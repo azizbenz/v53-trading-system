@@ -104,8 +104,10 @@ class TestStructureDetectorA:
         ))
         assert result.verdict == StructureVerdict.MARGINAL
 
-    def test_negative_direction_uses_abs(self):
-        """Negative direction (short) works via abs()."""
+    def test_negative_direction_abs_in_score(self):
+        """Structure detector still uses abs() internally for score calc.
+        But the runner rejects direction_score <= 0 before reaching here (long-only).
+        This test validates the math layer only."""
         result = detect_structure(StructureInput(
             pair="BTCUSDT",
             direction_score=-0.8,
@@ -114,7 +116,6 @@ class TestStructureDetectorA:
             zone_proximity=0.7,
             trend_stability=0.8,
         ))
-        assert result.verdict == StructureVerdict.FAVORABLE
         assert result.direction_strength == pytest.approx(0.8)
 
     def test_zone_proximity_affects_score(self):
@@ -356,14 +357,17 @@ class TestInvalidationMapperA:
         assert price_rules[0].level is not None
         assert price_rules[0].level < 50000.0
 
-    def test_short_invalidation_above_entry(self):
-        """Short direction explicitly documented and functional (P1 fix #7)."""
+    def test_short_branch_defensive_only(self):
+        """Short branch exists defensively but is unreachable in normal flow.
+        Runner rejects direction_score <= 0 before invalidation mapping.
+        This tests the math layer directly for coverage."""
         result = build_invalidation(
             pair="BTCUSDT", direction_score=-0.8,
             entry_price=50000.0, atr=500.0,
         )
         price_rules = [r for r in result.rules if r.invalidation_type == InvalidationType.PRICE_LEVEL]
         assert price_rules[0].level is not None
+        # Defensive: short maps above entry
         assert price_rules[0].level > 50000.0
 
     def test_time_expiry_present(self):
@@ -515,6 +519,24 @@ class TestEngineARunner:
         assert output.structure_verdict == StructureVerdict.FAVORABLE
         assert output.context_verdict == ContextVerdict.CONFIRMING
         assert output.cost_verdict == CostVerdict.FEASIBLE
+
+    def test_e2e_long_only_rejects_negative_direction(self):
+        """Long-only: direction_score < 0 => immediate NO_TRADE."""
+        output = run_engine_a(_make_good_inputs(direction_score=-0.8))
+        assert output.decision == EngineADecision.NO_TRADE
+        assert NoTradeReason.NON_LONG_DIRECTION in output.no_trade_reasons
+
+    def test_e2e_long_only_rejects_zero_direction(self):
+        """Long-only: direction_score == 0 => NO_TRADE."""
+        output = run_engine_a(_make_good_inputs(direction_score=0.0))
+        assert output.decision == EngineADecision.NO_TRADE
+        assert NoTradeReason.NON_LONG_DIRECTION in output.no_trade_reasons
+
+    def test_e2e_long_only_log_present(self):
+        """Long-only rejection produces structured log."""
+        output = run_engine_a(_make_good_inputs(direction_score=-0.5))
+        events = {log.event for log in output.log_entries}
+        assert "engine_a_no_trade" in events
 
     def test_e2e_no_trade_structure_unfavorable(self):
         """E2E no-trade: dirty structure => NO_TRADE with explicit reason."""

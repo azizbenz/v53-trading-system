@@ -4,12 +4,10 @@ Define structural invalidation for Engine A signals.
 
 A premium signal without readable invalidation is not exploitable.
 
-Direction policy:
-  direction_score > 0 → long bias (invalidation below entry)
-  direction_score < 0 → short bias (invalidation above entry)
-  Engine A supports both abstract directions. Spot-only constraint
-  enforcement is the responsibility of the hard_block_gate / risk_backbone,
-  not the engine itself. The engine maps invalidation symmetrically.
+Direction policy (spot-halal profile):
+  Engine A is long-only. The runner rejects direction_score <= 0
+  before reaching this module. Invalidation is always mapped below entry.
+  The short branch is retained defensively but unreachable in normal flow.
 """
 
 from __future__ import annotations
