@@ -1,43 +1,39 @@
 """Tests for engines.engine_a — Build-6.
 
 Covers all spec-mandated tests:
-- Structure: signal in clean trend, no signal in dirty range, direction too weak
+- Structure: signal in clean trend, no signal in dirty range, direction too weak, zone_proximity used
 - Context: confirming, degraded, fatal
 - Cost: feasible, marginal, infeasible, EV net check
 - Conviction: high/medium/low/none, tier mapping, score decomposition, reproducibility
-- Invalidation: price level, time expiry, always present
-- Reporter: emit/no-trade tracking, emission rate, no-trade reasons
+- Invalidation: price level, time expiry, always present, short direction documented
+- Reporter: emit/no-trade tracking, emission rate, no-trade reasons, typed enums
+- E2E: full pipeline emit, full pipeline no-trade
 """
 import pytest
 
 from engines.engine_a.structure_detector_a import (
     StructureVerdict,
     StructureInput,
-    StructureResult,
     detect_structure,
 )
 from engines.engine_a.context_validator_a import (
     ContextVerdict,
     ContextInput,
-    ContextResult,
     validate_context,
 )
 from engines.engine_a.cost_feasibility_a import (
     CostVerdict,
     CostInput,
-    CostResult,
     check_cost_feasibility,
 )
 from engines.engine_a.conviction_builder_a import (
     ConvictionLevel,
     TierSuggestion,
     ConvictionInput,
-    ConvictionResult,
     build_conviction,
 )
 from engines.engine_a.invalidation_mapper_a import (
     InvalidationType,
-    InvalidationMap,
     build_invalidation,
 )
 from engines.engine_a.signal_reporter_a import (
@@ -45,6 +41,13 @@ from engines.engine_a.signal_reporter_a import (
     NoTradeReason,
     SignalCandidateA,
     SignalReporterA,
+)
+from engines.engine_a.engine_a_runner import (
+    EngineADecision,
+    EngineAInput,
+    EngineAOutput,
+    EngineALogEntry,
+    run_engine_a,
 )
 
 
@@ -59,7 +62,7 @@ class TestStructureDetectorA:
             direction_score=0.8,
             continuation_score=0.9,
             structure_quality=0.85,
-            zone_proximity=0.5,
+            zone_proximity=0.7,
             trend_stability=0.8,
         ))
         assert result.verdict == StructureVerdict.FAVORABLE
@@ -72,19 +75,19 @@ class TestStructureDetectorA:
             direction_score=0.05,
             continuation_score=0.1,
             structure_quality=0.1,
-            zone_proximity=0.5,
+            zone_proximity=0.1,
             trend_stability=0.1,
         ))
         assert result.verdict == StructureVerdict.UNFAVORABLE
 
     def test_direction_too_weak(self):
-        """Direction below minimum threshold → unfavorable."""
+        """Direction below minimum threshold -> unfavorable."""
         result = detect_structure(StructureInput(
             pair="BTCUSDT",
             direction_score=0.1,
             continuation_score=0.9,
             structure_quality=0.9,
-            zone_proximity=0.5,
+            zone_proximity=0.9,
             trend_stability=0.9,
         ))
         assert result.verdict == StructureVerdict.UNFAVORABLE
@@ -108,11 +111,19 @@ class TestStructureDetectorA:
             direction_score=-0.8,
             continuation_score=0.9,
             structure_quality=0.85,
-            zone_proximity=0.5,
+            zone_proximity=0.7,
             trend_stability=0.8,
         ))
         assert result.verdict == StructureVerdict.FAVORABLE
         assert result.direction_strength == pytest.approx(0.8)
+
+    def test_zone_proximity_affects_score(self):
+        """zone_proximity is used in the score formula (P1 fix #5)."""
+        base = dict(pair="BTCUSDT", direction_score=0.6, continuation_score=0.5,
+                    structure_quality=0.5, trend_stability=0.5)
+        low_zone = detect_structure(StructureInput(**base, zone_proximity=0.0))
+        high_zone = detect_structure(StructureInput(**base, zone_proximity=1.0))
+        assert high_zone.structure_score > low_zone.structure_score
 
     def test_result_frozen(self):
         result = detect_structure(StructureInput(
@@ -209,7 +220,7 @@ class TestCostFeasibilityA:
         assert "break-even" in result.reason
 
     def test_marginal_ce(self):
-        """Gain > break-even but CE < CE_min → MARGINAL."""
+        """Gain > break-even but CE < CE_min -> MARGINAL."""
         result = check_cost_feasibility(CostInput(
             pair="BTCUSDT",
             expected_gain=0.002,
@@ -219,12 +230,11 @@ class TestCostFeasibilityA:
             delta_safe=0.0005,
             ce_min=0.001,
         ))
-        # gain 0.002 > break_even 0.0015 ✓, but CE = (0.002-0.001)/100 = 0.00001 < 0.001
         assert result.verdict == CostVerdict.MARGINAL
         assert "CE" in result.reason
 
     def test_ev_net_calculated(self):
-        """EV_net = x · (E[g] - E[c])."""
+        """EV_net = x * (E[g] - E[c])."""
         result = check_cost_feasibility(CostInput(
             pair="BTCUSDT",
             expected_gain=0.005,
@@ -300,7 +310,7 @@ class TestConvictionBuilderA:
         assert "cost_preference" in result.block_scores
 
     def test_reproducibility(self):
-        """Same inputs → same score."""
+        """Same inputs -> same score."""
         kwargs = dict(pair="BTCUSDT", structure_score=0.7, context_score=0.6,
                       flow_score=0.5, cost_preference_score=0.4)
         r1 = build_conviction(ConvictionInput(**kwargs))
@@ -347,6 +357,7 @@ class TestInvalidationMapperA:
         assert price_rules[0].level < 50000.0
 
     def test_short_invalidation_above_entry(self):
+        """Short direction explicitly documented and functional (P1 fix #7)."""
         result = build_invalidation(
             pair="BTCUSDT", direction_score=-0.8,
             entry_price=50000.0, atr=500.0,
@@ -422,6 +433,18 @@ class TestSignalReporterA:
         assert stats.no_trade_by_reason[NoTradeReason.COST_INFEASIBLE] == 2
         assert stats.no_trade_by_reason[NoTradeReason.STRUCTURE_UNFAVORABLE] == 1
 
+    def test_signal_candidate_typed_enums(self):
+        """P1 fix #6: conviction/tier use enums, not raw strings."""
+        signal = SignalCandidateA(
+            pair="BTCUSDT",
+            decision=SignalDecision.EMIT,
+            raw_score=0.8,
+            conviction=ConvictionLevel.HIGH,
+            tier_suggestion=TierSuggestion.TIER_3,
+        )
+        assert signal.conviction == ConvictionLevel.HIGH
+        assert signal.tier_suggestion == TierSuggestion.TIER_3
+
     def test_signal_candidate_frozen(self):
         signal = SignalCandidateA(
             pair="BTCUSDT", decision=SignalDecision.EMIT, raw_score=0.8,
@@ -437,3 +460,146 @@ class TestSignalReporterA:
         )
         assert len(signal.no_trade_reasons) > 0
         assert signal.decision == SignalDecision.NO_TRADE
+
+
+# ── engine_a_runner (E2E orchestration) ──
+
+
+def _make_good_inputs(**overrides) -> EngineAInput:
+    """Helper: inputs that produce a full EMIT through the pipeline."""
+    defaults = dict(
+        pair="BTCUSDT",
+        direction_score=0.8,
+        continuation_score=0.9,
+        structure_quality=0.85,
+        zone_proximity=0.7,
+        trend_stability=0.8,
+        regime="trending_up",
+        regime_favorability=0.9,
+        regime_confidence=0.8,
+        pair_health=0.9,
+        data_freshness=0.95,
+        flow_coherence=0.8,
+        expected_gain=0.005,
+        expected_cost=0.001,
+        candidate_size=1000.0,
+        holding_period=4.0,
+        entry_price=50000.0,
+        atr=500.0,
+        scoring_version="v1.0",
+    )
+    defaults.update(overrides)
+    return EngineAInput(**defaults)
+
+
+class TestEngineARunner:
+    def test_e2e_emit_full_pipeline(self):
+        """E2E: favorable structure + confirming context + feasible cost + conviction => EMIT."""
+        output = run_engine_a(_make_good_inputs())
+
+        assert output.decision == EngineADecision.EMIT
+        assert output.pair == "BTCUSDT"
+        assert output.engine_id == "engine_a"
+        assert output.raw_score > 0
+        assert len(output.block_scores) > 0
+        assert output.conviction != ConvictionLevel.NONE
+        assert output.tier_suggestion != TierSuggestion.NO_TRADE
+        assert output.expected_cost > 0
+        assert output.ce_expected > 0
+        assert output.ev_net > 0
+        assert output.invalidation is not None
+        assert output.invalidation.has_invalidation is True
+        assert output.holding_hours > 0
+        assert output.scoring_version == "v1.0"
+        assert output.no_trade_reasons == ()
+        assert output.structure_verdict == StructureVerdict.FAVORABLE
+        assert output.context_verdict == ContextVerdict.CONFIRMING
+        assert output.cost_verdict == CostVerdict.FEASIBLE
+
+    def test_e2e_no_trade_structure_unfavorable(self):
+        """E2E no-trade: dirty structure => NO_TRADE with explicit reason."""
+        output = run_engine_a(_make_good_inputs(
+            direction_score=0.05,
+            continuation_score=0.1,
+            structure_quality=0.1,
+            zone_proximity=0.1,
+            trend_stability=0.1,
+        ))
+        assert output.decision == EngineADecision.NO_TRADE
+        assert NoTradeReason.STRUCTURE_UNFAVORABLE in output.no_trade_reasons
+
+    def test_e2e_no_trade_context_fatal(self):
+        """E2E no-trade: fatal context => NO_TRADE."""
+        output = run_engine_a(_make_good_inputs(
+            regime_favorability=0.02,
+            regime_confidence=0.02,
+            pair_health=0.02,
+            data_freshness=0.02,
+            flow_coherence=0.02,
+        ))
+        assert output.decision == EngineADecision.NO_TRADE
+        assert NoTradeReason.CONTEXT_FATAL in output.no_trade_reasons
+
+    def test_e2e_no_trade_cost_infeasible(self):
+        """E2E no-trade: cost kills edge => NO_TRADE."""
+        output = run_engine_a(_make_good_inputs(
+            expected_gain=0.0001,
+            expected_cost=0.005,
+        ))
+        assert output.decision == EngineADecision.NO_TRADE
+        assert NoTradeReason.COST_INFEASIBLE in output.no_trade_reasons
+
+    def test_e2e_structured_logs_present(self):
+        """Spec section 19: structured logs must be present in output."""
+        output = run_engine_a(_make_good_inputs())
+        assert len(output.log_entries) > 0
+        events = {log.event for log in output.log_entries}
+        assert "engine_a_structure_evaluated" in events
+        assert "engine_a_context_evaluated" in events
+        assert "engine_a_cost_checked" in events
+        assert "engine_a_conviction_built" in events
+        assert "engine_a_invalidation_built" in events
+        assert "engine_a_signal_emitted" in events
+
+    def test_e2e_no_trade_logs_present(self):
+        """No-trade path also produces structured logs."""
+        output = run_engine_a(_make_good_inputs(
+            direction_score=0.05,
+            continuation_score=0.1,
+            structure_quality=0.1,
+            zone_proximity=0.1,
+            trend_stability=0.1,
+        ))
+        events = {log.event for log in output.log_entries}
+        assert "engine_a_structure_evaluated" in events
+        assert "engine_a_no_trade" in events
+
+    def test_e2e_emit_log_has_full_fields(self):
+        """The final emit log has all required audit fields (spec section 19)."""
+        output = run_engine_a(_make_good_inputs())
+        emit_logs = [l for l in output.log_entries if l.event == "engine_a_signal_emitted"]
+        assert len(emit_logs) == 1
+        log = emit_logs[0]
+        assert log.pair == "BTCUSDT"
+        assert log.regime == "trending_up"
+        assert log.raw_score > 0
+        assert log.expected_cost > 0
+        assert log.ce_expected > 0
+        assert log.ev_net > 0
+        assert log.conviction != ""
+        assert log.tier != ""
+        assert log.invalidation != ""
+        assert log.holding_hours > 0
+        assert log.scoring_version == "v1.0"
+
+    def test_e2e_output_frozen(self):
+        """EngineAOutput is immutable."""
+        output = run_engine_a(_make_good_inputs())
+        with pytest.raises(Exception):
+            output.decision = "x"
+
+    def test_e2e_log_entry_frozen(self):
+        """EngineALogEntry is immutable."""
+        log = EngineALogEntry(event="test", pair="BTC")
+        with pytest.raises(Exception):
+            log.event = "x"

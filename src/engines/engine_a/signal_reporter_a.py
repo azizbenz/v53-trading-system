@@ -9,6 +9,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
+from engines.engine_a.conviction_builder_a import ConvictionLevel, TierSuggestion
+
 
 class SignalDecision(StrEnum):
     EMIT = "emit"
@@ -23,22 +25,22 @@ class NoTradeReason(StrEnum):
 
 
 class SignalCandidateA(BaseModel, frozen=True):
-    """Complete Engine A signal output."""
+    """Complete Engine A signal output — typed for downstream consumption."""
 
     pair: str
     engine_id: str = "engine_a"
     decision: SignalDecision
     raw_score: float = 0.0
     block_scores: dict[str, float] = Field(default_factory=dict)
-    conviction: str = ""
-    tier_suggestion: str = ""
+    conviction: ConvictionLevel = ConvictionLevel.NONE
+    tier_suggestion: TierSuggestion = TierSuggestion.NO_TRADE
     expected_cost: float = 0.0
     ce_expected: float = 0.0
     ev_net: float = 0.0
     invalidation: str = ""
     holding_hours: float = 0.0
     scoring_version: str = ""
-    no_trade_reasons: tuple[str, ...] = ()
+    no_trade_reasons: tuple[NoTradeReason, ...] = ()
 
 
 class SignalStats(BaseModel, frozen=True):

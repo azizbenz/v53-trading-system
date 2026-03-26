@@ -26,6 +26,7 @@ markers = [
     "build3: Build-3 Execution Backbone",
     "build4: Build-4 Risk Backbone",
     "build5: Build-5 Scoring Backbone",
+    "build6: Build-6 Engine A",
     "slow: Tests lents (shadow/live simulation)",
 ]
 

@@ -52,15 +52,16 @@ _MIN_DIRECTION = 0.2
 def detect_structure(inputs: StructureInput) -> StructureResult:
     """Evaluate whether a premium trend/expansion structure is present.
 
-    structure_score = 0.35·|direction| + 0.25·continuation + 0.25·quality + 0.15·stability
+    structure_score = 0.30·|direction| + 0.25·continuation + 0.20·quality + 0.10·zone_proximity + 0.15·stability
     """
     direction_strength = abs(inputs.direction_score)
     continuation_strength = inputs.continuation_score
 
     score = (
-        0.35 * direction_strength
+        0.30 * direction_strength
         + 0.25 * continuation_strength
-        + 0.25 * inputs.structure_quality
+        + 0.20 * inputs.structure_quality
+        + 0.10 * inputs.zone_proximity
         + 0.15 * inputs.trend_stability
     )
 
