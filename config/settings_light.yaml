@@ -1,0 +1,40 @@
+# V5.3 — Profil LIGHT
+# 6 paires, moteurs A+B uniquement
+
+profile: light
+version: "5.3.0"
+
+pairs:
+  - BTCUSDT
+  - ETHUSDT
+  - BNBUSDT
+  - SOLUSDT
+  - XRPUSDT
+  - LINKUSDT
+
+engines:
+  enabled:
+    - engine_a
+    - engine_b
+  disabled:
+    - engine_c  # Complete only
+    - engine_d  # Complete only
+
+risk:
+  max_total_exposure_pct: 80.0
+  max_single_pair_pct: 25.0
+  max_loss_budget_pct: 5.0
+  max_cluster_exposure_pct: 40.0
+  max_btc_beta: 1.5
+
+execution:
+  default_order_type: limit
+  max_slippage_bps: 15.0
+  fill_timeout_ms: 30000
+  tier3_allowed: false
+
+data:
+  stale_threshold_ms: 5000
+  heartbeat_interval_ms: 10000
+  ws_reconnect_delay_ms: 1000
+  ws_max_reconnect_attempts: 10

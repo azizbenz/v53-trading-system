@@ -1,0 +1,33 @@
+# V5.3 — Configuration logging structuré
+version: 1
+disable_existing_loggers: false
+
+formatters:
+  json:
+    format: '{"timestamp":"%(asctime)s","level":"%(levelname)s","module":"%(name)s","message":"%(message)s"}'
+    datefmt: "%Y-%m-%dT%H:%M:%S%z"
+  console:
+    format: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+
+handlers:
+  console:
+    class: logging.StreamHandler
+    formatter: console
+    level: INFO
+  file:
+    class: logging.handlers.RotatingFileHandler
+    filename: v53.log
+    formatter: json
+    level: DEBUG
+    maxBytes: 10485760  # 10MB
+    backupCount: 5
+
+loggers:
+  v53:
+    level: DEBUG
+    handlers: [console, file]
+    propagate: false
+
+root:
+  level: WARNING
+  handlers: [console]

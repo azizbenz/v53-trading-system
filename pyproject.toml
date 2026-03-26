@@ -1,0 +1,44 @@
+[project]
+name = "v53-trading-system"
+version = "5.3.0-build1"
+description = "V5.3 Crypto Trading System — Architecture modulaire prod-safe"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.0,<3.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.3.0",
+    "mypy>=1.8",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-v --tb=short --strict-markers"
+markers = [
+    "build1: Build-1 Dependency Architecture",
+    "build2: Build-2 Data Backbone",
+    "build3: Build-3 Execution Backbone",
+    "build4: Build-4 Risk Backbone",
+    "build5: Build-5 Scoring Backbone",
+    "slow: Tests lents (shadow/live simulation)",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true

@@ -1,0 +1,45 @@
+# V5.3 — Profil COMPLETE
+# 12 paires, moteurs A+B+C+D
+
+profile: complete
+version: "5.3.0"
+
+pairs:
+  - BTCUSDT
+  - ETHUSDT
+  - BNBUSDT
+  - SOLUSDT
+  - XRPUSDT
+  - LINKUSDT
+  - ADAUSDT
+  - AVAXUSDT
+  - DOTUSDT
+  - MATICUSDT
+  - ATOMUSDT
+  - NEARUSDT
+
+engines:
+  enabled:
+    - engine_a
+    - engine_b
+    - engine_c
+    - engine_d
+
+risk:
+  max_total_exposure_pct: 85.0
+  max_single_pair_pct: 20.0
+  max_loss_budget_pct: 5.0
+  max_cluster_exposure_pct: 35.0
+  max_btc_beta: 1.5
+
+execution:
+  default_order_type: limit
+  max_slippage_bps: 15.0
+  fill_timeout_ms: 30000
+  tier3_allowed: true  # Prudent uniquement
+
+data:
+  stale_threshold_ms: 5000
+  heartbeat_interval_ms: 10000
+  ws_reconnect_delay_ms: 1000
+  ws_max_reconnect_attempts: 10
