@@ -3,9 +3,8 @@ Build-8 / opportunity_selector / correlation_conflict_checker
 Detect obvious exposure or redundancy conflicts between candidates.
 
 Rules:
-- Same pair from two engines → keep best penalized_score, flag duplicate
+- Same pair from two engines → keep best by ranking_score (composite), flag duplicate
 - Same cluster over-represented → flag crowding
-- Opposing directions on correlated pairs → flag conflict (future use)
 """
 
 from __future__ import annotations
@@ -15,6 +14,10 @@ from enum import StrEnum
 from pydantic import BaseModel, Field
 
 from portfolio_minimal.opportunity_selector.candidate_pool_builder import OpportunityCandidate
+from portfolio_minimal.opportunity_selector.comparative_ranker import (
+    RankedCandidate,
+    compute_ranking_score,
+)
 
 
 class ConflictType(StrEnum):
@@ -47,45 +50,56 @@ _CLUSTER_CROWDING_THRESHOLD = 3
 def check_conflicts(
     candidates: tuple[OpportunityCandidate, ...],
     cluster_crowding_threshold: int = _CLUSTER_CROWDING_THRESHOLD,
+    cluster_utilizations: dict[str, float] | None = None,
 ) -> ConflictCheckResult:
-    """Detect and resolve conflicts among ranked candidates.
+    """Detect and resolve conflicts among candidates.
 
     1. Duplicate pair resolution: if the same pair appears from multiple engines,
-       keep only the one with the highest penalized_score.
+       keep only the one with the highest ranking_score (composite economic score),
+       not just penalized_score alone.
     2. Cluster crowding: flag when a cluster has more candidates than threshold.
 
     Returns survivors (deduplicated) and conflict records.
     """
     conflicts: list[ConflictRecord] = []
     duplicates_removed = 0
+    utils = cluster_utilizations or {}
 
-    # ── 1. Deduplicate by pair: keep best penalized_score ──
-    best_by_pair: dict[str, OpportunityCandidate] = {}
-    dupes_by_pair: dict[str, list[OpportunityCandidate]] = {}
+    # ── 1. Deduplicate by pair: keep best ranking_score ──
+    best_by_pair: dict[str, tuple[OpportunityCandidate, float]] = {}
+    dupes_by_pair: dict[str, list[tuple[OpportunityCandidate, float]]] = {}
 
     for c in candidates:
+        corr_util = utils.get(c.cluster_id, 0.0)
+        rs = compute_ranking_score(c, cluster_utilization=corr_util)
+
         if c.pair in best_by_pair:
-            existing = best_by_pair[c.pair]
-            if c.penalized_score > existing.penalized_score:
-                dupes_by_pair.setdefault(c.pair, []).append(existing)
-                best_by_pair[c.pair] = c
+            existing_c, existing_rs = best_by_pair[c.pair]
+            if rs > existing_rs:
+                dupes_by_pair.setdefault(c.pair, []).append((existing_c, existing_rs))
+                best_by_pair[c.pair] = (c, rs)
             else:
-                dupes_by_pair.setdefault(c.pair, []).append(c)
+                dupes_by_pair.setdefault(c.pair, []).append((c, rs))
         else:
-            best_by_pair[c.pair] = c
+            best_by_pair[c.pair] = (c, rs)
 
     for pair, losers in dupes_by_pair.items():
-        winner = best_by_pair[pair]
-        all_engines = tuple(sorted({winner.engine_id} | {l.engine_id for l in losers}))
+        winner_c, winner_rs = best_by_pair[pair]
+        all_engines = tuple(sorted(
+            {winner_c.engine_id} | {lc.engine_id for lc, _ in losers}
+        ))
         conflicts.append(ConflictRecord(
             conflict_type=ConflictType.DUPLICATE_PAIR,
             pair=pair,
             engine_ids=all_engines,
-            detail=f"kept {winner.engine_id} (score={winner.penalized_score:.4f}), removed {len(losers)} duplicate(s)",
+            detail=(
+                f"kept {winner_c.engine_id} (ranking_score={winner_rs:.4f}), "
+                f"removed {len(losers)} duplicate(s)"
+            ),
         ))
         duplicates_removed += len(losers)
 
-    survivors = tuple(best_by_pair.values())
+    survivors = tuple(c for c, _ in best_by_pair.values())
 
     # ── 2. Cluster crowding detection ──
     cluster_counts: dict[str, list[str]] = {}

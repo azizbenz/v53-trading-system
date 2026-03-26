@@ -15,7 +15,7 @@
 | Python | `>=3.12` (developed on 3.13.1) |
 | Framework | Pydantic 2.x frozen models, StrEnum, sync-only |
 | Test runner | pytest 8.x with `pythonpath = ["src"]` |
-| Total tests | **940 passing** |
+| Total tests | **956 passing** |
 | Repository | `github.com/azizbenz/v53-trading-system` |
 
 ---
@@ -501,7 +501,7 @@
 ## Build-8 — Portfolio Minimal
 
 **Status**: MERGEABLE
-**Tests**: 54
+**Tests**: 70
 
 ### Source Files
 
@@ -540,11 +540,30 @@
 |------|-------|----------|
 | `test_portfolio_minimal/test_portfolio_minimal.py` | 54 | candidate_pool (6), eligibility (5), ranker (5), conflict_checker (6), selection_resolver (5), base_size (5), score_mapper (7), cap_applier (6), phantom_guard (5), reporter (4) |
 
-### Audit Findings
-- No blockers found at closure.
-- Fail-closed pattern consistent with Build-4/5.
-- All capacity checks use live remaining capacity (decremented during selection).
-- Phantom trade detection prevents economically sterile allocations.
+### Re-audit Findings & Patches (Post NO-GO audit)
+| # | File(s) | Issue | Severity | Fix |
+|---|---------|-------|----------|-----|
+| P0-1 | `eligibility_filter.py`, `selection_resolver.py` | Selector rejected oversized trades that allocation_router should reduce | P0 | Removed all size-based rejections from selector. Only structural reject: fail-closed no-cluster. allocation_router now handles all capacity reduction. |
+| P0-2 | `portfolio_cap_applier.py`, `candidate_pool_builder.py` | Loss budget and beta/BTC budget not enforced | P0 | Added proportional loss_budget and beta_budget caps. `estimated_loss` field added to OpportunityCandidate. Cap applier computes max_size from remaining budget / per-unit rate. |
+| P1-1 | (new) `portfolio_orchestrator.py` | No E2E orchestrator | P1 | Added 9-stage pipeline: pool -> conflicts -> rank -> select -> base_size -> modulate -> caps -> phantom -> report |
+| P1-2 | `correlation_conflict_checker.py` | Duplicate pair dedup used only penalized_score | P1 | Now uses `ranking_score` (composite: score + CE - cost - corr_util) for economically optimal dedup |
+| P1-3 | `portfolio_orchestrator.py` | Phantom sterilization not explicit in flow | P1 | Phantom trades explicitly sterilized before report. Budget decrements skip phantoms. |
+
+**Architecture after patches**:
+- `opportunity_selector` decides **what** deserves capital (structural eligibility only)
+- `allocation_router` decides **how much** capital (reduces oversized, enforces all 5 caps)
+- Only after cap application + phantom check is a trade definitively rejected
+- Budgets (gross, cluster, loss, beta) decremented live per viable allocation
+
+### Source Files (post-patch: +1 new)
+| File | Change |
+|------|--------|
+| `portfolio_orchestrator.py` | **NEW**: E2E 9-stage pipeline |
+| `eligibility_filter.py` | Removed REJECTED_GROSS_CAP and REJECTED_CLUSTER verdicts |
+| `selection_resolver.py` | Removed capacity tracking; only reject no-cluster |
+| `portfolio_cap_applier.py` | Added loss_budget + beta_budget proportional caps |
+| `candidate_pool_builder.py` | Added `estimated_loss` field |
+| `correlation_conflict_checker.py` | Dedup uses `ranking_score` (composite) |
 
 ---
 
@@ -559,8 +578,8 @@
 | Build-5 | Scoring Backbone | 106 | MERGEABLE |
 | Build-6 | Engine A | 40 | MERGEABLE |
 | Build-7 | Engine B | 50 | MERGEABLE |
-| Build-8 | Portfolio Minimal | 54 | MERGEABLE |
-| **Total** | | **940** | **ALL GREEN** |
+| Build-8 | Portfolio Minimal | 70 | MERGEABLE |
+| **Total** | | **956** | **ALL GREEN** |
 
 ---
 

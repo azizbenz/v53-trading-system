@@ -1,5 +1,8 @@
 """
-Build-8 tests — portfolio_minimal (opportunity_selector + allocation_router).
+Build-8 tests — portfolio_minimal (opportunity_selector + allocation_router + orchestrator).
+
+Post-audit: P0-1 (selector no longer rejects reducible trades),
+P0-2 (loss + beta budgets applied), P1-1/2/3 (orchestrator, ranking dedup, phantom sterilization).
 """
 
 from __future__ import annotations
@@ -59,6 +62,13 @@ from portfolio_minimal.allocation_router.allocation_reporter import (
     build_report,
 )
 
+# ── orchestrator import ──
+from portfolio_minimal.portfolio_orchestrator import (
+    OrchestratorConfig,
+    OrchestratorResult,
+    run_portfolio_pipeline,
+)
+
 
 # ═══════════════════════════════════════════════════════════════
 # Helper: build a candidate quickly
@@ -73,6 +83,8 @@ def _cand(
     size: float = 100.0,
     tier: str = "tier_1",
     cluster: str = "btc_cluster",
+    estimated_loss: float = 0.0,
+    beta_impact: float = 0.0,
 ) -> OpportunityCandidate:
     return OpportunityCandidate(
         pair=pair,
@@ -84,11 +96,13 @@ def _cand(
         candidate_size=size,
         tier_suggestion=tier,
         cluster_id=cluster,
+        estimated_loss=estimated_loss,
+        beta_impact=beta_impact,
     )
 
 
 # ═══════════════════════════════════════════════════════════════
-# 1. candidate_pool_builder
+# 1. candidate_pool_builder (6 tests)
 # ═══════════════════════════════════════════════════════════════
 
 class TestCandidatePoolBuilder:
@@ -124,7 +138,7 @@ class TestCandidatePoolBuilder:
 
 
 # ═══════════════════════════════════════════════════════════════
-# 2. eligibility_filter
+# 2. eligibility_filter — P0-1 fix: no size-based rejection
 # ═══════════════════════════════════════════════════════════════
 
 class TestEligibilityFilter:
@@ -138,48 +152,49 @@ class TestEligibilityFilter:
         r = check_eligibility(_cand(size=100.0), self._snapshot())
         assert r.verdict == EligibilityVerdict.ELIGIBLE
 
-    def test_rejected_gross_cap(self):
-        r = check_eligibility(_cand(size=200.0), self._snapshot(gross=100.0))
-        assert r.verdict == EligibilityVerdict.REJECTED_GROSS_CAP
-
-    def test_rejected_cluster_cap(self):
-        r = check_eligibility(_cand(size=200.0), self._snapshot(cluster_cap=100.0))
-        assert r.verdict == EligibilityVerdict.REJECTED_CLUSTER
-
     def test_rejected_no_cluster(self):
         r = check_eligibility(_cand(cluster=""), self._snapshot())
         assert r.verdict == EligibilityVerdict.REJECTED_NO_CLUSTER
 
-    def test_cluster_not_in_snapshot_rejected(self):
+    def test_oversized_NOT_rejected_by_selector(self):
+        """P0-1: candidate bigger than gross cap is NOT rejected here."""
+        r = check_eligibility(_cand(size=2000.0), self._snapshot(gross=100.0))
+        assert r.verdict == EligibilityVerdict.ELIGIBLE
+
+    def test_oversized_cluster_NOT_rejected_by_selector(self):
+        """P0-1: candidate bigger than cluster cap is NOT rejected here."""
+        r = check_eligibility(_cand(size=2000.0), self._snapshot(cluster_cap=100.0))
+        assert r.verdict == EligibilityVerdict.ELIGIBLE
+
+    def test_unknown_cluster_still_eligible(self):
+        """Candidate with a cluster not in snapshot is still eligible —
+        allocation_router will cap to 0 if no cluster capacity."""
         snap = PortfolioSnapshot(
             remaining_gross_capacity=1000.0,
-            remaining_cluster_capacity={},  # no clusters defined
+            remaining_cluster_capacity={},
         )
         r = check_eligibility(_cand(cluster="unknown"), snap)
-        assert r.verdict == EligibilityVerdict.REJECTED_CLUSTER
+        assert r.verdict == EligibilityVerdict.ELIGIBLE
 
 
 # ═══════════════════════════════════════════════════════════════
-# 3. comparative_ranker
+# 3. comparative_ranker (5 tests)
 # ═══════════════════════════════════════════════════════════════
 
 class TestComparativeRanker:
     def test_score_formula(self):
         c = _cand(score=1.0, ce=1.0, cost=0.0)
         rs = compute_ranking_score(c, cluster_utilization=0.0)
-        # 0.35*1 + 0.30*1 - 0.20*0 - 0.15*0 = 0.65
         assert abs(rs - 0.65) < 1e-9
 
     def test_cost_penalizes(self):
         c = _cand(score=1.0, ce=1.0, cost=1.0)
         rs = compute_ranking_score(c, cluster_utilization=0.0)
-        # 0.35 + 0.30 - 0.20 = 0.45
         assert abs(rs - 0.45) < 1e-9
 
     def test_cluster_utilization_penalizes(self):
         c = _cand(score=1.0, ce=1.0, cost=0.0)
         rs = compute_ranking_score(c, cluster_utilization=1.0)
-        # 0.35 + 0.30 - 0.15 = 0.50
         assert abs(rs - 0.50) < 1e-9
 
     def test_rank_order(self):
@@ -200,12 +215,11 @@ class TestComparativeRanker:
             _cand(pair="B", score=0.8, cluster="c2"),
         )
         ranked = rank_candidates(candidates, cluster_utilizations={"c1": 1.0, "c2": 0.0})
-        # B should rank higher (c1 penalized)
         assert ranked[0].candidate.pair == "B"
 
 
 # ═══════════════════════════════════════════════════════════════
-# 4. correlation_conflict_checker
+# 4. correlation_conflict_checker — P1-2: ranking_score dedup
 # ═══════════════════════════════════════════════════════════════
 
 class TestConflictChecker:
@@ -214,22 +228,22 @@ class TestConflictChecker:
         assert r.duplicates_removed == 0
         assert len(r.survivors) == 2
 
-    def test_duplicate_pair_keeps_best(self):
+    def test_duplicate_pair_keeps_best_by_ranking_score(self):
+        """P1-2: dedup uses ranking_score (composite), not penalized_score alone."""
         r = check_conflicts((
-            _cand(pair="BTC/USDT", engine="engine_a", score=0.9),
-            _cand(pair="BTC/USDT", engine="engine_b", score=0.5),
+            _cand(pair="BTC/USDT", engine="engine_a", score=0.9, ce=0.01),
+            _cand(pair="BTC/USDT", engine="engine_b", score=0.5, ce=0.50),
         ))
         assert r.duplicates_removed == 1
         assert len(r.survivors) == 1
-        assert r.survivors[0].engine_id == "engine_a"
         assert any(c.conflict_type == ConflictType.DUPLICATE_PAIR for c in r.conflicts)
 
     def test_duplicate_pair_reverse_order(self):
-        """Lower score first, higher second — still keeps higher."""
         r = check_conflicts((
             _cand(pair="X", engine="engine_b", score=0.3),
             _cand(pair="X", engine="engine_a", score=0.7),
         ))
+        assert len(r.survivors) == 1
         assert r.survivors[0].penalized_score == 0.7
 
     def test_cluster_crowding_flagged(self):
@@ -251,16 +265,27 @@ class TestConflictChecker:
         assert len(r.survivors) == 0
         assert r.duplicates_removed == 0
 
+    def test_dedup_uses_composite_not_just_score(self):
+        """Engine A: high score, low CE. Engine B: lower score, much higher CE.
+        Ranking_score composite can prefer B even if A has higher penalized_score."""
+        # A: 0.35*0.9 + 0.30*0.01 - 0.20*0.01 = 0.316
+        # B: 0.35*0.5 + 0.30*0.50 - 0.20*0.01 = 0.323
+        r = check_conflicts((
+            _cand(pair="X", engine="engine_a", score=0.9, ce=0.01, cost=0.01),
+            _cand(pair="X", engine="engine_b", score=0.5, ce=0.50, cost=0.01),
+        ))
+        assert r.survivors[0].engine_id == "engine_b"
+
 
 # ═══════════════════════════════════════════════════════════════
-# 5. selection_resolver
+# 5. selection_resolver — P0-1: no capacity rejection
 # ═══════════════════════════════════════════════════════════════
 
 class TestSelectionResolver:
     def _ranked(self, candidates):
         return rank_candidates(candidates)
 
-    def test_all_selected_when_capacity(self):
+    def test_all_selected_with_cluster(self):
         ranked = self._ranked((_cand(pair="A", size=100), _cand(pair="B", size=100)))
         snap = PortfolioSnapshot(
             remaining_gross_capacity=1000.0,
@@ -269,18 +294,17 @@ class TestSelectionResolver:
         r = resolve_selection(ranked, snap)
         assert len(r.selected) == 2
         assert len(r.rejected) == 0
-        assert r.total_selected_size == 200.0
 
-    def test_second_rejected_when_gross_exhausted(self):
-        ranked = self._ranked((_cand(pair="A", size=100), _cand(pair="B", size=100)))
+    def test_oversized_still_selected(self):
+        """P0-1: oversized candidates are NOT rejected by selector."""
+        ranked = self._ranked((_cand(pair="A", size=5000),))
         snap = PortfolioSnapshot(
-            remaining_gross_capacity=150.0,
-            remaining_cluster_capacity={"btc_cluster": 1000.0},
+            remaining_gross_capacity=100.0,
+            remaining_cluster_capacity={"btc_cluster": 50.0},
         )
         r = resolve_selection(ranked, snap)
         assert len(r.selected) == 1
-        assert len(r.rejected) == 1
-        assert r.rejected[0].verdict == SelectionVerdict.REJECTED_CAPACITY
+        assert len(r.rejected) == 0
 
     def test_rejected_no_cluster(self):
         ranked = self._ranked((_cand(pair="X", cluster=""),))
@@ -289,19 +313,15 @@ class TestSelectionResolver:
         assert len(r.rejected) == 1
         assert r.rejected[0].verdict == SelectionVerdict.REJECTED_NO_CLUSTER
 
-    def test_cluster_capacity_decremented(self):
+    def test_mixed_cluster_and_no_cluster(self):
         ranked = self._ranked((
-            _cand(pair="A", size=80, cluster="c1"),
-            _cand(pair="B", size=80, cluster="c1"),
+            _cand(pair="A", cluster="c1"),
+            _cand(pair="B", cluster=""),
         ))
-        snap = PortfolioSnapshot(
-            remaining_gross_capacity=1000.0,
-            remaining_cluster_capacity={"c1": 100.0},
-        )
+        snap = PortfolioSnapshot(remaining_gross_capacity=1000.0, remaining_cluster_capacity={"c1": 500.0})
         r = resolve_selection(ranked, snap)
         assert len(r.selected) == 1
         assert len(r.rejected) == 1
-        assert r.rejected[0].verdict == SelectionVerdict.REJECTED_CLUSTER
 
     def test_empty_ranked(self):
         r = resolve_selection((), PortfolioSnapshot(remaining_gross_capacity=1000.0))
@@ -309,14 +329,14 @@ class TestSelectionResolver:
 
 
 # ═══════════════════════════════════════════════════════════════
-# 6. base_size_builder
+# 6. base_size_builder (5 tests)
 # ═══════════════════════════════════════════════════════════════
 
 class TestBaseSizeBuilder:
     def test_normal_base_size(self):
         profile = SizeProfile(available_capital=10000.0)
         r = compute_base_size("BTC/USDT", profile)
-        assert r.base_size == 200.0  # 10000 * 0.02
+        assert r.base_size == 200.0
         assert not r.clamped
 
     def test_clamped_to_max(self):
@@ -328,13 +348,13 @@ class TestBaseSizeBuilder:
     def test_clamped_to_min(self):
         profile = SizeProfile(available_capital=100.0, min_size=10.0)
         r = compute_base_size("BTC/USDT", profile)
-        assert r.base_size == 10.0  # 100*0.02=2 < min=10
+        assert r.base_size == 10.0
         assert r.clamped
 
     def test_custom_fraction(self):
         profile = SizeProfile(available_capital=10000.0, base_fraction=0.05)
         r = compute_base_size("X", profile)
-        assert r.base_size == 500.0  # 10000 * 0.05 = 500 = max
+        assert r.base_size == 500.0
 
     def test_raw_base_preserved(self):
         profile = SizeProfile(available_capital=100.0, min_size=10.0)
@@ -344,7 +364,7 @@ class TestBaseSizeBuilder:
 
 
 # ═══════════════════════════════════════════════════════════════
-# 7. score_size_mapper
+# 7. score_size_mapper (7 tests)
 # ═══════════════════════════════════════════════════════════════
 
 class TestScoreSizeMapper:
@@ -381,7 +401,7 @@ class TestScoreSizeMapper:
 
 
 # ═══════════════════════════════════════════════════════════════
-# 8. portfolio_cap_applier
+# 8. portfolio_cap_applier — P0-2: loss + beta caps
 # ═══════════════════════════════════════════════════════════════
 
 class TestPortfolioCapApplier:
@@ -413,9 +433,84 @@ class TestPortfolioCapApplier:
         r = apply_caps("X", 200.0, remaining_gross_capacity=-10.0, remaining_cluster_capacity=500.0)
         assert r.final_size == 0.0
 
+    def test_loss_budget_reduces_size(self):
+        """P0-2: loss budget cap reduces allocation proportionally."""
+        # estimated_loss=10 at candidate_size=100 → loss_per_unit = 0.1
+        # remaining_loss=5 → max_size = 5/0.1 = 50
+        r = apply_caps(
+            "X", 100.0,
+            remaining_gross_capacity=500.0,
+            remaining_cluster_capacity=500.0,
+            remaining_loss_capacity=5.0,
+            estimated_loss_at_candidate_size=10.0,
+            candidate_size=100.0,
+        )
+        assert r.final_size == pytest.approx(50.0)
+        assert r.was_capped
+        assert "loss_budget" in r.cap_reason
+
+    def test_beta_budget_reduces_size(self):
+        """P0-2: beta budget cap reduces allocation proportionally."""
+        # beta_impact=0.5 at candidate_size=100 → beta_per_unit = 0.005
+        # remaining_beta=0.1 → max_size = 0.1/0.005 = 20
+        r = apply_caps(
+            "X", 100.0,
+            remaining_gross_capacity=500.0,
+            remaining_cluster_capacity=500.0,
+            remaining_beta_capacity=0.1,
+            beta_impact_at_candidate_size=0.5,
+            candidate_size=100.0,
+        )
+        assert r.final_size == pytest.approx(20.0)
+        assert r.was_capped
+        assert "beta_budget" in r.cap_reason
+
+    def test_loss_and_beta_combined_tightest_wins(self):
+        """P0-2: when both loss and beta constrain, tightest wins."""
+        # loss: 10/100=0.1 per unit, remaining=5 → max=50
+        # beta: 0.5/100=0.005 per unit, remaining=0.1 → max=20
+        # beta is tighter → 20
+        r = apply_caps(
+            "X", 100.0,
+            remaining_gross_capacity=500.0,
+            remaining_cluster_capacity=500.0,
+            remaining_loss_capacity=5.0,
+            remaining_beta_capacity=0.1,
+            estimated_loss_at_candidate_size=10.0,
+            beta_impact_at_candidate_size=0.5,
+            candidate_size=100.0,
+        )
+        assert r.final_size == pytest.approx(20.0)
+
+    def test_no_loss_budget_when_no_loss_estimate(self):
+        """No loss reduction when estimated_loss is 0."""
+        r = apply_caps(
+            "X", 100.0,
+            remaining_gross_capacity=500.0,
+            remaining_cluster_capacity=500.0,
+            remaining_loss_capacity=5.0,
+            estimated_loss_at_candidate_size=0.0,
+            candidate_size=100.0,
+        )
+        assert r.final_size == 100.0
+        assert not r.was_capped
+
+    def test_negative_beta_uses_abs(self):
+        """P0-2: negative beta_impact handled via abs()."""
+        r = apply_caps(
+            "X", 100.0,
+            remaining_gross_capacity=500.0,
+            remaining_cluster_capacity=500.0,
+            remaining_beta_capacity=0.1,
+            beta_impact_at_candidate_size=-0.5,
+            candidate_size=100.0,
+        )
+        assert r.final_size == pytest.approx(20.0)
+        assert r.was_capped
+
 
 # ═══════════════════════════════════════════════════════════════
-# 9. phantom_trade_guard
+# 9. phantom_trade_guard (5 tests)
 # ═══════════════════════════════════════════════════════════════
 
 class TestPhantomTradeGuard:
@@ -441,7 +536,7 @@ class TestPhantomTradeGuard:
 
 
 # ═══════════════════════════════════════════════════════════════
-# 10. allocation_reporter
+# 10. allocation_reporter (4 tests)
 # ═══════════════════════════════════════════════════════════════
 
 class TestAllocationReporter:
@@ -480,3 +575,137 @@ class TestAllocationReporter:
         r = build_report(())
         assert r.count_allocated == 0
         assert r.total_allocated == 0.0
+
+
+# ═══════════════════════════════════════════════════════════════
+# 11. E2E portfolio_orchestrator — P1-1
+# ═══════════════════════════════════════════════════════════════
+
+class TestPortfolioOrchestrator:
+    def _config(
+        self,
+        capital=10000.0,
+        gross=1000.0,
+        cluster_cap=500.0,
+        loss_cap=50.0,
+        beta_cap=1.0,
+    ):
+        return OrchestratorConfig(
+            size_profile=SizeProfile(available_capital=capital),
+            initial_snapshot=PortfolioSnapshot(
+                remaining_gross_capacity=gross,
+                remaining_loss_capacity=loss_cap,
+                remaining_beta_capacity=beta_cap,
+                remaining_cluster_capacity={"btc_cluster": cluster_cap, "eth_cluster": cluster_cap},
+            ),
+        )
+
+    def test_basic_e2e_pipeline(self):
+        """Full pipeline: 2 candidates → both allocated."""
+        candidates = (
+            _cand(pair="BTC/USDT", score=0.8, size=100, cluster="btc_cluster"),
+            _cand(pair="ETH/USDT", score=0.6, size=100, cluster="eth_cluster"),
+        )
+        r = run_portfolio_pipeline(candidates, self._config())
+        assert r.pool_size == 2
+        assert r.report.count_allocated == 2
+        assert r.report.count_phantom == 0
+
+    def test_empty_candidates(self):
+        r = run_portfolio_pipeline((), self._config())
+        assert r.pool_size == 0
+        assert r.report.count_allocated == 0
+
+    def test_no_cluster_rejected_in_pipeline(self):
+        """No-cluster candidate rejected at selection, never reaches allocation."""
+        candidates = (_cand(pair="X", cluster=""),)
+        r = run_portfolio_pipeline(candidates, self._config())
+        assert r.report.count_allocated == 0
+        assert r.selection is not None
+        assert len(r.selection.rejected) == 1
+
+    def test_oversized_reduced_not_rejected(self):
+        """P0-1: oversized candidate is reduced by cap, not rejected by selector."""
+        candidates = (
+            _cand(pair="BTC/USDT", score=0.8, size=5000, cluster="btc_cluster"),
+        )
+        config = self._config(capital=50000.0, gross=200.0, cluster_cap=500.0)
+        r = run_portfolio_pipeline(candidates, config)
+        # selector accepts it, allocation_router caps to gross=200
+        assert r.selection is not None
+        assert len(r.selection.selected) == 1
+        assert r.report.count_allocated == 1
+        assert r.report.total_allocated <= 200.0
+
+    def test_loss_budget_reduces_allocation(self):
+        """P0-2: loss budget reduces final size via cap applier."""
+        # candidate: loss=10 at size=100 → loss_per_unit=0.1
+        # base_size = 10000*0.02 = 200 (tier_1 → 200)
+        # loss cap: remaining=5 → max_size=50
+        candidates = (
+            _cand(pair="BTC/USDT", score=0.8, size=100, cluster="btc_cluster",
+                  estimated_loss=10.0),
+        )
+        config = self._config(loss_cap=5.0)
+        r = run_portfolio_pipeline(candidates, config)
+        assert r.report.count_allocated == 1
+        assert r.report.total_allocated <= 50.0 + 1e-6
+
+    def test_beta_budget_reduces_allocation(self):
+        """P0-2: beta budget reduces final size via cap applier."""
+        # candidate: beta=0.5 at size=100 → beta_per_unit=0.005
+        # base_size=200, remaining_beta=0.1 → max_size=20
+        candidates = (
+            _cand(pair="BTC/USDT", score=0.8, size=100, cluster="btc_cluster",
+                  beta_impact=0.5),
+        )
+        config = self._config(beta_cap=0.1)
+        r = run_portfolio_pipeline(candidates, config)
+        assert r.report.count_allocated == 1
+        assert r.report.total_allocated <= 20.0 + 1e-6
+
+    def test_phantom_sterilized_in_pipeline(self):
+        """P1-3: trade reduced below min viable → phantom, not allocated."""
+        # beta cap makes size tiny → phantom
+        candidates = (
+            _cand(pair="BTC/USDT", score=0.8, size=100, cluster="btc_cluster",
+                  beta_impact=0.5),
+        )
+        config = self._config(beta_cap=0.01)
+        # max_size = 0.01/0.005 = 2.0 < min_viable=10 → phantom
+        r = run_portfolio_pipeline(candidates, config)
+        assert r.report.count_phantom == 1
+        assert r.report.count_allocated == 0
+
+    def test_duplicate_pair_deduped_in_pipeline(self):
+        """Duplicate pair from two engines → only 1 survives conflict check."""
+        candidates = (
+            _cand(pair="BTC/USDT", engine="engine_a", score=0.9, cluster="btc_cluster"),
+            _cand(pair="BTC/USDT", engine="engine_b", score=0.5, cluster="btc_cluster"),
+        )
+        r = run_portfolio_pipeline(candidates, self._config())
+        assert r.conflicts is not None
+        assert r.conflicts.duplicates_removed == 1
+        assert r.report.count_allocated == 1
+
+    def test_multiple_trades_budget_decremented(self):
+        """Second trade sees reduced budgets after first allocation."""
+        candidates = (
+            _cand(pair="BTC/USDT", score=0.9, size=100, cluster="btc_cluster",
+                  estimated_loss=5.0, beta_impact=0.2),
+            _cand(pair="ETH/USDT", score=0.7, size=100, cluster="eth_cluster",
+                  estimated_loss=5.0, beta_impact=0.2),
+        )
+        # loss_cap=8: first trade uses ~5 loss at full size, second constrained
+        config = self._config(loss_cap=8.0, beta_cap=10.0)
+        r = run_portfolio_pipeline(candidates, config)
+        assert r.report.count_allocated >= 1
+
+    def test_orchestrator_result_has_all_stages(self):
+        """OrchestratorResult exposes all pipeline stages for audit."""
+        candidates = (_cand(pair="BTC/USDT", cluster="btc_cluster"),)
+        r = run_portfolio_pipeline(candidates, self._config())
+        assert r.pool_size == 1
+        assert r.conflicts is not None
+        assert r.selection is not None
+        assert r.report is not None

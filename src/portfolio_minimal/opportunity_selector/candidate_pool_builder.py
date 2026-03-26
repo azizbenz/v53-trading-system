@@ -23,7 +23,8 @@ class OpportunityCandidate(BaseModel, frozen=True):
     candidate_size: float = 0.0
     tier_suggestion: str = "tier_1"
     cluster_id: str = ""
-    beta_impact: float = 0.0
+    estimated_loss: float = 0.0  # L_i at candidate_size
+    beta_impact: float = 0.0  # β impact at candidate_size
     holding_hours: float = 0.0
     scoring_version: str = ""
 
