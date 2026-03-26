@@ -473,6 +473,36 @@ class TestEngineBRunner:
         # breakout_score ~ 0.34, below BLOCKED threshold
         assert output.decision == EngineBDecision.EMIT
 
+    def test_breakout_warning_penalizes_score(self):
+        """WARNING must produce penalized_score < raw_score."""
+        output = run_engine_b(_emit_inputs(
+            regime_trend_strength=0.5, volume_anomaly=0.4,
+            structural_break=0.3, continuation_momentum=0.3,
+        ))
+        # breakout_score = 0.30*0.5 + 0.25*0.4 + 0.25*0.3 + 0.20*0.3 = 0.385
+        # This is WARNING range (>=0.35, <0.65)
+        assert output.decision == EngineBDecision.EMIT
+        assert output.breakout_verdict == BreakoutVerdict.WARNING
+        assert output.penalized_score < output.raw_score
+        # Penalty = 0.30 * breakout_score
+        expected_penalty = 0.30 * output.breakout_score
+        assert output.penalized_score == pytest.approx(output.raw_score - expected_penalty)
+
+    def test_breakout_warning_logged(self):
+        """WARNING penalty must appear in structured logs."""
+        output = run_engine_b(_emit_inputs(
+            regime_trend_strength=0.5, volume_anomaly=0.4,
+            structural_break=0.3, continuation_momentum=0.3,
+        ))
+        events = [log.event for log in output.log_entries]
+        assert "engine_b_breakout_penalty" in events
+
+    def test_no_warning_no_penalty(self):
+        """CLEAR breakout => penalized_score == raw_score."""
+        output = run_engine_b(_emit_inputs())
+        assert output.breakout_verdict == BreakoutVerdict.CLEAR
+        assert output.penalized_score == pytest.approx(output.raw_score)
+
     def test_excess_score_in_output(self):
         output = run_engine_b(_emit_inputs())
         assert output.excess_score > 0.0

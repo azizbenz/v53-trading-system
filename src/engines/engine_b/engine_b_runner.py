@@ -86,11 +86,18 @@ class EngineBLogEntry(BaseModel, frozen=True):
 
 
 class EngineBOutput(BaseModel, frozen=True):
-    """Complete canonical Engine B output — consumed by scoring/portfolio/meta."""
+    """Complete canonical Engine B output — consumed by scoring/portfolio/meta.
+
+    Note: correlation/risk budget (exposure, beta, cluster) is NOT checked here.
+    It is enforced downstream by risk_backbone and scoring_backbone/ranking_router
+    (portfolio_compatibility_checker). Engine B produces a candidate; the portfolio
+    layer decides whether to accept it given current budget constraints.
+    """
     pair: str
     engine_id: str = "engine_b"
     decision: EngineBDecision
     raw_score: float = 0.0
+    penalized_score: float = 0.0  # raw_score - breakout_warning_penalty
     block_scores: dict[str, float] = Field(default_factory=dict)
     conviction: ConvictionLevelB = ConvictionLevelB.NONE
     tier_suggestion: TierSuggestionB = TierSuggestionB.NO_TRADE
@@ -370,6 +377,23 @@ def run_engine_b(inputs: EngineBInput) -> EngineBOutput:
             log_entries=tuple(logs),
         )
 
+    # ── 5b. Breakout WARNING penalty ──
+    # WARNING doesn't block, but must penalize the score explicitly.
+    # Penalty proportional to breakout_score (already in [0, 1]).
+    _WARNING_PENALTY_WEIGHT = 0.30
+    breakout_penalty = 0.0
+    if breakout.verdict == BreakoutVerdict.WARNING:
+        breakout_penalty = _WARNING_PENALTY_WEIGHT * breakout.breakout_score
+        logs.append(EngineBLogEntry(
+            event="engine_b_breakout_penalty",
+            pair=inputs.pair,
+            raw_score=conviction.raw_score,
+            penalized_score=conviction.raw_score - breakout_penalty,
+            reasons=(f"WARNING penalty: -{breakout_penalty:.4f} (weight={_WARNING_PENALTY_WEIGHT} x score={breakout.breakout_score:.3f})",),
+        ))
+
+    penalized = conviction.raw_score - breakout_penalty
+
     # ── 6. Invalidation mapping ──
     inv = build_invalidation_b(
         pair=inputs.pair,
@@ -394,6 +418,7 @@ def run_engine_b(inputs: EngineBInput) -> EngineBOutput:
         local_std=mean_result.local_std,
         z_score=mean_result.z_score,
         raw_score=conviction.raw_score,
+        penalized_score=penalized,
         block_scores=conviction.block_scores,
         expected_cost=cost.expected_cost,
         expected_duration=inputs.holding_period,
@@ -410,6 +435,7 @@ def run_engine_b(inputs: EngineBInput) -> EngineBOutput:
         pair=inputs.pair,
         decision=EngineBDecision.EMIT,
         raw_score=conviction.raw_score,
+        penalized_score=penalized,
         block_scores=conviction.block_scores,
         conviction=conviction.conviction,
         tier_suggestion=conviction.tier_suggestion,
