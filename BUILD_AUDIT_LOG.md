@@ -15,7 +15,7 @@
 | Python | `>=3.12` (developed on 3.13.1) |
 | Framework | Pydantic 2.x frozen models, StrEnum, sync-only |
 | Test runner | pytest 8.x with `pythonpath = ["src"]` |
-| Total tests | **883 passing** |
+| Total tests | **940 passing** |
 | Repository | `github.com/azizbenz/v53-trading-system` |
 
 ---
@@ -498,6 +498,56 @@
 
 ---
 
+## Build-8 — Portfolio Minimal
+
+**Status**: MERGEABLE
+**Tests**: 54
+
+### Source Files
+
+#### `portfolio_minimal/opportunity_selector/` (6 files)
+| File | Role |
+|------|------|
+| `__init__.py` | Package init |
+| `candidate_pool_builder.py` | OpportunityCandidate model, CandidatePool, filter positive score+size |
+| `eligibility_filter.py` | PortfolioSnapshot, check gross cap, cluster cap, fail-closed no cluster |
+| `comparative_ranker.py` | R_i = 0.35*score + 0.30*CE - 0.20*cost - 0.15*corr_util |
+| `correlation_conflict_checker.py` | Duplicate pair dedup (keep best), cluster crowding detection |
+| `selection_resolver.py` | Greedy top-down selection under capacity constraints |
+
+#### `portfolio_minimal/allocation_router/` (6 files)
+| File | Role |
+|------|------|
+| `__init__.py` | Package init |
+| `base_size_builder.py` | base_size = capital * fraction, clamped to [min, max] |
+| `score_size_mapper.py` | Tier multiplier (1.0/0.6/0.0) + score boost (up to +20%) |
+| `portfolio_cap_applier.py` | Apply tightest of position/gross/cluster caps |
+| `phantom_trade_guard.py` | Reject allocations < min_viable_size (phantom trades) |
+| `allocation_reporter.py` | Final report: viable allocations + phantom separations |
+
+### Key Design Decisions
+| Decision | Rationale |
+|----------|-----------|
+| Fail-closed on missing cluster | Consistent with Build-4/5 pattern |
+| Greedy top-down selection | Ranked candidates consumed in order, capacity decremented live |
+| Duplicate pair dedup | Same pair from two engines -> keep highest penalized_score |
+| Phantom trade guard | Prevents economically sterile trades (size < min viable) |
+| Tier 2 at 0.6x multiplier | Conservative sizing for lower-conviction signals |
+| Score boost capped at +20% | Prevents oversizing on high scores |
+
+### Test Files (54 tests)
+| File | Tests | Coverage |
+|------|-------|----------|
+| `test_portfolio_minimal/test_portfolio_minimal.py` | 54 | candidate_pool (6), eligibility (5), ranker (5), conflict_checker (6), selection_resolver (5), base_size (5), score_mapper (7), cap_applier (6), phantom_guard (5), reporter (4) |
+
+### Audit Findings
+- No blockers found at closure.
+- Fail-closed pattern consistent with Build-4/5.
+- All capacity checks use live remaining capacity (decremented during selection).
+- Phantom trade detection prevents economically sterile allocations.
+
+---
+
 ## Cumulative Test Summary
 
 | Build | Module | Tests | Status |
@@ -509,7 +559,8 @@
 | Build-5 | Scoring Backbone | 106 | MERGEABLE |
 | Build-6 | Engine A | 40 | MERGEABLE |
 | Build-7 | Engine B | 50 | MERGEABLE |
-| **Total** | | **883** | **ALL GREEN** |
+| Build-8 | Portfolio Minimal | 54 | MERGEABLE |
+| **Total** | | **940** | **ALL GREEN** |
 
 ---
 
@@ -517,7 +568,6 @@
 
 | Build | Module | Spec |
 |-------|--------|------|
-| Build-8 | Portfolio Minimal | `V5_3_BUILD8_SPECS_PORTFOLIO_MINIMAL.md` |
 | Build-9 | Meta Minimal | `V5_3_BUILD9_SPECS_META_MINIMAL.md` |
 | Build-10 | Monitoring + UI Light | `V5_3_BUILD10_SPECS_MONITORING_UI_LIGHT.md` |
 | Build-11 | Shadow Light | `V5_3_BUILD11_SPEC_SHADOW_LIGHT.md` |
