@@ -15,7 +15,7 @@
 | Python | `>=3.12` (developed on 3.13.1) |
 | Framework | Pydantic 2.x frozen models, StrEnum, sync-only |
 | Test runner | pytest 8.x with `pythonpath = ["src"]` |
-| Total tests | **819 passing** |
+| Total tests | **883 passing** |
 | Repository | `github.com/azizbenz/v53-trading-system` |
 
 ---
@@ -408,31 +408,93 @@
 
 ---
 
-## Build-6 — Engine A
+## Build-6 — Engine A (Trend/Expansion)
 
 **Status**: MERGEABLE
 **Tests**: 40
 
 ### Source Files
 
-#### `engines/engine_a/` (6 files)
+#### `engines/engine_a/` (8 files)
 | File | Role |
 |------|------|
 | `__init__.py` | Package init |
-| `structure_detector_a.py` | Market structure detection (Engine A strategy) |
-| `context_validator_a.py` | Context validation for Engine A signals |
-| `conviction_builder_a.py` | Conviction score construction |
-| `cost_feasibility_a.py` | Cost feasibility check before signal emission |
-| `invalidation_mapper_a.py` | Stop-loss / invalidation level mapping |
-| `signal_reporter_a.py` | Signal reporting for Engine A |
+| `structure_detector_a.py` | Structure detection: direction, continuation, quality, zone_proximity, stability |
+| `context_validator_a.py` | Context validation: regime favorability, pair health, data freshness, flow coherence |
+| `conviction_builder_a.py` | Conviction: S_A^raw = 0.40*structure + 0.25*context + 0.15*flow + 0.20*cost_pref. Tier 1-3 |
+| `cost_feasibility_a.py` | Cost check: E[g] > E[c] + delta_safe (0.0005), CE_A > CE_min |
+| `invalidation_mapper_a.py` | Long-only invalidation mapping (spot-halal profile) |
+| `signal_reporter_a.py` | Signal stats: emission rate, no-trade reasons, mean raw score |
+| `engine_a_runner.py` | **Canonical orchestrator**: 7-step pipeline, structured logs, EngineAOutput |
 
 ### Test Files (40 tests)
 | File | Tests | Coverage |
 |------|-------|----------|
-| `test_engines/test_engine_a/test_engine_a.py` | 40 | structure_detector, context_validator, conviction_builder, cost_feasibility, invalidation_mapper, signal_reporter |
+| `test_engines/test_engine_a/test_engine_a.py` | 40 | structure_detector, context_validator, conviction_builder, cost_feasibility, invalidation_mapper, signal_reporter, E2E runner |
+
+### Audit Findings & Patches
+| # | File | Issue | Severity | Fix |
+|---|------|-------|----------|-----|
+| 1 | (new) `engine_a_runner.py` | Missing canonical orchestrator | P0 | Added full pipeline: structure > context > cost > conviction > invalidation > emit |
+| 2 | `signal_reporter_a.py` | `NON_LONG_DIRECTION` missing | P0 | Added to NoTradeReason; runner rejects direction_score <= 0 |
+| 3 | `invalidation_mapper_a.py` | Short path implicit | P1 | Engine A documented as long-only (spot-halal). Short direction -> NO_TRADE |
+| 4 | All files | Structured logs absent | P0 | Added EngineALogEntry with events: structure/context/cost/conviction/invalidation/emit/no_trade |
+| 5 | `structure_detector_a.py` | `zone_proximity` declared but unused | P1 | Now used in score formula: 0.10 weight |
+
+---
+
+## Build-7 — Engine B (Mean Reversion Intraday)
+
+**Status**: MERGEABLE
+**Tests**: 50
+
+### Source Files
+
+#### `engines/engine_b/` (8 files)
+| File | Role | Key Invariant |
+|------|------|---------------|
+| `__init__.py` | Package init | |
+| `local_mean_estimator_b.py` | Local mean, dispersion, z-score | z_t = (p_t - mu) / sigma |
+| `excess_detector_b.py` | Detect exploitable local excess | abs(z_t) > z* = 1.5, z_max = 4.0 |
+| `anti_breakout_filter_b.py` | Reject reversion against hostile continuation | BLOCKED if score >= 0.65 |
+| `cost_feasibility_b.py` | Cost check (stricter than A) | delta_safe = 0.0008, CE_min = 0.0002 |
+| `conviction_builder_b.py` | Conviction building | **Tier 1-2 max, never Tier 3** |
+| `invalidation_mapper_b.py` | Mean-reversion invalidation | target=local_mean, stop=entry-1.5*sigma |
+| `signal_reporter_b.py` | B-specific stats with z-score tracking | |
+| `engine_b_runner.py` | **Canonical orchestrator**: 7-step pipeline | EngineBOutput, long-only |
+
+### Engine B vs Engine A
+| Property | Engine A (Trend) | Engine B (Mean Reversion) |
+|----------|-----------------|--------------------------|
+| delta_safe | 0.0005 | 0.0008 |
+| CE_min | 0.0001 | 0.0002 |
+| Max Tier | Tier 3 | **Tier 2** |
+| Default holding | 4h | 2h |
+| Long-only guard | direction_score > 0 | z_score < 0 (price below mean) |
+| Anti-filter | Structure unfavorable | Anti-breakout (hostile continuation) |
+
+### Pipeline (engine_b_runner.py)
+1. Local mean estimation + z-score
+2. Long-only guard (z > 0 -> NO_TRADE)
+3. Excess detection (abs(z) > z*)
+4. Anti-breakout filter
+5. Cost feasibility (stricter)
+6. Conviction building (Tier 1-2 cap)
+7. Invalidation mapping (target = local mean)
+
+### Structured Logs (EngineBLogEntry)
+- `engine_b_mean_estimated` / `engine_b_excess_evaluated` / `engine_b_breakout_evaluated`
+- `engine_b_cost_checked` / `engine_b_conviction_built` / `engine_b_invalidation_built`
+- `engine_b_signal_emitted` / `engine_b_no_trade`
+
+### Test Files (50 tests)
+| File | Tests | Coverage |
+|------|-------|----------|
+| `test_engines/test_engine_b/test_engine_b.py` | 50 | local_mean (5), excess_detector (7), anti_breakout (5), cost_feasibility (5), conviction (6), invalidation (5), reporter (4), E2E runner (13) |
 
 ### Audit Findings
 - No blockers found at closure.
+- Spec compliance: z-score in output, Tier 3 impossible, long-only enforced, anti-breakout present, cost stricter than A.
 
 ---
 
@@ -446,7 +508,8 @@
 | Build-4 | Risk Backbone | 116 | MERGEABLE |
 | Build-5 | Scoring Backbone | 106 | MERGEABLE |
 | Build-6 | Engine A | 40 | MERGEABLE |
-| **Total** | | **819** | **ALL GREEN** |
+| Build-7 | Engine B | 50 | MERGEABLE |
+| **Total** | | **883** | **ALL GREEN** |
 
 ---
 
@@ -454,7 +517,6 @@
 
 | Build | Module | Spec |
 |-------|--------|------|
-| Build-7 | Engine B | `V5_3_BUILD7_SPECS_MOTEUR_B.md` |
 | Build-8 | Portfolio Minimal | `V5_3_BUILD8_SPECS_PORTFOLIO_MINIMAL.md` |
 | Build-9 | Meta Minimal | `V5_3_BUILD9_SPECS_META_MINIMAL.md` |
 | Build-10 | Monitoring + UI Light | `V5_3_BUILD10_SPECS_MONITORING_UI_LIGHT.md` |
