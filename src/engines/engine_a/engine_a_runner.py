@@ -140,6 +140,23 @@ def run_engine_a(inputs: EngineAInput) -> EngineAOutput:
     logs: list[EngineALogEntry] = []
     no_trade_reasons: list[NoTradeReason] = []
 
+    # ── 0. Long-only guard (spot-halal profile) ──
+    if inputs.direction_score <= 0:
+        no_trade_reasons.append(NoTradeReason.NON_LONG_DIRECTION)
+        logs.append(EngineALogEntry(
+            event="engine_a_no_trade",
+            pair=inputs.pair,
+            regime=inputs.regime,
+            reasons=(f"direction_score={inputs.direction_score:.3f} <= 0 — long-only",),
+        ))
+        return EngineAOutput(
+            pair=inputs.pair,
+            decision=EngineADecision.NO_TRADE,
+            no_trade_reasons=tuple(no_trade_reasons),
+            scoring_version=inputs.scoring_version,
+            log_entries=tuple(logs),
+        )
+
     # ── 1. Structure detection ──
     structure = detect_structure(StructureInput(
         pair=inputs.pair,

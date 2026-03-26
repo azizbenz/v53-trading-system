@@ -18,6 +18,7 @@ class SignalDecision(StrEnum):
 
 
 class NoTradeReason(StrEnum):
+    NON_LONG_DIRECTION = "non_long_direction"
     STRUCTURE_UNFAVORABLE = "structure_unfavorable"
     CONTEXT_FATAL = "context_fatal"
     COST_INFEASIBLE = "cost_infeasible"
