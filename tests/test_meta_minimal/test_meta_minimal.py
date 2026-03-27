@@ -52,6 +52,7 @@ from meta_minimal.edge_tracker_prudent_minimal.sample_size_tracker import (
 from meta_minimal.edge_tracker_prudent_minimal.uncertainty_estimator import estimate_uncertainty
 from meta_minimal.edge_tracker_prudent_minimal.edge_status_classifier import (
     EdgeStatus,
+    PortfolioContext,
     classify_edge,
 )
 from meta_minimal.edge_tracker_prudent_minimal.edge_reporter import build_edge_report
@@ -604,7 +605,6 @@ class TestEdgeStatusClassifier:
         u = estimate_uncertainty("a", returns)
         s = assess_sample_size("a", 30)
         c = classify_edge(u, s)
-        # Mean ~0, CI includes zero → under_surveillance or degraded
         assert c.status in (EdgeStatus.UNDER_SURVEILLANCE, EdgeStatus.DEGRADED)
 
     def test_credible_strong_edge(self):
@@ -616,19 +616,60 @@ class TestEdgeStatusClassifier:
         assert c.status == EdgeStatus.CREDIBLE
 
     def test_marginal_sample_surveillance(self):
-        # Positive returns but marginal sample
         returns = tuple(0.05 for _ in range(15))
         u = estimate_uncertainty("a", returns)
         s = assess_sample_size("a", 15)
         c = classify_edge(u, s)
         assert c.status == EdgeStatus.UNDER_SURVEILLANCE
 
-    def test_classification_includes_sharpe(self):
-        returns = tuple(0.05 for _ in range(50))
+    def test_classification_output_includes_full_reading(self):
+        """P0: classification output must include cost_p90, CE, cluster_util."""
+        returns = tuple(0.05 + 0.001 * i for i in range(50))
         u = estimate_uncertainty("a", returns)
         s = assess_sample_size("a", 50)
-        c = classify_edge(u, s)
-        assert c.sharpe_per_trade == 0.0  # zero variance
+        ctx = PortfolioContext(cluster_utilization=0.3)
+        c = classify_edge(u, s, mean_cost_p90=0.01, ce_observed=0.005, portfolio_context=ctx)
+        assert c.mean_cost_p90 == 0.01
+        assert c.ce_observed == 0.005
+        assert c.cluster_utilization == 0.3
+
+    def test_degraded_destructive_cost_p90(self):
+        """P0: positive edge but cost_p90 > 1.5x mean_net → DEGRADED."""
+        returns = tuple(0.05 + 0.001 * i for i in range(50))
+        u = estimate_uncertainty("a", returns)
+        s = assess_sample_size("a", 50)
+        # mean_net ~ 0.0745, cost_p90 = 0.20 > 1.5 * 0.0745 ~ 0.112 → destructive
+        c = classify_edge(u, s, mean_cost_p90=0.20)
+        assert c.status == EdgeStatus.DEGRADED
+        assert "destructive" in c.reason
+
+    def test_surveillance_weak_ce(self):
+        """P0: positive edge but CE too weak → UNDER_SURVEILLANCE."""
+        returns = tuple(0.05 + 0.001 * i for i in range(50))
+        u = estimate_uncertainty("a", returns)
+        s = assess_sample_size("a", 50)
+        c = classify_edge(u, s, ce_observed=0.00005)  # < 0.0001
+        assert c.status == EdgeStatus.UNDER_SURVEILLANCE
+        assert "CE=" in c.reason
+
+    def test_surveillance_crowded_portfolio(self):
+        """P0: positive edge but crowded portfolio → UNDER_SURVEILLANCE."""
+        returns = tuple(0.05 + 0.001 * i for i in range(50))
+        u = estimate_uncertainty("a", returns)
+        s = assess_sample_size("a", 50)
+        ctx = PortfolioContext(cluster_utilization=0.9, is_crowded=True)
+        c = classify_edge(u, s, portfolio_context=ctx)
+        assert c.status == EdgeStatus.UNDER_SURVEILLANCE
+        assert "crowded" in c.reason
+
+    def test_credible_with_all_inputs_good(self):
+        """Full minimum reading: all good → CREDIBLE."""
+        returns = tuple(0.05 + 0.001 * i for i in range(50))
+        u = estimate_uncertainty("a", returns)
+        s = assess_sample_size("a", 50)
+        ctx = PortfolioContext(cluster_utilization=0.3, is_crowded=False)
+        c = classify_edge(u, s, mean_cost_p90=0.01, ce_observed=0.005, portfolio_context=ctx)
+        assert c.status == EdgeStatus.CREDIBLE
 
 
 # ═══════════════════════════════════════════════════════════════

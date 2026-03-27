@@ -670,3 +670,19 @@
 
 *Last updated: 2026-03-27*
 *Generated for third-party audit purposes.*
+
+
+---
+
+## Build-9 Re-Audit Patch (2026-03-27)
+
+**P0 Fixed**: edge_status_classifier now enforces full minimum reading.
+
+### Changes
+- **edge_status_classifier.py**: Added PortfolioContext model, enriched EdgeClassification with mean_cost_p90, ce_observed, cluster_utilization. Added 3 new classification rules:
+  - Rule 3: DEGRADED if cost_p90 > 1.5x mean_net_return (destructive costs)
+  - Rule 5: UNDER_SURVEILLANCE if CE < 0.0001 (too weak)
+  - Rule 6: UNDER_SURVEILLANCE if portfolio context is crowded
+- **Tests**: 5 new P0-specific tests added (74 total meta_minimal tests)
+
+### Verdict: **GO** — Full minimum reading enforced, 1030 tests green.
