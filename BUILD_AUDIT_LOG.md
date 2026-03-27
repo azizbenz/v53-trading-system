@@ -15,7 +15,7 @@
 | Python | `>=3.12` (developed on 3.13.1) |
 | Framework | Pydantic 2.x frozen models, StrEnum, sync-only |
 | Test runner | pytest 8.x with `pythonpath = ["src"]` |
-| Total tests | **956 passing** |
+| Total tests | **1026 passing** |
 | Repository | `github.com/azizbenz/v53-trading-system` |
 
 ---
@@ -567,6 +567,75 @@
 
 ---
 
+## Build-9 — Meta Minimal Pack
+
+**Status**: MERGEABLE
+**Tests**: 70
+
+### Source Files
+
+#### `meta_minimal/dtr_core/` (6 files)
+| File | Role |
+|------|------|
+| `__init__.py` | Package init |
+| `decision_state_encoder.py` | DecisionState enum (NOT_EVALUATED/EVALUATED/HARD_BLOCKED/REJECTED_RANKING/SELECTED/REDUCED/PHANTOM/EXECUTED), encode_state(), severity ordering |
+| `dtr_record_builder.py` | DTRRecord model (full decision trace), build_dtr() with schema_version="1.0" |
+| `cause_chain_assembler.py` | CauseChain: score -> penalties -> blockers -> ranking -> allocation -> execution |
+| `trace_persistence_layer.py` | DTRStore: in-memory persistence with loss tracking, DTRLossRate = N_drops/N_attempted |
+| `dtr_reporter.py` | DTRSummary: by_state/by_engine/by_pair counts, DTRCoverage = N_dtr/N_opportunities |
+
+#### `meta_minimal/cra_monitor/` (6 files)
+| File | Role |
+|------|------|
+| `__init__.py` | Package init |
+| `reduction_trace_reader.py` | ReductionTrace: original/final size, multiplier = final/original |
+| `phantom_risk_estimator.py` | PhantomRiskResult: expected_pnl vs operational_cost, risk_score [0,1] |
+| `sterilization_classifier.py` | SterilizationClass: HEALTHY / REDUCED_VIABLE / PHANTOM_PROBABLE / PHANTOM_CONFIRMED |
+| `cra_alert_builder.py` | CRAAlert by engine/pair: WARNING (>20%) / CRITICAL (>40%) sterilization rate |
+| `cra_reporter.py` | CRAReport: counts, sterilization_rate_by_engine, sterilization_rate_by_pair |
+
+#### `meta_minimal/break_even_dashboard/` (6 files)
+| File | Role |
+|------|------|
+| `__init__.py` | Package init |
+| `expected_break_even_calculator.py` | Simple BE = total cost; Prudent BE = fee + spread_p90 + slippage_p90 + adverse_p90 |
+| `realized_break_even_calculator.py` | Realized BE: cost_drift = realized - expected, net_return = gross - realized |
+| `cost_distribution_aggregator.py` | Aggregate costs: mean, p90, p95 with linear interpolation |
+| `motor_pair_break_even_view.py` | BreakEvenView by engine/pair: mean costs, drift, profitable_rate |
+| `break_even_reporter.py` | BreakEvenReport: global stats, cost drift alert if relative drift > 20% |
+
+#### `meta_minimal/edge_tracker_prudent_minimal/` (6 files)
+| File | Role |
+|------|------|
+| `__init__.py` | Package init |
+| `return_aggregator.py` | r_i = g_i - c_i, aggregate net returns by scope |
+| `sample_size_tracker.py` | SampleAdequacy: INSUFFICIENT (<10) / MARGINAL (10-29) / ADEQUATE (>=30) |
+| `uncertainty_estimator.py` | sigma_hat, SE(mu), Sharpe/trade, 95% CI = mu +/- 2*SE |
+| `edge_status_classifier.py` | EdgeStatus: INSUFFICIENT / CREDIBLE / UNDER_SURVEILLANCE / DEGRADED |
+| `edge_reporter.py` | EdgeReport: counts by status, drift_warning on degraded scopes |
+
+### Key Design Decisions
+| Decision | Rationale |
+|----------|-----------|
+| Schema version in DTR | Stable DTR structure for audit, forward-compatible |
+| 8 decision states | Distinguish: not_evaluated, evaluated, hard_blocked, rejected_ranking, selected, reduced, phantom, executed |
+| DTR persistence with loss tracking | Never silently drop — DTRLossRate measured |
+| Sterilization != small trade | Phantom = economically sterile (net expected <= epsilon), not just small size |
+| Prudent break-even uses p90 | Conservative: worst-case cost components, not averages |
+| Edge tracker never concludes "validated" | Must show mu, N, SE, cost, CE together — no oracle claims |
+| Sample adequacy thresholds | N<10 insufficient, 10-29 marginal, >=30 adequate |
+
+### Test Files (70 tests)
+| File | Tests | Coverage |
+|------|-------|----------|
+| `test_meta_minimal/test_meta_minimal.py` | 70 | decision_state (8), dtr_builder (4), cause_chain (4), persistence (5), dtr_reporter (2), reduction_reader (3), phantom_risk (3), sterilization (5), cra_alerts (3), cra_reporter (2), expected_be (2), realized_be (2), cost_distrib (3), be_view (2), be_reporter (2), return_agg (3), sample_size (5), uncertainty (4), edge_classifier (6), edge_reporter (2) |
+
+### Audit Findings
+- No blockers found at closure.
+- Spec compliance: DTR covers all 8 states, sterilization distinguishes healthy reduction from phantom, break-even shows p90 not just mean, edge tracker enforces sample size visibility.
+
+---
+
 ## Cumulative Test Summary
 
 | Build | Module | Tests | Status |
@@ -579,7 +648,8 @@
 | Build-6 | Engine A | 40 | MERGEABLE |
 | Build-7 | Engine B | 50 | MERGEABLE |
 | Build-8 | Portfolio Minimal | 70 | MERGEABLE |
-| **Total** | | **956** | **ALL GREEN** |
+| Build-9 | Meta Minimal | 70 | MERGEABLE |
+| **Total** | | **1026** | **ALL GREEN** |
 
 ---
 
@@ -587,7 +657,6 @@
 
 | Build | Module | Spec |
 |-------|--------|------|
-| Build-9 | Meta Minimal | `V5_3_BUILD9_SPECS_META_MINIMAL.md` |
 | Build-10 | Monitoring + UI Light | `V5_3_BUILD10_SPECS_MONITORING_UI_LIGHT.md` |
 | Build-11 | Shadow Light | `V5_3_BUILD11_SPEC_SHADOW_LIGHT.md` |
 | Build-12 | Micro Live Light | `V5_3_BUILD12_SPEC_MICRO_LIVE_LIGHT.md` |
@@ -599,5 +668,5 @@
 
 ---
 
-*Last updated: 2026-03-26*
+*Last updated: 2026-03-27*
 *Generated for third-party audit purposes.*
