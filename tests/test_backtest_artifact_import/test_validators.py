@@ -6,23 +6,44 @@ import pytest
 from pydantic import ValidationError
 
 from interface_contracts import ProfileId, PromotionState, RuntimeMode, StrategyClassification
-from backtest_artifact_import import ArtifactImportRequest, validate_import_request
-from local_replay_runtime import ArtifactManifest
+from backtest_artifact_import import (
+    ArtifactImportRequest,
+    summarize_import_request,
+    validate_import_request,
+)
+from local_replay_runtime import ArtifactManifest, ReplayArtifactKind
 
 
-def _manifest() -> ArtifactManifest:
-    return ArtifactManifest(
+def _manifest(**overrides) -> ArtifactManifest:
+    defaults = dict(
         artifact_id="artifact-1",
         correlation_id="corr-1",
         source_profile=ProfileId.LIGHT,
         strategy_classification=StrategyClassification.A_VARIANT,
         strategy_version="a.v1",
         lineage_version="a.v1.1",
+        dataset_ref="dataset-1",
+        clock_ref="clock-1",
+        review_export_ref="exports/review.md",
+        diagnostic_ids=("diag-1",),
+        candidate_ids=("cand-1",),
     )
+    defaults.update(overrides)
+    return ArtifactManifest(**defaults)
+
+
+def _request(**overrides) -> ArtifactImportRequest:
+    defaults = dict(
+        manifest=_manifest(),
+        artifact_kind=ReplayArtifactKind.REVIEW_PACKET,
+        payload_refs=("exports/review.md", "exports/bundle.json"),
+    )
+    defaults.update(overrides)
+    return ArtifactImportRequest(**defaults)
 
 
 def test_import_request_accepts_shadow_entrypoint_only():
-    decision = validate_import_request(ArtifactImportRequest(manifest=_manifest()))
+    decision = validate_import_request(_request())
 
     assert decision.accepted is True
     assert decision.normalized_promotion_state == PromotionState.SHADOW_CANDIDATE
@@ -30,10 +51,7 @@ def test_import_request_accepts_shadow_entrypoint_only():
 
 def test_import_request_rejects_micro_live_target():
     decision = validate_import_request(
-        ArtifactImportRequest(
-            manifest=_manifest(),
-            target_runtime_mode=RuntimeMode.MICRO_LIVE,
-        )
+        _request(target_runtime_mode=RuntimeMode.MICRO_LIVE)
     )
 
     assert decision.accepted is False
@@ -42,10 +60,7 @@ def test_import_request_rejects_micro_live_target():
 
 def test_import_request_rejects_live_candidate_jump():
     decision = validate_import_request(
-        ArtifactImportRequest(
-            manifest=_manifest(),
-            requested_promotion_state=PromotionState.LIVE_CANDIDATE,
-        )
+        _request(requested_promotion_state=PromotionState.LIVE_CANDIDATE)
     )
 
     assert decision.accepted is False
@@ -54,18 +69,15 @@ def test_import_request_rejects_live_candidate_jump():
 
 def test_import_request_model_rejects_local_replay_target():
     with pytest.raises(ValidationError):
-        ArtifactImportRequest(
-            manifest=_manifest(),
-            target_runtime_mode=RuntimeMode.LOCAL_REPLAY,
-        )
+        _request(target_runtime_mode=RuntimeMode.LOCAL_REPLAY)
 
 
 def test_import_request_rejects_multiple_policy_violations():
     decision = validate_import_request(
-        ArtifactImportRequest(
-            manifest=_manifest(),
+        _request(
             target_runtime_mode=RuntimeMode.LIVE,
             requested_promotion_state=PromotionState.LIVE_CANDIDATE,
+            payload_refs=("exports/review.md", "exports/review.md"),
         )
     )
 
@@ -74,11 +86,65 @@ def test_import_request_rejects_multiple_policy_violations():
     assert set(decision.reasons) == {
         "import target must start at SHADOW",
         "implicit promotion beyond SHADOW is forbidden",
+        "payload refs must be unique",
     }
 
 
+def test_import_request_rejects_missing_review_bundle_refs():
+    decision = validate_import_request(
+        _request(
+            manifest=_manifest(review_export_ref=""),
+            payload_refs=("exports/bundle.json",),
+        )
+    )
+
+    assert decision.accepted is False
+    assert set(decision.reasons) == {
+        "review packets require a review export ref",
+    }
+
+
+def test_import_request_rejects_incomplete_payload_and_origin_drift():
+    decision = validate_import_request(
+        _request(
+            manifest=_manifest(exported_from="vps"),
+            payload_refs=(),
+        )
+    )
+
+    assert decision.accepted is False
+    assert set(decision.reasons) == {
+        "unsupported artifact origin",
+        "payload refs are required for governed import",
+        "review export ref must be included in payload refs",
+    }
+
+
+def test_import_request_rejects_missing_dataset_or_clock_refs():
+    decision = validate_import_request(
+        _request(
+            manifest=_manifest(dataset_ref="", clock_ref=""),
+        )
+    )
+
+    assert decision.accepted is False
+    assert "dataset and clock refs are required for governed import" in decision.reasons
+
+
 def test_import_request_acceptance_keeps_pending_review():
-    decision = validate_import_request(ArtifactImportRequest(manifest=_manifest()))
+    decision = validate_import_request(_request())
 
     assert decision.accepted is True
     assert decision.review_state.value == "pending"
+
+
+def test_import_summary_projects_clean_monitoring_facts():
+    request = _request()
+    decision = validate_import_request(request)
+    summary = summarize_import_request(request, decision)
+
+    assert summary.artifact_id == "artifact-1"
+    assert summary.validation_status == "accepted"
+    assert summary.payload_ref_count == 2
+    assert summary.review_export_ref == "exports/review.md"
+    assert summary.accepted is True

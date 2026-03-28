@@ -22,6 +22,11 @@ class ArtifactManifest(BaseModel, frozen=True):
     lineage_version: str = Field(..., min_length=1)
     shared_core_id: str = Field(default=SHARED_CORE_ID, min_length=1)
     exported_from: str = Field(default="local", min_length=1)
+    dataset_ref: str = ""
+    clock_ref: str = ""
+    diagnostic_ids: tuple[str, ...] = ()
+    candidate_ids: tuple[str, ...] = ()
+    review_export_ref: str = ""
     backtest_profile: str | None = None
     creates_profile_fork: bool = False
     implicit_promotion_requested: bool = False
@@ -38,6 +43,14 @@ class ArtifactManifest(BaseModel, frozen=True):
             raise ValueError("Local/VPS profile forks are forbidden")
         if self.implicit_promotion_requested:
             raise ValueError("Artifacts must not request implicit promotion")
+        if not self.lineage_version.startswith(self.strategy_version):
+            raise ValueError("lineage_version must extend strategy_version")
+        if bool(self.dataset_ref) != bool(self.clock_ref):
+            raise ValueError("Artifact manifests must declare dataset and clock refs together")
+        if len(set(self.diagnostic_ids)) != len(self.diagnostic_ids):
+            raise ValueError("Artifact diagnostic refs must be unique")
+        if len(set(self.candidate_ids)) != len(self.candidate_ids):
+            raise ValueError("Artifact candidate refs must be unique")
         return self
 
 
