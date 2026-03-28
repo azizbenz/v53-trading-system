@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
+
 from interface_contracts import ProfileId, RuntimeMode
 from monitoring import HealthDashboardPayload
 from ui import build_light_dashboard_view
@@ -59,6 +62,10 @@ class TestDashboardCard:
         card = DashboardCard(key="test", label="Test", value="0", status="healthy")
         assert card.detail is None or card.detail == ""
 
+    def test_invalid_status_rejected(self):
+        with pytest.raises(ValidationError):
+            DashboardCard(key="test", label="Test", value="0", status="unknown")
+
 
 class TestDashboardSections:
     def test_health_section_present(self):
@@ -90,6 +97,16 @@ class TestDashboardSections:
     def test_exactly_four_sections(self):
         view = build_light_dashboard_view(_payload())
         assert len(view.sections) == 4
+
+    def test_each_section_has_expected_card_count(self):
+        view = build_light_dashboard_view(_payload())
+        counts = {section.title: len(section.cards) for section in view.sections}
+        assert counts == {
+            "Health": 2,
+            "Portfolio": 2,
+            "Meta": 3,
+            "Future Learning": 2,
+        }
 
 
 class TestDashboardStatusMapping:
@@ -174,3 +191,27 @@ class TestDashboardFuturePanels:
         view = build_light_dashboard_view(_payload())
         assert view.profile == ProfileId.LIGHT
         assert view.runtime_mode == RuntimeMode.SHADOW
+
+    def test_view_preserves_timestamp_and_correlation_id(self):
+        view = build_light_dashboard_view(_payload())
+        assert view.timestamp_ms == 1_700_000_000_000
+        assert view.correlation_id == "corr-ui-test"
+
+    def test_health_card_detail_projects_alerts_and_backlog(self):
+        view = build_light_dashboard_view(_payload(active_alert_count=4, queue_backlog=88))
+        health = next(s for s in view.sections if s.title == "Health")
+        assert health.cards[0].detail == "4 active alert(s)"
+        assert health.cards[1].detail == "Queue backlog 88"
+
+    def test_edge_status_detail_projects_break_even_scope_count(self):
+        view = build_light_dashboard_view(
+            _payload(break_even_drift_scopes=("engine_a", "engine_b"))
+        )
+        meta = next(s for s in view.sections if s.title == "Meta")
+        edge_card = next(c for c in meta.cards if c.key == "edge_status")
+        assert edge_card.detail == "Break-even drift scopes: 2"
+
+    def test_future_learning_cards_stay_planned_at_zero(self):
+        view = build_light_dashboard_view(_payload())
+        future = next(s for s in view.sections if s.title == "Future Learning")
+        assert tuple(card.status for card in future.cards) == ("planned", "planned")

@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import monitoring
-from interface_contracts import PairHealthLevel, ProfileId, RuntimeMode
+import pytest
+from pydantic import ValidationError
+
+from interface_contracts import AlertCategory, AlertRecord, AlertSeverity, PairHealthLevel, ProfileId, RuntimeMode
 from meta import (
     build_break_even_report,
     build_cra_report,
@@ -211,3 +214,121 @@ def test_monitoring_alerts_and_dashboard_payload_are_actionable():
     assert payload.active_alert_count == len(alerts)
     assert payload.future_learning_diagnostics == 2
     assert payload.future_learning_hypotheses == 1
+
+
+def test_health_dashboard_payload_preserves_identifiers_and_modes():
+    dtr_summary, cra_report, break_even_report, edge_report = _sample_build9_reports()
+    snapshot = collect_monitoring_snapshot(
+        correlation_id="corr-preserved",
+        profile=ProfileId.LIGHT,
+        runtime_mode=RuntimeMode.SHADOW,
+        timestamp_ms=1_700_000_123_456,
+        portfolio=collect_portfolio_metrics(
+            allocated_opportunities=1,
+            gross_capacity_used_pct=10.0,
+            loss_capacity_used_pct=2.0,
+            beta_utilization=0.1,
+            capital_deployed_usdt=500.0,
+            ce_net=0.0010,
+        ),
+        infra=collect_infra_metrics(),
+        meta=collect_meta_metrics(dtr_summary, cra_report, break_even_report, edge_report),
+    )
+
+    payload = build_health_dashboard_payload(snapshot)
+
+    assert payload.correlation_id == "corr-preserved"
+    assert payload.timestamp_ms == 1_700_000_123_456
+    assert payload.profile == ProfileId.LIGHT
+    assert payload.runtime_mode == RuntimeMode.SHADOW
+
+
+def test_critical_alert_overrides_warning_only_flags():
+    dtr_summary, cra_report, break_even_report, edge_report = _sample_build9_reports()
+    snapshot = collect_monitoring_snapshot(
+        correlation_id="corr-critical",
+        profile=ProfileId.LIGHT,
+        runtime_mode=RuntimeMode.SHADOW,
+        timestamp_ms=1_700_000_000_000,
+        portfolio=collect_portfolio_metrics(
+            allocated_opportunities=1,
+            gross_capacity_used_pct=15.0,
+            loss_capacity_used_pct=4.0,
+            beta_utilization=0.2,
+            capital_deployed_usdt=700.0,
+            ce_net=0.0008,
+        ),
+        infra=collect_infra_metrics(queue_backlog=60),
+        meta=collect_meta_metrics(dtr_summary, cra_report, break_even_report, edge_report),
+    )
+    critical_alert = AlertRecord(
+        alert_id="corr-critical:manual_critical",
+        category=AlertCategory.INFRA,
+        severity=AlertSeverity.CRITICAL,
+        message="manual critical escalation",
+        timestamp_ms=snapshot.timestamp_ms,
+    )
+    payload = build_health_dashboard_payload(
+        snapshot.model_copy(
+            update={
+                "alerts": (critical_alert,),
+                "loss_warning": False,
+                "backlog_warning": False,
+                "stale_warning": False,
+            }
+        )
+    )
+
+    assert payload.headline_status == "critical"
+
+
+def test_warning_payload_without_critical_loss_stays_warning():
+    dtr_summary, cra_report, break_even_report, edge_report = _sample_build9_reports()
+    snapshot = collect_monitoring_snapshot(
+        correlation_id="corr-warning",
+        profile=ProfileId.LIGHT,
+        runtime_mode=RuntimeMode.SHADOW,
+        timestamp_ms=1_700_000_000_000,
+        portfolio=collect_portfolio_metrics(
+            allocated_opportunities=1,
+            gross_capacity_used_pct=15.0,
+            loss_capacity_used_pct=4.0,
+            beta_utilization=0.2,
+            capital_deployed_usdt=700.0,
+            ce_net=0.0008,
+        ),
+        infra=collect_infra_metrics(),
+        meta=collect_meta_metrics(dtr_summary, cra_report, break_even_report, edge_report),
+    )
+
+    payload = build_health_dashboard_payload(
+        snapshot.model_copy(update={"alerts": (), "loss_warning": False})
+    )
+
+    assert payload.headline_status == "warning"
+
+
+def test_invalid_headline_status_rejected_by_contract():
+    with pytest.raises(ValidationError):
+        monitoring.HealthDashboardPayload(
+            timestamp_ms=1_700_000_000_000,
+            correlation_id="corr-invalid",
+            profile=ProfileId.LIGHT,
+            runtime_mode=RuntimeMode.SHADOW,
+            headline_status="degraded",
+            active_alert_count=0,
+            stale_pair_count=0,
+            queue_backlog=0,
+            capital_deployed_usdt=0.0,
+            gross_capacity_used_pct=0.0,
+            loss_capacity_used_pct=0.0,
+            ce_net=0.0,
+            dtr_coverage=1.0,
+            cra_sterilization_rate=0.0,
+            break_even_drift_scopes=(),
+            edge_credible_count=0,
+            edge_degraded_count=0,
+            edge_surveillance_count=0,
+            future_learning_diagnostics=0,
+            future_learning_hypotheses=0,
+        )

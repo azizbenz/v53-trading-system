@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from interface_contracts import AlertRecord, PairHealthLevel, ProfileId, RuntimeMode, TimestampedModel
+
+
+HeadlineStatus = Literal["healthy", "warning", "critical"]
 
 
 class PortfolioMetrics(BaseModel, frozen=True):
@@ -97,7 +102,7 @@ class HealthDashboardPayload(TimestampedModel):
     correlation_id: str = Field(..., min_length=1)
     profile: ProfileId
     runtime_mode: RuntimeMode
-    headline_status: str = Field(..., min_length=1)
+    headline_status: HeadlineStatus
     active_alert_count: int = Field(..., ge=0)
     stale_pair_count: int = Field(..., ge=0)
     queue_backlog: int = Field(..., ge=0)
@@ -124,4 +129,5 @@ __all__ = [
     "MetaMetrics",
     "MonitoringSnapshot",
     "HealthDashboardPayload",
+    "HeadlineStatus",
 ]

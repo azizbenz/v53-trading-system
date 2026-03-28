@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from interface_contracts import ProfileId, RuntimeMode, TimestampedModel
+
+
+DashboardStatus = Literal["healthy", "warning", "critical", "info", "planned"]
 
 
 class DashboardCard(BaseModel, frozen=True):
@@ -13,7 +18,7 @@ class DashboardCard(BaseModel, frozen=True):
     key: str = Field(..., min_length=1)
     label: str = Field(..., min_length=1)
     value: str = Field(..., min_length=1)
-    status: str = Field(..., min_length=1)
+    status: DashboardStatus
     detail: str = ""
 
 
@@ -47,6 +52,7 @@ class LightDashboardView(TimestampedModel):
 __all__ = [
     "DashboardCard",
     "DashboardSection",
+    "DashboardStatus",
     "LockedControlSurface",
     "LightDashboardView",
 ]
