@@ -62,3 +62,48 @@ def test_build9x_full_review_flow_stays_governed():
     assert "## Candidates" in review_export.markdown_body
     assert all(candidate.auto_promotion_enabled is False for candidate in review_export.candidates)
     assert all(candidate.promotion_state.value == "replay_only" for candidate in review_export.candidates)
+
+
+def test_breakdown_report_fallback_and_empty_candidate_export():
+    report = build_breakdown_report("corr-empty", (), ())
+    checklist = build_learning_checklist(
+        "corr-empty",
+        (
+            DiagnosticResult(
+                diagnostic_id="diag-ok",
+                correlation_id="corr-empty",
+                category="no_issue",
+                summary="No material post-trade issue detected",
+                structured_log_key="build9x.no_issue",
+            ),
+        ),
+        (),
+    )
+    review_export = export_learning_review("corr-empty", report, checklist, ())
+
+    assert report.summary == "No diagnostic summary available"
+    assert report.near_miss_pairs == ()
+    assert "# Build-9X Review - corr-empty" in review_export.markdown_body
+    assert "## Candidates" in review_export.markdown_body
+
+
+def test_memory_store_keeps_append_order_even_with_same_correlation_id():
+    first = LearningMemoryRecord(
+        correlation_id="corr-same",
+        diagnostics_count=1,
+        hypothesis_count=0,
+        candidate_count=0,
+        summary="first",
+    )
+    second = LearningMemoryRecord(
+        correlation_id="corr-same",
+        diagnostics_count=2,
+        hypothesis_count=1,
+        candidate_count=1,
+        summary="second",
+    )
+
+    store = LearningMemoryStore().append(first).append(second)
+
+    assert store.records == (first, second)
+    assert store.latest() == second

@@ -64,3 +64,54 @@ def test_improvement_candidates_stay_replay_only_and_governed():
     assert all(candidate.auto_promotion_enabled is False for candidate in candidates)
     assert any(candidate.kind == CandidateKind.BUILD14_READ_ONLY for candidate in candidates)
     assert all(isinstance(candidate, ImprovementCandidate) for candidate in candidates)
+
+
+def test_hypotheses_deduplicate_category_and_preserve_first_diagnostic_ref():
+    diagnostics = _diagnostics() + (
+        DiagnosticResult(
+            diagnostic_id="diag-3",
+            correlation_id="corr-9x",
+            category="cost_drift",
+            summary="Another cost drift signal",
+            structured_log_key="build9x.cost.2",
+        ),
+    )
+
+    hypotheses = build_learning_hypotheses("corr-9x", diagnostics)
+
+    assert len(hypotheses) == 2
+    cost_hypothesis = next(h for h in hypotheses if h.category == "cost_drift")
+    assert cost_hypothesis.diagnostic_ids == ("diag-2",)
+
+
+def test_unknown_category_falls_back_to_diagnostic_summary():
+    diagnostics = (
+        DiagnosticResult(
+            diagnostic_id="diag-x",
+            correlation_id="corr-9x",
+            category="novel_case",
+            summary="Novel governed observation",
+            structured_log_key="build9x.novel",
+        ),
+    )
+
+    hypotheses = build_learning_hypotheses("corr-9x", diagnostics)
+
+    assert hypotheses[0].rationale == "Novel governed observation"
+
+
+def test_checklist_stays_not_ready_when_only_no_issue_diagnostic_exists():
+    diagnostics = (
+        DiagnosticResult(
+            diagnostic_id="diag-ok",
+            correlation_id="corr-9x",
+            category="no_issue",
+            summary="No material post-trade issue detected",
+            structured_log_key="build9x.no_issue",
+        ),
+    )
+
+    checklist = build_learning_checklist("corr-9x", diagnostics, ())
+
+    assert checklist.ready_for_local_replay is False
+    assert checklist.ready_for_shadow is False

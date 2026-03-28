@@ -19,7 +19,7 @@ def export_learning_review(
     """Render the governed review packet into a markdown export."""
 
     lines = [
-        f"# Build-9X Review — {correlation_id}",
+        f"# Build-9X Review - {correlation_id}",
         "",
         "## Summary",
         report.summary,

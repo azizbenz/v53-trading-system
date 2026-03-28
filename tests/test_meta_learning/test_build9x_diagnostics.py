@@ -154,3 +154,46 @@ def test_mistake_classifier_deduplicates_classes():
     assert "economic_sterilization" in mistake_classes
     assert "near_miss" in mistake_classes
     assert len(mistake_classes) == len(set(mistake_classes))
+
+
+def test_trace_coverage_boundary_at_fifty_percent_stays_warning():
+    records, _, cra_report, break_even_report, edge_report = _reports()
+    dtr_summary = build_dtr_summary(records, total_opportunities=4)
+    diagnostics = build_post_trade_diagnostics(
+        _trade_input(),
+        dtr_summary.model_copy(update={"dtr_coverage": 0.50}),
+        cra_report.model_copy(update={"sterilization_rate": 0.0, "alerts": ()}),
+        break_even_report.model_copy(update={"has_cost_drift_alert": False, "cost_drift_alert_scopes": ()}),
+        edge_report.model_copy(update={"degraded_count": 0, "drift_scopes": ()}),
+    )
+
+    trace = next(d for d in diagnostics if d.category == "trace_coverage")
+    assert trace.severity.value == "warning"
+
+
+def test_sterilization_boundary_at_forty_percent_is_critical():
+    records, dtr_summary, cra_report, break_even_report, edge_report = _reports()
+    diagnostics = build_post_trade_diagnostics(
+        _trade_input(),
+        dtr_summary.model_copy(update={"dtr_coverage": 1.0}),
+        cra_report.model_copy(update={"sterilization_rate": 0.40}),
+        break_even_report.model_copy(update={"has_cost_drift_alert": False, "cost_drift_alert_scopes": ()}),
+        edge_report.model_copy(update={"degraded_count": 0, "drift_scopes": ()}),
+    )
+
+    sterilization = next(d for d in diagnostics if d.category == "sterilization")
+    assert sterilization.severity.value == "critical"
+
+
+def test_clean_reports_emit_no_issue_diagnostic():
+    records, dtr_summary, cra_report, break_even_report, edge_report = _reports()
+    diagnostics = build_post_trade_diagnostics(
+        _trade_input(),
+        dtr_summary.model_copy(update={"dtr_coverage": 1.0}),
+        cra_report.model_copy(update={"sterilization_rate": 0.0, "alerts": ()}),
+        break_even_report.model_copy(update={"has_cost_drift_alert": False, "cost_drift_alert_scopes": ()}),
+        edge_report.model_copy(update={"degraded_count": 0, "drift_scopes": ()}),
+    )
+
+    assert len(diagnostics) == 1
+    assert diagnostics[0].category == "no_issue"
