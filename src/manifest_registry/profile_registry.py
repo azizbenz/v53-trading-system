@@ -9,7 +9,7 @@ Rules:
 - Auxiliary governed modules (for monitoring, meta-learning, replay/import scaffolds)
   may be visible in both profiles without implying that their dedicated runtime_mode
   is fully operated yet.
-- The `protocols` module can now expose Build-11 Shadow while Build-12/13 remain closed.
+- The `protocols` module can now expose Build-11 Shadow and Build-12 Micro-live while Build-13 remains closed.
 """
 
 from __future__ import annotations

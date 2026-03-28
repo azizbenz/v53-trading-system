@@ -2,7 +2,7 @@
 ## Micro-live Light Protocol
 ### Protocole officiel de validation à capital réel ultra-prudent
 ### Douzième étape officielle du développement
-### Sans code — prod-safe
+### Première implémentation réelle, gouvernée et non-Live-Light
 
 ---
 
@@ -23,12 +23,13 @@ Build-12 doit répondre à une question simple :
 
 ## 0.1 Statut documentaire vs implémentation
 
-Ce document définit le **protocole cible** Build-12.
+Ce document définit le **protocole Build-12** et sa première implémentation réelle minimale.
 
 Il ne doit pas être lu comme :
 
-- la preuve que le runtime Build-12 est déjà codé
+- la preuve que Build-12 est complet au-delà du Micro-live minimal gouverné
 - une autorisation à sauter Build-10 ou Build-11
+- la preuve que Build-13 est ouvert
 - une validation implicite de `COMPLETE`
 
 ## 0.2 Règle d’unification local / VPS
