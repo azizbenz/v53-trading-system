@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
+
 from interface_contracts import ProfileId, PromotionState, RuntimeMode, StrategyClassification
 from backtest_artifact_import import ArtifactImportRequest, validate_import_request
 from local_replay_runtime import ArtifactManifest
@@ -47,3 +50,35 @@ def test_import_request_rejects_live_candidate_jump():
 
     assert decision.accepted is False
     assert "implicit promotion beyond SHADOW is forbidden" in decision.reasons
+
+
+def test_import_request_model_rejects_local_replay_target():
+    with pytest.raises(ValidationError):
+        ArtifactImportRequest(
+            manifest=_manifest(),
+            target_runtime_mode=RuntimeMode.LOCAL_REPLAY,
+        )
+
+
+def test_import_request_rejects_multiple_policy_violations():
+    decision = validate_import_request(
+        ArtifactImportRequest(
+            manifest=_manifest(),
+            target_runtime_mode=RuntimeMode.LIVE,
+            requested_promotion_state=PromotionState.LIVE_CANDIDATE,
+        )
+    )
+
+    assert decision.accepted is False
+    assert decision.review_state.value == "needs_revision"
+    assert set(decision.reasons) == {
+        "import target must start at SHADOW",
+        "implicit promotion beyond SHADOW is forbidden",
+    }
+
+
+def test_import_request_acceptance_keeps_pending_review():
+    decision = validate_import_request(ArtifactImportRequest(manifest=_manifest()))
+
+    assert decision.accepted is True
+    assert decision.review_state.value == "pending"

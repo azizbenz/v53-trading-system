@@ -53,6 +53,45 @@ def test_artifact_manifest_rejects_backtest_profile():
         )
 
 
+def test_artifact_manifest_rejects_non_local_replay_runtime():
+    with pytest.raises(ValidationError):
+        ArtifactManifest(
+            artifact_id="artifact-2b",
+            correlation_id="corr-2b",
+            source_profile=ProfileId.LIGHT,
+            runtime_mode=RuntimeMode.SHADOW,
+            strategy_classification=StrategyClassification.A_VARIANT,
+            strategy_version="a.v1",
+            lineage_version="a.v1.1",
+        )
+
+
+def test_artifact_manifest_rejects_shared_core_drift():
+    with pytest.raises(ValidationError):
+        ArtifactManifest(
+            artifact_id="artifact-2c",
+            correlation_id="corr-2c",
+            source_profile=ProfileId.LIGHT,
+            strategy_classification=StrategyClassification.A_VARIANT,
+            strategy_version="a.v1",
+            lineage_version="a.v1.1",
+            shared_core_id="forked_core",
+        )
+
+
+def test_artifact_manifest_rejects_implicit_promotion_request():
+    with pytest.raises(ValidationError):
+        ArtifactManifest(
+            artifact_id="artifact-2d",
+            correlation_id="corr-2d",
+            source_profile=ProfileId.LIGHT,
+            strategy_classification=StrategyClassification.A_VARIANT,
+            strategy_version="a.v1",
+            lineage_version="a.v1.1",
+            implicit_promotion_requested=True,
+        )
+
+
 def test_local_replay_request_rejects_non_local_replay_mode():
     with pytest.raises(ValidationError):
         LocalReplayRequest(
@@ -62,6 +101,30 @@ def test_local_replay_request_rejects_non_local_replay_mode():
             strategy_classification=StrategyClassification.B_VARIANT,
             lineage_version="b.v2",
             replay_reason="Validate a guarded replay candidate",
+        )
+
+
+def test_local_replay_request_rejects_profile_fork():
+    with pytest.raises(ValidationError):
+        LocalReplayRequest(
+            correlation_id="corr-4",
+            profile=ProfileId.LIGHT,
+            strategy_classification=StrategyClassification.B_VARIANT,
+            lineage_version="b.v2",
+            replay_reason="Validate a guarded replay candidate",
+            creates_profile_fork=True,
+        )
+
+
+def test_local_replay_request_rejects_live_mutation():
+    with pytest.raises(ValidationError):
+        LocalReplayRequest(
+            correlation_id="corr-5",
+            profile=ProfileId.LIGHT,
+            strategy_classification=StrategyClassification.B_VARIANT,
+            lineage_version="b.v2",
+            replay_reason="Validate a guarded replay candidate",
+            live_mutation_requested=True,
         )
 
 
@@ -83,3 +146,20 @@ def test_replay_bundle_wraps_manifest_without_mutating_policy():
 
     assert bundle.manifest.artifact_id == "artifact-3"
     assert bundle.lifecycle_state == ReplayLifecycleState.VALIDATED
+
+
+def test_replay_bundle_defaults_to_draft_state():
+    manifest = ArtifactManifest(
+        artifact_id="artifact-4",
+        correlation_id="corr-4",
+        source_profile=ProfileId.LIGHT,
+        strategy_classification=StrategyClassification.A_VARIANT,
+        strategy_version="a.v2",
+        lineage_version="a.v2.1",
+    )
+    bundle = ReplayBundle(
+        manifest=manifest,
+        artifact_kind=ReplayArtifactKind.REVIEW_PACKET,
+    )
+
+    assert bundle.lifecycle_state == ReplayLifecycleState.DRAFT
