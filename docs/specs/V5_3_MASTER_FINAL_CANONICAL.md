@@ -290,7 +290,7 @@ Il ne doit pas être lu comme :
 - la preuve que Build-10 est déjà opéré
 - la preuve que Build-11/12/13 sont déjà runtime-ready
 - la preuve que `COMPLETE` est déjà exécutable
-- la preuve que Build-9X ou `LOCAL_REPLAY` sont déjà codés
+- la preuve que Build-9X ou `LOCAL_REPLAY` sont déjà complets, opérés de bout en bout ou validés pour Build-11+
 
 ---
 

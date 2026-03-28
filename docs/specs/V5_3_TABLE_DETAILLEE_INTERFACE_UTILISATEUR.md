@@ -558,10 +558,10 @@ Exposer les actions administratives strictement nécessaires.
 
 ---
 
-# 14 bis. Vues futures gouvernées — non implémentées à ce stade
+# 14 bis. Vues gouvernées — partiellement implémentées, non finalisées
 
 ## 14 bis.1 Build-9X
-Si Build-9X est codé plus tard, l’UI doit exposer en lecture :
+La surface UI/backend Build-9X doit exposer en lecture :
 
 - diagnostics
 - hypotheses
@@ -577,7 +577,7 @@ Ces vues restent :
 - sans réécriture d’un moteur A/B/C/D
 
 ## 14 bis.2 LOCAL_REPLAY / artifact import / onboarding
-L’UI future peut exposer :
+La surface UI/backend dédiée peut exposer :
 
 - l’état d’un run `LOCAL_REPLAY`
 - l’état d’export d’un artifact

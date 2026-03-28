@@ -420,7 +420,7 @@ Ajouter une couche méta gouvernée qui produit :
 
 ## Statut
 - **référence documentaire active** : `V5_3_BUILD9X_SPEC_META_LEARNING_GOVERNED_LAYER_V2_FREEZE_READY.md`
-- **non codé à ce stade**
+- **première implémentation codée, non finale**
 
 ---
 
@@ -670,7 +670,7 @@ Ouvrir 12 paires / 4 moteurs seulement si la complexité supplémentaire paie r�
 - outputs attendus explicités
 - anti-live-mutation explicitée
 - anti-fork local/VPS explicité
-- non-promouvable tant que non codé et non validé
+- non-promouvable tant que non validé par les gates normales
 
 ## 21.9 Sortie Build-11/12/13
 - Light validé
