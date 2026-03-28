@@ -2,7 +2,7 @@
 ## Shadow Light Protocol
 ### Protocole officiel de validation pré-micro-live
 ### Onzième étape officielle du développement
-### Sans code — prod-safe
+### Première implémentation réelle, gouvernée et non-live
 
 ---
 
@@ -23,12 +23,13 @@ Le Shadow Light doit répondre à une question simple :
 
 ## 0.1 Statut documentaire vs implémentation
 
-Ce document définit le **protocole cible** Build-11.
+Ce document définit le **protocole Build-11** et sa première implémentation réelle.
 
 Il ne doit pas être lu comme :
 
-- la preuve que le runtime Build-11 est déjà codé
-- la preuve que Build-10 est déjà opéré dans le repo courant
+- la preuve que Build-11 est complet au-delà du Shadow minimal gouverné
+- la preuve que Build-12 ou Build-13 sont ouverts
+- la preuve que Build-10 est opéré en live dans le repo courant
 - une autorisation à court-circuiter le chemin `LOCAL_REPLAY -> export artifact -> import VPS -> Shadow`
 
 ## 0.2 Règle d’unification local / VPS
@@ -101,7 +102,7 @@ Si Build-11 est validé, alors seulement :
 
 ## 3.1 Relation avec Build-9X et LOCAL_REPLAY
 
-- Build-9X n’est pas actif en Shadow tant qu’il n’est pas codé et validé
+- Build-9X peut alimenter Shadow via des projections gouvernées, sans devenir moteur autonome
 - `LOCAL_REPLAY` peut préparer des hypothèses et artifacts, mais ne remplace jamais Build-11
 - l’import d’artifact côté VPS reste en lecture seule et ne bypass jamais Shadow
 
