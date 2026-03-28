@@ -1,5 +1,5 @@
 # V5.3 — Profil COMPLETE
-# 12 paires, moteurs A+B+C+D
+# 12 paires, moteurs A+B en runtime actuel; C/D restent roadmap runtime
 
 profile: complete
 version: "5.3.0"
@@ -22,8 +22,9 @@ engines:
   enabled:
     - engine_a
     - engine_b
-    - engine_c
-    - engine_d
+  disabled:
+    - engine_c  # Runtime roadmap only beyond Build-9
+    - engine_d  # Runtime roadmap only beyond Build-9
 
 risk:
   max_total_exposure_pct: 85.0

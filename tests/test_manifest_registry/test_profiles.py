@@ -1,9 +1,8 @@
-"""Tests Module 2 — profile_registry: profil Light/Complete valide."""
+"""Tests Module 2 - profile_registry: runtime profile activation is coherent."""
 
 import pytest
 
-from interface_contracts.domain_types import EngineId, ProfileId, LIGHT_PAIRS, ALL_PAIRS
-from manifest_registry.module_inventory import ProfileScope
+from interface_contracts.domain_types import EngineId, ModuleStatus, ProfileId
 from manifest_registry.profile_registry import (
     PROFILE_ENGINES,
     PROFILE_PAIRS,
@@ -20,7 +19,7 @@ from manifest_registry.profile_registry import (
 
 @pytest.mark.build1
 class TestProfilValide:
-    """4.14: profil valide."""
+    """Profile pair/engine exposure should match the current runtime surface."""
 
     def test_light_has_6_pairs(self):
         pairs = get_pairs_for_profile(ProfileId.LIGHT)
@@ -39,14 +38,14 @@ class TestProfilValide:
         engines = get_engines_for_profile(ProfileId.LIGHT)
         assert engines == frozenset({EngineId.A, EngineId.B})
 
-    def test_complete_engines_a_b_c_d(self):
+    def test_complete_runtime_engines_match_active_manifest(self):
         engines = get_engines_for_profile(ProfileId.COMPLETE)
-        assert engines == frozenset({EngineId.A, EngineId.B, EngineId.C, EngineId.D})
+        assert engines == frozenset({EngineId.A, EngineId.B})
 
 
 @pytest.mark.build1
 class TestEngineForbiddenInLight:
-    """Engines C/D are FORBIDDEN in Light."""
+    """Engines C/D are absent from the current runtime surface."""
 
     def test_engine_c_not_in_light(self):
         assert not is_engine_allowed(EngineId.C, ProfileId.LIGHT)
@@ -60,9 +59,11 @@ class TestEngineForbiddenInLight:
     def test_engine_b_in_light(self):
         assert is_engine_allowed(EngineId.B, ProfileId.LIGHT)
 
-    def test_all_engines_in_complete(self):
-        for e in EngineId:
-            assert is_engine_allowed(e, ProfileId.COMPLETE)
+    def test_engine_c_not_yet_in_complete(self):
+        assert not is_engine_allowed(EngineId.C, ProfileId.COMPLETE)
+
+    def test_engine_d_not_yet_in_complete(self):
+        assert not is_engine_allowed(EngineId.D, ProfileId.COMPLETE)
 
 
 @pytest.mark.build1
@@ -79,10 +80,14 @@ class TestPairsForbiddenInLight:
         complete_only = get_complete_only_pairs()
         assert len(complete_only) == 6
 
+    def test_pair_helper_uses_profile_pairs(self):
+        for pair in PROFILE_PAIRS[ProfileId.LIGHT]:
+            assert is_pair_allowed(pair, ProfileId.LIGHT)
+
 
 @pytest.mark.build1
 class TestModuleProfileMapping:
-    """Modules correctly mapped to profiles."""
+    """Only ACTIVE modules should be runtime-visible."""
 
     def test_common_modules_in_light(self):
         light_mods = get_modules_for_profile(ProfileId.LIGHT)
@@ -90,25 +95,45 @@ class TestModuleProfileMapping:
         assert "interface_contracts" in light_names
         assert "manifest_registry" in light_names
 
-    def test_common_modules_in_complete(self):
-        complete_mods = get_modules_for_profile(ProfileId.COMPLETE)
-        complete_names = {m.module_name for m in complete_mods}
-        assert "interface_contracts" in complete_names
+    def test_light_runtime_includes_build10_observability_only(self):
+        light_names = {m.module_name for m in get_modules_for_profile(ProfileId.LIGHT)}
+        assert "portfolio" in light_names
+        assert "meta" in light_names
+        assert "meta_learning" in light_names
+        assert "monitoring" in light_names
+        assert "ui" in light_names
+        assert "local_replay_runtime" in light_names
+        assert "backtest_artifact_import" in light_names
+        assert "protocols" not in light_names
 
-    def test_complete_only_modules_not_in_light(self):
-        complete_only = get_complete_only_modules()
-        for m in complete_only:
-            assert not is_module_active_in_profile(m.module_name, ProfileId.LIGHT), (
-                f"{m.module_name} should not be active in Light"
-            )
+    def test_complete_runtime_excludes_planned_complete_only_modules(self):
+        complete_names = {m.module_name for m in get_modules_for_profile(ProfileId.COMPLETE)}
+        assert "meta_learning" in complete_names
+        assert "monitoring" in complete_names
+        assert "ui" in complete_names
+        assert "local_replay_runtime" in complete_names
+        assert "backtest_artifact_import" in complete_names
+        assert "complete_enablers" not in complete_names
+        assert "engine_c" not in complete_names
+        assert "engine_d" not in complete_names
 
-    def test_complete_only_modules_in_complete(self):
+    def test_complete_only_modules_are_declared_but_not_runtime_active(self):
         complete_only = get_complete_only_modules()
+        assert {m.module_name for m in complete_only} == {
+            "complete_enablers",
+            "engine_c",
+            "engine_d",
+        }
         for m in complete_only:
-            assert is_module_active_in_profile(m.module_name, ProfileId.COMPLETE)
+            assert m.status == ModuleStatus.PLANNED
+            assert not is_module_active_in_profile(m.module_name, ProfileId.LIGHT)
+            assert not is_module_active_in_profile(m.module_name, ProfileId.COMPLETE)
 
     def test_light_modules_also_in_complete(self):
-        """Light modules should be a subset of Complete modules."""
         light = {m.module_name for m in get_modules_for_profile(ProfileId.LIGHT)}
         complete = {m.module_name for m in get_modules_for_profile(ProfileId.COMPLETE)}
         assert light.issubset(complete)
+
+    def test_profile_engines_constant_matches_helper(self):
+        for profile in ProfileId:
+            assert PROFILE_ENGINES[profile] == get_engines_for_profile(profile)

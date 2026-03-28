@@ -1,11 +1,14 @@
 """
-4.5.3 — Profile Registry: mapping of modules to Light / Complete / Common profiles.
+4.5.3 - Profile Registry: runtime mapping of modules to Light / Complete.
 
 Rules:
-- COMMON modules are active in both profiles.
-- LIGHT modules are active in Light and Complete.
-- COMPLETE modules are active only in Complete.
-- Engines C/D and paires 7-12 are FORBIDDEN in Light.
+- COMMON modules are active in both profiles when their manifest status is ACTIVE.
+- LIGHT modules are active in Light and Complete when their manifest status is ACTIVE.
+- COMPLETE modules are active only in Complete when their manifest status is ACTIVE.
+- Engines C/D remain absent from runtime profiles until their module status becomes ACTIVE.
+- Auxiliary governed modules (for monitoring, meta-learning, replay/import scaffolds)
+  may be visible in both profiles without implying that their dedicated runtime_mode
+  is fully operated yet.
 """
 
 from __future__ import annotations
@@ -13,9 +16,9 @@ from __future__ import annotations
 from interface_contracts.domain_types import (
     ALL_PAIRS,
     COMPLETE_ADDITIONAL_PAIRS,
-    ENGINE_PAIR_MAP,
     EngineId,
     LIGHT_PAIRS,
+    ModuleStatus,
     ProfileId,
 )
 from manifest_registry.module_inventory import (
@@ -25,43 +28,50 @@ from manifest_registry.module_inventory import (
 )
 
 
-# ─── PROFILE → ALLOWED ENGINES ───────────────────────────────────────
-
-PROFILE_ENGINES: dict[ProfileId, frozenset[EngineId]] = {
-    ProfileId.LIGHT: frozenset({EngineId.A, EngineId.B}),
-    ProfileId.COMPLETE: frozenset({EngineId.A, EngineId.B, EngineId.C, EngineId.D}),
-}
-
-# ─── PROFILE → ALLOWED PAIRS ─────────────────────────────────────────
-
 PROFILE_PAIRS: dict[ProfileId, frozenset[str]] = {
     ProfileId.LIGHT: LIGHT_PAIRS,
     ProfileId.COMPLETE: ALL_PAIRS,
 }
 
-
-# ─── QUERY HELPERS ────────────────────────────────────────────────────
+_ENGINE_MODULE_MAP: dict[EngineId, str] = {
+    EngineId.A: "engine_a",
+    EngineId.B: "engine_b",
+    EngineId.C: "engine_c",
+    EngineId.D: "engine_d",
+}
 
 
 def get_modules_for_profile(profile: ProfileId) -> tuple[ModuleEntry, ...]:
-    """Return all modules active in a given profile.
+    """Return runtime-active modules for a given profile.
 
-    - COMMON → active in both profiles
-    - LIGHT → active in LIGHT and COMPLETE
-    - COMPLETE → active in COMPLETE only
+    The manifest keeps the full V5.3 roadmap, but runtime profile activation
+    must expose only modules that are actually implemented today.
     """
+    active_modules = tuple(m for m in MODULES if m.status == ModuleStatus.ACTIVE)
+
     if profile == ProfileId.LIGHT:
         return tuple(
-            m for m in MODULES
+            m for m in active_modules
             if m.profile_scope in (ProfileScope.COMMON, ProfileScope.LIGHT)
         )
-    else:  # COMPLETE
-        return tuple(MODULES)  # all modules
+
+    return tuple(active_modules)
 
 
 def get_engines_for_profile(profile: ProfileId) -> frozenset[EngineId]:
-    """Return allowed engines for a profile."""
-    return PROFILE_ENGINES[profile]
+    """Return runtime-available engines for a profile."""
+    active_names = {m.module_name for m in get_modules_for_profile(profile)}
+    return frozenset(
+        engine
+        for engine, module_name in _ENGINE_MODULE_MAP.items()
+        if module_name in active_names
+    )
+
+
+PROFILE_ENGINES: dict[ProfileId, frozenset[EngineId]] = {
+    profile: get_engines_for_profile(profile)
+    for profile in ProfileId
+}
 
 
 def get_pairs_for_profile(profile: ProfileId) -> frozenset[str]:
@@ -80,13 +90,13 @@ def is_pair_allowed(pair: str, profile: ProfileId) -> bool:
 
 
 def is_module_active_in_profile(module_name: str, profile: ProfileId) -> bool:
-    """Check if a module should be active for the given profile."""
+    """Check if a module is runtime-active for the given profile."""
     active = get_modules_for_profile(profile)
     return any(m.module_name == module_name for m in active)
 
 
 def get_complete_only_modules() -> tuple[ModuleEntry, ...]:
-    """Return modules that exist only in Complete profile."""
+    """Return declared modules that exist only in Complete profile."""
     return tuple(m for m in MODULES if m.profile_scope == ProfileScope.COMPLETE)
 
 

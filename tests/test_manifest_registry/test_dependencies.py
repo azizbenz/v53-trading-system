@@ -114,9 +114,12 @@ class TestDAGLayerHierarchy:
         "complete_enablers": 3,
         "portfolio": 5,
         "meta": 6,
+        "local_replay_runtime": 7,
         "monitoring": 7,
-        "ui": 8,
-        "protocols": 9,
+        "backtest_artifact_import": 8,
+        "meta_learning": 8,
+        "ui": 9,
+        "protocols": 10,
     }
 
     def test_no_upward_dependency(self):

@@ -64,6 +64,19 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
         "engine_a",
         "engine_b",
     }),
+    # Stage-10 scaffolding: LOCAL_REPLAY / artifact import / Build-9X
+    "local_replay_runtime": frozenset({
+        "interface_contracts",
+        "manifest_registry",
+    }),
+    "backtest_artifact_import": frozenset({
+        "interface_contracts",
+        "local_replay_runtime",
+    }),
+    "meta_learning": frozenset({
+        "interface_contracts",
+        "meta",
+    }),
     # Build-10: Monitoring + UI
     "monitoring": frozenset({
         "interface_contracts",

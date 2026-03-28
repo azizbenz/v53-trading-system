@@ -50,6 +50,48 @@ class ProfileId(str, Enum):
 
 
 @unique
+class RuntimeMode(str, Enum):
+    """Modes d'exÃ©cution autorisÃ©s pour l'unique V5.3."""
+    LOCAL_REPLAY = "local_replay"
+    SHADOW = "shadow"
+    MICRO_LIVE = "micro_live"
+    LIVE = "live"
+
+
+@unique
+class StrategyClassification(str, Enum):
+    """Taxonomie canonique d'onboarding des stratÃ©gies V5.3."""
+    A_VARIANT = "a_variant"
+    B_VARIANT = "b_variant"
+    BUILD14_ENABLER = "build14_enabler"
+    C_CANDIDATE = "c_candidate"
+    D_CANDIDATE = "d_candidate"
+    OUT_OF_SCOPE_FOR_V5_3 = "out_of_scope_for_v5_3"
+
+
+@unique
+class PromotionState(str, Enum):
+    """Ã‰tat de promotion d'une amÃ©lioration gouvernÃ©e."""
+    DRAFT = "draft"
+    REPLAY_ONLY = "replay_only"
+    VPS_IMPORTED = "vps_imported"
+    SHADOW_CANDIDATE = "shadow_candidate"
+    MICRO_LIVE_CANDIDATE = "micro_live_candidate"
+    LIVE_CANDIDATE = "live_candidate"
+    REJECTED = "rejected"
+
+
+@unique
+class ReviewState(str, Enum):
+    """Ã‰tat de revue humaine des bundles et hypothÃ¨ses."""
+    PENDING = "pending"
+    IN_REVIEW = "in_review"
+    APPROVED = "approved"
+    NEEDS_REVISION = "needs_revision"
+    REJECTED = "rejected"
+
+
+@unique
 class DeploymentState(str, Enum):
     """État de déploiement du système ou d'un module."""
     OFFLINE = "offline"
@@ -204,7 +246,8 @@ class TimestampedModel(BaseModel):
 # ═══════════════════════════════════════════════════════════════
 
 __all__ = [
-    "EngineId", "RegimeId", "ProfileId", "DeploymentState", "ModuleLayer",
+    "EngineId", "RegimeId", "ProfileId", "RuntimeMode", "StrategyClassification",
+    "PromotionState", "ReviewState", "DeploymentState", "ModuleLayer",
     "ModuleStatus", "Tier", "Side", "Timeframe",
     "TradeId", "OrderId", "RunId",
     "PairId", "TimestampedModel",

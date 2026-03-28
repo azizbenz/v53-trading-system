@@ -94,8 +94,14 @@ BUILD_STAGES: tuple[BuildStage, ...] = (
     BuildStage(
         stage=10,
         name="Monitoring + UI Light",
-        description="Supervision verrouillee",
-        modules=("monitoring", "ui"),
+        description="Supervision verrouillee + Build-9X gouverne + scaffolds replay/import minimaux",
+        modules=(
+            "local_replay_runtime",
+            "backtest_artifact_import",
+            "meta_learning",
+            "monitoring",
+            "ui",
+        ),
     ),
     BuildStage(
         stage=11,

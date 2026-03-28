@@ -49,6 +49,13 @@ class TestBuildOrderCoherent:
         assert stage12 is not None
         assert stage12.name == "Micro-live Light"
 
+    def test_build10_contains_replay_and_learning_scaffolding(self):
+        stage10 = get_build_stage(10)
+        assert stage10 is not None
+        assert "local_replay_runtime" in stage10.modules
+        assert "backtest_artifact_import" in stage10.modules
+        assert "meta_learning" in stage10.modules
+
     def test_build13_exists(self):
         """Build-13 Live-Light must exist per V5.3 plan."""
         stage13 = get_build_stage(13)

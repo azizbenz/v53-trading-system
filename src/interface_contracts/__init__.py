@@ -26,7 +26,8 @@ from .error_contracts import *
 
 __all__ = [
     # domain_types — Enums
-    "EngineId", "RegimeId", "ProfileId", "Tier", "Timeframe", "Side",
+    "EngineId", "RegimeId", "ProfileId", "RuntimeMode", "StrategyClassification",
+    "PromotionState", "ReviewState", "Tier", "Timeframe", "Side",
     "ModuleLayer", "ModuleStatus", "SignalType", "PairHealthLevel",
     "ExecutionStatus", "RiskVerdict", "DeploymentState",
     # domain_types — Pairs

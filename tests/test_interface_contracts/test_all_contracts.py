@@ -8,7 +8,8 @@ from pydantic import ValidationError
 from interface_contracts.domain_types import (
     ALL_PAIRS, COMPLETE_ADDITIONAL_PAIRS, ENGINE_PAIR_MAP, LIGHT_PAIRS,
     PAIR_TIER_MAP, DeploymentState, EngineId, ModuleLayer, ModuleStatus,
-    PairId, ProfileId, RegimeId, Side, Tier, Timeframe, TimestampedModel,
+    PairId, ProfileId, PromotionState, RegimeId, ReviewState, RuntimeMode,
+    Side, StrategyClassification, Tier, Timeframe, TimestampedModel,
 )
 from interface_contracts.market_event_contracts import (
     DepthEvent, DepthLevel, HeartbeatEvent, KlineEvent, SnapshotEvent, TradeEvent,
@@ -39,6 +40,28 @@ class TestEnums:
 
     def test_profile_ids(self):
         assert set(ProfileId) == {ProfileId.LIGHT, ProfileId.COMPLETE}
+
+    def test_runtime_modes(self):
+        assert {mode.value for mode in RuntimeMode} == {
+            "local_replay",
+            "shadow",
+            "micro_live",
+            "live",
+        }
+
+    def test_strategy_classifications(self):
+        assert {classification.value for classification in StrategyClassification} == {
+            "a_variant",
+            "b_variant",
+            "build14_enabler",
+            "c_candidate",
+            "d_candidate",
+            "out_of_scope_for_v5_3",
+        }
+
+    def test_review_and_promotion_states(self):
+        assert ReviewState.PENDING.value == "pending"
+        assert PromotionState.REPLAY_ONLY.value == "replay_only"
 
     def test_deployment_states_completeness(self):
         expected = {"offline", "bootstrap", "shadow", "micro_live", "live_light",

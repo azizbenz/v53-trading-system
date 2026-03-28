@@ -45,7 +45,7 @@ class ManifestChange(BaseModel, frozen=True):
 
 # ─── MANIFEST VERSION ────────────────────────────────────────────────
 
-MANIFEST_VERSION = "1.1.0"
+MANIFEST_VERSION = "1.4.0"
 
 CHANGELOG: tuple[ManifestChange, ...] = (
     ManifestChange(
@@ -58,6 +58,42 @@ CHANGELOG: tuple[ManifestChange, ...] = (
         change_type=ChangeType.MODULE_ADDED,
         module_name="manifest_registry",
         description="Added manifest_registry module (Build-1 step 2)",
+    ),
+    ManifestChange(
+        version="1.2.0",
+        change_type=ChangeType.MODULE_ADDED,
+        module_name="local_replay_runtime",
+        description="Added LOCAL_REPLAY scaffold module to the canonical manifest",
+    ),
+    ManifestChange(
+        version="1.2.0",
+        change_type=ChangeType.MODULE_ADDED,
+        module_name="backtest_artifact_import",
+        description="Added controlled artifact import scaffold to the canonical manifest",
+    ),
+    ManifestChange(
+        version="1.2.0",
+        change_type=ChangeType.MODULE_ADDED,
+        module_name="meta_learning",
+        description="Added Build-9X governed scaffold to the canonical manifest",
+    ),
+    ManifestChange(
+        version="1.3.0",
+        change_type=ChangeType.STATUS_CHANGED,
+        module_name="monitoring",
+        description="Activated the real Build-10 monitoring backend",
+    ),
+    ManifestChange(
+        version="1.3.0",
+        change_type=ChangeType.STATUS_CHANGED,
+        module_name="ui",
+        description="Activated the locked Build-10 Light UI backend surface",
+    ),
+    ManifestChange(
+        version="1.4.0",
+        change_type=ChangeType.STATUS_CHANGED,
+        module_name="meta_learning",
+        description="Activated the governed Build-9X review and export layer",
     ),
 )
 
@@ -125,14 +161,20 @@ def get_changelog() -> tuple[ManifestChange, ...]:
 
 def get_changes_since(version: str) -> tuple[ManifestChange, ...]:
     """Return all changelog entries after a given version."""
-    found = False
-    result: list[ManifestChange] = []
-    for entry in CHANGELOG:
-        if found:
-            result.append(entry)
-        if entry.version == version:
-            found = True
-    return tuple(result)
+    if version not in {entry.version for entry in CHANGELOG}:
+        return ()
+
+    def _parse(value: str) -> tuple[int, ...]:
+        try:
+            return tuple(int(part) for part in value.split("."))
+        except ValueError:
+            return ()
+
+    target = _parse(version)
+    if not target:
+        return ()
+
+    return tuple(entry for entry in CHANGELOG if _parse(entry.version) > target)
 
 
 # ─── SNAPSHOT BUILDER ────────────────────────────────────────────────
