@@ -2,7 +2,7 @@
 ## Live-Light Production Protocol
 ### Protocole officiel de première production réelle disciplinée
 ### Treizième étape officielle du développement
-### Sans code — prod-safe
+### Première implémentation réelle minimale gouvernée
 
 ---
 
@@ -25,13 +25,20 @@ C’est la première phase où le système doit être capable de :
 
 ## 0.1 Statut documentaire vs implémentation
 
-Ce document définit le **protocole cible** Build-13.
+Ce document définit le protocole cible Build-13 et décrit aussi la première implémentation réelle minimale actuellement codée.
 
 Il ne doit pas être lu comme :
 
-- la preuve que le runtime Build-13 est déjà codé
+- la preuve qu’un runtime Live-Light complet d’exécution exchange est déjà codé
 - la preuve que `COMPLETE` est déjà exécutable
 - une autorisation à ouvrir Build-14, Build-15, Build-16 ou Build-17 sans validation effective
+
+La base actuelle ouvre Build-13 comme :
+
+- un gate / execution-intent planner gouverné
+- une surface Live-Light réelle mais minimale
+- une étape distincte de `MICRO_LIVE`
+- une étape encore distincte de tout runtime `COMPLETE` ou live complet
 
 ## 0.2 Règle d’unification local / VPS
 
