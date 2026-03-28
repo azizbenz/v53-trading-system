@@ -81,7 +81,7 @@ def test_hypotheses_deduplicate_category_and_preserve_first_diagnostic_ref():
 
     assert len(hypotheses) == 2
     cost_hypothesis = next(h for h in hypotheses if h.category == "cost_drift")
-    assert cost_hypothesis.diagnostic_ids == ("diag-2",)
+    assert cost_hypothesis.diagnostic_ids == ("diag-2", "diag-3")
 
 
 def test_unknown_category_falls_back_to_diagnostic_summary():
@@ -115,3 +115,25 @@ def test_checklist_stays_not_ready_when_only_no_issue_diagnostic_exists():
 
     assert checklist.ready_for_local_replay is False
     assert checklist.ready_for_shadow is False
+
+
+def test_no_issue_diagnostic_does_not_create_hypothesis_or_candidate():
+    diagnostics = (
+        DiagnosticResult(
+            diagnostic_id="diag-ok",
+            correlation_id="corr-9x",
+            category="no_issue",
+            summary="No material post-trade issue detected",
+            structured_log_key="build9x.no_issue",
+        ),
+    )
+
+    hypotheses = build_learning_hypotheses("corr-9x", diagnostics)
+    candidates = build_improvement_candidates(
+        "corr-9x",
+        StrategyClassification.A_VARIANT,
+        hypotheses,
+    )
+
+    assert hypotheses == ()
+    assert candidates == ()

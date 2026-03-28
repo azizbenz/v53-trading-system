@@ -1,7 +1,7 @@
-"""Build-9X governed meta-learning scaffold.
+"""Build-9X governed meta-learning layer.
 
-This package intentionally ships only governed contracts and guards in the
-minimal phase. It must not alter the Build-1..9 decision path.
+This package remains strictly governed and must not alter the Build-1..9
+decision path or create live mutation/promotion side effects.
 """
 
 from meta_learning.contracts import (
@@ -12,6 +12,7 @@ from meta_learning.contracts import (
     LearningReviewExport,
     LearningChecklist,
     LearningHypothesis,
+    MetaLearningReviewBundle,
     TradeLearningInput,
 )
 from meta_learning.enums import (
@@ -34,6 +35,7 @@ from meta_learning.learning_review_exporter import export_learning_review
 from meta_learning.mistake_classifier import classify_mistakes
 from meta_learning.near_miss_analyzer import analyze_near_misses
 from meta_learning.post_trade_diagnostic_engine import build_post_trade_diagnostics
+from meta_learning.review_orchestrator import run_meta_learning_review
 
 __all__ = [
     "TradeLearningInput",
@@ -44,6 +46,7 @@ __all__ = [
     "BreakdownReport",
     "LearningMemoryRecord",
     "LearningReviewExport",
+    "MetaLearningReviewBundle",
     "LearningLifecycleState",
     "DiagnosticSeverity",
     "HypothesisStatus",
@@ -60,4 +63,5 @@ __all__ = [
     "build_improvement_candidates",
     "LearningMemoryStore",
     "export_learning_review",
+    "run_meta_learning_review",
 ]

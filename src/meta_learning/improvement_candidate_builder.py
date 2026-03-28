@@ -17,6 +17,9 @@ def build_improvement_candidates(
     candidates: list[ImprovementCandidate] = []
 
     for index, hypothesis in enumerate(hypotheses, start=1):
+        if hypothesis.category == "no_issue":
+            continue
+
         if hypothesis.category == "trace_coverage":
             kind = CandidateKind.OBSERVABILITY_ONLY
         elif strategy_classification == StrategyClassification.BUILD14_ENABLER:

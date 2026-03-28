@@ -33,6 +33,8 @@ def test_meta_learning_exports_expected_symbols():
         "LearningHypothesis",
         "ImprovementCandidate",
         "LearningChecklist",
+        "MetaLearningReviewBundle",
+        "run_meta_learning_review",
     }.issubset(set(meta_learning.__all__))
 
 

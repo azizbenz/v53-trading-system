@@ -18,6 +18,10 @@ def export_learning_review(
 ) -> LearningReviewExport:
     """Render the governed review packet into a markdown export."""
 
+    mistake_lines = tuple(f"- {item}" for item in report.mistake_classes) or ("- none",)
+    checklist_lines = tuple(f"- {item}" for item in checklist.items) or ("- none",)
+    candidate_lines = tuple(f"- {candidate.summary}" for candidate in candidates) or ("- none",)
+
     lines = [
         f"# Build-9X Review - {correlation_id}",
         "",
@@ -25,13 +29,13 @@ def export_learning_review(
         report.summary,
         "",
         "## Mistake Classes",
-        *(f"- {item}" for item in report.mistake_classes),
+        *mistake_lines,
         "",
         "## Checklist",
-        *(f"- {item}" for item in checklist.items),
+        *checklist_lines,
         "",
         "## Candidates",
-        *(f"- {candidate.summary}" for candidate in candidates),
+        *candidate_lines,
     ]
 
     return LearningReviewExport(

@@ -22,19 +22,27 @@ def build_learning_hypotheses(
     """Convert diagnostics into governed replay hypotheses."""
 
     hypotheses: list[LearningHypothesis] = []
-    seen_categories: set[str] = set()
+    categories_in_order: list[str] = []
+    refs_by_category: dict[str, list[str]] = {}
+    summary_by_category: dict[str, str] = {}
 
-    for index, diagnostic in enumerate(diagnostics, start=1):
-        if diagnostic.category in seen_categories:
+    for diagnostic in diagnostics:
+        if diagnostic.category == "no_issue":
             continue
-        seen_categories.add(diagnostic.category)
+        if diagnostic.category not in refs_by_category:
+            categories_in_order.append(diagnostic.category)
+            refs_by_category[diagnostic.category] = []
+            summary_by_category[diagnostic.category] = diagnostic.summary
+        refs_by_category[diagnostic.category].append(diagnostic.diagnostic_id)
+
+    for index, category in enumerate(categories_in_order, start=1):
         hypotheses.append(LearningHypothesis(
             hypothesis_id=f"{correlation_id}:hypothesis:{index}",
             correlation_id=correlation_id,
-            category=diagnostic.category,
-            title=f"Hypothesis for {diagnostic.category}",
-            rationale=_RATIONALE_BY_CATEGORY.get(diagnostic.category, diagnostic.summary),
-            diagnostic_ids=(diagnostic.diagnostic_id,),
+            category=category,
+            title=f"Hypothesis for {category}",
+            rationale=_RATIONALE_BY_CATEGORY.get(category, summary_by_category[category]),
+            diagnostic_ids=tuple(refs_by_category[category]),
         ))
 
     return tuple(hypotheses)

@@ -157,6 +157,38 @@ class LearningReviewExport(BaseModel, frozen=True):
     candidates: tuple[ImprovementCandidate, ...] = ()
 
 
+class MetaLearningReviewBundle(BaseModel, frozen=True):
+    """Single governed Build-9X review bundle for downstream consumers."""
+
+    correlation_id: str = Field(..., min_length=1)
+    diagnostics: tuple[DiagnosticResult, ...] = ()
+    mistake_classes: tuple[str, ...] = ()
+    breakdown_report: BreakdownReport
+    checklist: LearningChecklist
+    hypotheses: tuple[LearningHypothesis, ...] = ()
+    candidates: tuple[ImprovementCandidate, ...] = ()
+    memory_record: LearningMemoryRecord
+    review_export: LearningReviewExport
+
+    @model_validator(mode="after")
+    def validate_bundle_coherence(self) -> "MetaLearningReviewBundle":
+        if self.breakdown_report.correlation_id != self.correlation_id:
+            raise ValueError("Breakdown report correlation_id must match bundle correlation_id")
+        if self.checklist.correlation_id != self.correlation_id:
+            raise ValueError("Checklist correlation_id must match bundle correlation_id")
+        if self.memory_record.correlation_id != self.correlation_id:
+            raise ValueError("Memory record correlation_id must match bundle correlation_id")
+        if self.review_export.correlation_id != self.correlation_id:
+            raise ValueError("Review export correlation_id must match bundle correlation_id")
+        if any(diagnostic.correlation_id != self.correlation_id for diagnostic in self.diagnostics):
+            raise ValueError("All diagnostics must share the bundle correlation_id")
+        if any(hypothesis.correlation_id != self.correlation_id for hypothesis in self.hypotheses):
+            raise ValueError("All hypotheses must share the bundle correlation_id")
+        if any(candidate.correlation_id != self.correlation_id for candidate in self.candidates):
+            raise ValueError("All candidates must share the bundle correlation_id")
+        return self
+
+
 __all__ = [
     "TradeLearningInput",
     "DiagnosticResult",
@@ -166,4 +198,5 @@ __all__ = [
     "BreakdownReport",
     "LearningMemoryRecord",
     "LearningReviewExport",
+    "MetaLearningReviewBundle",
 ]
