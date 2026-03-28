@@ -6,8 +6,10 @@ from backtest_artifact_import.contracts import (
     ArtifactImportDecision,
     ArtifactImportRequest,
     ArtifactImportSummary,
+    StrategyOnboardingDecision,
+    StrategyOnboardingRequest,
 )
-from interface_contracts import PromotionState, ReviewState, RuntimeMode
+from interface_contracts import PromotionState, ReviewState, RuntimeMode, StrategyClassification
 from local_replay_runtime.artifact_manifest import ArtifactManifest
 from local_replay_runtime.enums import ReplayArtifactKind
 
@@ -89,8 +91,51 @@ def summarize_import_request(
     )
 
 
+def validate_strategy_onboarding_request(
+    request: StrategyOnboardingRequest,
+) -> StrategyOnboardingDecision:
+    """Validate the minimal governed strategy onboarding flow."""
+
+    reasons: list[str] = []
+    import_decision = validate_import_request(request.import_request)
+    if not import_decision.accepted:
+        reasons.extend(f"import gate: {reason}" for reason in import_decision.reasons)
+
+    if request.automatic_promotion_requested:
+        reasons.append("automatic promotion is forbidden")
+
+    if request.bypass_runtime_gates_requested:
+        reasons.append("bypassing SHADOW/MICRO_LIVE/LIVE gates is forbidden")
+
+    if request.classification == StrategyClassification.OUT_OF_SCOPE_FOR_V5_3:
+        reasons.append("classification is out_of_scope_for_V5_3")
+
+    if request.classification in {
+        StrategyClassification.C_CANDIDATE,
+        StrategyClassification.D_CANDIDATE,
+    }:
+        reasons.append("C/D candidates stay documented only until later builds are opened")
+
+    accepted = len(reasons) == 0
+    if request.classification == StrategyClassification.BUILD14_ENABLER and accepted:
+        normalized_state = PromotionState.REPLAY_ONLY
+    else:
+        normalized_state = (
+            PromotionState.SHADOW_CANDIDATE if accepted else PromotionState.REPLAY_ONLY
+        )
+    review_state = ReviewState.PENDING if accepted else ReviewState.NEEDS_REVISION
+
+    return StrategyOnboardingDecision(
+        accepted=accepted,
+        normalized_promotion_state=normalized_state,
+        review_state=review_state,
+        reasons=tuple(reasons),
+    )
+
+
 __all__ = [
     "validate_artifact_manifest",
     "validate_import_request",
     "summarize_import_request",
+    "validate_strategy_onboarding_request",
 ]
