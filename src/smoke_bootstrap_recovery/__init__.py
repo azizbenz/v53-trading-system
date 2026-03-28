@@ -43,6 +43,10 @@ from smoke_bootstrap_recovery.smoke_reporter import (
     build_smoke_report,
     format_smoke_report,
 )
+from smoke_bootstrap_recovery.shadow_readiness import (
+    ShadowReadinessReport,
+    evaluate_shadow_readiness,
+)
 
 
 # ─── BUILD-1 MODULES ────────────────────────────────────────────────
@@ -172,6 +176,9 @@ __all__ = [
     # Reporter
     "build_smoke_report",
     "format_smoke_report",
+    # Shadow readiness preflight
+    "ShadowReadinessReport",
+    "evaluate_shadow_readiness",
     # Main entry
     "BUILD1_MODULES",
     "run_build1_smoke",
