@@ -1,4 +1,4 @@
-"""Tests for the minimal Build-10 observability export."""
+"""Tests for the grouped Build-10 observability export."""
 
 from __future__ import annotations
 
@@ -13,7 +13,10 @@ from meta_minimal.dtr_core.decision_state_encoder import DecisionState
 from meta_minimal.dtr_core.dtr_record_builder import build_dtr
 from meta_minimal.edge_tracker_prudent_minimal.edge_status_classifier import EdgeClassification, EdgeStatus
 from monitoring import (
+    Build9XProjection,
+    ReplayImportProjection,
     build_observability_export,
+    build_technical_dashboard_payload,
     collect_engine_metrics,
     collect_infra_metrics,
     collect_meta_metrics,
@@ -23,7 +26,13 @@ from monitoring import (
 )
 
 
-def _snapshot():
+def _payload(
+    *,
+    build9x_projection: Build9XProjection | None = None,
+    replay_projection: ReplayImportProjection | None = None,
+    active_modules: tuple[str, ...] = (),
+    active_engines: tuple[str, ...] = (),
+):
     dtr_summary = build_dtr_summary(
         (
             build_dtr(
@@ -84,7 +93,7 @@ def _snapshot():
             ),
         )
     )
-    return collect_monitoring_snapshot(
+    snapshot = collect_monitoring_snapshot(
         correlation_id="corr-obs",
         profile=ProfileId.LIGHT,
         runtime_mode=RuntimeMode.SHADOW,
@@ -127,6 +136,13 @@ def _snapshot():
             collect_pair_metrics(pair="BTCUSDT", health=PairHealthLevel.STALE, freshness_ms=9000),
         ),
     )
+    return build_technical_dashboard_payload(
+        snapshot,
+        active_modules=active_modules,
+        active_engines=active_engines,
+        build9x_projection=build9x_projection,
+        replay_projection=replay_projection,
+    )
 
 
 def test_monitoring_exports_observability_symbols():
@@ -137,62 +153,82 @@ def test_monitoring_exports_observability_symbols():
     }.issubset(set(monitoring.__all__))
 
 
-def test_observability_export_contains_structured_core_metrics():
-    export = build_observability_export(_snapshot())
+def test_observability_export_contains_grouped_metrics():
+    payload = _payload()
+    export = build_observability_export(payload)
     names = {sample.name for sample in export.samples}
 
-    assert "v53_headline_status" in names
-    assert "v53_active_alert_count" in names
-    assert "v53_dtr_coverage_ratio" in names
+    assert "v53_system_headline_status" in names
+    assert "v53_meta_dtr_coverage_ratio" in names
+    assert "v53_alert_active_count" in names
     assert export.correlation_id == "corr-obs"
     assert 'profile="light"' in export.text_payload
     assert 'runtime_mode="shadow"' in export.text_payload
 
 
 def test_observability_export_tracks_modules_engines_and_governed_flags():
-    export = build_observability_export(
-        _snapshot(),
+    payload = _payload(
         active_modules=("monitoring", "ui", "meta_learning"),
         active_engines=("engine_a", "engine_b"),
-        recent_diagnostics=4,
-        open_hypotheses=2,
-        replay_candidates=1,
-        artifact_present=True,
-        import_accepted=False,
+        build9x_projection=Build9XProjection(
+            status="warning",
+            diagnostics_count=4,
+            diagnostics_summary="Governed review bundle available",
+            open_hypotheses=2,
+            total_hypotheses=3,
+            near_miss_count=1,
+            replay_candidate_count=1,
+            memory_record_count=2,
+            latest_memory_summary="Most recent governed memory stored",
+            review_export_ready=True,
+            review_export_ref="exports/review.md",
+        ),
+        replay_projection=ReplayImportProjection(
+            status="warning",
+            artifact_id="artifact-1",
+            artifact_kind="review_packet",
+            lineage_version="a.v2.1",
+            lifecycle_state="exported",
+            validation_status="needs_revision",
+            review_state="needs_revision",
+            rejection_reasons=("lineage mismatch",),
+        ),
     )
+    export = build_observability_export(payload)
 
-    module_samples = [sample for sample in export.samples if sample.name == "v53_module_active"]
-    engine_samples = [sample for sample in export.samples if sample.name == "v53_engine_stale"]
+    module_samples = [sample for sample in export.samples if sample.name == "v53_system_module_active"]
+    engine_samples = [sample for sample in export.samples if sample.name == "v53_system_engine_stale"]
     assert {sample.labels["module"] for sample in module_samples} == {"monitoring", "ui", "meta_learning"}
     assert {sample.labels["engine"] for sample in engine_samples} == {"engine_a", "engine_b"}
     stale_b = next(sample for sample in engine_samples if sample.labels["engine"] == "engine_b")
     assert stale_b.value == 1.0
     assert any(sample.name == "v53_build9x_recent_diagnostics" and sample.value == 4.0 for sample in export.samples)
-    assert any(sample.name == "v53_artifact_import_accepted" and sample.value == 0.0 for sample in export.samples)
+    assert any(sample.name == "v53_replay_validation_accepted" and sample.value == 0.0 for sample in export.samples)
 
 
 def test_observability_export_marks_import_as_not_started_when_absent():
-    export = build_observability_export(_snapshot(), artifact_present=False, import_accepted=None)
+    export = build_observability_export(_payload())
 
-    started = next(sample for sample in export.samples if sample.name == "v53_artifact_import_review_started")
-    accepted = next(sample for sample in export.samples if sample.name == "v53_artifact_import_accepted")
+    started = next(sample for sample in export.samples if sample.name == "v53_replay_validation_started")
+    accepted = next(sample for sample in export.samples if sample.name == "v53_replay_validation_accepted")
     assert started.value == 0.0
     assert accepted.value == 0.0
 
 
 def test_observability_export_handles_empty_module_and_engine_lists():
-    export = build_observability_export(_snapshot())
+    export = build_observability_export(_payload())
 
-    assert all(sample.name != "v53_module_active" for sample in export.samples)
-    assert all(sample.name != "v53_engine_stale" for sample in export.samples)
-    assert export.text_payload.startswith("# V5.3 monitoring export")
+    assert all(sample.name != "v53_system_module_active" for sample in export.samples)
+    assert all(sample.name != "v53_system_engine_stale" for sample in export.samples)
+    assert export.text_payload.startswith("# V5.3 technical observability export")
 
 
 def test_observability_export_preserves_correlation_id_in_all_samples():
     export = build_observability_export(
-        _snapshot(),
-        active_modules=("monitoring",),
-        active_engines=("engine_a",),
+        _payload(
+            active_modules=("monitoring",),
+            active_engines=("engine_a",),
+        )
     )
 
     assert all(sample.labels.get("correlation_id") == "corr-obs" for sample in export.samples)

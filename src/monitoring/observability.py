@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from monitoring.contracts import MetricSample, MonitoringSnapshot, ObservabilityExport
-from monitoring.health_dashboard_backend import build_health_dashboard_payload
+from monitoring.contracts import MetricSample, ObservabilityExport, TechnicalDashboardPayload
 
 
 def _sample(
@@ -23,11 +22,11 @@ def _sample(
     )
 
 
-def _labels(snapshot: MonitoringSnapshot) -> dict[str, str]:
+def _labels(payload: TechnicalDashboardPayload) -> dict[str, str]:
     return {
-        "correlation_id": snapshot.correlation_id,
-        "profile": snapshot.profile.value,
-        "runtime_mode": snapshot.runtime_mode.value,
+        "correlation_id": payload.correlation_id,
+        "profile": payload.profile.value,
+        "runtime_mode": payload.runtime_mode.value,
     }
 
 
@@ -38,69 +37,257 @@ def _format_labels(labels: dict[str, str]) -> str:
     return f"{{{joined}}}"
 
 
-def build_observability_export(
-    snapshot: MonitoringSnapshot,
-    *,
-    active_modules: tuple[str, ...] = (),
-    active_engines: tuple[str, ...] = (),
-    recent_diagnostics: int = 0,
-    open_hypotheses: int = 0,
-    replay_candidates: int = 0,
-    artifact_present: bool = False,
-    import_accepted: bool | None = None,
-) -> ObservabilityExport:
-    """Emit a minimal metrics surface without opening a full observability stack."""
+def build_observability_export(payload: TechnicalDashboardPayload) -> ObservabilityExport:
+    """Emit a grouped, stable metrics surface from the Build-10 technical payload."""
 
-    base_labels = _labels(snapshot)
-    headline_status = build_health_dashboard_payload(snapshot).headline_status
+    base_labels = _labels(payload)
     samples: list[MetricSample] = [
-        _sample("v53_headline_status", kind="state", value=1.0, labels={**base_labels, "status": headline_status}),
-        _sample("v53_active_alert_count", kind="gauge", value=float(snapshot.active_alert_count), unit="count", labels=base_labels),
-        _sample("v53_stale_pair_count", kind="gauge", value=float(snapshot.stale_pair_count), unit="count", labels=base_labels),
-        _sample("v53_queue_backlog", kind="gauge", value=float(snapshot.infra.queue_backlog), unit="count", labels=base_labels),
-        _sample("v53_dtr_loss_count", kind="gauge", value=float(snapshot.infra.dtr_loss_count), unit="count", labels=base_labels),
-        _sample("v53_log_loss_count", kind="gauge", value=float(snapshot.infra.log_loss_count), unit="count", labels=base_labels),
-        _sample("v53_dtr_coverage_ratio", kind="gauge", value=snapshot.meta.dtr_coverage, unit="ratio", labels=base_labels),
-        _sample("v53_cra_sterilization_ratio", kind="gauge", value=snapshot.meta.cra_sterilization_rate, unit="ratio", labels=base_labels),
-        _sample("v53_edge_degraded_count", kind="gauge", value=float(snapshot.meta.edge_degraded_count), unit="count", labels=base_labels),
-        _sample("v53_build9x_recent_diagnostics", kind="gauge", value=float(recent_diagnostics), unit="count", labels=base_labels),
-        _sample("v53_build9x_open_hypotheses", kind="gauge", value=float(open_hypotheses), unit="count", labels=base_labels),
-        _sample("v53_build9x_replay_candidates", kind="gauge", value=float(replay_candidates), unit="count", labels=base_labels),
-        _sample("v53_replay_artifact_present", kind="state", value=1.0 if artifact_present else 0.0, labels=base_labels),
-        _sample("v53_artifact_import_review_started", kind="state", value=1.0 if import_accepted is not None else 0.0, labels=base_labels),
-        _sample("v53_artifact_import_accepted", kind="state", value=1.0 if import_accepted else 0.0, labels=base_labels),
+        _sample(
+            "v53_system_headline_status",
+            kind="state",
+            value=1.0,
+            labels={**base_labels, "status": payload.system.headline_status},
+        ),
+        _sample(
+            "v53_system_active_alert_count",
+            kind="gauge",
+            value=float(payload.alerts.active_alert_count),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_system_active_module_count",
+            kind="gauge",
+            value=float(len(payload.system.active_modules)),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_system_active_engine_count",
+            kind="gauge",
+            value=float(len(payload.system.active_engines)),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_system_build9x_status",
+            kind="state",
+            value=1.0,
+            labels={**base_labels, "status": payload.system.build9x_status},
+        ),
+        _sample(
+            "v53_system_replay_status",
+            kind="state",
+            value=1.0,
+            labels={**base_labels, "status": payload.system.replay_import_status},
+        ),
+        _sample(
+            "v53_meta_dtr_coverage_ratio",
+            kind="gauge",
+            value=payload.build9_meta.dtr_coverage,
+            unit="ratio",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_meta_cra_sterilization_ratio",
+            kind="gauge",
+            value=payload.build9_meta.cra_sterilization_rate,
+            unit="ratio",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_meta_cra_alert_count",
+            kind="gauge",
+            value=float(payload.build9_meta.cra_alert_count),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_meta_break_even_drift_scope_count",
+            kind="gauge",
+            value=float(len(payload.build9_meta.break_even_drift_scopes)),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_meta_edge_credible_count",
+            kind="gauge",
+            value=float(payload.build9_meta.edge_credible_count),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_meta_edge_degraded_count",
+            kind="gauge",
+            value=float(payload.build9_meta.edge_degraded_count),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_meta_edge_surveillance_count",
+            kind="gauge",
+            value=float(payload.build9_meta.edge_surveillance_count),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_build9x_status",
+            kind="state",
+            value=1.0,
+            labels={**base_labels, "status": payload.build9x.status},
+        ),
+        _sample(
+            "v53_build9x_recent_diagnostics",
+            kind="gauge",
+            value=float(payload.build9x.diagnostics_count),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_build9x_open_hypotheses",
+            kind="gauge",
+            value=float(payload.build9x.open_hypotheses),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_build9x_total_hypotheses",
+            kind="gauge",
+            value=float(payload.build9x.total_hypotheses),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_build9x_near_miss_count",
+            kind="gauge",
+            value=float(payload.build9x.near_miss_count),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_build9x_replay_candidate_count",
+            kind="gauge",
+            value=float(payload.build9x.replay_candidate_count),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_build9x_memory_record_count",
+            kind="gauge",
+            value=float(payload.build9x.memory_record_count),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_build9x_review_export_ready",
+            kind="state",
+            value=1.0 if payload.build9x.review_export_ready else 0.0,
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_replay_artifact_present",
+            kind="state",
+            value=1.0 if payload.replay_import.artifact_id != "none" else 0.0,
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_replay_validation_started",
+            kind="state",
+            value=1.0 if payload.replay_import.validation_status != "not_run" else 0.0,
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_replay_validation_accepted",
+            kind="state",
+            value=1.0 if payload.replay_import.validation_status == "accepted" else 0.0,
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_replay_rejection_reason_count",
+            kind="gauge",
+            value=float(len(payload.replay_import.rejection_reasons)),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_alert_active_count",
+            kind="gauge",
+            value=float(payload.alerts.active_alert_count),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_alert_queue_backlog",
+            kind="gauge",
+            value=float(payload.alerts.queue_backlog),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_alert_stale_pair_count",
+            kind="gauge",
+            value=float(payload.alerts.stale_pair_count),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_alert_dtr_loss_count",
+            kind="gauge",
+            value=float(payload.alerts.dtr_loss_count),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_alert_log_loss_count",
+            kind="gauge",
+            value=float(payload.alerts.log_loss_count),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_alert_backlog_stale_status",
+            kind="state",
+            value=1.0,
+            labels={**base_labels, "status": payload.alerts.backlog_stale_status},
+        ),
+        _sample(
+            "v53_alert_loss_drift_status",
+            kind="state",
+            value=1.0,
+            labels={**base_labels, "status": payload.alerts.loss_drift_status},
+        ),
     ]
 
-    for module_name in active_modules:
+    for module_name in payload.system.active_modules:
         samples.append(
             _sample(
-                "v53_module_active",
+                "v53_system_module_active",
                 kind="state",
                 value=1.0,
                 labels={**base_labels, "module": module_name},
             )
         )
 
-    stale_engines = {engine.engine_id for engine in snapshot.engines if engine.stale}
-    for engine_id in active_engines:
+    stale_engines = set(payload.system.stale_engines)
+    for engine_id in payload.system.active_engines:
         samples.append(
             _sample(
-                "v53_engine_stale",
+                "v53_system_engine_stale",
                 kind="state",
                 value=1.0 if engine_id in stale_engines else 0.0,
                 labels={**base_labels, "engine": engine_id},
             )
         )
 
-    lines = ["# V5.3 monitoring export"]
+    lines = ["# V5.3 technical observability export"]
     for sample in samples:
         lines.append(f"{sample.name}{_format_labels(sample.labels)} {sample.value}")
 
     return ObservabilityExport(
-        timestamp_ms=snapshot.timestamp_ms,
-        correlation_id=snapshot.correlation_id,
-        profile=snapshot.profile,
-        runtime_mode=snapshot.runtime_mode,
+        timestamp_ms=payload.timestamp_ms,
+        correlation_id=payload.correlation_id,
+        profile=payload.profile,
+        runtime_mode=payload.runtime_mode,
         samples=tuple(samples),
         text_payload="\n".join(lines),
     )
