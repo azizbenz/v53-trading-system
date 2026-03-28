@@ -2,6 +2,9 @@
 
 from monitoring.alert_manager import build_monitoring_alerts
 from monitoring.contracts import (
+    AlertProjection,
+    Build9MetaProjection,
+    Build9XProjection,
     EngineMetrics,
     HealthDashboardPayload,
     InfraMetrics,
@@ -11,6 +14,10 @@ from monitoring.contracts import (
     ObservabilityExport,
     PairMetrics,
     PortfolioMetrics,
+    ProjectionStatus,
+    ReplayImportProjection,
+    SystemProjection,
+    TechnicalDashboardPayload,
 )
 from monitoring.health_dashboard_backend import build_health_dashboard_payload
 from monitoring.metrics_collector import (
@@ -22,6 +29,7 @@ from monitoring.metrics_collector import (
     collect_portfolio_metrics,
 )
 from monitoring.observability import build_observability_export
+from monitoring.technical_dashboard_backend import build_technical_dashboard_payload
 
 __all__ = [
     "PortfolioMetrics",
@@ -31,6 +39,13 @@ __all__ = [
     "MetaMetrics",
     "MonitoringSnapshot",
     "HealthDashboardPayload",
+    "ProjectionStatus",
+    "SystemProjection",
+    "Build9MetaProjection",
+    "Build9XProjection",
+    "ReplayImportProjection",
+    "AlertProjection",
+    "TechnicalDashboardPayload",
     "MetricSample",
     "ObservabilityExport",
     "collect_portfolio_metrics",
@@ -41,5 +56,6 @@ __all__ = [
     "collect_monitoring_snapshot",
     "build_monitoring_alerts",
     "build_health_dashboard_payload",
+    "build_technical_dashboard_payload",
     "build_observability_export",
 ]

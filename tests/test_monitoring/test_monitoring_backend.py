@@ -26,8 +26,11 @@ from meta_minimal.edge_tracker_prudent_minimal.edge_status_classifier import (
     EdgeStatus,
 )
 from monitoring import (
+    Build9XProjection,
+    ReplayImportProjection,
     build_health_dashboard_payload,
     build_monitoring_alerts,
+    build_technical_dashboard_payload,
     collect_engine_metrics,
     collect_infra_metrics,
     collect_meta_metrics,
@@ -133,6 +136,10 @@ def test_monitoring_exports_expected_symbols():
         "collect_monitoring_snapshot",
         "build_monitoring_alerts",
         "build_health_dashboard_payload",
+        "Build9XProjection",
+        "ReplayImportProjection",
+        "TechnicalDashboardPayload",
+        "build_technical_dashboard_payload",
     }.issubset(set(monitoring.__all__))
 
 
@@ -332,3 +339,117 @@ def test_invalid_headline_status_rejected_by_contract():
             future_learning_diagnostics=0,
             future_learning_hypotheses=0,
         )
+
+
+def test_technical_dashboard_payload_normalizes_system_meta_and_governed_extensions():
+    dtr_summary, cra_report, break_even_report, edge_report = _sample_build9_reports()
+    snapshot = collect_monitoring_snapshot(
+        correlation_id="corr-tech-payload",
+        profile=ProfileId.LIGHT,
+        runtime_mode=RuntimeMode.SHADOW,
+        timestamp_ms=1_700_000_000_000,
+        portfolio=collect_portfolio_metrics(
+            allocated_opportunities=2,
+            gross_capacity_used_pct=30.0,
+            loss_capacity_used_pct=8.0,
+            beta_utilization=0.3,
+            capital_deployed_usdt=900.0,
+            ce_net=0.0011,
+        ),
+        infra=collect_infra_metrics(queue_backlog=75, stale_pairs=("BTCUSDT",), dtr_loss_count=1),
+        meta=collect_meta_metrics(
+            dtr_summary,
+            cra_report,
+            break_even_report,
+            edge_report,
+            future_learning_diagnostics=2,
+            future_learning_hypotheses=1,
+        ),
+        engines=(
+            collect_engine_metrics(
+                engine_id="engine_a",
+                emitted_signals=2,
+                net_edge_bps=12.0,
+                expected_cost_bps=4.0,
+                ce_expected=0.0007,
+            ),
+            collect_engine_metrics(
+                engine_id="engine_b",
+                emitted_signals=1,
+                net_edge_bps=4.0,
+                expected_cost_bps=3.0,
+                ce_expected=0.0002,
+                stale=True,
+            ),
+        ),
+    )
+
+    payload = build_technical_dashboard_payload(
+        snapshot,
+        active_modules=("meta", "meta_learning", "local_replay_runtime", "backtest_artifact_import", "monitoring", "ui"),
+        active_engines=("engine_a", "engine_b"),
+        build9x_projection=Build9XProjection(
+            status="warning",
+            diagnostics_count=2,
+            diagnostics_summary="Two governed issues detected",
+            open_hypotheses=1,
+            total_hypotheses=2,
+            near_miss_count=1,
+            replay_candidate_count=1,
+            memory_record_count=1,
+            latest_memory_summary="Stored governed review state",
+            review_export_ready=True,
+            review_export_ref="exports/review.md",
+        ),
+        replay_projection=ReplayImportProjection(
+            status="warning",
+            artifact_id="artifact-1",
+            artifact_kind="review_packet",
+            lineage_version="a.v2.1",
+            lifecycle_state="exported",
+            validation_status="needs_revision",
+            review_state="needs_revision",
+            rejection_reasons=("import target must start at SHADOW",),
+        ),
+    )
+
+    assert payload.system.headline_status == "critical"
+    assert payload.system.stale_engines == ("engine_b",)
+    assert payload.system.build9x_status == "warning"
+    assert payload.system.replay_import_status == "warning"
+    assert payload.build9_meta.break_even_state == "drift_alert"
+    assert payload.build9x.review_export_ready is True
+    assert payload.replay_import.rejection_reasons == ("import target must start at SHADOW",)
+    assert payload.alerts.active_alert_count >= 4
+
+
+def test_technical_dashboard_payload_defaults_governed_sections_without_raw_protocol_objects():
+    dtr_summary, cra_report, break_even_report, edge_report = _sample_build9_reports()
+    snapshot = collect_monitoring_snapshot(
+        correlation_id="corr-tech-defaults",
+        profile=ProfileId.LIGHT,
+        runtime_mode=RuntimeMode.SHADOW,
+        timestamp_ms=1_700_000_000_000,
+        portfolio=collect_portfolio_metrics(
+            allocated_opportunities=1,
+            gross_capacity_used_pct=10.0,
+            loss_capacity_used_pct=2.0,
+            beta_utilization=0.1,
+            capital_deployed_usdt=500.0,
+            ce_net=0.0010,
+        ),
+        infra=collect_infra_metrics(),
+        meta=collect_meta_metrics(dtr_summary, cra_report, break_even_report, edge_report),
+    )
+
+    payload = build_technical_dashboard_payload(
+        snapshot,
+        active_modules=("monitoring", "ui", "meta_learning", "local_replay_runtime"),
+        active_engines=("engine_a", "engine_b"),
+    )
+
+    assert payload.build9x.status == "info"
+    assert payload.build9x.diagnostics_count == 0
+    assert payload.replay_import.status == "info"
+    assert payload.replay_import.validation_status == "not_run"
+    assert payload.alerts.backlog_stale_status == "healthy"

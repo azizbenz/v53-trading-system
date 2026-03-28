@@ -1,22 +1,13 @@
-"""Tests for the richer Build-10 technical supervision view."""
+"""Tests for the normalized Build-10 technical supervision view."""
 
 from __future__ import annotations
 
-from interface_contracts import ProfileId, PromotionState, ReviewState, RuntimeMode, StrategyClassification
+from interface_contracts import PairHealthLevel, ProfileId, RuntimeMode
 from meta import (
     build_break_even_report,
     build_cra_report,
     build_dtr_summary,
     build_edge_report,
-)
-from meta_learning import (
-    BreakdownReport,
-    DiagnosticResult,
-    ImprovementCandidate,
-    LearningChecklist,
-    LearningHypothesis,
-    LearningMemoryRecord,
-    LearningReviewExport,
 )
 from meta_minimal.break_even_dashboard.motor_pair_break_even_view import BreakEvenView
 from meta_minimal.cra_monitor.cra_alert_builder import CRAAlert, CRAAlertLevel
@@ -31,6 +22,9 @@ from meta_minimal.edge_tracker_prudent_minimal.edge_status_classifier import (
     EdgeStatus,
 )
 from monitoring import (
+    Build9XProjection,
+    ReplayImportProjection,
+    build_technical_dashboard_payload,
     collect_engine_metrics,
     collect_infra_metrics,
     collect_meta_metrics,
@@ -38,8 +32,6 @@ from monitoring import (
     collect_pair_metrics,
     collect_portfolio_metrics,
 )
-from backtest_artifact_import import ArtifactImportDecision
-from local_replay_runtime import ArtifactManifest, ReplayArtifactKind, ReplayBundle, ReplayLifecycleState
 from ui import build_technical_dashboard_view
 
 
@@ -155,102 +147,49 @@ def _snapshot(**overrides):
             ),
         ),
         pairs=(
-            collect_pair_metrics(pair="BTCUSDT", health="stale", freshness_ms=9000, backlog_depth=75),
+            collect_pair_metrics(
+                pair="BTCUSDT",
+                health=PairHealthLevel.STALE,
+                freshness_ms=9000,
+                backlog_depth=75,
+            ),
         ),
     )
     defaults.update(overrides)
     return collect_monitoring_snapshot(**defaults)
 
 
-def _governed_objects():
-    diagnostics = (
-        DiagnosticResult(
-            diagnostic_id="diag-1",
-            correlation_id="corr-tech",
-            category="sterilization",
-            summary="CRA sterilization elevated",
-            structured_log_key="build9x.sterilization",
-        ),
-        DiagnosticResult(
-            diagnostic_id="diag-2",
-            correlation_id="corr-tech",
-            category="near_miss",
-            summary="Near miss on BTCUSDT",
-            structured_log_key="build9x.near_miss",
-        ),
-    )
-    report = BreakdownReport(
-        correlation_id="corr-tech",
-        diagnostics=diagnostics,
-        mistake_classes=("economic_sterilization", "near_miss"),
-        near_miss_pairs=("BTCUSDT",),
-        summary="Two governed issues detected",
-    )
-    hypotheses = (
-        LearningHypothesis(
-            hypothesis_id="hyp-1",
-            correlation_id="corr-tech",
-            category="sterilization",
-            title="Tighten cost drift guard",
-            rationale="CRA drift elevated",
-            diagnostic_ids=("diag-1",),
-        ),
-    )
-    candidates = (
-        ImprovementCandidate(
-            candidate_id="cand-1",
-            correlation_id="corr-tech",
-            hypothesis_ids=("hyp-1",),
-            classification=StrategyClassification.A_VARIANT,
-            kind="guard_tightening",
-            summary="Tighten replay-only spread guard",
-        ),
-    )
-    checklist = LearningChecklist(
-        checklist_id="check-1",
-        correlation_id="corr-tech",
-        items=("Confirm replay bundle",),
-        ready_for_local_replay=True,
-    )
-    review_export = LearningReviewExport(
-        correlation_id="corr-tech",
-        markdown_body="# Review",
-        checklist=checklist,
-        candidates=candidates,
-    )
-    memory_record = LearningMemoryRecord(
-        correlation_id="corr-tech",
+def _build9x_projection() -> Build9XProjection:
+    return Build9XProjection(
+        status="warning",
         diagnostics_count=2,
-        hypothesis_count=1,
-        candidate_count=1,
-        summary="Stored governed review state",
+        diagnostics_summary="Two governed issues detected",
+        open_hypotheses=1,
+        total_hypotheses=1,
+        near_miss_count=1,
+        replay_candidate_count=1,
+        memory_record_count=1,
+        latest_memory_summary="Stored governed review state",
+        review_export_ready=True,
+        review_export_ref="exports/review.md",
     )
-    bundle = ReplayBundle(
-        manifest=ArtifactManifest(
-            artifact_id="artifact-1",
-            correlation_id="corr-tech",
-            source_profile=ProfileId.LIGHT,
-            strategy_classification=StrategyClassification.A_VARIANT,
-            strategy_version="a.v2",
-            lineage_version="a.v2.1",
-        ),
-        artifact_kind=ReplayArtifactKind.REVIEW_PACKET,
-        lifecycle_state=ReplayLifecycleState.EXPORTED,
-        payload_refs=("exports/review.md",),
+
+
+def _accepted_replay_projection() -> ReplayImportProjection:
+    return ReplayImportProjection(
+        status="healthy",
+        artifact_id="artifact-1",
+        artifact_kind="review_packet",
+        lineage_version="a.v2.1",
+        lifecycle_state="exported",
+        validation_status="accepted",
+        review_state="pending",
+        rejection_reasons=(),
     )
-    decision = ArtifactImportDecision(
-        accepted=True,
-        normalized_promotion_state=PromotionState.SHADOW_CANDIDATE,
-        review_state=ReviewState.PENDING,
-        reasons=(),
-    )
-    return report, hypotheses, candidates, (memory_record,), review_export, bundle, decision
 
 
 def test_technical_dashboard_view_exposes_system_meta_build9x_and_replay_sections():
-    report, hypotheses, candidates, memory_records, review_export, bundle, decision = _governed_objects()
-
-    view = build_technical_dashboard_view(
+    payload = build_technical_dashboard_payload(
         _snapshot(),
         active_modules=(
             "interface_contracts",
@@ -263,14 +202,11 @@ def test_technical_dashboard_view_exposes_system_meta_build9x_and_replay_section
             "ui",
         ),
         active_engines=("engine_a", "engine_b"),
-        breakdown_report=report,
-        hypotheses=hypotheses,
-        candidates=candidates,
-        memory_records=memory_records,
-        review_export=review_export,
-        replay_bundle=bundle,
-        import_decision=decision,
+        build9x_projection=_build9x_projection(),
+        replay_projection=_accepted_replay_projection(),
     )
+
+    view = build_technical_dashboard_view(payload)
 
     titles = {section.title for section in view.sections}
     assert titles == {
@@ -292,12 +228,13 @@ def test_technical_dashboard_view_exposes_system_meta_build9x_and_replay_section
 
 
 def test_technical_dashboard_view_handles_empty_governed_state_cleanly():
-    view = build_technical_dashboard_view(
+    payload = build_technical_dashboard_payload(
         _snapshot(infra=collect_infra_metrics()),
         active_modules=("interface_contracts", "monitoring", "ui"),
         active_engines=("engine_a", "engine_b"),
     )
 
+    view = build_technical_dashboard_view(payload)
     build9x = next(section for section in view.sections if section.title == "Build-9X")
     replay = next(section for section in view.sections if section.title == "Replay & Import")
     assert next(card for card in build9x.cards if card.key == "diagnostics_recent").value == "0"
@@ -307,12 +244,13 @@ def test_technical_dashboard_view_handles_empty_governed_state_cleanly():
 
 
 def test_technical_dashboard_view_projects_alerts_and_engine_staleness_without_prefilled_alerts():
-    view = build_technical_dashboard_view(
+    payload = build_technical_dashboard_payload(
         _snapshot(),
         active_modules=("interface_contracts", "meta_learning", "local_replay_runtime", "monitoring", "ui"),
         active_engines=("engine_a", "engine_b"),
     )
 
+    view = build_technical_dashboard_view(payload)
     system = next(section for section in view.sections if section.title == "System")
     alerts = next(section for section in view.sections if section.title == "Alerts")
     engines = next(card for card in system.cards if card.key == "engines_ab")
@@ -325,27 +263,24 @@ def test_technical_dashboard_view_projects_alerts_and_engine_staleness_without_p
 
 
 def test_technical_dashboard_view_surfaces_rejected_import_and_future_panels():
-    report, hypotheses, candidates, memory_records, review_export, bundle, _ = _governed_objects()
-    rejected = ArtifactImportDecision(
-        accepted=False,
-        normalized_promotion_state=PromotionState.REPLAY_ONLY,
-        review_state=ReviewState.NEEDS_REVISION,
-        reasons=("import target must start at SHADOW",),
-    )
-
-    view = build_technical_dashboard_view(
+    payload = build_technical_dashboard_payload(
         _snapshot(),
         active_modules=("meta_learning", "local_replay_runtime", "backtest_artifact_import", "monitoring", "ui"),
         active_engines=("engine_a", "engine_b"),
-        breakdown_report=report,
-        hypotheses=hypotheses,
-        candidates=candidates,
-        memory_records=memory_records,
-        review_export=review_export,
-        replay_bundle=bundle,
-        import_decision=rejected,
+        build9x_projection=_build9x_projection(),
+        replay_projection=ReplayImportProjection(
+            status="warning",
+            artifact_id="artifact-1",
+            artifact_kind="review_packet",
+            lineage_version="a.v2.1",
+            lifecycle_state="exported",
+            validation_status="needs_revision",
+            review_state="needs_revision",
+            rejection_reasons=("import target must start at SHADOW",),
+        ),
     )
 
+    view = build_technical_dashboard_view(payload)
     replay = next(section for section in view.sections if section.title == "Replay & Import")
     validation = next(card for card in replay.cards if card.key == "validation_status")
     reasons = next(card for card in replay.cards if card.key == "validation_reasons")
@@ -361,7 +296,8 @@ def test_technical_dashboard_view_surfaces_rejected_import_and_future_panels():
 
 
 def test_technical_dashboard_view_marks_missing_modules_and_engines_as_planned():
-    view = build_technical_dashboard_view(_snapshot(infra=collect_infra_metrics()))
+    payload = build_technical_dashboard_payload(_snapshot(infra=collect_infra_metrics()))
+    view = build_technical_dashboard_view(payload)
     system = next(section for section in view.sections if section.title == "System")
     modules = next(card for card in system.cards if card.key == "active_modules")
     engines = next(card for card in system.cards if card.key == "engines_ab")

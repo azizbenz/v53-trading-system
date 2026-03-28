@@ -10,6 +10,7 @@ from interface_contracts import AlertRecord, PairHealthLevel, ProfileId, Runtime
 
 
 HeadlineStatus = Literal["healthy", "warning", "critical"]
+ProjectionStatus = Literal["healthy", "warning", "critical", "info", "planned"]
 MetricKind = Literal["counter", "gauge", "state"]
 
 
@@ -122,6 +123,101 @@ class HealthDashboardPayload(TimestampedModel):
     controls_locked: bool = True
 
 
+class SystemProjection(BaseModel, frozen=True):
+    """Normalized system-level projection used by the technical dashboard."""
+
+    headline_status: HeadlineStatus
+    active_modules: tuple[str, ...] = ()
+    active_engines: tuple[str, ...] = ()
+    stale_engines: tuple[str, ...] = ()
+    build9x_status: ProjectionStatus = "planned"
+    replay_import_status: ProjectionStatus = "planned"
+    governed_extensions_detail: str = ""
+
+
+class Build9MetaProjection(BaseModel, frozen=True):
+    """Normalized Build-9 projection for technical supervision."""
+
+    dtr_coverage: float = Field(..., ge=0.0, le=1.0)
+    dtr_status: ProjectionStatus
+    cra_sterilization_rate: float = Field(..., ge=0.0, le=1.0)
+    cra_alert_count: int = Field(..., ge=0)
+    cra_status: ProjectionStatus
+    break_even_state: str = Field(..., min_length=1)
+    break_even_status: ProjectionStatus
+    break_even_drift_scopes: tuple[str, ...] = ()
+    edge_credible_count: int = Field(..., ge=0)
+    edge_degraded_count: int = Field(..., ge=0)
+    edge_surveillance_count: int = Field(..., ge=0)
+    edge_status: ProjectionStatus
+
+
+class Build9XProjection(BaseModel, frozen=True):
+    """Normalized Build-9X summary consumed by Build-10."""
+
+    status: ProjectionStatus
+    diagnostics_count: int = Field(..., ge=0)
+    diagnostics_summary: str = "No diagnostic report"
+    open_hypotheses: int = Field(..., ge=0)
+    total_hypotheses: int = Field(..., ge=0)
+    near_miss_count: int = Field(..., ge=0)
+    replay_candidate_count: int = Field(..., ge=0)
+    memory_record_count: int = Field(..., ge=0)
+    latest_memory_summary: str = "No memory records"
+    review_export_ready: bool = False
+    review_export_ref: str = ""
+
+
+class ReplayImportProjection(BaseModel, frozen=True):
+    """Normalized LOCAL_REPLAY / import projection consumed by Build-10."""
+
+    status: ProjectionStatus
+    artifact_id: str = "none"
+    artifact_kind: str = "No replay bundle exported"
+    lineage_version: str = "n/a"
+    lifecycle_state: str = "Awaiting LOCAL_REPLAY artifact"
+    validation_status: str = "not_run"
+    review_state: str = "No import review executed"
+    rejection_reasons: tuple[str, ...] = ()
+
+
+class AlertProjection(BaseModel, frozen=True):
+    """Normalized alert and operability projection."""
+
+    headline_status: HeadlineStatus
+    active_alert_count: int = Field(..., ge=0)
+    alert_ids: tuple[str, ...] = ()
+    queue_backlog: int = Field(..., ge=0)
+    stale_pair_count: int = Field(..., ge=0)
+    stale_pairs: tuple[str, ...] = ()
+    backlog_stale_status: ProjectionStatus
+    dtr_loss_count: int = Field(..., ge=0)
+    log_loss_count: int = Field(..., ge=0)
+    break_even_drift_scope_count: int = Field(..., ge=0)
+    edge_degraded_count: int = Field(..., ge=0)
+    loss_drift_status: ProjectionStatus
+
+
+class TechnicalDashboardPayload(TimestampedModel):
+    """Normalized Build-10 technical supervision payload."""
+
+    correlation_id: str = Field(..., min_length=1)
+    profile: ProfileId
+    runtime_mode: RuntimeMode
+    system: SystemProjection
+    portfolio: PortfolioMetrics
+    build9_meta: Build9MetaProjection
+    build9x: Build9XProjection
+    replay_import: ReplayImportProjection
+    alerts: AlertProjection
+    future_panels: tuple[str, ...] = (
+        "technical_supervision",
+        "build9x_diagnostics",
+        "artifact_import",
+        "observability_export",
+    )
+
+
 class MetricSample(BaseModel, frozen=True):
     """Single structured metric emitted by the minimal observability layer."""
 
@@ -151,6 +247,13 @@ __all__ = [
     "MonitoringSnapshot",
     "HealthDashboardPayload",
     "HeadlineStatus",
+    "ProjectionStatus",
+    "SystemProjection",
+    "Build9MetaProjection",
+    "Build9XProjection",
+    "ReplayImportProjection",
+    "AlertProjection",
+    "TechnicalDashboardPayload",
     "MetricKind",
     "MetricSample",
     "ObservabilityExport",
