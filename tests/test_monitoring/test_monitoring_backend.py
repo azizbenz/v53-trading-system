@@ -27,6 +27,7 @@ from meta_minimal.edge_tracker_prudent_minimal.edge_status_classifier import (
 )
 from monitoring import (
     Build9XProjection,
+    MicroLiveProjection,
     ReplayImportProjection,
     ShadowProjection,
     build_health_dashboard_payload,
@@ -419,6 +420,7 @@ def test_technical_dashboard_payload_normalizes_system_meta_and_governed_extensi
     assert payload.system.stale_engines == ("engine_b",)
     assert payload.system.build9x_status == "warning"
     assert payload.system.shadow_status == "planned"
+    assert payload.system.micro_live_status == "planned"
     assert payload.system.replay_import_status == "warning"
     assert payload.build9_meta.break_even_state == "drift_alert"
     assert payload.build9x.review_export_ready is True
@@ -456,6 +458,8 @@ def test_technical_dashboard_payload_defaults_governed_sections_without_raw_prot
     assert payload.build9x.diagnostics_count == 0
     assert payload.shadow.status == "planned"
     assert payload.shadow.verdict == "not_run"
+    assert payload.micro_live.status == "planned"
+    assert payload.micro_live.verdict == "not_run"
     assert payload.replay_import.status == "info"
     assert payload.replay_import.validation_status == "not_run"
     assert payload.alerts.backlog_stale_status == "healthy"
@@ -508,3 +512,54 @@ def test_technical_dashboard_payload_accepts_shadow_projection_summary():
     assert payload.shadow.run_state == "completed"
     assert payload.shadow.validation_set_ref == "shadow_validation:v1"
     assert payload.shadow.blocking_reasons == ("review export missing",)
+
+
+def test_technical_dashboard_payload_accepts_micro_live_projection_summary():
+    dtr_summary, cra_report, break_even_report, edge_report = _sample_build9_reports()
+    snapshot = collect_monitoring_snapshot(
+        correlation_id="corr-micro-projection",
+        profile=ProfileId.LIGHT,
+        runtime_mode=RuntimeMode.SHADOW,
+        timestamp_ms=1_700_000_000_000,
+        portfolio=collect_portfolio_metrics(
+            allocated_opportunities=1,
+            gross_capacity_used_pct=18.0,
+            loss_capacity_used_pct=4.0,
+            beta_utilization=0.15,
+            capital_deployed_usdt=700.0,
+            ce_net=0.0009,
+        ),
+        infra=collect_infra_metrics(queue_backlog=20),
+        meta=collect_meta_metrics(dtr_summary, cra_report, break_even_report, edge_report),
+    )
+
+    payload = build_technical_dashboard_payload(
+        snapshot,
+        active_modules=("monitoring", "ui", "protocols"),
+        active_engines=("engine_a", "engine_b"),
+        micro_live_projection=MicroLiveProjection(
+            status="healthy",
+            run_state="ready_to_probe",
+            verdict="allowed_to_probe",
+            shadow_run_id="shadow-run-1",
+            shadow_verdict="accepted",
+            allowed_to_probe=True,
+            requested_total_notional_usdt=20.0,
+            approved_total_notional_usdt=20.0,
+            approved_pair_notional_usdt=10.0,
+            order_probe_limit=2,
+            planned_pairs=("BTCUSDT", "ETHUSDT"),
+            planned_engines=("engine_a", "engine_b"),
+            import_artifact_id="artifact-micro-1",
+            import_lineage_version="a.v1.0.r1",
+            observability_ready=True,
+            halt_ready=True,
+            onboarding_ready=True,
+            blocking_reasons=(),
+        ),
+    )
+
+    assert payload.system.micro_live_status == "healthy"
+    assert payload.micro_live.run_state == "ready_to_probe"
+    assert payload.micro_live.allowed_to_probe is True
+    assert payload.micro_live.planned_pairs == ("BTCUSDT", "ETHUSDT")

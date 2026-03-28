@@ -43,6 +43,7 @@ def test_export_technical_dashboard_writes_availability_view():
         assert "availability_only" in html
         assert "No monitoring snapshot loaded" in html
         assert "Build-11 Shadow" in html
+        assert "Build-12 Micro-live" in html
         assert "Build-14 Read-only" in html
         assert "Governance &amp; Readiness" in html
         assert artifacts.payload_json_path is None
@@ -70,13 +71,16 @@ def test_export_technical_dashboard_writes_demo_sidecars():
 
         assert "demo payload" in html.lower()
         assert "Build-11 Shadow" in html
+        assert "Build-12 Micro-live" in html
         assert "Strategy Onboarding" in html
         assert "Build-14 Read-only" in html
         assert "Observability Export" in html
         assert '"correlation_id": "corr-tech-demo"' in payload_json
         assert '"shadow"' in payload_json
+        assert '"micro_live"' in payload_json
         assert "v53_system_headline_status" in observability_text
         assert "v53_shadow_run_state" in observability_text
+        assert "v53_micro_live_run_state" in observability_text
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)
 

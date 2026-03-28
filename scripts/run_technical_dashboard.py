@@ -54,6 +54,7 @@ from meta_minimal.edge_tracker_prudent_minimal.edge_status_classifier import (  
 )
 from monitoring import (  # noqa: E402
     Build9XProjection,
+    MicroLiveProjection,
     ReplayImportProjection,
     build_observability_export,
     build_technical_dashboard_payload,
@@ -65,8 +66,11 @@ from monitoring import (  # noqa: E402
     collect_portfolio_metrics,
 )
 from protocols import (  # noqa: E402
+    build_micro_live_input_from_shadow,
+    build_micro_live_projection,
     build_shadow_input_from_payloads,
     build_shadow_projection,
+    run_micro_live_gate,
     run_shadow_validation,
 )
 from smoke_bootstrap_recovery import evaluate_shadow_readiness  # noqa: E402
@@ -423,6 +427,33 @@ def _build_demo_shadow_projection(payload):
     return summary, build_shadow_projection(summary)
 
 
+def _build_demo_micro_live_projection(
+    shadow_summary,
+    payload,
+    onboarding_decision,
+) -> MicroLiveProjection:
+    micro_live_input = build_micro_live_input_from_shadow(
+        shadow_summary,
+        payload,
+        probe_pairs=("BTCUSDT", "ETHUSDT"),
+        requested_total_notional_usdt=40.0,
+        requested_pair_notional_usdt=20.0,
+        max_total_notional_usdt=50.0,
+        max_pair_notional_usdt=25.0,
+        order_probe_limit=2,
+        observability_ready=True,
+        halt_ready=True,
+        onboarding_accepted=onboarding_decision.accepted,
+        onboarding_review_state=onboarding_decision.review_state,
+        onboarding_reasons=onboarding_decision.reasons,
+    )
+    summary = run_micro_live_gate(
+        micro_live_input,
+        run_id="micro-live-demo-run",
+    )
+    return build_micro_live_projection(summary)
+
+
 def _build_build14_section(payload) -> DashboardSection:
     observation = Build14ObservationInput(
         correlation_id=payload.correlation_id,
@@ -477,9 +508,9 @@ def _build_readiness_section() -> DashboardSection:
             DashboardCard(
                 key="protocol_guardrails",
                 label="Protocol Guardrails",
-                value="shadow_governed",
+                value="shadow_and_micro_governed",
                 status="info",
-                detail="Build-11 Shadow is opened in governed non-live mode. Build-12/13 remain closed.",
+                detail="Build-11 Shadow and Build-12 Micro-live are opened in governed mode. Build-13 remains closed.",
             ),
         ),
     )
@@ -565,7 +596,7 @@ def _availability_sections() -> tuple[DashboardSection, ...]:
                 DashboardCard(
                     key="governed_extensions",
                     label="Governed Extensions",
-                    value="9X=implemented / shadow=implemented / replay=implemented",
+                    value="9X=implemented / shadow=implemented / micro=implemented / replay=implemented",
                     status="info",
                     detail="No runtime snapshot loaded; rendered here as available capability only.",
                 ),
@@ -663,6 +694,53 @@ def _availability_sections() -> tuple[DashboardSection, ...]:
             ),
         ),
         DashboardSection(
+            title="Build-12 Micro-live",
+            cards=(
+                DashboardCard(
+                    key="micro_live_run_state",
+                    label="Run State",
+                    value="not_run",
+                    status="info",
+                    detail="The launcher can project Micro-live, but no governed Micro-live run has been materialized in availability mode.",
+                ),
+                DashboardCard(
+                    key="micro_live_verdict",
+                    label="Probe Verdict",
+                    value="not available",
+                    status="planned",
+                    detail="Requires a completed Shadow summary, accepted onboarding, and governed micro-live budget inputs.",
+                ),
+                DashboardCard(
+                    key="micro_live_budget",
+                    label="Budget",
+                    value="not available",
+                    status="planned",
+                    detail="No governed micro-live plan has been prepared.",
+                ),
+                DashboardCard(
+                    key="micro_live_surface",
+                    label="Probe Surface",
+                    value="not available",
+                    status="planned",
+                    detail="No governed probe pairs or engines have been selected.",
+                ),
+                DashboardCard(
+                    key="micro_live_guardrails",
+                    label="Guardrails",
+                    value="not available",
+                    status="planned",
+                    detail="Observability, halt, and onboarding gates have not been materialized in availability mode.",
+                ),
+                DashboardCard(
+                    key="micro_live_blocking_reasons",
+                    label="Blocking Reasons",
+                    value="0",
+                    status="info",
+                    detail="No Micro-live run executed, therefore no blocking reason collected.",
+                ),
+            ),
+        ),
+        DashboardSection(
             title="Replay & Import",
             cards=(
                 DashboardCard(key="artifact_manifest", label="Artifact Manifest", value="not available", status="planned", detail="No replay bundle loaded."),
@@ -714,7 +792,7 @@ def _availability_sections() -> tuple[DashboardSection, ...]:
                     label="Launcher Mode",
                     value="availability_only",
                     status="info",
-                    detail="Use --demo to render a full governed sample, including Build-11 Shadow, without claiming a live runtime snapshot.",
+                    detail="Use --demo to render a full governed sample, including Build-11 Shadow and Build-12 Micro-live, without claiming a live runtime snapshot.",
                 ),
             ),
         ),
@@ -735,12 +813,13 @@ def export_technical_dashboard(output_dir: Path, *, demo: bool = False) -> Dashb
         "technical_supervision",
         "build9x_diagnostics",
         "shadow_supervision",
+        "micro_live_supervision",
         "artifact_import",
         "observability_export",
     )
     footer_notes = (
         "One V5.3 only. No BACKTEST_PROFILE. No local/VPS fork.",
-        "Build-11 Shadow is governed and non-live. Build-12+ remain closed.",
+        "Build-11 Shadow and Build-12 Micro-live are governed. Build-13 remains closed.",
     )
 
     if demo:
@@ -764,13 +843,19 @@ def export_technical_dashboard(output_dir: Path, *, demo: bool = False) -> Dashb
             build9x_projection=build9x_projection,
             replay_projection=replay_projection,
         )
-        _, shadow_projection = _build_demo_shadow_projection(payload)
+        shadow_summary, shadow_projection = _build_demo_shadow_projection(payload)
+        micro_live_projection = _build_demo_micro_live_projection(
+            shadow_summary,
+            payload,
+            onboarding_decision,
+        )
         payload = build_technical_dashboard_payload(
             snapshot,
             active_modules=active_modules,
             active_engines=active_engines,
             build9x_projection=build9x_projection,
             shadow_projection=shadow_projection,
+            micro_live_projection=micro_live_projection,
             replay_projection=replay_projection,
         )
         view = build_technical_dashboard_view(payload)
@@ -786,7 +871,7 @@ def export_technical_dashboard(output_dir: Path, *, demo: bool = False) -> Dashb
             source_mode="demo_payload",
             source_note=(
                 "This page is rendered from a governed local demo payload built with the real "
-                "Build-10, Build-9X, Build-11 Shadow, replay/import, onboarding, and Build-14 readers. "
+                "Build-10, Build-9X, Build-11 Shadow, Build-12 Micro-live, replay/import, onboarding, and Build-14 readers. "
                 "It is not a live runtime snapshot."
             ),
             sections=sections,

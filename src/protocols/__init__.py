@@ -1,6 +1,10 @@
-"""Minimal real Build-11 Shadow runtime surface."""
+"""Minimal real Build-11/12 protocol runtime surface."""
 
 from protocols.contracts import (
+    MicroLiveDecision,
+    MicroLiveExecutionPlan,
+    MicroLiveInput,
+    MicroLiveRunSummary,
     ShadowComparison,
     ShadowDecision,
     ShadowInput,
@@ -9,16 +13,30 @@ from protocols.contracts import (
     ShadowValidationSet,
 )
 from protocols.enums import (
+    MicroLiveRunState,
+    MicroLiveVerdict,
     ShadowComparisonStatus,
     ShadowDivergenceSeverity,
     ShadowRunState,
     ShadowVerdict,
 )
 from protocols.errors import (
+    MicroLiveBudgetError,
+    MicroLiveGateError,
+    MicroLiveInputError,
+    MicroLiveProtocolError,
     ShadowGateError,
     ShadowInputError,
     ShadowLineageError,
     ShadowProtocolError,
+)
+from protocols.micro_live_dashboard import (
+    build_micro_live_dashboard_section,
+    build_micro_live_projection,
+)
+from protocols.micro_live_runtime import (
+    build_micro_live_input_from_shadow,
+    run_micro_live_gate,
 )
 from protocols.shadow_dashboard import (
     build_shadow_dashboard_section,
@@ -31,6 +49,20 @@ from protocols.shadow_runtime import (
 )
 
 __all__ = [
+    "MicroLiveInput",
+    "MicroLiveDecision",
+    "MicroLiveExecutionPlan",
+    "MicroLiveRunSummary",
+    "MicroLiveRunState",
+    "MicroLiveVerdict",
+    "MicroLiveProtocolError",
+    "MicroLiveInputError",
+    "MicroLiveGateError",
+    "MicroLiveBudgetError",
+    "build_micro_live_input_from_shadow",
+    "run_micro_live_gate",
+    "build_micro_live_projection",
+    "build_micro_live_dashboard_section",
     "ShadowTruthSet",
     "ShadowValidationSet",
     "ShadowInput",

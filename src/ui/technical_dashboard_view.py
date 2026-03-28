@@ -71,6 +71,7 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LightD
                     value=(
                         f"9X={payload.system.build9x_status} / "
                         f"shadow={payload.system.shadow_status} / "
+                        f"micro={payload.system.micro_live_status} / "
                         f"replay={payload.system.replay_import_status}"
                     ),
                     status=(
@@ -78,12 +79,14 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LightD
                         if "critical" in {
                             payload.system.build9x_status,
                             payload.system.shadow_status,
+                            payload.system.micro_live_status,
                             payload.system.replay_import_status,
                         }
                         else "warning"
                         if "warning" in {
                             payload.system.build9x_status,
                             payload.system.shadow_status,
+                            payload.system.micro_live_status,
                             payload.system.replay_import_status,
                         }
                         else "info"
@@ -306,6 +309,82 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LightD
                         else payload.shadow.status
                     ),
                     detail=_join(payload.shadow.blocking_reasons, empty="No blocking reason"),
+                ),
+            ),
+        ),
+        DashboardSection(
+            title="Build-12 Micro-live",
+            cards=(
+                DashboardCard(
+                    key="micro_live_run_state",
+                    label="Run State",
+                    value=payload.micro_live.run_state,
+                    status=payload.micro_live.status,
+                    detail=f"shadow_run={payload.micro_live.shadow_run_id or 'n/a'}",
+                ),
+                DashboardCard(
+                    key="micro_live_verdict",
+                    label="Probe Verdict",
+                    value=payload.micro_live.verdict,
+                    status=payload.micro_live.status,
+                    detail=f"shadow_verdict={payload.micro_live.shadow_verdict}",
+                ),
+                DashboardCard(
+                    key="micro_live_budget",
+                    label="Budget",
+                    value=(
+                        f"approved={payload.micro_live.approved_total_notional_usdt:.2f} / "
+                        f"pair={payload.micro_live.approved_pair_notional_usdt:.2f}"
+                    ),
+                    status=payload.micro_live.status,
+                    detail=f"requested={payload.micro_live.requested_total_notional_usdt:.2f}",
+                ),
+                DashboardCard(
+                    key="micro_live_surface",
+                    label="Probe Surface",
+                    value=(
+                        f"pairs={len(payload.micro_live.planned_pairs)} / "
+                        f"engines={len(payload.micro_live.planned_engines)} / "
+                        f"orders={payload.micro_live.order_probe_limit}"
+                    ),
+                    status=(
+                        "info"
+                        if payload.micro_live.planned_pairs or payload.micro_live.planned_engines
+                        else payload.micro_live.status
+                    ),
+                    detail=_join(payload.micro_live.planned_pairs, empty="No probe surface planned"),
+                ),
+                DashboardCard(
+                    key="micro_live_guardrails",
+                    label="Guardrails",
+                    value=(
+                        f"obs={'ready' if payload.micro_live.observability_ready else 'missing'} / "
+                        f"halt={'ready' if payload.micro_live.halt_ready else 'missing'} / "
+                        f"onboarding={'ready' if payload.micro_live.onboarding_ready else 'missing'}"
+                    ),
+                    status=(
+                        "healthy"
+                        if payload.micro_live.observability_ready
+                        and payload.micro_live.halt_ready
+                        and payload.micro_live.onboarding_ready
+                        else "critical"
+                        if payload.micro_live.status != "planned"
+                        else "planned"
+                    ),
+                    detail=payload.micro_live.import_lineage_version,
+                ),
+                DashboardCard(
+                    key="micro_live_blocking_reasons",
+                    label="Blocking Reasons",
+                    value=str(len(payload.micro_live.blocking_reasons)),
+                    status=(
+                        "critical"
+                        if payload.micro_live.blocking_reasons
+                        else "healthy"
+                        if payload.micro_live.status == "healthy"
+                        else payload.micro_live.status
+                    ),
+                    detail=_join(payload.micro_live.blocking_reasons, empty="No blocking reason"),
                 ),
             ),
         ),

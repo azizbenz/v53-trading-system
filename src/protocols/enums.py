@@ -1,4 +1,4 @@
-"""Enums for the minimal Build-11 Shadow runtime."""
+"""Enums for the minimal real Build-11/12 protocol runtimes."""
 
 from __future__ import annotations
 
@@ -39,9 +39,27 @@ class ShadowDivergenceSeverity(StrEnum):
     CRITICAL = "critical"
 
 
+class MicroLiveRunState(StrEnum):
+    """Lifecycle state of a governed Build-12 Micro-live run."""
+
+    PREPARED = "prepared"
+    READY_TO_PROBE = "ready_to_probe"
+    BLOCKED = "blocked"
+
+
+class MicroLiveVerdict(StrEnum):
+    """Minimal gating verdict for Build-12 Micro-live."""
+
+    ALLOWED_TO_PROBE = "allowed_to_probe"
+    DRY_RUN_ONLY = "dry_run_only"
+    BLOCKED = "blocked"
+
+
 __all__ = [
     "ShadowRunState",
     "ShadowVerdict",
     "ShadowComparisonStatus",
     "ShadowDivergenceSeverity",
+    "MicroLiveRunState",
+    "MicroLiveVerdict",
 ]

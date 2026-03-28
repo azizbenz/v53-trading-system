@@ -1,0 +1,311 @@
+"""Runtime tests for the minimal real Build-12 Micro-live gate."""
+
+from __future__ import annotations
+
+import pytest
+
+from interface_contracts import PairHealthLevel, ProfileId, ReviewState, RuntimeMode
+from monitoring import (
+    AlertProjection,
+    Build9MetaProjection,
+    Build9XProjection,
+    MicroLiveProjection,
+    PortfolioMetrics,
+    ReplayImportProjection,
+    ShadowProjection,
+    SystemProjection,
+    TechnicalDashboardPayload,
+)
+from protocols import (
+    MicroLiveInputError,
+    MicroLiveVerdict,
+    ShadowComparison,
+    ShadowComparisonStatus,
+    ShadowDecision,
+    ShadowDivergenceSeverity,
+    ShadowRunState,
+    ShadowRunSummary,
+    ShadowVerdict,
+    build_micro_live_input_from_shadow,
+    run_micro_live_gate,
+)
+from interface_contracts import PromotionState
+
+
+def _shadow_payload(
+    *,
+    correlation_id: str = "corr-micro",
+    runtime_mode: RuntimeMode = RuntimeMode.SHADOW,
+    profile: ProfileId = ProfileId.LIGHT,
+    validation_status: str = "accepted",
+    artifact_id: str = "artifact-1",
+    lineage_version: str = "a.v1.0.r1",
+) -> TechnicalDashboardPayload:
+    return TechnicalDashboardPayload(
+        timestamp_ms=1_700_000_000_000,
+        correlation_id=correlation_id,
+        profile=profile,
+        runtime_mode=runtime_mode,
+        system=SystemProjection(
+            headline_status="healthy",
+            active_modules=("protocols", "monitoring", "ui"),
+            active_engines=("engine_a", "engine_b"),
+            stale_engines=(),
+            build9x_status="info",
+            shadow_status="healthy",
+            micro_live_status="planned",
+            replay_import_status="healthy",
+            governed_extensions_detail="Build-9X, Shadow, Micro-live, and replay/import remain governed.",
+        ),
+        portfolio=PortfolioMetrics(
+            allocated_opportunities=2,
+            gross_capacity_used_pct=12.0,
+            loss_capacity_used_pct=4.0,
+            beta_utilization=0.2,
+            capital_deployed_usdt=200.0,
+            ce_net=0.0011,
+        ),
+        build9_meta=Build9MetaProjection(
+            dtr_coverage=0.9,
+            dtr_status="healthy",
+            cra_sterilization_rate=0.1,
+            cra_alert_count=0,
+            cra_status="healthy",
+            break_even_state="stable",
+            break_even_status="healthy",
+            break_even_drift_scopes=(),
+            edge_credible_count=1,
+            edge_degraded_count=0,
+            edge_surveillance_count=0,
+            edge_status="healthy",
+        ),
+        build9x=Build9XProjection(
+            status="info",
+            diagnostics_count=0,
+            diagnostics_summary="No diagnostic report",
+            open_hypotheses=0,
+            total_hypotheses=0,
+            near_miss_count=0,
+            replay_candidate_count=0,
+            memory_record_count=0,
+            latest_memory_summary="No memory records",
+            review_export_ready=True,
+            review_export_ref="exports/review.md",
+        ),
+        shadow=ShadowProjection(
+            status="healthy",
+            run_state="completed",
+            verdict="accepted",
+            truth_set_ref="truth-1",
+            validation_set_ref="validation-1",
+            divergent_comparison_count=0,
+            blocking_comparison_count=0,
+            total_comparison_count=7,
+            build9x_diagnostics_count=0,
+            open_hypotheses=0,
+            replay_candidate_count=0,
+            review_export_ready=True,
+            import_artifact_id=artifact_id,
+            import_lineage_version=lineage_version,
+            blocking_reasons=(),
+            manual_review_required=False,
+        ),
+        micro_live=MicroLiveProjection(),
+        replay_import=ReplayImportProjection(
+            status="healthy" if validation_status == "accepted" else "warning",
+            artifact_id=artifact_id,
+            artifact_kind="review_packet",
+            lineage_version=lineage_version,
+            lifecycle_state="exported",
+            validation_status=validation_status,
+            review_state="pending" if validation_status == "accepted" else "needs_revision",
+            rejection_reasons=(),
+        ),
+        alerts=AlertProjection(
+            headline_status="healthy",
+            active_alert_count=0,
+            alert_ids=(),
+            queue_backlog=0,
+            stale_pair_count=0,
+            stale_pairs=(),
+            backlog_stale_status="healthy",
+            dtr_loss_count=0,
+            log_loss_count=0,
+            break_even_drift_scope_count=0,
+            edge_degraded_count=0,
+            loss_drift_status="healthy",
+        ),
+    )
+
+
+def _shadow_summary(
+    *,
+    verdict: ShadowVerdict = ShadowVerdict.ACCEPTED,
+    run_state: ShadowRunState = ShadowRunState.COMPLETED,
+) -> ShadowRunSummary:
+    return ShadowRunSummary(
+        run_id="shadow-run-1",
+        correlation_id="corr-micro",
+        run_state=run_state,
+        truth_set_ref="truth-1",
+        validation_set_ref="validation-1",
+        comparisons=(
+            ShadowComparison(
+                comparison_id="cmp-1",
+                metric_name="dtr_coverage_drop",
+                baseline_value=0.9,
+                candidate_value=0.9,
+                delta=0.0,
+                threshold=0.05,
+                status=ShadowComparisonStatus.MATCHING,
+                severity=ShadowDivergenceSeverity.INFO,
+                blocking=False,
+                summary="matched",
+            ),
+        ),
+        decision=ShadowDecision(
+            accepted=verdict == ShadowVerdict.ACCEPTED,
+            verdict=verdict,
+            normalized_promotion_state=(
+                PromotionState.SHADOW_CANDIDATE
+                if verdict == ShadowVerdict.ACCEPTED
+                else PromotionState.REPLAY_ONLY
+            ),
+            review_state=ReviewState.PENDING if verdict == ShadowVerdict.ACCEPTED else ReviewState.NEEDS_REVISION,
+            blocking_reasons=(),
+            manual_review_required=False,
+        ),
+        import_artifact_id="artifact-1",
+        import_lineage_version="a.v1.0.r1",
+        build9x_diagnostics_count=0,
+        open_hypotheses=0,
+        replay_candidate_count=0,
+        review_export_ready=True,
+    )
+
+
+def test_build_micro_live_input_from_shadow_maps_governed_inputs():
+    micro_input = build_micro_live_input_from_shadow(
+        _shadow_summary(),
+        _shadow_payload(),
+        probe_pairs=("BTCUSDT", "ETHUSDT"),
+        requested_total_notional_usdt=20.0,
+        requested_pair_notional_usdt=10.0,
+        max_total_notional_usdt=25.0,
+        max_pair_notional_usdt=12.5,
+        observability_ready=True,
+        halt_ready=True,
+        onboarding_accepted=True,
+    )
+
+    assert micro_input.runtime_mode == RuntimeMode.MICRO_LIVE
+    assert micro_input.shadow_run_id == "shadow-run-1"
+    assert micro_input.import_validation_status == "accepted"
+
+
+def test_build_micro_live_input_from_shadow_rejects_non_shadow_source_payload():
+    with pytest.raises(
+        MicroLiveInputError,
+        match="source payload must originate from runtime_mode=SHADOW",
+    ):
+        build_micro_live_input_from_shadow(
+            _shadow_summary(),
+            _shadow_payload(runtime_mode=RuntimeMode.MICRO_LIVE),
+            probe_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=20.0,
+            requested_pair_notional_usdt=10.0,
+            max_total_notional_usdt=25.0,
+            max_pair_notional_usdt=12.5,
+            observability_ready=True,
+            halt_ready=True,
+            onboarding_accepted=True,
+        )
+
+
+def test_run_micro_live_gate_allows_probe_when_shadow_and_governance_are_ready():
+    summary = run_micro_live_gate(
+        build_micro_live_input_from_shadow(
+            _shadow_summary(),
+            _shadow_payload(),
+            probe_pairs=("BTCUSDT", "ETHUSDT"),
+            requested_total_notional_usdt=20.0,
+            requested_pair_notional_usdt=10.0,
+            max_total_notional_usdt=25.0,
+            max_pair_notional_usdt=12.5,
+            observability_ready=True,
+            halt_ready=True,
+            onboarding_accepted=True,
+        )
+    )
+
+    assert summary.run_state.value == "ready_to_probe"
+    assert summary.decision.verdict == MicroLiveVerdict.ALLOWED_TO_PROBE
+    assert summary.decision.allowed_to_probe is True
+    assert summary.execution_plan.approved_total_notional_usdt == 20.0
+
+
+def test_run_micro_live_gate_blocks_when_observability_or_onboarding_is_missing():
+    summary = run_micro_live_gate(
+        build_micro_live_input_from_shadow(
+            _shadow_summary(),
+            _shadow_payload(),
+            probe_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=20.0,
+            requested_pair_notional_usdt=10.0,
+            max_total_notional_usdt=25.0,
+            max_pair_notional_usdt=12.5,
+            observability_ready=False,
+            halt_ready=True,
+            onboarding_accepted=False,
+            onboarding_reasons=("manual sign-off missing",),
+        )
+    )
+
+    assert summary.decision.verdict == MicroLiveVerdict.BLOCKED
+    assert "Build-10 observability must be ready before Micro-live capital exposure" in summary.decision.blocking_reasons
+    assert "strategy onboarding must be accepted before Micro-live" in summary.decision.blocking_reasons
+
+
+def test_run_micro_live_gate_stays_dry_run_only_when_shadow_needs_review():
+    summary = run_micro_live_gate(
+        build_micro_live_input_from_shadow(
+            _shadow_summary(verdict=ShadowVerdict.NEEDS_REVIEW),
+            _shadow_payload(),
+            probe_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=20.0,
+            requested_pair_notional_usdt=10.0,
+            max_total_notional_usdt=25.0,
+            max_pair_notional_usdt=12.5,
+            observability_ready=True,
+            halt_ready=True,
+            onboarding_accepted=True,
+        )
+    )
+
+    assert summary.decision.verdict == MicroLiveVerdict.DRY_RUN_ONLY
+    assert summary.decision.allowed_to_probe is False
+    assert summary.execution_plan.dry_run_only is True
+
+
+def test_run_micro_live_gate_keeps_hard_blockers_stronger_than_needs_review():
+    summary = run_micro_live_gate(
+        build_micro_live_input_from_shadow(
+            _shadow_summary(verdict=ShadowVerdict.NEEDS_REVIEW),
+            _shadow_payload(),
+            probe_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=20.0,
+            requested_pair_notional_usdt=10.0,
+            max_total_notional_usdt=25.0,
+            max_pair_notional_usdt=12.5,
+            observability_ready=False,
+            halt_ready=True,
+            onboarding_accepted=True,
+        )
+    )
+
+    assert summary.decision.verdict == MicroLiveVerdict.BLOCKED
+    assert summary.run_state == summary.run_state.__class__.BLOCKED
+    assert (
+        "Build-10 observability must be ready before Micro-live capital exposure"
+        in summary.decision.blocking_reasons
+    )

@@ -8,6 +8,12 @@ from pydantic import ValidationError
 import protocols
 from interface_contracts import ProfileId, PromotionState, ReviewState, RuntimeMode
 from protocols import (
+    MicroLiveDecision,
+    MicroLiveExecutionPlan,
+    MicroLiveInput,
+    MicroLiveRunState,
+    MicroLiveRunSummary,
+    MicroLiveVerdict,
     ShadowComparison,
     ShadowComparisonStatus,
     ShadowDecision,
@@ -23,6 +29,14 @@ from protocols import (
 
 def test_protocols_exports_expected_symbols():
     assert {
+        "MicroLiveInput",
+        "MicroLiveDecision",
+        "MicroLiveExecutionPlan",
+        "MicroLiveRunSummary",
+        "build_micro_live_input_from_shadow",
+        "run_micro_live_gate",
+        "build_micro_live_projection",
+        "build_micro_live_dashboard_section",
         "ShadowTruthSet",
         "ShadowValidationSet",
         "ShadowInput",
@@ -244,3 +258,82 @@ def test_shadow_validation_set_accepts_coherent_import_state():
 
     assert validation.accepted_import is True
     assert validation.import_validation_status == "accepted"
+
+
+def test_micro_live_input_rejects_wrong_runtime_mode_and_budget_overflow():
+    with pytest.raises(ValidationError):
+        MicroLiveInput(
+            correlation_id="corr-micro",
+            profile=ProfileId.LIGHT,
+            runtime_mode=RuntimeMode.SHADOW,
+            shadow_run_id="shadow-run-1",
+            shadow_truth_set_ref="truth-1",
+            shadow_validation_set_ref="validation-1",
+            shadow_verdict=ShadowVerdict.ACCEPTED,
+            shadow_run_state=ShadowRunState.COMPLETED,
+            import_artifact_id="artifact-1",
+            import_lineage_version="a.v1.0.r1",
+            import_validation_status="accepted",
+            onboarding_accepted=True,
+            review_export_ready=True,
+            observability_ready=True,
+            halt_ready=True,
+            active_engines=("engine_a",),
+            probe_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=20.0,
+            requested_pair_notional_usdt=10.0,
+            max_total_notional_usdt=15.0,
+            max_pair_notional_usdt=10.0,
+        )
+
+
+def test_micro_live_decision_requires_allowed_flag_to_match_verdict():
+    with pytest.raises(ValidationError):
+        MicroLiveDecision(
+            allowed_to_probe=False,
+            verdict=MicroLiveVerdict.ALLOWED_TO_PROBE,
+            normalized_promotion_state=PromotionState.MICRO_LIVE_CANDIDATE,
+            review_state=ReviewState.PENDING,
+        )
+
+
+def test_micro_live_run_summary_counts_planned_surface():
+    summary = MicroLiveRunSummary(
+        run_id="micro-run-1",
+        correlation_id="corr-micro",
+        run_state=MicroLiveRunState.READY_TO_PROBE,
+        shadow_run_id="shadow-run-1",
+        shadow_verdict=ShadowVerdict.ACCEPTED,
+        decision=MicroLiveDecision(
+            allowed_to_probe=True,
+            verdict=MicroLiveVerdict.ALLOWED_TO_PROBE,
+            normalized_promotion_state=PromotionState.MICRO_LIVE_CANDIDATE,
+            review_state=ReviewState.PENDING,
+            approved_total_notional_usdt=20.0,
+            approved_pair_notional_usdt=10.0,
+            blocking_reasons=(),
+            manual_review_required=False,
+        ),
+        execution_plan=MicroLiveExecutionPlan(
+            plan_id="micro-plan-1",
+            import_artifact_id="artifact-1",
+            import_lineage_version="a.v1.0.r1",
+            planned_engines=("engine_a", "engine_b"),
+            planned_pairs=("BTCUSDT", "ETHUSDT"),
+            requested_total_notional_usdt=20.0,
+            approved_total_notional_usdt=20.0,
+            approved_pair_notional_usdt=10.0,
+            order_probe_limit=2,
+            dry_run_only=False,
+            halt_guard_required=True,
+        ),
+        import_artifact_id="artifact-1",
+        import_lineage_version="a.v1.0.r1",
+        observability_ready=True,
+        halt_ready=True,
+        onboarding_ready=True,
+    )
+
+    assert summary.planned_pair_count == 2
+    assert summary.planned_engine_count == 2
+    assert summary.blocking_reason_count == 0

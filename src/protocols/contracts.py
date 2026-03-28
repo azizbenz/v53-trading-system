@@ -1,11 +1,13 @@
-"""Governed contracts for the minimal real Build-11 Shadow runtime."""
+"""Governed contracts for the minimal real Build-11/12 runtimes."""
 
 from __future__ import annotations
 
 from pydantic import BaseModel, Field, model_validator
 
-from interface_contracts import ProfileId, PromotionState, ReviewState, RuntimeMode
+from interface_contracts import LIGHT_PAIRS, ProfileId, PromotionState, ReviewState, RuntimeMode
 from protocols.enums import (
+    MicroLiveRunState,
+    MicroLiveVerdict,
     ShadowComparisonStatus,
     ShadowDivergenceSeverity,
     ShadowRunState,
@@ -14,6 +16,7 @@ from protocols.enums import (
 
 
 _ACCEPTED_IMPORT_STATUSES = frozenset({"accepted"})
+_MICRO_LIVE_ALLOWED_ENGINES = frozenset({"engine_a", "engine_b"})
 
 
 class ShadowTruthSet(BaseModel, frozen=True):
@@ -162,6 +165,171 @@ class ShadowRunSummary(BaseModel, frozen=True):
         )
 
 
+class MicroLiveInput(BaseModel, frozen=True):
+    """Single governed input entering the minimal Build-12 Micro-live gate."""
+
+    correlation_id: str = Field(..., min_length=1)
+    profile: ProfileId = ProfileId.LIGHT
+    runtime_mode: RuntimeMode = RuntimeMode.MICRO_LIVE
+    shadow_run_id: str = Field(..., min_length=1)
+    shadow_truth_set_ref: str = Field(..., min_length=1)
+    shadow_validation_set_ref: str = Field(..., min_length=1)
+    shadow_verdict: ShadowVerdict
+    shadow_run_state: ShadowRunState
+    shadow_blocking_reasons: tuple[str, ...] = ()
+    import_artifact_id: str = Field(..., min_length=1)
+    import_lineage_version: str = Field(..., min_length=1)
+    import_validation_status: str = Field(..., min_length=1)
+    onboarding_accepted: bool = False
+    onboarding_review_state: ReviewState = ReviewState.PENDING
+    onboarding_reasons: tuple[str, ...] = ()
+    review_export_ready: bool = False
+    observability_ready: bool = False
+    halt_ready: bool = False
+    active_engines: tuple[str, ...] = ()
+    probe_pairs: tuple[str, ...] = ()
+    requested_total_notional_usdt: float = Field(..., gt=0.0)
+    requested_pair_notional_usdt: float = Field(..., gt=0.0)
+    max_total_notional_usdt: float = Field(..., gt=0.0)
+    max_pair_notional_usdt: float = Field(..., gt=0.0)
+    order_probe_limit: int = Field(default=3, ge=1, le=10)
+    backtest_profile: str | None = None
+    creates_profile_fork: bool = False
+    automatic_live_promotion_requested: bool = False
+
+    @model_validator(mode="after")
+    def validate_governance(self) -> "MicroLiveInput":
+        if self.profile != ProfileId.LIGHT:
+            raise ValueError("Build-12 Micro-live opens in LIGHT profile only")
+        if self.runtime_mode != RuntimeMode.MICRO_LIVE:
+            raise ValueError("Build-12 Micro-live requires runtime_mode=MICRO_LIVE")
+        if self.backtest_profile is not None:
+            raise ValueError("BACKTEST_PROFILE is forbidden in the unified V5.3")
+        if self.creates_profile_fork:
+            raise ValueError("Local/VPS profile forks are forbidden")
+        if self.automatic_live_promotion_requested:
+            raise ValueError("Micro-live must not request automatic promotion to LIVE")
+
+        normalized_status = self.import_validation_status.strip().casefold()
+        if normalized_status not in _ACCEPTED_IMPORT_STATUSES:
+            raise ValueError(
+                "Build-12 Micro-live requires an accepted import_validation_status"
+            )
+        if self.import_artifact_id == "none":
+            raise ValueError("Build-12 Micro-live requires a concrete import_artifact_id")
+        if self.import_lineage_version == "n/a":
+            raise ValueError("Build-12 Micro-live requires a concrete lineage_version")
+
+        if not self.active_engines:
+            raise ValueError("Build-12 Micro-live requires at least one Light engine")
+        unknown_engines = set(self.active_engines) - _MICRO_LIVE_ALLOWED_ENGINES
+        if unknown_engines:
+            raise ValueError(
+                "Build-12 Micro-live allows only engine_a and engine_b"
+            )
+
+        if not self.probe_pairs:
+            raise ValueError("Build-12 Micro-live requires at least one probe pair")
+        if len(self.probe_pairs) > len(LIGHT_PAIRS):
+            raise ValueError("Build-12 Micro-live must stay within the Light pair scope")
+        invalid_pairs = tuple(pair for pair in self.probe_pairs if pair not in LIGHT_PAIRS)
+        if invalid_pairs:
+            raise ValueError(
+                "Build-12 Micro-live probe_pairs must stay within the Light pair scope"
+            )
+
+        if self.max_pair_notional_usdt > self.max_total_notional_usdt:
+            raise ValueError("Micro-live max_pair_notional_usdt must stay within total budget")
+        if self.requested_pair_notional_usdt > self.requested_total_notional_usdt:
+            raise ValueError(
+                "Micro-live requested_pair_notional_usdt must stay within total request"
+            )
+        if self.requested_total_notional_usdt > self.max_total_notional_usdt:
+            raise ValueError("Micro-live requested_total_notional_usdt exceeds max budget")
+        if self.requested_pair_notional_usdt > self.max_pair_notional_usdt:
+            raise ValueError("Micro-live requested_pair_notional_usdt exceeds max pair budget")
+
+        return self
+
+
+class MicroLiveDecision(BaseModel, frozen=True):
+    """Governed Build-12 verdict for a micro-live candidate."""
+
+    allowed_to_probe: bool
+    verdict: MicroLiveVerdict
+    normalized_promotion_state: PromotionState
+    review_state: ReviewState
+    approved_total_notional_usdt: float = Field(default=0.0, ge=0.0)
+    approved_pair_notional_usdt: float = Field(default=0.0, ge=0.0)
+    blocking_reasons: tuple[str, ...] = ()
+    manual_review_required: bool = True
+
+    @model_validator(mode="after")
+    def validate_decision(self) -> "MicroLiveDecision":
+        if self.allowed_to_probe and self.verdict != MicroLiveVerdict.ALLOWED_TO_PROBE:
+            raise ValueError(
+                "allowed_to_probe=True requires verdict=ALLOWED_TO_PROBE"
+            )
+        if not self.allowed_to_probe and self.verdict == MicroLiveVerdict.ALLOWED_TO_PROBE:
+            raise ValueError(
+                "verdict=ALLOWED_TO_PROBE requires allowed_to_probe=True"
+            )
+        return self
+
+
+class MicroLiveExecutionPlan(BaseModel, frozen=True):
+    """Minimal micro-live plan produced by the governed Build-12 gate."""
+
+    plan_id: str = Field(..., min_length=1)
+    import_artifact_id: str = Field(..., min_length=1)
+    import_lineage_version: str = Field(..., min_length=1)
+    planned_engines: tuple[str, ...] = ()
+    planned_pairs: tuple[str, ...] = ()
+    requested_total_notional_usdt: float = Field(..., ge=0.0)
+    approved_total_notional_usdt: float = Field(..., ge=0.0)
+    approved_pair_notional_usdt: float = Field(..., ge=0.0)
+    order_probe_limit: int = Field(..., ge=0)
+    dry_run_only: bool = False
+    halt_guard_required: bool = True
+
+    @model_validator(mode="after")
+    def validate_budgets(self) -> "MicroLiveExecutionPlan":
+        if self.approved_total_notional_usdt > self.requested_total_notional_usdt:
+            raise ValueError("Approved total notional must stay within the requested budget")
+        if self.approved_pair_notional_usdt > self.approved_total_notional_usdt:
+            raise ValueError("Approved pair notional must stay within the approved total budget")
+        return self
+
+
+class MicroLiveRunSummary(BaseModel, frozen=True):
+    """Deterministic output of the minimal Build-12 Micro-live gate."""
+
+    run_id: str = Field(..., min_length=1)
+    correlation_id: str = Field(..., min_length=1)
+    run_state: MicroLiveRunState
+    shadow_run_id: str = Field(..., min_length=1)
+    shadow_verdict: ShadowVerdict
+    decision: MicroLiveDecision
+    execution_plan: MicroLiveExecutionPlan
+    import_artifact_id: str = Field(..., min_length=1)
+    import_lineage_version: str = Field(..., min_length=1)
+    observability_ready: bool = False
+    halt_ready: bool = False
+    onboarding_ready: bool = False
+
+    @property
+    def blocking_reason_count(self) -> int:
+        return len(self.decision.blocking_reasons)
+
+    @property
+    def planned_pair_count(self) -> int:
+        return len(self.execution_plan.planned_pairs)
+
+    @property
+    def planned_engine_count(self) -> int:
+        return len(self.execution_plan.planned_engines)
+
+
 __all__ = [
     "ShadowTruthSet",
     "ShadowValidationSet",
@@ -169,4 +337,8 @@ __all__ = [
     "ShadowComparison",
     "ShadowDecision",
     "ShadowRunSummary",
+    "MicroLiveInput",
+    "MicroLiveDecision",
+    "MicroLiveExecutionPlan",
+    "MicroLiveRunSummary",
 ]

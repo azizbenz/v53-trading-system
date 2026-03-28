@@ -132,6 +132,7 @@ class SystemProjection(BaseModel, frozen=True):
     stale_engines: tuple[str, ...] = ()
     build9x_status: ProjectionStatus = "planned"
     shadow_status: ProjectionStatus = "planned"
+    micro_live_status: ProjectionStatus = "planned"
     replay_import_status: ProjectionStatus = "planned"
     governed_extensions_detail: str = ""
 
@@ -203,6 +204,29 @@ class ShadowProjection(BaseModel, frozen=True):
     manual_review_required: bool = False
 
 
+class MicroLiveProjection(BaseModel, frozen=True):
+    """Normalized Build-12 Micro-live summary consumed by Build-10 supervision."""
+
+    status: ProjectionStatus = "planned"
+    run_state: str = "not_run"
+    verdict: str = "not_run"
+    shadow_run_id: str = ""
+    shadow_verdict: str = "not_run"
+    allowed_to_probe: bool = False
+    requested_total_notional_usdt: float = Field(default=0.0, ge=0.0)
+    approved_total_notional_usdt: float = Field(default=0.0, ge=0.0)
+    approved_pair_notional_usdt: float = Field(default=0.0, ge=0.0)
+    order_probe_limit: int = Field(default=0, ge=0)
+    planned_pairs: tuple[str, ...] = ()
+    planned_engines: tuple[str, ...] = ()
+    import_artifact_id: str = "none"
+    import_lineage_version: str = "n/a"
+    observability_ready: bool = False
+    halt_ready: bool = False
+    onboarding_ready: bool = False
+    blocking_reasons: tuple[str, ...] = ()
+
+
 class AlertProjection(BaseModel, frozen=True):
     """Normalized alert and operability projection."""
 
@@ -231,12 +255,14 @@ class TechnicalDashboardPayload(TimestampedModel):
     build9_meta: Build9MetaProjection
     build9x: Build9XProjection
     shadow: ShadowProjection = ShadowProjection()
+    micro_live: MicroLiveProjection = MicroLiveProjection()
     replay_import: ReplayImportProjection
     alerts: AlertProjection
     future_panels: tuple[str, ...] = (
         "technical_supervision",
         "build9x_diagnostics",
         "shadow_supervision",
+        "micro_live_supervision",
         "artifact_import",
         "observability_export",
     )
@@ -276,6 +302,7 @@ __all__ = [
     "Build9MetaProjection",
     "Build9XProjection",
     "ShadowProjection",
+    "MicroLiveProjection",
     "ReplayImportProjection",
     "AlertProjection",
     "TechnicalDashboardPayload",
