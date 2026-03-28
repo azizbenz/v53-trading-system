@@ -38,6 +38,22 @@ Exemple :
 - un build complet avec bon PnL shadow mais sans logs suffisants = refus
 - un profil Complete sans Light validé = refus
 
+## 1.3 Invariants local / VPS et runtime_mode
+
+La V5.3 reste :
+
+- une seule base de code
+- deux profils métier uniquement : `LIGHT`, `COMPLETE`
+- quatre `runtime_mode` uniquement : `LOCAL_REPLAY`, `SHADOW`, `MICRO_LIVE`, `LIVE`
+
+Refus immédiat si l’on introduit :
+
+- `BACKTEST_PROFILE`
+- `LOCAL_PROFILE`
+- une seconde V5.3 locale ou VPS
+- une promotion implicite local -> live
+- l’exécution sur VPS d’un code stratégie importé par artifact
+
 ---
 
 # 2. GATE DE MODULE
@@ -56,6 +72,7 @@ Un module n’est mergeable que si :
 8. logs obligatoires définis  
 9. audit logique quant si module métier  
 10. documentation module minimale rédigée  
+11. `correlation_id` / `event_id` / `source_version` si le module produit diagnostics, artifacts, états de promotion ou événements opératoires  
 
 ## 2.2 Table standard de merge
 
@@ -71,6 +88,7 @@ Un module n’est mergeable que si :
 | Logs critiques | oui | oui |
 | Audit quant / risk si pertinent | oui | oui |
 | Documentation module | oui | oui |
+| IDs structurés si module stateful / artifact / promotion | oui | oui |
 
 ## 2.3 Dérives à éviter
 - “on merge puis on écrira les tests”
@@ -252,6 +270,37 @@ Refus si :
 
 ---
 
+# 5 bis. GATE LOCAL_REPLAY / ARTIFACT / ONBOARDING
+
+## 5 bis.1 Objet
+Encadrer le chemin documentaire et futur d’introduction d’une nouvelle hypothèse ou stratégie :
+
+`classification -> versioning -> shared core -> LOCAL_REPLAY -> export artifact -> import VPS -> candidature contrôlée`
+
+## 5 bis.2 Conditions minimales
+- classification explicite : `A_variant`, `B_variant`, `Build14_enabler`, `C_candidate`, `D_candidate`, `out_of_scope_for_V5_3`
+- versioning explicite
+- intégration shared core, jamais plugin libre
+- export artifact signé / versionné / horodaté
+- import VPS en lecture seule
+- aucun code stratégie exécutable importé
+- `correlation_id`, `artifact_id`, `proposal_id`, `source_version` visibles
+
+## 5 bis.3 Refus automatique
+- artifact non versionné
+- import qui modifie le live ou le profil actif
+- fork local / VPS
+- création d’un `BACKTEST_PROFILE`
+- contournement de Shadow / Micro-live / Live
+
+## 5 bis.4 Statut Build-9X
+- Build-9X peut produire diagnostics, hypothèses, checklists, improvement candidates et replay bundles
+- Build-9X n’est pas promouvable tant qu’il n’est pas codé, testé et validé par les gates normales
+- aucune auto-modification live n’est autorisée
+- aucune auto-promotion n’est autorisée
+
+---
+
 # 6. GATE SHADOW
 
 ## 6.1 Objectif
@@ -368,6 +417,31 @@ Passer à 12 paires / 4 moteurs seulement si la complexité supplémentaire appo
 - K_eff reste quasi constant
 - backlog / logs / DTR se dégradent
 - le profil Complete n’améliore que la fréquence brute
+
+---
+
+# 9 bis. GATE BUILD-14 ENRICHI
+
+## 9 bis.1 Règle d’introduction
+Toute brique `Build14_enabler` doit suivre trois étapes :
+
+1. lecture seule
+2. influence limitée
+3. candidature éventuelle vers Build-15/16/17
+
+## 9 bis.2 Refus automatique
+- moteur autonome déguisé
+- bypass de A/B/C/D
+- bypass du risk backbone ou du portfolio
+- hard block live immédiat
+- influence significative sans validation replay puis shadow
+
+## 9 bis.3 Budgets minimaux attendus
+- budget CPU documenté
+- budget RAM documenté
+- budget I/O documenté
+- impact latence documenté
+- logs structurés et projections UI prévues
 
 ---
 

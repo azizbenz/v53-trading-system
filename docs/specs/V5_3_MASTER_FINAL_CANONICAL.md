@@ -21,6 +21,39 @@ Toutes les annexes, audits, notes de recherche et variantes mathématiques doive
 
 Aucun développeur, aucune IA, aucun auditeur ne doit utiliser un autre document comme source de vérité active si ce document contredit ou dépasse ce master.
 
+## 0.1 Statut documentaire vs réalité d’implémentation
+
+Pour éviter toute sur-promesse :
+
+- le **core Build-1 à Build-9** reste la base réellement exécutable / gelable
+- **Build-10** dispose désormais d’une première implémentation codée côté monitoring backend et projection UI Light verrouillée
+- **Build-9X** dispose désormais d’une première implémentation codée côté diagnostics, hypothèses, candidats et exports gouvernés
+- **LOCAL_REPLAY** et l’import d’artifact disposent désormais de **scaffolds minimaux codés**, sans constituer encore un runtime complet opéré
+- **Build-11 à Build-17** restent des cibles canoniques futures
+- `COMPLETE` ne doit toujours pas être lu comme pleinement runtime-ready tant que Build-14 à Build-17 ne sont pas réellement validés
+
+## 0.2 Invariants local / VPS
+
+La V5.3 reste :
+
+- **une seule base de code**
+- **deux profils métier uniquement**
+  - `LIGHT`
+  - `COMPLETE`
+- **quatre runtime_mode uniquement**
+  - `LOCAL_REPLAY`
+  - `SHADOW`
+  - `MICRO_LIVE`
+  - `LIVE`
+
+Interdictions canoniques :
+
+- `BACKTEST_PROFILE`
+- `LOCAL_PROFILE`
+- toute seconde V5.3 locale ou VPS
+- toute promotion implicite d’une idée locale vers le live
+- tout fork local / VPS
+
 ---
 
 # 1. Mission de la V5.3
@@ -232,6 +265,32 @@ Il existe **une seule V5.3**, avec **deux profils d’activation officiels**.
 - budget corrélation maîtrisé
 - infra stable
 - pas de dérive de logs ni d’état
+
+## 5.4 Runtime modes officiels
+
+Les profils métier ne doivent jamais être confondus avec les contextes d’exécution.
+
+Les seuls `runtime_mode` autorisés sont :
+
+- `LOCAL_REPLAY`
+- `SHADOW`
+- `MICRO_LIVE`
+- `LIVE`
+
+Le pipeline canonique de promotion reste :
+
+`classification -> versioning -> shared core -> LOCAL_REPLAY -> export artifact -> import VPS -> candidature contrôlée -> Shadow -> Micro-live -> Live`
+
+## 5.5 Règle critique de lecture du canon
+
+Le canon décrit la **cible complète** de la V5.3.
+
+Il ne doit pas être lu comme :
+
+- la preuve que Build-10 est déjà opéré
+- la preuve que Build-11/12/13 sont déjà runtime-ready
+- la preuve que `COMPLETE` est déjà exécutable
+- la preuve que Build-9X ou `LOCAL_REPLAY` sont déjà codés
 
 ---
 
@@ -746,6 +805,28 @@ Chaque merge doit être :
 - shadow
 - micro-live
 - live-light
+
+## Extension documentaire post-Build-9 — Build-9X
+- diagnostic post-trade gouverné
+- hypothesis registry
+- breakdown reports
+- replay bundles
+- dépendance logique : Build-9
+- dépendance opératoire forte : Build-10 + `LOCAL_REPLAY`
+- aucun impact live direct
+- aucune auto-modification live
+- aucun fork local / VPS
+- aucun nouveau profil métier
+- statut : **documentaire uniquement à ce stade**
+
+## Règle Build-14 / onboarding
+
+Les enrichissements classés `Build14_enabler` :
+
+- entrent d’abord en lecture seule
+- peuvent ensuite avoir une influence limitée
+- ne deviennent jamais des moteurs autonomes
+- ne bypassent jamais A/B/C/D, le risk backbone, le portfolio ni les gates de promotion
 
 ## Phase Build-5 — extension Complete
 - 12 paires

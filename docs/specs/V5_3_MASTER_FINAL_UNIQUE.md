@@ -22,6 +22,37 @@ Ces documents restent utiles comme matière de travail, mais **ne doivent plus �
 ## Règle absolue
 Un développeur, un opérateur ou une IA ne doit jamais implémenter une brique sur la base d’un document secondaire si ce document contredit ou dépasse ce master.
 
+## 0.1 Statut documentaire vs réalité d’implémentation
+
+Pour éviter toute double vérité :
+
+- le **core Build-1 à Build-9** reste la base réellement exécutable / gelable
+- **Build-10** dispose désormais d’une première implémentation codée côté monitoring backend et projection UI Light verrouillée
+- **Build-9X** est une extension méta **post-Build-9** maintenant codée dans une première version gouvernée, tout en restant soumise au pipeline canonique
+- `LOCAL_REPLAY`, l’export d’artifact et l’import VPS disposent désormais de **scaffolds minimaux codés** ; cela ne vaut pas ouverture d’un runtime complet autonome
+- **Build-11 à Build-17** restent des cibles futures et ne doivent pas être lus comme déjà validés
+
+## 0.2 Invariants local / VPS
+
+La V5.3 reste :
+
+- **une seule base de code**
+- **deux profils métier uniquement**
+  - `LIGHT`
+  - `COMPLETE`
+- **quatre runtime_mode uniquement**
+  - `LOCAL_REPLAY`
+  - `SHADOW`
+  - `MICRO_LIVE`
+  - `LIVE`
+
+Interdictions canoniques :
+
+- `BACKTEST_PROFILE`
+- `LOCAL_PROFILE`
+- toute seconde V5.3 locale ou VPS
+- toute promotion implicite d’une idée locale vers le live
+
 ---
 
 # 1. Mission de la V5.3
@@ -191,6 +222,21 @@ Il existe **une V5.3 unique** avec **deux profils officiels**.
 ## 5.4 Règle critique
 Le document décrit le système complet.  
 Le **profil actif** décrit ce qui a le droit d’exister en production aujourd’hui.
+
+## 5.5 Runtime modes officiels
+
+Les profils métier ne doivent pas être confondus avec les contextes d’exécution.
+
+Les seuls `runtime_mode` autorisés sont :
+
+- `LOCAL_REPLAY`
+- `SHADOW`
+- `MICRO_LIVE`
+- `LIVE`
+
+Le pipeline canonique de promotion reste :
+
+`classification -> versioning -> shared core -> LOCAL_REPLAY -> export artifact -> import VPS -> candidature contrôlée -> Shadow -> Micro-live -> Live`
 
 ---
 
@@ -1130,6 +1176,31 @@ Go :
 
 ---
 
+## Build-9X — Meta Learning Governed Layer (référence documentaire V2)
+
+Mission :
+- transformer l’observabilité post-trade en diagnostic gouverné
+- produire des `diagnostics`
+- produire des `breakdown reports`
+- produire des `checklists`
+- produire un `hypothesis registry`
+- produire des `improvement candidates`
+- produire des `replay bundles`
+
+Contraintes :
+- dépend de Build-9
+- dépend opératoirement de Build-10 et de la future surface `LOCAL_REPLAY`
+- aucun impact live direct
+- aucune auto-modification live
+- aucun fork local / VPS
+- aucun nouveau profil métier
+
+Verdict :
+- **documentaire uniquement à ce stade**
+- référence active : `V5_3_BUILD9X_SPEC_META_LEARNING_GOVERNED_LAYER_V2_FREEZE_READY.md`
+
+---
+
 ## Build-10 — Monitoring + UI Light (P0/P1)
 Modules :
 - metrics_collector
@@ -1196,6 +1267,9 @@ Modules :
 
 Objectif :
 - préparer le passage Complete sans casser Light
+- introduire d’abord les enrichissements **en lecture seule**
+- n’autoriser qu’ensuite une influence limitée, jamais un moteur autonome
+- absorber les `Build14_enabler` issus du protocole d’onboarding sans bypass des moteurs A/B/C/D, du risk backbone, du portfolio ni des gates de promotion
 
 Go :
 - aucune régression Light

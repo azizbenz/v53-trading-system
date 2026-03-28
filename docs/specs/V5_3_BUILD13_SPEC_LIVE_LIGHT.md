@@ -23,6 +23,26 @@ C’est la première phase où le système doit être capable de :
 - démontrer une crédibilité économique
 - accumuler des preuves de robustesse avant toute extension vers Complete
 
+## 0.1 Statut documentaire vs implémentation
+
+Ce document définit le **protocole cible** Build-13.
+
+Il ne doit pas être lu comme :
+
+- la preuve que le runtime Build-13 est déjà codé
+- la preuve que `COMPLETE` est déjà exécutable
+- une autorisation à ouvrir Build-14, Build-15, Build-16 ou Build-17 sans validation effective
+
+## 0.2 Règle d’unification local / VPS
+
+Build-13 reste strictement dans la V5.3 unifiée :
+
+- une seule base de code
+- aucun fork local / VPS
+- `runtime_mode = LIVE`
+- aucun `BACKTEST_PROFILE`
+- aucune promotion implicite depuis un replay local ou un artifact importé
+
 ---
 
 # 1. Mission du Live-Light
@@ -79,6 +99,14 @@ Les conditions suivantes doivent être satisfaites :
 Si Build-13 est validé, alors seulement :
 - Build-14 : Complete Enablers
 - puis éventuellement Build-15/16/17 vers la Complete
+
+## 3.1 Relation avec Build-14, onboarding et Build-9X
+
+- Build-14 reste une phase d’enablers d’abord en lecture seule
+- les candidats `Build14_enabler`, `C_candidate` et `D_candidate` restent gouvernés par le protocole d’onboarding
+- `LOCAL_REPLAY` et l’import d’artifact peuvent préparer une candidature, mais ne remplacent jamais la chaîne `SHADOW -> MICRO_LIVE -> LIVE`
+- Build-9X, s’il existe plus tard, ne peut produire que diagnostics, hypothèses et replay bundles ; jamais une mutation live directe
+- aucune trajectoire locale ne bypass `SHADOW -> MICRO_LIVE -> LIVE`
 
 ---
 

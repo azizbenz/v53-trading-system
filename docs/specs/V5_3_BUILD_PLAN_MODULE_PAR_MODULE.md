@@ -18,6 +18,28 @@ Le plan suit une règle simple :
 
 > aucune sophistication métier avant d’avoir verrouillé l’infrastructure, les tests, les coûts et la gouvernance de risque.
 
+## 0.1 Statut documentaire vs réalité d’implémentation
+
+Ce plan décrit la cible complète V5.3.
+
+Pour l’état documentaire actuel :
+
+- le **core Build-1 à Build-9** constitue la base réellement exécutable / gelable
+- **Build-10** dispose maintenant d’une première implémentation codée exploitable côté monitoring/backend UI
+- **Build-9X** dispose maintenant d’une première implémentation codée gouvernée
+- `LOCAL_REPLAY` et l’import d’artifact disposent de scaffolds minimaux codés, sans runtime complet opéré
+- **Build-11 à Build-17** restent des étapes canoniques futures et ne doivent pas être lues comme déjà validées
+
+## 0.2 Invariant local / VPS
+
+Le plan s’appuie sur une seule V5.3 commune local + VPS :
+
+- deux profils métier uniquement : `LIGHT`, `COMPLETE`
+- quatre `runtime_mode` uniquement : `LOCAL_REPLAY`, `SHADOW`, `MICRO_LIVE`, `LIVE`
+- aucun `BACKTEST_PROFILE`
+- aucun fork local / VPS
+- pipeline officiel : `classification -> versioning -> shared core -> LOCAL_REPLAY -> export artifact -> import VPS -> candidature contrôlée`
+
 ---
 
 # 1. Principes de build
@@ -53,6 +75,7 @@ Le plan suit une règle simple :
 | 7 | Moteur B | Light | P0 | fréquence utile |
 | 8 | Portfolio Minimal | Light | P0 | arbitrage A/B |
 | 9 | Meta Minimal | Light | P0 | DTR, CRA, break-even |
+| 9X | Meta Learning Governed Layer | documentaire | P1/P2 | diagnostics, hypothèses, replay bundles, sans effet live direct |
 | 10 | Monitoring + UI Light | Light | P0/P1 | supervision verrouillée |
 | 11 | Shadow Light | Light | P0 | validation sans capital |
 | 12 | Micro-live Light | Light | P0 | coûts réels |
@@ -364,6 +387,43 @@ Ne jamais piloter à l’aveugle.
 
 ---
 
+## Extension documentaire post-Build-9 — Build-9X
+
+## Mission
+Ajouter une couche méta gouvernée qui produit :
+
+- `diagnostics`
+- `breakdown reports`
+- `checklists`
+- `hypothesis registry`
+- `improvement candidates`
+- `replay bundles`
+
+## Dépendances
+- dépendance logique : Build-9
+- dépendance opératoire forte : Build-10
+- consommateur futur de `LOCAL_REPLAY`
+- export / import d’artifact versionné et en lecture seule
+
+## Interdictions
+- aucun impact live direct
+- aucune auto-modification live
+- aucun nouveau profil métier
+- aucun fork local / VPS
+- aucune promotion implicite depuis un bon replay local
+
+## Gates minimales avant implémentation réelle
+- Build-9 stable et traçabilité meta propre
+- Build-10 opérable et UI de supervision disponible
+- règles `LOCAL_REPLAY` / export artifact / import VPS documentées
+- IDs de corrélation, logs structurés, contrats internes et budgets définis
+
+## Statut
+- **référence documentaire active** : `V5_3_BUILD9X_SPEC_META_LEARNING_GOVERNED_LAYER_V2_FREEZE_READY.md`
+- **non codé à ce stade**
+
+---
+
 # 13. Build-10 — Monitoring + UI Light
 
 ## Modules
@@ -484,6 +544,13 @@ Première production réelle disciplinée.
 ## Objectif
 Préparer Complete sans casser Light.
 
+## Gouvernance obligatoire
+- introduction d’abord en lecture seule
+- influence limitée seulement après preuve
+- jamais moteur autonome
+- jamais bypass des moteurs A/B/C/D, du risk backbone, du portfolio ni des protocoles de promotion
+- intégration des candidats classés `Build14_enabler` via le protocole d’onboarding officiel
+
 ## Go si
 - aucune régression Light
 - coût infra acceptable
@@ -597,6 +664,13 @@ Ouvrir 12 paires / 4 moteurs seulement si la complexité supplémentaire paie r�
 ## 21.8 Sortie Build-8/9/10
 - portefeuille Light gouvernable
 - UI Light verrouillée
+
+## 21.8 bis Sortie documentaire Build-9X
+- V2 gelée comme référence documentaire
+- outputs attendus explicités
+- anti-live-mutation explicitée
+- anti-fork local/VPS explicité
+- non-promouvable tant que non codé et non validé
 
 ## 21.9 Sortie Build-11/12/13
 - Light validé

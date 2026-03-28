@@ -20,6 +20,20 @@ Elle est un **panneau de contrôle surveillé**, conçu pour :
 
 Elle ne doit **jamais** permettre de contourner les garde-fous fondamentaux.
 
+## 0.1 Statut documentaire vs implémentation
+
+Cette table décrit la **cible UI canonique**.
+
+Elle ne doit pas être lue comme la preuve que toute la surface UI est déjà codée.
+
+Lecture honnête :
+
+- le **core Build-1 à Build-9** est la base exécutable / gelable actuelle
+- Build-10 dispose désormais d’une première implémentation backend / projection UI Light
+- Build-11 à Build-17 restent des phases futures
+- les vues `Build-9X`, `LOCAL_REPLAY`, `artifact import` et `strategy onboarding` décrites plus bas restent **partiellement implémentées au mieux** : quelques projections backend existent, mais la surface UI complète n’est pas finie
+- ces vues futures restent liées à des `runtime_mode` gouvernés et jamais à un fork local / VPS
+
 ---
 
 # 1. Principes non négociables
@@ -541,6 +555,56 @@ Exposer les actions administratives strictement nécessaires.
 | Admin contrôlée | écran | oui | oui | P1 | oui |
 | Bouton profil custom | action | non | non | FORBIDDEN | non |
 | Override hard blocker | action | non | non | FORBIDDEN | non |
+
+---
+
+# 14 bis. Vues futures gouvernées — non implémentées à ce stade
+
+## 14 bis.1 Build-9X
+Si Build-9X est codé plus tard, l’UI doit exposer en lecture :
+
+- diagnostics
+- hypotheses
+- replay eligibility
+- learning events
+- replay bundles
+
+Ces vues restent :
+
+- non promotrices par elles-mêmes
+- sans mutation live
+- sans override de profil
+- sans réécriture d’un moteur A/B/C/D
+
+## 14 bis.2 LOCAL_REPLAY / artifact import / onboarding
+L’UI future peut exposer :
+
+- l’état d’un run `LOCAL_REPLAY`
+- l’état d’export d’un artifact
+- l’état d’import VPS
+- la classification d’une proposition stratégie
+- la traçabilité `proposal_id` / `artifact_id` / `correlation_id`
+
+Mais elle ne doit jamais permettre :
+
+- d’exécuter du code stratégie importé
+- de créer un `BACKTEST_PROFILE`
+- de contourner `SHADOW`, `MICRO_LIVE` ou `LIVE`
+- de promouvoir implicitement une hypothèse locale vers le live
+
+## 14 bis.3 Build-14 enrichi
+Les briques `Build14_enabler` ne doivent apparaître d’abord qu’en :
+
+- lecture seule
+- diagnostics
+- alertes enrichies
+- projections portefeuille limitées
+
+et non comme :
+
+- moteur autonome
+- source de hard block live immédiat
+- voie de contournement des gates de promotion
 
 ---
 

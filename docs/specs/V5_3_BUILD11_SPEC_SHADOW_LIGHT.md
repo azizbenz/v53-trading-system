@@ -21,6 +21,26 @@ Le Shadow Light doit répondre à une question simple :
 
 > si l’on injecte des données réalistes, des coûts prudents, des budgets portefeuille et la logique complète de décision, le système reste-t-il cohérent, explicable, stable et économiquement crédible ?
 
+## 0.1 Statut documentaire vs implémentation
+
+Ce document définit le **protocole cible** Build-11.
+
+Il ne doit pas être lu comme :
+
+- la preuve que le runtime Build-11 est déjà codé
+- la preuve que Build-10 est déjà opéré dans le repo courant
+- une autorisation à court-circuiter le chemin `LOCAL_REPLAY -> export artifact -> import VPS -> Shadow`
+
+## 0.2 Règle d’unification local / VPS
+
+Build-11 reste strictement dans la V5.3 unifiée :
+
+- une seule base de code
+- aucun fork local / VPS
+- `runtime_mode = SHADOW`
+- aucun `BACKTEST_PROFILE`
+- aucun code stratégie importé et exécuté côté VPS
+
 ---
 
 # 1. Mission du Shadow Light
@@ -78,6 +98,12 @@ Les builds précédents doivent être terminés et gelés :
 ## Après Build-11
 Si Build-11 est validé, alors seulement :
 - Build-12 : micro-live Light
+
+## 3.1 Relation avec Build-9X et LOCAL_REPLAY
+
+- Build-9X n’est pas actif en Shadow tant qu’il n’est pas codé et validé
+- `LOCAL_REPLAY` peut préparer des hypothèses et artifacts, mais ne remplace jamais Build-11
+- l’import d’artifact côté VPS reste en lecture seule et ne bypass jamais Shadow
 
 ---
 

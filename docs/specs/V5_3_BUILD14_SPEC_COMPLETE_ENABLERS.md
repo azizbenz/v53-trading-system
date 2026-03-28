@@ -29,6 +29,36 @@ Build-14 **n’active pas encore** :
 
 Il prépare le terrain pour pouvoir, plus tard, décider rationnellement si la Complete mérite d’exister.
 
+## 0.1 Statut documentaire vs implémentation
+
+Ce document définit le **protocole cible** Build-14.
+
+Il ne doit pas être lu comme :
+
+- la preuve que Build-14 est déjà codé
+- la preuve que Build-15/16/17 sont déjà activables
+- une autorisation à présenter `COMPLETE` comme déjà exécutable
+
+## 0.2 Relation avec l’addendum, l’onboarding et LOCAL_REPLAY
+
+Build-14 doit rester cohérent avec :
+
+- `V5_3_BUILD14_AI_EDGE_AND_MICROSTRUCTURE_ENRICHMENT_ADDENDUM.md`
+- `V5_3_STRATEGY_ONBOARDING_PROTOCOL.md`
+- `V5_3_UNIFIED_LOCAL_VPS_BACKTEST_ARCHITECTURE_PLAN_V2.md`
+
+Conséquences :
+
+- un enrichissement Build-14 entre d’abord comme `Build14_enabler`
+- il passe d’abord par lecture seule
+- il peut ensuite être confronté à `LOCAL_REPLAY`
+- puis seulement à Shadow
+- il ne devient jamais un moteur autonome
+- il ne crée jamais de fork local / VPS
+- il ne crée jamais de `BACKTEST_PROFILE`
+- il reste compatible avec les `runtime_mode` canoniques uniquement
+- Build-9X peut consommer ses diagnostics plus tard, sans effet live direct
+
 ---
 
 # 1. Mission du Build-14
@@ -147,6 +177,15 @@ Les enablers doivent être introduits :
 - moteur D live
 - optimisation lourde non démontrée
 - Complete profile live
+
+## 6.5 Règles d’introduction obligatoires
+
+- lecture seule d’abord
+- influence limitée ensuite
+- jamais bypass de A/B/C/D
+- jamais bypass du risk backbone
+- jamais bypass du portfolio
+- jamais promotion implicite vers la Complete
 
 ---
 

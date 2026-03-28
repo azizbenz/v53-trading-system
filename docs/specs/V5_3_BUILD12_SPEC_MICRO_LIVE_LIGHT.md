@@ -21,6 +21,26 @@ Build-12 doit répondre à une question simple :
 
 > quand la V5.3 Light passe du shadow à l’argent réel, les hypothèses critiques restent-elles valides, ou bien les coûts, les fills, les divergences d’état et les contraintes de marché détruisent-ils l’économie du système ?
 
+## 0.1 Statut documentaire vs implémentation
+
+Ce document définit le **protocole cible** Build-12.
+
+Il ne doit pas être lu comme :
+
+- la preuve que le runtime Build-12 est déjà codé
+- une autorisation à sauter Build-10 ou Build-11
+- une validation implicite de `COMPLETE`
+
+## 0.2 Règle d’unification local / VPS
+
+Build-12 reste strictement dans la V5.3 unifiée :
+
+- une seule base de code
+- aucun fork local / VPS
+- `runtime_mode = MICRO_LIVE`
+- aucun `BACKTEST_PROFILE`
+- aucun code stratégie importé et exécuté côté VPS
+
 ---
 
 # 1. Mission du Micro-live Light
@@ -75,6 +95,13 @@ Les conditions suivantes doivent être satisfaites :
 ## Après Build-12
 Si Build-12 est validé, alors seulement :
 - Build-13 : Live-Light
+
+## 3.1 Relation avec LOCAL_REPLAY, artifacts et Build-9X
+
+- `LOCAL_REPLAY` prépare des hypothèses ; il ne valide pas le micro-live à lui seul
+- l’import d’artifact côté VPS reste en lecture seule
+- Build-9X, s’il existe plus tard, ne modifie jamais automatiquement la logique micro-live
+- aucune hypothèse locale ne peut monter en micro-live sans passer par les gates normales
 
 ---
 
