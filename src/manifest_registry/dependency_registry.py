@@ -87,7 +87,11 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
         "portfolio",
         "meta",
     }),
-    "ui": frozenset({"interface_contracts", "monitoring"}),
+    "ui": frozenset({
+        "interface_contracts",
+        "monitoring",
+        "meta_learning",
+    }),
     # Build-11/12/13: Protocols
     "protocols": frozenset({
         "interface_contracts",
