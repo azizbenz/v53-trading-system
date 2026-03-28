@@ -10,6 +10,7 @@ from interface_contracts import AlertRecord, PairHealthLevel, ProfileId, Runtime
 
 
 HeadlineStatus = Literal["healthy", "warning", "critical"]
+MetricKind = Literal["counter", "gauge", "state"]
 
 
 class PortfolioMetrics(BaseModel, frozen=True):
@@ -121,6 +122,26 @@ class HealthDashboardPayload(TimestampedModel):
     controls_locked: bool = True
 
 
+class MetricSample(BaseModel, frozen=True):
+    """Single structured metric emitted by the minimal observability layer."""
+
+    name: str = Field(..., min_length=1)
+    kind: MetricKind
+    value: float
+    labels: dict[str, str] = Field(default_factory=dict)
+    unit: str = ""
+
+
+class ObservabilityExport(TimestampedModel):
+    """Structured and text-exportable monitoring snapshot."""
+
+    correlation_id: str = Field(..., min_length=1)
+    profile: ProfileId
+    runtime_mode: RuntimeMode
+    samples: tuple[MetricSample, ...] = ()
+    text_payload: str = Field(..., min_length=1)
+
+
 __all__ = [
     "PortfolioMetrics",
     "EngineMetrics",
@@ -130,4 +151,7 @@ __all__ = [
     "MonitoringSnapshot",
     "HealthDashboardPayload",
     "HeadlineStatus",
+    "MetricKind",
+    "MetricSample",
+    "ObservabilityExport",
 ]

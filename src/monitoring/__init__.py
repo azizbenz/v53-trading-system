@@ -5,8 +5,10 @@ from monitoring.contracts import (
     EngineMetrics,
     HealthDashboardPayload,
     InfraMetrics,
+    MetricSample,
     MetaMetrics,
     MonitoringSnapshot,
+    ObservabilityExport,
     PairMetrics,
     PortfolioMetrics,
 )
@@ -19,6 +21,7 @@ from monitoring.metrics_collector import (
     collect_pair_metrics,
     collect_portfolio_metrics,
 )
+from monitoring.observability import build_observability_export
 
 __all__ = [
     "PortfolioMetrics",
@@ -28,6 +31,8 @@ __all__ = [
     "MetaMetrics",
     "MonitoringSnapshot",
     "HealthDashboardPayload",
+    "MetricSample",
+    "ObservabilityExport",
     "collect_portfolio_metrics",
     "collect_engine_metrics",
     "collect_pair_metrics",
@@ -36,4 +41,5 @@ __all__ = [
     "collect_monitoring_snapshot",
     "build_monitoring_alerts",
     "build_health_dashboard_payload",
+    "build_observability_export",
 ]
