@@ -1,4 +1,12 @@
-# V5.3 — Module non encore implémenté
-# Ce module sera développé dans un build futur
-# Ne pas coder ici tant que le build précédent n'est pas validé
-raise ImportError("Module pas encore implémenté — respecter l'ordre des builds")
+"""Locked Build-10 Light UI backend surface."""
+
+from ui.contracts import DashboardCard, DashboardSection, LightDashboardView, LockedControlSurface
+from ui.ui_light_locked import build_light_dashboard_view
+
+__all__ = [
+    "DashboardCard",
+    "DashboardSection",
+    "LockedControlSurface",
+    "LightDashboardView",
+    "build_light_dashboard_view",
+]
