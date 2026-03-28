@@ -1,4 +1,4 @@
-"""Enums for the minimal real Build-11/12 protocol runtimes."""
+"""Enums for the minimal real Build-11/12/13 protocol runtimes."""
 
 from __future__ import annotations
 
@@ -55,6 +55,22 @@ class MicroLiveVerdict(StrEnum):
     BLOCKED = "blocked"
 
 
+class LiveLightRunState(StrEnum):
+    """Lifecycle state of a governed Build-13 Live-Light run."""
+
+    PREPARED = "prepared"
+    READY_TO_EXECUTE_SMALL = "ready_to_execute_small"
+    BLOCKED = "blocked"
+
+
+class LiveLightVerdict(StrEnum):
+    """Minimal gating verdict for Build-13 Live-Light."""
+
+    ALLOWED_TO_EXECUTE_SMALL = "allowed_to_execute_small"
+    DRY_RUN_ONLY = "dry_run_only"
+    BLOCKED = "blocked"
+
+
 __all__ = [
     "ShadowRunState",
     "ShadowVerdict",
@@ -62,4 +78,6 @@ __all__ = [
     "ShadowDivergenceSeverity",
     "MicroLiveRunState",
     "MicroLiveVerdict",
+    "LiveLightRunState",
+    "LiveLightVerdict",
 ]

@@ -1,4 +1,4 @@
-"""Governed contracts for the minimal real Build-11/12 runtimes."""
+"""Governed contracts for the minimal real Build-11/12/13 runtimes."""
 
 from __future__ import annotations
 
@@ -6,6 +6,8 @@ from pydantic import BaseModel, Field, model_validator
 
 from interface_contracts import LIGHT_PAIRS, ProfileId, PromotionState, ReviewState, RuntimeMode
 from protocols.enums import (
+    LiveLightRunState,
+    LiveLightVerdict,
     MicroLiveRunState,
     MicroLiveVerdict,
     ShadowComparisonStatus,
@@ -20,6 +22,7 @@ _ACCEPTED_ONBOARDING_REVIEW_STATES = frozenset(
     {ReviewState.PENDING, ReviewState.APPROVED}
 )
 _MICRO_LIVE_ALLOWED_ENGINES = frozenset({"engine_a", "engine_b"})
+_LIVE_LIGHT_ALLOWED_ENGINES = frozenset({"engine_a", "engine_b"})
 
 
 class ShadowTruthSet(BaseModel, frozen=True):
@@ -366,6 +369,220 @@ class MicroLiveRunSummary(BaseModel, frozen=True):
         return len(self.execution_plan.planned_engines)
 
 
+class LiveLightInput(BaseModel, frozen=True):
+    """Single governed input entering the minimal Build-13 Live-Light gate."""
+
+    correlation_id: str = Field(..., min_length=1)
+    profile: ProfileId = ProfileId.LIGHT
+    runtime_mode: RuntimeMode = RuntimeMode.LIVE
+    micro_live_run_id: str = Field(..., min_length=1)
+    shadow_run_id: str = Field(..., min_length=1)
+    micro_live_verdict: MicroLiveVerdict
+    micro_live_run_state: MicroLiveRunState
+    micro_live_blocking_reasons: tuple[str, ...] = ()
+    micro_live_import_artifact_id: str = Field(..., min_length=1)
+    micro_live_import_lineage_version: str = Field(..., min_length=1)
+    import_artifact_id: str = Field(..., min_length=1)
+    import_lineage_version: str = Field(..., min_length=1)
+    import_validation_status: str = Field(..., min_length=1)
+    import_rejection_reasons: tuple[str, ...] = ()
+    onboarding_accepted: bool = False
+    onboarding_review_state: ReviewState = ReviewState.PENDING
+    onboarding_reasons: tuple[str, ...] = ()
+    review_export_ready: bool = False
+    observability_ready: bool = False
+    halt_ready: bool = False
+    execution_ready: bool = False
+    broker_ready: bool = False
+    exchange_ready: bool = False
+    active_engines: tuple[str, ...] = ()
+    live_pairs: tuple[str, ...] = ()
+    requested_total_notional_usdt: float = Field(..., gt=0.0)
+    requested_pair_notional_usdt: float = Field(..., gt=0.0)
+    max_total_notional_usdt: float = Field(..., gt=0.0)
+    max_pair_notional_usdt: float = Field(..., gt=0.0)
+    execution_order_limit: int = Field(default=3, ge=1, le=20)
+    backtest_profile: str | None = None
+    creates_profile_fork: bool = False
+    automatic_complete_promotion_requested: bool = False
+
+    @model_validator(mode="after")
+    def validate_governance(self) -> "LiveLightInput":
+        if self.profile != ProfileId.LIGHT:
+            raise ValueError("Build-13 Live-Light opens in LIGHT profile only")
+        if self.runtime_mode != RuntimeMode.LIVE:
+            raise ValueError("Build-13 Live-Light requires runtime_mode=LIVE")
+        if self.backtest_profile is not None:
+            raise ValueError("BACKTEST_PROFILE is forbidden in the unified V5.3")
+        if self.creates_profile_fork:
+            raise ValueError("Local/VPS profile forks are forbidden")
+        if self.automatic_complete_promotion_requested:
+            raise ValueError(
+                "Build-13 Live-Light must not request automatic promotion to Complete"
+            )
+
+        normalized_status = self.import_validation_status.strip().casefold()
+        if normalized_status not in _ACCEPTED_IMPORT_STATUSES:
+            raise ValueError(
+                "Build-13 Live-Light requires an accepted import_validation_status"
+            )
+        if self.import_rejection_reasons:
+            raise ValueError(
+                "Build-13 Live-Light requires empty import_rejection_reasons"
+            )
+        if self.micro_live_import_artifact_id == "none":
+            raise ValueError(
+                "Build-13 Live-Light requires a concrete micro_live_import_artifact_id"
+            )
+        if self.micro_live_import_lineage_version == "n/a":
+            raise ValueError(
+                "Build-13 Live-Light requires a concrete micro_live_import_lineage_version"
+            )
+        if self.import_artifact_id == "none":
+            raise ValueError("Build-13 Live-Light requires a concrete import_artifact_id")
+        if self.import_lineage_version == "n/a":
+            raise ValueError("Build-13 Live-Light requires a concrete lineage_version")
+        if self.micro_live_import_artifact_id != self.import_artifact_id:
+            raise ValueError(
+                "Build-13 Live-Light requires matching Micro-live/import artifact_id"
+            )
+        if self.micro_live_import_lineage_version != self.import_lineage_version:
+            raise ValueError(
+                "Build-13 Live-Light requires matching Micro-live/import lineage_version"
+            )
+
+        if self.onboarding_accepted:
+            if self.onboarding_review_state not in _ACCEPTED_ONBOARDING_REVIEW_STATES:
+                raise ValueError(
+                    "onboarding_accepted=True requires a pending or approved onboarding_review_state"
+                )
+            if self.onboarding_reasons:
+                raise ValueError(
+                    "onboarding_accepted=True requires empty onboarding_reasons"
+                )
+
+        if not self.active_engines:
+            raise ValueError("Build-13 Live-Light requires at least one Light engine")
+        unknown_engines = set(self.active_engines) - _LIVE_LIGHT_ALLOWED_ENGINES
+        if unknown_engines:
+            raise ValueError(
+                "Build-13 Live-Light allows only engine_a and engine_b"
+            )
+
+        if not self.live_pairs:
+            raise ValueError("Build-13 Live-Light requires at least one live pair")
+        if len(self.live_pairs) > len(LIGHT_PAIRS):
+            raise ValueError("Build-13 Live-Light must stay within the Light pair scope")
+        invalid_pairs = tuple(pair for pair in self.live_pairs if pair not in LIGHT_PAIRS)
+        if invalid_pairs:
+            raise ValueError(
+                "Build-13 Live-Light live_pairs must stay within the Light pair scope"
+            )
+
+        if self.max_pair_notional_usdt > self.max_total_notional_usdt:
+            raise ValueError("Live-Light max_pair_notional_usdt must stay within total cap")
+        if self.requested_pair_notional_usdt > self.requested_total_notional_usdt:
+            raise ValueError(
+                "Live-Light requested_pair_notional_usdt must stay within total request"
+            )
+        if self.requested_total_notional_usdt > self.max_total_notional_usdt:
+            raise ValueError("Live-Light requested_total_notional_usdt exceeds max cap")
+        if self.requested_pair_notional_usdt > self.max_pair_notional_usdt:
+            raise ValueError("Live-Light requested_pair_notional_usdt exceeds max pair cap")
+
+        return self
+
+
+class LiveLightDecision(BaseModel, frozen=True):
+    """Governed Build-13 verdict for a Live-Light candidate."""
+
+    allowed_to_execute_small: bool
+    verdict: LiveLightVerdict
+    normalized_promotion_state: PromotionState
+    review_state: ReviewState
+    approved_total_notional_usdt: float = Field(default=0.0, ge=0.0)
+    approved_pair_notional_usdt: float = Field(default=0.0, ge=0.0)
+    blocking_reasons: tuple[str, ...] = ()
+    manual_review_required: bool = True
+
+    @model_validator(mode="after")
+    def validate_decision(self) -> "LiveLightDecision":
+        if (
+            self.allowed_to_execute_small
+            and self.verdict != LiveLightVerdict.ALLOWED_TO_EXECUTE_SMALL
+        ):
+            raise ValueError(
+                "allowed_to_execute_small=True requires verdict=ALLOWED_TO_EXECUTE_SMALL"
+            )
+        if (
+            not self.allowed_to_execute_small
+            and self.verdict == LiveLightVerdict.ALLOWED_TO_EXECUTE_SMALL
+        ):
+            raise ValueError(
+                "verdict=ALLOWED_TO_EXECUTE_SMALL requires allowed_to_execute_small=True"
+            )
+        return self
+
+
+class LiveLightExecutionIntent(BaseModel, frozen=True):
+    """Minimal Live-Light execution intent produced by the governed Build-13 gate."""
+
+    intent_id: str = Field(..., min_length=1)
+    import_artifact_id: str = Field(..., min_length=1)
+    import_lineage_version: str = Field(..., min_length=1)
+    planned_engines: tuple[str, ...] = ()
+    planned_pairs: tuple[str, ...] = ()
+    requested_total_notional_usdt: float = Field(..., ge=0.0)
+    approved_total_notional_usdt: float = Field(..., ge=0.0)
+    approved_pair_notional_usdt: float = Field(..., ge=0.0)
+    execution_order_limit: int = Field(..., ge=0)
+    dry_run_only: bool = False
+    halt_guard_required: bool = True
+    broker_ready_required: bool = True
+    exchange_ready_required: bool = True
+
+    @model_validator(mode="after")
+    def validate_budgets(self) -> "LiveLightExecutionIntent":
+        if self.approved_total_notional_usdt > self.requested_total_notional_usdt:
+            raise ValueError("Approved total notional must stay within the requested cap")
+        if self.approved_pair_notional_usdt > self.approved_total_notional_usdt:
+            raise ValueError("Approved pair notional must stay within the approved total cap")
+        return self
+
+
+class LiveLightRunSummary(BaseModel, frozen=True):
+    """Deterministic output of the minimal Build-13 Live-Light gate."""
+
+    run_id: str = Field(..., min_length=1)
+    correlation_id: str = Field(..., min_length=1)
+    run_state: LiveLightRunState
+    micro_live_run_id: str = Field(..., min_length=1)
+    shadow_run_id: str = Field(..., min_length=1)
+    micro_live_verdict: MicroLiveVerdict
+    decision: LiveLightDecision
+    execution_intent: LiveLightExecutionIntent
+    import_artifact_id: str = Field(..., min_length=1)
+    import_lineage_version: str = Field(..., min_length=1)
+    observability_ready: bool = False
+    halt_ready: bool = False
+    execution_ready: bool = False
+    broker_ready: bool = False
+    exchange_ready: bool = False
+    onboarding_ready: bool = False
+
+    @property
+    def blocking_reason_count(self) -> int:
+        return len(self.decision.blocking_reasons)
+
+    @property
+    def planned_pair_count(self) -> int:
+        return len(self.execution_intent.planned_pairs)
+
+    @property
+    def planned_engine_count(self) -> int:
+        return len(self.execution_intent.planned_engines)
+
+
 __all__ = [
     "ShadowTruthSet",
     "ShadowValidationSet",
@@ -377,4 +594,8 @@ __all__ = [
     "MicroLiveDecision",
     "MicroLiveExecutionPlan",
     "MicroLiveRunSummary",
+    "LiveLightInput",
+    "LiveLightDecision",
+    "LiveLightExecutionIntent",
+    "LiveLightRunSummary",
 ]

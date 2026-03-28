@@ -248,7 +248,7 @@ MODULES: tuple[ModuleEntry, ...] = (
         priority=Priority.P0,
         profile_scope=ProfileScope.LIGHT,
         build_stage=11,
-        description="Build-11 Shadow et Build-12 Micro-live reels et gouvernes; Build-13 reste ferme dans le meme module",
+        description="Build-11 Shadow, Build-12 Micro-live et Build-13 Live-Light reels et gouvernes; Complete reste ferme dans le meme module",
     ),
     # ── Build-14: Complete Enablers ──
     ModuleEntry(

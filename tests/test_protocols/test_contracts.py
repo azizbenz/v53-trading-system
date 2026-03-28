@@ -8,6 +8,12 @@ from pydantic import ValidationError
 import protocols
 from interface_contracts import ProfileId, PromotionState, ReviewState, RuntimeMode
 from protocols import (
+    LiveLightDecision,
+    LiveLightExecutionIntent,
+    LiveLightInput,
+    LiveLightRunState,
+    LiveLightRunSummary,
+    LiveLightVerdict,
     MicroLiveDecision,
     MicroLiveExecutionPlan,
     MicroLiveInput,
@@ -33,6 +39,14 @@ def test_protocols_exports_expected_symbols():
         "MicroLiveDecision",
         "MicroLiveExecutionPlan",
         "MicroLiveRunSummary",
+        "LiveLightInput",
+        "LiveLightDecision",
+        "LiveLightExecutionIntent",
+        "LiveLightRunSummary",
+        "build_live_light_input_from_micro_live",
+        "run_live_light_gate",
+        "build_live_light_projection",
+        "build_live_light_dashboard_section",
         "build_micro_live_input_from_shadow",
         "run_micro_live_gate",
         "build_micro_live_projection",
@@ -455,6 +469,160 @@ def test_micro_live_run_summary_counts_planned_surface():
         import_lineage_version="a.v1.0.r1",
         observability_ready=True,
         halt_ready=True,
+        onboarding_ready=True,
+    )
+
+    assert summary.planned_pair_count == 2
+    assert summary.planned_engine_count == 2
+    assert summary.blocking_reason_count == 0
+
+
+def test_live_light_input_rejects_wrong_runtime_mode_and_budget_overflow():
+    with pytest.raises(ValidationError):
+        LiveLightInput(
+            correlation_id="corr-live",
+            profile=ProfileId.LIGHT,
+            runtime_mode=RuntimeMode.MICRO_LIVE,
+            micro_live_run_id="micro-run-1",
+            shadow_run_id="shadow-run-1",
+            micro_live_verdict=MicroLiveVerdict.ALLOWED_TO_PROBE,
+            micro_live_run_state=MicroLiveRunState.READY_TO_PROBE,
+            micro_live_import_artifact_id="artifact-1",
+            micro_live_import_lineage_version="a.v1.0.r1",
+            import_artifact_id="artifact-1",
+            import_lineage_version="a.v1.0.r1",
+            import_validation_status="accepted",
+            onboarding_accepted=True,
+            onboarding_review_state=ReviewState.PENDING,
+            review_export_ready=True,
+            observability_ready=True,
+            halt_ready=True,
+            execution_ready=True,
+            broker_ready=True,
+            exchange_ready=True,
+            active_engines=("engine_a",),
+            live_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=60.0,
+            requested_pair_notional_usdt=30.0,
+            max_total_notional_usdt=50.0,
+            max_pair_notional_usdt=25.0,
+        )
+
+
+def test_live_light_input_rejects_micro_live_import_provenance_mismatch():
+    with pytest.raises(ValidationError):
+        LiveLightInput(
+            correlation_id="corr-live",
+            profile=ProfileId.LIGHT,
+            runtime_mode=RuntimeMode.LIVE,
+            micro_live_run_id="micro-run-1",
+            shadow_run_id="shadow-run-1",
+            micro_live_verdict=MicroLiveVerdict.ALLOWED_TO_PROBE,
+            micro_live_run_state=MicroLiveRunState.READY_TO_PROBE,
+            micro_live_import_artifact_id="artifact-micro",
+            micro_live_import_lineage_version="a.v1.0.r1",
+            import_artifact_id="artifact-live",
+            import_lineage_version="a.v1.0.r1",
+            import_validation_status="accepted",
+            onboarding_accepted=True,
+            onboarding_review_state=ReviewState.PENDING,
+            review_export_ready=True,
+            observability_ready=True,
+            halt_ready=True,
+            execution_ready=True,
+            broker_ready=True,
+            exchange_ready=True,
+            active_engines=("engine_a",),
+            live_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=40.0,
+            requested_pair_notional_usdt=20.0,
+            max_total_notional_usdt=60.0,
+            max_pair_notional_usdt=30.0,
+        )
+
+
+def test_live_light_input_rejects_accepted_onboarding_with_incoherent_review_state():
+    with pytest.raises(ValidationError):
+        LiveLightInput(
+            correlation_id="corr-live",
+            profile=ProfileId.LIGHT,
+            runtime_mode=RuntimeMode.LIVE,
+            micro_live_run_id="micro-run-1",
+            shadow_run_id="shadow-run-1",
+            micro_live_verdict=MicroLiveVerdict.ALLOWED_TO_PROBE,
+            micro_live_run_state=MicroLiveRunState.READY_TO_PROBE,
+            micro_live_import_artifact_id="artifact-1",
+            micro_live_import_lineage_version="a.v1.0.r1",
+            import_artifact_id="artifact-1",
+            import_lineage_version="a.v1.0.r1",
+            import_validation_status="accepted",
+            onboarding_accepted=True,
+            onboarding_review_state=ReviewState.NEEDS_REVISION,
+            review_export_ready=True,
+            observability_ready=True,
+            halt_ready=True,
+            execution_ready=True,
+            broker_ready=True,
+            exchange_ready=True,
+            active_engines=("engine_a",),
+            live_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=40.0,
+            requested_pair_notional_usdt=20.0,
+            max_total_notional_usdt=60.0,
+            max_pair_notional_usdt=30.0,
+        )
+
+
+def test_live_light_decision_requires_allowed_flag_to_match_verdict():
+    with pytest.raises(ValidationError):
+        LiveLightDecision(
+            allowed_to_execute_small=False,
+            verdict=LiveLightVerdict.ALLOWED_TO_EXECUTE_SMALL,
+            normalized_promotion_state=PromotionState.LIVE_CANDIDATE,
+            review_state=ReviewState.PENDING,
+        )
+
+
+def test_live_light_run_summary_counts_planned_surface():
+    summary = LiveLightRunSummary(
+        run_id="live-run-1",
+        correlation_id="corr-live",
+        run_state=LiveLightRunState.READY_TO_EXECUTE_SMALL,
+        micro_live_run_id="micro-run-1",
+        shadow_run_id="shadow-run-1",
+        micro_live_verdict=MicroLiveVerdict.ALLOWED_TO_PROBE,
+        decision=LiveLightDecision(
+            allowed_to_execute_small=True,
+            verdict=LiveLightVerdict.ALLOWED_TO_EXECUTE_SMALL,
+            normalized_promotion_state=PromotionState.LIVE_CANDIDATE,
+            review_state=ReviewState.PENDING,
+            approved_total_notional_usdt=60.0,
+            approved_pair_notional_usdt=30.0,
+            blocking_reasons=(),
+            manual_review_required=False,
+        ),
+        execution_intent=LiveLightExecutionIntent(
+            intent_id="live-intent-1",
+            import_artifact_id="artifact-1",
+            import_lineage_version="a.v1.0.r1",
+            planned_engines=("engine_a", "engine_b"),
+            planned_pairs=("BTCUSDT", "ETHUSDT"),
+            requested_total_notional_usdt=60.0,
+            approved_total_notional_usdt=60.0,
+            approved_pair_notional_usdt=30.0,
+            execution_order_limit=3,
+            dry_run_only=False,
+            halt_guard_required=True,
+            broker_ready_required=True,
+            exchange_ready_required=True,
+        ),
+        import_artifact_id="artifact-1",
+        import_lineage_version="a.v1.0.r1",
+        observability_ready=True,
+        halt_ready=True,
+        execution_ready=True,
+        broker_ready=True,
+        exchange_ready=True,
         onboarding_ready=True,
     )
 

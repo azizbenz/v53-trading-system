@@ -133,6 +133,7 @@ class SystemProjection(BaseModel, frozen=True):
     build9x_status: ProjectionStatus = "planned"
     shadow_status: ProjectionStatus = "planned"
     micro_live_status: ProjectionStatus = "planned"
+    live_light_status: ProjectionStatus = "planned"
     replay_import_status: ProjectionStatus = "planned"
     governed_extensions_detail: str = ""
 
@@ -227,6 +228,31 @@ class MicroLiveProjection(BaseModel, frozen=True):
     blocking_reasons: tuple[str, ...] = ()
 
 
+class LiveLightProjection(BaseModel, frozen=True):
+    """Normalized Build-13 Live-Light summary consumed by Build-10 supervision."""
+
+    status: ProjectionStatus = "planned"
+    run_state: str = "not_run"
+    verdict: str = "not_run"
+    micro_live_run_id: str = ""
+    micro_live_verdict: str = "not_run"
+    allowed_to_execute_small: bool = False
+    requested_total_notional_usdt: float = Field(default=0.0, ge=0.0)
+    approved_total_notional_usdt: float = Field(default=0.0, ge=0.0)
+    approved_pair_notional_usdt: float = Field(default=0.0, ge=0.0)
+    execution_order_limit: int = Field(default=0, ge=0)
+    planned_pairs: tuple[str, ...] = ()
+    planned_engines: tuple[str, ...] = ()
+    import_artifact_id: str = "none"
+    import_lineage_version: str = "n/a"
+    observability_ready: bool = False
+    halt_ready: bool = False
+    execution_ready: bool = False
+    broker_ready: bool = False
+    exchange_ready: bool = False
+    blocking_reasons: tuple[str, ...] = ()
+
+
 class AlertProjection(BaseModel, frozen=True):
     """Normalized alert and operability projection."""
 
@@ -256,6 +282,7 @@ class TechnicalDashboardPayload(TimestampedModel):
     build9x: Build9XProjection
     shadow: ShadowProjection = ShadowProjection()
     micro_live: MicroLiveProjection = MicroLiveProjection()
+    live_light: LiveLightProjection = LiveLightProjection()
     replay_import: ReplayImportProjection
     alerts: AlertProjection
     future_panels: tuple[str, ...] = (
@@ -263,6 +290,7 @@ class TechnicalDashboardPayload(TimestampedModel):
         "build9x_diagnostics",
         "shadow_supervision",
         "micro_live_supervision",
+        "live_light_supervision",
         "artifact_import",
         "observability_export",
     )
@@ -303,6 +331,7 @@ __all__ = [
     "Build9XProjection",
     "ShadowProjection",
     "MicroLiveProjection",
+    "LiveLightProjection",
     "ReplayImportProjection",
     "AlertProjection",
     "TechnicalDashboardPayload",

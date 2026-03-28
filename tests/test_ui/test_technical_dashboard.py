@@ -23,6 +23,7 @@ from meta_minimal.edge_tracker_prudent_minimal.edge_status_classifier import (
 )
 from monitoring import (
     Build9XProjection,
+    LiveLightProjection,
     MicroLiveProjection,
     ReplayImportProjection,
     ShadowProjection,
@@ -218,19 +219,23 @@ def test_technical_dashboard_view_exposes_system_meta_build9x_and_replay_section
         "Build-9X",
         "Build-11 Shadow",
         "Build-12 Micro-live",
+        "Build-13 Live-Light",
         "Replay & Import",
         "Alerts",
     }
     system = next(section for section in view.sections if section.title == "System")
     assert any(card.key == "governed_extensions" and "9X=warning" in card.value for card in system.cards)
     assert any(card.key == "governed_extensions" and "micro=planned" in card.value for card in system.cards)
+    assert any(card.key == "governed_extensions" and "live=planned" in card.value for card in system.cards)
     build9x = next(section for section in view.sections if section.title == "Build-9X")
     assert next(card for card in build9x.cards if card.key == "diagnostics_recent").value == "2"
     assert next(card for card in build9x.cards if card.key == "hypotheses_open").value == "1"
     shadow = next(section for section in view.sections if section.title == "Build-11 Shadow")
     micro = next(section for section in view.sections if section.title == "Build-12 Micro-live")
+    live = next(section for section in view.sections if section.title == "Build-13 Live-Light")
     assert next(card for card in shadow.cards if card.key == "shadow_run_state").value == "not_run"
     assert next(card for card in micro.cards if card.key == "micro_live_run_state").value == "not_run"
+    assert next(card for card in live.cards if card.key == "live_light_run_state").value == "not_run"
     replay = next(section for section in view.sections if section.title == "Replay & Import")
     assert next(card for card in replay.cards if card.key == "artifact_manifest").value == "artifact-1"
     assert next(card for card in replay.cards if card.key == "validation_status").value == "accepted"
@@ -247,11 +252,13 @@ def test_technical_dashboard_view_handles_empty_governed_state_cleanly():
     build9x = next(section for section in view.sections if section.title == "Build-9X")
     shadow = next(section for section in view.sections if section.title == "Build-11 Shadow")
     micro = next(section for section in view.sections if section.title == "Build-12 Micro-live")
+    live = next(section for section in view.sections if section.title == "Build-13 Live-Light")
     replay = next(section for section in view.sections if section.title == "Replay & Import")
     assert next(card for card in build9x.cards if card.key == "diagnostics_recent").value == "0"
     assert next(card for card in build9x.cards if card.key == "memory_review").status == "planned"
     assert next(card for card in shadow.cards if card.key == "shadow_run_state").status == "planned"
     assert next(card for card in micro.cards if card.key == "micro_live_run_state").status == "planned"
+    assert next(card for card in live.cards if card.key == "live_light_run_state").status == "planned"
     assert next(card for card in replay.cards if card.key == "artifact_manifest").value == "none"
     assert next(card for card in replay.cards if card.key == "validation_status").value == "not_run"
 
@@ -305,6 +312,7 @@ def test_technical_dashboard_view_surfaces_rejected_import_and_future_panels():
         "build9x_diagnostics",
         "shadow_supervision",
         "micro_live_supervision",
+        "live_light_supervision",
         "artifact_import",
         "observability_export",
     }
@@ -396,3 +404,42 @@ def test_technical_dashboard_view_projects_micro_live_summary_when_available():
     assert "micro=healthy" in governed.value
     assert next(card for card in micro.cards if card.key == "micro_live_verdict").value == "allowed_to_probe"
     assert next(card for card in micro.cards if card.key == "micro_live_guardrails").status == "healthy"
+
+
+def test_technical_dashboard_view_projects_live_light_summary_when_available():
+    payload = build_technical_dashboard_payload(
+        _snapshot(runtime_mode=RuntimeMode.LIVE),
+        active_modules=("protocols", "monitoring", "ui"),
+        active_engines=("engine_a", "engine_b"),
+        live_light_projection=LiveLightProjection(
+            status="healthy",
+            run_state="ready_to_execute_small",
+            verdict="allowed_to_execute_small",
+            micro_live_run_id="micro-run-1",
+            micro_live_verdict="allowed_to_probe",
+            allowed_to_execute_small=True,
+            requested_total_notional_usdt=80.0,
+            approved_total_notional_usdt=80.0,
+            approved_pair_notional_usdt=40.0,
+            execution_order_limit=3,
+            planned_pairs=("BTCUSDT", "ETHUSDT"),
+            planned_engines=("engine_a", "engine_b"),
+            import_artifact_id="artifact-live-1",
+            import_lineage_version="a.v1.0.r1",
+            observability_ready=True,
+            halt_ready=True,
+            execution_ready=True,
+            broker_ready=True,
+            exchange_ready=True,
+            blocking_reasons=(),
+        ),
+    )
+
+    view = build_technical_dashboard_view(payload)
+    system = next(section for section in view.sections if section.title == "System")
+    live = next(section for section in view.sections if section.title == "Build-13 Live-Light")
+
+    governed = next(card for card in system.cards if card.key == "governed_extensions")
+    assert "live=healthy" in governed.value
+    assert next(card for card in live.cards if card.key == "live_light_verdict").value == "allowed_to_execute_small"
+    assert next(card for card in live.cards if card.key == "live_light_readiness").status == "healthy"

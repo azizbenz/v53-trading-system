@@ -72,6 +72,7 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LightD
                         f"9X={payload.system.build9x_status} / "
                         f"shadow={payload.system.shadow_status} / "
                         f"micro={payload.system.micro_live_status} / "
+                        f"live={payload.system.live_light_status} / "
                         f"replay={payload.system.replay_import_status}"
                     ),
                     status=(
@@ -80,6 +81,7 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LightD
                             payload.system.build9x_status,
                             payload.system.shadow_status,
                             payload.system.micro_live_status,
+                            payload.system.live_light_status,
                             payload.system.replay_import_status,
                         }
                         else "warning"
@@ -87,6 +89,7 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LightD
                             payload.system.build9x_status,
                             payload.system.shadow_status,
                             payload.system.micro_live_status,
+                            payload.system.live_light_status,
                             payload.system.replay_import_status,
                         }
                         else "info"
@@ -385,6 +388,86 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LightD
                         else payload.micro_live.status
                     ),
                     detail=_join(payload.micro_live.blocking_reasons, empty="No blocking reason"),
+                ),
+            ),
+        ),
+        DashboardSection(
+            title="Build-13 Live-Light",
+            cards=(
+                DashboardCard(
+                    key="live_light_run_state",
+                    label="Run State",
+                    value=payload.live_light.run_state,
+                    status=payload.live_light.status,
+                    detail=f"micro_live_run={payload.live_light.micro_live_run_id or 'n/a'}",
+                ),
+                DashboardCard(
+                    key="live_light_verdict",
+                    label="Execution Verdict",
+                    value=payload.live_light.verdict,
+                    status=payload.live_light.status,
+                    detail=f"micro_live_verdict={payload.live_light.micro_live_verdict}",
+                ),
+                DashboardCard(
+                    key="live_light_budget",
+                    label="Budget",
+                    value=(
+                        f"approved={payload.live_light.approved_total_notional_usdt:.2f} / "
+                        f"pair={payload.live_light.approved_pair_notional_usdt:.2f}"
+                    ),
+                    status=payload.live_light.status,
+                    detail=f"requested={payload.live_light.requested_total_notional_usdt:.2f}",
+                ),
+                DashboardCard(
+                    key="live_light_surface",
+                    label="Execution Surface",
+                    value=(
+                        f"pairs={len(payload.live_light.planned_pairs)} / "
+                        f"engines={len(payload.live_light.planned_engines)} / "
+                        f"orders={payload.live_light.execution_order_limit}"
+                    ),
+                    status=(
+                        "info"
+                        if payload.live_light.planned_pairs or payload.live_light.planned_engines
+                        else payload.live_light.status
+                    ),
+                    detail=_join(payload.live_light.planned_pairs, empty="No execution surface planned"),
+                ),
+                DashboardCard(
+                    key="live_light_readiness",
+                    label="Readiness",
+                    value=(
+                        f"obs={'ready' if payload.live_light.observability_ready else 'missing'} / "
+                        f"halt={'ready' if payload.live_light.halt_ready else 'missing'} / "
+                        f"exec={'ready' if payload.live_light.execution_ready else 'missing'} / "
+                        f"broker={'ready' if payload.live_light.broker_ready else 'missing'} / "
+                        f"exchange={'ready' if payload.live_light.exchange_ready else 'missing'}"
+                    ),
+                    status=(
+                        "healthy"
+                        if payload.live_light.observability_ready
+                        and payload.live_light.halt_ready
+                        and payload.live_light.execution_ready
+                        and payload.live_light.broker_ready
+                        and payload.live_light.exchange_ready
+                        else "critical"
+                        if payload.live_light.status != "planned"
+                        else "planned"
+                    ),
+                    detail=payload.live_light.import_lineage_version,
+                ),
+                DashboardCard(
+                    key="live_light_blocking_reasons",
+                    label="Blocking Reasons",
+                    value=str(len(payload.live_light.blocking_reasons)),
+                    status=(
+                        "critical"
+                        if payload.live_light.blocking_reasons
+                        else "healthy"
+                        if payload.live_light.status == "healthy"
+                        else payload.live_light.status
+                    ),
+                    detail=_join(payload.live_light.blocking_reasons, empty="No blocking reason"),
                 ),
             ),
         ),

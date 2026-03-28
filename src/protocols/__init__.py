@@ -1,6 +1,10 @@
-"""Minimal real Build-11/12 protocol runtime surface."""
+"""Minimal real Build-11/12/13 protocol runtime surface."""
 
 from protocols.contracts import (
+    LiveLightDecision,
+    LiveLightExecutionIntent,
+    LiveLightInput,
+    LiveLightRunSummary,
     MicroLiveDecision,
     MicroLiveExecutionPlan,
     MicroLiveInput,
@@ -13,6 +17,8 @@ from protocols.contracts import (
     ShadowValidationSet,
 )
 from protocols.enums import (
+    LiveLightRunState,
+    LiveLightVerdict,
     MicroLiveRunState,
     MicroLiveVerdict,
     ShadowComparisonStatus,
@@ -21,6 +27,10 @@ from protocols.enums import (
     ShadowVerdict,
 )
 from protocols.errors import (
+    LiveLightBudgetError,
+    LiveLightGateError,
+    LiveLightInputError,
+    LiveLightProtocolError,
     MicroLiveBudgetError,
     MicroLiveGateError,
     MicroLiveInputError,
@@ -38,6 +48,14 @@ from protocols.micro_live_runtime import (
     build_micro_live_input_from_shadow,
     run_micro_live_gate,
 )
+from protocols.live_light_dashboard import (
+    build_live_light_dashboard_section,
+    build_live_light_projection,
+)
+from protocols.live_light_runtime import (
+    build_live_light_input_from_micro_live,
+    run_live_light_gate,
+)
 from protocols.shadow_dashboard import (
     build_shadow_dashboard_section,
     build_shadow_projection,
@@ -49,6 +67,20 @@ from protocols.shadow_runtime import (
 )
 
 __all__ = [
+    "LiveLightInput",
+    "LiveLightDecision",
+    "LiveLightExecutionIntent",
+    "LiveLightRunSummary",
+    "LiveLightRunState",
+    "LiveLightVerdict",
+    "LiveLightProtocolError",
+    "LiveLightInputError",
+    "LiveLightGateError",
+    "LiveLightBudgetError",
+    "build_live_light_input_from_micro_live",
+    "run_live_light_gate",
+    "build_live_light_projection",
+    "build_live_light_dashboard_section",
     "MicroLiveInput",
     "MicroLiveDecision",
     "MicroLiveExecutionPlan",

@@ -14,6 +14,7 @@ from meta_minimal.dtr_core.dtr_record_builder import build_dtr
 from meta_minimal.edge_tracker_prudent_minimal.edge_status_classifier import EdgeClassification, EdgeStatus
 from monitoring import (
     Build9XProjection,
+    LiveLightProjection,
     MicroLiveProjection,
     ReplayImportProjection,
     ShadowProjection,
@@ -33,6 +34,7 @@ def _payload(
     build9x_projection: Build9XProjection | None = None,
     shadow_projection: ShadowProjection | None = None,
     micro_live_projection: MicroLiveProjection | None = None,
+    live_light_projection: LiveLightProjection | None = None,
     replay_projection: ReplayImportProjection | None = None,
     active_modules: tuple[str, ...] = (),
     active_engines: tuple[str, ...] = (),
@@ -147,6 +149,7 @@ def _payload(
         build9x_projection=build9x_projection,
         shadow_projection=shadow_projection,
         micro_live_projection=micro_live_projection,
+        live_light_projection=live_light_projection,
         replay_projection=replay_projection,
     )
 
@@ -168,6 +171,7 @@ def test_observability_export_contains_grouped_metrics():
     assert "v53_meta_dtr_coverage_ratio" in names
     assert "v53_shadow_run_state" in names
     assert "v53_micro_live_run_state" in names
+    assert "v53_live_light_run_state" in names
     assert "v53_alert_active_count" in names
     assert export.correlation_id == "corr-obs"
     assert 'profile="light"' in export.text_payload
@@ -229,6 +233,28 @@ def test_observability_export_tracks_modules_engines_and_governed_flags():
             onboarding_ready=True,
             blocking_reasons=("Build-11 Shadow verdict must be accepted before Micro-live can probe capital",),
         ),
+        live_light_projection=LiveLightProjection(
+            status="warning",
+            run_state="prepared",
+            verdict="dry_run_only",
+            micro_live_run_id="micro-run-1",
+            micro_live_verdict="dry_run_only",
+            allowed_to_execute_small=False,
+            requested_total_notional_usdt=80.0,
+            approved_total_notional_usdt=0.0,
+            approved_pair_notional_usdt=0.0,
+            execution_order_limit=3,
+            planned_pairs=("BTCUSDT",),
+            planned_engines=("engine_a",),
+            import_artifact_id="artifact-1",
+            import_lineage_version="a.v2.1",
+            observability_ready=True,
+            halt_ready=True,
+            execution_ready=True,
+            broker_ready=False,
+            exchange_ready=True,
+            blocking_reasons=("broker readiness must be confirmed before Live-Light execution",),
+        ),
         replay_projection=ReplayImportProjection(
             status="warning",
             artifact_id="artifact-1",
@@ -252,6 +278,9 @@ def test_observability_export_tracks_modules_engines_and_governed_flags():
     assert any(sample.name == "v53_shadow_divergent_comparison_count" and sample.value == 2.0 for sample in export.samples)
     assert any(sample.name == "v53_micro_live_allowed_to_probe" and sample.value == 0.0 for sample in export.samples)
     assert any(sample.name == "v53_micro_live_blocking_reason_count" and sample.value == 1.0 for sample in export.samples)
+    assert any(sample.name == "v53_live_light_allowed_to_execute_small" and sample.value == 0.0 for sample in export.samples)
+    assert any(sample.name == "v53_live_light_blocking_reason_count" and sample.value == 1.0 for sample in export.samples)
+    assert any(sample.name == "v53_live_light_broker_ready" and sample.value == 0.0 for sample in export.samples)
     assert any(sample.name == "v53_replay_validation_accepted" and sample.value == 0.0 for sample in export.samples)
 
 

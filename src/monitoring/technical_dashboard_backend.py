@@ -7,6 +7,7 @@ from monitoring.contracts import (
     AlertProjection,
     Build9MetaProjection,
     Build9XProjection,
+    LiveLightProjection,
     MicroLiveProjection,
     MonitoringSnapshot,
     ReplayImportProjection,
@@ -103,6 +104,32 @@ def _default_micro_live_projection(*, active_modules: tuple[str, ...]) -> MicroL
     )
 
 
+def _default_live_light_projection(*, active_modules: tuple[str, ...]) -> LiveLightProjection:
+    module_active = "protocols" in active_modules
+    return LiveLightProjection(
+        status="info" if module_active else "planned",
+        run_state="not_run",
+        verdict="not_run",
+        micro_live_run_id="",
+        micro_live_verdict="not_run",
+        allowed_to_execute_small=False,
+        requested_total_notional_usdt=0.0,
+        approved_total_notional_usdt=0.0,
+        approved_pair_notional_usdt=0.0,
+        execution_order_limit=0,
+        planned_pairs=(),
+        planned_engines=(),
+        import_artifact_id="none",
+        import_lineage_version="n/a",
+        observability_ready=False,
+        halt_ready=False,
+        execution_ready=False,
+        broker_ready=False,
+        exchange_ready=False,
+        blocking_reasons=(),
+    )
+
+
 def _build_build9_meta_projection(snapshot: MonitoringSnapshot) -> Build9MetaProjection:
     break_even_state = "drift_alert" if snapshot.meta.break_even_drift_alert else "stable"
     return Build9MetaProjection(
@@ -162,6 +189,7 @@ def build_technical_dashboard_payload(
     build9x_projection: Build9XProjection | None = None,
     shadow_projection: ShadowProjection | None = None,
     micro_live_projection: MicroLiveProjection | None = None,
+    live_light_projection: LiveLightProjection | None = None,
     replay_projection: ReplayImportProjection | None = None,
 ) -> TechnicalDashboardPayload:
     """Normalize runtime supervision truth into a typed Build-10 payload."""
@@ -171,6 +199,7 @@ def build_technical_dashboard_payload(
     build9x = build9x_projection or _default_build9x_projection(active_modules=active_modules)
     shadow = shadow_projection or _default_shadow_projection(active_modules=active_modules)
     micro_live = micro_live_projection or _default_micro_live_projection(active_modules=active_modules)
+    live_light = live_light_projection or _default_live_light_projection(active_modules=active_modules)
     replay_import = replay_projection or _default_replay_projection(active_modules=active_modules)
     stale_engines = tuple(
         engine.engine_id
@@ -191,10 +220,11 @@ def build_technical_dashboard_payload(
             build9x_status=build9x.status,
             shadow_status=shadow.status,
             micro_live_status=micro_live.status,
+            live_light_status=live_light.status,
             replay_import_status=replay_import.status,
             governed_extensions_detail=(
-                "Build-9X, Shadow, Micro-live, and replay/import remain governed. "
-                "Build-13 stays closed."
+                "Build-9X, Shadow, Micro-live, Live-Light, and replay/import remain governed. "
+                "Complete stays closed."
             ),
         ),
         portfolio=resolved_snapshot.portfolio,
@@ -202,6 +232,7 @@ def build_technical_dashboard_payload(
         build9x=build9x,
         shadow=shadow,
         micro_live=micro_live,
+        live_light=live_light,
         replay_import=replay_import,
         alerts=_build_alert_projection(resolved_snapshot, headline_status=headline_status),
     )

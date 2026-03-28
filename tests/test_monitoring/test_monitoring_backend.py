@@ -27,6 +27,7 @@ from meta_minimal.edge_tracker_prudent_minimal.edge_status_classifier import (
 )
 from monitoring import (
     Build9XProjection,
+    LiveLightProjection,
     MicroLiveProjection,
     ReplayImportProjection,
     ShadowProjection,
@@ -140,6 +141,7 @@ def test_monitoring_exports_expected_symbols():
         "build_health_dashboard_payload",
         "Build9XProjection",
         "ShadowProjection",
+        "LiveLightProjection",
         "ReplayImportProjection",
         "TechnicalDashboardPayload",
         "build_technical_dashboard_payload",
@@ -421,6 +423,7 @@ def test_technical_dashboard_payload_normalizes_system_meta_and_governed_extensi
     assert payload.system.build9x_status == "warning"
     assert payload.system.shadow_status == "planned"
     assert payload.system.micro_live_status == "planned"
+    assert payload.system.live_light_status == "planned"
     assert payload.system.replay_import_status == "warning"
     assert payload.build9_meta.break_even_state == "drift_alert"
     assert payload.build9x.review_export_ready is True
@@ -460,6 +463,8 @@ def test_technical_dashboard_payload_defaults_governed_sections_without_raw_prot
     assert payload.shadow.verdict == "not_run"
     assert payload.micro_live.status == "planned"
     assert payload.micro_live.verdict == "not_run"
+    assert payload.live_light.status == "planned"
+    assert payload.live_light.verdict == "not_run"
     assert payload.replay_import.status == "info"
     assert payload.replay_import.validation_status == "not_run"
     assert payload.alerts.backlog_stale_status == "healthy"
@@ -563,3 +568,56 @@ def test_technical_dashboard_payload_accepts_micro_live_projection_summary():
     assert payload.micro_live.run_state == "ready_to_probe"
     assert payload.micro_live.allowed_to_probe is True
     assert payload.micro_live.planned_pairs == ("BTCUSDT", "ETHUSDT")
+
+
+def test_technical_dashboard_payload_accepts_live_light_projection_summary():
+    dtr_summary, cra_report, break_even_report, edge_report = _sample_build9_reports()
+    snapshot = collect_monitoring_snapshot(
+        correlation_id="corr-live-projection",
+        profile=ProfileId.LIGHT,
+        runtime_mode=RuntimeMode.LIVE,
+        timestamp_ms=1_700_000_000_000,
+        portfolio=collect_portfolio_metrics(
+            allocated_opportunities=1,
+            gross_capacity_used_pct=18.0,
+            loss_capacity_used_pct=4.0,
+            beta_utilization=0.15,
+            capital_deployed_usdt=700.0,
+            ce_net=0.0009,
+        ),
+        infra=collect_infra_metrics(queue_backlog=20),
+        meta=collect_meta_metrics(dtr_summary, cra_report, break_even_report, edge_report),
+    )
+
+    payload = build_technical_dashboard_payload(
+        snapshot,
+        active_modules=("monitoring", "ui", "protocols"),
+        active_engines=("engine_a", "engine_b"),
+        live_light_projection=LiveLightProjection(
+            status="healthy",
+            run_state="ready_to_execute_small",
+            verdict="allowed_to_execute_small",
+            micro_live_run_id="micro-run-1",
+            micro_live_verdict="allowed_to_probe",
+            allowed_to_execute_small=True,
+            requested_total_notional_usdt=80.0,
+            approved_total_notional_usdt=80.0,
+            approved_pair_notional_usdt=40.0,
+            execution_order_limit=3,
+            planned_pairs=("BTCUSDT", "ETHUSDT"),
+            planned_engines=("engine_a", "engine_b"),
+            import_artifact_id="artifact-live-1",
+            import_lineage_version="a.v1.0.r1",
+            observability_ready=True,
+            halt_ready=True,
+            execution_ready=True,
+            broker_ready=True,
+            exchange_ready=True,
+            blocking_reasons=(),
+        ),
+    )
+
+    assert payload.system.live_light_status == "healthy"
+    assert payload.live_light.run_state == "ready_to_execute_small"
+    assert payload.live_light.allowed_to_execute_small is True
+    assert payload.live_light.planned_pairs == ("BTCUSDT", "ETHUSDT")

@@ -54,6 +54,7 @@ from meta_minimal.edge_tracker_prudent_minimal.edge_status_classifier import (  
 )
 from monitoring import (  # noqa: E402
     Build9XProjection,
+    LiveLightProjection,
     MicroLiveProjection,
     ReplayImportProjection,
     build_observability_export,
@@ -66,10 +67,13 @@ from monitoring import (  # noqa: E402
     collect_portfolio_metrics,
 )
 from protocols import (  # noqa: E402
+    build_live_light_input_from_micro_live,
+    build_live_light_projection,
     build_micro_live_input_from_shadow,
     build_micro_live_projection,
     build_shadow_input_from_payloads,
     build_shadow_projection,
+    run_live_light_gate,
     run_micro_live_gate,
     run_shadow_validation,
 )
@@ -431,7 +435,7 @@ def _build_demo_micro_live_projection(
     shadow_summary,
     payload,
     onboarding_decision,
-) -> MicroLiveProjection:
+) -> tuple[object, MicroLiveProjection]:
     micro_live_input = build_micro_live_input_from_shadow(
         shadow_summary,
         payload,
@@ -451,7 +455,37 @@ def _build_demo_micro_live_projection(
         micro_live_input,
         run_id="micro-live-demo-run",
     )
-    return build_micro_live_projection(summary)
+    return summary, build_micro_live_projection(summary)
+
+
+def _build_demo_live_light_projection(
+    micro_live_summary,
+    micro_live_payload,
+    onboarding_decision,
+) -> tuple[object, LiveLightProjection]:
+    live_light_input = build_live_light_input_from_micro_live(
+        micro_live_summary,
+        micro_live_payload,
+        live_pairs=("BTCUSDT", "ETHUSDT"),
+        requested_total_notional_usdt=90.0,
+        requested_pair_notional_usdt=45.0,
+        max_total_notional_usdt=100.0,
+        max_pair_notional_usdt=50.0,
+        execution_order_limit=3,
+        observability_ready=True,
+        halt_ready=True,
+        execution_ready=True,
+        broker_ready=True,
+        exchange_ready=True,
+        onboarding_accepted=onboarding_decision.accepted,
+        onboarding_review_state=onboarding_decision.review_state,
+        onboarding_reasons=onboarding_decision.reasons,
+    )
+    summary = run_live_light_gate(
+        live_light_input,
+        run_id="live-light-demo-run",
+    )
+    return summary, build_live_light_projection(summary)
 
 
 def _build_build14_section(payload) -> DashboardSection:
@@ -508,9 +542,9 @@ def _build_readiness_section() -> DashboardSection:
             DashboardCard(
                 key="protocol_guardrails",
                 label="Protocol Guardrails",
-                value="shadow_and_micro_governed",
+                value="shadow_micro_live_live_light_governed",
                 status="info",
-                detail="Build-11 Shadow and Build-12 Micro-live are opened in governed mode. Build-13 remains closed.",
+                detail="Build-11 Shadow, Build-12 Micro-live, and Build-13 Live-Light are opened in governed mode. Complete remains closed.",
             ),
         ),
     )
@@ -596,7 +630,7 @@ def _availability_sections() -> tuple[DashboardSection, ...]:
                 DashboardCard(
                     key="governed_extensions",
                     label="Governed Extensions",
-                    value="9X=implemented / shadow=implemented / micro=implemented / replay=implemented",
+                    value="9X=implemented / shadow=implemented / micro=implemented / live=implemented / replay=implemented",
                     status="info",
                     detail="No runtime snapshot loaded; rendered here as available capability only.",
                 ),
@@ -741,6 +775,53 @@ def _availability_sections() -> tuple[DashboardSection, ...]:
             ),
         ),
         DashboardSection(
+            title="Build-13 Live-Light",
+            cards=(
+                DashboardCard(
+                    key="live_light_run_state",
+                    label="Run State",
+                    value="not_run",
+                    status="info",
+                    detail="The launcher can project Live-Light, but no governed Live-Light run has been materialized in availability mode.",
+                ),
+                DashboardCard(
+                    key="live_light_verdict",
+                    label="Execution Verdict",
+                    value="not available",
+                    status="planned",
+                    detail="Requires a completed Micro-live summary, accepted onboarding, and governed Live-Light readiness inputs.",
+                ),
+                DashboardCard(
+                    key="live_light_budget",
+                    label="Budget",
+                    value="not available",
+                    status="planned",
+                    detail="No governed Live-Light intent has been prepared.",
+                ),
+                DashboardCard(
+                    key="live_light_surface",
+                    label="Execution Surface",
+                    value="not available",
+                    status="planned",
+                    detail="No governed Live-Light pairs or engines have been selected.",
+                ),
+                DashboardCard(
+                    key="live_light_readiness",
+                    label="Readiness",
+                    value="not available",
+                    status="planned",
+                    detail="Execution, broker, exchange, halt, and observability gates have not been materialized in availability mode.",
+                ),
+                DashboardCard(
+                    key="live_light_blocking_reasons",
+                    label="Blocking Reasons",
+                    value="0",
+                    status="info",
+                    detail="No Live-Light run executed, therefore no blocking reason collected.",
+                ),
+            ),
+        ),
+        DashboardSection(
             title="Replay & Import",
             cards=(
                 DashboardCard(key="artifact_manifest", label="Artifact Manifest", value="not available", status="planned", detail="No replay bundle loaded."),
@@ -792,7 +873,7 @@ def _availability_sections() -> tuple[DashboardSection, ...]:
                     label="Launcher Mode",
                     value="availability_only",
                     status="info",
-                    detail="Use --demo to render a full governed sample, including Build-11 Shadow and Build-12 Micro-live, without claiming a live runtime snapshot.",
+                    detail="Use --demo to render a full governed sample, including Build-11 Shadow, Build-12 Micro-live, and Build-13 Live-Light, without claiming a production runtime snapshot.",
                 ),
             ),
         ),
@@ -814,12 +895,13 @@ def export_technical_dashboard(output_dir: Path, *, demo: bool = False) -> Dashb
         "build9x_diagnostics",
         "shadow_supervision",
         "micro_live_supervision",
+        "live_light_supervision",
         "artifact_import",
         "observability_export",
     )
     footer_notes = (
         "One V5.3 only. No BACKTEST_PROFILE. No local/VPS fork.",
-        "Build-11 Shadow and Build-12 Micro-live are governed. Build-13 remains closed.",
+        "Build-11 Shadow, Build-12 Micro-live, and Build-13 Live-Light are governed. Complete remains closed.",
     )
 
     if demo:
@@ -844,18 +926,35 @@ def export_technical_dashboard(output_dir: Path, *, demo: bool = False) -> Dashb
             replay_projection=replay_projection,
         )
         shadow_summary, shadow_projection = _build_demo_shadow_projection(payload)
-        micro_live_projection = _build_demo_micro_live_projection(
+        micro_live_summary, micro_live_projection = _build_demo_micro_live_projection(
             shadow_summary,
             payload,
             onboarding_decision,
         )
-        payload = build_technical_dashboard_payload(
-            snapshot,
+        micro_live_snapshot = snapshot.model_copy(update={"runtime_mode": RuntimeMode.MICRO_LIVE})
+        micro_live_payload = build_technical_dashboard_payload(
+            micro_live_snapshot,
             active_modules=active_modules,
             active_engines=active_engines,
             build9x_projection=build9x_projection,
             shadow_projection=shadow_projection,
             micro_live_projection=micro_live_projection,
+            replay_projection=replay_projection,
+        )
+        _, live_light_projection = _build_demo_live_light_projection(
+            micro_live_summary,
+            micro_live_payload,
+            onboarding_decision,
+        )
+        live_snapshot = snapshot.model_copy(update={"runtime_mode": RuntimeMode.LIVE})
+        payload = build_technical_dashboard_payload(
+            live_snapshot,
+            active_modules=active_modules,
+            active_engines=active_engines,
+            build9x_projection=build9x_projection,
+            shadow_projection=shadow_projection,
+            micro_live_projection=micro_live_projection,
+            live_light_projection=live_light_projection,
             replay_projection=replay_projection,
         )
         view = build_technical_dashboard_view(payload)
@@ -871,7 +970,7 @@ def export_technical_dashboard(output_dir: Path, *, demo: bool = False) -> Dashb
             source_mode="demo_payload",
             source_note=(
                 "This page is rendered from a governed local demo payload built with the real "
-                "Build-10, Build-9X, Build-11 Shadow, Build-12 Micro-live, replay/import, onboarding, and Build-14 readers. "
+                "Build-10, Build-9X, Build-11 Shadow, Build-12 Micro-live, Build-13 Live-Light, replay/import, onboarding, and Build-14 readers. "
                 "It is not a live runtime snapshot."
             ),
             sections=sections,

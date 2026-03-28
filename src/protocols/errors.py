@@ -1,4 +1,4 @@
-"""Dedicated errors for the minimal real Build-11/12 protocol runtimes."""
+"""Dedicated errors for the minimal real Build-11/12/13 protocol runtimes."""
 
 from __future__ import annotations
 
@@ -35,6 +35,22 @@ class MicroLiveBudgetError(MicroLiveProtocolError):
     """Raised when a micro-live exposure request exceeds the governed budget."""
 
 
+class LiveLightProtocolError(RuntimeError):
+    """Base error for governed Build-13 Live-Light failures."""
+
+
+class LiveLightInputError(LiveLightProtocolError):
+    """Raised when Live-Light input is structurally invalid."""
+
+
+class LiveLightGateError(LiveLightProtocolError):
+    """Raised when Micro-live -> Live-Light gates are bypassed."""
+
+
+class LiveLightBudgetError(LiveLightProtocolError):
+    """Raised when a Live-Light execution request exceeds the governed budget."""
+
+
 __all__ = [
     "ShadowProtocolError",
     "ShadowInputError",
@@ -44,4 +60,8 @@ __all__ = [
     "MicroLiveInputError",
     "MicroLiveGateError",
     "MicroLiveBudgetError",
+    "LiveLightProtocolError",
+    "LiveLightInputError",
+    "LiveLightGateError",
+    "LiveLightBudgetError",
 ]
