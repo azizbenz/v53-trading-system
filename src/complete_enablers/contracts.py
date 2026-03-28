@@ -37,6 +37,35 @@ class Build14EnablerContract(BaseModel, frozen=True):
         return self
 
 
+class Build14ObservationInput(BaseModel, frozen=True):
+    """Read-only facts collected from existing Build-9 / Build-10 surfaces."""
+
+    correlation_id: str = Field(..., min_length=1)
+    dtr_coverage: float = Field(..., ge=0.0, le=1.0)
+    cra_sterilization_rate: float = Field(..., ge=0.0, le=1.0)
+    cra_alert_count: int = Field(default=0, ge=0)
+    break_even_drift_alert: bool = False
+    edge_degraded_count: int = Field(default=0, ge=0)
+    queue_backlog: int = Field(default=0, ge=0)
+    stale_pair_count: int = Field(default=0, ge=0)
+    dtr_loss_count: int = Field(default=0, ge=0)
+    log_loss_count: int = Field(default=0, ge=0)
+    ce_net: float = 0.0
+
+
+class Build14EnablerSnapshot(Build14EnablerContract):
+    """Traceable read-only analytical snapshot emitted by a concrete Build-14 reader."""
+
+    reader_name: str = Field(..., min_length=1)
+    observed_value: float = Field(..., ge=0.0)
+    status: str = Field(..., min_length=1)
+    detail: str = Field(..., min_length=1)
+    evidence_refs: tuple[str, ...] = ()
+    structured_log_key: str = Field(..., min_length=1)
+
+
 __all__ = [
     "Build14EnablerContract",
+    "Build14ObservationInput",
+    "Build14EnablerSnapshot",
 ]
