@@ -1,40 +1,45 @@
-.PHONY: test lint typecheck dag-check ci clean install
+.PHONY: test lint typecheck dag-check ci clean install build9-core-smoke
+
+PYTHON ?= python
 
 # Installation
 install:
-	pip install -e ".[dev]"
+	$(PYTHON) -m pip install -e ".[dev]"
 
 # Tests
 test:
-	pytest tests/ -v --tb=short
+	$(PYTHON) -m pytest tests/ -v --tb=short
 
 test-build1:
-	pytest tests/test_interface_contracts/ tests/test_manifest_registry/ tests/test_dag_validator/ tests/test_contract_test_suite/ tests/test_smoke_bootstrap/ -v --tb=short
+	$(PYTHON) -m pytest tests/test_interface_contracts/ tests/test_manifest_registry/ tests/test_dag_validator/ tests/test_contract_test_suite/ tests/test_smoke_bootstrap_recovery/ -v --tb=short
 
 test-cov:
-	pytest tests/ --cov=src --cov-report=term-missing --cov-report=html
+	$(PYTHON) -m pytest tests/ --cov=src --cov-report=term-missing --cov-report=html
 
 # Qualité
 lint:
-	ruff check src/ tests/
-	ruff format --check src/ tests/
+	$(PYTHON) -m ruff check src/ tests/
+	$(PYTHON) -m ruff format --check src/ tests/
 
 format:
-	ruff format src/ tests/
-	ruff check --fix src/ tests/
+	$(PYTHON) -m ruff format src/ tests/
+	$(PYTHON) -m ruff check --fix src/ tests/
 
 typecheck:
-	mypy src/
+	$(PYTHON) -m mypy src/
 
 # Architecture
 dag-check:
-	python scripts/run_dag_check.py
+	$(PYTHON) scripts/run_dag_check.py
 
 contract-tests:
-	python scripts/run_contract_tests.py
+	$(PYTHON) scripts/run_contract_tests.py
 
 smoke-tests:
-	python scripts/run_smoke_tests.py
+	$(PYTHON) scripts/run_smoke_tests.py
+
+build9-core-smoke:
+	$(PYTHON) scripts/run_build9_core_smoke.py
 
 # CI complet
 ci: lint typecheck test dag-check

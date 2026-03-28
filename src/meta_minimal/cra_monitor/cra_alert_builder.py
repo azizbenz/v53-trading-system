@@ -78,7 +78,11 @@ def build_alerts(
         for s in sterilized:
             if s.reason:
                 cause_counts[s.reason] = cause_counts.get(s.reason, 0) + 1
-        dominant = max(cause_counts, key=cause_counts.get, default="") if cause_counts else ""
+        dominant = (
+            max(cause_counts.items(), key=lambda item: item[1])[0]
+            if cause_counts
+            else ""
+        )
 
         if level != CRAAlertLevel.NONE:
             alerts.append(CRAAlert(

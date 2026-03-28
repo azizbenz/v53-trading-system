@@ -1,12 +1,12 @@
 """
-4.5.5 — Raw Message Emitter: emit raw messages with recv_time metadata.
+4.5.5 â€” Raw Message Emitter: emit raw messages with recv_time metadata.
 
 Invariant: every raw message MUST have a recv_time. No silent reordering.
 """
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class RawMessage(BaseModel, frozen=True):
@@ -17,7 +17,7 @@ class RawMessage(BaseModel, frozen=True):
 
     pair: str
     stream_type: str  # "trade" | "depth" | "kline" | "heartbeat"
-    payload: dict  # raw exchange data — opaque to business modules
+    payload: dict[str, object]  # raw exchange data â€” opaque to business modules
     recv_time: float  # local reception timestamp (mandatory)
     source: str = ""  # exchange identifier
     sequence: int | None = None  # optional exchange sequence number
@@ -69,7 +69,7 @@ class RawMessageEmitter:
 
     @property
     def utilization(self) -> float:
-        """ρ_q = backlog / max_buffer."""
+        """Ï_q = backlog / max_buffer."""
         if self._max_buffer == 0:
             return 1.0
         return len(self._buffer) / self._max_buffer

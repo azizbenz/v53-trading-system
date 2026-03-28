@@ -6,8 +6,6 @@ Invariant: every reconnection must be logged with reason and attempt count.
 
 from __future__ import annotations
 
-import math
-
 from pydantic import BaseModel, Field
 
 
@@ -45,7 +43,7 @@ class ReconnectController:
         """Compute delay for next reconnect attempt (exponential backoff)."""
         attempt = self._attempts.get(endpoint, 0)
         delay = min(self._base_delay * (2 ** attempt), self._max_delay)
-        return delay
+        return float(delay)
 
     def should_retry(self, endpoint: str) -> bool:
         return self._attempts.get(endpoint, 0) < self._max_attempts

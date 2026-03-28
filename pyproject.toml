@@ -1,6 +1,6 @@
 [project]
 name = "v53-trading-system"
-version = "5.3.0-build1"
+version = "5.3.0-build9"
 description = "V5.3 Crypto Trading System — Architecture modulaire prod-safe"
 requires-python = ">=3.12"
 dependencies = [
@@ -10,7 +10,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0",
+    "pytest>=7.4,<9.0",
     "pytest-cov>=4.0",
     "ruff>=0.3.0",
     "mypy>=1.8",
@@ -43,3 +43,5 @@ python_version = "3.12"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
+mypy_path = "$MYPY_CONFIG_FILE_DIR/src"
+explicit_package_bases = true

@@ -50,7 +50,10 @@ class FillAggregator:
         if fill.order_id not in self._fills:
             self._fills[fill.order_id] = []
         self._fills[fill.order_id].append(fill)
-        return self.get_aggregated(fill.order_id)
+        aggregated = self.get_aggregated(fill.order_id)
+        if aggregated is None:
+            raise RuntimeError(f"Aggregation unexpectedly missing for order {fill.order_id}")
+        return aggregated
 
     def get_aggregated(self, order_id: str) -> AggregatedFill | None:
         fills = self._fills.get(order_id)

@@ -8,8 +8,16 @@ Selected = arg top-k R_i subject to portfolio constraints.
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import TypedDict
 
 from pydantic import BaseModel, Field
+
+
+class RankedCandidate(TypedDict):
+    engine_id: str
+    pair: str
+    ranking_score: float
+    rank: int
 
 
 class SelectionOutcome(StrEnum):
@@ -39,7 +47,7 @@ class SelectionResult(BaseModel, frozen=True):
 
 
 def resolve_selection(
-    ranked_candidates: tuple[dict[str, object], ...],
+    ranked_candidates: tuple[RankedCandidate, ...],
     max_selections: int,
     portfolio_rejected_keys: frozenset[tuple[str, str]],
 ) -> SelectionResult:
@@ -53,10 +61,10 @@ def resolve_selection(
     selected = 0
 
     for c in ranked_candidates:
-        eid = str(c["engine_id"])
-        pair = str(c["pair"])
-        rs = float(c["ranking_score"])
-        rank = int(c["rank"])
+        eid = c["engine_id"]
+        pair = c["pair"]
+        rs = c["ranking_score"]
+        rank = c["rank"]
         key = (eid, pair)
 
         if key in portfolio_rejected_keys:

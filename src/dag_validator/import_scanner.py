@@ -1,8 +1,8 @@
 """
-5.5.1 — Import Scanner: scan Python source files for import statements via AST.
+5.5.1 - Import Scanner: scan Python source files for import statements via AST.
 
-Extracts all import targets from .py files in the src/ tree.
-Handles: import X, from X import Y, TYPE_CHECKING blocks.
+Extracts first-party import targets from the src/ tree and normalizes physical
+package layout to canonical module names declared in the manifest.
 """
 
 from __future__ import annotations
@@ -10,17 +10,26 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
+
+
+_PACKAGE_ALIASES: dict[str, str] = {
+    "portfolio_minimal": "portfolio",
+    "meta_minimal": "meta",
+}
+
+_ENGINE_PARENT = "engines"
+_ENGINE_MODULES = frozenset({"engine_a", "engine_b", "engine_c", "engine_d"})
 
 
 class ImportRecord(BaseModel, frozen=True):
     """Single observed import."""
 
-    source_module: str  # module that contains the import
-    target_module: str  # top-level package being imported
-    source_file: str    # relative file path
+    source_module: str
+    target_module: str
+    source_file: str
     line_number: int
-    is_type_checking: bool = False  # inside TYPE_CHECKING block
+    is_type_checking: bool = False
 
 
 class ScanResult(BaseModel, frozen=True):
@@ -29,19 +38,31 @@ class ScanResult(BaseModel, frozen=True):
     imports: tuple[ImportRecord, ...]
     files_scanned: int
     errors: tuple[str, ...] = ()
+    discovered_modules: tuple[str, ...] = ()
+    unknown_modules: tuple[str, ...] = ()
+
+
+def _canonicalize_package_parts(parts: tuple[str, ...]) -> str:
+    """Map a filesystem or import path to a canonical manifest module name."""
+    if not parts:
+        return ""
+
+    top = parts[0]
+    if top == _ENGINE_PARENT and len(parts) >= 2 and parts[1] in _ENGINE_MODULES:
+        return parts[1]
+
+    return _PACKAGE_ALIASES.get(top, top)
 
 
 def _resolve_module_name(file_path: Path, src_root: Path) -> str:
-    """Convert a file path to its module package name.
-
-    src/data_backbone/ingestion.py -> data_backbone
-    src/interface_contracts/__init__.py -> interface_contracts
-    """
+    """Convert a file path to its canonical module name."""
     rel = file_path.relative_to(src_root)
-    parts = rel.parts
-    if len(parts) >= 1:
-        return parts[0]
-    return str(rel)
+    return _canonicalize_package_parts(rel.parts)
+
+
+def _resolve_import_target(import_name: str) -> str:
+    """Map an import string to its canonical manifest module name."""
+    return _canonicalize_package_parts(tuple(import_name.split(".")))
 
 
 def _is_in_type_checking(node: ast.AST, tree: ast.Module) -> bool:
@@ -60,17 +81,23 @@ def _is_in_type_checking(node: ast.AST, tree: ast.Module) -> bool:
 
 
 def _detect_first_party_packages(src_root: Path) -> frozenset[str]:
-    """Detect all Python packages in src_root (dirs containing __init__.py).
-
-    This catches packages that exist on disk but are NOT registered in the
-    manifest — the exact phantom-module scenario that Build-1 must block.
-    """
+    """Detect canonical first-party module names present on disk."""
     packages: set[str] = set()
     if not src_root.is_dir():
         return frozenset()
+
     for child in src_root.iterdir():
-        if child.is_dir() and (child / "__init__.py").exists():
-            packages.add(child.name)
+        if not child.is_dir() or not (child / "__init__.py").exists():
+            continue
+
+        if child.name == _ENGINE_PARENT:
+            for engine_dir in child.iterdir():
+                if engine_dir.is_dir() and (engine_dir / "__init__.py").exists():
+                    packages.add(_canonicalize_package_parts((child.name, engine_dir.name)))
+            continue
+
+        packages.add(_canonicalize_package_parts((child.name,)))
+
     return frozenset(packages)
 
 
@@ -80,35 +107,28 @@ def _extract_imports(
     source_file: str,
     relevant_modules: frozenset[str],
 ) -> list[ImportRecord]:
-    """Extract import records from an AST tree.
-
-    Args:
-        relevant_modules: Union of known_modules (manifest) and first-party
-            packages detected on disk. An import is captured if its top-level
-            package is in this set. Stdlib and third-party imports are excluded
-            because they don't appear as directories under src/.
-    """
+    """Extract canonicalized first-party import records from an AST tree."""
     records: list[ImportRecord] = []
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                top_pkg = alias.name.split(".")[0]
-                if top_pkg in relevant_modules:
+                target_module = _resolve_import_target(alias.name)
+                if target_module in relevant_modules:
                     records.append(ImportRecord(
                         source_module=source_module,
-                        target_module=top_pkg,
+                        target_module=target_module,
                         source_file=source_file,
                         line_number=node.lineno,
                         is_type_checking=_is_in_type_checking(node, tree),
                     ))
         elif isinstance(node, ast.ImportFrom):
             if node.module:
-                top_pkg = node.module.split(".")[0]
-                if top_pkg in relevant_modules:
+                target_module = _resolve_import_target(node.module)
+                if target_module in relevant_modules:
                     records.append(ImportRecord(
                         source_module=source_module,
-                        target_module=top_pkg,
+                        target_module=target_module,
                         source_file=source_file,
                         line_number=node.lineno,
                         is_type_checking=_is_in_type_checking(node, tree),
@@ -118,24 +138,7 @@ def _extract_imports(
 
 
 def scan_imports(src_root: Path, known_modules: frozenset[str]) -> ScanResult:
-    """Scan all .py files under src_root for first-party imports.
-
-    Captures imports of:
-    - Modules registered in the manifest (known_modules)
-    - Packages that exist as directories in src_root but are NOT registered
-      (phantom/unregistered modules — these become missing_from_manifest violations)
-
-    Stdlib and third-party imports are excluded: they don't exist as
-    directories under src_root, so they are never in relevant_modules.
-
-    Args:
-        src_root: Path to the src/ directory.
-        known_modules: Set of module names registered in manifest_registry.
-
-    Returns:
-        ScanResult with all observed first-party imports.
-    """
-    # Detect all first-party packages on disk (registered or not)
+    """Scan all .py files under src_root for canonicalized first-party imports."""
     first_party = _detect_first_party_packages(src_root)
     relevant_modules = known_modules | first_party
 
@@ -160,8 +163,12 @@ def scan_imports(src_root: Path, known_modules: frozenset[str]) -> ScanResult:
         except OSError as e:
             errors.append(f"IOError reading {rel_path}: {e}")
 
+    unknown_modules = tuple(sorted(first_party - known_modules))
+
     return ScanResult(
         imports=tuple(all_imports),
         files_scanned=files_scanned,
         errors=tuple(errors),
+        discovered_modules=tuple(sorted(first_party)),
+        unknown_modules=unknown_modules,
     )

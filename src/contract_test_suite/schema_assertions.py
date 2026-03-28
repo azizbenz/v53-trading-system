@@ -7,7 +7,7 @@ that a Pydantic model conforms to its declared schema contract.
 
 from __future__ import annotations
 
-from typing import Any, Type
+from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
@@ -20,7 +20,7 @@ from contract_test_suite.contract_models import (
 
 
 def assert_field_present(
-    model_class: Type[BaseModel],
+    model_class: type[BaseModel],
     field_name: str,
     module_name: str,
 ) -> ContractResult:
@@ -41,7 +41,7 @@ def assert_field_present(
 
 
 def assert_field_absent(
-    model_class: Type[BaseModel],
+    model_class: type[BaseModel],
     field_name: str,
     module_name: str,
 ) -> ContractResult:
@@ -62,9 +62,9 @@ def assert_field_absent(
 
 
 def assert_field_type(
-    model_class: Type[BaseModel],
+    model_class: type[BaseModel],
     field_name: str,
-    expected_type: Type,
+    expected_type: type[Any],
     module_name: str,
 ) -> ContractResult:
     """Assert that a field's annotation matches the expected type."""
@@ -100,7 +100,7 @@ def assert_field_type(
 
 
 def assert_valid_instance(
-    model_class: Type[BaseModel],
+    model_class: type[BaseModel],
     data: dict[str, Any],
     module_name: str,
     contract_name: str = "",
@@ -125,7 +125,7 @@ def assert_valid_instance(
 
 
 def assert_invalid_rejected(
-    model_class: Type[BaseModel],
+    model_class: type[BaseModel],
     data: dict[str, Any],
     module_name: str,
     contract_name: str = "",
@@ -155,7 +155,7 @@ def assert_invalid_rejected(
 
 
 def assert_bounds(
-    model_class: Type[BaseModel],
+    model_class: type[BaseModel],
     field_name: str,
     valid_value: Any,
     invalid_low: Any | None,

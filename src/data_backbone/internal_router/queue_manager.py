@@ -30,7 +30,7 @@ class QueueManager:
 
     def __init__(self, default_max_size: int = 10000) -> None:
         self._default_max_size = default_max_size
-        self._queues: dict[str, deque] = {}
+        self._queues: dict[str, deque[object]] = {}
         self._max_sizes: dict[str, int] = {}
         self._enqueued: dict[str, int] = {}
         self._dequeued: dict[str, int] = {}
@@ -57,7 +57,7 @@ class QueueManager:
         self._enqueued[consumer_id] += 1
         return True
 
-    def dequeue(self, consumer_id: str, max_count: int | None = None) -> tuple:
+    def dequeue(self, consumer_id: str, max_count: int | None = None) -> tuple[object, ...]:
         """Consume items from a queue (FIFO)."""
         if consumer_id not in self._queues:
             return ()
@@ -90,9 +90,12 @@ class QueueManager:
         )
 
     def all_stats(self) -> tuple[QueueStats, ...]:
-        return tuple(
-            self.get_stats(cid) for cid in self._queues if self.get_stats(cid) is not None
-        )
+        stats: list[QueueStats] = []
+        for consumer_id in self._queues:
+            stat = self.get_stats(consumer_id)
+            if stat is not None:
+                stats.append(stat)
+        return tuple(stats)
 
     def remove_queue(self, consumer_id: str) -> bool:
         if consumer_id not in self._queues:

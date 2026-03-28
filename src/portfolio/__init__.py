@@ -1,4 +1,22 @@
-# V5.3 — Module non encore implémenté
-# Ce module sera développé dans un build futur
-# Ne pas coder ici tant que le build précédent n'est pas validé
-raise ImportError("Module pas encore implémenté — respecter l'ordre des builds")
+"""
+V5.3 - Canonical portfolio facade.
+
+The manifest module name is `portfolio`; the current Build-8 implementation
+resides in `portfolio_minimal`. This facade keeps the canonical import surface
+stable while the implementation remains split into subpackages.
+"""
+
+from portfolio_minimal import allocation_router, opportunity_selector
+from portfolio_minimal.portfolio_orchestrator import (
+    OrchestratorConfig,
+    OrchestratorResult,
+    run_portfolio_pipeline,
+)
+
+__all__ = [
+    "allocation_router",
+    "opportunity_selector",
+    "OrchestratorConfig",
+    "OrchestratorResult",
+    "run_portfolio_pipeline",
+]

@@ -6,7 +6,7 @@ Objets d'observabilité et de diagnostic.
 from __future__ import annotations
 from enum import Enum, unique
 from typing import Optional
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 from .domain_types import EngineId, RegimeId, TimestampedModel
 
 
@@ -105,7 +105,7 @@ class CostRecord(TimestampedModel):
 
     @field_validator("total_cost_bps")
     @classmethod
-    def validate_total_cost(cls, v: float, info) -> float:
+    def validate_total_cost(cls, v: float, info: ValidationInfo) -> float:
         data = info.data
         if all(k in data for k in ("fee_bps", "spread_cost_bps", "slippage_bps")):
             expected = data["fee_bps"] + data["spread_cost_bps"] + data["slippage_bps"]
@@ -129,7 +129,7 @@ class EdgeEstimate(TimestampedModel):
 
     @field_validator("net_edge_bps")
     @classmethod
-    def validate_net_edge(cls, v: float, info) -> float:
+    def validate_net_edge(cls, v: float, info: ValidationInfo) -> float:
         data = info.data
         if "gross_edge_bps" in data and "cost_drag_bps" in data:
             expected = data["gross_edge_bps"] - data["cost_drag_bps"]

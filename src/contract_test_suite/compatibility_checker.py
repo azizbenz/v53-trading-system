@@ -32,6 +32,7 @@ class FieldSnapshot(BaseModel, frozen=True):
 class SchemaSnapshot(BaseModel, frozen=True):
     """Frozen snapshot of a model's field schema."""
 
+    model_config = {"protected_namespaces": ()}
     model_name: str
     fields: tuple[FieldSnapshot, ...]
 

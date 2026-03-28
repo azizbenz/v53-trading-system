@@ -1,14 +1,14 @@
 """
-5.5.2 — Dependency Matcher: compare observed imports vs manifest-authorized dependencies.
+5.5.2 - Dependency Matcher: compare observed imports vs manifest-authorized dependencies.
 
 Takes scan results and the allowed-dependency whitelist, produces violations.
 """
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from dag_validator.import_scanner import ImportRecord, ScanResult
+from dag_validator.import_scanner import ScanResult
 
 
 class Violation(BaseModel, frozen=True):
@@ -34,51 +34,59 @@ class MatchResult(BaseModel, frozen=True):
         return len(self.violations) == 0
 
 
+def _missing_module_violation(module_name: str) -> Violation:
+    """Create a deterministic violation for an unregistered first-party module."""
+    return Violation(
+        source_module=module_name,
+        target_module=module_name,
+        source_file=f"{module_name}/__init__.py",
+        line_number=1,
+        violation_type="missing_from_manifest",
+        message=f"First-party module '{module_name}' exists on disk but is not registered in the manifest",
+    )
+
+
 def match_dependencies(
     scan: ScanResult,
     allowed_dependencies: dict[str, frozenset[str]],
     known_modules: frozenset[str],
 ) -> MatchResult:
-    """Compare observed imports against the manifest whitelist.
-
-    Checks:
-    1. Every internal import must be in the allowed_dependencies whitelist.
-    2. Every imported module must exist in the manifest (no phantom modules).
-    3. Self-imports are always allowed (module importing from itself).
-
-    Args:
-        scan: Result from import_scanner.
-        allowed_dependencies: From manifest_registry.dependency_registry.
-        known_modules: Set of all registered module names.
-
-    Returns:
-        MatchResult with violations and stats.
-    """
+    """Compare observed imports against the manifest whitelist."""
     violations: list[Violation] = []
     authorized_count = 0
+    reported_missing: set[str] = set()
+
+    for module_name in scan.unknown_modules:
+        violations.append(_missing_module_violation(module_name))
+        reported_missing.add(module_name)
 
     for imp in scan.imports:
-        # Self-import is always allowed
+        if imp.source_module not in known_modules:
+            if imp.source_module not in reported_missing:
+                violations.append(_missing_module_violation(imp.source_module))
+                reported_missing.add(imp.source_module)
+            continue
+
+        if imp.target_module not in known_modules:
+            if imp.target_module not in reported_missing:
+                violations.append(Violation(
+                    source_module=imp.source_module,
+                    target_module=imp.target_module,
+                    source_file=imp.source_file,
+                    line_number=imp.line_number,
+                    violation_type="missing_from_manifest",
+                    message=(
+                        f"{imp.source_module} imports '{imp.target_module}' "
+                        f"which is not registered in the manifest"
+                    ),
+                ))
+                reported_missing.add(imp.target_module)
+            continue
+
         if imp.source_module == imp.target_module:
             authorized_count += 1
             continue
 
-        # Target must exist in manifest
-        if imp.target_module not in known_modules:
-            violations.append(Violation(
-                source_module=imp.source_module,
-                target_module=imp.target_module,
-                source_file=imp.source_file,
-                line_number=imp.line_number,
-                violation_type="missing_from_manifest",
-                message=(
-                    f"{imp.source_module} imports '{imp.target_module}' "
-                    f"which is not registered in the manifest"
-                ),
-            ))
-            continue
-
-        # Check against whitelist
         allowed = allowed_dependencies.get(imp.source_module, frozenset())
         if imp.target_module in allowed:
             authorized_count += 1

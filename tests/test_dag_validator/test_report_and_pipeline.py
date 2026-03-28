@@ -1,5 +1,7 @@
 """Tests Module 3 — report_builder + full pipeline: build fail on critical violation."""
 
+from pathlib import Path
+
 import pytest
 
 from dag_validator.cycle_detector import CycleResult
@@ -232,7 +234,7 @@ class TestFullPipeline:
         assert isinstance(report.manifest_version, str)
         assert report.files_scanned > 0
 
-    def test_phantom_module_detected_end_to_end(self, tmp_path):
+    def test_phantom_module_detected_end_to_end(self, isolated_tmp_path: Path):
         """CRITICAL: a package in src/ not in manifest must cause FAIL.
 
         Creates a temporary src/ with:
@@ -248,7 +250,7 @@ class TestFullPipeline:
         from dag_validator.report_builder import build_report, format_report
         from interface_contracts.domain_types import ModuleLayer
 
-        src = tmp_path / "src"
+        src = isolated_tmp_path / "src"
 
         # registered_mod: imports phantom_mod
         pkg_a = src / "registered_mod"
@@ -295,4 +297,47 @@ class TestFullPipeline:
 
         assert report.passed is False, (
             f"Pipeline must FAIL on phantom module:\n{format_report(report)}"
+        )
+
+    def test_self_contained_first_party_package_detected_end_to_end(
+        self,
+        isolated_tmp_path: Path,
+    ):
+        """A first-party package with no imports must still fail if unregistered."""
+        from dag_validator.import_scanner import scan_imports
+        from dag_validator.dependency_matcher import match_dependencies
+        from dag_validator.cycle_detector import detect_cycles_in_manifest
+        from dag_validator.layer_validator import validate_layers
+        from dag_validator.report_builder import build_report, format_report
+        from interface_contracts.domain_types import ModuleLayer
+
+        src = isolated_tmp_path / "src"
+        pkg = src / "ghost_mod"
+        pkg.mkdir(parents=True)
+        (pkg / "__init__.py").write_text("", encoding="utf-8")
+
+        known_modules = frozenset()
+        allowed_deps: dict[str, frozenset[str]] = {}
+        module_layers: dict[str, ModuleLayer] = {}
+
+        scan = scan_imports(src, known_modules)
+        assert "ghost_mod" in scan.unknown_modules
+
+        match = match_dependencies(scan, allowed_deps, known_modules)
+        assert any(
+            v.violation_type == "missing_from_manifest" and v.target_module == "ghost_mod"
+            for v in match.violations
+        )
+
+        cycles = detect_cycles_in_manifest(allowed_deps)
+        layers = validate_layers(allowed_deps, module_layers)
+        report = build_report(
+            match,
+            cycles,
+            layers,
+            manifest_version="test",
+            files_scanned=scan.files_scanned,
+        )
+        assert report.passed is False, (
+            f"Pipeline must FAIL on self-contained first-party package:\n{format_report(report)}"
         )

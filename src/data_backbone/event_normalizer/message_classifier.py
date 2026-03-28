@@ -7,6 +7,7 @@ Invariant: classification is deterministic and explicit. Unknown types are flagg
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Mapping
 
 from pydantic import BaseModel, Field
 
@@ -29,7 +30,7 @@ class ClassificationResult(BaseModel, frozen=True):
 
 
 def classify_message(
-    payload: dict,
+    payload: Mapping[str, object],
     stream_type_hint: str | None = None,
 ) -> ClassificationResult:
     """Classify a raw message into a known type.

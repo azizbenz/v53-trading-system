@@ -6,7 +6,7 @@ Structures de décision: signal → score → risk → execution → portfolio.
 from __future__ import annotations
 from enum import Enum, unique
 from typing import Optional
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 from .domain_types import EngineId, RegimeId, Side, TimestampedModel
 
 
@@ -117,7 +117,7 @@ class RiskDecision(TimestampedModel):
 
     @field_validator("approved_size")
     @classmethod
-    def validate_approved_size(cls, v: float, info) -> float:
+    def validate_approved_size(cls, v: float, info: ValidationInfo) -> float:
         data = info.data
         if "requested_size" in data and v > data["requested_size"]:
             raise ValueError(f"approved_size ({v}) > requested_size ({data['requested_size']})")

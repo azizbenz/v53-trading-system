@@ -1,15 +1,12 @@
-"""Tests Module 3 — import_scanner: AST-based import extraction."""
+"""Tests Module 3 - import_scanner: AST-based import extraction."""
 
-import pytest
-import tempfile
 from pathlib import Path
 
+import pytest
+
 from dag_validator.import_scanner import (
-    ImportRecord,
-    ScanResult,
-    scan_imports,
     _resolve_module_name,
-    _extract_imports,
+    scan_imports,
 )
 
 
@@ -17,17 +14,23 @@ from dag_validator.import_scanner import (
 class TestResolveModuleName:
     """Module name extraction from file path."""
 
-    def test_simple_package(self, tmp_path: Path):
-        src = tmp_path / "src"
+    def test_simple_package(self, isolated_tmp_path: Path):
+        src = isolated_tmp_path / "src"
         f = src / "data_backbone" / "ingestion.py"
         f.parent.mkdir(parents=True)
         assert _resolve_module_name(f, src) == "data_backbone"
 
-    def test_init_file(self, tmp_path: Path):
-        src = tmp_path / "src"
-        f = src / "interface_contracts" / "__init__.py"
+    def test_nested_engine_package_maps_to_engine_name(self, isolated_tmp_path: Path):
+        src = isolated_tmp_path / "src"
+        f = src / "engines" / "engine_a" / "engine_a_runner.py"
         f.parent.mkdir(parents=True)
-        assert _resolve_module_name(f, src) == "interface_contracts"
+        assert _resolve_module_name(f, src) == "engine_a"
+
+    def test_alias_package_maps_to_canonical_name(self, isolated_tmp_path: Path):
+        src = isolated_tmp_path / "src"
+        f = src / "portfolio_minimal" / "portfolio_orchestrator.py"
+        f.parent.mkdir(parents=True)
+        assert _resolve_module_name(f, src) == "portfolio"
 
 
 @pytest.mark.build1
@@ -39,8 +42,8 @@ class TestScanImports:
         pkg.mkdir(parents=True, exist_ok=True)
         (pkg / "__init__.py").write_text(code, encoding="utf-8")
 
-    def test_scan_simple_import(self, tmp_path: Path):
-        src = tmp_path / "src"
+    def test_scan_simple_import(self, isolated_tmp_path: Path):
+        src = isolated_tmp_path / "src"
         self._write_module(src, "mod_a", "import mod_b\n")
         self._write_module(src, "mod_b", "")
 
@@ -52,51 +55,79 @@ class TestScanImports:
         assert result.imports[0].source_module == "mod_a"
         assert result.imports[0].target_module == "mod_b"
 
-    def test_scan_from_import(self, tmp_path: Path):
-        src = tmp_path / "src"
-        self._write_module(src, "mod_a", "from mod_b import something\n")
-        self._write_module(src, "mod_b", "")
+    def test_detects_unregistered_first_party_package_even_without_imports(
+        self,
+        isolated_tmp_path: Path,
+    ):
+        src = isolated_tmp_path / "src"
+        self._write_module(src, "ghost_module", "")
 
-        known = frozenset({"mod_a", "mod_b"})
-        result = scan_imports(src, known)
-        assert len(result.imports) == 1
-        assert result.imports[0].target_module == "mod_b"
+        result = scan_imports(src, frozenset())
+        assert "ghost_module" in result.discovered_modules
+        assert result.unknown_modules == ("ghost_module",)
 
-    def test_ignores_stdlib_imports(self, tmp_path: Path):
-        src = tmp_path / "src"
-        self._write_module(src, "mod_a", "import os\nimport json\n")
+    def test_detects_unregistered_first_party_package_import(self, isolated_tmp_path: Path):
+        src = isolated_tmp_path / "src"
+        self._write_module(src, "mod_a", "import phantom_module\n")
+        self._write_module(src, "phantom_module", "")
 
         known = frozenset({"mod_a"})
         result = scan_imports(src, known)
-        assert len(result.imports) == 0  # os/json not in known
+        assert len(result.imports) == 1
+        assert result.imports[0].source_module == "mod_a"
+        assert result.imports[0].target_module == "phantom_module"
+        assert result.unknown_modules == ("phantom_module",)
 
-    def test_ignores_nonexistent_external_modules(self, tmp_path: Path):
-        """Import of a package that doesn't exist on disk → ignored (not first-party)."""
-        src = tmp_path / "src"
-        self._write_module(src, "mod_a", "import unknown_pkg\n")
+    def test_nested_engine_import_maps_to_canonical_engine_module(self, isolated_tmp_path: Path):
+        src = isolated_tmp_path / "src"
+        engine_a = src / "engines" / "engine_a"
+        engine_a.mkdir(parents=True, exist_ok=True)
+        (src / "engines" / "__init__.py").write_text("", encoding="utf-8")
+        (engine_a / "__init__.py").write_text("", encoding="utf-8")
+        (engine_a / "engine_a_runner.py").write_text(
+            "from engines.engine_a.signal_reporter_a import SignalDecision\n",
+            encoding="utf-8",
+        )
+        (engine_a / "signal_reporter_a.py").write_text("", encoding="utf-8")
+
+        known = frozenset({"engine_a"})
+        result = scan_imports(src, known)
+        assert len(result.imports) == 1
+        assert result.imports[0].source_module == "engine_a"
+        assert result.imports[0].target_module == "engine_a"
+        assert result.unknown_modules == ()
+
+    def test_alias_package_maps_to_canonical_manifest_module(self, isolated_tmp_path: Path):
+        src = isolated_tmp_path / "src"
+        pkg = src / "portfolio_minimal"
+        pkg.mkdir(parents=True, exist_ok=True)
+        (pkg / "__init__.py").write_text("", encoding="utf-8")
+        (pkg / "portfolio_orchestrator.py").write_text(
+            "from portfolio_minimal.allocation_router.base_size_builder import SizeProfile\n",
+            encoding="utf-8",
+        )
+        sub = pkg / "allocation_router"
+        sub.mkdir(parents=True, exist_ok=True)
+        (sub / "__init__.py").write_text("", encoding="utf-8")
+        (sub / "base_size_builder.py").write_text("", encoding="utf-8")
+
+        known = frozenset({"portfolio"})
+        result = scan_imports(src, known)
+        assert len(result.imports) == 1
+        assert result.imports[0].source_module == "portfolio"
+        assert result.imports[0].target_module == "portfolio"
+        assert result.unknown_modules == ()
+
+    def test_ignores_stdlib_imports(self, isolated_tmp_path: Path):
+        src = isolated_tmp_path / "src"
+        self._write_module(src, "mod_a", "import os\nimport json\n")
 
         known = frozenset({"mod_a"})
         result = scan_imports(src, known)
         assert len(result.imports) == 0
 
-    def test_detects_unregistered_first_party_package(self, tmp_path: Path):
-        """A package exists in src/ but is NOT in known_modules → captured.
-
-        This is the phantom-module scenario: the scanner must not silently
-        drop it, so dependency_matcher can flag it as missing_from_manifest.
-        """
-        src = tmp_path / "src"
-        self._write_module(src, "mod_a", "import phantom_module\n")
-        self._write_module(src, "phantom_module", "")  # exists on disk
-
-        known = frozenset({"mod_a"})  # phantom_module NOT registered
-        result = scan_imports(src, known)
-        assert len(result.imports) == 1
-        assert result.imports[0].source_module == "mod_a"
-        assert result.imports[0].target_module == "phantom_module"
-
-    def test_type_checking_import_flagged(self, tmp_path: Path):
-        src = tmp_path / "src"
+    def test_type_checking_import_flagged(self, isolated_tmp_path: Path):
+        src = isolated_tmp_path / "src"
         code = (
             "from __future__ import annotations\n"
             "from typing import TYPE_CHECKING\n"
@@ -111,8 +142,8 @@ class TestScanImports:
         assert len(result.imports) == 1
         assert result.imports[0].is_type_checking is True
 
-    def test_scan_handles_syntax_error(self, tmp_path: Path):
-        src = tmp_path / "src"
+    def test_scan_handles_syntax_error(self, isolated_tmp_path: Path):
+        src = isolated_tmp_path / "src"
         pkg = src / "bad_mod"
         pkg.mkdir(parents=True)
         (pkg / "__init__.py").write_text("def broken(:\n", encoding="utf-8")
@@ -122,20 +153,12 @@ class TestScanImports:
         assert len(result.errors) == 1
         assert "SyntaxError" in result.errors[0]
 
-    def test_scan_empty_directory(self, tmp_path: Path):
-        src = tmp_path / "src"
+    def test_scan_empty_directory(self, isolated_tmp_path: Path):
+        src = isolated_tmp_path / "src"
         src.mkdir()
 
         result = scan_imports(src, frozenset())
         assert result.files_scanned == 0
         assert len(result.imports) == 0
-
-    def test_dotted_import_extracts_top_package(self, tmp_path: Path):
-        src = tmp_path / "src"
-        self._write_module(src, "mod_a", "from mod_b.sub.deep import X\n")
-        self._write_module(src, "mod_b", "")
-
-        known = frozenset({"mod_a", "mod_b"})
-        result = scan_imports(src, known)
-        assert len(result.imports) == 1
-        assert result.imports[0].target_module == "mod_b"
+        assert result.discovered_modules == ()
+        assert result.unknown_modules == ()

@@ -37,7 +37,7 @@ class ExecutionIntent(BaseModel, frozen=True):
     justification: str = ""
     timeout_s: float = 0.0  # 0 = no timeout
     profile: str = "LIGHT"
-    metadata: dict = Field(default_factory=dict)
+    metadata: dict[str, object] = Field(default_factory=dict)
 
 
 class NoTradeReason(StrEnum):

@@ -21,7 +21,7 @@ class Snapshot(BaseModel, frozen=True):
 
     pair: str
     data_type: str  # "orderbook" | "trades" | "ticker"
-    payload: dict
+    payload: dict[str, object]
     fetch_time: float
     exchange_time: float | None = None
     age_s: float = 0.0

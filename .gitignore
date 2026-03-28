@@ -19,3 +19,9 @@ Thumbs.db
 htmlcov/
 .coverage
 coverage.xml
+
+# Local audit / scratch artifacts
+.codex_tmp/
+v53_dag_*/
+v53_probe_*/
+V53_TRADING_SYSTEM_FILE_AUDIT_*.md

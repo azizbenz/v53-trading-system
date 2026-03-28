@@ -5,7 +5,7 @@ Structures de données de marché normalisées.
 """
 from __future__ import annotations
 from typing import Optional
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 from .domain_types import Side, Timeframe, TimestampedModel
 
 
@@ -84,7 +84,7 @@ class KlineEvent(TimestampedModel):
 
     @field_validator("high_price")
     @classmethod
-    def validate_high(cls, v: float, info) -> float:
+    def validate_high(cls, v: float, info: ValidationInfo) -> float:
         data = info.data
         if "open_price" in data and v < data["open_price"]:
             raise ValueError(f"high_price ({v}) < open_price ({data['open_price']})")
@@ -94,7 +94,7 @@ class KlineEvent(TimestampedModel):
 
     @field_validator("low_price")
     @classmethod
-    def validate_low(cls, v: float, info) -> float:
+    def validate_low(cls, v: float, info: ValidationInfo) -> float:
         data = info.data
         if "open_price" in data and v > data["open_price"]:
             raise ValueError(f"low_price ({v}) > open_price ({data['open_price']})")
@@ -132,7 +132,7 @@ class SnapshotEvent(TimestampedModel):
 
     @field_validator("ask")
     @classmethod
-    def validate_spread(cls, v: float, info) -> float:
+    def validate_spread(cls, v: float, info: ValidationInfo) -> float:
         data = info.data
         if "bid" in data and v < data["bid"]:
             raise ValueError(f"ask ({v}) < bid ({data['bid']})")
