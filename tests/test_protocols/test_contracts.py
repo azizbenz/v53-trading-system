@@ -271,6 +271,8 @@ def test_micro_live_input_rejects_wrong_runtime_mode_and_budget_overflow():
             shadow_validation_set_ref="validation-1",
             shadow_verdict=ShadowVerdict.ACCEPTED,
             shadow_run_state=ShadowRunState.COMPLETED,
+            shadow_import_artifact_id="artifact-1",
+            shadow_import_lineage_version="a.v1.0.r1",
             import_artifact_id="artifact-1",
             import_lineage_version="a.v1.0.r1",
             import_validation_status="accepted",
@@ -284,6 +286,128 @@ def test_micro_live_input_rejects_wrong_runtime_mode_and_budget_overflow():
             requested_pair_notional_usdt=10.0,
             max_total_notional_usdt=15.0,
             max_pair_notional_usdt=10.0,
+        )
+
+
+def test_micro_live_input_rejects_shadow_import_provenance_mismatch():
+    with pytest.raises(ValidationError):
+        MicroLiveInput(
+            correlation_id="corr-micro",
+            profile=ProfileId.LIGHT,
+            runtime_mode=RuntimeMode.MICRO_LIVE,
+            shadow_run_id="shadow-run-1",
+            shadow_truth_set_ref="truth-1",
+            shadow_validation_set_ref="validation-1",
+            shadow_verdict=ShadowVerdict.ACCEPTED,
+            shadow_run_state=ShadowRunState.COMPLETED,
+            shadow_import_artifact_id="artifact-shadow",
+            shadow_import_lineage_version="a.v1.0.r1",
+            import_artifact_id="artifact-replay",
+            import_lineage_version="a.v1.0.r1",
+            import_validation_status="accepted",
+            onboarding_accepted=True,
+            onboarding_review_state=ReviewState.PENDING,
+            review_export_ready=True,
+            observability_ready=True,
+            halt_ready=True,
+            active_engines=("engine_a",),
+            probe_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=20.0,
+            requested_pair_notional_usdt=10.0,
+            max_total_notional_usdt=25.0,
+            max_pair_notional_usdt=12.5,
+        )
+
+
+def test_micro_live_input_rejects_accepted_import_with_rejection_reasons():
+    with pytest.raises(ValidationError):
+        MicroLiveInput(
+            correlation_id="corr-micro",
+            profile=ProfileId.LIGHT,
+            runtime_mode=RuntimeMode.MICRO_LIVE,
+            shadow_run_id="shadow-run-1",
+            shadow_truth_set_ref="truth-1",
+            shadow_validation_set_ref="validation-1",
+            shadow_verdict=ShadowVerdict.ACCEPTED,
+            shadow_run_state=ShadowRunState.COMPLETED,
+            shadow_import_artifact_id="artifact-1",
+            shadow_import_lineage_version="a.v1.0.r1",
+            import_artifact_id="artifact-1",
+            import_lineage_version="a.v1.0.r1",
+            import_validation_status="accepted",
+            import_rejection_reasons=("lineage mismatch",),
+            onboarding_accepted=True,
+            onboarding_review_state=ReviewState.PENDING,
+            review_export_ready=True,
+            observability_ready=True,
+            halt_ready=True,
+            active_engines=("engine_a",),
+            probe_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=20.0,
+            requested_pair_notional_usdt=10.0,
+            max_total_notional_usdt=25.0,
+            max_pair_notional_usdt=12.5,
+        )
+
+
+def test_micro_live_input_rejects_accepted_onboarding_with_incoherent_review_state():
+    with pytest.raises(ValidationError):
+        MicroLiveInput(
+            correlation_id="corr-micro",
+            profile=ProfileId.LIGHT,
+            runtime_mode=RuntimeMode.MICRO_LIVE,
+            shadow_run_id="shadow-run-1",
+            shadow_truth_set_ref="truth-1",
+            shadow_validation_set_ref="validation-1",
+            shadow_verdict=ShadowVerdict.ACCEPTED,
+            shadow_run_state=ShadowRunState.COMPLETED,
+            shadow_import_artifact_id="artifact-1",
+            shadow_import_lineage_version="a.v1.0.r1",
+            import_artifact_id="artifact-1",
+            import_lineage_version="a.v1.0.r1",
+            import_validation_status="accepted",
+            onboarding_accepted=True,
+            onboarding_review_state=ReviewState.NEEDS_REVISION,
+            review_export_ready=True,
+            observability_ready=True,
+            halt_ready=True,
+            active_engines=("engine_a",),
+            probe_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=20.0,
+            requested_pair_notional_usdt=10.0,
+            max_total_notional_usdt=25.0,
+            max_pair_notional_usdt=12.5,
+        )
+
+
+def test_micro_live_input_rejects_accepted_onboarding_with_rejection_reasons():
+    with pytest.raises(ValidationError):
+        MicroLiveInput(
+            correlation_id="corr-micro",
+            profile=ProfileId.LIGHT,
+            runtime_mode=RuntimeMode.MICRO_LIVE,
+            shadow_run_id="shadow-run-1",
+            shadow_truth_set_ref="truth-1",
+            shadow_validation_set_ref="validation-1",
+            shadow_verdict=ShadowVerdict.ACCEPTED,
+            shadow_run_state=ShadowRunState.COMPLETED,
+            shadow_import_artifact_id="artifact-1",
+            shadow_import_lineage_version="a.v1.0.r1",
+            import_artifact_id="artifact-1",
+            import_lineage_version="a.v1.0.r1",
+            import_validation_status="accepted",
+            onboarding_accepted=True,
+            onboarding_review_state=ReviewState.PENDING,
+            onboarding_reasons=("manual sign-off missing",),
+            review_export_ready=True,
+            observability_ready=True,
+            halt_ready=True,
+            active_engines=("engine_a",),
+            probe_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=20.0,
+            requested_pair_notional_usdt=10.0,
+            max_total_notional_usdt=25.0,
+            max_pair_notional_usdt=12.5,
         )
 
 

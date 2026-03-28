@@ -25,6 +25,13 @@ Build-12 doit répondre à une question simple :
 
 Ce document définit le **protocole Build-12** et sa première implémentation réelle minimale.
 
+Dans la base de code actuelle retenue :
+
+- Build-12 existe réellement comme **gate / probe planner gouverné**
+- il prépare et bloque proprement l'entrée en Micro-live
+- il n'ouvre pas encore un runtime d'exécution exchange complet
+- il ne constitue donc pas encore Build-13
+
 Il ne doit pas être lu comme :
 
 - la preuve que Build-12 est complet au-delà du Micro-live minimal gouverné
@@ -260,7 +267,15 @@ x_i^{micro} \text{ assez petit pour protéger le capital, mais assez grand pour 
 
 ## 8.1 Principe
 
-Contrairement au Shadow, le Micro-live passe de vrais ordres.
+Dans le protocole cible complet, le Micro-live passe de vrais ordres.
+
+Dans l'implémentation actuelle retenue dans ce dépôt, Build-12 s'arrête volontairement à un
+**gate / probe planner gouverné** :
+
+- il valide les préconditions Shadow -> Micro-live
+- il borne le budget et la surface de probe
+- il produit un plan minimal supervisable
+- il n'exécute pas encore un runtime exchange complet
 
 On valide donc :
 - type d’ordre réel

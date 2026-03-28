@@ -17,6 +17,7 @@ from monitoring import (
     TechnicalDashboardPayload,
 )
 from protocols import (
+    MicroLiveInput,
     MicroLiveInputError,
     MicroLiveVerdict,
     ShadowComparison,
@@ -40,6 +41,9 @@ def _shadow_payload(
     validation_status: str = "accepted",
     artifact_id: str = "artifact-1",
     lineage_version: str = "a.v1.0.r1",
+    replay_artifact_id: str | None = None,
+    replay_lineage_version: str | None = None,
+    replay_rejection_reasons: tuple[str, ...] = (),
 ) -> TechnicalDashboardPayload:
     return TechnicalDashboardPayload(
         timestamp_ms=1_700_000_000_000,
@@ -113,13 +117,13 @@ def _shadow_payload(
         micro_live=MicroLiveProjection(),
         replay_import=ReplayImportProjection(
             status="healthy" if validation_status == "accepted" else "warning",
-            artifact_id=artifact_id,
+            artifact_id=replay_artifact_id or artifact_id,
             artifact_kind="review_packet",
-            lineage_version=lineage_version,
+            lineage_version=replay_lineage_version or lineage_version,
             lifecycle_state="exported",
             validation_status=validation_status,
             review_state="pending" if validation_status == "accepted" else "needs_revision",
-            rejection_reasons=(),
+            rejection_reasons=replay_rejection_reasons,
         ),
         alerts=AlertProjection(
             headline_status="healthy",
@@ -200,6 +204,8 @@ def test_build_micro_live_input_from_shadow_maps_governed_inputs():
 
     assert micro_input.runtime_mode == RuntimeMode.MICRO_LIVE
     assert micro_input.shadow_run_id == "shadow-run-1"
+    assert micro_input.shadow_import_artifact_id == "artifact-1"
+    assert micro_input.shadow_import_lineage_version == "a.v1.0.r1"
     assert micro_input.import_validation_status == "accepted"
 
 
@@ -211,6 +217,82 @@ def test_build_micro_live_input_from_shadow_rejects_non_shadow_source_payload():
         build_micro_live_input_from_shadow(
             _shadow_summary(),
             _shadow_payload(runtime_mode=RuntimeMode.MICRO_LIVE),
+            probe_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=20.0,
+            requested_pair_notional_usdt=10.0,
+            max_total_notional_usdt=25.0,
+            max_pair_notional_usdt=12.5,
+            observability_ready=True,
+            halt_ready=True,
+            onboarding_accepted=True,
+        )
+
+
+def test_build_micro_live_input_from_shadow_rejects_shadow_import_artifact_mismatch():
+    with pytest.raises(
+        MicroLiveInputError,
+        match="matching Shadow/import artifact_id",
+    ):
+        build_micro_live_input_from_shadow(
+            _shadow_summary(),
+            _shadow_payload(replay_artifact_id="artifact-2"),
+            probe_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=20.0,
+            requested_pair_notional_usdt=10.0,
+            max_total_notional_usdt=25.0,
+            max_pair_notional_usdt=12.5,
+            observability_ready=True,
+            halt_ready=True,
+            onboarding_accepted=True,
+        )
+
+
+def test_build_micro_live_input_from_shadow_rejects_shadow_import_lineage_mismatch():
+    with pytest.raises(
+        MicroLiveInputError,
+        match="matching Shadow/import lineage_version",
+    ):
+        build_micro_live_input_from_shadow(
+            _shadow_summary(),
+            _shadow_payload(replay_lineage_version="a.v1.0.r2"),
+            probe_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=20.0,
+            requested_pair_notional_usdt=10.0,
+            max_total_notional_usdt=25.0,
+            max_pair_notional_usdt=12.5,
+            observability_ready=True,
+            halt_ready=True,
+            onboarding_accepted=True,
+        )
+
+
+def test_build_micro_live_input_from_shadow_rejects_non_empty_import_rejection_reasons():
+    with pytest.raises(
+        MicroLiveInputError,
+        match="empty replay import_rejection_reasons",
+    ):
+        build_micro_live_input_from_shadow(
+            _shadow_summary(),
+            _shadow_payload(replay_rejection_reasons=("lineage mismatch",)),
+            probe_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=20.0,
+            requested_pair_notional_usdt=10.0,
+            max_total_notional_usdt=25.0,
+            max_pair_notional_usdt=12.5,
+            observability_ready=True,
+            halt_ready=True,
+            onboarding_accepted=True,
+        )
+
+
+def test_build_micro_live_input_from_shadow_rejects_non_accepted_import_status():
+    with pytest.raises(
+        MicroLiveInputError,
+        match="accepted replay import_validation_status",
+    ):
+        build_micro_live_input_from_shadow(
+            _shadow_summary(),
+            _shadow_payload(validation_status="needs_revision"),
             probe_pairs=("BTCUSDT",),
             requested_total_notional_usdt=20.0,
             requested_pair_notional_usdt=10.0,
@@ -308,4 +390,91 @@ def test_run_micro_live_gate_keeps_hard_blockers_stronger_than_needs_review():
     assert (
         "Build-10 observability must be ready before Micro-live capital exposure"
         in summary.decision.blocking_reasons
+    )
+
+
+def test_run_micro_live_gate_blocks_model_constructed_import_provenance_mismatch():
+    micro_input = build_micro_live_input_from_shadow(
+        _shadow_summary(),
+        _shadow_payload(),
+        probe_pairs=("BTCUSDT",),
+        requested_total_notional_usdt=20.0,
+        requested_pair_notional_usdt=10.0,
+        max_total_notional_usdt=25.0,
+        max_pair_notional_usdt=12.5,
+        observability_ready=True,
+        halt_ready=True,
+        onboarding_accepted=True,
+    )
+
+    contradictory_input = MicroLiveInput.model_construct(
+        **{
+            **micro_input.model_dump(),
+            "shadow_import_artifact_id": "artifact-shadow",
+        }
+    )
+    summary = run_micro_live_gate(contradictory_input)
+
+    assert summary.decision.verdict == MicroLiveVerdict.BLOCKED
+    assert summary.decision.allowed_to_probe is False
+    assert "Build-12 Micro-live requires matching Shadow/import artifact_id" in (
+        summary.decision.blocking_reasons
+    )
+
+
+def test_run_micro_live_gate_blocks_model_constructed_onboarding_contradiction():
+    micro_input = build_micro_live_input_from_shadow(
+        _shadow_summary(),
+        _shadow_payload(),
+        probe_pairs=("BTCUSDT",),
+        requested_total_notional_usdt=20.0,
+        requested_pair_notional_usdt=10.0,
+        max_total_notional_usdt=25.0,
+        max_pair_notional_usdt=12.5,
+        observability_ready=True,
+        halt_ready=True,
+        onboarding_accepted=True,
+    )
+
+    contradictory_input = MicroLiveInput.model_construct(
+        **{
+            **micro_input.model_dump(),
+            "onboarding_review_state": ReviewState.NEEDS_REVISION,
+        }
+    )
+    summary = run_micro_live_gate(contradictory_input)
+
+    assert summary.decision.verdict == MicroLiveVerdict.BLOCKED
+    assert summary.decision.allowed_to_probe is False
+    assert "accepted onboarding must keep a pending or approved review_state" in (
+        summary.decision.blocking_reasons
+    )
+
+
+def test_run_micro_live_gate_blocks_model_constructed_non_accepted_import_status():
+    micro_input = build_micro_live_input_from_shadow(
+        _shadow_summary(),
+        _shadow_payload(),
+        probe_pairs=("BTCUSDT",),
+        requested_total_notional_usdt=20.0,
+        requested_pair_notional_usdt=10.0,
+        max_total_notional_usdt=25.0,
+        max_pair_notional_usdt=12.5,
+        observability_ready=True,
+        halt_ready=True,
+        onboarding_accepted=True,
+    )
+
+    contradictory_input = MicroLiveInput.model_construct(
+        **{
+            **micro_input.model_dump(),
+            "import_validation_status": "needs_revision",
+        }
+    )
+    summary = run_micro_live_gate(contradictory_input)
+
+    assert summary.decision.verdict == MicroLiveVerdict.BLOCKED
+    assert summary.decision.allowed_to_probe is False
+    assert "Build-12 Micro-live requires an accepted import_validation_status" in (
+        summary.decision.blocking_reasons
     )

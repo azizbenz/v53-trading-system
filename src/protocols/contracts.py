@@ -16,6 +16,9 @@ from protocols.enums import (
 
 
 _ACCEPTED_IMPORT_STATUSES = frozenset({"accepted"})
+_ACCEPTED_ONBOARDING_REVIEW_STATES = frozenset(
+    {ReviewState.PENDING, ReviewState.APPROVED}
+)
 _MICRO_LIVE_ALLOWED_ENGINES = frozenset({"engine_a", "engine_b"})
 
 
@@ -177,9 +180,12 @@ class MicroLiveInput(BaseModel, frozen=True):
     shadow_verdict: ShadowVerdict
     shadow_run_state: ShadowRunState
     shadow_blocking_reasons: tuple[str, ...] = ()
+    shadow_import_artifact_id: str = Field(..., min_length=1)
+    shadow_import_lineage_version: str = Field(..., min_length=1)
     import_artifact_id: str = Field(..., min_length=1)
     import_lineage_version: str = Field(..., min_length=1)
     import_validation_status: str = Field(..., min_length=1)
+    import_rejection_reasons: tuple[str, ...] = ()
     onboarding_accepted: bool = False
     onboarding_review_state: ReviewState = ReviewState.PENDING
     onboarding_reasons: tuple[str, ...] = ()
@@ -215,10 +221,40 @@ class MicroLiveInput(BaseModel, frozen=True):
             raise ValueError(
                 "Build-12 Micro-live requires an accepted import_validation_status"
             )
+        if self.import_rejection_reasons:
+            raise ValueError(
+                "Build-12 Micro-live requires empty import_rejection_reasons"
+            )
+        if self.shadow_import_artifact_id == "none":
+            raise ValueError(
+                "Build-12 Micro-live requires a concrete shadow_import_artifact_id"
+            )
+        if self.shadow_import_lineage_version == "n/a":
+            raise ValueError(
+                "Build-12 Micro-live requires a concrete shadow_import_lineage_version"
+            )
         if self.import_artifact_id == "none":
             raise ValueError("Build-12 Micro-live requires a concrete import_artifact_id")
         if self.import_lineage_version == "n/a":
             raise ValueError("Build-12 Micro-live requires a concrete lineage_version")
+        if self.shadow_import_artifact_id != self.import_artifact_id:
+            raise ValueError(
+                "Build-12 Micro-live requires matching Shadow/import artifact_id"
+            )
+        if self.shadow_import_lineage_version != self.import_lineage_version:
+            raise ValueError(
+                "Build-12 Micro-live requires matching Shadow/import lineage_version"
+            )
+
+        if self.onboarding_accepted:
+            if self.onboarding_review_state not in _ACCEPTED_ONBOARDING_REVIEW_STATES:
+                raise ValueError(
+                    "onboarding_accepted=True requires a pending or approved onboarding_review_state"
+                )
+            if self.onboarding_reasons:
+                raise ValueError(
+                    "onboarding_accepted=True requires empty onboarding_reasons"
+                )
 
         if not self.active_engines:
             raise ValueError("Build-12 Micro-live requires at least one Light engine")

@@ -31,6 +31,43 @@ def _validate_shadow_source_payload_scope(payload: TechnicalDashboardPayload) ->
         )
 
 
+def _validate_shadow_import_consistency(
+    shadow_summary: ShadowRunSummary,
+    shadow_payload: TechnicalDashboardPayload,
+) -> None:
+    replay_import = shadow_payload.replay_import
+    normalized_status = replay_import.validation_status.strip().casefold()
+
+    if shadow_summary.correlation_id != shadow_payload.correlation_id:
+        raise MicroLiveInputError(
+            "Build-12 Micro-live requires matching correlation_id between Shadow summary and payload"
+        )
+    if normalized_status != "accepted":
+        raise MicroLiveInputError(
+            "Build-12 Micro-live requires an accepted replay import_validation_status"
+        )
+    if replay_import.rejection_reasons:
+        raise MicroLiveInputError(
+            "Build-12 Micro-live requires empty replay import_rejection_reasons"
+        )
+    if not replay_import.artifact_id or replay_import.artifact_id == "none":
+        raise MicroLiveInputError(
+            "Build-12 Micro-live requires a concrete replay import_artifact_id"
+        )
+    if not replay_import.lineage_version or replay_import.lineage_version == "n/a":
+        raise MicroLiveInputError(
+            "Build-12 Micro-live requires a concrete replay lineage_version"
+        )
+    if shadow_summary.import_artifact_id != replay_import.artifact_id:
+        raise MicroLiveInputError(
+            "Build-12 Micro-live requires matching Shadow/import artifact_id"
+        )
+    if shadow_summary.import_lineage_version != replay_import.lineage_version:
+        raise MicroLiveInputError(
+            "Build-12 Micro-live requires matching Shadow/import lineage_version"
+        )
+
+
 def build_micro_live_input_from_shadow(
     shadow_summary: ShadowRunSummary,
     shadow_payload: TechnicalDashboardPayload,
@@ -51,6 +88,7 @@ def build_micro_live_input_from_shadow(
     """Build a governed Build-12 input from Build-11 Shadow outputs."""
 
     _validate_shadow_source_payload_scope(shadow_payload)
+    _validate_shadow_import_consistency(shadow_summary, shadow_payload)
     return MicroLiveInput(
         correlation_id=shadow_summary.correlation_id,
         profile=shadow_payload.profile,
@@ -61,9 +99,12 @@ def build_micro_live_input_from_shadow(
         shadow_verdict=shadow_summary.decision.verdict,
         shadow_run_state=shadow_summary.run_state,
         shadow_blocking_reasons=shadow_summary.decision.blocking_reasons,
+        shadow_import_artifact_id=shadow_summary.import_artifact_id,
+        shadow_import_lineage_version=shadow_summary.import_lineage_version,
         import_artifact_id=shadow_payload.replay_import.artifact_id,
         import_lineage_version=shadow_payload.replay_import.lineage_version,
         import_validation_status=shadow_payload.replay_import.validation_status,
+        import_rejection_reasons=shadow_payload.replay_import.rejection_reasons,
         onboarding_accepted=onboarding_accepted,
         onboarding_review_state=onboarding_review_state,
         onboarding_reasons=onboarding_reasons,
@@ -89,6 +130,7 @@ def run_micro_live_gate(
 
     hard_blocking_reasons: list[str] = []
     shadow_needs_review = False
+    normalized_import_status = micro_live_input.import_validation_status.strip().casefold()
 
     if micro_live_input.shadow_run_state != ShadowRunState.COMPLETED:
         hard_blocking_reasons.append(
@@ -108,9 +150,47 @@ def run_micro_live_gate(
             f"shadow gate: {reason}" for reason in micro_live_input.shadow_blocking_reasons
         )
 
+    if normalized_import_status != "accepted":
+        hard_blocking_reasons.append(
+            "Build-12 Micro-live requires an accepted import_validation_status"
+        )
+    if micro_live_input.import_rejection_reasons:
+        hard_blocking_reasons.append(
+            "Build-12 Micro-live requires empty import_rejection_reasons"
+        )
+    if micro_live_input.shadow_import_artifact_id != micro_live_input.import_artifact_id:
+        hard_blocking_reasons.append(
+            "Build-12 Micro-live requires matching Shadow/import artifact_id"
+        )
+    if (
+        micro_live_input.shadow_import_lineage_version
+        != micro_live_input.import_lineage_version
+    ):
+        hard_blocking_reasons.append(
+            "Build-12 Micro-live requires matching Shadow/import lineage_version"
+        )
+
     if not micro_live_input.onboarding_accepted:
         hard_blocking_reasons.append(
             "strategy onboarding must be accepted before Micro-live"
+        )
+    elif micro_live_input.onboarding_review_state not in {
+        ReviewState.PENDING,
+        ReviewState.APPROVED,
+    }:
+        hard_blocking_reasons.append(
+            "accepted onboarding must keep a pending or approved review_state"
+        )
+    if micro_live_input.onboarding_reasons and micro_live_input.onboarding_accepted:
+        hard_blocking_reasons.append(
+            "accepted onboarding must not carry rejection reasons"
+        )
+    if micro_live_input.onboarding_review_state in {
+        ReviewState.NEEDS_REVISION,
+        ReviewState.REJECTED,
+    }:
+        hard_blocking_reasons.append(
+            f"onboarding review_state={micro_live_input.onboarding_review_state.value} is not eligible for Micro-live"
         )
     hard_blocking_reasons.extend(
         f"onboarding gate: {reason}" for reason in micro_live_input.onboarding_reasons
