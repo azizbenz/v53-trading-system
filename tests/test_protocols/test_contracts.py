@@ -168,3 +168,79 @@ def test_shadow_run_summary_counts_divergent_and_blocking_comparisons():
 
     assert summary.divergent_comparison_count == 1
     assert summary.blocking_comparison_count == 1
+
+
+def test_shadow_validation_set_rejects_accepted_import_with_incoherent_status():
+    with pytest.raises(ValidationError):
+        ShadowValidationSet(
+            validation_ref="validation-1",
+            dtr_coverage=0.81,
+            cra_sterilization_rate=0.12,
+            break_even_drift_scope_count=0,
+            edge_degraded_count=0,
+            ce_net=0.0009,
+            active_alert_count=1,
+            queue_backlog=14,
+            accepted_import=True,
+            import_validation_status="needs_revision",
+            import_artifact_id="artifact-1",
+            import_lineage_version="a.v1.0.r1",
+        )
+
+
+def test_shadow_validation_set_rejects_accepted_import_with_rejection_reasons():
+    with pytest.raises(ValidationError):
+        ShadowValidationSet(
+            validation_ref="validation-1",
+            dtr_coverage=0.81,
+            cra_sterilization_rate=0.12,
+            break_even_drift_scope_count=0,
+            edge_degraded_count=0,
+            ce_net=0.0009,
+            active_alert_count=1,
+            queue_backlog=14,
+            accepted_import=True,
+            import_validation_status="accepted",
+            import_artifact_id="artifact-1",
+            import_lineage_version="a.v1.0.r1",
+            import_rejection_reasons=("lineage mismatch",),
+        )
+
+
+def test_shadow_validation_set_rejects_accepted_status_when_accept_flag_is_false():
+    with pytest.raises(ValidationError):
+        ShadowValidationSet(
+            validation_ref="validation-1",
+            dtr_coverage=0.81,
+            cra_sterilization_rate=0.12,
+            break_even_drift_scope_count=0,
+            edge_degraded_count=0,
+            ce_net=0.0009,
+            active_alert_count=1,
+            queue_backlog=14,
+            accepted_import=False,
+            import_validation_status="accepted",
+            import_artifact_id="artifact-1",
+            import_lineage_version="a.v1.0.r1",
+        )
+
+
+def test_shadow_validation_set_accepts_coherent_import_state():
+    validation = ShadowValidationSet(
+        validation_ref="validation-1",
+        dtr_coverage=0.81,
+        cra_sterilization_rate=0.12,
+        break_even_drift_scope_count=0,
+        edge_degraded_count=0,
+        ce_net=0.0009,
+        active_alert_count=1,
+        queue_backlog=14,
+        accepted_import=True,
+        import_validation_status="accepted",
+        import_artifact_id="artifact-1",
+        import_lineage_version="a.v1.0.r1",
+        import_rejection_reasons=(),
+    )
+
+    assert validation.accepted_import is True
+    assert validation.import_validation_status == "accepted"

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from interface_contracts import PromotionState, ReviewState
+from interface_contracts import ProfileId, PromotionState, ReviewState, RuntimeMode
 from monitoring import TechnicalDashboardPayload
 from protocols.contracts import (
     ShadowComparison,
@@ -18,6 +18,22 @@ from protocols.enums import (
     ShadowRunState,
     ShadowVerdict,
 )
+from protocols.errors import ShadowInputError
+
+
+def _validate_shadow_payload_scope(
+    payload: TechnicalDashboardPayload,
+    *,
+    role: str,
+) -> None:
+    if payload.profile != ProfileId.LIGHT:
+        raise ShadowInputError(
+            f"Build-11 Shadow {role} payload must stay on profile=LIGHT"
+        )
+    if payload.runtime_mode != RuntimeMode.SHADOW:
+        raise ShadowInputError(
+            f"Build-11 Shadow {role} payload must stay on runtime_mode=SHADOW"
+        )
 
 
 def build_shadow_input_from_payloads(
@@ -35,6 +51,9 @@ def build_shadow_input_from_payloads(
     max_allowed_queue_backlog_increase: int = 25,
 ) -> ShadowInput:
     """Build governed Shadow input from normalized Build-10 payloads."""
+
+    _validate_shadow_payload_scope(baseline_payload, role="baseline")
+    _validate_shadow_payload_scope(candidate_payload, role="candidate")
 
     truth_set = ShadowTruthSet(
         truth_ref=truth_ref,
@@ -201,16 +220,24 @@ def run_shadow_validation(
     validation = shadow_input.validation_set
     blocking_reasons: list[str] = []
     structurally_blocked = False
+    normalized_validation_status = validation.import_validation_status.strip().casefold()
 
     if not validation.accepted_import:
         structurally_blocked = True
         blocking_reasons.append("candidate import must be accepted before Shadow")
+    if normalized_validation_status != "accepted":
+        structurally_blocked = True
+        blocking_reasons.append(
+            "candidate import_validation_status must be an accepted status before Shadow"
+        )
     if not validation.import_artifact_id or validation.import_artifact_id == "none":
         structurally_blocked = True
         blocking_reasons.append("candidate import artifact_id is required")
     if not validation.import_lineage_version or validation.import_lineage_version == "n/a":
         structurally_blocked = True
         blocking_reasons.append("candidate lineage_version is required")
+    if validation.import_rejection_reasons:
+        structurally_blocked = True
     blocking_reasons.extend(
         f"import gate: {reason}" for reason in validation.import_rejection_reasons
     )

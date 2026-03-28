@@ -13,6 +13,9 @@ from protocols.enums import (
 )
 
 
+_ACCEPTED_IMPORT_STATUSES = frozenset({"accepted"})
+
+
 class ShadowTruthSet(BaseModel, frozen=True):
     """Baseline truth set used by Shadow for candidate comparison."""
 
@@ -46,6 +49,27 @@ class ShadowValidationSet(BaseModel, frozen=True):
     open_hypotheses: int = Field(default=0, ge=0)
     replay_candidate_count: int = Field(default=0, ge=0)
     review_export_ready: bool = False
+
+    @model_validator(mode="after")
+    def validate_import_consistency(self) -> "ShadowValidationSet":
+        normalized_status = self.import_validation_status.strip().casefold()
+
+        if self.accepted_import:
+            if normalized_status not in _ACCEPTED_IMPORT_STATUSES:
+                raise ValueError(
+                    "accepted_import=True requires an acceptance import_validation_status"
+                )
+            if self.import_rejection_reasons:
+                raise ValueError(
+                    "accepted_import=True requires empty import_rejection_reasons"
+                )
+
+        if normalized_status in _ACCEPTED_IMPORT_STATUSES and not self.accepted_import:
+            raise ValueError(
+                "accepted import_validation_status requires accepted_import=True"
+            )
+
+        return self
 
 
 class ShadowInput(BaseModel, frozen=True):

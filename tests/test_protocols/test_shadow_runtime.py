@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from interface_contracts import ProfileId, RuntimeMode
 from monitoring import (
     AlertProjection,
@@ -13,6 +15,10 @@ from monitoring import (
     TechnicalDashboardPayload,
 )
 from protocols import (
+    ShadowInputError,
+    ShadowInput,
+    ShadowTruthSet,
+    ShadowValidationSet,
     ShadowVerdict,
     build_shadow_input_from_payloads,
     run_shadow_validation,
@@ -154,6 +160,111 @@ def test_build_shadow_input_from_payloads_maps_baseline_and_candidate_sets():
     assert shadow_input.validation_set.accepted_import is True
     assert shadow_input.validation_set.build9x_diagnostics_count == 2
     assert shadow_input.validation_set.open_hypotheses == 1
+
+
+def test_build_shadow_input_from_payloads_rejects_complete_baseline():
+    baseline_payload = _payload(
+        correlation_id="corr-shadow-baseline",
+        ce_net=0.0012,
+        dtr_coverage=0.84,
+        cra_sterilization_rate=0.10,
+        break_even_scope_count=1,
+        edge_degraded_count=0,
+        active_alert_count=2,
+        queue_backlog=20,
+    ).model_copy(update={"profile": ProfileId.COMPLETE})
+    candidate_payload = _payload(
+        correlation_id="corr-shadow-candidate",
+        ce_net=0.0010,
+        dtr_coverage=0.81,
+        cra_sterilization_rate=0.12,
+        break_even_scope_count=1,
+        edge_degraded_count=0,
+        active_alert_count=3,
+        queue_backlog=28,
+        diagnostics_count=2,
+        open_hypotheses=1,
+        replay_candidate_count=1,
+        review_export_ready=True,
+    )
+
+    with pytest.raises(ShadowInputError, match="baseline payload must stay on profile=LIGHT"):
+        build_shadow_input_from_payloads(
+            baseline_payload,
+            candidate_payload,
+            truth_ref="truth-1",
+            validation_ref="validation-1",
+        )
+
+
+def test_build_shadow_input_from_payloads_rejects_live_baseline():
+    baseline_payload = _payload(
+        correlation_id="corr-shadow-baseline",
+        ce_net=0.0012,
+        dtr_coverage=0.84,
+        cra_sterilization_rate=0.10,
+        break_even_scope_count=1,
+        edge_degraded_count=0,
+        active_alert_count=2,
+        queue_backlog=20,
+    ).model_copy(update={"runtime_mode": RuntimeMode.LIVE})
+    candidate_payload = _payload(
+        correlation_id="corr-shadow-candidate",
+        ce_net=0.0010,
+        dtr_coverage=0.81,
+        cra_sterilization_rate=0.12,
+        break_even_scope_count=1,
+        edge_degraded_count=0,
+        active_alert_count=3,
+        queue_backlog=28,
+        diagnostics_count=2,
+        open_hypotheses=1,
+        replay_candidate_count=1,
+        review_export_ready=True,
+    )
+
+    with pytest.raises(ShadowInputError, match="baseline payload must stay on runtime_mode=SHADOW"):
+        build_shadow_input_from_payloads(
+            baseline_payload,
+            candidate_payload,
+            truth_ref="truth-1",
+            validation_ref="validation-1",
+        )
+
+
+def test_build_shadow_input_from_payloads_rejects_non_shadow_baseline_mode():
+    baseline_payload = _payload(
+        correlation_id="corr-shadow-baseline",
+        ce_net=0.0012,
+        dtr_coverage=0.84,
+        cra_sterilization_rate=0.10,
+        break_even_scope_count=1,
+        edge_degraded_count=0,
+        active_alert_count=2,
+        queue_backlog=20,
+    ).model_copy(update={"runtime_mode": RuntimeMode.LOCAL_REPLAY})
+    candidate_payload = _payload(
+        correlation_id="corr-shadow-candidate",
+        ce_net=0.0010,
+        dtr_coverage=0.81,
+        cra_sterilization_rate=0.12,
+        break_even_scope_count=1,
+        edge_degraded_count=0,
+        active_alert_count=3,
+        queue_backlog=28,
+        diagnostics_count=2,
+        open_hypotheses=1,
+        replay_candidate_count=1,
+        review_export_ready=True,
+    )
+
+    with pytest.raises(ShadowInputError, match="baseline payload must stay on runtime_mode=SHADOW"):
+        build_shadow_input_from_payloads(
+            baseline_payload,
+            candidate_payload,
+            truth_ref="truth-1",
+            validation_ref="validation-1",
+        )
 
 
 def test_run_shadow_validation_accepts_candidate_within_thresholds():
@@ -322,3 +433,60 @@ def test_run_shadow_validation_rejects_blocking_metric_divergence():
     assert summary.blocking_comparison_count >= 2
     assert any("dtr_coverage_drop" in reason for reason in summary.decision.blocking_reasons)
 
+
+def test_run_shadow_validation_blocks_contradictory_import_state_even_if_contracts_are_bypassed():
+    truth = ShadowTruthSet(
+        truth_ref="truth-1",
+        dtr_coverage=0.84,
+        cra_sterilization_rate=0.10,
+        break_even_drift_scope_count=1,
+        edge_degraded_count=0,
+        ce_net=0.0012,
+        active_alert_count=2,
+        queue_backlog=20,
+    )
+    invalid_validation = ShadowValidationSet.model_construct(
+        validation_ref="validation-1",
+        dtr_coverage=0.81,
+        cra_sterilization_rate=0.12,
+        break_even_drift_scope_count=1,
+        edge_degraded_count=0,
+        ce_net=0.0010,
+        active_alert_count=2,
+        queue_backlog=21,
+        accepted_import=True,
+        import_validation_status="needs_revision",
+        import_artifact_id="artifact-1",
+        import_lineage_version="a.v1.0.r1",
+        import_rejection_reasons=("artifact review incomplete",),
+        build9x_diagnostics_count=0,
+        open_hypotheses=0,
+        replay_candidate_count=0,
+        review_export_ready=False,
+    )
+    shadow_input = ShadowInput.model_construct(
+        correlation_id="corr-shadow",
+        profile=ProfileId.LIGHT,
+        runtime_mode=RuntimeMode.SHADOW,
+        truth_set=truth,
+        validation_set=invalid_validation,
+        max_allowed_dtr_coverage_drop=0.05,
+        max_allowed_cra_increase=0.10,
+        max_allowed_break_even_drift_scope_increase=0,
+        max_allowed_edge_degraded_delta=0,
+        max_allowed_ce_net_drop=0.0005,
+        max_allowed_alert_count_increase=1,
+        max_allowed_queue_backlog_increase=25,
+        backtest_profile=None,
+        creates_profile_fork=False,
+        automatic_promotion_requested=False,
+    )
+
+    summary = run_shadow_validation(shadow_input)
+
+    assert summary.decision.accepted is False
+    assert summary.decision.verdict == ShadowVerdict.BLOCKED
+    assert (
+        "candidate import_validation_status must be an accepted status before Shadow"
+        in summary.decision.blocking_reasons
+    )
