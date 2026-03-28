@@ -9,6 +9,7 @@ from monitoring.contracts import (
     Build9XProjection,
     MonitoringSnapshot,
     ReplayImportProjection,
+    ShadowProjection,
     SystemProjection,
     TechnicalDashboardPayload,
 )
@@ -52,6 +53,28 @@ def _default_replay_projection(*, active_modules: tuple[str, ...]) -> ReplayImpo
         validation_status="not_run",
         review_state="No import review executed",
         rejection_reasons=(),
+    )
+
+
+def _default_shadow_projection(*, active_modules: tuple[str, ...]) -> ShadowProjection:
+    module_active = "protocols" in active_modules
+    return ShadowProjection(
+        status="info" if module_active else "planned",
+        run_state="not_run",
+        verdict="not_run",
+        truth_set_ref="",
+        validation_set_ref="",
+        divergent_comparison_count=0,
+        blocking_comparison_count=0,
+        total_comparison_count=0,
+        build9x_diagnostics_count=0,
+        open_hypotheses=0,
+        replay_candidate_count=0,
+        review_export_ready=False,
+        import_artifact_id="none",
+        import_lineage_version="n/a",
+        blocking_reasons=(),
+        manual_review_required=False,
     )
 
 
@@ -112,6 +135,7 @@ def build_technical_dashboard_payload(
     active_modules: tuple[str, ...] = (),
     active_engines: tuple[str, ...] = (),
     build9x_projection: Build9XProjection | None = None,
+    shadow_projection: ShadowProjection | None = None,
     replay_projection: ReplayImportProjection | None = None,
 ) -> TechnicalDashboardPayload:
     """Normalize runtime supervision truth into a typed Build-10 payload."""
@@ -119,6 +143,7 @@ def build_technical_dashboard_payload(
     resolved_snapshot = _resolve_snapshot(snapshot)
     headline_status = build_health_dashboard_payload(resolved_snapshot).headline_status
     build9x = build9x_projection or _default_build9x_projection(active_modules=active_modules)
+    shadow = shadow_projection or _default_shadow_projection(active_modules=active_modules)
     replay_import = replay_projection or _default_replay_projection(active_modules=active_modules)
     stale_engines = tuple(
         engine.engine_id
@@ -137,12 +162,17 @@ def build_technical_dashboard_payload(
             active_engines=active_engines,
             stale_engines=stale_engines,
             build9x_status=build9x.status,
+            shadow_status=shadow.status,
             replay_import_status=replay_import.status,
-            governed_extensions_detail="Build-9X and replay/import remain governed and non-live",
+            governed_extensions_detail=(
+                "Build-9X, Shadow, and replay/import remain governed. "
+                "Only Build-11 Shadow is opened; Build-12/13 stay closed."
+            ),
         ),
         portfolio=resolved_snapshot.portfolio,
         build9_meta=_build_build9_meta_projection(resolved_snapshot),
         build9x=build9x,
+        shadow=shadow,
         replay_import=replay_import,
         alerts=_build_alert_projection(resolved_snapshot, headline_status=headline_status),
     )

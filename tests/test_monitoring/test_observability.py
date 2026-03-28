@@ -15,6 +15,7 @@ from meta_minimal.edge_tracker_prudent_minimal.edge_status_classifier import Edg
 from monitoring import (
     Build9XProjection,
     ReplayImportProjection,
+    ShadowProjection,
     build_observability_export,
     build_technical_dashboard_payload,
     collect_engine_metrics,
@@ -29,6 +30,7 @@ from monitoring import (
 def _payload(
     *,
     build9x_projection: Build9XProjection | None = None,
+    shadow_projection: ShadowProjection | None = None,
     replay_projection: ReplayImportProjection | None = None,
     active_modules: tuple[str, ...] = (),
     active_engines: tuple[str, ...] = (),
@@ -141,6 +143,7 @@ def _payload(
         active_modules=active_modules,
         active_engines=active_engines,
         build9x_projection=build9x_projection,
+        shadow_projection=shadow_projection,
         replay_projection=replay_projection,
     )
 
@@ -160,6 +163,7 @@ def test_observability_export_contains_grouped_metrics():
 
     assert "v53_system_headline_status" in names
     assert "v53_meta_dtr_coverage_ratio" in names
+    assert "v53_shadow_run_state" in names
     assert "v53_alert_active_count" in names
     assert export.correlation_id == "corr-obs"
     assert 'profile="light"' in export.text_payload
@@ -183,6 +187,24 @@ def test_observability_export_tracks_modules_engines_and_governed_flags():
             review_export_ready=True,
             review_export_ref="exports/review.md",
         ),
+        shadow_projection=ShadowProjection(
+            status="warning",
+            run_state="completed",
+            verdict="needs_review",
+            truth_set_ref="shadow_truth:t1",
+            validation_set_ref="shadow_validation:v1",
+            divergent_comparison_count=2,
+            blocking_comparison_count=0,
+            total_comparison_count=7,
+            build9x_diagnostics_count=4,
+            open_hypotheses=2,
+            replay_candidate_count=1,
+            review_export_ready=False,
+            import_artifact_id="artifact-1",
+            import_lineage_version="a.v2.1",
+            blocking_reasons=("review export missing",),
+            manual_review_required=True,
+        ),
         replay_projection=ReplayImportProjection(
             status="warning",
             artifact_id="artifact-1",
@@ -203,6 +225,7 @@ def test_observability_export_tracks_modules_engines_and_governed_flags():
     stale_b = next(sample for sample in engine_samples if sample.labels["engine"] == "engine_b")
     assert stale_b.value == 1.0
     assert any(sample.name == "v53_build9x_recent_diagnostics" and sample.value == 4.0 for sample in export.samples)
+    assert any(sample.name == "v53_shadow_divergent_comparison_count" and sample.value == 2.0 for sample in export.samples)
     assert any(sample.name == "v53_replay_validation_accepted" and sample.value == 0.0 for sample in export.samples)
 
 

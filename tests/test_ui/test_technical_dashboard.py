@@ -24,6 +24,7 @@ from meta_minimal.edge_tracker_prudent_minimal.edge_status_classifier import (
 from monitoring import (
     Build9XProjection,
     ReplayImportProjection,
+    ShadowProjection,
     build_technical_dashboard_payload,
     collect_engine_metrics,
     collect_infra_metrics,
@@ -214,6 +215,7 @@ def test_technical_dashboard_view_exposes_system_meta_build9x_and_replay_section
         "Portfolio",
         "Build-9 Meta",
         "Build-9X",
+        "Build-11 Shadow",
         "Replay & Import",
         "Alerts",
     }
@@ -222,6 +224,8 @@ def test_technical_dashboard_view_exposes_system_meta_build9x_and_replay_section
     build9x = next(section for section in view.sections if section.title == "Build-9X")
     assert next(card for card in build9x.cards if card.key == "diagnostics_recent").value == "2"
     assert next(card for card in build9x.cards if card.key == "hypotheses_open").value == "1"
+    shadow = next(section for section in view.sections if section.title == "Build-11 Shadow")
+    assert next(card for card in shadow.cards if card.key == "shadow_run_state").value == "not_run"
     replay = next(section for section in view.sections if section.title == "Replay & Import")
     assert next(card for card in replay.cards if card.key == "artifact_manifest").value == "artifact-1"
     assert next(card for card in replay.cards if card.key == "validation_status").value == "accepted"
@@ -236,9 +240,11 @@ def test_technical_dashboard_view_handles_empty_governed_state_cleanly():
 
     view = build_technical_dashboard_view(payload)
     build9x = next(section for section in view.sections if section.title == "Build-9X")
+    shadow = next(section for section in view.sections if section.title == "Build-11 Shadow")
     replay = next(section for section in view.sections if section.title == "Replay & Import")
     assert next(card for card in build9x.cards if card.key == "diagnostics_recent").value == "0"
     assert next(card for card in build9x.cards if card.key == "memory_review").status == "planned"
+    assert next(card for card in shadow.cards if card.key == "shadow_run_state").status == "planned"
     assert next(card for card in replay.cards if card.key == "artifact_manifest").value == "none"
     assert next(card for card in replay.cards if card.key == "validation_status").value == "not_run"
 
@@ -290,6 +296,7 @@ def test_technical_dashboard_view_surfaces_rejected_import_and_future_panels():
     assert set(view.future_panels) == {
         "technical_supervision",
         "build9x_diagnostics",
+        "shadow_supervision",
         "artifact_import",
         "observability_export",
     }
@@ -306,3 +313,41 @@ def test_technical_dashboard_view_marks_missing_modules_and_engines_as_planned()
     assert modules.detail == "No active modules declared"
     assert engines.status == "planned"
     assert engines.detail == "No active engines declared"
+
+
+def test_technical_dashboard_view_projects_shadow_summary_when_available():
+    payload = build_technical_dashboard_payload(
+        _snapshot(),
+        active_modules=("protocols", "monitoring", "ui"),
+        active_engines=("engine_a", "engine_b"),
+        shadow_projection=ShadowProjection(
+            status="warning",
+            run_state="completed",
+            verdict="needs_review",
+            truth_set_ref="shadow_truth:t1",
+            validation_set_ref="shadow_validation:v1",
+            divergent_comparison_count=2,
+            blocking_comparison_count=0,
+            total_comparison_count=7,
+            build9x_diagnostics_count=2,
+            open_hypotheses=1,
+            replay_candidate_count=1,
+            review_export_ready=False,
+            import_artifact_id="artifact-shadow-1",
+            import_lineage_version="a.v1.0.r1",
+            blocking_reasons=("Build-9X review export must be ready before accepting Shadow",),
+            manual_review_required=True,
+        ),
+    )
+
+    view = build_technical_dashboard_view(payload)
+    system = next(section for section in view.sections if section.title == "System")
+    shadow = next(section for section in view.sections if section.title == "Build-11 Shadow")
+
+    governed = next(card for card in system.cards if card.key == "governed_extensions")
+    assert "shadow=warning" in governed.value
+    assert next(card for card in shadow.cards if card.key == "shadow_verdict").value == "needs_review"
+    assert next(card for card in shadow.cards if card.key == "shadow_divergences").status == "warning"
+    assert next(card for card in shadow.cards if card.key == "shadow_blocking_reasons").detail == (
+        "Build-9X review export must be ready before accepting Shadow"
+    )

@@ -100,15 +100,16 @@ class TestModuleProfileMapping:
         assert "portfolio" in light_names
         assert "meta" in light_names
         assert "meta_learning" in light_names
+        assert "protocols" in light_names
         assert "monitoring" in light_names
         assert "ui" in light_names
         assert "local_replay_runtime" in light_names
         assert "backtest_artifact_import" in light_names
-        assert "protocols" not in light_names
 
     def test_complete_runtime_excludes_planned_complete_only_modules(self):
         complete_names = {m.module_name for m in get_modules_for_profile(ProfileId.COMPLETE)}
         assert "meta_learning" in complete_names
+        assert "protocols" in complete_names
         assert "monitoring" in complete_names
         assert "ui" in complete_names
         assert "local_replay_runtime" in complete_names

@@ -70,12 +70,20 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LightD
                     label="Governed Extensions",
                     value=(
                         f"9X={payload.system.build9x_status} / "
+                        f"shadow={payload.system.shadow_status} / "
                         f"replay={payload.system.replay_import_status}"
                     ),
                     status=(
-                        "warning"
+                        "critical"
+                        if "critical" in {
+                            payload.system.build9x_status,
+                            payload.system.shadow_status,
+                            payload.system.replay_import_status,
+                        }
+                        else "warning"
                         if "warning" in {
                             payload.system.build9x_status,
+                            payload.system.shadow_status,
                             payload.system.replay_import_status,
                         }
                         else "info"
@@ -209,6 +217,95 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LightD
                         else "planned"
                     ),
                     detail=payload.build9x.latest_memory_summary,
+                ),
+            ),
+        ),
+        DashboardSection(
+            title="Build-11 Shadow",
+            cards=(
+                DashboardCard(
+                    key="shadow_run_state",
+                    label="Run State",
+                    value=payload.shadow.run_state,
+                    status=payload.shadow.status,
+                    detail=(
+                        f"truth={payload.shadow.truth_set_ref or 'n/a'} / "
+                        f"validation={payload.shadow.validation_set_ref or 'n/a'}"
+                    ),
+                ),
+                DashboardCard(
+                    key="shadow_verdict",
+                    label="Gating Verdict",
+                    value=payload.shadow.verdict,
+                    status=payload.shadow.status,
+                    detail=(
+                        "manual review required"
+                        if payload.shadow.manual_review_required
+                        else "manual review not required"
+                    ),
+                ),
+                DashboardCard(
+                    key="shadow_divergences",
+                    label="Divergences",
+                    value=(
+                        f"blocking={payload.shadow.blocking_comparison_count} / "
+                        f"divergent={payload.shadow.divergent_comparison_count} / "
+                        f"total={payload.shadow.total_comparison_count}"
+                    ),
+                    status=(
+                        "critical"
+                        if payload.shadow.blocking_comparison_count > 0
+                        else "warning"
+                        if payload.shadow.divergent_comparison_count > 0
+                        else payload.shadow.status
+                    ),
+                ),
+                DashboardCard(
+                    key="shadow_candidate_state",
+                    label="Candidate State",
+                    value=(
+                        f"diagnostics={payload.shadow.build9x_diagnostics_count} / "
+                        f"hypotheses={payload.shadow.open_hypotheses} / "
+                        f"replay={payload.shadow.replay_candidate_count}"
+                    ),
+                    status=(
+                        "warning"
+                        if payload.shadow.manual_review_required
+                        else "info"
+                        if payload.shadow.status != "planned"
+                        else "planned"
+                    ),
+                    detail=(
+                        "review export ready"
+                        if payload.shadow.review_export_ready
+                        else "review export missing"
+                    ),
+                ),
+                DashboardCard(
+                    key="shadow_import_lineage",
+                    label="Import Lineage",
+                    value=payload.shadow.import_lineage_version,
+                    status=(
+                        "healthy"
+                        if payload.shadow.import_lineage_version not in {"", "n/a"}
+                        else "critical"
+                        if payload.shadow.status != "planned"
+                        else "planned"
+                    ),
+                    detail=payload.shadow.import_artifact_id or "No import artifact id",
+                ),
+                DashboardCard(
+                    key="shadow_blocking_reasons",
+                    label="Blocking Reasons",
+                    value=str(len(payload.shadow.blocking_reasons)),
+                    status=(
+                        "critical"
+                        if payload.shadow.blocking_reasons
+                        else "healthy"
+                        if payload.shadow.status == "healthy"
+                        else payload.shadow.status
+                    ),
+                    detail=_join(payload.shadow.blocking_reasons, empty="No blocking reason"),
                 ),
             ),
         ),

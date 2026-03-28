@@ -131,6 +131,7 @@ class SystemProjection(BaseModel, frozen=True):
     active_engines: tuple[str, ...] = ()
     stale_engines: tuple[str, ...] = ()
     build9x_status: ProjectionStatus = "planned"
+    shadow_status: ProjectionStatus = "planned"
     replay_import_status: ProjectionStatus = "planned"
     governed_extensions_detail: str = ""
 
@@ -181,6 +182,27 @@ class ReplayImportProjection(BaseModel, frozen=True):
     rejection_reasons: tuple[str, ...] = ()
 
 
+class ShadowProjection(BaseModel, frozen=True):
+    """Normalized Build-11 Shadow summary consumed by Build-10 supervision."""
+
+    status: ProjectionStatus = "planned"
+    run_state: str = "not_run"
+    verdict: str = "not_run"
+    truth_set_ref: str = ""
+    validation_set_ref: str = ""
+    divergent_comparison_count: int = Field(default=0, ge=0)
+    blocking_comparison_count: int = Field(default=0, ge=0)
+    total_comparison_count: int = Field(default=0, ge=0)
+    build9x_diagnostics_count: int = Field(default=0, ge=0)
+    open_hypotheses: int = Field(default=0, ge=0)
+    replay_candidate_count: int = Field(default=0, ge=0)
+    review_export_ready: bool = False
+    import_artifact_id: str = "none"
+    import_lineage_version: str = "n/a"
+    blocking_reasons: tuple[str, ...] = ()
+    manual_review_required: bool = False
+
+
 class AlertProjection(BaseModel, frozen=True):
     """Normalized alert and operability projection."""
 
@@ -208,11 +230,13 @@ class TechnicalDashboardPayload(TimestampedModel):
     portfolio: PortfolioMetrics
     build9_meta: Build9MetaProjection
     build9x: Build9XProjection
+    shadow: ShadowProjection = ShadowProjection()
     replay_import: ReplayImportProjection
     alerts: AlertProjection
     future_panels: tuple[str, ...] = (
         "technical_supervision",
         "build9x_diagnostics",
+        "shadow_supervision",
         "artifact_import",
         "observability_export",
     )
@@ -251,6 +275,7 @@ __all__ = [
     "SystemProjection",
     "Build9MetaProjection",
     "Build9XProjection",
+    "ShadowProjection",
     "ReplayImportProjection",
     "AlertProjection",
     "TechnicalDashboardPayload",

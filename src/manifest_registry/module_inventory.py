@@ -244,11 +244,11 @@ MODULES: tuple[ModuleEntry, ...] = (
         module_name="protocols",
         module_layer=ModuleLayer.PROTOCOL,
         owner=Owner.CLAUDE,
-        status=ModuleStatus.PLANNED,
+        status=ModuleStatus.ACTIVE,
         priority=Priority.P0,
         profile_scope=ProfileScope.LIGHT,
         build_stage=11,
-        description="Shadow, micro-live, live-light protocols",
+        description="Build-11 Shadow reel et gouverne; Build-12/13 restent fermes dans le meme module",
     ),
     # ── Build-14: Complete Enablers ──
     ModuleEntry(

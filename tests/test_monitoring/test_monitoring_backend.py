@@ -28,6 +28,7 @@ from meta_minimal.edge_tracker_prudent_minimal.edge_status_classifier import (
 from monitoring import (
     Build9XProjection,
     ReplayImportProjection,
+    ShadowProjection,
     build_health_dashboard_payload,
     build_monitoring_alerts,
     build_technical_dashboard_payload,
@@ -137,6 +138,7 @@ def test_monitoring_exports_expected_symbols():
         "build_monitoring_alerts",
         "build_health_dashboard_payload",
         "Build9XProjection",
+        "ShadowProjection",
         "ReplayImportProjection",
         "TechnicalDashboardPayload",
         "build_technical_dashboard_payload",
@@ -416,9 +418,11 @@ def test_technical_dashboard_payload_normalizes_system_meta_and_governed_extensi
     assert payload.system.headline_status == "critical"
     assert payload.system.stale_engines == ("engine_b",)
     assert payload.system.build9x_status == "warning"
+    assert payload.system.shadow_status == "planned"
     assert payload.system.replay_import_status == "warning"
     assert payload.build9_meta.break_even_state == "drift_alert"
     assert payload.build9x.review_export_ready is True
+    assert payload.shadow.run_state == "not_run"
     assert payload.replay_import.rejection_reasons == ("import target must start at SHADOW",)
     assert payload.alerts.active_alert_count >= 4
 
@@ -450,6 +454,57 @@ def test_technical_dashboard_payload_defaults_governed_sections_without_raw_prot
 
     assert payload.build9x.status == "info"
     assert payload.build9x.diagnostics_count == 0
+    assert payload.shadow.status == "planned"
+    assert payload.shadow.verdict == "not_run"
     assert payload.replay_import.status == "info"
     assert payload.replay_import.validation_status == "not_run"
     assert payload.alerts.backlog_stale_status == "healthy"
+
+
+def test_technical_dashboard_payload_accepts_shadow_projection_summary():
+    dtr_summary, cra_report, break_even_report, edge_report = _sample_build9_reports()
+    snapshot = collect_monitoring_snapshot(
+        correlation_id="corr-shadow-projection",
+        profile=ProfileId.LIGHT,
+        runtime_mode=RuntimeMode.SHADOW,
+        timestamp_ms=1_700_000_000_000,
+        portfolio=collect_portfolio_metrics(
+            allocated_opportunities=1,
+            gross_capacity_used_pct=18.0,
+            loss_capacity_used_pct=4.0,
+            beta_utilization=0.15,
+            capital_deployed_usdt=700.0,
+            ce_net=0.0009,
+        ),
+        infra=collect_infra_metrics(queue_backlog=20),
+        meta=collect_meta_metrics(dtr_summary, cra_report, break_even_report, edge_report),
+    )
+
+    payload = build_technical_dashboard_payload(
+        snapshot,
+        active_modules=("monitoring", "ui", "protocols"),
+        active_engines=("engine_a", "engine_b"),
+        shadow_projection=ShadowProjection(
+            status="warning",
+            run_state="completed",
+            verdict="needs_review",
+            truth_set_ref="shadow_truth:t1",
+            validation_set_ref="shadow_validation:v1",
+            divergent_comparison_count=2,
+            blocking_comparison_count=0,
+            total_comparison_count=7,
+            build9x_diagnostics_count=2,
+            open_hypotheses=1,
+            replay_candidate_count=1,
+            review_export_ready=False,
+            import_artifact_id="artifact-shadow-1",
+            import_lineage_version="a.v1.0.r1",
+            blocking_reasons=("review export missing",),
+            manual_review_required=True,
+        ),
+    )
+
+    assert payload.system.shadow_status == "warning"
+    assert payload.shadow.run_state == "completed"
+    assert payload.shadow.validation_set_ref == "shadow_validation:v1"
+    assert payload.shadow.blocking_reasons == ("review export missing",)

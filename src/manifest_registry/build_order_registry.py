@@ -106,7 +106,7 @@ BUILD_STAGES: tuple[BuildStage, ...] = (
     BuildStage(
         stage=11,
         name="Shadow Light",
-        description="Validation sans capital, flux et logique proches du reel",
+        description="Validation Shadow gouvernee sans capital; Build-12/13 restent fermes",
         modules=("protocols",),
     ),
     BuildStage(

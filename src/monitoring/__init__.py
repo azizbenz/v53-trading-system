@@ -16,6 +16,7 @@ from monitoring.contracts import (
     PortfolioMetrics,
     ProjectionStatus,
     ReplayImportProjection,
+    ShadowProjection,
     SystemProjection,
     TechnicalDashboardPayload,
 )
@@ -43,6 +44,7 @@ __all__ = [
     "SystemProjection",
     "Build9MetaProjection",
     "Build9XProjection",
+    "ShadowProjection",
     "ReplayImportProjection",
     "AlertProjection",
     "TechnicalDashboardPayload",

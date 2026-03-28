@@ -64,6 +64,11 @@ from monitoring import (  # noqa: E402
     collect_pair_metrics,
     collect_portfolio_metrics,
 )
+from protocols import (  # noqa: E402
+    build_shadow_input_from_payloads,
+    build_shadow_projection,
+    run_shadow_validation,
+)
 from smoke_bootstrap_recovery import evaluate_shadow_readiness  # noqa: E402
 from ui import DashboardCard, DashboardSection, build_technical_dashboard_view, render_technical_dashboard_html  # noqa: E402
 
@@ -384,6 +389,40 @@ def _build_demo_replay_projection(bundle):
     return replay_plan, import_summary, onboarding_decision, projection
 
 
+def _build_demo_shadow_projection(payload):
+    baseline_payload = payload.model_copy(
+        update={
+            "correlation_id": f"{payload.correlation_id}:baseline",
+            "portfolio": payload.portfolio.model_copy(
+                update={"ce_net": round(payload.portfolio.ce_net + 0.0003, 6)}
+            ),
+            "build9_meta": payload.build9_meta.model_copy(
+                update={
+                    "dtr_coverage": min(1.0, payload.build9_meta.dtr_coverage + 0.03),
+                    "cra_sterilization_rate": max(
+                        0.0,
+                        payload.build9_meta.cra_sterilization_rate - 0.05,
+                    ),
+                }
+            ),
+            "alerts": payload.alerts.model_copy(
+                update={
+                    "active_alert_count": max(0, payload.alerts.active_alert_count - 1),
+                    "queue_backlog": max(0, payload.alerts.queue_backlog - 10),
+                }
+            ),
+        }
+    )
+    shadow_input = build_shadow_input_from_payloads(
+        baseline_payload,
+        payload,
+        truth_ref="shadow_truth:demo_baseline",
+        validation_ref=f"shadow_validation:{payload.replay_import.artifact_id}",
+    )
+    summary = run_shadow_validation(shadow_input, run_id="shadow-demo-run")
+    return summary, build_shadow_projection(summary)
+
+
 def _build_build14_section(payload) -> DashboardSection:
     observation = Build14ObservationInput(
         correlation_id=payload.correlation_id,
@@ -438,9 +477,9 @@ def _build_readiness_section() -> DashboardSection:
             DashboardCard(
                 key="protocol_guardrails",
                 label="Protocol Guardrails",
-                value="enforced",
+                value="shadow_governed",
                 status="info",
-                detail="No Build-11 runtime opened. Replay/import remain governed and non-live.",
+                detail="Build-11 Shadow is opened in governed non-live mode. Build-12/13 remain closed.",
             ),
         ),
     )
@@ -526,7 +565,7 @@ def _availability_sections() -> tuple[DashboardSection, ...]:
                 DashboardCard(
                     key="governed_extensions",
                     label="Governed Extensions",
-                    value="9X=implemented / replay=implemented",
+                    value="9X=implemented / shadow=implemented / replay=implemented",
                     status="info",
                     detail="No runtime snapshot loaded; rendered here as available capability only.",
                 ),
@@ -574,6 +613,53 @@ def _availability_sections() -> tuple[DashboardSection, ...]:
                 DashboardCard(key="hypotheses_open", label="Open Hypotheses", value="not available", status="planned", detail="No governed review bundle loaded."),
                 DashboardCard(key="near_miss_candidates", label="Near Miss / Candidates", value="not available", status="planned", detail="No governed review bundle loaded."),
                 DashboardCard(key="memory_review", label="Memory / Review", value="not available", status="planned", detail="No governed review bundle loaded."),
+            ),
+        ),
+        DashboardSection(
+            title="Build-11 Shadow",
+            cards=(
+                DashboardCard(
+                    key="shadow_run_state",
+                    label="Run State",
+                    value="not_run",
+                    status="info",
+                    detail="The launcher can project Shadow, but no governed Shadow run has been materialized in availability mode.",
+                ),
+                DashboardCard(
+                    key="shadow_verdict",
+                    label="Gating Verdict",
+                    value="not available",
+                    status="planned",
+                    detail="Requires a governed Shadow input built from baseline and candidate payloads.",
+                ),
+                DashboardCard(
+                    key="shadow_divergences",
+                    label="Divergences",
+                    value="not available",
+                    status="planned",
+                    detail="No Shadow comparison set has been computed.",
+                ),
+                DashboardCard(
+                    key="shadow_candidate_state",
+                    label="Candidate State",
+                    value="not available",
+                    status="planned",
+                    detail="No governed candidate has been evaluated under Shadow.",
+                ),
+                DashboardCard(
+                    key="shadow_import_lineage",
+                    label="Import Lineage",
+                    value="not available",
+                    status="planned",
+                    detail="No accepted import has been projected into a Shadow validation set.",
+                ),
+                DashboardCard(
+                    key="shadow_blocking_reasons",
+                    label="Blocking Reasons",
+                    value="0",
+                    status="info",
+                    detail="No Shadow run executed, therefore no blocking reason collected.",
+                ),
             ),
         ),
         DashboardSection(
@@ -628,7 +714,7 @@ def _availability_sections() -> tuple[DashboardSection, ...]:
                     label="Launcher Mode",
                     value="availability_only",
                     status="info",
-                    detail="Use --demo to render a full governed sample without claiming a live runtime snapshot.",
+                    detail="Use --demo to render a full governed sample, including Build-11 Shadow, without claiming a live runtime snapshot.",
                 ),
             ),
         ),
@@ -648,12 +734,13 @@ def export_technical_dashboard(output_dir: Path, *, demo: bool = False) -> Dashb
     future_panels = (
         "technical_supervision",
         "build9x_diagnostics",
+        "shadow_supervision",
         "artifact_import",
         "observability_export",
     )
     footer_notes = (
         "One V5.3 only. No BACKTEST_PROFILE. No local/VPS fork.",
-        "Build-11+ remains closed; this launcher is technical supervision only.",
+        "Build-11 Shadow is governed and non-live. Build-12+ remain closed.",
     )
 
     if demo:
@@ -677,6 +764,15 @@ def export_technical_dashboard(output_dir: Path, *, demo: bool = False) -> Dashb
             build9x_projection=build9x_projection,
             replay_projection=replay_projection,
         )
+        _, shadow_projection = _build_demo_shadow_projection(payload)
+        payload = build_technical_dashboard_payload(
+            snapshot,
+            active_modules=active_modules,
+            active_engines=active_engines,
+            build9x_projection=build9x_projection,
+            shadow_projection=shadow_projection,
+            replay_projection=replay_projection,
+        )
         view = build_technical_dashboard_view(payload)
         observability = build_observability_export(payload)
         sections = view.sections + (
@@ -690,7 +786,7 @@ def export_technical_dashboard(output_dir: Path, *, demo: bool = False) -> Dashb
             source_mode="demo_payload",
             source_note=(
                 "This page is rendered from a governed local demo payload built with the real "
-                "Build-10, Build-9X, replay/import, onboarding, and Build-14 readers. "
+                "Build-10, Build-9X, Build-11 Shadow, replay/import, onboarding, and Build-14 readers. "
                 "It is not a live runtime snapshot."
             ),
             sections=sections,
