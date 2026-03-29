@@ -2,7 +2,7 @@
 ## Complete Enablers Protocol
 ### Spécification des briques d’extension vers la V5.3 Complete
 ### Quatorzième étape officielle du développement
-### Sans code — prod-safe
+### Première implémentation réelle gouvernée
 
 ---
 
@@ -31,13 +31,24 @@ Il prépare le terrain pour pouvoir, plus tard, décider rationnellement si la C
 
 ## 0.1 Statut documentaire vs implémentation
 
-Ce document définit le **protocole cible** Build-14.
+Ce document définit le **protocole cible** Build-14 et son ouverture minimale actuelle.
 
 Il ne doit pas être lu comme :
 
-- la preuve que Build-14 est déjà codé
 - la preuve que Build-15/16/17 sont déjà activables
 - une autorisation à présenter `COMPLETE` comme déjà exécutable
+
+En date du 29 mars 2026, le dépôt contient déjà :
+
+- des readers Build-14 réels en lecture seule
+- une première couche d’influence limitée et gouvernée
+- une exposition supervision / observabilité
+
+Ce qui n’existe toujours pas à ce stade :
+
+- aucun moteur autonome Build-14
+- aucun bypass de A/B, du risk backbone ou du portfolio
+- aucune activation implicite de `COMPLETE`
 
 ## 0.2 Relation avec l’addendum, l’onboarding et LOCAL_REPLAY
 
@@ -626,7 +637,9 @@ Les briques Build-14 doivent d’abord exister en lecture seule :
 - sans impact direct sur les décisions live
 
 ## 13.2 Étape 2 — Influence limitée
-Ensuite seulement, certaines briques peuvent influencer :
+Cette étape est maintenant ouverte de façon minimale et gouvernée.
+
+Certaines briques peuvent influencer :
 - une pénalité légère
 - une meilleure lecture portefeuille
 - une alerte enrichie
@@ -635,6 +648,8 @@ Mais pas :
 - un hard block central
 - une refonte du sizing live
 - un changement brutal de logique A/B
+- une décision autonome
+- une promotion implicite vers `COMPLETE`
 
 ## 13.3 Étape 3 — Préparation Complete
 Si leur utilité est démontrée sans régression, elles deviennent candidates à Build-15/16/17.

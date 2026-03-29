@@ -1,7 +1,7 @@
 # V5.3 — BUILD-14 AI EDGE AND MICROSTRUCTURE ENRICHMENT ADDENDUM
 ## Addendum spécialisé Build-14
 ### Complément du spec Build-14 officiel
-### Sans code — prod-safe
+### Addendum gouverné sur base réellement codée
 
 ---
 
@@ -23,7 +23,7 @@ En cas de conflit :
 
 ## 0.2 Réalité d’implémentation
 
-- Build-14 reste une cible future et ne doit pas être présenté comme déjà codé
+- Build-14 dispose déjà de readers réels et d’une influence limitée gouvernée
 - cet addendum ne rend pas `COMPLETE` exécutable
 - il ne crée aucun runtime autonome
 - il n’ouvre aucun `BACKTEST_PROFILE`
@@ -53,6 +53,19 @@ Toute brique de cet addendum suit :
 1. lecture seule
 2. influence limitée
 3. candidature éventuelle vers Build-15 / Build-16 / Build-17
+
+En date du 29 mars 2026, seule l’étape 2 est ouverte de façon minimale :
+
+- modulation bornée de confiance / budget
+- review_only gouverné
+- soft veto gouverné
+
+Toujours interdit :
+
+- toute décision autonome
+- tout bypass du risk backbone
+- tout bypass du portfolio
+- toute activation implicite de `COMPLETE`
 
 ## 2.2 Interdictions
 
