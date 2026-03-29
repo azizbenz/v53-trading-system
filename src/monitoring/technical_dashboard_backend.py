@@ -5,6 +5,7 @@ from __future__ import annotations
 from monitoring.alert_manager import build_monitoring_alerts
 from monitoring.contracts import (
     AlertProjection,
+    Build14Projection,
     Build9MetaProjection,
     Build9XProjection,
     LiveLightProjection,
@@ -130,6 +131,30 @@ def _default_live_light_projection(*, active_modules: tuple[str, ...]) -> LiveLi
     )
 
 
+def _default_build14_projection(*, active_modules: tuple[str, ...]) -> Build14Projection:
+    module_active = "complete_enablers" in active_modules
+    return Build14Projection(
+        status="info" if module_active else "planned",
+        influence_mode="read_only",
+        action="observe",
+        severity="nominal",
+        summary=(
+            "Build-14 readers are available but no bounded influence evaluation was materialized"
+            if module_active
+            else "Build-14 limited influence has not been materialized"
+        ),
+        market_toxicity_value=0.0,
+        market_toxicity_status="nominal",
+        execution_fragility_value=0.0,
+        execution_fragility_status="nominal",
+        confidence_penalty_weight=0.0,
+        recommended_budget_factor=1.0,
+        requires_manual_review=False,
+        candidate_effect="observe_only",
+        reason_codes=(),
+    )
+
+
 def _build_build9_meta_projection(snapshot: MonitoringSnapshot) -> Build9MetaProjection:
     break_even_state = "drift_alert" if snapshot.meta.break_even_drift_alert else "stable"
     return Build9MetaProjection(
@@ -190,6 +215,7 @@ def build_technical_dashboard_payload(
     shadow_projection: ShadowProjection | None = None,
     micro_live_projection: MicroLiveProjection | None = None,
     live_light_projection: LiveLightProjection | None = None,
+    build14_projection: Build14Projection | None = None,
     replay_projection: ReplayImportProjection | None = None,
 ) -> TechnicalDashboardPayload:
     """Normalize runtime supervision truth into a typed Build-10 payload."""
@@ -200,6 +226,7 @@ def build_technical_dashboard_payload(
     shadow = shadow_projection or _default_shadow_projection(active_modules=active_modules)
     micro_live = micro_live_projection or _default_micro_live_projection(active_modules=active_modules)
     live_light = live_light_projection or _default_live_light_projection(active_modules=active_modules)
+    build14 = build14_projection or _default_build14_projection(active_modules=active_modules)
     replay_import = replay_projection or _default_replay_projection(active_modules=active_modules)
     stale_engines = tuple(
         engine.engine_id
@@ -221,10 +248,11 @@ def build_technical_dashboard_payload(
             shadow_status=shadow.status,
             micro_live_status=micro_live.status,
             live_light_status=live_light.status,
+            build14_status=build14.status,
             replay_import_status=replay_import.status,
             governed_extensions_detail=(
-                "Build-9X, Shadow, Micro-live, Live-Light, and replay/import remain governed. "
-                "Complete stays closed."
+                "Build-9X, Shadow, Micro-live, Live-Light, replay/import, and Build-14 limited influence remain governed. "
+                "Complete stays closed and Build-14 does not bypass engines, risk, or portfolio."
             ),
         ),
         portfolio=resolved_snapshot.portfolio,
@@ -233,6 +261,7 @@ def build_technical_dashboard_payload(
         shadow=shadow,
         micro_live=micro_live,
         live_light=live_light,
+        build14=build14,
         replay_import=replay_import,
         alerts=_build_alert_projection(resolved_snapshot, headline_status=headline_status),
     )

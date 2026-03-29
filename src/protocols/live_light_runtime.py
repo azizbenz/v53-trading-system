@@ -20,6 +20,28 @@ from protocols.enums import (
 from protocols.errors import LiveLightInputError
 
 
+def _normalized_value(value: object, default: str) -> str:
+    if value is None:
+        return default
+    enum_value = getattr(value, "value", value)
+    return str(enum_value)
+
+
+def _build14_signal_object(build14_influence: object | None) -> object | None:
+    if build14_influence is None:
+        return None
+    return getattr(build14_influence, "signal", build14_influence)
+
+
+def _build14_reason_codes(signal: object | None) -> tuple[str, ...]:
+    if signal is None:
+        return ()
+    raw_value = getattr(signal, "reason_codes", ())
+    if raw_value is None:
+        return ()
+    return tuple(str(item) for item in raw_value)
+
+
 def _validate_micro_live_source_payload_scope(payload: TechnicalDashboardPayload) -> None:
     if payload.profile != ProfileId.LIGHT:
         raise LiveLightInputError(
@@ -93,6 +115,87 @@ def _validate_micro_live_consistency(
         )
 
 
+def _validate_live_light_surface(
+    micro_live_summary: MicroLiveRunSummary,
+    *,
+    live_pairs: tuple[str, ...],
+    active_engines: tuple[str, ...],
+) -> None:
+    planned_pairs = set(micro_live_summary.execution_plan.planned_pairs)
+    planned_engines = set(micro_live_summary.execution_plan.planned_engines)
+
+    if not set(live_pairs).issubset(planned_pairs):
+        raise LiveLightInputError(
+            "Build-13 Live-Light live_pairs must stay within the governed Micro-live planned_pairs"
+        )
+    if not set(active_engines).issubset(planned_engines):
+        raise LiveLightInputError(
+            "Build-13 Live-Light active_engines must stay within the governed Micro-live planned_engines"
+        )
+
+
+def _build14_guardrail_reasons(
+    signal: object,
+) -> tuple[str, ...]:
+    reasons: list[str] = []
+    influence_mode = _normalized_value(getattr(signal, "influence_mode", None), "read_only")
+    action = _normalized_value(getattr(signal, "action", None), "observe")
+    reason_codes = _build14_reason_codes(signal)
+    confidence_penalty_weight = float(getattr(signal, "confidence_penalty_weight", 0.0))
+    recommended_budget_factor = float(getattr(signal, "recommended_budget_factor", 1.0))
+    requires_manual_review = bool(getattr(signal, "requires_manual_review", False))
+    stability_confirmed = bool(getattr(signal, "stability_confirmed", True))
+    non_regression_required = bool(getattr(signal, "non_regression_required", True))
+    families = tuple(getattr(signal, "families", ()) or ())
+
+    if (
+        bool(getattr(signal, "can_override_engines", False))
+        or bool(getattr(signal, "can_bypass_risk", False))
+        or bool(getattr(signal, "can_bypass_portfolio", False))
+    ):
+        reasons.append(
+            "Build-14 influence must never bypass engines, risk, or portfolio"
+        )
+    if bool(getattr(signal, "can_trade_autonomously", False)):
+        reasons.append("Build-14 influence must never trade autonomously")
+    if not non_regression_required:
+        reasons.append("Build-14 influence must keep non_regression_required=True")
+
+    if influence_mode == "read_only":
+        if action != "observe":
+            reasons.append("read-only Build-14 influence must keep action=observe")
+        if confidence_penalty_weight != 0.0:
+            reasons.append("read-only Build-14 influence must keep zero confidence penalty")
+        if recommended_budget_factor != 1.0:
+            reasons.append("read-only Build-14 influence must keep budget factor at 1.0")
+        if requires_manual_review:
+            reasons.append("read-only Build-14 influence must not require manual review")
+        return tuple(reasons)
+
+    if not stability_confirmed:
+        reasons.append("limited Build-14 influence requires stability_confirmed=True")
+    if not families:
+        reasons.append("limited Build-14 influence must reference at least one signal family")
+    if action == "observe":
+        reasons.append("limited Build-14 influence must not keep action=observe")
+    if action == "downgrade_confidence":
+        if confidence_penalty_weight <= 0.0:
+            reasons.append("Build-14 confidence downgrade requires a positive penalty")
+        if not 0.0 < recommended_budget_factor < 1.0:
+            reasons.append("Build-14 confidence downgrade requires a bounded budget factor")
+        if requires_manual_review:
+            reasons.append("Build-14 confidence downgrade must stay automated and bounded")
+    if action in {"review_only", "soft_veto"}:
+        if not requires_manual_review:
+            reasons.append("Build-14 review_only and soft_veto must require manual review")
+        if recommended_budget_factor != 0.0:
+            reasons.append("Build-14 review_only and soft_veto must zero the budget factor")
+    if action != "observe" and not reason_codes:
+        reasons.append("limited Build-14 influence must expose reason_codes")
+
+    return tuple(reasons)
+
+
 def build_live_light_input_from_micro_live(
     micro_live_summary: MicroLiveRunSummary,
     micro_live_payload: TechnicalDashboardPayload,
@@ -117,6 +220,12 @@ def build_live_light_input_from_micro_live(
 
     _validate_micro_live_source_payload_scope(micro_live_payload)
     _validate_micro_live_consistency(micro_live_summary, micro_live_payload)
+    resolved_active_engines = active_engines or micro_live_summary.execution_plan.planned_engines
+    _validate_live_light_surface(
+        micro_live_summary,
+        live_pairs=live_pairs,
+        active_engines=resolved_active_engines,
+    )
     return LiveLightInput(
         correlation_id=micro_live_summary.correlation_id,
         profile=micro_live_payload.profile,
@@ -141,7 +250,7 @@ def build_live_light_input_from_micro_live(
         execution_ready=execution_ready,
         broker_ready=broker_ready,
         exchange_ready=exchange_ready,
-        active_engines=active_engines or micro_live_summary.execution_plan.planned_engines,
+        active_engines=resolved_active_engines,
         live_pairs=live_pairs,
         requested_total_notional_usdt=requested_total_notional_usdt,
         requested_pair_notional_usdt=requested_pair_notional_usdt,
@@ -155,12 +264,32 @@ def run_live_light_gate(
     live_light_input: LiveLightInput,
     *,
     run_id: str | None = None,
+    build14_influence: object | None = None,
 ) -> LiveLightRunSummary:
     """Run the minimal Build-13 gate without opening Complete or full live execution."""
 
     hard_blocking_reasons: list[str] = []
     micro_live_needs_review = False
+    build14_requires_review = False
     normalized_import_status = live_light_input.import_validation_status.strip().casefold()
+    build14_signal = _build14_signal_object(build14_influence)
+    build14_influence_mode = _normalized_value(
+        getattr(build14_signal, "influence_mode", None),
+        "read_only",
+    )
+    build14_action = _normalized_value(
+        getattr(build14_signal, "action", None),
+        "observe",
+    )
+    build14_severity = _normalized_value(
+        getattr(build14_signal, "severity", None),
+        "nominal",
+    )
+    build14_summary = str(getattr(build14_signal, "summary", "")) if build14_signal is not None else ""
+    build14_reason_codes = _build14_reason_codes(build14_signal)
+    confidence_penalty_weight = 0.0
+    recommended_budget_factor = 1.0
+    build14_reason_lines: tuple[str, ...] = ()
 
     if live_light_input.micro_live_run_state != MicroLiveRunState.READY_TO_PROBE:
         hard_blocking_reasons.append(
@@ -253,7 +382,29 @@ def run_live_light_gate(
             "exchange readiness must be confirmed before Live-Light execution"
         )
 
+    if build14_signal is not None:
+        hard_blocking_reasons.extend(_build14_guardrail_reasons(build14_signal))
+        build14_reason_lines = tuple(
+            f"build14 gate: {reason}" for reason in build14_reason_codes
+        )
+        if build14_action == "downgrade_confidence":
+            confidence_penalty_weight = float(
+                getattr(build14_signal, "confidence_penalty_weight", 0.0)
+            )
+            recommended_budget_factor = float(
+                getattr(build14_signal, "recommended_budget_factor", 1.0)
+            )
+        elif build14_action in {"review_only", "soft_veto"}:
+            build14_requires_review = True
+            confidence_penalty_weight = float(
+                getattr(build14_signal, "confidence_penalty_weight", 0.0)
+            )
+            recommended_budget_factor = float(
+                getattr(build14_signal, "recommended_budget_factor", 1.0)
+            )
+
     if hard_blocking_reasons:
+        combined_reasons = tuple(hard_blocking_reasons) + build14_reason_lines
         decision = LiveLightDecision(
             allowed_to_execute_small=False,
             verdict=LiveLightVerdict.BLOCKED,
@@ -261,7 +412,7 @@ def run_live_light_gate(
             review_state=ReviewState.NEEDS_REVISION,
             approved_total_notional_usdt=0.0,
             approved_pair_notional_usdt=0.0,
-            blocking_reasons=tuple(hard_blocking_reasons),
+            blocking_reasons=combined_reasons,
             manual_review_required=True,
         )
         execution_intent = LiveLightExecutionIntent(
@@ -280,7 +431,15 @@ def run_live_light_gate(
             exchange_ready_required=True,
         )
         run_state = LiveLightRunState.BLOCKED
-    elif micro_live_needs_review:
+    elif micro_live_needs_review or build14_requires_review:
+        review_reasons = []
+        if micro_live_needs_review:
+            review_reasons.append(
+                "Build-12 Micro-live verdict must be allowed_to_probe before Live-Light can execute small size"
+            )
+        if build14_signal is not None and build14_requires_review:
+            review_reasons.append(build14_summary)
+            review_reasons.extend(build14_reason_lines)
         decision = LiveLightDecision(
             allowed_to_execute_small=False,
             verdict=LiveLightVerdict.DRY_RUN_ONLY,
@@ -288,9 +447,7 @@ def run_live_light_gate(
             review_state=ReviewState.NEEDS_REVISION,
             approved_total_notional_usdt=0.0,
             approved_pair_notional_usdt=0.0,
-            blocking_reasons=(
-                "Build-12 Micro-live verdict must be allowed_to_probe before Live-Light can execute small size",
-            ),
+            blocking_reasons=tuple(review_reasons),
             manual_review_required=True,
         )
         execution_intent = LiveLightExecutionIntent(
@@ -310,13 +467,21 @@ def run_live_light_gate(
         )
         run_state = LiveLightRunState.PREPARED
     else:
+        approved_total = round(
+            live_light_input.requested_total_notional_usdt * recommended_budget_factor,
+            8,
+        )
+        approved_pair = round(
+            live_light_input.requested_pair_notional_usdt * recommended_budget_factor,
+            8,
+        )
         decision = LiveLightDecision(
             allowed_to_execute_small=True,
             verdict=LiveLightVerdict.ALLOWED_TO_EXECUTE_SMALL,
             normalized_promotion_state=PromotionState.LIVE_CANDIDATE,
             review_state=ReviewState.PENDING,
-            approved_total_notional_usdt=live_light_input.requested_total_notional_usdt,
-            approved_pair_notional_usdt=live_light_input.requested_pair_notional_usdt,
+            approved_total_notional_usdt=approved_total,
+            approved_pair_notional_usdt=approved_pair,
             blocking_reasons=(),
             manual_review_required=False,
         )
@@ -327,8 +492,8 @@ def run_live_light_gate(
             planned_engines=live_light_input.active_engines,
             planned_pairs=live_light_input.live_pairs,
             requested_total_notional_usdt=live_light_input.requested_total_notional_usdt,
-            approved_total_notional_usdt=live_light_input.requested_total_notional_usdt,
-            approved_pair_notional_usdt=live_light_input.requested_pair_notional_usdt,
+            approved_total_notional_usdt=approved_total,
+            approved_pair_notional_usdt=approved_pair,
             execution_order_limit=live_light_input.execution_order_limit,
             dry_run_only=False,
             halt_guard_required=True,
@@ -354,6 +519,13 @@ def run_live_light_gate(
         broker_ready=live_light_input.broker_ready,
         exchange_ready=live_light_input.exchange_ready,
         onboarding_ready=live_light_input.onboarding_accepted,
+        build14_influence_mode=build14_influence_mode,
+        build14_action=build14_action,
+        build14_severity=build14_severity,
+        build14_summary=build14_summary,
+        build14_reason_codes=build14_reason_codes,
+        build14_confidence_penalty_weight=confidence_penalty_weight,
+        build14_recommended_budget_factor=recommended_budget_factor,
     )
 
 

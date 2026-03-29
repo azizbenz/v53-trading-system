@@ -73,6 +73,7 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LightD
                         f"shadow={payload.system.shadow_status} / "
                         f"micro={payload.system.micro_live_status} / "
                         f"live={payload.system.live_light_status} / "
+                        f"b14={payload.system.build14_status} / "
                         f"replay={payload.system.replay_import_status}"
                     ),
                     status=(
@@ -82,6 +83,7 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LightD
                             payload.system.shadow_status,
                             payload.system.micro_live_status,
                             payload.system.live_light_status,
+                            payload.system.build14_status,
                             payload.system.replay_import_status,
                         }
                         else "warning"
@@ -90,6 +92,7 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LightD
                             payload.system.shadow_status,
                             payload.system.micro_live_status,
                             payload.system.live_light_status,
+                            payload.system.build14_status,
                             payload.system.replay_import_status,
                         }
                         else "info"
@@ -416,7 +419,10 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LightD
                         f"pair={payload.live_light.approved_pair_notional_usdt:.2f}"
                     ),
                     status=payload.live_light.status,
-                    detail=f"requested={payload.live_light.requested_total_notional_usdt:.2f}",
+                    detail=(
+                        f"requested={payload.live_light.requested_total_notional_usdt:.2f} / "
+                        f"build14={payload.live_light.build14_action}@{payload.live_light.build14_recommended_budget_factor:.2f}"
+                    ),
                 ),
                 DashboardCard(
                     key="live_light_surface",
@@ -454,7 +460,7 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LightD
                         if payload.live_light.status != "planned"
                         else "planned"
                     ),
-                    detail=payload.live_light.import_lineage_version,
+                    detail=payload.live_light.build14_summary or payload.live_light.import_lineage_version,
                 ),
                 DashboardCard(
                     key="live_light_blocking_reasons",
@@ -468,6 +474,63 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LightD
                         else payload.live_light.status
                     ),
                     detail=_join(payload.live_light.blocking_reasons, empty="No blocking reason"),
+                ),
+            ),
+        ),
+        DashboardSection(
+            title="Build-14 Limited Influence",
+            cards=(
+                DashboardCard(
+                    key="build14_mode",
+                    label="Mode",
+                    value=f"{payload.build14.influence_mode} / {payload.build14.action}",
+                    status=payload.build14.status,
+                    detail=f"severity={payload.build14.severity}",
+                ),
+                DashboardCard(
+                    key="build14_readers",
+                    label="Readers",
+                    value=(
+                        f"toxicity={payload.build14.market_toxicity_status} ({payload.build14.market_toxicity_value:.2f}) / "
+                        f"fragility={payload.build14.execution_fragility_status} ({payload.build14.execution_fragility_value:.2f})"
+                    ),
+                    status=(
+                        "critical"
+                        if payload.build14.severity == "critical"
+                        else "warning"
+                        if payload.build14.severity == "elevated"
+                        else payload.build14.status
+                    ),
+                    detail=payload.build14.summary,
+                ),
+                DashboardCard(
+                    key="build14_candidate_effect",
+                    label="Candidate Effect",
+                    value=payload.build14.candidate_effect,
+                    status=payload.build14.status,
+                    detail=(
+                        f"penalty={payload.build14.confidence_penalty_weight:.2f} / "
+                        f"budget_factor={payload.build14.recommended_budget_factor:.2f}"
+                    ),
+                ),
+                DashboardCard(
+                    key="build14_guardrails",
+                    label="Guardrails",
+                    value=(
+                        "review_only"
+                        if payload.build14.requires_manual_review
+                        else "bounded_modulation"
+                        if payload.build14.influence_mode == "limited_influence"
+                        else "read_only"
+                    ),
+                    status=(
+                        "warning"
+                        if payload.build14.requires_manual_review
+                        else "healthy"
+                        if payload.build14.status in {"healthy", "info"}
+                        else payload.build14.status
+                    ),
+                    detail=_join(payload.build14.reason_codes, empty="No Build-14 reason code"),
                 ),
             ),
         ),

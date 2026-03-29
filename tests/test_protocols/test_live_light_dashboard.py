@@ -56,6 +56,13 @@ def _summary() -> LiveLightRunSummary:
         broker_ready=True,
         exchange_ready=True,
         onboarding_ready=True,
+        build14_influence_mode="limited_influence",
+        build14_action="downgrade_confidence",
+        build14_severity="elevated",
+        build14_summary="Elevated toxicity requires a bounded confidence downgrade",
+        build14_reason_codes=("market_toxicity_snapshot_elevated",),
+        build14_confidence_penalty_weight=0.10,
+        build14_recommended_budget_factor=0.85,
     )
 
 
@@ -67,6 +74,8 @@ def test_build_live_light_projection_returns_normalized_monitoring_summary():
     assert projection.verdict == "allowed_to_execute_small"
     assert projection.approved_total_notional_usdt == 80.0
     assert projection.planned_pairs == ("BTCUSDT", "ETHUSDT")
+    assert projection.build14_action == "downgrade_confidence"
+    assert projection.build14_recommended_budget_factor == 0.85
 
 
 def test_build_live_light_dashboard_section_renders_expected_cards():
@@ -83,5 +92,7 @@ def test_build_live_light_dashboard_section_renders_expected_cards():
         "live_light_blocking_reasons",
     }
     verdict = next(card for card in section.cards if card.key == "live_light_verdict")
+    budget = next(card for card in section.cards if card.key == "live_light_budget")
     assert verdict.value == "allowed_to_execute_small"
     assert verdict.status == "healthy"
+    assert "build14=downgrade_confidence@0.85" in budget.detail

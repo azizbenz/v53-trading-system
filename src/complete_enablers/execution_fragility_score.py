@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from complete_enablers.contracts import Build14EnablerSnapshot, Build14ObservationInput
-from complete_enablers.enums import Build14SignalFamily
+from complete_enablers.enums import Build14Severity, Build14SignalFamily
 
 
 def build_execution_fragility_score(observation: Build14ObservationInput) -> Build14EnablerSnapshot:
@@ -22,11 +22,11 @@ def build_execution_fragility_score(observation: Build14ObservationInput) -> Bui
     )
 
     if fragility_score >= 0.75:
-        status = "critical"
+        status = Build14Severity.CRITICAL
     elif fragility_score >= 0.40:
-        status = "elevated"
+        status = Build14Severity.ELEVATED
     else:
-        status = "nominal"
+        status = Build14Severity.NOMINAL
 
     return Build14EnablerSnapshot(
         correlation_id=observation.correlation_id,

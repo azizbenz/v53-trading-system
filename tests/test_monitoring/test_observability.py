@@ -13,6 +13,7 @@ from meta_minimal.dtr_core.decision_state_encoder import DecisionState
 from meta_minimal.dtr_core.dtr_record_builder import build_dtr
 from meta_minimal.edge_tracker_prudent_minimal.edge_status_classifier import EdgeClassification, EdgeStatus
 from monitoring import (
+    Build14Projection,
     Build9XProjection,
     LiveLightProjection,
     MicroLiveProjection,
@@ -35,6 +36,7 @@ def _payload(
     shadow_projection: ShadowProjection | None = None,
     micro_live_projection: MicroLiveProjection | None = None,
     live_light_projection: LiveLightProjection | None = None,
+    build14_projection: Build14Projection | None = None,
     replay_projection: ReplayImportProjection | None = None,
     active_modules: tuple[str, ...] = (),
     active_engines: tuple[str, ...] = (),
@@ -150,6 +152,7 @@ def _payload(
         shadow_projection=shadow_projection,
         micro_live_projection=micro_live_projection,
         live_light_projection=live_light_projection,
+        build14_projection=build14_projection,
         replay_projection=replay_projection,
     )
 
@@ -172,6 +175,7 @@ def test_observability_export_contains_grouped_metrics():
     assert "v53_shadow_run_state" in names
     assert "v53_micro_live_run_state" in names
     assert "v53_live_light_run_state" in names
+    assert "v53_build14_status" in names
     assert "v53_alert_active_count" in names
     assert export.correlation_id == "corr-obs"
     assert 'profile="light"' in export.text_payload
@@ -254,6 +258,29 @@ def test_observability_export_tracks_modules_engines_and_governed_flags():
             broker_ready=False,
             exchange_ready=True,
             blocking_reasons=("broker readiness must be confirmed before Live-Light execution",),
+            build14_influence_mode="limited_influence",
+            build14_action="review_only",
+            build14_severity="critical",
+            build14_summary="Critical enriched signal requires review only",
+            build14_reason_codes=("execution_fragility_score_critical",),
+            build14_confidence_penalty_weight=0.15,
+            build14_recommended_budget_factor=0.0,
+        ),
+        build14_projection=Build14Projection(
+            status="critical",
+            influence_mode="limited_influence",
+            action="review_only",
+            severity="critical",
+            summary="Critical enriched signal requires review only",
+            market_toxicity_value=0.82,
+            market_toxicity_status="critical",
+            execution_fragility_value=0.78,
+            execution_fragility_status="critical",
+            confidence_penalty_weight=0.15,
+            recommended_budget_factor=0.0,
+            requires_manual_review=True,
+            candidate_effect="review_only",
+            reason_codes=("market_toxicity_snapshot_critical", "execution_fragility_score_critical"),
         ),
         replay_projection=ReplayImportProjection(
             status="warning",
@@ -281,6 +308,10 @@ def test_observability_export_tracks_modules_engines_and_governed_flags():
     assert any(sample.name == "v53_live_light_allowed_to_execute_small" and sample.value == 0.0 for sample in export.samples)
     assert any(sample.name == "v53_live_light_blocking_reason_count" and sample.value == 1.0 for sample in export.samples)
     assert any(sample.name == "v53_live_light_broker_ready" and sample.value == 0.0 for sample in export.samples)
+    assert any(sample.name == "v53_system_build14_status" and sample.labels["status"] == "critical" for sample in export.samples)
+    assert any(sample.name == "v53_build14_action" and sample.labels["action"] == "review_only" for sample in export.samples)
+    assert any(sample.name == "v53_build14_requires_manual_review" and sample.value == 1.0 for sample in export.samples)
+    assert any(sample.name == "v53_build14_reason_code_count" and sample.value == 2.0 for sample in export.samples)
     assert any(sample.name == "v53_replay_validation_accepted" and sample.value == 0.0 for sample in export.samples)
 
 

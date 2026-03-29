@@ -22,6 +22,7 @@ from meta_minimal.edge_tracker_prudent_minimal.edge_status_classifier import (
     EdgeStatus,
 )
 from monitoring import (
+    Build14Projection,
     Build9XProjection,
     LiveLightProjection,
     MicroLiveProjection,
@@ -220,6 +221,7 @@ def test_technical_dashboard_view_exposes_system_meta_build9x_and_replay_section
         "Build-11 Shadow",
         "Build-12 Micro-live",
         "Build-13 Live-Light",
+        "Build-14 Limited Influence",
         "Replay & Import",
         "Alerts",
     }
@@ -227,15 +229,18 @@ def test_technical_dashboard_view_exposes_system_meta_build9x_and_replay_section
     assert any(card.key == "governed_extensions" and "9X=warning" in card.value for card in system.cards)
     assert any(card.key == "governed_extensions" and "micro=planned" in card.value for card in system.cards)
     assert any(card.key == "governed_extensions" and "live=planned" in card.value for card in system.cards)
+    assert any(card.key == "governed_extensions" and "b14=planned" in card.value for card in system.cards)
     build9x = next(section for section in view.sections if section.title == "Build-9X")
     assert next(card for card in build9x.cards if card.key == "diagnostics_recent").value == "2"
     assert next(card for card in build9x.cards if card.key == "hypotheses_open").value == "1"
     shadow = next(section for section in view.sections if section.title == "Build-11 Shadow")
     micro = next(section for section in view.sections if section.title == "Build-12 Micro-live")
     live = next(section for section in view.sections if section.title == "Build-13 Live-Light")
+    build14 = next(section for section in view.sections if section.title == "Build-14 Limited Influence")
     assert next(card for card in shadow.cards if card.key == "shadow_run_state").value == "not_run"
     assert next(card for card in micro.cards if card.key == "micro_live_run_state").value == "not_run"
     assert next(card for card in live.cards if card.key == "live_light_run_state").value == "not_run"
+    assert next(card for card in build14.cards if card.key == "build14_mode").value == "read_only / observe"
     replay = next(section for section in view.sections if section.title == "Replay & Import")
     assert next(card for card in replay.cards if card.key == "artifact_manifest").value == "artifact-1"
     assert next(card for card in replay.cards if card.key == "validation_status").value == "accepted"
@@ -253,12 +258,14 @@ def test_technical_dashboard_view_handles_empty_governed_state_cleanly():
     shadow = next(section for section in view.sections if section.title == "Build-11 Shadow")
     micro = next(section for section in view.sections if section.title == "Build-12 Micro-live")
     live = next(section for section in view.sections if section.title == "Build-13 Live-Light")
+    build14 = next(section for section in view.sections if section.title == "Build-14 Limited Influence")
     replay = next(section for section in view.sections if section.title == "Replay & Import")
     assert next(card for card in build9x.cards if card.key == "diagnostics_recent").value == "0"
     assert next(card for card in build9x.cards if card.key == "memory_review").status == "planned"
     assert next(card for card in shadow.cards if card.key == "shadow_run_state").status == "planned"
     assert next(card for card in micro.cards if card.key == "micro_live_run_state").status == "planned"
     assert next(card for card in live.cards if card.key == "live_light_run_state").status == "planned"
+    assert next(card for card in build14.cards if card.key == "build14_mode").status == "planned"
     assert next(card for card in replay.cards if card.key == "artifact_manifest").value == "none"
     assert next(card for card in replay.cards if card.key == "validation_status").value == "not_run"
 
@@ -313,6 +320,7 @@ def test_technical_dashboard_view_surfaces_rejected_import_and_future_panels():
         "shadow_supervision",
         "micro_live_supervision",
         "live_light_supervision",
+        "build14_supervision",
         "artifact_import",
         "observability_export",
     }
@@ -443,3 +451,69 @@ def test_technical_dashboard_view_projects_live_light_summary_when_available():
     assert "live=healthy" in governed.value
     assert next(card for card in live.cards if card.key == "live_light_verdict").value == "allowed_to_execute_small"
     assert next(card for card in live.cards if card.key == "live_light_readiness").status == "healthy"
+
+
+def test_technical_dashboard_view_projects_build14_limited_influence_when_available():
+    payload = build_technical_dashboard_payload(
+        _snapshot(runtime_mode=RuntimeMode.LIVE),
+        active_modules=("protocols", "monitoring", "ui"),
+        active_engines=("engine_a", "engine_b"),
+        build14_projection=Build14Projection(
+            status="warning",
+            influence_mode="limited_influence",
+            action="downgrade_confidence",
+            severity="elevated",
+            summary="Build-14 limited influence reduces live-light confidence and budget",
+            market_toxicity_value=0.46,
+            market_toxicity_status="elevated",
+            execution_fragility_value=0.35,
+            execution_fragility_status="nominal",
+            confidence_penalty_weight=0.10,
+            recommended_budget_factor=0.85,
+            requires_manual_review=False,
+            candidate_effect="confidence_downgrade",
+            reason_codes=("market_toxicity_snapshot_elevated",),
+        ),
+        live_light_projection=LiveLightProjection(
+            status="warning",
+            run_state="ready_to_execute_small",
+            verdict="allowed_to_execute_small",
+            micro_live_run_id="micro-run-1",
+            micro_live_verdict="allowed_to_probe",
+            allowed_to_execute_small=True,
+            requested_total_notional_usdt=80.0,
+            approved_total_notional_usdt=68.0,
+            approved_pair_notional_usdt=34.0,
+            execution_order_limit=3,
+            planned_pairs=("BTCUSDT", "ETHUSDT"),
+            planned_engines=("engine_a", "engine_b"),
+            import_artifact_id="artifact-live-1",
+            import_lineage_version="a.v1.0.r1",
+            observability_ready=True,
+            halt_ready=True,
+            execution_ready=True,
+            broker_ready=True,
+            exchange_ready=True,
+            blocking_reasons=(),
+            build14_influence_mode="limited_influence",
+            build14_action="downgrade_confidence",
+            build14_severity="elevated",
+            build14_summary="Build-14 limited influence reduces live-light confidence and budget",
+            build14_reason_codes=("market_toxicity_snapshot_elevated",),
+            build14_confidence_penalty_weight=0.10,
+            build14_recommended_budget_factor=0.85,
+        ),
+    )
+
+    view = build_technical_dashboard_view(payload)
+    system = next(section for section in view.sections if section.title == "System")
+    live = next(section for section in view.sections if section.title == "Build-13 Live-Light")
+    build14 = next(section for section in view.sections if section.title == "Build-14 Limited Influence")
+
+    governed = next(card for card in system.cards if card.key == "governed_extensions")
+    assert "b14=warning" in governed.value
+    assert next(card for card in live.cards if card.key == "live_light_budget").detail.endswith(
+        "build14=downgrade_confidence@0.85"
+    )
+    assert next(card for card in build14.cards if card.key == "build14_candidate_effect").value == "confidence_downgrade"
+    assert next(card for card in build14.cards if card.key == "build14_guardrails").detail == "market_toxicity_snapshot_elevated"

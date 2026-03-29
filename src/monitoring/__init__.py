@@ -3,6 +3,7 @@
 from monitoring.alert_manager import build_monitoring_alerts
 from monitoring.contracts import (
     AlertProjection,
+    Build14Projection,
     Build9MetaProjection,
     Build9XProjection,
     EngineMetrics,
@@ -46,6 +47,7 @@ __all__ = [
     "SystemProjection",
     "Build9MetaProjection",
     "Build9XProjection",
+    "Build14Projection",
     "MicroLiveProjection",
     "LiveLightProjection",
     "ShadowProjection",

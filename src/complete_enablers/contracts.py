@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, model_validator
 
-from complete_enablers.enums import Build14InfluenceMode, Build14SignalFamily
+from complete_enablers.enums import (
+    Build14InfluenceAction,
+    Build14InfluenceMode,
+    Build14Severity,
+    Build14SignalFamily,
+)
 from interface_contracts import StrategyClassification
 
 
@@ -58,14 +63,100 @@ class Build14EnablerSnapshot(Build14EnablerContract):
 
     reader_name: str = Field(..., min_length=1)
     observed_value: float = Field(..., ge=0.0)
-    status: str = Field(..., min_length=1)
+    status: Build14Severity
     detail: str = Field(..., min_length=1)
     evidence_refs: tuple[str, ...] = ()
     structured_log_key: str = Field(..., min_length=1)
+
+
+class Build14InfluenceSignal(BaseModel, frozen=True):
+    """Governed and bounded Build-14 recommendation for limited influence."""
+
+    correlation_id: str = Field(..., min_length=1)
+    classification: StrategyClassification = StrategyClassification.BUILD14_ENABLER
+    influence_mode: Build14InfluenceMode = Build14InfluenceMode.READ_ONLY
+    action: Build14InfluenceAction = Build14InfluenceAction.OBSERVE
+    severity: Build14Severity = Build14Severity.NOMINAL
+    families: tuple[Build14SignalFamily, ...] = ()
+    summary: str = Field(..., min_length=1)
+    reason_codes: tuple[str, ...] = ()
+    confidence_penalty_weight: float = Field(default=0.0, ge=0.0, le=0.25)
+    recommended_budget_factor: float = Field(default=1.0, ge=0.0, le=1.0)
+    stability_confirmed: bool = True
+    non_regression_required: bool = True
+    requires_manual_review: bool = False
+    candidate_effect: str = Field(default="observe_only", min_length=1)
+    can_override_engines: bool = False
+    can_bypass_risk: bool = False
+    can_bypass_portfolio: bool = False
+    can_trade_autonomously: bool = False
+
+    @model_validator(mode="after")
+    def validate_signal(self) -> "Build14InfluenceSignal":
+        if self.classification != StrategyClassification.BUILD14_ENABLER:
+            raise ValueError("Build-14 influence must stay classified as build14_enabler")
+        if self.can_override_engines or self.can_bypass_risk or self.can_bypass_portfolio:
+            raise ValueError("Build-14 influence must never bypass engines, risk, or portfolio")
+        if self.can_trade_autonomously:
+            raise ValueError("Build-14 influence must never become an autonomous engine")
+        if not self.non_regression_required:
+            raise ValueError("Build-14 limited influence must keep non_regression_required=True")
+        if self.influence_mode == Build14InfluenceMode.READ_ONLY:
+            if self.action != Build14InfluenceAction.OBSERVE:
+                raise ValueError("Read-only Build-14 influence must keep action=observe")
+            if self.confidence_penalty_weight != 0.0:
+                raise ValueError("Read-only Build-14 influence must have zero confidence penalty")
+            if self.recommended_budget_factor != 1.0:
+                raise ValueError("Read-only Build-14 influence must keep budget factor at 1.0")
+            if self.requires_manual_review:
+                raise ValueError("Read-only Build-14 influence must not require manual review")
+        else:
+            if not self.stability_confirmed:
+                raise ValueError("Limited Build-14 influence requires stability_confirmed=True")
+            if not self.families:
+                raise ValueError("Limited Build-14 influence must reference at least one signal family")
+            if self.action == Build14InfluenceAction.OBSERVE:
+                raise ValueError("Limited Build-14 influence must change the candidate effect")
+            if self.action == Build14InfluenceAction.DOWNGRADE_CONFIDENCE:
+                if self.confidence_penalty_weight <= 0.0:
+                    raise ValueError("Confidence downgrade requires a positive bounded penalty")
+                if not 0.0 < self.recommended_budget_factor < 1.0:
+                    raise ValueError("Confidence downgrade requires a budget factor strictly between 0 and 1")
+                if self.requires_manual_review:
+                    raise ValueError("Confidence downgrade must stay governed without manual review by default")
+            if self.action in {
+                Build14InfluenceAction.REVIEW_ONLY,
+                Build14InfluenceAction.SOFT_VETO,
+            }:
+                if not self.requires_manual_review:
+                    raise ValueError("Review-only and soft-veto Build-14 actions must require manual review")
+                if self.recommended_budget_factor != 0.0:
+                    raise ValueError("Review-only and soft-veto Build-14 actions must zero the budget factor")
+            if self.action != Build14InfluenceAction.OBSERVE and not self.reason_codes:
+                raise ValueError("Limited Build-14 influence must explain itself with reason_codes")
+        return self
+
+
+class Build14InfluenceReport(BaseModel, frozen=True):
+    """Traceable Build-14 phase-2 report: observations plus bounded recommendation."""
+
+    correlation_id: str = Field(..., min_length=1)
+    snapshots: tuple[Build14EnablerSnapshot, ...] = ()
+    signal: Build14InfluenceSignal
+
+    @model_validator(mode="after")
+    def validate_report(self) -> "Build14InfluenceReport":
+        if any(snapshot.correlation_id != self.correlation_id for snapshot in self.snapshots):
+            raise ValueError("Build-14 report requires matching correlation_id across all snapshots")
+        if self.signal.correlation_id != self.correlation_id:
+            raise ValueError("Build-14 report requires matching correlation_id across signal and report")
+        return self
 
 
 __all__ = [
     "Build14EnablerContract",
     "Build14ObservationInput",
     "Build14EnablerSnapshot",
+    "Build14InfluenceSignal",
+    "Build14InfluenceReport",
 ]

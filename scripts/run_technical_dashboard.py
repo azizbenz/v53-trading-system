@@ -25,8 +25,7 @@ from backtest_artifact_import import (  # noqa: E402
 )
 from complete_enablers import (  # noqa: E402
     Build14ObservationInput,
-    build_execution_fragility_score,
-    build_market_toxicity_snapshot,
+    evaluate_build14_limited_influence,
 )
 from interface_contracts import PairHealthLevel, ProfileId, RuntimeMode, StrategyClassification  # noqa: E402
 from local_replay_runtime import (  # noqa: E402
@@ -53,6 +52,7 @@ from meta_minimal.edge_tracker_prudent_minimal.edge_status_classifier import (  
     EdgeStatus,
 )
 from monitoring import (  # noqa: E402
+    Build14Projection,
     Build9XProjection,
     LiveLightProjection,
     MicroLiveProjection,
@@ -462,6 +462,7 @@ def _build_demo_live_light_projection(
     micro_live_summary,
     micro_live_payload,
     onboarding_decision,
+    build14_report,
 ) -> tuple[object, LiveLightProjection]:
     live_light_input = build_live_light_input_from_micro_live(
         micro_live_summary,
@@ -484,12 +485,13 @@ def _build_demo_live_light_projection(
     summary = run_live_light_gate(
         live_light_input,
         run_id="live-light-demo-run",
+        build14_influence=build14_report,
     )
     return summary, build_live_light_projection(summary)
 
 
-def _build_build14_section(payload) -> DashboardSection:
-    observation = Build14ObservationInput(
+def _build_build14_observation(payload) -> Build14ObservationInput:
+    return Build14ObservationInput(
         correlation_id=payload.correlation_id,
         dtr_coverage=payload.build9_meta.dtr_coverage,
         cra_sterilization_rate=payload.build9_meta.cra_sterilization_rate,
@@ -502,21 +504,37 @@ def _build_build14_section(payload) -> DashboardSection:
         log_loss_count=payload.alerts.log_loss_count,
         ce_net=payload.portfolio.ce_net,
     )
-    snapshots = (
-        build_market_toxicity_snapshot(observation),
-        build_execution_fragility_score(observation),
+
+
+def _build_build14_report_and_projection(payload) -> tuple[object, Build14Projection]:
+    report = evaluate_build14_limited_influence(_build_build14_observation(payload))
+    snapshots_by_reader = {snapshot.reader_name: snapshot for snapshot in report.snapshots}
+    market_toxicity = snapshots_by_reader.get("market_toxicity_snapshot")
+    execution_fragility = snapshots_by_reader.get("execution_fragility_score")
+
+    if report.signal.severity.value == "critical":
+        status = "critical"
+    elif report.signal.influence_mode.value == "limited_influence":
+        status = "warning"
+    else:
+        status = "info"
+
+    return report, Build14Projection(
+        status=status,
+        influence_mode=report.signal.influence_mode.value,
+        action=report.signal.action.value,
+        severity=report.signal.severity.value,
+        summary=report.signal.summary,
+        market_toxicity_value=market_toxicity.observed_value if market_toxicity else 0.0,
+        market_toxicity_status=market_toxicity.status.value if market_toxicity else "nominal",
+        execution_fragility_value=execution_fragility.observed_value if execution_fragility else 0.0,
+        execution_fragility_status=execution_fragility.status.value if execution_fragility else "nominal",
+        confidence_penalty_weight=report.signal.confidence_penalty_weight,
+        recommended_budget_factor=report.signal.recommended_budget_factor,
+        requires_manual_review=report.signal.requires_manual_review,
+        candidate_effect=report.signal.candidate_effect,
+        reason_codes=report.signal.reason_codes,
     )
-    cards = tuple(
-        DashboardCard(
-            key=f"build14_{snapshot.reader_name}",
-            label=snapshot.reader_name,
-            value=f"{snapshot.status} ({snapshot.observed_value:.2f})",
-            status=_status_for_build14(snapshot.status),
-            detail=snapshot.detail,
-        )
-        for snapshot in snapshots
-    )
-    return DashboardSection(title="Build-14 Read-only", cards=cards)
 
 
 def _build_readiness_section() -> DashboardSection:
@@ -839,7 +857,7 @@ def _availability_sections() -> tuple[DashboardSection, ...]:
             ),
         ),
         DashboardSection(
-            title="Build-14 Read-only",
+            title="Build-14 Limited Influence",
             cards=(
                 DashboardCard(
                     key="build14_availability",
@@ -850,10 +868,10 @@ def _availability_sections() -> tuple[DashboardSection, ...]:
                 ),
                 DashboardCard(
                     key="build14_state",
-                    label="Observation Input",
+                    label="Governed Influence",
                     value="not available",
                     status="planned",
-                    detail="No monitoring payload loaded to feed read-only readers.",
+                    detail="No monitoring payload loaded to evaluate limited influence; Build-14 stays governed and non-autonomous in availability mode.",
                 ),
             ),
         ),
@@ -873,7 +891,7 @@ def _availability_sections() -> tuple[DashboardSection, ...]:
                     label="Launcher Mode",
                     value="availability_only",
                     status="info",
-                    detail="Use --demo to render a full governed sample, including Build-11 Shadow, Build-12 Micro-live, and Build-13 Live-Light, without claiming a production runtime snapshot.",
+                    detail="Use --demo to render a full governed sample, including Build-11 Shadow, Build-12 Micro-live, Build-13 Live-Light, and Build-14 limited influence, without claiming a production runtime snapshot.",
                 ),
             ),
         ),
@@ -896,6 +914,7 @@ def export_technical_dashboard(output_dir: Path, *, demo: bool = False) -> Dashb
         "shadow_supervision",
         "micro_live_supervision",
         "live_light_supervision",
+        "build14_supervision",
         "artifact_import",
         "observability_export",
     )
@@ -941,10 +960,14 @@ def export_technical_dashboard(output_dir: Path, *, demo: bool = False) -> Dashb
             micro_live_projection=micro_live_projection,
             replay_projection=replay_projection,
         )
+        build14_report, build14_projection = _build_build14_report_and_projection(
+            micro_live_payload
+        )
         _, live_light_projection = _build_demo_live_light_projection(
             micro_live_summary,
             micro_live_payload,
             onboarding_decision,
+            build14_report,
         )
         live_snapshot = snapshot.model_copy(update={"runtime_mode": RuntimeMode.LIVE})
         payload = build_technical_dashboard_payload(
@@ -955,13 +978,13 @@ def export_technical_dashboard(output_dir: Path, *, demo: bool = False) -> Dashb
             shadow_projection=shadow_projection,
             micro_live_projection=micro_live_projection,
             live_light_projection=live_light_projection,
+            build14_projection=build14_projection,
             replay_projection=replay_projection,
         )
         view = build_technical_dashboard_view(payload)
         observability = build_observability_export(payload)
         sections = view.sections + (
             _build_onboarding_section(import_summary, onboarding_decision),
-            _build_build14_section(payload),
             _build_readiness_section(),
         )
         html = render_technical_dashboard_html(
@@ -970,7 +993,7 @@ def export_technical_dashboard(output_dir: Path, *, demo: bool = False) -> Dashb
             source_mode="demo_payload",
             source_note=(
                 "This page is rendered from a governed local demo payload built with the real "
-                "Build-10, Build-9X, Build-11 Shadow, Build-12 Micro-live, Build-13 Live-Light, replay/import, onboarding, and Build-14 readers. "
+                "Build-10, Build-9X, Build-11 Shadow, Build-12 Micro-live, Build-13 Live-Light, replay/import, onboarding, and Build-14 limited influence. "
                 "It is not a live runtime snapshot."
             ),
             sections=sections,

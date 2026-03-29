@@ -4,6 +4,13 @@ from __future__ import annotations
 
 import pytest
 
+from complete_enablers import (
+    Build14InfluenceAction,
+    Build14InfluenceMode,
+    Build14InfluenceSignal,
+    Build14Severity,
+    Build14SignalFamily,
+)
 from interface_contracts import PairHealthLevel, ProfileId, ReviewState, RuntimeMode
 from monitoring import (
     AlertProjection,
@@ -323,6 +330,28 @@ def test_build_live_light_input_from_micro_live_rejects_non_empty_import_rejecti
         )
 
 
+def test_build_live_light_input_from_micro_live_rejects_live_pairs_outside_micro_live_surface():
+    with pytest.raises(
+        LiveLightInputError,
+        match="live_pairs must stay within the governed Micro-live planned_pairs",
+    ):
+        build_live_light_input_from_micro_live(
+            _micro_live_summary(),
+            _micro_live_payload(),
+            live_pairs=("SOLUSDT",),
+            requested_total_notional_usdt=80.0,
+            requested_pair_notional_usdt=40.0,
+            max_total_notional_usdt=100.0,
+            max_pair_notional_usdt=50.0,
+            observability_ready=True,
+            halt_ready=True,
+            execution_ready=True,
+            broker_ready=True,
+            exchange_ready=True,
+            onboarding_accepted=True,
+        )
+
+
 def test_run_live_light_gate_allows_small_execution_when_micro_live_and_guards_are_ready():
     summary = run_live_light_gate(
         build_live_light_input_from_micro_live(
@@ -346,6 +375,83 @@ def test_run_live_light_gate_allows_small_execution_when_micro_live_and_guards_a
     assert summary.decision.verdict == LiveLightVerdict.ALLOWED_TO_EXECUTE_SMALL
     assert summary.decision.allowed_to_execute_small is True
     assert summary.execution_intent.approved_total_notional_usdt == 80.0
+
+
+def test_run_live_light_gate_applies_build14_budget_downgrade_without_bypass():
+    summary = run_live_light_gate(
+        build_live_light_input_from_micro_live(
+            _micro_live_summary(),
+            _micro_live_payload(),
+            live_pairs=("BTCUSDT", "ETHUSDT"),
+            requested_total_notional_usdt=80.0,
+            requested_pair_notional_usdt=40.0,
+            max_total_notional_usdt=100.0,
+            max_pair_notional_usdt=50.0,
+            observability_ready=True,
+            halt_ready=True,
+            execution_ready=True,
+            broker_ready=True,
+            exchange_ready=True,
+            onboarding_accepted=True,
+        ),
+        build14_influence=Build14InfluenceSignal(
+            correlation_id="corr-live",
+            influence_mode=Build14InfluenceMode.LIMITED_INFLUENCE,
+            action=Build14InfluenceAction.DOWNGRADE_CONFIDENCE,
+            severity=Build14Severity.ELEVATED,
+            families=(Build14SignalFamily.MICROSTRUCTURE,),
+            summary="Elevated toxicity requires a bounded confidence downgrade",
+            reason_codes=("market_toxicity_snapshot_elevated",),
+            confidence_penalty_weight=0.10,
+            recommended_budget_factor=0.85,
+            requires_manual_review=False,
+            candidate_effect="confidence_downgrade",
+        ),
+    )
+
+    assert summary.decision.verdict == LiveLightVerdict.ALLOWED_TO_EXECUTE_SMALL
+    assert summary.execution_intent.approved_total_notional_usdt == 68.0
+    assert summary.decision.blocking_reasons == ()
+    assert summary.build14_action == "downgrade_confidence"
+    assert summary.build14_recommended_budget_factor == 0.85
+
+
+def test_run_live_light_gate_keeps_build14_review_only_governed():
+    summary = run_live_light_gate(
+        build_live_light_input_from_micro_live(
+            _micro_live_summary(),
+            _micro_live_payload(),
+            live_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=80.0,
+            requested_pair_notional_usdt=40.0,
+            max_total_notional_usdt=100.0,
+            max_pair_notional_usdt=50.0,
+            observability_ready=True,
+            halt_ready=True,
+            execution_ready=True,
+            broker_ready=True,
+            exchange_ready=True,
+            onboarding_accepted=True,
+        ),
+        build14_influence=Build14InfluenceSignal(
+            correlation_id="corr-live",
+            influence_mode=Build14InfluenceMode.LIMITED_INFLUENCE,
+            action=Build14InfluenceAction.REVIEW_ONLY,
+            severity=Build14Severity.CRITICAL,
+            families=(Build14SignalFamily.AI_EDGE,),
+            summary="Critical execution fragility requires manual review",
+            reason_codes=("execution_fragility_score_critical",),
+            confidence_penalty_weight=0.15,
+            recommended_budget_factor=0.0,
+            requires_manual_review=True,
+            candidate_effect="review_only",
+        ),
+    )
+
+    assert summary.decision.verdict == LiveLightVerdict.DRY_RUN_ONLY
+    assert summary.execution_intent.dry_run_only is True
+    assert "Critical execution fragility requires manual review" in summary.decision.blocking_reasons
+    assert "build14 gate: execution_fragility_score_critical" in summary.decision.blocking_reasons
 
 
 def test_run_live_light_gate_blocks_when_execution_or_onboarding_is_missing():
@@ -484,3 +590,47 @@ def test_run_live_light_gate_blocks_model_constructed_onboarding_contradiction()
     assert summary.decision.verdict == LiveLightVerdict.BLOCKED
     assert summary.decision.allowed_to_execute_small is False
     assert "accepted onboarding must keep a pending or approved review_state" in summary.decision.blocking_reasons
+
+
+def test_run_live_light_gate_blocks_model_constructed_build14_guardrail_bypass():
+    live_input = build_live_light_input_from_micro_live(
+        _micro_live_summary(),
+        _micro_live_payload(),
+        live_pairs=("BTCUSDT",),
+        requested_total_notional_usdt=80.0,
+        requested_pair_notional_usdt=40.0,
+        max_total_notional_usdt=100.0,
+        max_pair_notional_usdt=50.0,
+        observability_ready=True,
+        halt_ready=True,
+        execution_ready=True,
+        broker_ready=True,
+        exchange_ready=True,
+        onboarding_accepted=True,
+    )
+    contradictory_signal = Build14InfluenceSignal.model_construct(
+        correlation_id="corr-live",
+        influence_mode=Build14InfluenceMode.LIMITED_INFLUENCE,
+        action=Build14InfluenceAction.DOWNGRADE_CONFIDENCE,
+        severity=Build14Severity.ELEVATED,
+        families=(Build14SignalFamily.MICROSTRUCTURE,),
+        summary="Forbidden autonomous bypass",
+        reason_codes=("market_toxicity_snapshot_elevated",),
+        confidence_penalty_weight=0.10,
+        recommended_budget_factor=0.85,
+        requires_manual_review=False,
+        candidate_effect="confidence_downgrade",
+        stability_confirmed=True,
+        non_regression_required=True,
+        can_override_engines=True,
+        can_bypass_risk=False,
+        can_bypass_portfolio=False,
+        can_trade_autonomously=False,
+        classification="build14_enabler",
+    )
+
+    summary = run_live_light_gate(live_input, build14_influence=contradictory_signal)
+
+    assert summary.decision.verdict == LiveLightVerdict.BLOCKED
+    assert summary.decision.allowed_to_execute_small is False
+    assert "Build-14 influence must never bypass engines, risk, or portfolio" in summary.decision.blocking_reasons

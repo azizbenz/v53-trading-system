@@ -569,6 +569,13 @@ class LiveLightRunSummary(BaseModel, frozen=True):
     broker_ready: bool = False
     exchange_ready: bool = False
     onboarding_ready: bool = False
+    build14_influence_mode: str = "read_only"
+    build14_action: str = "observe"
+    build14_severity: str = "nominal"
+    build14_summary: str = ""
+    build14_reason_codes: tuple[str, ...] = ()
+    build14_confidence_penalty_weight: float = Field(default=0.0, ge=0.0, le=0.25)
+    build14_recommended_budget_factor: float = Field(default=1.0, ge=0.0, le=1.0)
 
     @property
     def blocking_reason_count(self) -> int:

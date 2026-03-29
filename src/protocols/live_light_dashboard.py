@@ -42,6 +42,13 @@ def build_live_light_projection(summary: LiveLightRunSummary) -> LiveLightProjec
         broker_ready=summary.broker_ready,
         exchange_ready=summary.exchange_ready,
         blocking_reasons=summary.decision.blocking_reasons,
+        build14_influence_mode=summary.build14_influence_mode,
+        build14_action=summary.build14_action,
+        build14_severity=summary.build14_severity,
+        build14_summary=summary.build14_summary,
+        build14_reason_codes=summary.build14_reason_codes,
+        build14_confidence_penalty_weight=summary.build14_confidence_penalty_weight,
+        build14_recommended_budget_factor=summary.build14_recommended_budget_factor,
     )
 
 
@@ -79,7 +86,10 @@ def build_live_light_dashboard_section(summary: LiveLightRunSummary) -> Dashboar
                     f"pair={projection.approved_pair_notional_usdt:.2f}"
                 ),
                 status=projection.status,
-                detail=f"requested={projection.requested_total_notional_usdt:.2f}",
+                detail=(
+                    f"requested={projection.requested_total_notional_usdt:.2f} / "
+                    f"build14={projection.build14_action}@{projection.build14_recommended_budget_factor:.2f}"
+                ),
             ),
             DashboardCard(
                 key="live_light_surface",
@@ -115,7 +125,7 @@ def build_live_light_dashboard_section(summary: LiveLightRunSummary) -> Dashboar
                     and projection.exchange_ready
                     else "critical"
                 ),
-                detail=projection.import_lineage_version,
+                detail=projection.build14_summary or projection.import_lineage_version,
             ),
             DashboardCard(
                 key="live_light_blocking_reasons",

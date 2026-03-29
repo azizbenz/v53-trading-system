@@ -134,6 +134,7 @@ class SystemProjection(BaseModel, frozen=True):
     shadow_status: ProjectionStatus = "planned"
     micro_live_status: ProjectionStatus = "planned"
     live_light_status: ProjectionStatus = "planned"
+    build14_status: ProjectionStatus = "planned"
     replay_import_status: ProjectionStatus = "planned"
     governed_extensions_detail: str = ""
 
@@ -251,6 +252,32 @@ class LiveLightProjection(BaseModel, frozen=True):
     broker_ready: bool = False
     exchange_ready: bool = False
     blocking_reasons: tuple[str, ...] = ()
+    build14_influence_mode: str = "read_only"
+    build14_action: str = "observe"
+    build14_severity: str = "nominal"
+    build14_summary: str = ""
+    build14_reason_codes: tuple[str, ...] = ()
+    build14_confidence_penalty_weight: float = Field(default=0.0, ge=0.0, le=0.25)
+    build14_recommended_budget_factor: float = Field(default=1.0, ge=0.0, le=1.0)
+
+
+class Build14Projection(BaseModel, frozen=True):
+    """Normalized Build-14 limited-influence summary consumed by Build-10."""
+
+    status: ProjectionStatus = "planned"
+    influence_mode: str = "read_only"
+    action: str = "observe"
+    severity: str = "nominal"
+    summary: str = "No Build-14 evaluation materialized"
+    market_toxicity_value: float = Field(default=0.0, ge=0.0)
+    market_toxicity_status: str = "nominal"
+    execution_fragility_value: float = Field(default=0.0, ge=0.0)
+    execution_fragility_status: str = "nominal"
+    confidence_penalty_weight: float = Field(default=0.0, ge=0.0, le=0.25)
+    recommended_budget_factor: float = Field(default=1.0, ge=0.0, le=1.0)
+    requires_manual_review: bool = False
+    candidate_effect: str = "observe_only"
+    reason_codes: tuple[str, ...] = ()
 
 
 class AlertProjection(BaseModel, frozen=True):
@@ -283,6 +310,7 @@ class TechnicalDashboardPayload(TimestampedModel):
     shadow: ShadowProjection = ShadowProjection()
     micro_live: MicroLiveProjection = MicroLiveProjection()
     live_light: LiveLightProjection = LiveLightProjection()
+    build14: Build14Projection = Build14Projection()
     replay_import: ReplayImportProjection
     alerts: AlertProjection
     future_panels: tuple[str, ...] = (
@@ -291,6 +319,7 @@ class TechnicalDashboardPayload(TimestampedModel):
         "shadow_supervision",
         "micro_live_supervision",
         "live_light_supervision",
+        "build14_supervision",
         "artifact_import",
         "observability_export",
     )
@@ -332,6 +361,7 @@ __all__ = [
     "ShadowProjection",
     "MicroLiveProjection",
     "LiveLightProjection",
+    "Build14Projection",
     "ReplayImportProjection",
     "AlertProjection",
     "TechnicalDashboardPayload",

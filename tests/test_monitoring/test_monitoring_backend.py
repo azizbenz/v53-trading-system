@@ -26,6 +26,7 @@ from meta_minimal.edge_tracker_prudent_minimal.edge_status_classifier import (
     EdgeStatus,
 )
 from monitoring import (
+    Build14Projection,
     Build9XProjection,
     LiveLightProjection,
     MicroLiveProjection,
@@ -140,6 +141,7 @@ def test_monitoring_exports_expected_symbols():
         "build_monitoring_alerts",
         "build_health_dashboard_payload",
         "Build9XProjection",
+        "Build14Projection",
         "ShadowProjection",
         "LiveLightProjection",
         "ReplayImportProjection",
@@ -424,6 +426,7 @@ def test_technical_dashboard_payload_normalizes_system_meta_and_governed_extensi
     assert payload.system.shadow_status == "planned"
     assert payload.system.micro_live_status == "planned"
     assert payload.system.live_light_status == "planned"
+    assert payload.system.build14_status == "planned"
     assert payload.system.replay_import_status == "warning"
     assert payload.build9_meta.break_even_state == "drift_alert"
     assert payload.build9x.review_export_ready is True
@@ -465,6 +468,8 @@ def test_technical_dashboard_payload_defaults_governed_sections_without_raw_prot
     assert payload.micro_live.verdict == "not_run"
     assert payload.live_light.status == "planned"
     assert payload.live_light.verdict == "not_run"
+    assert payload.build14.status == "planned"
+    assert payload.build14.influence_mode == "read_only"
     assert payload.replay_import.status == "info"
     assert payload.replay_import.validation_status == "not_run"
     assert payload.alerts.backlog_stale_status == "healthy"
@@ -621,3 +626,50 @@ def test_technical_dashboard_payload_accepts_live_light_projection_summary():
     assert payload.live_light.run_state == "ready_to_execute_small"
     assert payload.live_light.allowed_to_execute_small is True
     assert payload.live_light.planned_pairs == ("BTCUSDT", "ETHUSDT")
+
+
+def test_technical_dashboard_payload_accepts_build14_projection_summary():
+    dtr_summary, cra_report, break_even_report, edge_report = _sample_build9_reports()
+    snapshot = collect_monitoring_snapshot(
+        correlation_id="corr-build14-projection",
+        profile=ProfileId.LIGHT,
+        runtime_mode=RuntimeMode.LIVE,
+        timestamp_ms=1_700_000_000_000,
+        portfolio=collect_portfolio_metrics(
+            allocated_opportunities=1,
+            gross_capacity_used_pct=18.0,
+            loss_capacity_used_pct=4.0,
+            beta_utilization=0.15,
+            capital_deployed_usdt=700.0,
+            ce_net=0.0009,
+        ),
+        infra=collect_infra_metrics(queue_backlog=20),
+        meta=collect_meta_metrics(dtr_summary, cra_report, break_even_report, edge_report),
+    )
+
+    payload = build_technical_dashboard_payload(
+        snapshot,
+        active_modules=("monitoring", "ui", "protocols"),
+        active_engines=("engine_a", "engine_b"),
+        build14_projection=Build14Projection(
+            status="warning",
+            influence_mode="limited_influence",
+            action="downgrade_confidence",
+            severity="elevated",
+            summary="Build-14 limited influence reduces live-light confidence and budget",
+            market_toxicity_value=0.46,
+            market_toxicity_status="elevated",
+            execution_fragility_value=0.35,
+            execution_fragility_status="nominal",
+            confidence_penalty_weight=0.10,
+            recommended_budget_factor=0.85,
+            requires_manual_review=False,
+            candidate_effect="confidence_downgrade",
+            reason_codes=("market_toxicity_snapshot_elevated",),
+        ),
+    )
+
+    assert payload.system.build14_status == "warning"
+    assert payload.build14.action == "downgrade_confidence"
+    assert payload.build14.recommended_budget_factor == 0.85
+    assert payload.build14.reason_codes == ("market_toxicity_snapshot_elevated",)
