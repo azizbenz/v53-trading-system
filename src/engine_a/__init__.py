@@ -13,11 +13,21 @@ from engines.engine_a.engine_a_runner import (
     EngineAOutput,
     run_engine_a,
 )
+from engines.engine_a.engine_a_runtime import (
+    EngineARuntime,
+    EngineARuntimeInput,
+    EngineARuntimeResult,
+    EngineARuntimeStatus,
+)
 
 __all__ = [
     "EngineADecision",
     "EngineAInput",
     "EngineALogEntry",
     "EngineAOutput",
+    "EngineARuntime",
+    "EngineARuntimeInput",
+    "EngineARuntimeResult",
+    "EngineARuntimeStatus",
     "run_engine_a",
 ]

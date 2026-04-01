@@ -32,6 +32,10 @@ class TestCanonicalRuntimeSurface:
         module = importlib.import_module("engine_a")
         assert {"EngineAInput", "EngineAOutput", "EngineADecision", "run_engine_a"} <= set(module.__all__)
 
+    def test_engine_a_facade_exports_runtime_api(self):
+        module = importlib.import_module("engine_a")
+        assert {"EngineARuntime", "EngineARuntimeInput", "EngineARuntimeResult", "EngineARuntimeStatus"} <= set(module.__all__)
+
     def test_engine_b_facade_exports_runner_api(self):
         module = importlib.import_module("engine_b")
         assert {"EngineBInput", "EngineBOutput", "EngineBDecision", "run_engine_b"} <= set(module.__all__)

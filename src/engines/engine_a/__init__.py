@@ -3,5 +3,22 @@
 High-conviction engine capturing structured trend continuations
 with readable cost, auditable score, and explicit invalidation.
 
-Entry point: engines.engine_a.engine_a_runner.run_engine_a()
+Entry points:
+- engines.engine_a.engine_a_runner.run_engine_a()
+- engines.engine_a.engine_a_runtime.EngineARuntime
 """
+
+from .engine_a_runner import EngineADecision, EngineAInput, EngineALogEntry, EngineAOutput, run_engine_a
+from .engine_a_runtime import EngineARuntime, EngineARuntimeInput, EngineARuntimeResult, EngineARuntimeStatus
+
+__all__ = [
+    "EngineADecision",
+    "EngineAInput",
+    "EngineALogEntry",
+    "EngineAOutput",
+    "EngineARuntime",
+    "EngineARuntimeInput",
+    "EngineARuntimeResult",
+    "EngineARuntimeStatus",
+    "run_engine_a",
+]
