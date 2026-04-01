@@ -155,3 +155,15 @@ class TestConsistencyReporter:
         reporter.update_score(ConsistencyScore(pair="ETH", score=0.5))
         assert reporter.get_worst_pair().pair == "ETH"
         assert len(reporter.get_all_scores()) == 2
+
+    def test_reporter_tracks_anomaly_totals(self):
+        reporter = ConsistencyReporter()
+        reporter.record_gap(2)
+        reporter.record_duplicate()
+        reporter.record_disorder(3)
+        reporter.record_contradiction(4)
+        stats = reporter.get_stats()
+        assert stats.total_gaps == 2
+        assert stats.total_duplicates == 1
+        assert stats.total_disorders == 3
+        assert stats.total_contradictions == 4

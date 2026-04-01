@@ -96,12 +96,18 @@ class TestQueueManager:
         items = qm.dequeue("c1")
         assert items == ("event1",)
 
-    def test_bounded_queue_drops(self):
+    def test_bounded_queue_drops_oldest(self):
+        """GEM-05: drop_oldest=True evicts oldest when full."""
         qm = QueueManager()
         qm.create_queue("c1", max_size=2)
         qm.enqueue("c1", "a")
         qm.enqueue("c1", "b")
-        assert qm.enqueue("c1", "c") is False  # dropped
+        assert qm.enqueue("c1", "c") is True  # accepted, oldest dropped
+        stats = qm.get_stats("c1")
+        assert stats.total_dropped == 1
+        assert stats.depth == 2
+        items = qm.dequeue("c1")
+        assert items == ("b", "c")  # "a" was evicted
 
     def test_stats(self):
         qm = QueueManager()
@@ -111,6 +117,8 @@ class TestQueueManager:
         stats = qm.get_stats("c1")
         assert stats.depth == 2
         assert stats.total_enqueued == 2
+        assert stats.capacity == 10
+        assert stats.high_water_mark == 2
         assert stats.utilization == 0.2
 
     def test_partial_dequeue(self):

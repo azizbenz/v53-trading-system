@@ -1,14 +1,12 @@
 """
-10.5.4 — Health State Tracker: track active / degraded / suspended / recovery states.
-
-Invariant: transitions are explicit and logged. State is consultable by downstream modules.
+10.5.4 - Health State Tracker: track active / degraded / suspended / recovery states.
 """
 
 from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class PairHealthState(StrEnum):
@@ -29,7 +27,12 @@ class StateTransition(BaseModel, frozen=True):
 
 
 class HealthStateTracker:
-    """Track pair health states and transitions."""
+    """Track pair health states and explicit quarantine."""
+
+    _QUARANTINE_STATES = frozenset({
+        PairHealthState.SUSPENDED,
+        PairHealthState.RECOVERING,
+    })
 
     def __init__(self) -> None:
         self._states: dict[str, PairHealthState] = {}
@@ -40,9 +43,12 @@ class HealthStateTracker:
         return self._states.get(pair, PairHealthState.ACTIVE)
 
     def set_state(
-        self, pair: str, new_state: PairHealthState, reason: str, timestamp: float,
+        self,
+        pair: str,
+        new_state: PairHealthState,
+        reason: str,
+        timestamp: float,
     ) -> StateTransition | None:
-        """Transition to a new state. Returns transition event if state changed."""
         current = self.get_state(pair)
         if current == new_state:
             return None
@@ -91,4 +97,19 @@ class HealthStateTracker:
         return dict(self._states)
 
     def get_suspended_pairs(self) -> frozenset[str]:
-        return frozenset(p for p, s in self._states.items() if s == PairHealthState.SUSPENDED)
+        return frozenset(
+            pair for pair, state in self._states.items()
+            if state == PairHealthState.SUSPENDED
+        )
+
+    def is_quarantined(self, pair: str) -> bool:
+        return self.get_state(pair) in self._QUARANTINE_STATES
+
+    def get_quarantined_pairs(self) -> frozenset[str]:
+        return frozenset(
+            pair for pair, state in self._states.items()
+            if state in self._QUARANTINE_STATES
+        )
+
+    def can_receive_signals(self, pair: str) -> bool:
+        return not self.is_quarantined(pair)

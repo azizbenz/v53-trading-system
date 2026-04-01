@@ -16,6 +16,7 @@ from data_backbone.rest_bootstrap.bootstrap_reporter import (
     BootstrapOutcome,
     BootstrapReporter,
 )
+from data_backbone.rest_bootstrap.runtime_bootstrap import RestBootstrapRuntime
 
 
 pytestmark = pytest.mark.build2
@@ -155,3 +156,95 @@ class TestBootstrapReporter:
             outcome=BootstrapOutcome.RATE_LIMITED, timestamp=101.0,
         ))
         assert reporter.failure_rate == 0.5
+
+
+class _FakeSnapshotProvider:
+    def __init__(self) -> None:
+        self.snapshot: Snapshot | None = None
+        self.gap_snapshot: Snapshot | None = None
+        self.fetch_error: Exception | None = None
+        self.fill_error: Exception | None = None
+
+    def fetch_snapshot(self, pair: str, data_type: str) -> Snapshot:
+        if self.fetch_error is not None:
+            raise self.fetch_error
+        assert self.snapshot is not None
+        return self.snapshot
+
+    def fill_gap(self, pair: str, data_type: str, gap_start: float, gap_end: float) -> Snapshot:
+        if self.fill_error is not None:
+            raise self.fill_error
+        assert self.gap_snapshot is not None
+        return self.gap_snapshot
+
+
+class TestRestBootstrapRuntime:
+    def test_bootstrap_success(self):
+        provider = _FakeSnapshotProvider()
+        provider.snapshot = Snapshot(
+            pair="BTCUSDT",
+            data_type="orderbook",
+            payload={"bids": [], "asks": []},
+            fetch_time=100.0,
+        )
+        runtime = RestBootstrapRuntime(provider)
+        result = runtime.bootstrap("BTCUSDT", "orderbook", now=105.0, max_age_s=10.0)
+        assert result.outcome == BootstrapOutcome.SUCCESS
+        assert result.snapshot is not None
+        assert runtime.reporter.total_events == 1
+
+    def test_bootstrap_too_old_snapshot(self):
+        provider = _FakeSnapshotProvider()
+        provider.snapshot = Snapshot(
+            pair="BTCUSDT",
+            data_type="orderbook",
+            payload={"bids": [], "asks": []},
+            fetch_time=100.0,
+        )
+        runtime = RestBootstrapRuntime(provider)
+        result = runtime.bootstrap("BTCUSDT", "orderbook", now=120.0, max_age_s=10.0)
+        assert result.outcome == BootstrapOutcome.SNAPSHOT_TOO_OLD
+        assert result.blocked is True
+
+    def test_bootstrap_fetch_error(self):
+        provider = _FakeSnapshotProvider()
+        provider.fetch_error = RuntimeError("snapshot failed")
+        runtime = RestBootstrapRuntime(provider)
+        result = runtime.bootstrap("BTCUSDT", "orderbook", now=100.0)
+        assert result.outcome == BootstrapOutcome.FETCH_ERROR
+        assert "snapshot failed" in result.message
+
+    def test_gap_fill_rejected_when_too_large(self):
+        provider = _FakeSnapshotProvider()
+        runtime = RestBootstrapRuntime(provider)
+        result = runtime.resync(
+            "BTCUSDT",
+            "orderbook",
+            gap_start=100.0,
+            gap_end=500.0,
+            now=105.0,
+            max_gap_s=300.0,
+        )
+        assert result.outcome == BootstrapOutcome.GAP_TOO_LARGE
+        assert result.blocked is True
+
+    def test_gap_fill_success(self):
+        provider = _FakeSnapshotProvider()
+        provider.gap_snapshot = Snapshot(
+            pair="BTCUSDT",
+            data_type="orderbook",
+            payload={"bids": [], "asks": []},
+            fetch_time=105.0,
+        )
+        runtime = RestBootstrapRuntime(provider)
+        result = runtime.resync(
+            "BTCUSDT",
+            "orderbook",
+            gap_start=100.0,
+            gap_end=110.0,
+            now=106.0,
+            max_gap_s=30.0,
+            max_age_s=10.0,
+        )
+        assert result.outcome == BootstrapOutcome.SUCCESS
+        assert result.gap_fill_result is not None

@@ -1,16 +1,14 @@
 """
-7.5.3 — Queue Manager: per-consumer queues with backlog and saturation metrics.
+7.5.3 - Queue Manager: per-consumer queues with backlog and saturation metrics.
 
 Invariant: backlog visible per consumer. Bounded queues with explicit drops.
-B_m(t+1) = B_m(t) + A_m(t) - S_m(t)
-ρ_m = λ_m / μ_m
 """
 
 from __future__ import annotations
 
 from collections import deque
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class QueueStats(BaseModel, frozen=True):
@@ -19,10 +17,13 @@ class QueueStats(BaseModel, frozen=True):
     consumer_id: str
     depth: int = 0
     max_depth: int = 0
+    high_water_mark: int = 0
+    capacity: int = 0
     total_enqueued: int = 0
     total_dequeued: int = 0
     total_dropped: int = 0
-    utilization: float = 0.0  # depth / max_size
+    utilization: float = 0.0
+    drop_rate: float = 0.0
 
 
 class QueueManager:
@@ -32,6 +33,7 @@ class QueueManager:
         self._default_max_size = default_max_size
         self._queues: dict[str, deque[object]] = {}
         self._max_sizes: dict[str, int] = {}
+        self._high_water_marks: dict[str, int] = {}
         self._enqueued: dict[str, int] = {}
         self._dequeued: dict[str, int] = {}
         self._dropped: dict[str, int] = {}
@@ -41,20 +43,33 @@ class QueueManager:
         size = max_size if max_size is not None else self._default_max_size
         self._queues[consumer_id] = deque()
         self._max_sizes[consumer_id] = size
+        self._high_water_marks[consumer_id] = 0
         self._enqueued[consumer_id] = 0
         self._dequeued[consumer_id] = 0
         self._dropped[consumer_id] = 0
 
-    def enqueue(self, consumer_id: str, item: object) -> bool:
-        """Add item to consumer queue. Returns False if dropped (queue full)."""
+    def enqueue(self, consumer_id: str, item: object, drop_oldest: bool = True) -> bool:
+        """Add item to consumer queue.
+
+        GEM-05: drop_oldest=True (default) evicts oldest when full.
+        Returns False only if the queue is unknown or policy forbids insertion.
+        """
         if consumer_id not in self._queues:
             return False
         q = self._queues[consumer_id]
         if len(q) >= self._max_sizes[consumer_id]:
-            self._dropped[consumer_id] += 1
-            return False
+            if drop_oldest:
+                q.popleft()
+                self._dropped[consumer_id] += 1
+            else:
+                self._dropped[consumer_id] += 1
+                return False
         q.append(item)
         self._enqueued[consumer_id] += 1
+        self._high_water_marks[consumer_id] = max(
+            self._high_water_marks.get(consumer_id, 0),
+            len(q),
+        )
         return True
 
     def dequeue(self, consumer_id: str, max_count: int | None = None) -> tuple[object, ...]:
@@ -78,15 +93,22 @@ class QueueManager:
         if consumer_id not in self._queues:
             return None
         depth = len(self._queues[consumer_id])
-        max_size = self._max_sizes[consumer_id]
+        capacity = self._max_sizes[consumer_id]
+        total_enqueued = self._enqueued.get(consumer_id, 0)
+        total_dropped = self._dropped.get(consumer_id, 0)
+        total_seen = total_enqueued + total_dropped
+        high_water_mark = self._high_water_marks.get(consumer_id, 0)
         return QueueStats(
             consumer_id=consumer_id,
             depth=depth,
-            max_depth=max_size,
-            total_enqueued=self._enqueued.get(consumer_id, 0),
+            max_depth=high_water_mark,
+            high_water_mark=high_water_mark,
+            capacity=capacity,
+            total_enqueued=total_enqueued,
             total_dequeued=self._dequeued.get(consumer_id, 0),
-            total_dropped=self._dropped.get(consumer_id, 0),
-            utilization=depth / max_size if max_size > 0 else 1.0,
+            total_dropped=total_dropped,
+            utilization=depth / capacity if capacity > 0 else 1.0,
+            drop_rate=total_dropped / total_seen if total_seen > 0 else 0.0,
         )
 
     def all_stats(self) -> tuple[QueueStats, ...]:
@@ -97,9 +119,25 @@ class QueueManager:
                 stats.append(stat)
         return tuple(stats)
 
+    def is_saturated(self, consumer_id: str, threshold: float = 0.9) -> bool:
+        stats = self.get_stats(consumer_id)
+        if stats is None:
+            return False
+        return stats.utilization >= threshold
+
+    def saturated_queues(self, threshold: float = 0.9) -> tuple[str, ...]:
+        return tuple(
+            cid for cid in self._queues
+            if self.is_saturated(cid, threshold)
+        )
+
     def remove_queue(self, consumer_id: str) -> bool:
         if consumer_id not in self._queues:
             return False
         del self._queues[consumer_id]
         del self._max_sizes[consumer_id]
+        del self._high_water_marks[consumer_id]
+        del self._enqueued[consumer_id]
+        del self._dequeued[consumer_id]
+        del self._dropped[consumer_id]
         return True

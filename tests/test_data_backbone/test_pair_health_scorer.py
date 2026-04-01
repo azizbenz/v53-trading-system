@@ -138,6 +138,21 @@ class TestHealthStateTracker:
         tracker.activate("ETH", "ok", 101.0)
         assert tracker.get_suspended_pairs() == frozenset({"BTC"})
 
+    def test_quarantine_is_explicit_for_recovering_and_suspended(self):
+        tracker = HealthStateTracker()
+        tracker.suspend("BTC", "test", 100.0)
+        tracker.start_recovery("ETH", 101.0)
+        assert tracker.is_quarantined("BTC") is True
+        assert tracker.is_quarantined("ETH") is True
+        assert tracker.get_quarantined_pairs() == frozenset({"BTC", "ETH"})
+
+    def test_quarantined_pair_cannot_receive_signals(self):
+        tracker = HealthStateTracker()
+        tracker.suspend("BTC", "test", 100.0)
+        assert tracker.can_receive_signals("BTC") is False
+        tracker.activate("BTC", "ok", 105.0)
+        assert tracker.can_receive_signals("BTC") is True
+
 
 # --- Health Reporter ---
 

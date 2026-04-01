@@ -1,8 +1,5 @@
 """
-9.5.5 — Consistency Reporter: aggregate consistency metrics.
-
-ConsistencyScore = 1 - (w1*Gaps + w2*Duplicates + w3*Disorder + w4*Contradictions)
-Invariant: score is interpretable. Anomalies are per-pair and per-stream.
+9.5.5 - Consistency Reporter: aggregate consistency metrics.
 """
 
 from __future__ import annotations
@@ -14,7 +11,7 @@ class ConsistencyScore(BaseModel, frozen=True):
     """Consistency score for a pair."""
 
     pair: str
-    score: float  # 0.0 = inconsistent, 1.0 = perfect
+    score: float
     gap_rate: float = 0.0
     dup_rate: float = 0.0
     disorder_rate: float = 0.0
@@ -41,11 +38,7 @@ def compute_consistency_score(
     w_disorder: float = 0.2,
     w_contradiction: float = 0.3,
 ) -> float:
-    """Compute consistency score.
-
-    ConsistencyScore = 1 - (w1*Gaps + w2*Duplicates + w3*Disorder + w4*Contradictions)
-    Clamped to [0, 1].
-    """
+    """Compute consistency score clamped to [0, 1]."""
     raw = 1.0 - (
         w_gap * gap_rate
         + w_dup * dup_rate
@@ -60,9 +53,25 @@ class ConsistencyReporter:
 
     def __init__(self) -> None:
         self._scores: dict[str, ConsistencyScore] = {}
+        self._total_gaps: int = 0
+        self._total_duplicates: int = 0
+        self._total_disorders: int = 0
+        self._total_contradictions: int = 0
 
     def update_score(self, score: ConsistencyScore) -> None:
         self._scores[score.pair] = score
+
+    def record_gap(self, count: int = 1) -> None:
+        self._total_gaps += count
+
+    def record_duplicate(self, count: int = 1) -> None:
+        self._total_duplicates += count
+
+    def record_disorder(self, count: int = 1) -> None:
+        self._total_disorders += count
+
+    def record_contradiction(self, count: int = 1) -> None:
+        self._total_contradictions += count
 
     def get_score(self, pair: str) -> ConsistencyScore | None:
         return self._scores.get(pair)
@@ -72,6 +81,10 @@ class ConsistencyReporter:
 
     def get_stats(self) -> ConsistencyStats:
         return ConsistencyStats(
+            total_gaps=self._total_gaps,
+            total_duplicates=self._total_duplicates,
+            total_disorders=self._total_disorders,
+            total_contradictions=self._total_contradictions,
             scores_by_pair={p: s.score for p, s in self._scores.items()},
         )
 

@@ -1,5 +1,7 @@
-"""Tests for data_backbone.freshness_checker — Build-2."""
+"""Tests for data_backbone.freshness_checker - Build-2."""
 import pytest
+
+from interface_contracts import RuntimeMode
 
 from data_backbone.freshness_checker.last_update_tracker import LastUpdateTracker
 from data_backbone.freshness_checker.age_calculator import (
@@ -9,6 +11,7 @@ from data_backbone.freshness_checker.age_calculator import (
 from data_backbone.freshness_checker.stale_penalty_builder import compute_stale_penalty
 from data_backbone.freshness_checker.stale_hard_guard import (
     StaleVerdict,
+    evaluate_exchange_staleness,
     evaluate_staleness,
 )
 from data_backbone.freshness_checker.freshness_reporter import (
@@ -19,8 +22,6 @@ from data_backbone.freshness_checker.freshness_reporter import (
 
 pytestmark = pytest.mark.build2
 
-
-# --- Last Update Tracker ---
 
 class TestLastUpdateTracker:
     def test_record_and_get(self):
@@ -53,8 +54,6 @@ class TestLastUpdateTracker:
         assert len(records) == 2
 
 
-# --- Age Calculator ---
-
 class TestAgeCalculator:
     def test_calculate_age(self):
         result = calculate_age("BTCUSDT", "trade", 100.0, 105.0)
@@ -70,8 +69,6 @@ class TestAgeCalculator:
         assert ages["depth"] == 8.0
 
 
-# --- Stale Penalty Builder ---
-
 class TestStalePenaltyBuilder:
     def test_fresh_no_penalty(self):
         result = compute_stale_penalty("BTC", "trade", age_s=3.0, threshold_s=5.0)
@@ -81,14 +78,12 @@ class TestStalePenaltyBuilder:
         result = compute_stale_penalty(
             "BTC", "trade", age_s=10.0, threshold_s=5.0, lambda_factor=0.1,
         )
-        assert result.penalty == pytest.approx(0.5)  # 0.1 * (10 - 5)
+        assert result.penalty == pytest.approx(0.5)
 
     def test_exact_threshold_no_penalty(self):
         result = compute_stale_penalty("BTC", "trade", age_s=5.0, threshold_s=5.0)
         assert result.penalty == 0.0
 
-
-# --- Stale Hard Guard ---
 
 class TestStaleHardGuard:
     def test_fresh(self):
@@ -107,12 +102,45 @@ class TestStaleHardGuard:
         assert result.blocked is True
 
     def test_recovery_after_fresh_update(self):
-        # After receiving fresh data, stale goes back to fresh
         result = evaluate_staleness("BTC", "trade", 1.0, soft_threshold_s=5.0, hard_threshold_s=30.0)
         assert result.verdict == StaleVerdict.FRESH
 
+    def test_exchange_stale_shadow_is_logged_only(self):
+        result = evaluate_exchange_staleness(
+            "BTC",
+            "trade",
+            local_timestamp=100.5,
+            exchange_timestamp=100.0,
+            runtime_mode=RuntimeMode.SHADOW,
+            stale_threshold_s=0.2,
+        )
+        assert result.verdict == StaleVerdict.DEGRADED
+        assert result.blocked is False
 
-# --- Freshness Reporter ---
+    def test_exchange_stale_micro_live_is_blocking(self):
+        result = evaluate_exchange_staleness(
+            "BTC",
+            "trade",
+            local_timestamp=100.5,
+            exchange_timestamp=100.0,
+            runtime_mode=RuntimeMode.MICRO_LIVE,
+            stale_threshold_s=0.2,
+        )
+        assert result.verdict == StaleVerdict.HARD_STALE
+        assert result.blocked is True
+
+    def test_exchange_stale_live_is_blocking(self):
+        result = evaluate_exchange_staleness(
+            "BTC",
+            "trade",
+            local_timestamp=100.5,
+            exchange_timestamp=100.0,
+            runtime_mode=RuntimeMode.LIVE,
+            stale_threshold_s=0.2,
+        )
+        assert result.verdict == StaleVerdict.HARD_STALE
+        assert result.blocked is True
+
 
 class TestFreshnessReporter:
     def test_record_and_stats(self):

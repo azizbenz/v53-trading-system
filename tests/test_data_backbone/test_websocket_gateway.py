@@ -21,6 +21,10 @@ from data_backbone.websocket_gateway.raw_message_emitter import (
     RawMessage,
     RawMessageEmitter,
 )
+from data_backbone.websocket_gateway.runtime_gateway import (
+    AdapterMessage,
+    WebSocketGatewayRuntime,
+)
 
 
 pytestmark = pytest.mark.build2
@@ -204,8 +208,13 @@ class TestRawMessageEmitter:
         emitter = RawMessageEmitter(max_buffer_size=2)
         emitter.emit(self._msg(recv_time=1.0))
         emitter.emit(self._msg(recv_time=2.0))
-        assert emitter.emit(self._msg(recv_time=3.0)) is False
+        assert emitter.emit(self._msg(recv_time=3.0)) is True
         assert emitter.total_dropped == 1
+        assert emitter.high_water_mark == 2
+        assert emitter.consume() == (
+            self._msg(recv_time=2.0),
+            self._msg(recv_time=3.0),
+        )
 
     def test_consume_partial(self):
         emitter = RawMessageEmitter()
@@ -226,3 +235,77 @@ class TestRawMessageEmitter:
         for i in range(5):
             emitter.emit(self._msg(recv_time=float(i + 1)))
         assert emitter.utilization == 0.5
+
+
+class _FakeAdapter:
+    def __init__(self) -> None:
+        self.connected: set[str] = set()
+        self.subscriptions: list[tuple[str, str, str]] = []
+        self.frames: dict[str, list[AdapterMessage]] = {}
+        self.recv_errors: dict[str, list[Exception]] = {}
+
+    def connect(self, endpoint: str) -> None:
+        self.connected.add(endpoint)
+
+    def disconnect(self, endpoint: str) -> None:
+        self.connected.discard(endpoint)
+
+    def subscribe(self, endpoint: str, pair: str, stream_type: str) -> None:
+        self.subscriptions.append((endpoint, pair, stream_type))
+
+    def recv(self, endpoint: str) -> AdapterMessage | None:
+        if endpoint in self.recv_errors and self.recv_errors[endpoint]:
+            raise self.recv_errors[endpoint].pop(0)
+        queue = self.frames.get(endpoint, [])
+        if not queue:
+            return None
+        return queue.pop(0)
+
+
+class TestWebSocketGatewayRuntime:
+    def test_connect_and_resubscribe(self):
+        adapter = _FakeAdapter()
+        runtime = WebSocketGatewayRuntime(adapter)
+        runtime.subscribe("BTCUSDT", "trade", EP)
+        status = runtime.connect(EP, now=100.0)
+        assert status.state == ConnectionState.CONNECTED
+        assert (EP, "BTCUSDT", "trade") in adapter.subscriptions
+
+    def test_poll_message_updates_backlog_and_heartbeat(self):
+        adapter = _FakeAdapter()
+        adapter.frames[EP] = [
+            AdapterMessage(
+                pair="BTCUSDT",
+                stream_type="trade",
+                payload={"price": "100"},
+                recv_time=101.0,
+                source="binance",
+            )
+        ]
+        runtime = WebSocketGatewayRuntime(adapter, emitter=RawMessageEmitter(max_buffer_size=4))
+        runtime.subscribe("BTCUSDT", "trade", EP)
+        runtime.connect(EP, now=100.0)
+        result = runtime.poll_once(EP, now=101.0)
+        assert result.raw_message is not None
+        assert result.raw_message.pair == "BTCUSDT"
+        assert result.backlog == 1
+        assert result.heartbeat_state.status == HeartbeatStatus.ALIVE
+
+    def test_reconnect_on_recv_error(self):
+        adapter = _FakeAdapter()
+        adapter.recv_errors[EP] = [RuntimeError("socket lost")]
+        runtime = WebSocketGatewayRuntime(adapter)
+        runtime.subscribe("BTCUSDT", "trade", EP)
+        runtime.connect(EP, now=100.0)
+        result = runtime.poll_once(EP, now=101.0)
+        assert result.reconnect_event is not None
+        assert result.connection_status.state == ConnectionState.CONNECTED
+        assert "socket lost" in result.error
+
+    def test_poll_without_connection_is_visible(self):
+        adapter = _FakeAdapter()
+        runtime = WebSocketGatewayRuntime(adapter)
+        runtime.register_endpoint(EP)
+        result = runtime.poll_once(EP, now=100.0)
+        assert result.connection_status.state == ConnectionState.DISCONNECTED
+        assert result.error == "endpoint_not_connected"

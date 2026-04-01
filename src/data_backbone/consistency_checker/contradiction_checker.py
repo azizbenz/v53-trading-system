@@ -28,23 +28,34 @@ class ContradictionEvent(BaseModel, frozen=True):
 
 
 class ContradictionChecker:
-    """Detect contradictions in event streams."""
+    """Detect contradictions in event streams.
 
-    def __init__(self) -> None:
+    GEM-06: jitter tolerance window for timestamp reversal checks.
+    """
+
+    # GEM-06: timestamps within this window are not flagged as reversals
+    _JITTER_TOLERANCE_S: float = 0.010  # 10ms
+
+    def __init__(self, jitter_tolerance_s: float | None = None) -> None:
         self._contradictions: list[ContradictionEvent] = []
         self._last_exchange_time: dict[tuple[str, str], float] = {}
         self._total_checked: int = 0
+        if jitter_tolerance_s is not None:
+            self._JITTER_TOLERANCE_S = jitter_tolerance_s
 
     def check_timestamp_order(
         self, pair: str, stream_type: str, exchange_time: float, recv_time: float,
     ) -> ContradictionEvent | None:
-        """Check for timestamp reversal (exchange time going backwards)."""
+        """Check for timestamp reversal (exchange time going backwards).
+
+        GEM-06: reversals within jitter tolerance (default 10ms) are ignored.
+        """
         self._total_checked += 1
         key = (pair, stream_type)
         last = self._last_exchange_time.get(key)
         self._last_exchange_time[key] = exchange_time
 
-        if last is not None and exchange_time < last:
+        if last is not None and exchange_time < last - self._JITTER_TOLERANCE_S:
             event = ContradictionEvent(
                 pair=pair,
                 contradiction_type=ContradictionType.TIMESTAMP_REVERSAL,

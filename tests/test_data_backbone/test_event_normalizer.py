@@ -11,8 +11,10 @@ from data_backbone.event_normalizer.schema_mapper import (
     map_raw_to_event,
 )
 from data_backbone.event_normalizer.timestamp_enricher import (
+    compute_latency,
     compute_drift,
     enrich_timestamp,
+    monotonic_now,
 )
 from data_backbone.event_normalizer.message_classifier import (
     MessageClass,
@@ -90,6 +92,17 @@ class TestTimestampEnricher:
         enrichment = enrich_timestamp(event, now=101.0)
         assert enrichment.drift_s == pytest.approx(0.5)
         assert enrichment.latency_s == pytest.approx(0.5)
+
+    def test_monotonic_helper_is_monotonic(self):
+        t1 = monotonic_now()
+        t2 = monotonic_now()
+        assert t2 >= t1
+
+    def test_negative_latency_filtered(self):
+        assert compute_latency(105.0, 100.0) is None
+
+    def test_aberrant_latency_filtered(self):
+        assert compute_latency(1.0, 1000.0, max_latency_s=10.0) is None
 
 
 # --- Message Classifier ---
