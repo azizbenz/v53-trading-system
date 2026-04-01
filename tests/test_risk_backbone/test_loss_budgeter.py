@@ -19,6 +19,10 @@ from risk_backbone.loss_budgeter.loss_cap_guard import (
     evaluate_loss_cap,
 )
 from risk_backbone.loss_budgeter.loss_reporter import LossReporter
+from risk_backbone.loss_budgeter.drawdown_guard import (
+    DrawdownVerdict,
+    evaluate_drawdown_guard,
+)
 
 
 # ── position_loss_estimator ──
@@ -258,3 +262,40 @@ class TestLossReporter:
         reporter.record_accepted(pair="BTCUSDT", loss_amount=30.0)
         stats = reporter.get_stats()
         assert stats.remaining_capacity == pytest.approx(70.0)
+
+
+class TestDrawdownGuard:
+    def test_no_drawdown_is_accepted(self):
+        result = evaluate_drawdown_guard(
+            current_equity=1000.0,
+            session_peak_equity=1000.0,
+            warning_threshold_pct=0.02,
+            observe_threshold_pct=0.04,
+        )
+        assert result.verdict == DrawdownVerdict.ACCEPTED
+        assert result.drawdown_pct == pytest.approx(0.0)
+
+    def test_warning_drawdown_reduces_exposure(self):
+        result = evaluate_drawdown_guard(
+            current_equity=970.0,
+            session_peak_equity=1000.0,
+            warning_threshold_pct=0.02,
+            observe_threshold_pct=0.04,
+        )
+        assert result.verdict == DrawdownVerdict.REDUCE_EXPOSURE
+
+    def test_observe_threshold_switches_to_observation(self):
+        result = evaluate_drawdown_guard(
+            current_equity=950.0,
+            session_peak_equity=1000.0,
+            warning_threshold_pct=0.02,
+            observe_threshold_pct=0.04,
+        )
+        assert result.verdict == DrawdownVerdict.OBSERVE_ONLY
+
+    def test_invalid_peak_raises(self):
+        with pytest.raises(ValueError):
+            evaluate_drawdown_guard(
+                current_equity=1000.0,
+                session_peak_equity=0.0,
+            )
