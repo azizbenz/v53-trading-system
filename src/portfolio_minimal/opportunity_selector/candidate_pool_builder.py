@@ -15,6 +15,8 @@ class OpportunityCandidate(BaseModel, frozen=True):
 
     pair: str
     engine_id: str  # "engine_a" or "engine_b"
+    direction: str = "long"
+    emitted_at: float = 0.0
     penalized_score: float
     raw_score: float = 0.0
     ce_expected: float = 0.0  # capital efficiency

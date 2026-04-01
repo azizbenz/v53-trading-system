@@ -144,8 +144,11 @@ def run_portfolio_pipeline(
             c.pair,
             capped.final_size,
             min_viable_size=config.min_viable_size,
+            candidate_size=c.candidate_size,
+            expected_cost=c.expected_cost,
+            ev_net=c.ev_net,
         )
-        is_phantom = phantom.verdict == PhantomVerdict.PHANTOM
+        is_phantom = phantom.verdict != PhantomVerdict.VIABLE
 
         entry = AllocationEntry(
             pair=c.pair,
@@ -157,6 +160,7 @@ def run_portfolio_pipeline(
             ranking_score=se.ranking_score,
             is_phantom=is_phantom,
             cap_reason=capped.cap_reason,
+            viability_reason=phantom.reason,
         )
         entries.append(entry)
 

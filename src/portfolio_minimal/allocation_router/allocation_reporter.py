@@ -22,6 +22,7 @@ class AllocationEntry(BaseModel, frozen=True):
     ranking_score: float
     is_phantom: bool = False
     cap_reason: str = ""
+    viability_reason: str = ""
 
 
 class AllocationReport(BaseModel, frozen=True):

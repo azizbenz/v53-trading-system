@@ -77,9 +77,12 @@ from portfolio_minimal.portfolio_orchestrator import (
 def _cand(
     pair: str = "BTC/USDT",
     engine: str = "engine_a",
+    direction: str = "long",
+    emitted_at: float = 0.0,
     score: float = 0.8,
     ce: float = 0.05,
     cost: float = 0.01,
+    ev_net: float = 4.0,
     size: float = 100.0,
     tier: str = "tier_1",
     cluster: str = "btc_cluster",
@@ -89,10 +92,13 @@ def _cand(
     return OpportunityCandidate(
         pair=pair,
         engine_id=engine,
+        direction=direction,
+        emitted_at=emitted_at,
         penalized_score=score,
         raw_score=score,
         ce_expected=ce,
         expected_cost=cost,
+        ev_net=ev_net,
         candidate_size=size,
         tier_suggestion=tier,
         cluster_id=cluster,
@@ -275,6 +281,27 @@ class TestConflictChecker:
             _cand(pair="X", engine="engine_b", score=0.5, ce=0.50, cost=0.01),
         ))
         assert r.survivors[0].engine_id == "engine_b"
+
+    def test_contradictory_pair_is_neutralized_with_full_audit(self):
+        r = check_conflicts((
+            _cand(pair="BTC/USDT", engine="engine_a", direction="long", emitted_at=100.0, score=0.8),
+            _cand(pair="BTC/USDT", engine="engine_b", direction="short", emitted_at=120.0, score=0.7),
+        ))
+        assert len(r.survivors) == 0
+        assert any(c.conflict_type == ConflictType.CONTRADICTORY_SIGNAL for c in r.conflicts)
+        assert len(r.rejection_audit) == 2
+        assert {entry.engine_id for entry in r.rejection_audit} == {"engine_a", "engine_b"}
+
+    def test_contradictory_pair_outside_window_is_not_neutralized(self):
+        r = check_conflicts(
+            (
+                _cand(pair="BTC/USDT", engine="engine_a", direction="long", emitted_at=100.0, score=0.8),
+                _cand(pair="BTC/USDT", engine="engine_b", direction="short", emitted_at=1000.0, score=0.7),
+            ),
+            contradiction_window_s=60.0,
+        )
+        assert len(r.survivors) == 1
+        assert not any(c.conflict_type == ConflictType.CONTRADICTORY_SIGNAL for c in r.conflicts)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -534,6 +561,17 @@ class TestPhantomTradeGuard:
         r = check_phantom("X", 15.0, min_viable_size=20.0)
         assert r.verdict == PhantomVerdict.PHANTOM
 
+    def test_cost_exceeds_edge_after_allocation(self):
+        r = check_phantom(
+            "X",
+            100.0,
+            candidate_size=100.0,
+            expected_cost=0.02,
+            ev_net=0.01,
+        )
+        assert r.verdict == PhantomVerdict.COST_EXCEEDS_EDGE_AFTER_ALLOCATION
+        assert "COST_EXCEEDS_EDGE_AFTER_ALLOCATION" in r.reason
+
 
 # ═══════════════════════════════════════════════════════════════
 # 10. allocation_reporter (4 tests)
@@ -677,6 +715,24 @@ class TestPortfolioOrchestrator:
         assert r.report.count_phantom == 1
         assert r.report.count_allocated == 0
 
+    def test_cost_exceeds_edge_after_allocation_sterilized(self):
+        candidates = (
+            _cand(
+                pair="BTC/USDT",
+                score=0.8,
+                size=100.0,
+                cluster="btc_cluster",
+                cost=0.02,
+                ev_net=0.01,
+                estimated_loss=1.0,
+                beta_impact=0.01,
+            ),
+        )
+        r = run_portfolio_pipeline(candidates, self._config())
+        assert r.report.count_phantom == 1
+        assert r.report.count_allocated == 0
+        assert "COST_EXCEEDS_EDGE_AFTER_ALLOCATION" in r.report.phantoms[0].viability_reason
+
     def test_duplicate_pair_deduped_in_pipeline(self):
         """Duplicate pair from two engines → only 1 survives conflict check."""
         candidates = (
@@ -709,3 +765,14 @@ class TestPortfolioOrchestrator:
         assert r.conflicts is not None
         assert r.selection is not None
         assert r.report is not None
+
+    def test_contradictory_a_b_signals_are_neutralized_in_pipeline(self):
+        candidates = (
+            _cand(pair="BTC/USDT", engine="engine_a", direction="long", emitted_at=100.0, cluster="btc_cluster"),
+            _cand(pair="BTC/USDT", engine="engine_b", direction="short", emitted_at=120.0, cluster="btc_cluster"),
+        )
+        r = run_portfolio_pipeline(candidates, self._config())
+        assert r.conflicts is not None
+        assert any(c.conflict_type == ConflictType.CONTRADICTORY_SIGNAL for c in r.conflicts.conflicts)
+        assert r.report.count_allocated == 0
+        assert len(r.conflicts.rejection_audit) == 2
