@@ -2,7 +2,7 @@
 ## Live-Light Production Protocol
 ### Protocole officiel de première production réelle disciplinée
 ### Treizième étape officielle du développement
-### Première implémentation réelle minimale gouvernée
+### Premier rollout réel borné et gouverné
 
 ---
 
@@ -14,31 +14,48 @@ Build-13 a une mission unique :
 
 > définir le protocole de **Live-Light**, c’est-à-dire la première production réelle de la V5.3 en profil Light, après validation du Shadow et du Micro-live.
 
-Le Live-Light n’est pas encore la version finale de la V5.3.  
-C’est la première phase où le système doit être capable de :
+## HARD STATEMENT — Prérequis temporels non négociables
+
+> **NON NÉGOCIABLE. Aucune dérogation.**
+
+- **HARD : Light a tradé en shadow complet 30 jours calendaires consécutifs minimum** (Build-11 validé, avec A/B/C/D et Build-14 activés à 100%)
+- **HARD : Verdict post-Shadow rendu composant par composant** (chaque moteur/enabler : `SHADOW_VALIDATED` ou `DORMANT`)
+- **HARD : Micro-live stable minimum 7 jours** (Build-12 validé, avec uniquement les composants `SHADOW_VALIDATED`)
+- **HARD : Rapport shadow produit, exploitable et approuvé** (incluant comparaison inter-moteurs et contribution Build-14)
+- Sans ces prérequis, Build-13 ne peut pas être activé, même si tout le code est prêt
+- L'activation complète en Shadow ne signifie pas promotion live automatique de tous les composants
+
+Le Live-Light n’est pas une architecture partielle distincte de la V5.3.
+C’est le premier **rollout reel borne** de la meme architecture complete,
+dans lequel le systeme doit être capable de :
 
 - produire du trading réel de manière disciplinée
 - rester gouvernable en continu
 - préserver le capital
 - démontrer une crédibilité économique
-- accumuler des preuves de robustesse avant toute extension vers Complete
+- accumuler des preuves de robustesse avant toute extension gouvernée du rollout
 
 ## 0.1 Statut documentaire vs implémentation
 
-Ce document définit le protocole cible Build-13 et décrit aussi la première implémentation réelle minimale actuellement codée.
+Ce document définit le protocole cible Build-13 et exige une **implémentation réelle et complète** du Live-Light.
+
+Build-13 n’est considéré codé, testable et validable que si le dépôt fournit réellement :
+
+- un `runtime_mode = LIVE` opérable
+- un chargement de configuration effectif
+- une exécution exchange réelle et bornée
+- une capacité réelle de sortie de positions
+- une notification opérateur fonctionnelle
+- des protocoles `rollback`, `degraded` et `halted` réellement opérables
+- une supervision, des budgets et des gates réellement branchés au runtime
+
+Un gate, un planner, un execution-intent builder ou une surface bornée ne suffisent jamais à eux seuls pour déclarer Build-13 complet.
 
 Il ne doit pas être lu comme :
 
-- la preuve qu’un runtime Live-Light complet d’exécution exchange est déjà codé
-- la preuve que `COMPLETE` est déjà exécutable
+- la preuve qu’un simple gate Live-Light suffit
+- la preuve que tout le rollout `COMPLETE` est déjà autorisé
 - une autorisation à ouvrir Build-14, Build-15, Build-16 ou Build-17 sans validation effective
-
-La base actuelle ouvre Build-13 comme :
-
-- un gate / execution-intent planner gouverné
-- une surface Live-Light réelle mais minimale
-- une étape distincte de `MICRO_LIVE`
-- une étape encore distincte de tout runtime `COMPLETE` ou live complet
 
 ## 0.2 Règle d’unification local / VPS
 
@@ -56,17 +73,19 @@ Build-13 reste strictement dans la V5.3 unifiée :
 
 Le Live-Light existe pour tester simultanément, dans des conditions réelles de production :
 
-- la stabilité continue de l’architecture Light
+- la stabilité continue du rollout LIGHT sur la même architecture complète
 - la robustesse d’A et B
 - la cohérence du portefeuille minimal
 - la soutenabilité des coûts réels
 - la qualité de la réconciliation sur la durée
 - la discipline de supervision et de rollback
-- la crédibilité économique de la Light
+- la crédibilité économique du rollout LIGHT
 
 Le Live-Light doit répondre à une question simple :
 
-> la V5.3 Light peut-elle rester en production réelle, de façon stable, explicable et économiquement crédible, sans dépendre d’ajustements manuels improvisés ?
+> la V5.3 en rollout LIGHT peut-elle rester en production réelle, de façon
+> stable, explicable et économiquement crédible, sans dépendre d’ajustements
+> manuels improvisés ?
 
 ---
 
@@ -105,11 +124,11 @@ Les conditions suivantes doivent être satisfaites :
 ## Après Build-13
 Si Build-13 est validé, alors seulement :
 - Build-14 : Complete Enablers
-- puis éventuellement Build-15/16/17 vers la Complete
+- puis extension gouvernée du rollout via Build-15/16/17
 
 ## 3.1 Relation avec Build-14, onboarding et Build-9X
 
-- Build-14 reste une phase d’enablers d’abord en lecture seule
+- Build-14 est une phase d’enablers **activés à 100% en Shadow** (`SHADOW_ENABLED`), promotion live conditionnelle au verdict post-Shadow
 - les candidats `Build14_enabler`, `C_candidate` et `D_candidate` restent gouvernés par le protocole d’onboarding
 - `LOCAL_REPLAY` et l’import d’artifact peuvent préparer une candidature, mais ne remplacent jamais la chaîne `SHADOW -> MICRO_LIVE -> LIVE`
 - Build-9X, s’il existe plus tard, ne peut produire que diagnostics, hypothèses et replay bundles ; jamais une mutation live directe
@@ -134,7 +153,8 @@ Le portefeuille Light reste-t-il discipliné dans le temps, sans dérive de conc
 L’UI, le monitoring, les alertes et les procédures HALTED/DEGRADED sont-ils réellement utilisables en production ?
 
 ## 4.5 Vérité de readiness future
-Le système accumule-t-il des preuves qui permettront, plus tard, d’ouvrir prudemment la phase Complete ?
+Le système accumule-t-il des preuves qui permettront d’ouvrir prudemment
+l’extension gouvernée du rollout ?
 
 ---
 
@@ -156,9 +176,9 @@ Build-13 ne peut pas commencer si une des conditions suivantes n’est pas satis
 # 6. Périmètre du Live-Light
 
 ## 6.1 Profil actif
-- **Light uniquement**
+- **LIGHT comme enveloppe active**
 - 6 paires maximum
-- moteurs A et B uniquement
+- coeur runtime attendu : moteurs A et B
 
 ## 6.2 Paires autorisées
 Uniquement les paires validées par Shadow + Micro-live, typiquement :
@@ -172,6 +192,9 @@ Uniquement les paires validées par Shadow + Micro-live, typiquement :
 ## 6.3 Moteurs autorisés
 - A
 - B
+- C et D peuvent exister comme composants de référence, mais leur activation
+  réelle reste hors scope de Build-13 tant que leurs gates spécifiques ne sont
+  pas passés
 
 ## 6.4 Composants obligatoirement actifs
 - tous les backbones précédents
@@ -184,12 +207,20 @@ Uniquement les paires validées par Shadow + Micro-live, typiquement :
 - protocole halted
 
 ## 6.5 Composants interdits
-- C
-- D
-- Complete profile
+- activation réelle non gouvernée de C
+- activation réelle non gouvernée de D
+- extension COMPLETE sans gates passées
 - activation > 6 paires
 - overrides opérateur sur caps de risque
 - montée sauvage de taille
+
+## 6.6 Angles morts critiques à surveiller
+- dérive de corrélation malgré seulement 6 paires
+- faux sentiment de diversification A/B
+- coûts destructeurs masqués par fréquence brute
+- latence / backlog / stale non vus assez tôt
+- désalignement état local / exchange
+- contournement opérateur ou journalisation incomplète
 
 ---
 
@@ -596,7 +627,7 @@ Le rapport doit répondre explicitement à :
 - le portefeuille Light reste-t-il discipliné ?
 - la CE réelle Light est-elle crédible ?
 - quels incidents ont nécessité DEGRADED ou HALTED ?
-- la phase Complete est-elle prématurée ou envisageable plus tard ?
+- l’extension gouvernée du rollout est-elle prématurée ou envisageable ensuite ?
 
 ---
 
@@ -636,7 +667,7 @@ Le rapport doit répondre explicitement à :
 - monter les tailles trop vite
 - juger la phase au PnL brut
 - oublier la CE, le coût réel et la stérilisation
-- préparer Complete par impatience
+- préparer l’extension COMPLETE par impatience
 - rester en live alors qu’un HALTED est justifié
 - multiplier les interventions manuelles invisibles
 
@@ -644,7 +675,7 @@ Le rapport doit répondre explicitement à :
 
 # 23. Conditions de readiness pour Complete Enablers
 
-Build-13 ne valide pas encore la Complete.  
+Build-13 ne valide pas encore l’extension COMPLETE du rollout.
 Il peut seulement établir un début de readiness si :
 
 - Light est stable techniquement
@@ -677,6 +708,37 @@ Si Build-13 est mal fait :
 Donc :
 
 > Build-13 doit être traité comme un **build bloquant de maturité de production Light**, pas comme une simple prolongation du micro-live.
+
+---
+
+# Guardrails issus des audits — Préconditions runtime réel Build-13
+
+## Runtime complet obligatoire (QWEN-03, QWEN-04)
+- Le Live-Light exige un runtime complet : I/O exchange, event loop continu, persistance, réconciliation, monitoring, notification
+- Aucun composant ne peut être mocké ou simulé en Live-Light
+- Le système doit tourner de manière autonome pendant des jours sans intervention
+
+## Notification opérateur (QWEN-06)
+- En Live-Light, les alertes CRITICAL doivent être livrées à l'opérateur humain via un canal externe
+- Un webhook (Slack, Telegram, ou équivalent) doit être configuré et testé
+- Une alerte non livrée est aussi grave qu'une alerte non générée
+
+## Workflow d'approbation (QWEN-08)
+- Le passage en Live-Light doit suivre un processus d'approbation explicite
+- Les conditions de passage (gates) doivent être vérifiées et loggées
+- L'opérateur humain doit explicitement valider le passage
+
+## Kill switch externe opérationnel (QWEN-07, GEM-10)
+- En Live-Light, le kill switch externe (fichier flag ou API admin) doit être opérationnel et testé
+- Un test de kill switch doit être exécuté avant le passage en Live-Light
+- Le kill switch doit fermer toutes les positions ouvertes de manière ordonnée
+
+## Interdiction de considérer Live-Light validé sans :
+- au moins 7 jours de micro-live stable
+- réconciliation exchange sans divergence critique
+- DTR complet avec coûts réels
+- CE (Capital Efficiency) mesurée et positive ou économiquement crédible
+- notification opérateur testée et fonctionnelle
 
 ---
 

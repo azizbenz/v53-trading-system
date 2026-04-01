@@ -1,6 +1,6 @@
 # V5.3 — BUILD-14 SPEC
 ## Complete Enablers Protocol
-### Spécification des briques d’extension vers la V5.3 Complete
+### Spécification des briques d’enabling d’une architecture complète déjà assumée
 ### Quatorzième étape officielle du développement
 ### Première implémentation réelle gouvernée
 
@@ -12,7 +12,9 @@ Ce document couvre **Build-14** du plan officiel V5.3.
 
 Build-14 a une mission unique :
 
-> préparer l’ouverture future de la V5.3 Complete en ajoutant les **briques d’enrichissement strictement utiles**, sans casser la stabilité de la Light et sans confondre sophistication de recherche et valeur de production.
+> renforcer une architecture complete deja assumee en ajoutant les **briques
+> d’enrichissement strictement utiles**, sans casser la stabilite du rollout
+> LIGHT et sans confondre sophistication de recherche et valeur de production.
 
 Les composants couverts ici sont :
 
@@ -22,27 +24,57 @@ Les composants couverts ici sont :
 4. `risk_contribution_monitor`
 5. `effective_edge_diversity_enriched`
 
-Build-14 **n’active pas encore** :
-- le moteur C en production
-- le moteur D en production
-- le profil Complete
+Build-14 est **activé à 100% pendant le Shadow 30 jours** : ses enablers sont
+pleinement utilisés dans les décisions Shadow, tracés, comparés et auditables.
 
-Il prépare le terrain pour pouvoir, plus tard, décider rationnellement si la Complete mérite d’exister.
+La promotion live de Build-14 reste conditionnelle au verdict post-Shadow.
+Activation en Shadow ≠ promotion automatique vers Live.
+
+Il formalise les enablers d'une architecture complete deja reconnue comme
+doctrine cible unique.
+
+## HARD STATEMENT — Conditions temporelles de promotion Complete
+
+> **NON NÉGOCIABLE. Aucune dérogation, aucun raccourci.**
+
+Même si tout le code Complete (Builds 14→17) est implémenté et testé :
+
+1. **Light doit avoir tradé en shadow 30 jours consécutifs minimum** avant toute activation live Light
+2. **Light doit être stable en Live-Light** avant toute considération de Complete
+3. **Complete doit avoir tradé en shadow 30 jours consécutifs minimum** (en parallèle de Light live) avant toute activation Live-Complete
+4. **Non-régression Light obligatoire** pendant les 30 jours de shadow Complete — dégradation = désactivation + compteur à zéro
+5. **Rapport comparatif Light vs Complete** obligatoire et approuvé par l'opérateur avant Live-Complete
+
+Le code est prêt ≠ le système est prêt. Seul le temps réel de marché valide un système de trading.
 
 ## 0.1 Statut documentaire vs implémentation
 
-Ce document définit le **protocole cible** Build-14 et son ouverture minimale actuelle.
+Ce document définit le **protocole cible** Build-14 et exige une **implémentation réelle et complète** des enablers canoniques du build.
+
+Build-14 n’est considéré codé, testable et validable que si le dépôt fournit réellement :
+
+- les cinq briques canoniques du build :
+  `microstructure_enriched_layer`,
+  `regime_enriched_layer`,
+  `robust_covariance_layer`,
+  `risk_contribution_monitor`,
+  `effective_edge_diversity_enriched`
+- leurs contrats, outputs, logs structurés et projections de supervision
+- leur activation complète en Shadow (`SHADOW_ENABLED`)
+- une séparation nette entre activation Shadow et promotion live
+
+Un contrat seul, quelques readers isolés ou un socle analytique partiel ne suffisent jamais à eux seuls pour déclarer Build-14 complet.
 
 Il ne doit pas être lu comme :
 
 - la preuve que Build-15/16/17 sont déjà activables
 - une autorisation à présenter `COMPLETE` comme déjà exécutable
 
-En date du 29 mars 2026, le dépôt contient déjà :
+En date du 31 mars 2026, le dépôt contient déjà :
 
-- des readers Build-14 réels en lecture seule
-- une première couche d’influence limitée et gouvernée
-- une exposition supervision / observabilité
+- des enablers Build-14 réels (`SHADOW_ENABLED` : activés à 100% en Shadow)
+- une couche d’influence pleine en Shadow, gouvernée
+- une exposition supervision / observabilité complète
 
 Ce qui n’existe toujours pas à ce stade :
 
@@ -61,9 +93,8 @@ Build-14 doit rester cohérent avec :
 Conséquences :
 
 - un enrichissement Build-14 entre d’abord comme `Build14_enabler`
-- il passe d’abord par lecture seule
-- il peut ensuite être confronté à `LOCAL_REPLAY`
-- puis seulement à Shadow
+- il peut être préparé via `LOCAL_REPLAY`
+- il est ensuite **activé à 100% en Shadow** pendant les 30 jours
 - il ne devient jamais un moteur autonome
 - il ne crée jamais de fork local / VPS
 - il ne crée jamais de `BACKTEST_PROFILE`
@@ -76,7 +107,10 @@ Conséquences :
 
 Le Build-14 existe pour répondre à une question stratégique :
 
-> la V5.3 Light stable peut-elle être enrichie par des briques analytiques supplémentaires qui améliorent réellement la lecture du risque, de la corrélation, de la microstructure et de la diversité d’edge, sans détériorer la stabilité opérationnelle ?
+> le rollout LIGHT stable peut-il être enrichi par des briques analytiques
+> supplémentaires qui améliorent réellement la lecture du risque, de la
+> corrélation, de la microstructure et de la diversité d’edge, sans détériorer
+> la stabilité opérationnelle de l’architecture complète ?
 
 En pratique, Build-14 doit permettre de tester, en environnement contrôlé :
 
@@ -165,14 +199,16 @@ Build-14 ne peut pas commencer si une des conditions suivantes n’est pas satis
 # 6. Périmètre du Build-14
 
 ## 6.1 Profil actif
-- **Light toujours actif**
-- Complete non activé
+- **LIGHT comme enveloppe de rollout**
+- Build-14 enablers **activés à 100% en Shadow** (`SHADOW_ENABLED`)
 
-## 6.2 Mode d’introduction
-Les enablers doivent être introduits :
-- d’abord en lecture / analyse
-- ensuite en influence limitée / shadow
-- jamais comme sources immédiates de veto hard en production
+## 6.2 Mode d’activation
+Les enablers sont activés à 100% pendant le Shadow 30 jours :
+- pleinement utilisés dans les décisions Shadow
+- leurs outputs sont tracés, comparés, auditables
+- ils ne sont pas en lecture seule : ils influencent activement le scoring, le risk et le portefeuille en Shadow
+- leur promotion live reste soumise au verdict post-Shadow
+- jamais promotion implicite vers la Complete sans verdict
 
 ## 6.3 Composants concernés
 - microstructure enrichie
@@ -184,19 +220,27 @@ Les enablers doivent être introduits :
 ## 6.4 Composants explicitement hors périmètre
 - RL live
 - POMDP live
-- moteur C live
-- moteur D live
+- activation large de C live
+- activation large de D live
 - optimisation lourde non démontrée
-- Complete profile live
+- extension COMPLETE live sans gates passées
 
-## 6.5 Règles d’introduction obligatoires
+## 6.5 Règles d’activation obligatoires
 
-- lecture seule d’abord
-- influence limitée ensuite
+- **activé à 100% en Shadow** : pleinement utilisé, pas en lecture seule
+- promotion live non automatique : soumis au verdict post-Shadow
 - jamais bypass de A/B/C/D
 - jamais bypass du risk backbone
 - jamais bypass du portfolio
 - jamais promotion implicite vers la Complete
+- Hard State : `CODED` → `SHADOW_ENABLED` → verdict → `SHADOW_VALIDATED` ou `DORMANT`
+
+## 6.6 Angles morts critiques de Build-14
+- inflation de veto sans gain économique réel
+- microstructure ou régime enrichi qui augmente la stérilisation
+- faux sentiment de diversité d'edge
+- surcharge CPU / mémoire / observabilité
+- dérive documentaire entre enrichissement analytique et politique de rollout
 
 ---
 
@@ -628,25 +672,25 @@ Cette brique est utile seulement si elle :
 
 ---
 
-# 13. Mode d’introduction en production Light
+# 13. Mode d’activation en Shadow et promotion Live
 
-## 13.1 Étape 1 — Lecture seule
-Les briques Build-14 doivent d’abord exister en lecture seule :
-- visibles au monitoring
-- visibles à l’analyse
-- sans impact direct sur les décisions live
+## 13.1 Étape 1 — Activation complète en Shadow (`SHADOW_ENABLED`)
+Les briques Build-14 sont **activées à 100% pendant le Shadow 30 jours** :
+- pleinement utilisées dans les décisions Shadow
+- visibles au monitoring et à l’analyse
+- leurs outputs sont tracés, comparés, auditables
+- elles influencent activement le scoring, le risk et le portefeuille en Shadow
 
-## 13.2 Étape 2 — Influence limitée
-Cette étape est maintenant ouverte de façon minimale et gouvernée.
+## 13.2 Étape 2 — Verdict post-Shadow
+À l’issue des 30 jours, chaque enabler reçoit un verdict individuel :
+- `SHADOW_VALIDATED` : valeur démontrée, éligible à Micro-live
+- `DORMANT` : valeur non démontrée, désactivé pour le Micro-live
 
-Certaines briques peuvent influencer :
-- une pénalité légère
-- une meilleure lecture portefeuille
-- une alerte enrichie
-
-Mais pas :
-- un hard block central
-- une refonte du sizing live
+## 13.3 Étape 3 — Promotion Live conditionnelle
+Seuls les enablers `SHADOW_VALIDATED` peuvent influencer le Live :
+- influence mesurée et gouvernée
+- jamais un hard block central en live sans preuve supplémentaire
+- non-régression Light obligatoire
 - un changement brutal de logique A/B
 - une décision autonome
 - une promotion implicite vers `COMPLETE`
@@ -895,12 +939,86 @@ Si Build-14 est bien fait :
 
 Si Build-14 est mal fait :
 - la Light se complexifie sans gain
-- la future Complete sera construite sur des illusions
+- l’extension COMPLETE du rollout sera construite sur des illusions
 - la discipline prod-safe se dégrade
 
 Donc :
 
 > Build-14 doit être traité comme un **build bloquant d’enrichissement sous contrôle**, pas comme une simple phase de recherche additionnelle.
+
+---
+
+# Guardrails issus des audits — Statut forcé Build-14
+
+## Enablers absorbés depuis les audits tiers
+
+Les audits tiers ont identifié des enrichissements pertinents absorbés comme enablers Build-14 :
+
+### LOB deep filter / anti-spoofing (GEM-11, GEM-21)
+- Module VWA (Volume Weighted Absorption) pour analyser la densité réelle du carnet
+- Détection de flickering (liquidité fantôme qui disparaît avant d’être consommée)
+- Statut : **enabler Build-14**, `SHADOW_ENABLED` — activé à 100% en Shadow
+
+### OBI — Order Book Imbalance (GEM-24)
+- Indicateur de pression de flux adverse
+- Si OBI montre une pression contraire au signal, réduction de taille ou élargissement stop
+- Statut : **enabler Build-14**, `SHADOW_ENABLED` — influence active en Shadow
+
+### Hurst regime classifier enrichi (GEM-22)
+- Exposant de Hurst pour classification trending/reverting/ranging
+- Enrichissement du `regime_enriched_layer` existant
+- Statut : **enabler Build-14**, `SHADOW_ENABLED` — activé à 100% en Shadow
+
+### Anti-spoofing (GEM-21)
+- Détection de spoofing via analyse de persistance des ordres dans le carnet
+- Intégration dans le `microstructure_enriched_layer`
+- Statut : **enabler Build-14**, `SHADOW_ENABLED` en Shadow ; promotion live uniquement après verdict `SHADOW_VALIDATED`, sinon `DORMANT`
+
+### Faux breakout model
+- Détection de breakouts non soutenus par le volume réel
+- Enrichissement de la validation Engine A
+- Statut : **enabler Build-14**, `SHADOW_ENABLED` en Shadow ; promotion live uniquement après verdict `SHADOW_VALIDATED`, sinon `DORMANT`
+
+### Toxicité de flux
+- Mesure de la toxicité du flux d’ordres (proportion d’exécutions adverses)
+- Intégration dans le cost model enrichi
+- Statut : **enabler Build-14**, `SHADOW_ENABLED` en Shadow ; promotion live uniquement après verdict `SHADOW_VALIDATED`, sinon `DORMANT`
+
+### Competition monitor / capital competition
+- Détection de présence d’autres algos sur les mêmes niveaux de prix
+- Intégration dans le risk_contribution_monitor
+- Statut : **enabler Build-14**, `SHADOW_ENABLED` en Shadow ; promotion live uniquement après verdict `SHADOW_VALIDATED`, sinon `DORMANT`
+
+### Risk contribution enrichie
+- Décomposition du risque par facteur, pas seulement par paire
+- Enrichissement du `risk_contribution_monitor` existant
+- Statut : **enabler Build-14**, `SHADOW_ENABLED` en Shadow ; promotion live uniquement après verdict `SHADOW_VALIDATED`, sinon `DORMANT`
+
+### Edge diversity enrichie
+- K_eff spectral enrichi pour mesurer la diversification réelle
+- Enrichissement du `effective_edge_diversity_enriched` existant
+- Statut : **enabler Build-14**, `SHADOW_ENABLED` en Shadow ; promotion live uniquement après verdict `SHADOW_VALIDATED`, sinon `DORMANT`
+
+## Statut forcé pour tous les enablers
+
+Règle obligatoire pour chaque enabler Build-14 :
+
+1. **Activé à 100% en Shadow** (`SHADOW_ENABLED`) : l’enabler participe pleinement aux décisions Shadow, ses outputs sont tracés et auditables
+2. **Verdict post-Shadow** : chaque enabler reçoit `SHADOW_VALIDATED` ou `DORMANT` à l’issue des 30 jours
+3. **No hard-block central en live sans verdict** : aucun enabler Build-14 ne peut bloquer le flux de décision Live sans avoir été `SHADOW_VALIDATED`
+4. **No auto-promotion** : aucun enabler ne peut s’activer automatiquement en Live
+5. **Non-régression Light obligatoire** : si l’enabler dégrade les métriques Light, il est désactivé
+6. **Pas de bypass** de A/B, du risk backbone ou du portfolio
+7. **Pas d’activation implicite de Complete**
+
+## Conditions de promotion Build-14
+
+Build-14 ne peut être promu en Live que si :
+- 30 jours de Shadow complet consécutifs atteints (A/B/C/D + Build-14 à 100%)
+- verdict post-Shadow rendu composant par composant
+- chaque enabler a démontré sa valeur pendant le Shadow
+- la non-régression Light est démontrée
+- l’opérateur humain approuve explicitement la promotion
 
 ---
 

@@ -23,18 +23,21 @@ Build-12 doit répondre à une question simple :
 
 ## 0.1 Statut documentaire vs implémentation
 
-Ce document définit le **protocole Build-12** et sa première implémentation réelle minimale.
+Ce document définit le **protocole Build-12** et exige une **implémentation réelle et complète** du Micro-live.
 
-Dans la base de code actuelle retenue :
+Build-12 n’est considéré codé, testable et validable que si le dépôt fournit réellement :
 
-- Build-12 existe réellement comme **gate / probe planner gouverné**
-- il prépare et bloque proprement l'entrée en Micro-live
-- il n'ouvre pas encore un runtime d'exécution exchange complet
-- il ne constitue donc pas encore Build-13
+- une exécution exchange réelle, même bornée
+- une event loop et des I/O réels
+- une persistance exploitable
+- une réconciliation fiable avec l’exchange
+- des budgets, des gates, des halt guards et une supervision réellement branchés
+
+Un gate, un probe planner ou une préparation de Micro-live ne suffisent jamais à eux seuls pour déclarer Build-12 complet.
 
 Il ne doit pas être lu comme :
 
-- la preuve que Build-12 est complet au-delà du Micro-live minimal gouverné
+- la preuve qu’un Micro-live partiel ou seulement gouverné suffit
 - une autorisation à sauter Build-10 ou Build-11
 - la preuve que Build-13 est ouvert
 - une validation implicite de `COMPLETE`
@@ -63,6 +66,15 @@ Le Micro-live Light existe pour tester simultanément :
 - la cohérence entre shadow et réel
 - la qualité de supervision opérateur
 - la capacité à arrêter proprement en cas de dérive
+
+## Relation avec le verdict post-Shadow
+
+Le Micro-live n’active que les composants ayant reçu le verdict `SHADOW_VALIDATED` à l’issue des 30 jours de Shadow complet.
+
+- L’activation complète en Shadow (Build-14, C/D à 100%) **ne signifie pas activation Micro-live automatique** de tous ces composants
+- Seuls les composants dont la valeur a été démontrée pendant le Shadow passent en Micro-live
+- Les composants marqués `DORMANT` au verdict post-Shadow restent inactifs
+- Il peut y avoir rollback ou filtrage avant Micro-live
 
 Sans cette phase, le passage direct en Live-Light serait prématuré.
 
@@ -161,9 +173,9 @@ Build-12 ne peut pas commencer si une des conditions suivantes n’est pas satis
 # 6. Périmètre du Micro-live Light
 
 ## 6.1 Profil actif
-- **Light uniquement**
+- **LIGHT comme enveloppe active**
 - 6 paires maximum
-- moteurs A et B uniquement
+- coeur runtime attendu : moteurs A et B
 
 ## 6.2 Paires autorisées
 Seulement les paires validées en Shadow Light, en pratique :
@@ -177,6 +189,9 @@ Seulement les paires validées en Shadow Light, en pratique :
 ## 6.3 Moteurs autorisés
 - A
 - B
+- C et D peuvent exister comme composants de référence, mais leur activation
+  réelle reste hors scope de Build-12 tant que leurs gates spécifiques ne sont
+  pas passés
 
 ## 6.4 Composants obligatoirement actifs
 - data backbone
@@ -191,8 +206,8 @@ Seulement les paires validées en Shadow Light, en pratique :
 - protocoles d’arrêt immédiat
 
 ## 6.5 Composants interdits
-- moteurs C/D
-- Complete profile
+- activation réelle non gouvernée de C/D
+- extension COMPLETE sans gates passées
 - overrides UI de caps
 - élargissement discrétionnaire du scope
 - augmentation de taille non planifiée
@@ -766,6 +781,42 @@ Si Build-12 est mal fait :
 Donc :
 
 > Build-12 doit être traité comme un **build bloquant de vérité de marché réel**, pas comme un simple “petit live”.
+
+---
+
+# Guardrails issus des audits — Préconditions runtime réel Build-12
+
+## I/O réel obligatoire (QWEN-03)
+- Le micro-live exige une connexion exchange réelle avec envoi d'ordres réels
+- Un micro-live simulé (mock exchange) ne constitue pas une validation Build-12
+- Le système doit démontrer : connexion WebSocket + REST API exchange + envoi/annulation d'ordres
+
+## Event loop et persistance (QWEN-01, GEM-19)
+- Le micro-live doit tourner sur un event loop continu (pas d'appels manuels ponctuels)
+- La persistance des états (positions, DTR, circuit breaker) doit être active et atomique
+- Un crash pendant le micro-live ne doit pas perdre l'état des positions ouvertes
+
+## Sortie de positions (QWEN-03)
+- Le micro-live doit démontrer la capacité de sortir proprement de toutes les positions :
+  - sortie normale (take profit / stop loss)
+  - sortie d'urgence (kill switch)
+  - sortie sur timeout (time-based invalidation)
+- Une position qui ne peut pas être fermée est un risque existentiel
+
+## Réconciliation exchange réelle (GEM-07c)
+- En micro-live, la `reconciliation_layer` doit comparer l'état local avec l'état exchange réel
+- Les divergences doivent être loggées et alertées
+- Le système doit pouvoir se réconcilier automatiquement pour les cas simples (partial fill, latence)
+
+## Stale guard bloquant (GEM-23)
+- En micro-live, un message stale doit bloquer la prise de décision
+- Le système passe en observation si le delta dépasse le seuil
+- Aucun ordre ne doit être envoyé sur des données périmées
+
+## Config loading officiel
+- Toutes les configurations doivent être chargées depuis les fichiers officiels
+- Aucun paramètre ne doit être hardcodé dans le code pour le micro-live
+- Le config loading doit être loggé au bootstrap
 
 ---
 

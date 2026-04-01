@@ -14,8 +14,21 @@ Build-11 a une mission unique :
 
 > valider la **V5.3 Light en mode Shadow**, c’est-à-dire dans des conditions de flux et de logique aussi proches que possible du réel, mais sans engager de capital.
 
-Build-11 ne crée pas un nouveau moteur ni un nouveau module central.  
+Build-11 ne crée pas un nouveau moteur ni un nouveau module central.
 Il définit le **protocole de vérité pré-micro-live**.
+
+## HARD STATEMENT — 30 jours de shadow Light obligatoires
+
+> **NON NÉGOCIABLE. Aucune dérogation, aucun raccourci, aucune exception.**
+
+- La version Light doit trader en mode **SHADOW** pendant un minimum de **30 jours calendaires consécutifs**
+- Données réelles obligatoires (WebSocket live ou replay de données réelles enregistrées)
+- Pipeline complet : data → engine → scoring → portfolio → execution simulée
+- DTR complet produit pendant les 30 jours
+- Si un incident interrompt le shadow pendant plus de 24h, le compteur **reprend à zéro**
+- Un rapport shadow exploitable doit être produit à l’issue (CE, coûts estimés, edge, drawdown, stale rate)
+- **Aucune activation Micro-live ni Live-Light n’est autorisée avant l’expiration de cette période**
+- "Le code est prêt" ou "les tests passent" ne sont PAS des arguments pour réduire cette durée
 
 Le Shadow Light doit répondre à une question simple :
 
@@ -23,11 +36,19 @@ Le Shadow Light doit répondre à une question simple :
 
 ## 0.1 Statut documentaire vs implémentation
 
-Ce document définit le **protocole Build-11** et sa première implémentation réelle.
+Ce document définit le **protocole Build-11** et l’exigence d’une **implémentation réelle et complète** du Shadow.
 
-Il ne doit pas être lu comme :
+Build-11 n’est considéré codé, testable et validable que si le dépôt fournit réellement :
 
-- la preuve que Build-11 est complet au-delà du Shadow minimal gouverné
+- un `runtime_mode = SHADOW` opérable
+- des données réelles ou des replays enregistrés de données réelles
+- un pipeline complet `data -> engine -> scoring -> portfolio -> execution simulée`
+- un DTR complet, une persistance exploitable et un rapport shadow exploitable
+- une observabilité, des alerts et des états de gouvernance réellement branchés
+
+Il ne doit jamais être lu comme :
+
+- la preuve qu’un Shadow partiel, in-memory ou seulement gouverné suffit
 - la preuve que Build-12 ou Build-13 sont ouverts
 - la preuve que Build-10 est opéré en live dans le repo courant
 - une autorisation à court-circuiter le chemin `LOCAL_REPLAY -> export artifact -> import VPS -> Shadow`
@@ -44,17 +65,23 @@ Build-11 reste strictement dans la V5.3 unifiée :
 
 ---
 
-# 1. Mission du Shadow Light
+# 1. Mission du Shadow — Phase de vérité système complète
 
-Le Shadow Light existe pour tester simultanément :
+Le Shadow existe pour tester **la solution complète utile** simultanément :
 
 - la qualité de la chaîne data
 - la cohérence scoring / hard-soft-rank
-- l’arbitrage portefeuille A/B
-- les coûts attendus
+- l’arbitrage portefeuille **A/B/C/D** (tous moteurs actifs)
+- les coûts attendus par moteur
 - la discipline du risk backbone
 - la qualité des DTR / CRA / break-even / edge tracker
 - la supervision UI / monitoring
+- **les enrichissements Build-14** (microstructure, régime, covariance, risk contribution, edge diversity) activés à 100%
+- **les interactions inter-moteurs** A/B/C/D : conflits, duplication, concentration, complémentarité
+- **la robustesse portefeuille** avec 4 moteurs et enrichissements complets
+- **le coût réel simulé prudent** avec solution complète
+
+Le Shadow n’est plus une simple validation Light minimale. Il est la **phase de vérité système** où l’on observe la solution complète avant de décider quoi promouvoir.
 
 Sans ce protocole, un passage direct au micro-live serait aveugle.
 
@@ -119,10 +146,16 @@ Le système prend-il des décisions cohérentes et reproductibles ?
 Le système produit-il une fréquence utile plausible avec des coûts prudents ?
 
 ## 4.3 Vérité portefeuille
-Le système A/B + portefeuille minimal arbitre-t-il proprement les opportunités ?
+Le système A/B/C/D + portefeuille complet + Build-14 arbitre-t-il proprement les opportunités ?
 
 ## 4.4 Vérité opérationnelle
-Le système reste-t-il observable, stable, non saturé et explicable en fonctionnement continu ?
+Le système reste-t-il observable, stable, non saturé et explicable en fonctionnement continu avec 4 moteurs et enrichissements complets ?
+
+## 4.5 Vérité inter-moteurs
+Les moteurs C/D apportent-ils une contribution réelle distincte de A/B ? Y a-t-il duplication, concentration excessive ou inflation de coût ?
+
+## 4.6 Vérité Build-14
+Les enrichissements Build-14 améliorent-ils réellement la lecture du risque, de la corrélation, de la microstructure et de la diversité d'edge ?
 
 ---
 
@@ -144,9 +177,9 @@ Build-11 ne peut pas commencer si une des conditions suivantes n’est pas satis
 # 6. Périmètre du Shadow Light
 
 ## 6.1 Profil actif
-- **Light uniquement**
+- **LIGHT comme enveloppe de rollout**
 - 6 paires maximum
-- moteurs A et B uniquement
+- **Solution complète utile activée en Shadow** : A/B/C/D + Build-14
 
 ## 6.2 Paires autorisées
 - BTC/USDT
@@ -156,9 +189,13 @@ Build-11 ne peut pas commencer si une des conditions suivantes n’est pas satis
 - XRP/USDT
 - LINK/USDT
 
-## 6.3 Moteurs autorisés
-- A
-- B
+## 6.3 Moteurs activés en Shadow
+- **A — activé à 100%** (`SHADOW_ENABLED`)
+- **B — activé à 100%** (`SHADOW_ENABLED`)
+- **C — activé à 100%** (`SHADOW_ENABLED`) : scoré, classé, arbitré, observé, comparé à A/B
+- **D — activé à 100%** (`SHADOW_ENABLED`) : scoré, classé, arbitré, observé, comparé à A/B/C
+
+L'activation de C/D en Shadow est un **essai structuré**. Leur promotion live reste conditionnelle au verdict post-Shadow.
 
 ## 6.4 Composants obligatoirement actifs
 - data backbone
@@ -166,16 +203,42 @@ Build-11 ne peut pas commencer si une des conditions suivantes n’est pas satis
 - execution backbone en mode shadow
 - risk backbone
 - scoring backbone
-- portfolio minimal
-- meta minimal
-- monitoring
+- portfolio complet (arbitrage A/B/C/D)
+- meta complet (DTR, CRA, edge tracker)
+- monitoring complet
 - UI Light verrouillée
+- **Build-14 enablers activés à 100%** : microstructure enrichie, régime enrichi, covariance robuste, risk contribution, edge diversity
 
 ## 6.5 Composants interdits
-- moteurs C/D
-- Complete profile
+- extension COMPLETE live sans gates passées
 - overrides UI de caps
 - logique RL / POMDP / experimentation libre
+- **confondre activation Shadow et promotion live**
+
+## 6.6 Hard States en entrée de Shadow
+
+| Composant | Hard State |
+|---|---|
+| Moteur A | `SHADOW_ENABLED` |
+| Moteur B | `SHADOW_ENABLED` |
+| Moteur C | `SHADOW_ENABLED` |
+| Moteur D | `SHADOW_ENABLED` |
+| Build-14 microstructure | `SHADOW_ENABLED` |
+| Build-14 régime | `SHADOW_ENABLED` |
+| Build-14 covariance | `SHADOW_ENABLED` |
+| Build-14 risk contribution | `SHADOW_ENABLED` |
+| Build-14 edge diversity | `SHADOW_ENABLED` |
+
+## 6.7 Verdict structuré à l'issue des 30 jours
+
+À la fin du Shadow 30 jours, chaque composant reçoit un verdict individuel :
+
+| Verdict | Signification |
+|---|---|
+| `SHADOW_VALIDATED` | Apporte une valeur démontrée, éligible à Micro-live |
+| `DORMANT` | Ne démontre pas de valeur suffisante, désactivé pour le Micro-live |
+
+Le verdict est composant par composant : un moteur peut être validé tandis qu'un autre est mis en dormance. La décision de promotion est basée sur les résultats observés, pas sur l'existence du code.
 
 ---
 
@@ -584,7 +647,7 @@ Le rapport final Build-11 doit répondre explicitement à :
 
 ## 20.1 Tests de protocole
 - activation profil Light uniquement
-- refus activation moteur C/D
+- refus activation moteur hors gates ou hors budget
 - refus activation > 6 paires
 - shadow sans exécution réelle
 
@@ -638,6 +701,37 @@ Si Build-11 est mal fait :
 Donc :
 
 > Build-11 doit être traité comme un **build bloquant de validation systémique**, pas comme une simple période d’observation.
+
+---
+
+# Guardrails issus des audits — Préconditions runtime réel Build-11
+
+## Shadow ≠ validable sur modèles in-memory seuls (QWEN-03, QWEN-04)
+- Le shadow mode doit opérer sur des données de marché réelles (WebSocket ou replay de données réelles)
+- Un shadow qui tourne sur des données mockées ou générées ne constitue pas une validation
+- Le shadow doit démontrer que le pipeline complet fonctionne : data → engine → scoring → portfolio → execution simulée
+
+## Préconditions I/O et event loop (QWEN-03)
+- Avant de valider Build-11, le système doit démontrer :
+  - une connexion WebSocket réelle (ou un replay réaliste de données enregistrées)
+  - un event loop fonctionnel qui traite les messages en flux continu
+  - une persistance des décisions shadow (DTR shadow)
+  - un config loading depuis fichier YAML/JSON officiel
+- Si ces éléments sont absents, Build-11 reste "scaffold" et non "validé"
+
+## Interdiction de considérer shadow validé sans runtime réel
+- Un shadow qui passe ses tests unitaires mais n’a jamais tourné sur un flux réel pendant une durée significative (minimum 24h) n’est pas validé
+- Le DTR shadow doit contenir des décisions sur des données réelles, pas sur des fixtures de test
+
+## Stale guard en shadow (GEM-23)
+- En shadow, les messages stale sont loggés mais ne bloquent pas
+- Le logging doit capturer la fréquence et la distribution des stale events
+- Ces métriques alimentent la décision de passer en Micro-live
+
+## Clarification rôle des configs YAML
+- Si des fichiers de configuration YAML existent dans le dépôt, ils doivent être chargés par un module officiel (`config_loader` ou équivalent)
+- Un fichier YAML présent mais non chargé par le code est un gap documentaire
+- Le shadow doit utiliser exactement les mêmes configs que les modes suivants
 
 ---
 
