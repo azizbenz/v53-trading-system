@@ -55,36 +55,56 @@ class OrderStateTracker:
 
     def __init__(self) -> None:
         self._orders: dict[str, OrderRecord] = {}
+        self._seen_fill_ids: dict[str, set[str]] = {}
 
     def register_order(
         self, order_id: str, pair: str, engine_id: str,
         side: str, order_type: str, quantity: float,
     ) -> OrderRecord:
+        if order_id in self._orders:
+            return self._orders[order_id]
         record = OrderRecord(
             order_id=order_id, pair=pair, engine_id=engine_id,
             side=side, order_type=order_type, quantity=quantity,
             state=OrderState.PENDING,
         )
         self._orders[order_id] = record
+        self._seen_fill_ids.setdefault(order_id, set())
         return record
 
     def mark_sent(self, order_id: str, sent_time: float) -> OrderRecord:
         old = self._get(order_id)
+        if old.state != OrderState.PENDING:
+            return old
         new = old.model_copy(update={"state": OrderState.SENT, "sent_time": sent_time, "last_update_time": sent_time})
         self._orders[order_id] = new
         return new
 
     def mark_acked(self, order_id: str, ack_time: float) -> OrderRecord:
         old = self._get(order_id)
+        if old.state in TERMINAL_STATES or old.state in {OrderState.ACKED, OrderState.PARTIALLY_FILLED}:
+            return old
         new = old.model_copy(update={"state": OrderState.ACKED, "ack_time": ack_time, "last_update_time": ack_time})
         self._orders[order_id] = new
         return new
 
     def mark_fill(
-        self, order_id: str, fill_qty: float, fill_price: float, fill_time: float,
+        self,
+        order_id: str,
+        fill_qty: float,
+        fill_price: float,
+        fill_time: float,
+        fill_id: str | None = None,
     ) -> OrderRecord:
         """Record a fill (partial or complete)."""
         old = self._get(order_id)
+        if old.state in TERMINAL_STATES:
+            return old
+        if fill_id is not None:
+            seen = self._seen_fill_ids.setdefault(order_id, set())
+            if fill_id in seen:
+                return old
+            seen.add(fill_id)
         new_filled = old.filled_quantity + fill_qty
         # Weighted average price
         if old.filled_quantity + fill_qty > 0:
@@ -94,20 +114,25 @@ class OrderStateTracker:
 
         is_full = new_filled >= old.quantity
         new_state = OrderState.FILLED if is_full else OrderState.PARTIALLY_FILLED
-        first_fill = old.first_fill_time if old.first_fill_time is not None else fill_time
+        if old.first_fill_time is None:
+            first_fill = fill_time
+        else:
+            first_fill = min(old.first_fill_time, fill_time)
 
         new = old.model_copy(update={
             "state": new_state,
             "filled_quantity": new_filled,
             "average_fill_price": avg,
             "first_fill_time": first_fill,
-            "last_update_time": fill_time,
+            "last_update_time": max(old.last_update_time or fill_time, fill_time),
         })
         self._orders[order_id] = new
         return new
 
     def mark_cancelled(self, order_id: str, time: float, reason: str = "") -> OrderRecord:
         old = self._get(order_id)
+        if old.state in TERMINAL_STATES:
+            return old
         state = OrderState.CANCELLED
         new = old.model_copy(update={"state": state, "cancel_reason": reason, "last_update_time": time})
         self._orders[order_id] = new
@@ -115,12 +140,16 @@ class OrderStateTracker:
 
     def mark_expired(self, order_id: str, time: float) -> OrderRecord:
         old = self._get(order_id)
+        if old.state in TERMINAL_STATES:
+            return old
         new = old.model_copy(update={"state": OrderState.EXPIRED, "last_update_time": time})
         self._orders[order_id] = new
         return new
 
     def mark_rejected(self, order_id: str, time: float, reason: str = "") -> OrderRecord:
         old = self._get(order_id)
+        if old.state in TERMINAL_STATES:
+            return old
         new = old.model_copy(update={"state": OrderState.REJECTED, "cancel_reason": reason, "last_update_time": time})
         self._orders[order_id] = new
         return new

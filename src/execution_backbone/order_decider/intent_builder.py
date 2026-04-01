@@ -41,7 +41,8 @@ class ExecutionIntent(BaseModel, frozen=True):
 
 
 class NoTradeReason(StrEnum):
-    COST_EXCEEDS_GAIN = "cost_exceeds_gain"
+    COST_EXCEEDS_EDGE = "cost_exceeds_edge"
+    COST_EXCEEDS_GAIN = "cost_exceeds_edge"
     PAIR_SUSPENDED = "pair_suspended"
     RISK_BUDGET_EXHAUSTED = "risk_budget_exhausted"
     INFRASTRUCTURE_DOWN = "infrastructure_down"

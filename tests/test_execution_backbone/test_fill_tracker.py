@@ -84,6 +84,29 @@ class TestOrderStateTracker:
         with pytest.raises(KeyError):
             t.mark_sent("unknown", 100.0)
 
+    def test_duplicate_fill_id_is_ignored(self):
+        t = OrderStateTracker()
+        t.register_order("o1", "BTC", "A", "buy", "market", 1.0)
+        t.mark_fill("o1", 0.4, 50000.0, 100.0, fill_id="f1")
+        result = t.mark_fill("o1", 0.4, 50000.0, 100.1, fill_id="f1")
+        assert result.filled_quantity == pytest.approx(0.4)
+        assert result.state == OrderState.PARTIALLY_FILLED
+
+    def test_late_ack_does_not_regress_after_partial_fill(self):
+        t = OrderStateTracker()
+        t.register_order("o1", "BTC", "A", "buy", "limit", 1.0)
+        t.mark_fill("o1", 0.2, 50000.0, 100.0, fill_id="f1")
+        result = t.mark_acked("o1", 99.0)
+        assert result.state == OrderState.PARTIALLY_FILLED
+        assert result.first_fill_time == pytest.approx(100.0)
+
+    def test_terminal_state_is_not_downgraded_by_late_cancel(self):
+        t = OrderStateTracker()
+        t.register_order("o1", "BTC", "A", "buy", "market", 1.0)
+        t.mark_fill("o1", 1.0, 50000.0, 100.0, fill_id="f1")
+        result = t.mark_cancelled("o1", 101.0, "late_cancel")
+        assert result.state == OrderState.FILLED
+
 
 # --- Fill Aggregator ---
 
@@ -126,6 +149,29 @@ class TestFillAggregator:
         ))
         assert agg.total_fills == 2
 
+    def test_duplicate_fill_event_is_idempotent(self):
+        agg = FillAggregator()
+        fill = FillEvent(
+            fill_id="f1", order_id="o1", pair="BTC", side="buy",
+            quantity=1.0, price=50000.0, timestamp=100.0,
+        )
+        agg.record_fill(fill)
+        result = agg.record_fill(fill)
+        assert result.fill_count == 1
+        assert result.total_filled_qty == pytest.approx(1.0)
+
+    def test_conflicting_fill_metadata_raises(self):
+        agg = FillAggregator()
+        agg.record_fill(FillEvent(
+            fill_id="f1", order_id="o1", pair="BTC", side="buy",
+            quantity=0.5, price=50000.0, timestamp=100.0,
+        ))
+        with pytest.raises(ValueError):
+            agg.record_fill(FillEvent(
+                fill_id="f2", order_id="o1", pair="ETH", side="buy",
+                quantity=0.5, price=3000.0, timestamp=101.0,
+            ))
+
 
 # --- Latency Meter ---
 
@@ -165,6 +211,18 @@ class TestLatencyMeter:
         stats = meter.get_stats()
         assert stats.count == 2
         assert stats.avg_submit_to_ack_s == pytest.approx(0.2)
+
+    def test_negative_latency_is_filtered(self):
+        meter = LatencyMeter()
+        m = meter.record("o1", sent_time=100.2, ack_time=100.1)
+        assert m.submit_to_ack_s is None
+        assert meter.get_stats().filtered_samples == 1
+
+    def test_aberrant_latency_is_filtered(self):
+        meter = LatencyMeter(max_latency_s=1.0)
+        m = meter.record("o1", sent_time=100.0, full_fill_time=105.0)
+        assert m.submit_to_full_fill_s is None
+        assert meter.get_stats().filtered_samples == 1
 
 
 # --- Terminal State Resolver ---

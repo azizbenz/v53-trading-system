@@ -160,3 +160,16 @@ class TestCostAggregator:
         agg.record(compute_trade_cost("o2", "BTC", "A", 0.001, 0.0004))
         be = agg.get_break_even("A", "BTC")
         assert be == pytest.approx((0.0012 + 0.0014) / 2)
+
+    def test_market_impact_is_included_in_total_cost(self):
+        c = compute_trade_cost(
+            "o1", "BTC", "A",
+            explicit_fee=0.001,
+            implicit_cost=0.0002,
+            adverse_selection=0.0001,
+            partial_fill_cost=0.00005,
+            market_impact=0.0003,
+            expected_cost=0.001,
+        )
+        assert c.market_impact == pytest.approx(0.0003)
+        assert c.total_cost == pytest.approx(0.00165)

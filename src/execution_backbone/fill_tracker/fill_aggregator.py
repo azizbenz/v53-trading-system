@@ -44,11 +44,24 @@ class FillAggregator:
 
     def __init__(self) -> None:
         self._fills: dict[str, list[FillEvent]] = {}  # order_id -> fills
+        self._seen_fill_ids: set[str] = set()
 
     def record_fill(self, fill: FillEvent) -> AggregatedFill:
         """Record a fill and return updated aggregation."""
+        if fill.fill_id in self._seen_fill_ids:
+            aggregated = self.get_aggregated(fill.order_id)
+            if aggregated is None:
+                raise RuntimeError(f"Duplicate fill {fill.fill_id} seen before aggregation exists")
+            return aggregated
         if fill.order_id not in self._fills:
             self._fills[fill.order_id] = []
+        else:
+            first = self._fills[fill.order_id][0]
+            if first.pair != fill.pair or first.side != fill.side:
+                raise ValueError(
+                    f"Fill {fill.fill_id} conflicts with existing order aggregation for {fill.order_id}",
+                )
+        self._seen_fill_ids.add(fill.fill_id)
         self._fills[fill.order_id].append(fill)
         aggregated = self.get_aggregated(fill.order_id)
         if aggregated is None:

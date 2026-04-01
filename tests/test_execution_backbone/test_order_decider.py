@@ -57,6 +57,15 @@ class TestIntentBuilder:
         )
         assert d.reason == NoTradeReason.COST_EXCEEDS_GAIN
 
+    def test_cost_exceeds_edge_is_canonical_reason(self):
+        d = NoTradeDecision(
+            pair="BTC", engine_id="A",
+            reason=NoTradeReason.COST_EXCEEDS_EDGE,
+            expected_cost=0.01, expected_gain=0.005,
+        )
+        assert d.reason == NoTradeReason.COST_EXCEEDS_EDGE
+        assert d.reason == NoTradeReason.COST_EXCEEDS_GAIN
+
 
 # --- Order Type Selector ---
 
