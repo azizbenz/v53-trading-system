@@ -7,6 +7,12 @@ keeping implementation details behind stable imports.
 """
 
 from meta_minimal import (
+    MetaInputSource,
+    MetaRuntime,
+    MetaRuntimeConfig,
+    MetaRuntimeInput,
+    MetaRuntimeResult,
+    MetaRuntimeStatus,
     break_even_dashboard,
     cra_monitor,
     dtr_core,
@@ -26,4 +32,10 @@ __all__ = [
     "build_cra_report",
     "build_dtr_summary",
     "build_edge_report",
+    "MetaInputSource",
+    "MetaRuntime",
+    "MetaRuntimeConfig",
+    "MetaRuntimeInput",
+    "MetaRuntimeResult",
+    "MetaRuntimeStatus",
 ]

@@ -24,6 +24,10 @@ class DTRRecord(BaseModel, frozen=True):
     engine_id: str
     regime: str = ""
     schema_version: str = "1.0"
+    runtime_mode: str = ""
+    input_source: str = ""
+    path_complete: bool = True
+    path_warnings: tuple[str, ...] = ()
 
     # Scores
     raw_score: float = 0.0
@@ -43,6 +47,7 @@ class DTRRecord(BaseModel, frozen=True):
     # Costs
     expected_cost: float = 0.0
     realized_cost: float = 0.0
+    gross_return: float = 0.0
 
     # CE
     ce_expected: float = 0.0
@@ -71,8 +76,13 @@ def build_dtr(
     tier: str = "",
     expected_cost: float = 0.0,
     realized_cost: float = 0.0,
+    gross_return: float = 0.0,
     ce_expected: float = 0.0,
     regime: str = "",
+    runtime_mode: str = "",
+    input_source: str = "",
+    path_complete: bool = True,
+    path_warnings: tuple[str, ...] = (),
     primary_reason: str = "",
     cause_chain: tuple[str, ...] = (),
     timestamp: float | None = None,
@@ -84,6 +94,10 @@ def build_dtr(
         pair=pair,
         engine_id=engine_id,
         regime=regime,
+        runtime_mode=runtime_mode,
+        input_source=input_source,
+        path_complete=path_complete,
+        path_warnings=path_warnings,
         raw_score=raw_score,
         penalized_score=penalized_score,
         final_score=final_score,
@@ -95,6 +109,7 @@ def build_dtr(
         tier=tier,
         expected_cost=expected_cost,
         realized_cost=realized_cost,
+        gross_return=gross_return,
         ce_expected=ce_expected,
         decision_state=decision_state,
         primary_reason=primary_reason,

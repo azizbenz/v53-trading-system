@@ -21,6 +21,9 @@ class DTRSummary(BaseModel, frozen=True):
     by_engine: dict[str, int] = Field(default_factory=dict)
     by_pair: dict[str, int] = Field(default_factory=dict)
     dtr_coverage: float = 0.0  # N_dtr / N_opportunities
+    synthetic_input_count: int = 0
+    local_replay_input_count: int = 0
+    incomplete_path_count: int = 0
 
 
 def build_dtr_summary(
@@ -36,11 +39,20 @@ def build_dtr_summary(
     by_state: dict[str, int] = {}
     by_engine: dict[str, int] = {}
     by_pair: dict[str, int] = {}
+    synthetic_input_count = 0
+    local_replay_input_count = 0
+    incomplete_path_count = 0
 
     for r in records:
         by_state[r.decision_state] = by_state.get(r.decision_state, 0) + 1
         by_engine[r.engine_id] = by_engine.get(r.engine_id, 0) + 1
         by_pair[r.pair] = by_pair.get(r.pair, 0) + 1
+        if r.input_source == "synthetic":
+            synthetic_input_count += 1
+        if r.input_source == "local_replay":
+            local_replay_input_count += 1
+        if not r.path_complete:
+            incomplete_path_count += 1
 
     coverage = len(records) / total_opportunities if total_opportunities > 0 else 0.0
 
@@ -50,4 +62,7 @@ def build_dtr_summary(
         by_engine=by_engine,
         by_pair=by_pair,
         dtr_coverage=coverage,
+        synthetic_input_count=synthetic_input_count,
+        local_replay_input_count=local_replay_input_count,
+        incomplete_path_count=incomplete_path_count,
     )
