@@ -67,3 +67,4 @@ def test_portfolio_facade_runs_minimal_pipeline():
     assert result.report.count_allocated == 1
     assert result.report.allocations[0].pair == "BTCUSDT"
     assert result.report.allocations[0].engine_id == "engine_a"
+    assert result.report.capital_remaining < 1000.0

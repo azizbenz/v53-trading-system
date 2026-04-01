@@ -12,6 +12,7 @@ import pytest
 # ── opportunity_selector imports ──
 from portfolio_minimal.opportunity_selector.candidate_pool_builder import (
     CandidatePool,
+    CandidatePoolRejectReason,
     OpportunityCandidate,
     build_candidate_pool,
 )
@@ -22,6 +23,7 @@ from portfolio_minimal.opportunity_selector.eligibility_filter import (
     check_eligibility,
 )
 from portfolio_minimal.opportunity_selector.comparative_ranker import (
+    RANKING_VERSION,
     RankedCandidate,
     compute_ranking_score,
     rank_candidates,
@@ -142,6 +144,23 @@ class TestCandidatePoolBuilder:
         assert pool.pool_size == 0
         assert pool.engines_present == ()
 
+    def test_expired_signal_rejected_with_audit(self):
+        pool = build_candidate_pool(
+            (_cand(pair="BTC/USDT", engine="engine_a", emitted_at=100.0),),
+            now_ts=500.0,
+            max_signal_age_s=60.0,
+        )
+        assert pool.pool_size == 0
+        assert pool.rejected_count == 1
+        assert pool.rejected_candidates[0].reason == CandidatePoolRejectReason.SIGNAL_EXPIRED
+
+    def test_signal_not_rejected_without_expiry_config(self):
+        pool = build_candidate_pool(
+            (_cand(pair="BTC/USDT", engine="engine_a", emitted_at=100.0),),
+        )
+        assert pool.pool_size == 1
+        assert pool.rejected_count == 0
+
 
 # ═══════════════════════════════════════════════════════════════
 # 2. eligibility_filter — P0-1 fix: no size-based rejection
@@ -222,6 +241,15 @@ class TestComparativeRanker:
         )
         ranked = rank_candidates(candidates, cluster_utilizations={"c1": 1.0, "c2": 0.0})
         assert ranked[0].candidate.pair == "B"
+
+    def test_rank_is_deterministic_on_exact_tie(self):
+        candidates = (
+            _cand(pair="ETH/USDT", engine="engine_b", score=0.8, ce=0.1, cost=0.01),
+            _cand(pair="BTC/USDT", engine="engine_a", score=0.8, ce=0.1, cost=0.01),
+        )
+        ranked = rank_candidates(candidates)
+        assert tuple(entry.candidate.pair for entry in ranked) == ("BTC/USDT", "ETH/USDT")
+        assert all(entry.ranking_version == RANKING_VERSION for entry in ranked)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -353,6 +381,13 @@ class TestSelectionResolver:
     def test_empty_ranked(self):
         r = resolve_selection((), PortfolioSnapshot(remaining_gross_capacity=1000.0))
         assert len(r.selected) == 0
+
+    def test_selection_exposes_versions(self):
+        ranked = self._ranked((_cand(pair="A", cluster="c1"),))
+        snap = PortfolioSnapshot(remaining_gross_capacity=1000.0, remaining_cluster_capacity={"c1": 500.0})
+        r = resolve_selection(ranked, snap)
+        assert r.selection_version == "build8_selection_v1"
+        assert r.ranking_version == RANKING_VERSION
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -614,6 +649,20 @@ class TestAllocationReporter:
         assert r.count_allocated == 0
         assert r.total_allocated == 0.0
 
+    def test_remaining_capacities_exposed(self):
+        entries = (self._entry("A", 100),)
+        r = build_report(
+            entries,
+            capital_remaining=900.0,
+            remaining_loss_capacity=40.0,
+            remaining_beta_capacity=0.8,
+            remaining_cluster_capacity={"btc_cluster": 400.0},
+        )
+        assert r.capital_remaining == 900.0
+        assert r.remaining_loss_capacity == 40.0
+        assert r.remaining_beta_capacity == 0.8
+        assert r.remaining_cluster_capacity["btc_cluster"] == 400.0
+
 
 # ═══════════════════════════════════════════════════════════════
 # 11. E2E portfolio_orchestrator — P1-1
@@ -776,3 +825,23 @@ class TestPortfolioOrchestrator:
         assert any(c.conflict_type == ConflictType.CONTRADICTORY_SIGNAL for c in r.conflicts.conflicts)
         assert r.report.count_allocated == 0
         assert len(r.conflicts.rejection_audit) == 2
+
+    def test_expired_signal_is_visible_and_not_allocated(self):
+        candidates = (
+            _cand(pair="BTC/USDT", engine="engine_a", emitted_at=100.0, cluster="btc_cluster"),
+        )
+        config = self._config()
+        config = config.model_copy(update={"now_ts": 500.0, "max_signal_age_s": 60.0})
+        r = run_portfolio_pipeline(candidates, config)
+        assert r.pool_size == 0
+        assert len(r.pool_rejections) == 1
+        assert r.pool_rejections[0].reason == CandidatePoolRejectReason.SIGNAL_EXPIRED
+        assert r.report.count_allocated == 0
+
+    def test_report_exposes_remaining_capital_after_allocation(self):
+        candidates = (
+            _cand(pair="BTC/USDT", score=0.8, size=100, cluster="btc_cluster"),
+        )
+        r = run_portfolio_pipeline(candidates, self._config(gross=1000.0))
+        assert r.report.count_allocated == 1
+        assert r.report.capital_remaining < 1000.0

@@ -34,10 +34,18 @@ class AllocationReport(BaseModel, frozen=True):
     total_phantom: float = 0.0
     count_allocated: int = 0
     count_phantom: int = 0
+    capital_remaining: float = 0.0
+    remaining_loss_capacity: float = 0.0
+    remaining_beta_capacity: float = 0.0
+    remaining_cluster_capacity: dict[str, float] = Field(default_factory=dict)
 
 
 def build_report(
     entries: tuple[AllocationEntry, ...],
+    capital_remaining: float = 0.0,
+    remaining_loss_capacity: float = 0.0,
+    remaining_beta_capacity: float = 0.0,
+    remaining_cluster_capacity: dict[str, float] | None = None,
 ) -> AllocationReport:
     """Build the final allocation report, separating viable from phantom trades."""
     viable = tuple(e for e in entries if not e.is_phantom)
@@ -50,4 +58,8 @@ def build_report(
         total_phantom=sum(e.final_size for e in phantoms),
         count_allocated=len(viable),
         count_phantom=len(phantoms),
+        capital_remaining=capital_remaining,
+        remaining_loss_capacity=remaining_loss_capacity,
+        remaining_beta_capacity=remaining_beta_capacity,
+        remaining_cluster_capacity=dict(remaining_cluster_capacity or {}),
     )

@@ -14,7 +14,10 @@ from enum import StrEnum
 from pydantic import BaseModel, Field
 
 from portfolio_minimal.opportunity_selector.candidate_pool_builder import OpportunityCandidate
-from portfolio_minimal.opportunity_selector.comparative_ranker import RankedCandidate
+from portfolio_minimal.opportunity_selector.comparative_ranker import (
+    RANKING_VERSION,
+    RankedCandidate,
+)
 from portfolio_minimal.opportunity_selector.eligibility_filter import (
     EligibilityVerdict,
     PortfolioSnapshot,
@@ -42,6 +45,8 @@ class SelectionEntry(BaseModel, frozen=True):
 class SelectionResult(BaseModel, frozen=True):
     """Full selection output: selected + rejected with reasons."""
 
+    selection_version: str = "build8_selection_v1"
+    ranking_version: str = RANKING_VERSION
     selected: tuple[SelectionEntry, ...] = ()
     rejected: tuple[SelectionEntry, ...] = ()
 

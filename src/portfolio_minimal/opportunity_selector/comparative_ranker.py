@@ -17,12 +17,16 @@ from pydantic import BaseModel, Field
 from portfolio_minimal.opportunity_selector.candidate_pool_builder import OpportunityCandidate
 
 
+RANKING_VERSION = "build8_rank_v1"
+
+
 class RankedCandidate(BaseModel, frozen=True):
     """A candidate with its ranking score."""
 
     candidate: OpportunityCandidate
     ranking_score: float
     rank: int = 0  # 1-based, set after sorting
+    ranking_version: str = RANKING_VERSION
 
 
 # Ranking weights
@@ -66,7 +70,15 @@ def rank_candidates(
         rs = compute_ranking_score(c, cluster_utilization=corr_util)
         scored.append((c, rs))
 
-    scored.sort(key=lambda x: x[1], reverse=True)
+    scored.sort(
+        key=lambda x: (
+            -x[1],
+            x[0].pair,
+            x[0].engine_id,
+            x[0].direction,
+            x[0].emitted_at,
+        )
+    )
 
     return tuple(
         RankedCandidate(candidate=c, ranking_score=rs, rank=i + 1)

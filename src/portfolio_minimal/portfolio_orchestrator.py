@@ -20,9 +20,10 @@ allocation_router reduces it first.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from portfolio_minimal.opportunity_selector.candidate_pool_builder import (
+    CandidatePoolRejection,
     OpportunityCandidate,
     build_candidate_pool,
 )
@@ -30,10 +31,7 @@ from portfolio_minimal.opportunity_selector.correlation_conflict_checker import 
     ConflictCheckResult,
     check_conflicts,
 )
-from portfolio_minimal.opportunity_selector.comparative_ranker import (
-    RankedCandidate,
-    rank_candidates,
-)
+from portfolio_minimal.opportunity_selector.comparative_ranker import rank_candidates
 from portfolio_minimal.opportunity_selector.selection_resolver import (
     SelectionResult,
     resolve_selection,
@@ -64,6 +62,8 @@ class OrchestratorConfig(BaseModel, frozen=True):
     position_cap: float = 500.0
     min_viable_size: float = 10.0
     cluster_crowding_threshold: int = 3
+    now_ts: float | None = None
+    max_signal_age_s: float | None = None
 
 
 class OrchestratorResult(BaseModel, frozen=True):
@@ -71,6 +71,7 @@ class OrchestratorResult(BaseModel, frozen=True):
 
     # Stage outputs for audit
     pool_size: int = 0
+    pool_rejections: tuple[CandidatePoolRejection, ...] = ()
     conflicts: ConflictCheckResult | None = None
     selection: SelectionResult | None = None
     report: AllocationReport = AllocationReport()
@@ -86,9 +87,16 @@ def run_portfolio_pipeline(
     → 5-7. Size + cap per trade → 8. Phantom check → 9. Report
     """
     # ── 1. Build candidate pool ──
-    pool = build_candidate_pool(candidates)
+    pool = build_candidate_pool(
+        candidates,
+        now_ts=config.now_ts,
+        max_signal_age_s=config.max_signal_age_s,
+    )
     if pool.pool_size == 0:
-        return OrchestratorResult(pool_size=0)
+        return OrchestratorResult(
+            pool_size=0,
+            pool_rejections=pool.rejected_candidates,
+        )
 
     # ── 2. Conflict resolution (dedup by ranking_score) ──
     conflict_result = check_conflicts(
@@ -178,10 +186,17 @@ def run_portfolio_pipeline(
                     remaining_beta -= abs(c.beta_impact) * size_ratio
 
     # ── 9. Final report ──
-    report = build_report(tuple(entries))
+    report = build_report(
+        tuple(entries),
+        capital_remaining=remaining_gross,
+        remaining_loss_capacity=remaining_loss,
+        remaining_beta_capacity=remaining_beta,
+        remaining_cluster_capacity=remaining_cluster,
+    )
 
     return OrchestratorResult(
         pool_size=pool.pool_size,
+        pool_rejections=pool.rejected_candidates,
         conflicts=conflict_result,
         selection=selection,
         report=report,
