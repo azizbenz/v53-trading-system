@@ -484,6 +484,8 @@ def _make_good_inputs(**overrides) -> EngineAInput:
         pair_health=0.9,
         data_freshness=0.95,
         flow_coherence=0.8,
+        flow_score=0.4,
+        cost_preference_score=0.5,
         expected_gain=0.005,
         expected_cost=0.001,
         candidate_size=1000.0,
@@ -583,6 +585,20 @@ class TestEngineARunner:
         assert "engine_a_invalidation_built" in events
         assert "engine_a_signal_emitted" in events
 
+    def test_e2e_flow_and_cost_preference_are_used_in_runtime_path(self):
+        """Build-6 guardrail: runtime path must not drop flow/cost-preference inputs."""
+        base = _make_good_inputs(flow_score=0.0, cost_preference_score=0.0)
+        enriched = _make_good_inputs(flow_score=0.8, cost_preference_score=0.9)
+
+        base_output = run_engine_a(base)
+        enriched_output = run_engine_a(enriched)
+
+        assert base_output.decision == EngineADecision.EMIT
+        assert enriched_output.decision == EngineADecision.EMIT
+        assert enriched_output.raw_score > base_output.raw_score
+        assert enriched_output.block_scores["flow"] == pytest.approx(0.8)
+        assert enriched_output.block_scores["cost_preference"] == pytest.approx(0.9)
+
     def test_e2e_no_trade_logs_present(self):
         """No-trade path also produces structured logs."""
         output = run_engine_a(_make_good_inputs(
@@ -612,6 +628,7 @@ class TestEngineARunner:
         assert log.tier != ""
         assert log.invalidation != ""
         assert log.holding_hours > 0
+        assert log.penalized_score == pytest.approx(log.raw_score)
         assert log.scoring_version == "v1.0"
 
     def test_e2e_output_frozen(self):

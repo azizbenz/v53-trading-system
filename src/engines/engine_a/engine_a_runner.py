@@ -112,6 +112,8 @@ class EngineAInput(BaseModel, frozen=True):
     pair_health: float = 0.5
     data_freshness: float = 0.5
     flow_coherence: float = 0.5
+    flow_score: float = 0.0
+    cost_preference_score: float = 0.0
     # Cost inputs
     expected_gain: float = 0.0
     expected_cost: float = 0.0
@@ -273,6 +275,8 @@ def run_engine_a(inputs: EngineAInput) -> EngineAOutput:
         pair=inputs.pair,
         structure_score=structure.structure_score,
         context_score=context.context_score,
+        flow_score=inputs.flow_score,
+        cost_preference_score=inputs.cost_preference_score,
         scoring_version=inputs.scoring_version,
     ))
     logs.append(EngineALogEntry(
@@ -280,6 +284,7 @@ def run_engine_a(inputs: EngineAInput) -> EngineAOutput:
         pair=inputs.pair,
         regime=inputs.regime,
         raw_score=conviction.raw_score,
+        penalized_score=conviction.raw_score,
         block_scores=conviction.block_scores,
         conviction=conviction.conviction.value,
         tier=conviction.tier_suggestion.value,
@@ -333,6 +338,7 @@ def run_engine_a(inputs: EngineAInput) -> EngineAOutput:
         pair=inputs.pair,
         regime=inputs.regime,
         raw_score=conviction.raw_score,
+        penalized_score=conviction.raw_score,
         block_scores=conviction.block_scores,
         expected_cost=cost.expected_cost,
         ce_expected=cost.ce_expected,
