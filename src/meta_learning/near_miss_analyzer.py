@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from meta_learning.contracts import DiagnosticResult
+from meta_learning.contracts import DiagnosticEvidence, DiagnosticResult
 from meta_learning.enums import DiagnosticSeverity
 from meta_minimal.dtr_core.decision_state_encoder import DecisionState
 from meta_minimal.dtr_core.dtr_record_builder import DTRRecord
@@ -40,7 +40,18 @@ def analyze_near_misses(
                 f"state={record.decision_state}"
             ),
             severity=DiagnosticSeverity.WARNING,
+            root_causes=("threshold_rejection",),
+            evidence=(
+                DiagnosticEvidence(
+                    source="dtr_record",
+                    reference=record.dtr_id,
+                    observation="High-score record was blocked before execution",
+                ),
+            ),
             evidence_refs=(record.dtr_id,),
+            counterfactual_summary="A slightly different threshold may have captured this edge.",
+            economic_assessment="Replay is needed to confirm whether this near miss was valid.",
+            actionability_level="medium",
             structured_log_key="build9x.diagnostic.near_miss",
         ))
 

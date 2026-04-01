@@ -32,6 +32,15 @@ class ImportRecord(BaseModel, frozen=True):
     is_type_checking: bool = False
 
 
+class DynamicImportRecord(BaseModel, frozen=True):
+    """GEM-03: detected dynamic import via importlib."""
+
+    source_module: str = ""
+    source_file: str
+    line_number: int
+    call_text: str
+
+
 class ScanResult(BaseModel, frozen=True):
     """Result of scanning the entire src tree."""
 
@@ -40,6 +49,7 @@ class ScanResult(BaseModel, frozen=True):
     errors: tuple[str, ...] = ()
     discovered_modules: tuple[str, ...] = ()
     unknown_modules: tuple[str, ...] = ()
+    dynamic_imports: tuple[DynamicImportRecord, ...] = ()
 
 
 def _canonicalize_package_parts(parts: tuple[str, ...]) -> str:
@@ -137,12 +147,48 @@ def _extract_imports(
     return records
 
 
+def _detect_dynamic_imports(
+    tree: ast.Module,
+    source_file: str,
+    source_module: str = "",
+) -> list[DynamicImportRecord]:
+    """GEM-03: detect importlib.import_module() and __import__() calls via AST."""
+    records: list[DynamicImportRecord] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        # importlib.import_module(...)
+        if (
+            isinstance(func, ast.Attribute)
+            and func.attr == "import_module"
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "importlib"
+        ):
+            records.append(DynamicImportRecord(
+                source_module=source_module,
+                source_file=source_file,
+                line_number=node.lineno,
+                call_text="importlib.import_module",
+            ))
+        # __import__(...)
+        elif isinstance(func, ast.Name) and func.id == "__import__":
+            records.append(DynamicImportRecord(
+                source_module=source_module,
+                source_file=source_file,
+                line_number=node.lineno,
+                call_text="__import__",
+            ))
+    return records
+
+
 def scan_imports(src_root: Path, known_modules: frozenset[str]) -> ScanResult:
     """Scan all .py files under src_root for canonicalized first-party imports."""
     first_party = _detect_first_party_packages(src_root)
     relevant_modules = known_modules | first_party
 
     all_imports: list[ImportRecord] = []
+    all_dynamic: list[DynamicImportRecord] = []
     errors: list[str] = []
     files_scanned = 0
 
@@ -157,6 +203,9 @@ def scan_imports(src_root: Path, known_modules: frozenset[str]) -> ScanResult:
             tree = ast.parse(source_code, filename=str(py_file))
             imports = _extract_imports(tree, source_module, rel_path, relevant_modules)
             all_imports.extend(imports)
+            # GEM-03: detect dynamic imports (importlib / __import__)
+            dynamic = _detect_dynamic_imports(tree, rel_path, source_module=source_module)
+            all_dynamic.extend(dynamic)
             files_scanned += 1
         except SyntaxError as e:
             errors.append(f"SyntaxError in {rel_path}: {e}")
@@ -171,4 +220,5 @@ def scan_imports(src_root: Path, known_modules: frozenset[str]) -> ScanResult:
         errors=tuple(errors),
         discovered_modules=tuple(sorted(first_party)),
         unknown_modules=unknown_modules,
+        dynamic_imports=tuple(all_dynamic),
     )

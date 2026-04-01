@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from interface_contracts import ProfileId, RuntimeMode
+from local_replay_runtime import LocalReplayRuntimeEvidence
 from monitoring import (
     AlertProjection,
     Build9MetaProjection,
@@ -21,9 +22,11 @@ from protocols import (
     ShadowComponentVerdict,
     ShadowInput,
     ShadowInputError,
+    ShadowRuntimeEvidence,
     ShadowTruthSet,
     ShadowValidationSet,
     ShadowVerdict,
+    build_shadow_runtime_evidence,
     build_shadow_input_from_payloads,
     run_shadow_validation,
 )
@@ -182,6 +185,7 @@ def _build_shadow_input(
     shadow_report_ready: bool = True,
     inter_engine_comparison_ready: bool = True,
     build14_contribution_ready: bool = True,
+    runtime_evidence: ShadowRuntimeEvidence | None = None,
 ) -> ShadowInput:
     return build_shadow_input_from_payloads(
         baseline_payload,
@@ -193,6 +197,24 @@ def _build_shadow_input(
         shadow_report_ready=shadow_report_ready,
         inter_engine_comparison_ready=inter_engine_comparison_ready,
         build14_contribution_ready=build14_contribution_ready,
+        runtime_evidence=runtime_evidence
+        or build_shadow_runtime_evidence(
+            local_replay_evidence=LocalReplayRuntimeEvidence(
+                artifact_id="artifact-1",
+                lineage_version="a.v1.0.r1",
+                data_source="recorded_replay",
+                feature_bridge_ready=True,
+                parity_diagnostics_ready=True,
+                replay_metrics_ready=True,
+                replay_dtr_ready=True,
+                replay_useful_ready=True,
+                evidence_summary="local replay evidence ready",
+            ),
+            runtime_event_loop_ready=True,
+            runtime_config_loaded=True,
+            runtime_shadow_dtr_persisted=True,
+            runtime_continuous_hours=24.0,
+        ),
     )
 
 
@@ -227,6 +249,12 @@ def test_build_shadow_input_from_payloads_maps_full_system_shadow_state():
     assert shadow_input.correlation_id == "corr-shadow-candidate"
     assert shadow_input.validation_set.shadow_days_completed == 30
     assert shadow_input.validation_set.shadow_report_ready is True
+    assert shadow_input.validation_set.runtime_data_source == "recorded_replay"
+    assert shadow_input.validation_set.runtime_parity_diagnostics_ready is True
+    assert shadow_input.validation_set.runtime_replay_metrics_ready is True
+    assert shadow_input.validation_set.runtime_replay_dtr_ready is True
+    assert shadow_input.validation_set.runtime_event_loop_ready is True
+    assert shadow_input.validation_set.runtime_continuous_hours == 24.0
     assert shadow_input.validation_set.active_engines == (
         "engine_a",
         "engine_b",
@@ -327,6 +355,7 @@ def test_run_shadow_validation_accepts_candidate_with_full_system_shadow_evidenc
     assert summary.decision.accepted is True
     assert summary.decision.verdict == ShadowVerdict.ACCEPTED
     assert summary.shadow_days_completed == 30
+    assert summary.runtime_evidence_ready is True
     assert summary.shadow_validated_component_count == 9
     assert summary.dormant_component_count == 0
     assert summary.blocking_comparison_count == 0
@@ -441,6 +470,67 @@ def test_run_shadow_validation_blocks_missing_import_lineage():
     assert summary.decision.verdict == ShadowVerdict.BLOCKED
     assert "candidate import must be accepted before Shadow" in summary.decision.blocking_reasons
     assert "candidate lineage_version is required" in summary.decision.blocking_reasons
+
+
+def test_run_shadow_validation_blocks_without_real_runtime_evidence():
+    baseline_payload = _payload(
+        correlation_id="corr-shadow-baseline",
+        ce_net=0.0012,
+        dtr_coverage=0.84,
+        cra_sterilization_rate=0.10,
+        break_even_scope_count=1,
+        edge_degraded_count=0,
+        active_alert_count=2,
+        queue_backlog=20,
+    )
+    candidate_payload = _payload(
+        correlation_id="corr-shadow-candidate",
+        ce_net=0.0010,
+        dtr_coverage=0.82,
+        cra_sterilization_rate=0.12,
+        break_even_scope_count=1,
+        edge_degraded_count=0,
+        active_alert_count=2,
+        queue_backlog=21,
+        review_export_ready=True,
+    )
+
+    summary = run_shadow_validation(
+        _build_shadow_input(
+            baseline_payload,
+            candidate_payload,
+            runtime_evidence=build_shadow_runtime_evidence(
+                local_replay_evidence=LocalReplayRuntimeEvidence(
+                    artifact_id="artifact-1",
+                    lineage_version="a.v1.0.r1",
+                    data_source="unknown",
+                    feature_bridge_ready=False,
+                    parity_diagnostics_ready=False,
+                    replay_metrics_ready=False,
+                    replay_dtr_ready=False,
+                    replay_useful_ready=False,
+                    evidence_summary="local replay evidence missing",
+                ),
+                runtime_data_source="unknown",
+                runtime_event_loop_ready=False,
+                runtime_config_loaded=False,
+                runtime_shadow_dtr_persisted=False,
+                runtime_continuous_hours=0.0,
+            ),
+        )
+    )
+
+    assert summary.decision.verdict == ShadowVerdict.BLOCKED
+    assert summary.runtime_evidence_ready is False
+    assert "Build-11 Shadow requires runtime evidence from live_websocket or recorded_replay" in summary.decision.blocking_reasons
+    assert "Build-11 Shadow requires feature bridge evidence (prices -> features -> engines)" in summary.decision.blocking_reasons
+    assert "Build-11 Shadow requires parity diagnostics evidence" in summary.decision.blocking_reasons
+    assert "Build-11 Shadow requires replay metrics evidence" in summary.decision.blocking_reasons
+    assert "Build-11 Shadow requires replay DTR evidence" in summary.decision.blocking_reasons
+    assert "Build-11 Shadow requires event loop evidence" in summary.decision.blocking_reasons
+    assert "Build-11 Shadow requires official config loading evidence" in summary.decision.blocking_reasons
+    assert "Build-11 Shadow requires persisted shadow DTR evidence" in summary.decision.blocking_reasons
+    assert "Build-11 Shadow requires at least 24h of real runtime evidence before the verdict gate" in summary.decision.blocking_reasons
 
 
 def test_run_shadow_validation_rejects_blocking_metric_divergence():

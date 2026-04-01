@@ -6,7 +6,11 @@ Invariant: RejectRate = N_reject / N_raw is always computable.
 
 from __future__ import annotations
 
+import logging
 from pydantic import BaseModel, Field
+
+
+logger = logging.getLogger(__name__)
 
 
 class NormalizationStats(BaseModel, frozen=True):
@@ -34,11 +38,19 @@ class NormalizationReporter:
         self._total_raw += 1
         self._total_normalized += 1
         self._by_event_type[event_type] = self._by_event_type.get(event_type, 0) + 1
+        logger.info(
+            "normalization_event_normalized",
+            extra={"event_type": event_type, "total_normalized": self._total_normalized},
+        )
 
     def record_rejected(self, reason: str) -> None:
         self._total_raw += 1
         self._total_rejected += 1
         self._by_rejection_reason[reason] = self._by_rejection_reason.get(reason, 0) + 1
+        logger.warning(
+            "normalization_event_rejected",
+            extra={"reason": reason, "total_rejected": self._total_rejected},
+        )
 
     def get_stats(self) -> NormalizationStats:
         reject_rate = 0.0

@@ -1,4 +1,6 @@
 """Tests for data_backbone.websocket_gateway — Build-2."""
+import logging
+
 import pytest
 
 from data_backbone.websocket_gateway.connection_manager import (
@@ -236,6 +238,18 @@ class TestRawMessageEmitter:
             emitter.emit(self._msg(recv_time=float(i + 1)))
         assert emitter.utilization == 0.5
 
+    def test_upstream_reordering_is_visible(self, caplog: pytest.LogCaptureFixture):
+        caplog.set_level(logging.WARNING)
+        emitter = RawMessageEmitter()
+        emitter.emit(self._msg(recv_time=100.0))
+        emitter.emit(self._msg(recv_time=99.0))
+        assert emitter.total_reordered == 1
+        events = emitter.get_reordering_events()
+        assert len(events) == 1
+        assert events[0].previous_recv_time == 100.0
+        assert events[0].recv_time == 99.0
+        assert any(record.message == "raw_message_upstream_reordered" for record in caplog.records)
+
 
 class _FakeAdapter:
     def __init__(self) -> None:
@@ -309,3 +323,12 @@ class TestWebSocketGatewayRuntime:
         result = runtime.poll_once(EP, now=100.0)
         assert result.connection_status.state == ConnectionState.DISCONNECTED
         assert result.error == "endpoint_not_connected"
+
+    def test_runtime_emits_structured_logs(self, caplog: pytest.LogCaptureFixture):
+        caplog.set_level(logging.INFO)
+        adapter = _FakeAdapter()
+        runtime = WebSocketGatewayRuntime(adapter)
+        runtime.subscribe("BTCUSDT", "trade", EP)
+        runtime.connect(EP, now=100.0)
+        assert any(record.message == "websocket_gateway_subscription_registered" for record in caplog.records)
+        assert any(record.message == "websocket_gateway_connected" for record in caplog.records)

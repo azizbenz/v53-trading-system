@@ -19,7 +19,7 @@ class ShadowReadinessReport(BaseModel, frozen=True):
     build9x_governed_ready: bool
     replay_import_ready: bool
     onboarding_ready: bool
-    build14_read_only_fenced: bool
+    build14_shadow_governance_ready: bool
     missing_items: tuple[str, ...] = ()
     final_verdict: str = Field(..., min_length=1)
 
@@ -37,7 +37,7 @@ def evaluate_shadow_readiness(
     build9x_governed_ready: bool | None = None,
     replay_import_ready: bool | None = None,
     onboarding_ready: bool | None = None,
-    build14_read_only_fenced: bool | None = None,
+    build14_shadow_governance_ready: bool | None = None,
 ) -> ShadowReadinessReport:
     """Evaluate whether Shadow opening is credible without creating the runtime."""
 
@@ -67,8 +67,8 @@ def evaluate_shadow_readiness(
             "backtest_artifact_import",
             {"StrategyOnboardingRequest", "validate_strategy_onboarding_request"},
         )
-    if build14_read_only_fenced is None:
-        build14_read_only_fenced = (
+    if build14_shadow_governance_ready is None:
+        build14_shadow_governance_ready = (
             _has_exports(
                 "complete_enablers",
                 {"build_market_toxicity_snapshot", "build_execution_fragility_score"},
@@ -87,8 +87,8 @@ def evaluate_shadow_readiness(
         missing_items.append("LOCAL_REPLAY / import governed MVP is not ready")
     if not onboarding_ready:
         missing_items.append("strategy onboarding governance is not ready")
-    if not build14_read_only_fenced:
-        missing_items.append("Build-14 read-only fencing is not ready")
+    if not build14_shadow_governance_ready:
+        missing_items.append("Build-14 Shadow governance is not ready")
 
     return ShadowReadinessReport(
         core_green=core_green,
@@ -96,7 +96,7 @@ def evaluate_shadow_readiness(
         build9x_governed_ready=build9x_governed_ready,
         replay_import_ready=replay_import_ready,
         onboarding_ready=onboarding_ready,
-        build14_read_only_fenced=build14_read_only_fenced,
+        build14_shadow_governance_ready=build14_shadow_governance_ready,
         missing_items=tuple(missing_items),
         final_verdict="ready_for_shadow" if not missing_items else "not_ready_for_shadow",
     )

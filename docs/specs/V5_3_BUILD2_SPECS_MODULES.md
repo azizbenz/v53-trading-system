@@ -1326,4 +1326,43 @@ Donc :
 
 ---
 
+# Guardrails P0 issus des audits — Invariants Build-2
+
+## Buffer policy explicite (GEM-05)
+- Tout buffer de messages (`RawMessageEmitter` ou équivalent) doit utiliser `collections.deque(maxlen=K)`
+- Politique obligatoire : **drop_oldest**, jamais drop_newest
+- Garantit que le système travaille toujours sur le dernier tick reçu pendant les pics de volatilité
+
+## Jitter tolerance (GEM-06)
+- Le `contradiction_checker` doit implémenter une fenêtre de tolérance configurable (défaut : 5-10ms)
+- Sur les exchanges distribués, l'out-of-order est un comportement réseau normal
+- `TIMESTAMP_REVERSAL` ne doit être levé que si le retard dépasse le seuil de jitter configurable
+- Faux positifs de jitter ≠ anomalies réelles
+
+## Stale guard explicite (GEM-23)
+- Chaque message entrant doit être comparé : `delta = local_timestamp - exchange_timestamp`
+- Si `delta > seuil_stale_ms` (configurable, défaut 200ms), le message est marqué stale
+- Un message stale ne doit pas alimenter le pipeline de décision en mode `MICRO_LIVE` ou `LIVE`
+- En `SHADOW`, le stale est loggé mais pas bloquant
+
+## Latence monotone et plausibility checks (GEM-08, QWEN-13)
+- Toute mesure de latence doit utiliser un clock monotone (`time.monotonic()` ou `time.perf_counter()`)
+- Les valeurs de latence négatives ou aberrantes (> seuil max) doivent être filtrées
+- Une latence aberrante ne doit pas corrompre les statistiques moyennes
+- Protection contre les sauts NTP dans les environnements conteneurisés
+
+## Backlog saturation metrics (GEM-18)
+- Le `internal_router` doit exposer des métriques de saturation :
+  - high-water mark du backlog
+  - drop rate (% de messages perdus)
+  - taux de stale spikes
+- Ces métriques sont obligatoires pour Build-10 (monitoring)
+
+## Distinction "socket ouvert" ≠ "flux sain" (QWEN-03)
+- Une connexion WebSocket ouverte ne signifie pas que le flux de données est valide
+- Le `pair_health_scorer` doit intégrer la qualité réelle du flux, pas seulement l'état de connexion
+- `pair_quarantine` doit être explicite : un pair en quarantaine ne doit pas recevoir de signaux
+
+---
+
 ## Fin du document

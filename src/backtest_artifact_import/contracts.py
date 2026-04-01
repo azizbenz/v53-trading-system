@@ -46,6 +46,10 @@ class ArtifactImportSummary(BaseModel, frozen=True):
     exported_from: str = Field(..., min_length=1)
     dataset_ref: str = ""
     clock_ref: str = ""
+    feature_bridge_ref: str = ""
+    parity_diagnostics_ref: str = ""
+    replay_metrics_ref: str = ""
+    replay_dtr_ref: str = ""
     review_export_ref: str = ""
     payload_ref_count: int = Field(..., ge=0)
     accepted: bool

@@ -1,4 +1,6 @@
 """Tests for execution_backbone.reconciliation_layer — Build-3."""
+import logging
+
 import pytest
 
 from execution_backbone.reconciliation_layer.order_reconciler import (
@@ -175,3 +177,12 @@ class TestRecoveryTrigger:
         rt.evaluate(DivergenceSeverity.INFO, now=110.0)
         rt.evaluate(DivergenceSeverity.CRITICAL, now=120.0)
         assert len(rt.get_history()) == 2
+
+    def test_recovery_trigger_emits_structured_logs(self, caplog: pytest.LogCaptureFixture):
+        caplog.set_level(logging.INFO)
+        rt = RecoveryTrigger()
+        rt.record_reconciliation(100.0)
+        rt.evaluate(DivergenceSeverity.WARNING, now=110.0)
+        messages = {record.message for record in caplog.records}
+        assert "execution_reconciliation_recorded" in messages
+        assert "execution_recovery_decision" in messages

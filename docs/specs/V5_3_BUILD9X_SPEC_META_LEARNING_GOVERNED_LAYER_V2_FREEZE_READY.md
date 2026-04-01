@@ -77,7 +77,7 @@ Cette brique dépend naturellement de :
 Elle ne doit pas être confondue avec :
 - Build-10 : supervision/UI
 - Build-11 : protocole de vérité shadow
-- Build-14 : enablers Complete à influence limitée
+- Build-14 : enablers Complete activés à 100% en Shadow, promotion live conditionnelle au verdict
 
 ### 1.3 Nature exacte
 

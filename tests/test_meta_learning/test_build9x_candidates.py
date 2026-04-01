@@ -37,6 +37,8 @@ def test_hypotheses_target_local_replay_only():
 
     assert len(hypotheses) == 2
     assert all(hypothesis.target_runtime_mode.value == "local_replay" for hypothesis in hypotheses)
+    assert all(hypothesis.evidence_strength for hypothesis in hypotheses)
+    assert all(hypothesis.governance_stage.value == "draft" for hypothesis in hypotheses)
 
 
 def test_checklist_requires_replay_first():
@@ -62,8 +64,10 @@ def test_improvement_candidates_stay_replay_only_and_governed():
     assert len(candidates) == 2
     assert all(candidate.promotion_state == PromotionState.REPLAY_ONLY for candidate in candidates)
     assert all(candidate.auto_promotion_enabled is False for candidate in candidates)
-    assert any(candidate.kind == CandidateKind.BUILD14_READ_ONLY for candidate in candidates)
+    assert any(candidate.kind == CandidateKind.BUILD14_ENABLER for candidate in candidates)
     assert all(isinstance(candidate, ImprovementCandidate) for candidate in candidates)
+    assert all(candidate.tests_required for candidate in candidates)
+    assert all(candidate.governance_stage.value == "prepared" for candidate in candidates)
 
 
 def test_hypotheses_deduplicate_category_and_preserve_first_diagnostic_ref():

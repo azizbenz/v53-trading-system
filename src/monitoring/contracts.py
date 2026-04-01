@@ -6,12 +6,22 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from interface_contracts import AlertRecord, PairHealthLevel, ProfileId, RuntimeMode, TimestampedModel
+from interface_contracts import (
+    AlertCategory,
+    AlertRecord,
+    AlertSeverity,
+    DeploymentState,
+    PairHealthLevel,
+    ProfileId,
+    RuntimeMode,
+    TimestampedModel,
+)
 
 
 HeadlineStatus = Literal["healthy", "warning", "critical"]
 ProjectionStatus = Literal["healthy", "warning", "critical", "info", "planned"]
 MetricKind = Literal["counter", "gauge", "state"]
+AlertHistoryState = Literal["open", "resolved"]
 
 
 class PortfolioMetrics(BaseModel, frozen=True):
@@ -23,6 +33,9 @@ class PortfolioMetrics(BaseModel, frozen=True):
     beta_utilization: float = Field(..., ge=0.0)
     capital_deployed_usdt: float = Field(..., ge=0.0)
     ce_net: float = 0.0
+    pnl_net_usdt: float = 0.0
+    dominant_cluster: str = ""
+    breaches: tuple[str, ...] = ()
 
 
 class EngineMetrics(BaseModel, frozen=True):
@@ -33,6 +46,10 @@ class EngineMetrics(BaseModel, frozen=True):
     net_edge_bps: float = 0.0
     expected_cost_bps: float = Field(default=0.0, ge=0.0)
     ce_expected: float = 0.0
+    useful_frequency: float = Field(default=0.0, ge=0.0)
+    sharpe_per_trade: float = 0.0
+    drawdown_pct: float = Field(default=0.0, ge=0.0, le=100.0)
+    suspension_reason: str = ""
     stale: bool = False
 
 
@@ -44,16 +61,37 @@ class PairMetrics(BaseModel, frozen=True):
     freshness_ms: int = Field(..., ge=0)
     backlog_depth: int = Field(default=0, ge=0)
     is_active: bool = True
+    average_cost_bps: float = Field(default=0.0, ge=0.0)
+    cost_p90_bps: float = Field(default=0.0, ge=0.0)
+    ce_expected: float = 0.0
+    useful_frequency: float = Field(default=0.0, ge=0.0)
+    suspension_reason: str = ""
 
 
 class InfraMetrics(BaseModel, frozen=True):
     """Infrastructure and operability metrics for Build-10."""
 
     queue_backlog: int = Field(default=0, ge=0)
+    backlog_high_water_mark: int = Field(default=0, ge=0)
     reconnect_count: int = Field(default=0, ge=0)
     stale_pairs: tuple[str, ...] = ()
+    stale_spike_count: int = Field(default=0, ge=0)
+    recovery_retry_count: int = Field(default=0, ge=0)
     dtr_loss_count: int = Field(default=0, ge=0)
     log_loss_count: int = Field(default=0, ge=0)
+    total_enqueued: int = Field(default=0, ge=0)
+    total_dropped: int = Field(default=0, ge=0)
+    drop_rate_pct: float = Field(default=0.0, ge=0.0, le=100.0)
+    elw_bps: float = Field(default=0.0, ge=0.0)
+    expected_cost_bps: float = Field(default=0.0, ge=0.0)
+    realized_cost_bps: float = Field(default=0.0, ge=0.0)
+    partial_fill_count: int = Field(default=0, ge=0)
+    fill_latency_ms_p95: int = Field(default=0, ge=0)
+    reconciliation_alert_count: int = Field(default=0, ge=0)
+    kill_switch_active: bool = False
+    kill_switch_timestamp_ms: int | None = Field(default=None, ge=0)
+    persisted_metric_names: tuple[str, ...] = ()
+    volatile_metric_names: tuple[str, ...] = ()
     cpu_pct: float = Field(default=0.0, ge=0.0, le=100.0)
     ram_pct: float = Field(default=0.0, ge=0.0, le=100.0)
 
@@ -98,6 +136,47 @@ class MonitoringSnapshot(TimestampedModel):
         return len(self.infra.stale_pairs)
 
 
+class AlertHistoryEntry(BaseModel, frozen=True):
+    """Short Build-10 alert lifecycle history exposed to the locked Light UI."""
+
+    alert_id: str = Field(..., min_length=1)
+    severity: AlertSeverity
+    category: AlertCategory
+    message: str = Field(..., min_length=1)
+    status: AlertHistoryState = "open"
+    opened_ms: int = Field(..., ge=0)
+    last_seen_ms: int = Field(..., ge=0)
+    resolved_ms: int | None = Field(default=None, ge=0)
+
+
+class OperatorRuntimeEvent(BaseModel, frozen=True):
+    """Audit-ready operator log event projected from the locked Light UI into monitoring."""
+
+    timestamp_ms: int = Field(..., ge=0)
+    correlation_id: str = Field(..., min_length=1)
+    event_type: str = Field(..., min_length=1)
+    action: str = Field(..., min_length=1)
+    target: str = ""
+    accepted: bool = False
+    message: str = Field(..., min_length=1)
+    rejection_reason: str = ""
+
+
+class OperatorRuntimeProjection(BaseModel, frozen=True):
+    """Typed operator-governance surface projected through Build-10 monitoring."""
+
+    event_count: int = Field(default=0, ge=0)
+    latest_event_type: str = ""
+    latest_event_message: str = ""
+    recent_event_log: tuple[OperatorRuntimeEvent, ...] = ()
+    rejection_event_count: int = Field(default=0, ge=0)
+    latest_rejection_reason: str = ""
+    pending_notification_count: int = Field(default=0, ge=0)
+    pending_notification_alert_ids: tuple[str, ...] = ()
+    acknowledged_notification_count: int = Field(default=0, ge=0)
+    latest_acknowledged_alert_id: str = ""
+
+
 class HealthDashboardPayload(TimestampedModel):
     """Stable backend payload structured for the locked Light UI."""
 
@@ -106,20 +185,54 @@ class HealthDashboardPayload(TimestampedModel):
     runtime_mode: RuntimeMode
     headline_status: HeadlineStatus
     active_alert_count: int = Field(..., ge=0)
+    active_alert_ids: tuple[str, ...] = ()
+    alert_history: tuple[AlertHistoryEntry, ...] = ()
     stale_pair_count: int = Field(..., ge=0)
     queue_backlog: int = Field(..., ge=0)
+    backlog_high_water_mark: int = Field(default=0, ge=0)
+    drop_rate_pct: float = Field(default=0.0, ge=0.0, le=100.0)
+    stale_spike_count: int = Field(default=0, ge=0)
+    recovery_retry_count: int = Field(default=0, ge=0)
+    kill_switch_active: bool = False
+    kill_switch_timestamp_ms: int | None = Field(default=None, ge=0)
+    persisted_metric_names: tuple[str, ...] = ()
+    volatile_metric_names: tuple[str, ...] = ()
     capital_deployed_usdt: float = Field(..., ge=0.0)
+    pnl_net_usdt: float = 0.0
     gross_capacity_used_pct: float = Field(..., ge=0.0, le=100.0)
     loss_capacity_used_pct: float = Field(..., ge=0.0, le=100.0)
+    beta_utilization: float = Field(default=0.0, ge=0.0)
     ce_net: float = 0.0
+    dominant_cluster: str = ""
+    risk_breaches: tuple[str, ...] = ()
+    pairs: tuple[PairMetrics, ...] = ()
+    engines: tuple[EngineMetrics, ...] = ()
+    reconnect_count: int = Field(default=0, ge=0)
+    dtr_loss_count: int = Field(default=0, ge=0)
+    log_loss_count: int = Field(default=0, ge=0)
+    elw_bps: float = Field(default=0.0, ge=0.0)
+    expected_cost_bps: float = Field(default=0.0, ge=0.0)
+    realized_cost_bps: float = Field(default=0.0, ge=0.0)
+    partial_fill_count: int = Field(default=0, ge=0)
+    fill_latency_ms_p95: int = Field(default=0, ge=0)
+    reconciliation_alert_count: int = Field(default=0, ge=0)
+    cpu_pct: float = Field(default=0.0, ge=0.0, le=100.0)
+    ram_pct: float = Field(default=0.0, ge=0.0, le=100.0)
     dtr_coverage: float = Field(..., ge=0.0, le=1.0)
     cra_sterilization_rate: float = Field(..., ge=0.0, le=1.0)
+    cra_alert_count: int = Field(default=0, ge=0)
     break_even_drift_scopes: tuple[str, ...] = ()
     edge_credible_count: int = Field(..., ge=0)
     edge_degraded_count: int = Field(..., ge=0)
     edge_surveillance_count: int = Field(..., ge=0)
     future_learning_diagnostics: int = Field(default=0, ge=0)
     future_learning_hypotheses: int = Field(default=0, ge=0)
+    deployment_state: DeploymentState = DeploymentState.SHADOW
+    last_transition_summary: str = ""
+    shadow_status: ProjectionStatus = "planned"
+    micro_live_status: ProjectionStatus = "planned"
+    live_light_status: ProjectionStatus = "planned"
+    operator_runtime: OperatorRuntimeProjection = OperatorRuntimeProjection()
     controls_locked: bool = True
 
 
@@ -170,6 +283,21 @@ class Build9XProjection(BaseModel, frozen=True):
     latest_memory_summary: str = "No memory records"
     review_export_ready: bool = False
     review_export_ref: str = ""
+    learning_queue_depth: int = Field(default=0, ge=0)
+    learning_queue_oldest_age_ms: int = Field(default=0, ge=0)
+    learning_worker_cpu_pct: float = Field(default=0.0, ge=0.0)
+    learning_worker_rss_mb: float = Field(default=0.0, ge=0.0)
+    learning_write_latency_ms: float = Field(default=0.0, ge=0.0)
+    learning_export_failures_total: int = Field(default=0, ge=0)
+    learning_log_loss_total: int = Field(default=0, ge=0)
+    learning_unprocessed_items_count: int = Field(default=0, ge=0)
+    learning_backlog_state: Literal["normal", "alert", "protection"] = "normal"
+    learning_capture_mode: Literal["full_capture", "capture_minimale"] = "full_capture"
+    learning_observability_reduced: bool = False
+    learning_backpressure_active: bool = False
+    review_blocked_due_to_incomplete_data: bool = False
+    promotion_blocked_due_to_incomplete_data: bool = False
+    learning_capacity_summary: str = "queue=0 / backlog=normal / mode=full_capture"
 
 
 class ReplayImportProjection(BaseModel, frozen=True):
@@ -274,7 +402,7 @@ class Build14Projection(BaseModel, frozen=True):
     status: ProjectionStatus = "planned"
     hard_state: str = "coded"
     live_promotion_eligible: bool = False
-    influence_mode: str = "observe"
+    influence_mode: str = "read_only"
     action: str = "observe"
     severity: str = "nominal"
     summary: str = "No Build-14 evaluation materialized"
@@ -296,14 +424,23 @@ class AlertProjection(BaseModel, frozen=True):
     active_alert_count: int = Field(..., ge=0)
     alert_ids: tuple[str, ...] = ()
     queue_backlog: int = Field(..., ge=0)
+    backlog_high_water_mark: int = Field(default=0, ge=0)
+    drop_rate_pct: float = Field(default=0.0, ge=0.0, le=100.0)
     stale_pair_count: int = Field(..., ge=0)
     stale_pairs: tuple[str, ...] = ()
+    stale_spike_count: int = Field(default=0, ge=0)
+    recovery_retry_count: int = Field(default=0, ge=0)
+    kill_switch_active: bool = False
+    kill_switch_timestamp_ms: int | None = Field(default=None, ge=0)
+    persisted_metric_names: tuple[str, ...] = ()
+    volatile_metric_names: tuple[str, ...] = ()
     backlog_stale_status: ProjectionStatus
     dtr_loss_count: int = Field(..., ge=0)
     log_loss_count: int = Field(..., ge=0)
     break_even_drift_scope_count: int = Field(..., ge=0)
     edge_degraded_count: int = Field(..., ge=0)
     loss_drift_status: ProjectionStatus
+    operator_runtime: OperatorRuntimeProjection = OperatorRuntimeProjection()
 
 
 class TechnicalDashboardPayload(TimestampedModel):
@@ -314,6 +451,9 @@ class TechnicalDashboardPayload(TimestampedModel):
     runtime_mode: RuntimeMode
     system: SystemProjection
     portfolio: PortfolioMetrics
+    engines: tuple[EngineMetrics, ...] = ()
+    pairs: tuple[PairMetrics, ...] = ()
+    infra: InfraMetrics = InfraMetrics()
     build9_meta: Build9MetaProjection
     build9x: Build9XProjection
     shadow: ShadowProjection = ShadowProjection()
@@ -361,6 +501,9 @@ __all__ = [
     "InfraMetrics",
     "MetaMetrics",
     "MonitoringSnapshot",
+    "AlertHistoryEntry",
+    "OperatorRuntimeEvent",
+    "OperatorRuntimeProjection",
     "HealthDashboardPayload",
     "HeadlineStatus",
     "ProjectionStatus",

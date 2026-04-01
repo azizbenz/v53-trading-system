@@ -1,4 +1,6 @@
 """Tests for execution_backbone.fill_tracker — Build-3."""
+import logging
+
 import pytest
 
 from execution_backbone.fill_tracker.order_state_tracker import (
@@ -306,3 +308,12 @@ class TestFillReporter:
         stats = reporter.get_stats()
         assert stats.cancellations == 1
         assert stats.partial_fills == 0
+
+    def test_reporter_emits_structured_logs(self, caplog: pytest.LogCaptureFixture):
+        caplog.set_level(logging.INFO)
+        reporter = FillReporter()
+        reporter.record_order_created()
+        reporter.record_terminal(OrderState.REJECTED)
+        messages = {record.message for record in caplog.records}
+        assert "execution_order_created" in messages
+        assert "execution_order_terminal" in messages

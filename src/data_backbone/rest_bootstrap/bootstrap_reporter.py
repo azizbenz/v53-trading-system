@@ -7,8 +7,12 @@ Invariant: every REST usage is explicitly logged with outcome and timing.
 from __future__ import annotations
 
 from enum import StrEnum
+import logging
 
 from pydantic import BaseModel, Field
+
+
+logger = logging.getLogger(__name__)
 
 
 class BootstrapOutcome(StrEnum):
@@ -52,6 +56,19 @@ class BootstrapReporter:
 
     def record(self, event: BootstrapEvent) -> None:
         self._events.append(event)
+        level = logging.INFO if event.outcome == BootstrapOutcome.SUCCESS else logging.WARNING
+        logger.log(
+            level,
+            "rest_bootstrap_event",
+            extra={
+                "pair": event.pair,
+                "operation": event.operation,
+                "outcome": event.outcome.value,
+                "timestamp": event.timestamp,
+                "duration_s": event.duration_s,
+                "detail": event.message,
+            },
+        )
 
     def get_events(
         self, pair: str | None = None, operation: str | None = None,

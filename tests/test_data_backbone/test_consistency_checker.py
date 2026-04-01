@@ -1,4 +1,6 @@
 """Tests for data_backbone.consistency_checker — Build-2."""
+import logging
+
 import pytest
 
 from data_backbone.consistency_checker.sequence_checker import (
@@ -167,3 +169,12 @@ class TestConsistencyReporter:
         assert stats.total_duplicates == 1
         assert stats.total_disorders == 3
         assert stats.total_contradictions == 4
+
+    def test_reporter_emits_structured_logs(self, caplog: pytest.LogCaptureFixture):
+        caplog.set_level(logging.INFO)
+        reporter = ConsistencyReporter()
+        reporter.update_score(ConsistencyScore(pair="BTC", score=0.9))
+        reporter.record_gap()
+        messages = {record.message for record in caplog.records}
+        assert "consistency_score_updated" in messages
+        assert "consistency_gap_recorded" in messages

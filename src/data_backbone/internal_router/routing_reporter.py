@@ -6,7 +6,11 @@ Invariant: dispatch success/fail, backpressure events, consumer lag all tracked.
 
 from __future__ import annotations
 
+import logging
 from pydantic import BaseModel, Field
+
+
+logger = logging.getLogger(__name__)
 
 
 class RoutingStats(BaseModel, frozen=True):
@@ -32,15 +36,27 @@ class RoutingReporter:
     def record_dispatch(self, consumer_id: str) -> None:
         self._total_dispatched += 1
         self._by_consumer[consumer_id] = self._by_consumer.get(consumer_id, 0) + 1
+        logger.info(
+            "routing_dispatch_recorded",
+            extra={"consumer_id": consumer_id, "total_dispatched": self._total_dispatched},
+        )
 
     def record_drop(self, consumer_id: str) -> None:
         self._total_dropped += 1
         self._drops_by_consumer[consumer_id] = (
             self._drops_by_consumer.get(consumer_id, 0) + 1
         )
+        logger.warning(
+            "routing_drop_recorded",
+            extra={"consumer_id": consumer_id, "total_dropped": self._total_dropped},
+        )
 
     def record_backpressure(self) -> None:
         self._backpressure_events += 1
+        logger.warning(
+            "routing_backpressure_recorded",
+            extra={"backpressure_events": self._backpressure_events},
+        )
 
     def get_stats(self) -> RoutingStats:
         return RoutingStats(

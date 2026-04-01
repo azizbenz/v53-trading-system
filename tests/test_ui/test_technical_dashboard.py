@@ -26,6 +26,7 @@ from monitoring import (
     Build9XProjection,
     LiveLightProjection,
     MicroLiveProjection,
+    OperatorRuntimeProjection,
     ReplayImportProjection,
     ShadowProjection,
     build_technical_dashboard_payload,
@@ -176,6 +177,21 @@ def _build9x_projection() -> Build9XProjection:
         latest_memory_summary="Stored governed review state",
         review_export_ready=True,
         review_export_ref="exports/review.md",
+        learning_queue_depth=1200,
+        learning_queue_oldest_age_ms=350,
+        learning_worker_cpu_pct=8.5,
+        learning_worker_rss_mb=180.0,
+        learning_write_latency_ms=12.0,
+        learning_export_failures_total=0,
+        learning_log_loss_total=0,
+        learning_unprocessed_items_count=0,
+        learning_backlog_state="alert",
+        learning_capture_mode="full_capture",
+        learning_observability_reduced=False,
+        learning_backpressure_active=False,
+        review_blocked_due_to_incomplete_data=False,
+        promotion_blocked_due_to_incomplete_data=False,
+        learning_capacity_summary="queue=1200 / backlog=alert / mode=full_capture",
     )
 
 
@@ -216,6 +232,11 @@ def test_technical_dashboard_view_exposes_system_meta_build9x_and_replay_section
     assert titles == {
         "System",
         "Portfolio",
+        "Pairs",
+        "Engines",
+        "Risk",
+        "Execution",
+        "Data & Infra",
         "Build-9 Meta",
         "Build-9X",
         "Build-11 Shadow",
@@ -233,14 +254,28 @@ def test_technical_dashboard_view_exposes_system_meta_build9x_and_replay_section
     build9x = next(section for section in view.sections if section.title == "Build-9X")
     assert next(card for card in build9x.cards if card.key == "diagnostics_recent").value == "2"
     assert next(card for card in build9x.cards if card.key == "hypotheses_open").value == "1"
+    assert next(card for card in build9x.cards if card.key == "capacity_backpressure").detail == (
+        "backlog=alert / oldest=350ms / unprocessed=0"
+    )
+    assert next(card for card in build9x.cards if card.key == "worker_budget").value == "cpu=8.5% / rss=180.0MB"
     shadow = next(section for section in view.sections if section.title == "Build-11 Shadow")
     micro = next(section for section in view.sections if section.title == "Build-12 Micro-live")
     live = next(section for section in view.sections if section.title == "Build-13 Live-Light")
     build14 = next(section for section in view.sections if section.title == "Build-14 Limited Influence")
+    pairs = next(section for section in view.sections if section.title == "Pairs")
+    engines = next(section for section in view.sections if section.title == "Engines")
+    risk = next(section for section in view.sections if section.title == "Risk")
+    execution = next(section for section in view.sections if section.title == "Execution")
+    infra = next(section for section in view.sections if section.title == "Data & Infra")
     assert next(card for card in shadow.cards if card.key == "shadow_run_state").value == "not_run"
     assert next(card for card in micro.cards if card.key == "micro_live_run_state").value == "not_run"
     assert next(card for card in live.cards if card.key == "live_light_run_state").value == "not_run"
     assert next(card for card in build14.cards if card.key == "build14_mode").value == "read_only / observe"
+    assert next(card for card in pairs.cards if card.key == "pair_btcusdt").value == "stale / fresh=9000ms"
+    assert next(card for card in engines.cards if card.key == "engine_engine_a").value == "signals=2 / edge=12.0"
+    assert next(card for card in risk.cards if card.key == "risk_exposure").value == "gross=35.0% / loss=8.0%"
+    assert next(card for card in execution.cards if card.key == "execution_fills").value == "partial=0 / latency_p95=0ms"
+    assert next(card for card in infra.cards if card.key == "infra_queue").value == "backlog=75 / hwm=75 / drop=0.0%"
     replay = next(section for section in view.sections if section.title == "Replay & Import")
     assert next(card for card in replay.cards if card.key == "artifact_manifest").value == "artifact-1"
     assert next(card for card in replay.cards if card.key == "validation_status").value == "accepted"
@@ -262,6 +297,8 @@ def test_technical_dashboard_view_handles_empty_governed_state_cleanly():
     replay = next(section for section in view.sections if section.title == "Replay & Import")
     assert next(card for card in build9x.cards if card.key == "diagnostics_recent").value == "0"
     assert next(card for card in build9x.cards if card.key == "memory_review").status == "planned"
+    assert next(card for card in build9x.cards if card.key == "capacity_backpressure").status == "planned"
+    assert next(card for card in build9x.cards if card.key == "worker_budget").status == "planned"
     assert next(card for card in shadow.cards if card.key == "shadow_run_state").status == "planned"
     assert next(card for card in micro.cards if card.key == "micro_live_run_state").status == "planned"
     assert next(card for card in live.cards if card.key == "live_light_run_state").status == "planned"
@@ -275,6 +312,14 @@ def test_technical_dashboard_view_projects_alerts_and_engine_staleness_without_p
         _snapshot(),
         active_modules=("interface_contracts", "meta_learning", "local_replay_runtime", "monitoring", "ui"),
         active_engines=("engine_a", "engine_b"),
+        operator_runtime=OperatorRuntimeProjection(
+            event_count=2,
+            latest_event_type="screen_opened",
+            latest_event_message="screen opened: overview",
+            pending_notification_count=1,
+            pending_notification_alert_ids=("corr-tech:loss",),
+            acknowledged_notification_count=0,
+        ),
     )
 
     view = build_technical_dashboard_view(payload)
@@ -287,6 +332,8 @@ def test_technical_dashboard_view_projects_alerts_and_engine_staleness_without_p
     assert "stale: engine_b" in engines.detail
     assert int(active_alerts.value) >= 3
     assert active_alerts.status in {"warning", "critical"}
+    assert any(card.key == "operator_events" and card.value == "2" for card in alerts.cards)
+    assert any(card.key == "operator_notifications" and card.value == "pending=1 / ack=0" for card in alerts.cards)
 
 
 def test_technical_dashboard_view_surfaces_rejected_import_and_future_panels():

@@ -9,10 +9,14 @@ Invariant: absence of recent reconciliation must be visible.
 from __future__ import annotations
 
 from enum import StrEnum
+import logging
 
 from pydantic import BaseModel, Field
 
 from .divergence_classifier import DivergenceSeverity
+
+
+logger = logging.getLogger(__name__)
 
 
 class RecoveryAction(StrEnum):
@@ -42,6 +46,10 @@ class RecoveryTrigger:
 
     def record_reconciliation(self, timestamp: float) -> None:
         self._last_recon_time = timestamp
+        logger.info(
+            "execution_reconciliation_recorded",
+            extra={"timestamp": timestamp},
+        )
 
     def evaluate(
         self,
@@ -93,6 +101,19 @@ class RecoveryTrigger:
             )
 
         self._history.append(decision)
+        level = logging.WARNING if decision.action != RecoveryAction.NONE else logging.INFO
+        logger.log(
+            level,
+            "execution_recovery_decision",
+            extra={
+                "action": decision.action.value,
+                "reason": decision.reason,
+                "severity": decision.severity.value,
+                "stale_reconciliation": decision.stale_reconciliation,
+                "recon_age_s": decision.recon_age_s,
+                "divergence_count": divergence_count,
+            },
+        )
         return decision
 
     def get_history(self) -> tuple[RecoveryDecision, ...]:

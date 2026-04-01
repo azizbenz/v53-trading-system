@@ -1,4 +1,6 @@
 """Tests for data_backbone.freshness_checker - Build-2."""
+import logging
+
 import pytest
 
 from interface_contracts import RuntimeMode
@@ -158,3 +160,10 @@ class TestFreshnessReporter:
         reporter.record(FreshnessEvent(pair="BTC", stream_type="trade", verdict=StaleVerdict.FRESH, age_s=1.0))
         reporter.record(FreshnessEvent(pair="ETH", stream_type="trade", verdict=StaleVerdict.FRESH, age_s=2.0))
         assert len(reporter.get_events("BTC")) == 1
+
+    def test_reporter_emits_structured_logs(self, caplog: pytest.LogCaptureFixture):
+        caplog.set_level(logging.INFO)
+        reporter = FreshnessReporter()
+        reporter.record(FreshnessEvent(pair="BTC", stream_type="trade", verdict=StaleVerdict.FRESH, age_s=1.0))
+        reporter.record(FreshnessEvent(pair="ETH", stream_type="trade", verdict=StaleVerdict.HARD_STALE, age_s=50.0))
+        assert any(record.message == "freshness_event_recorded" and getattr(record, "pair", "") == "ETH" for record in caplog.records)

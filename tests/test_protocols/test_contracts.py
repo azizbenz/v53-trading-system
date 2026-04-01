@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+import local_replay_runtime
 import protocols
 from interface_contracts import ProfileId, PromotionState, ReviewState, RuntimeMode
 from protocols import (
@@ -21,6 +22,7 @@ from protocols import (
     MicroLiveRunSummary,
     MicroLiveVerdict,
     ShadowComparison,
+    ShadowBuild14Contribution,
     ShadowComponentAssessment,
     ShadowComponentHardState,
     ShadowComponentKind,
@@ -28,12 +30,16 @@ from protocols import (
     ShadowComparisonStatus,
     ShadowDecision,
     ShadowDivergenceSeverity,
+    ShadowEngineReport,
     ShadowInput,
+    ShadowReportArtifact,
+    ShadowRuntimeEvidence,
     ShadowRunState,
     ShadowRunSummary,
     ShadowTruthSet,
     ShadowValidationSet,
     ShadowVerdict,
+    build_shadow_runtime_evidence,
 )
 
 
@@ -56,9 +62,13 @@ def test_protocols_exports_expected_symbols():
         "build_micro_live_projection",
         "build_micro_live_dashboard_section",
         "ShadowTruthSet",
+        "ShadowRuntimeEvidence",
         "ShadowValidationSet",
         "ShadowInput",
         "ShadowComparison",
+        "ShadowEngineReport",
+        "ShadowBuild14Contribution",
+        "ShadowReportArtifact",
         "ShadowComponentAssessment",
         "ShadowDecision",
         "ShadowRunSummary",
@@ -66,6 +76,7 @@ def test_protocols_exports_expected_symbols():
         "ShadowComponentHardState",
         "ShadowComponentVerdict",
         "build_shadow_input_from_payloads",
+        "build_shadow_runtime_evidence",
         "compare_shadow_candidate",
         "run_shadow_validation",
         "build_shadow_projection",
@@ -196,6 +207,21 @@ def test_shadow_run_summary_counts_divergent_and_blocking_comparisons():
         ),
         import_artifact_id="artifact-1",
         import_lineage_version="a.v1.0.r1",
+        runtime_data_source="recorded_replay",
+        runtime_feature_bridge_ready=True,
+        runtime_parity_diagnostics_ready=True,
+        runtime_replay_metrics_ready=True,
+        runtime_replay_dtr_ready=True,
+        runtime_event_loop_ready=True,
+        runtime_config_loaded=True,
+        runtime_shadow_dtr_persisted=True,
+        runtime_continuous_hours=26.0,
+        runtime_evidence_ready=True,
+        runtime_evidence_summary=(
+            "source=recorded_replay / feature_bridge=yes / parity=yes / "
+            "metrics=yes / replay_dtr=yes / event_loop=yes / config=yes / "
+            "shadow_dtr=yes / hours=26.0"
+        ),
         build9x_diagnostics_count=2,
         open_hypotheses=1,
         replay_candidate_count=1,
@@ -204,6 +230,7 @@ def test_shadow_run_summary_counts_divergent_and_blocking_comparisons():
 
     assert summary.divergent_comparison_count == 1
     assert summary.blocking_comparison_count == 1
+    assert summary.runtime_evidence_ready is True
 
 
 def test_shadow_validation_set_rejects_accepted_import_with_incoherent_status():
@@ -326,6 +353,161 @@ def test_shadow_validation_set_accepts_coherent_import_state():
 
     assert validation.accepted_import is True
     assert validation.import_validation_status == "accepted"
+    assert validation.runtime_data_source == "unknown"
+    assert validation.runtime_continuous_hours == 0.0
+
+
+def test_build_shadow_runtime_evidence_combines_local_replay_and_runtime_signals():
+    evidence = build_shadow_runtime_evidence(
+        local_replay_evidence=local_replay_runtime.LocalReplayRuntimeEvidence(
+            artifact_id="artifact-1",
+            lineage_version="a.v1.0.r1",
+            data_source="recorded_replay",
+            feature_bridge_ready=True,
+            parity_diagnostics_ready=True,
+            replay_metrics_ready=True,
+            replay_dtr_ready=True,
+            replay_useful_ready=True,
+            evidence_summary="local replay evidence ready",
+        ),
+        runtime_event_loop_ready=True,
+        runtime_config_loaded=True,
+        runtime_shadow_dtr_persisted=True,
+        runtime_continuous_hours=25.0,
+    )
+
+    assert isinstance(evidence, ShadowRuntimeEvidence)
+    assert evidence.data_source == "recorded_replay"
+    assert evidence.feature_bridge_ready is True
+    assert evidence.parity_diagnostics_ready is True
+    assert evidence.replay_metrics_ready is True
+    assert evidence.replay_dtr_ready is True
+    assert evidence.shadow_dtr_persisted is True
+
+
+def test_shadow_report_artifact_accepts_complete_build11_evidence():
+    report = ShadowReportArtifact(
+        report_id="shadow-report-1",
+        profile="light",
+        report_generated_at=1_700_000_000.0,
+        consecutive_days=30,
+        required_days=30,
+        remaining_days=0,
+        is_complete=True,
+        daily_records_count=30,
+        dtr_coverage=1.0,
+        dtr_complete=True,
+        ce_net=0.0012,
+        estimated_cost_bps=4.2,
+        edge_net=0.0015,
+        drawdown_pct=0.018,
+        stale_rate=0.01,
+        economic_pass_rate=0.67,
+        pair_health_ratio=0.98,
+        backlog_avg=2.0,
+        decisions_reproducible=True,
+        infra_stable=True,
+        costs_plausible=True,
+        shadow_report_ready=True,
+        inter_engine_comparison_ready=True,
+        build14_contribution_ready=True,
+        inter_engine_comparison=(
+            ShadowEngineReport(
+                engine_id="engine_a",
+                gross_frequency=8.0,
+                useful_frequency=3.0,
+                estimated_cost_bps=4.0,
+                edge_net=0.0013,
+                economic_pass_rate=0.7,
+                conflict_rate=0.05,
+                marginal_edge=0.0004,
+                observations=30,
+            ),
+            ShadowEngineReport(
+                engine_id="engine_b",
+                gross_frequency=7.0,
+                useful_frequency=2.8,
+                estimated_cost_bps=4.1,
+                edge_net=0.0012,
+                economic_pass_rate=0.68,
+                conflict_rate=0.04,
+                marginal_edge=0.0003,
+                observations=30,
+            ),
+            ShadowEngineReport(
+                engine_id="engine_c",
+                gross_frequency=6.0,
+                useful_frequency=2.4,
+                estimated_cost_bps=4.3,
+                edge_net=0.0011,
+                economic_pass_rate=0.66,
+                conflict_rate=0.03,
+                marginal_edge=0.0002,
+                observations=30,
+            ),
+            ShadowEngineReport(
+                engine_id="engine_d",
+                gross_frequency=5.0,
+                useful_frequency=2.1,
+                estimated_cost_bps=4.4,
+                edge_net=0.0010,
+                economic_pass_rate=0.65,
+                conflict_rate=0.02,
+                marginal_edge=0.0001,
+                observations=30,
+            ),
+        ),
+        build14_contribution=(
+            ShadowBuild14Contribution(
+                component_id="build14_microstructure",
+                contribution_score=0.32,
+                interaction_score=0.12,
+                observations=30,
+            ),
+            ShadowBuild14Contribution(
+                component_id="build14_regime",
+                contribution_score=0.28,
+                interaction_score=0.10,
+                observations=30,
+            ),
+            ShadowBuild14Contribution(
+                component_id="build14_covariance",
+                contribution_score=0.25,
+                interaction_score=0.09,
+                observations=30,
+            ),
+            ShadowBuild14Contribution(
+                component_id="build14_risk_contribution",
+                contribution_score=0.22,
+                interaction_score=0.08,
+                observations=30,
+            ),
+            ShadowBuild14Contribution(
+                component_id="build14_edge_diversity",
+                contribution_score=0.20,
+                interaction_score=0.07,
+                observations=30,
+            ),
+        ),
+    )
+
+    assert report.shadow_report_ready is True
+    assert report.inter_engine_comparison_ready is True
+    assert report.build14_contribution_ready is True
+
+
+def test_shadow_report_artifact_rejects_ready_state_when_sections_are_missing():
+    with pytest.raises(ValidationError, match="required sections are missing"):
+        ShadowReportArtifact(
+            report_id="shadow-report-1",
+            profile="light",
+            report_generated_at=1_700_000_000.0,
+            consecutive_days=30,
+            required_days=30,
+            remaining_days=0,
+            is_complete=True,
+            shadow_report_ready=True,
+        )
 
 
 def test_micro_live_input_rejects_wrong_runtime_mode_and_budget_overflow():

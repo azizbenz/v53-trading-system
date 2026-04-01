@@ -1,4 +1,7 @@
-# V5.3 — INDEX MAÎTRE FINAL DU CORPUS## Répertoire canonique de navigation### Version développeur / quant / risk / opérateur### Sans code
+# V5.3 — INDEX MAÎTRE FINAL DU CORPUS
+## Répertoire canonique de navigation
+### Version développeur / quant / risk / opérateur
+### Sans code
 ---
 # 0. Objet du document
 Ce document est le **point d’entrée unique de navigation** pour l’ensemble du corpus V5.3.
@@ -21,6 +24,10 @@ Le but est d’éviter quatre dérives classiques :
 Le document qui fait foi au-dessus de tous les autres est :
 - `V5_3_MASTER_FINAL_UNIQUE.md`
 
+## Niveau 1 bis — Miroir secondaire
+Le document suivant peut être conservé comme support de lecture, mais ne fait **pas** foi s’il diverge :
+- `V5_3_MASTER_FINAL_CANONICAL.md`
+
 ## Niveau 2 — Canonique de progression
 Le document qui fixe l’ordre réel de construction est :
 - `V5_3_BUILD_PLAN_MODULE_PAR_MODULE.md`
@@ -38,6 +45,44 @@ Ces documents détaillent des sous-domaines et servent de support de conception 
 
 ## Niveau 5 — Specs build par build
 Ce sont les documents à utiliser pour développer ou auditer chaque étape concrète.
+
+---
+# 1 bis. Statut final des documents
+
+## 1 bis.1 Actifs principaux
+- `V5_3_MASTER_FINAL_UNIQUE.md`
+- `V5_3_BUILD_PLAN_MODULE_PAR_MODULE.md`
+- les specs Build-1 à Build-17
+- les tables détaillées encore actives
+
+## 1 bis.2 Actifs secondaires subordonnés
+- `V5_3_MASTER_FINAL_CANONICAL.md` : miroir secondaire, non autonome
+- `V5_3_TABLE_MODULES_ANNEXE_MATH_DETAILLEE.md`
+- `V5_3_TABLE_DETAILLEE_MOTEURS.md`
+- `V5_3_TABLE_DETAILLEE_INTERFACE_UTILISATEUR.md`
+- `V5_3_TABLE_MERGE_GATES_TESTS_GO_NO_GO.md`
+- `V5_3_BUILD14_AI_EDGE_AND_MICROSTRUCTURE_ENRICHMENT_ADDENDUM.md`
+- `V5_3_STRATEGY_ONBOARDING_PROTOCOL.md`
+- `V5_3_UNIFIED_LOCAL_VPS_BACKTEST_ARCHITECTURE_PLAN_V2.md`
+- `V5_3_LOCAL_REPLAY_BACKTEST_RUNTIME_SPEC.md`
+- `V5_3_BUILD9X_SPEC_META_LEARNING_GOVERNED_LAYER_V2_FREEZE_READY.md`
+
+## 1 bis.3 Meta-docs actifs
+- `V5_3_AUDIT_INTEGRATION_DECISIONS.md`
+- `V5_3_CHANGELOG_DOCUMENTAIRE_AUDIT_INTEGRATION.md`
+- `V5_3_DOC_TO_CODE_ALIGNMENT_PLAN.md`
+- `V5_3_CORPUS_STABILIZATION_REPORT.md`
+
+## 1 bis.4 Historiques
+- `V5_3_BUILD9X_SPEC_META_LEARNING_GOVERNED_LAYER.md`
+
+## 1 bis.5 Archives
+- `V5_3_ARCHIVE_COMBINED_WORKING_COPY_BUILD14_ONBOARDING_LOCAL_VPS.md`
+
+## 1 bis.6 Contaminants potentiels
+- tout document secondaire utilisé contre `V5_3_MASTER_FINAL_UNIQUE.md`
+- `V5_3_MASTER_FINAL_CANONICAL.md` s’il est lu comme un second master au lieu d’un miroir
+- toute annexe ou addendum qui réintroduirait une doctrine Build-14 en lecture seule ou une activation tardive de C/D
 
 ---
 # 2. Ordre de lecture minimal recommandé
@@ -82,8 +127,63 @@ Lire dans cet ordre :
 
 ---
 # 4. Index maître de tous les fichiers
-| Fichier | Statut | Quand l’ouvrir | Contenu / usage |
-|---|---|---|---|| `V5_3_MASTER_FINAL_UNIQUE.md` | Source de vérité unique | À lire en premier | Architecture canonique complète, profils Light/Complete, modules, moteurs, UI, merge gates, maths utiles, interdits, workflow IA. || `V5_3_BUILD_PLAN_MODULE_PAR_MODULE.md` | Plan d’exécution global | Juste après le master | Ordre réel de construction Build-0 à Build-17, objectifs, critères GO/NO-GO, logique de progression. || `V5_3_PROMPT_PACK_CLAUDE_CHATGPT_BUILD_BY_BUILD.md` | Manuel d’orchestration IA | Avant toute session Claude/ChatGPT | Prompts maîtres, prompts par build, workflow spec → code → audit → correction → merge gate. || `V5_3_TABLE_MODULES_ANNEXE_MATH_DETAILLEE.md` | Table détaillée des modules | Quand on conçoit une brique | Référentiel détaillé par module, sous-composants, logs, tests, dérives à éviter, activation Light/Complete. || `V5_3_TABLE_DETAILLEE_MOTEURS.md` | Table détaillée des moteurs | Quand on compare A/B/C/D | Vue consolidée des 4 moteurs, paires autorisées, logique économique, contraintes, désactivation. || `V5_3_TABLE_DETAILLEE_INTERFACE_UTILISATEUR.md` | Référentiel UI | Quand on conçoit l’interface | Écrans, composants, actions autorisées/interdites, comportement Light/Complete, tests UI. || `V5_3_TABLE_MERGE_GATES_TESTS_GO_NO_GO.md` | Référentiel de gouvernance | Avant merge ou changement de phase | Gates de module, build, profil, Shadow, Micro-live, Live-Light, Live-Complete. || `V5_3_BUILD1_SPECS_MODULES.md` | Spec Build-1 | Début du développement | Dependency Architecture Pack : interface_contracts, manifest_registry, dag_validator, contract_test_suite, smoke_bootstrap_recovery. || `V5_3_BUILD2_SPECS_MODULES.md` | Spec Build-2 | Après Build-1 | Data Backbone Pack : websocket_gateway, rest_bootstrap, event_normalizer, internal_router, freshness_checker, consistency_checker, pair_health_scorer. || `V5_3_BUILD3_SPECS_MODULES.md` | Spec Build-3 | Après Build-2 | Execution Backbone Pack : order_decider, fill_tracker, execution_cost_meter, reconciliation_layer. || `V5_3_BUILD4_SPECS_MODULES.md` | Spec Build-4 | Après Build-3 | Risk Backbone Pack : exposure_budgeter, loss_budgeter, btc_factor_guard, correlation_cluster_guard. || `V5_3_BUILD5_SPECS_MODULES.md` | Spec Build-5 | Après Build-4 | Scoring Backbone Pack : raw_score_builder, penalty_aggregator, hard_block_gate, ranking_router. || `V5_3_BUILD6_SPECS_MOTEUR_A.md` | Spec Build-6 | Après Build-5 | Moteur A — Premium Trend / Expansion. || `V5_3_BUILD7_SPECS_MOTEUR_B.md` | Spec Build-7 | Après Build-6 | Moteur B — Mean Reversion Intraday. || `V5_3_BUILD8_SPECS_PORTFOLIO_MINIMAL.md` | Spec Build-8 | Après Build-7 | Portfolio Minimal Pack : opportunity_selector, allocation_router. || `V5_3_BUILD9_SPECS_META_MINIMAL.md` | Spec Build-9 | Après Build-8 | Meta Minimal Pack : dtr_core, cra_monitor, break_even_dashboard, edge_tracker_prudent_minimal. || `V5_3_BUILD10_SPECS_MONITORING_UI_LIGHT.md` | Spec Build-10 | Après Build-9 | Monitoring + UI Light Pack : metrics_collector, alert_manager, health_dashboard_backend, ui_light_locked. || `V5_3_BUILD11_SPEC_SHADOW_LIGHT.md` | Spec Build-11 | Quand Build-10 est prêt | Protocole Shadow Light, critères GO/NO-GO pré-micro-live. || `V5_3_BUILD12_SPEC_MICRO_LIVE_LIGHT.md` | Spec Build-12 | Après Shadow GO | Protocole Micro-live Light, tailles ultra-prudentes, coût réel, kill/halt conditions. || `V5_3_BUILD13_SPEC_LIVE_LIGHT.md` | Spec Build-13 | Après Micro-live GO | Protocole Live-Light, montée en charge prudente, DEGRADED/HALTED/rollback. || `V5_3_BUILD14_SPEC_COMPLETE_ENABLERS.md` | Spec Build-14 | Après Light stable | Complete Enablers : microstructure enrichie, régime enrichi, covariance robuste, risk contributions, K_eff. || `V5_3_BUILD15_SPECS_MOTEUR_C.md` | Spec Build-15 | Après Build-14 | Moteur C — Breakout Continuation. || `V5_3_BUILD16_SPECS_MOTEUR_D.md` | Spec Build-16 | Après Build-15 | Moteur D — Re-entry / Second Chance Logic. || `V5_3_BUILD17_SPEC_UI_COMPLETE_LIVE_COMPLETE.md` | Spec Build-17 | Fin de trajectoire | UI Complete + protocole Live-Complete 12 paires / 4 moteurs. |
+
+## 4.1 Sources de vérité et pilotage
+- `V5_3_MASTER_FINAL_UNIQUE.md` : master officiel unique, a lire en premier
+- `V5_3_MASTER_FINAL_CANONICAL.md` : miroir secondaire, lecture de support seulement
+- `V5_3_BUILD_PLAN_MODULE_PAR_MODULE.md` : ordre reel de construction Build-1 a Build-17
+- `V5_3_PROMPT_PACK_CLAUDE_CHATGPT_BUILD_BY_BUILD.md` : orchestration IA, non source autonome
+- `V5_3_TABLE_MERGE_GATES_TESTS_GO_NO_GO.md` : gouvernance de merge et de changement de phase
+- `V5_3_CORPUS_STABILIZATION_REPORT.md` : matrice finale du statut de tous les fichiers Markdown
+
+## 4.2 Tables et annexes transverses actives
+- `V5_3_TABLE_MODULES_ANNEXE_MATH_DETAILLEE.md` : modules + annexe math subordonnee au master unique
+- `V5_3_TABLE_DETAILLEE_MOTEURS.md` : referentiel detaille A/B/C/D
+- `V5_3_TABLE_DETAILLEE_INTERFACE_UTILISATEUR.md` : referentiel UI et supervision
+- `V5_3_BUILD14_AI_EDGE_AND_MICROSTRUCTURE_ENRICHMENT_ADDENDUM.md` : addendum Build-14, non autonome
+- `V5_3_BUILD9X_SPEC_META_LEARNING_GOVERNED_LAYER_V2_FREEZE_READY.md` : extension meta active, gouvernee, non autonome
+
+## 4.3 Specs Build-1 a Build-10
+- `V5_3_BUILD1_SPECS_MODULES.md` : architecture de dependances
+- `V5_3_BUILD2_SPECS_MODULES.md` : data backbone
+- `V5_3_BUILD3_SPECS_MODULES.md` : execution backbone
+- `V5_3_BUILD4_SPECS_MODULES.md` : risk backbone
+- `V5_3_BUILD5_SPECS_MODULES.md` : scoring backbone
+- `V5_3_BUILD6_SPECS_MOTEUR_A.md` : moteur A
+- `V5_3_BUILD7_SPECS_MOTEUR_B.md` : moteur B
+- `V5_3_BUILD8_SPECS_PORTFOLIO_MINIMAL.md` : portefeuille minimal
+- `V5_3_BUILD9_SPECS_META_MINIMAL.md` : meta minimal
+- `V5_3_BUILD10_SPECS_MONITORING_UI_LIGHT.md` : monitoring + UI Light
+
+## 4.4 Specs Build-11 a Build-17
+- `V5_3_BUILD11_SPEC_SHADOW_LIGHT.md` : protocole Shadow
+- `V5_3_BUILD12_SPEC_MICRO_LIVE_LIGHT.md` : protocole Micro-live
+- `V5_3_BUILD13_SPEC_LIVE_LIGHT.md` : protocole Live-Light
+- `V5_3_BUILD14_SPEC_COMPLETE_ENABLERS.md` : enablers Complete actifs en Shadow
+- `V5_3_BUILD15_SPECS_MOTEUR_C.md` : moteur C
+- `V5_3_BUILD16_SPECS_MOTEUR_D.md` : moteur D
+- `V5_3_BUILD17_SPEC_UI_COMPLETE_LIVE_COMPLETE.md` : UI Complete + Live-Complete
+
+## 4.5 Runtime local / VPS et onboarding
+- `V5_3_UNIFIED_LOCAL_VPS_BACKTEST_ARCHITECTURE_PLAN_V2.md` : architecture active commune local / VPS
+- `V5_3_LOCAL_REPLAY_BACKTEST_RUNTIME_SPEC.md` : replay et backtest local sur donnees historiques
+- `V5_3_STRATEGY_ONBOARDING_PROTOCOL.md` : onboarding, classification et promotion gouvernee
+- regle : `import d'artifact cote VPS en lecture seule` designe un guardrail d'import, pas une mise en archive du runtime VPS
+
+## 4.6 Meta-docs actifs
+- `V5_3_AUDIT_INTEGRATION_DECISIONS.md`
+- `V5_3_CHANGELOG_DOCUMENTAIRE_AUDIT_INTEGRATION.md`
+- `V5_3_DOC_TO_CODE_ALIGNMENT_PLAN.md`
+- `V5_3_INDEX_MAITRE_FINAL_CORPUS.md`
+- `V5_3_CORPUS_STABILIZATION_REPORT.md`
+
+## 4.7 Historiques et archives
+- `V5_3_BUILD9X_SPEC_META_LEARNING_GOVERNED_LAYER.md` : historique, non binding
+- `V5_3_ARCHIVE_COMBINED_WORKING_COPY_BUILD14_ONBOARDING_LOCAL_VPS.md` : archive de travail, non canonique
+
+Note :
+
+- la matrice exhaustive du statut final de tous les fichiers Markdown `docs/specs` est tenue dans `V5_3_CORPUS_STABILIZATION_REPORT.md`
 ---
 # 5. Référentiel par phase de travail
 ## 5.1 Si tu veux comprendre l’architecture globale
@@ -181,7 +281,7 @@ Fichier principal : `V5_3_BUILD13_SPEC_LIVE_LIGHT.md`
 
 ## Build-14
 Fichier principal : `V5_3_BUILD14_SPEC_COMPLETE_ENABLERS.md`
-À croiser avec : master + prompt pack + moteurs C/D futurs
+À croiser avec : master + prompt pack + tables moteurs
 
 ## Build-15
 Fichier principal : `V5_3_BUILD15_SPECS_MOTEUR_C.md`
@@ -242,8 +342,8 @@ Ouvrir : merge gates + protocole de phase correspondant.
 Ouvrir : table UI + Build-10 ou Build-17.
 
 ---
-# 10. Ensemble documentaire minimal à transmettre à un nouveau développeur
-Si tu veux donner un pack minimum à quelqu’un qui rejoint le projet, envoie seulement :
+# 10. Ensemble documentaire de base à transmettre à un nouveau développeur
+Si tu veux donner un pack de base à quelqu’un qui rejoint le projet, envoie seulement :
 1. `V5_3_MASTER_FINAL_UNIQUE.md`
 2. `V5_3_BUILD_PLAN_MODULE_PAR_MODULE.md`
 3. `V5_3_PROMPT_PACK_CLAUDE_CHATGPT_BUILD_BY_BUILD.md`
@@ -252,14 +352,14 @@ Si tu veux donner un pack minimum à quelqu’un qui rejoint le projet, envoie s
 Le reste vient ensuite selon les besoins.
 
 ---
-# 11. Ensemble documentaire minimal à transmettre à un reviewer quant/risk
+# 11. Ensemble documentaire de base à transmettre à un reviewer quant/risk
 1. master final
 2. table détaillée des moteurs
 3. table merge gates
 4. spec du build ou moteur concerné
 
 ---
-# 12. Ensemble documentaire minimal à transmettre à un opérateur
+# 12. Ensemble documentaire de base à transmettre à un opérateur
 1. master final
 2. table UI
 3. protocole de phase courant (Shadow / Micro-live / Live-Light / Live-Complete)

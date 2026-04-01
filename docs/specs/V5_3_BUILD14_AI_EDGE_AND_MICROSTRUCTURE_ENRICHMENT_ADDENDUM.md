@@ -16,14 +16,16 @@
 En cas de conflit :
 
 1. `V5_3_MASTER_FINAL_UNIQUE.md`
-2. `V5_3_MASTER_FINAL_CANONICAL.md`
-3. `V5_3_BUILD_PLAN_MODULE_PAR_MODULE.md`
-4. `V5_3_BUILD14_SPEC_COMPLETE_ENABLERS.md`
-5. le présent addendum
+2. `V5_3_BUILD_PLAN_MODULE_PAR_MODULE.md`
+3. `V5_3_BUILD14_SPEC_COMPLETE_ENABLERS.md`
+4. le présent addendum
+
+`V5_3_MASTER_FINAL_CANONICAL.md`, s'il est conservé, n'est qu'un miroir secondaire et ne constitue pas une source autonome.
 
 ## 0.2 Réalité d’implémentation
 
-- Build-14 dispose déjà de readers réels et d’une influence limitée gouvernée
+- les briques de cet addendum sont des enablers Build-14 **activés à 100% en Shadow** (`SHADOW_ENABLED`)
+- leur promotion live reste strictement conditionnelle au verdict post-Shadow
 - cet addendum ne rend pas `COMPLETE` exécutable
 - il ne crée aucun runtime autonome
 - il n’ouvre aucun `BACKTEST_PROFILE`
@@ -46,26 +48,27 @@ Le but est de rendre Build-14 plus précis sur :
 
 # 2. Règles non négociables
 
-## 2.1 Mode d’introduction
+## 2.1 Mode d’activation
 
-Toute brique de cet addendum suit :
+Toute brique de cet addendum suit le cycle Hard State :
 
-1. lecture seule
-2. influence limitée
-3. candidature éventuelle vers Build-15 / Build-16 / Build-17
+1. `CODED` → `SHADOW_ENABLED` : activé à 100% en Shadow, pleinement utilisé et observé
+2. Verdict post-Shadow : `SHADOW_VALIDATED` ou `DORMANT`
+3. Promotion live conditionnelle au verdict
 
-En date du 29 mars 2026, seule l’étape 2 est ouverte de façon minimale :
+En date du 31 mars 2026, les enablers sont `SHADOW_ENABLED` :
 
-- modulation bornée de confiance / budget
-- review_only gouverné
-- soft veto gouverné
+- pleinement utilisés dans les décisions Shadow
+- leurs outputs sont tracés, comparés, auditables
+- ils influencent activement le scoring, le risk et le portefeuille en Shadow
 
 Toujours interdit :
 
-- toute décision autonome
+- toute décision autonome hors gouvernance
 - tout bypass du risk backbone
 - tout bypass du portfolio
 - toute activation implicite de `COMPLETE`
+- confondre activation Shadow et promotion live
 
 ## 2.2 Interdictions
 
@@ -141,6 +144,41 @@ mais jamais :
 - plus opaque
 - plus autonome
 - plus permissif envers le live
+
+---
+
+# Clarification post-audit — Absorption des enrichissements tiers
+
+## Principe
+Les enrichissements proposés par les audits tiers (Gemini, Opus, Qwen) sont absorbés dans cet addendum comme matière de travail, pas comme doctrine active.
+
+## Enrichissements absorbés
+- LOB deep filter / VWA (anti-spoofing cognitif) → `microstructure_enriched_layer`
+- OBI (Order Book Imbalance) → `microstructure_enriched_layer`
+- Hurst regime classifier → `regime_enriched_layer`
+- Toxicité de flux → `microstructure_enriched_layer`
+- Competition monitor → `risk_contribution_monitor`
+- Faux breakout model → validation Engine A enrichie
+
+## Enrichissements classés RESEARCH_LOCAL
+- Predictive shadow agressif / what-if engine autonome → recherche locale uniquement
+- Adaptation stop-hunting avancée → expérimentation locale non promue
+- Inférence asymétrique via shadow-replay → non live
+
+## Règle
+Tout enrichissement absorbé suit le cycle Hard State canonique :
+1. Documentation dans cet addendum (`DOCUMENTED`)
+2. Implémentation codée (`CODED`)
+3. Test en LOCAL_REPLAY
+4. Activation à 100% en Shadow (`SHADOW_ENABLED`) : pleinement utilisé, tracé, auditable
+5. Verdict post-Shadow : `SHADOW_VALIDATED` ou `DORMANT`
+6. Promotion live conditionnelle au verdict, jamais automatique
+
+Aucun enrichissement de cet addendum ne peut :
+- créer un nouveau moteur (E, F, G...)
+- créer un nouveau profil
+- bypasser les gates de promotion
+- s'auto-activer
 
 ---
 

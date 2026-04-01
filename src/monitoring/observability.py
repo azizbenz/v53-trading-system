@@ -106,6 +106,41 @@ def build_observability_export(payload: TechnicalDashboardPayload) -> Observabil
             labels={**base_labels, "status": payload.system.replay_import_status},
         ),
         _sample(
+            "v53_portfolio_capital_deployed_usdt",
+            kind="gauge",
+            value=payload.portfolio.capital_deployed_usdt,
+            unit="usdt",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_portfolio_ce_net",
+            kind="gauge",
+            value=payload.portfolio.ce_net,
+            unit="ratio",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_portfolio_pnl_net_usdt",
+            kind="gauge",
+            value=payload.portfolio.pnl_net_usdt,
+            unit="usdt",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_risk_beta_utilization",
+            kind="gauge",
+            value=payload.portfolio.beta_utilization,
+            unit="ratio",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_risk_breach_count",
+            kind="gauge",
+            value=float(len(payload.portfolio.breaches)),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
             "v53_meta_dtr_coverage_ratio",
             kind="gauge",
             value=payload.build9_meta.dtr_coverage,
@@ -206,6 +241,98 @@ def build_observability_export(payload: TechnicalDashboardPayload) -> Observabil
             "v53_build9x_review_export_ready",
             kind="state",
             value=1.0 if payload.build9x.review_export_ready else 0.0,
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_build9x_learning_queue_depth",
+            kind="gauge",
+            value=float(payload.build9x.learning_queue_depth),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_build9x_learning_queue_oldest_age_ms",
+            kind="gauge",
+            value=float(payload.build9x.learning_queue_oldest_age_ms),
+            unit="ms",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_build9x_learning_worker_cpu_pct",
+            kind="gauge",
+            value=payload.build9x.learning_worker_cpu_pct,
+            unit="pct",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_build9x_learning_worker_rss_mb",
+            kind="gauge",
+            value=payload.build9x.learning_worker_rss_mb,
+            unit="mb",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_build9x_learning_write_latency_ms",
+            kind="gauge",
+            value=payload.build9x.learning_write_latency_ms,
+            unit="ms",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_build9x_learning_export_failures_total",
+            kind="counter",
+            value=float(payload.build9x.learning_export_failures_total),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_build9x_learning_log_loss_total",
+            kind="counter",
+            value=float(payload.build9x.learning_log_loss_total),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_build9x_learning_unprocessed_items_count",
+            kind="gauge",
+            value=float(payload.build9x.learning_unprocessed_items_count),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_build9x_learning_backlog_state",
+            kind="state",
+            value=1.0,
+            labels={**base_labels, "state": payload.build9x.learning_backlog_state},
+        ),
+        _sample(
+            "v53_build9x_learning_capture_mode",
+            kind="state",
+            value=1.0,
+            labels={**base_labels, "mode": payload.build9x.learning_capture_mode},
+        ),
+        _sample(
+            "v53_build9x_learning_backpressure_active",
+            kind="state",
+            value=1.0 if payload.build9x.learning_backpressure_active else 0.0,
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_build9x_learning_observability_reduced",
+            kind="state",
+            value=1.0 if payload.build9x.learning_observability_reduced else 0.0,
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_build9x_review_blocked_due_to_incomplete_data",
+            kind="state",
+            value=1.0 if payload.build9x.review_blocked_due_to_incomplete_data else 0.0,
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_build9x_promotion_blocked_due_to_incomplete_data",
+            kind="state",
+            value=1.0 if payload.build9x.promotion_blocked_due_to_incomplete_data else 0.0,
             labels=base_labels,
         ),
         _sample(
@@ -510,9 +637,37 @@ def build_observability_export(payload: TechnicalDashboardPayload) -> Observabil
             labels=base_labels,
         ),
         _sample(
+            "v53_alert_queue_backlog_high_water_mark",
+            kind="gauge",
+            value=float(payload.alerts.backlog_high_water_mark),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_alert_queue_drop_rate_pct",
+            kind="gauge",
+            value=payload.alerts.drop_rate_pct,
+            unit="pct",
+            labels=base_labels,
+        ),
+        _sample(
             "v53_alert_stale_pair_count",
             kind="gauge",
             value=float(payload.alerts.stale_pair_count),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_alert_stale_spike_count",
+            kind="gauge",
+            value=float(payload.alerts.stale_spike_count),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_alert_recovery_retry_count",
+            kind="gauge",
+            value=float(payload.alerts.recovery_retry_count),
             unit="count",
             labels=base_labels,
         ),
@@ -542,7 +697,177 @@ def build_observability_export(payload: TechnicalDashboardPayload) -> Observabil
             value=1.0,
             labels={**base_labels, "status": payload.alerts.loss_drift_status},
         ),
+        _sample(
+            "v53_alert_kill_switch_active",
+            kind="state",
+            value=1.0 if payload.alerts.kill_switch_active else 0.0,
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_alert_operator_event_count",
+            kind="gauge",
+            value=float(payload.alerts.operator_runtime.event_count),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_alert_operator_pending_notification_count",
+            kind="gauge",
+            value=float(payload.alerts.operator_runtime.pending_notification_count),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_alert_operator_acknowledged_notification_count",
+            kind="gauge",
+            value=float(payload.alerts.operator_runtime.acknowledged_notification_count),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_alert_operator_rejection_event_count",
+            kind="gauge",
+            value=float(payload.alerts.operator_runtime.rejection_event_count),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_execution_expected_cost_bps",
+            kind="gauge",
+            value=payload.infra.expected_cost_bps,
+            unit="bps",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_execution_realized_cost_bps",
+            kind="gauge",
+            value=payload.infra.realized_cost_bps,
+            unit="bps",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_execution_elw_bps",
+            kind="gauge",
+            value=payload.infra.elw_bps,
+            unit="bps",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_execution_partial_fill_count",
+            kind="gauge",
+            value=float(payload.infra.partial_fill_count),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_execution_fill_latency_ms_p95",
+            kind="gauge",
+            value=float(payload.infra.fill_latency_ms_p95),
+            unit="ms",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_execution_reconciliation_alert_count",
+            kind="gauge",
+            value=float(payload.infra.reconciliation_alert_count),
+            unit="count",
+            labels=base_labels,
+        ),
     ]
+
+    for metric_name in payload.alerts.persisted_metric_names:
+        samples.append(
+            _sample(
+                "v53_alert_metric_persistence",
+                kind="state",
+                value=1.0,
+                labels={**base_labels, "metric": metric_name, "persistence": "persisted"},
+            )
+        )
+
+    for metric_name in payload.alerts.volatile_metric_names:
+        samples.append(
+            _sample(
+                "v53_alert_metric_persistence",
+                kind="state",
+                value=1.0,
+                labels={**base_labels, "metric": metric_name, "persistence": "volatile"},
+            )
+        )
+
+    if payload.alerts.operator_runtime.latest_event_type:
+        samples.append(
+            _sample(
+                "v53_alert_operator_latest_event",
+                kind="state",
+                value=1.0,
+                labels={
+                    **base_labels,
+                    "event_type": payload.alerts.operator_runtime.latest_event_type,
+                },
+            )
+        )
+
+    if payload.alerts.operator_runtime.latest_acknowledged_alert_id:
+        samples.append(
+            _sample(
+                "v53_alert_operator_latest_ack",
+                kind="state",
+                value=1.0,
+                labels={
+                    **base_labels,
+                    "alert_id": payload.alerts.operator_runtime.latest_acknowledged_alert_id,
+                },
+            )
+        )
+
+    if payload.alerts.operator_runtime.latest_rejection_reason:
+        samples.append(
+            _sample(
+                "v53_alert_operator_latest_rejection",
+                kind="state",
+                value=1.0,
+                labels={
+                    **base_labels,
+                    "reason": payload.alerts.operator_runtime.latest_rejection_reason,
+                },
+            )
+        )
+
+    for index, event in enumerate(payload.alerts.operator_runtime.recent_event_log):
+        samples.append(
+            _sample(
+                "v53_alert_operator_recent_event",
+                kind="state",
+                value=float(event.timestamp_ms),
+                unit="ms",
+                labels={
+                    **base_labels,
+                    "index": str(index),
+                    "event_type": event.event_type,
+                    "action": event.action,
+                    "accepted": "true" if event.accepted else "false",
+                    "target": event.target or "none",
+                    "message": event.message,
+                },
+            )
+        )
+        if event.rejection_reason:
+            samples.append(
+                _sample(
+                    "v53_alert_operator_recent_rejection",
+                    kind="state",
+                    value=float(event.timestamp_ms),
+                    unit="ms",
+                    labels={
+                        **base_labels,
+                        "index": str(index),
+                        "action": event.action,
+                        "target": event.target or "none",
+                        "reason": event.rejection_reason,
+                    },
+                )
+            )
 
     for module_name in payload.system.active_modules:
         samples.append(
@@ -562,6 +887,46 @@ def build_observability_export(payload: TechnicalDashboardPayload) -> Observabil
                 kind="state",
                 value=1.0 if engine_id in stale_engines else 0.0,
                 labels={**base_labels, "engine": engine_id},
+            )
+        )
+
+    for engine in payload.engines:
+        samples.append(
+            _sample(
+                "v53_engine_useful_frequency",
+                kind="gauge",
+                value=engine.useful_frequency,
+                unit="count",
+                labels={**base_labels, "engine": engine.engine_id},
+            )
+        )
+        samples.append(
+            _sample(
+                "v53_engine_ce_expected",
+                kind="gauge",
+                value=engine.ce_expected,
+                unit="ratio",
+                labels={**base_labels, "engine": engine.engine_id},
+            )
+        )
+
+    for pair in payload.pairs:
+        samples.append(
+            _sample(
+                "v53_pair_freshness_ms",
+                kind="gauge",
+                value=float(pair.freshness_ms),
+                unit="ms",
+                labels={**base_labels, "pair": pair.pair, "health": pair.health.value},
+            )
+        )
+        samples.append(
+            _sample(
+                "v53_pair_useful_frequency",
+                kind="gauge",
+                value=pair.useful_frequency,
+                unit="count",
+                labels={**base_labels, "pair": pair.pair},
             )
         )
 

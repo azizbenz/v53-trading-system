@@ -1,4 +1,6 @@
 """Tests for data_backbone.rest_bootstrap — Build-2."""
+import logging
+
 import pytest
 
 from data_backbone.rest_bootstrap.snapshot_fetcher import (
@@ -157,6 +159,15 @@ class TestBootstrapReporter:
         ))
         assert reporter.failure_rate == 0.5
 
+    def test_record_emits_structured_log(self, caplog: pytest.LogCaptureFixture):
+        caplog.set_level(logging.INFO)
+        reporter = BootstrapReporter()
+        reporter.record(BootstrapEvent(
+            pair="BTCUSDT", operation="bootstrap",
+            outcome=BootstrapOutcome.SUCCESS, timestamp=100.0,
+        ))
+        assert any(record.message == "rest_bootstrap_event" for record in caplog.records)
+
 
 class _FakeSnapshotProvider:
     def __init__(self) -> None:
@@ -248,3 +259,16 @@ class TestRestBootstrapRuntime:
         )
         assert result.outcome == BootstrapOutcome.SUCCESS
         assert result.gap_fill_result is not None
+
+    def test_runtime_logs_bootstrap_request(self, caplog: pytest.LogCaptureFixture):
+        caplog.set_level(logging.INFO)
+        provider = _FakeSnapshotProvider()
+        provider.snapshot = Snapshot(
+            pair="BTCUSDT",
+            data_type="orderbook",
+            payload={"bids": [], "asks": []},
+            fetch_time=100.0,
+        )
+        runtime = RestBootstrapRuntime(provider)
+        runtime.bootstrap("BTCUSDT", "orderbook", now=105.0, max_age_s=10.0)
+        assert any(record.message == "rest_bootstrap_requested" for record in caplog.records)

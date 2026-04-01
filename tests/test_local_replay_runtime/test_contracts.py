@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import shutil
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -10,15 +13,24 @@ from interface_contracts import ProfileId, RuntimeMode, StrategyClassification
 from local_replay_runtime import (
     ArtifactManifest,
     LocalReplayOrchestrator,
+    LocalReplayEvidenceRecorder,
+    LocalReplayEvidenceRecorderConfig,
     LocalReplayRequest,
+    ReplayRunManifest,
     ReplayArtifactKind,
     ReplayBundle,
     ReplayClockRef,
     ReplayDatasetRef,
     ReplayExecutionPlan,
     ReplayLifecycleState,
+    LocalReplayRuntimeEvidence,
     SHARED_CORE_ID,
 )
+
+
+def _scratch_dir(name: str) -> Path:
+    repo_root = Path(__file__).resolve().parents[2]
+    return repo_root / "build" / "local_replay_runtime_tests" / name
 
 
 def test_local_replay_runtime_exports_expected_symbols():
@@ -29,8 +41,38 @@ def test_local_replay_runtime_exports_expected_symbols():
         "LocalReplayRequest",
         "ReplayBundle",
         "ReplayExecutionPlan",
+        "LocalReplayRuntimeEvidence",
         "LocalReplayOrchestrator",
+        "ReplayRunManifest",
         "ReplayArtifactKind",
+        "HistoricalReplayOpportunity",
+        "HistoricalReplayDataset",
+        "load_historical_replay_dataset",
+        "build_feature_bridge_payload",
+        "ReplayRouteHint",
+        "HistoricalMarketEventEnvelope",
+        "HistoricalSnapshotBatch",
+        "load_historical_snapshot_batch",
+        "ReplayEventRouterConfig",
+        "route_snapshot_batch_to_dataset",
+        "ReplayInputKind",
+        "ReplayDetailLevel",
+        "ReplaySessionConfig",
+        "build_replay_session_config",
+        "ReplaySessionLifecycle",
+        "ReplaySessionState",
+        "ReplaySessionStoreConfig",
+        "ReplaySessionStateStore",
+        "PerformanceModeGuardReport",
+        "build_performance_mode_guard_report",
+        "RunConsistencyGuardReport",
+        "compare_replay_runs",
+        "ReplayClockTick",
+        "HistoricalReplayClock",
+        "build_replay_clock",
+        "ShadowExecutionSimulatorConfig",
+        "simulate_shadow_compatible_dtrs",
+        "build_parity_diagnostics_payload",
     }.issubset(set(local_replay_runtime.__all__))
 
 
@@ -138,6 +180,93 @@ def test_artifact_manifest_rejects_implicit_promotion_request():
         )
 
 
+def test_replay_run_manifest_accepts_canonical_local_replay_shape():
+    manifest = ReplayRunManifest(
+        run_id="run-1",
+        strategy_id="strategy-a",
+        strategy_version="a.v1",
+        strategy_classification=StrategyClassification.A_VARIANT,
+        lineage_version="a.v1.r1",
+        profile_scope=ProfileId.LIGHT,
+        engine_scope=("engine_a", "engine_b"),
+        tested_pairs=("BTCUSDT", "ETHUSDT"),
+        dataset_manifest_id="dataset-1",
+        timeframe_scope="2026-03-01/2026-03-31",
+        feature_set_version="feature.v1",
+        formula_set_version="formula.v1",
+        scoring_version="score.v1",
+        regime_version="regime.v1",
+        risk_policy_version="risk.v1",
+        cost_model_version="cost.v1",
+        performance_mode="shadow_fidelity_mode",
+        artifact_schema_version="artifact.v1",
+        artifact_hash="hash-1",
+        clock_id="clock-1",
+        start_timestamp_ms=1_700,
+        end_timestamp_ms=2_000,
+        tick_count=12,
+        record_count=42,
+    )
+
+    assert manifest.runtime_mode == RuntimeMode.LOCAL_REPLAY
+    assert manifest.record_count == 42
+
+
+def test_replay_run_manifest_rejects_non_local_runtime_and_duplicate_scope():
+    with pytest.raises(ValidationError):
+        ReplayRunManifest(
+            run_id="run-2",
+            strategy_id="strategy-a",
+            strategy_version="a.v1",
+            strategy_classification=StrategyClassification.A_VARIANT,
+            lineage_version="a.v1.r1",
+            profile_scope=ProfileId.LIGHT,
+            runtime_mode=RuntimeMode.SHADOW,
+            engine_scope=("engine_a",),
+            tested_pairs=("BTCUSDT",),
+            dataset_manifest_id="dataset-1",
+            timeframe_scope="2026-03-01/2026-03-31",
+            feature_set_version="feature.v1",
+            formula_set_version="formula.v1",
+            scoring_version="score.v1",
+            regime_version="regime.v1",
+            risk_policy_version="risk.v1",
+            cost_model_version="cost.v1",
+            performance_mode="shadow_fidelity_mode",
+            artifact_schema_version="artifact.v1",
+            artifact_hash="hash-1",
+            clock_id="clock-1",
+            start_timestamp_ms=1_700,
+            end_timestamp_ms=2_000,
+        )
+
+    with pytest.raises(ValidationError):
+        ReplayRunManifest(
+            run_id="run-3",
+            strategy_id="strategy-a",
+            strategy_version="a.v1",
+            strategy_classification=StrategyClassification.A_VARIANT,
+            lineage_version="a.v1.r1",
+            profile_scope=ProfileId.LIGHT,
+            engine_scope=("engine_a", "engine_a"),
+            tested_pairs=("BTCUSDT",),
+            dataset_manifest_id="dataset-1",
+            timeframe_scope="2026-03-01/2026-03-31",
+            feature_set_version="feature.v1",
+            formula_set_version="formula.v1",
+            scoring_version="score.v1",
+            regime_version="regime.v1",
+            risk_policy_version="risk.v1",
+            cost_model_version="cost.v1",
+            performance_mode="research_fast_mode",
+            artifact_schema_version="artifact.v1",
+            artifact_hash="hash-1",
+            clock_id="clock-1",
+            start_timestamp_ms=2_000,
+            end_timestamp_ms=1_700,
+        )
+
+
 def test_local_replay_request_rejects_non_local_replay_mode():
     with pytest.raises(ValidationError):
         LocalReplayRequest(
@@ -240,12 +369,22 @@ def test_local_replay_orchestrator_prepares_validated_bundle_when_refs_are_compl
         request,
         artifact_id="artifact-plan",
         strategy_version="a.v2",
-        payload_refs=("exports/review.md", "exports/bundle.json"),
+        payload_refs=(
+            "exports/review.md",
+            "exports/feature_bridge.json",
+            "exports/parity.json",
+            "exports/replay_metrics.json",
+            "exports/replay_dtr.json",
+        ),
         dataset_ref=dataset_ref,
         clock_ref=clock_ref,
         diagnostic_ids=("diag-1",),
         candidate_ids=("cand-1",),
         review_export_ref="exports/review.md",
+        feature_bridge_ref="exports/feature_bridge.json",
+        parity_diagnostics_ref="exports/parity.json",
+        replay_metrics_ref="exports/replay_metrics.json",
+        replay_dtr_ref="exports/replay_dtr.json",
     )
 
     assert isinstance(plan, ReplayExecutionPlan)
@@ -253,6 +392,17 @@ def test_local_replay_orchestrator_prepares_validated_bundle_when_refs_are_compl
     assert plan.bundle.lifecycle_state == ReplayLifecycleState.VALIDATED
     assert plan.bundle.manifest.dataset_ref == "dataset-1"
     assert plan.bundle.manifest.review_export_ref == "exports/review.md"
+    assert plan.bundle.manifest.feature_bridge_ref == "exports/feature_bridge.json"
+    assert plan.bundle.manifest.parity_diagnostics_ref == "exports/parity.json"
+
+    evidence = LocalReplayOrchestrator.build_runtime_evidence(plan)
+    assert isinstance(evidence, LocalReplayRuntimeEvidence)
+    assert evidence.data_source == "recorded_replay"
+    assert evidence.feature_bridge_ready is True
+    assert evidence.parity_diagnostics_ready is True
+    assert evidence.replay_metrics_ready is True
+    assert evidence.replay_dtr_ready is True
+    assert evidence.replay_useful_ready is True
 
 
 def test_local_replay_orchestrator_keeps_partial_plan_non_ready_without_executing_replay():
@@ -277,4 +427,119 @@ def test_local_replay_orchestrator_keeps_partial_plan_non_ready_without_executin
         "clock ref is required before validation",
         "payload refs are required before validation",
         "review export ref is required for review packets",
+        "feature bridge ref is required before validation",
+        "parity diagnostics ref is required before validation",
+        "replay metrics ref is required before validation",
+        "replay dtr ref is required before validation",
     }
+
+    evidence = LocalReplayOrchestrator.build_runtime_evidence(plan)
+    assert evidence.data_source == "unknown"
+    assert evidence.replay_useful_ready is False
+
+
+def test_local_replay_evidence_recorder_materializes_useful_replay_evidence():
+    request = LocalReplayRequest(
+        correlation_id="corr-runtime-recorder",
+        profile=ProfileId.LIGHT,
+        strategy_classification=StrategyClassification.A_VARIANT,
+        lineage_version="a.v4.1",
+        replay_reason="Replay runtime recorder coverage",
+    )
+    dataset_ref = ReplayDatasetRef(dataset_id="dataset-1", pair_scope=("BTCUSDT",), record_count=100)
+    clock_ref = ReplayClockRef(
+        clock_id="clock-1",
+        start_timestamp_ms=1_000,
+        end_timestamp_ms=2_000,
+        tick_count=50,
+    )
+    plan = LocalReplayOrchestrator.prepare_bundle(
+        request,
+        artifact_id="artifact-runtime",
+        strategy_version="a.v4",
+        payload_refs=(
+            "exports/review.md",
+            "exports/feature_bridge.json",
+            "exports/parity.json",
+            "exports/replay_metrics.json",
+            "exports/replay_dtr.json",
+        ),
+        dataset_ref=dataset_ref,
+        clock_ref=clock_ref,
+        review_export_ref="exports/review.md",
+        feature_bridge_ref="exports/feature_bridge.json",
+        parity_diagnostics_ref="exports/parity.json",
+        replay_metrics_ref="exports/replay_metrics.json",
+        replay_dtr_ref="exports/replay_dtr.json",
+    )
+    recorder = LocalReplayEvidenceRecorder()
+
+    recorder.load_execution_plan(plan)
+    recorder.mark_payload_generated("exports/feature_bridge.json")
+    recorder.mark_payload_generated("exports/parity.json")
+    recorder.mark_payload_generated("exports/replay_metrics.json")
+    partial = recorder.build_evidence()
+    recorder.mark_payload_generated("exports/replay_dtr.json")
+    full = recorder.build_evidence()
+
+    assert partial.replay_useful_ready is False
+    assert full.replay_useful_ready is True
+    assert full.data_source == "recorded_replay"
+
+
+def test_local_replay_evidence_recorder_persists_state_across_restart():
+    state_dir = _scratch_dir("evidence")
+    shutil.rmtree(state_dir, ignore_errors=True)
+    try:
+        request = LocalReplayRequest(
+            correlation_id="corr-runtime-recorder-persist",
+            profile=ProfileId.LIGHT,
+            strategy_classification=StrategyClassification.A_VARIANT,
+            lineage_version="a.v5.1",
+            replay_reason="Replay runtime recorder persistence",
+        )
+        dataset_ref = ReplayDatasetRef(dataset_id="dataset-1", pair_scope=("BTCUSDT",), record_count=100)
+        clock_ref = ReplayClockRef(
+            clock_id="clock-1",
+            start_timestamp_ms=1_000,
+            end_timestamp_ms=2_000,
+            tick_count=50,
+        )
+        plan = LocalReplayOrchestrator.prepare_bundle(
+            request,
+            artifact_id="artifact-runtime-persist",
+            strategy_version="a.v5",
+            payload_refs=(
+                "exports/review.md",
+                "exports/feature_bridge.json",
+                "exports/parity.json",
+                "exports/replay_metrics.json",
+                "exports/replay_dtr.json",
+            ),
+            dataset_ref=dataset_ref,
+            clock_ref=clock_ref,
+            review_export_ref="exports/review.md",
+            feature_bridge_ref="exports/feature_bridge.json",
+            parity_diagnostics_ref="exports/parity.json",
+            replay_metrics_ref="exports/replay_metrics.json",
+            replay_dtr_ref="exports/replay_dtr.json",
+        )
+        config = LocalReplayEvidenceRecorderConfig(state_dir=state_dir, persist_state=True)
+        recorder = LocalReplayEvidenceRecorder(config=config)
+        recorder.load_execution_plan(plan)
+        recorder.mark_payloads_generated(
+            (
+                "exports/feature_bridge.json",
+                "exports/parity.json",
+                "exports/replay_metrics.json",
+                "exports/replay_dtr.json",
+            )
+        )
+
+        reloaded = LocalReplayEvidenceRecorder(config=config)
+        evidence = reloaded.build_evidence()
+
+        assert evidence.replay_useful_ready is True
+        assert evidence.artifact_id == "artifact-runtime-persist"
+    finally:
+        shutil.rmtree(state_dir, ignore_errors=True)

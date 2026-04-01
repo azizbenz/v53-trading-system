@@ -130,8 +130,8 @@ Interdiction de laisser vivre :
 
 Un `Build14_enabler` :
 
-- entre d’abord en lecture seule
-- peut ensuite avoir une influence limitée
+- est **activé à 100% en Shadow** (`SHADOW_ENABLED`) : pleinement utilisé, tracé, auditable
+- sa promotion live est conditionnelle au verdict post-Shadow (`SHADOW_VALIDATED` ou `DORMANT`)
 - ne devient jamais un moteur autonome
 - ne bypass jamais A/B/C/D, le risk backbone, le portfolio ni les gates de promotion
 

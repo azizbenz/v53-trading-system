@@ -10,7 +10,11 @@ GEM-08: added market_impact term (MI_i) to cost model.
 
 from __future__ import annotations
 
+import logging
 from pydantic import BaseModel, Field
+
+
+logger = logging.getLogger(__name__)
 
 
 class TradeCost(BaseModel, frozen=True):
@@ -89,6 +93,22 @@ class CostAggregator:
 
     def record(self, cost: TradeCost) -> None:
         self._costs.append(cost)
+        logger.info(
+            "execution_trade_cost_recorded",
+            extra={
+                "order_id": cost.order_id,
+                "pair": cost.pair,
+                "engine_id": cost.engine_id,
+                "total_cost": cost.total_cost,
+                "explicit_fee": cost.explicit_fee,
+                "implicit_cost": cost.implicit_cost,
+                "adverse_selection": cost.adverse_selection,
+                "partial_fill_cost": cost.partial_fill_cost,
+                "market_impact": cost.market_impact,
+                "expected_cost": cost.expected_cost,
+                "cost_surprise": cost.cost_surprise,
+            },
+        )
 
     def get_aggregate(self) -> CostAggregate:
         if not self._costs:

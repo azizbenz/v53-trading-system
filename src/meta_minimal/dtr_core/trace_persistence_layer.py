@@ -4,12 +4,18 @@ Persist DTRs without silent loss. Track persistence failures.
 
 DTRCoverage = N_dtr / N_opportunities
 DTRLossRate = N_drops / N_attempted
+
+GEM-19: disk flush via atomic write (write-tmp-then-rename).
 """
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from pydantic import BaseModel, Field
 
+from interface_contracts.atomic_io import atomic_write_json
 from meta_minimal.dtr_core.dtr_record_builder import DTRRecord
 
 
@@ -23,15 +29,17 @@ class PersistenceStats(BaseModel, frozen=True):
 
 
 class DTRStore:
-    """In-memory DTR persistence with loss tracking.
+    """In-memory DTR persistence with loss tracking and disk flush.
 
-    Production would use a database; this provides the contract.
+    GEM-19: flush_to_disk() writes all records atomically to JSON.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, flush_dir: Path | None = None) -> None:
         self._records: list[DTRRecord] = []
         self._attempted: int = 0
         self._dropped: int = 0
+        self._flush_dir = flush_dir
+        self._last_flush_index: int = 0
 
     def persist(self, record: DTRRecord) -> bool:
         """Persist a DTR. Returns True on success, False on failure.
@@ -84,3 +92,29 @@ class DTRStore:
     @property
     def size(self) -> int:
         return len(self._records)
+
+    def flush_to_disk(self, path: Path | None = None) -> int:
+        """GEM-19: atomically flush all records to JSON on disk.
+
+        Returns the number of new records flushed since last call.
+        """
+        target = path or (self._flush_dir / "dtr_records.json" if self._flush_dir else None)
+        if target is None:
+            return 0
+
+        new_records = self._records[self._last_flush_index:]
+        if not new_records:
+            return 0
+
+        # Serialize all records (not just new — full snapshot for atomicity)
+        data = [r.model_dump(mode="json") for r in self._records]
+        atomic_write_json(target, data)
+
+        flushed = len(new_records)
+        self._last_flush_index = len(self._records)
+        return flushed
+
+    @property
+    def pending_flush_count(self) -> int:
+        """Number of records not yet flushed to disk."""
+        return len(self._records) - self._last_flush_index

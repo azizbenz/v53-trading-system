@@ -1,25 +1,26 @@
 # V5_3_MASTER_FINAL_CANONICAL
-## Architecture canonique unique — prod-safe
+## Miroir documentaire secondaire — prod-safe
 ### Système quant crypto spot halal — V5.3
-### Document maître développeur / quant / risk / infra
-### Référence unique du projet
+### Support développeur / quant / risk / infra aligné sur le master officiel unique
+### Document miroir, non source de vérité autonome
 
 ---
 
 # 0. Statut du document
 
-Ce document est la **référence canonique unique** de la V5.3.
+Ce document est un **miroir documentaire secondaire** de la V5.3.
 
-Il remplace l’usage simultané de plusieurs documents actifs et absorbe les travaux précédents dans une structure unique.  
-Toutes les annexes, audits, notes de recherche et variantes mathématiques doivent être considérées comme :
+La **source de vérité unique** est `V5_3_MASTER_FINAL_UNIQUE.md`.
 
-- soit **intégrées ici**
-- soit **archivées**
-- soit **non binding**
+En cas de divergence :
+
+- `V5_3_MASTER_FINAL_UNIQUE.md` prime immédiatement
+- le présent document doit être corrigé ou relu comme simple miroir
+- aucune table, annexe ou addendum ne peut se rattacher à ce document comme à une source autonome
 
 ## Règle absolue
 
-Aucun développeur, aucune IA, aucun auditeur ne doit utiliser un autre document comme source de vérité active si ce document contredit ou dépasse ce master.
+Aucun développeur, aucune IA, aucun auditeur ne doit utiliser le présent document comme source de vérité autonome si son contenu diverge du `V5_3_MASTER_FINAL_UNIQUE.md`.
 
 ## 0.1 Statut documentaire vs réalité d’implémentation
 
@@ -29,8 +30,10 @@ Pour éviter toute sur-promesse :
 - **Build-10** dispose désormais d’une première implémentation codée côté monitoring backend et projection UI Light verrouillée
 - **Build-9X** dispose désormais d’une première implémentation codée côté diagnostics, hypothèses, candidats et exports gouvernés
 - **LOCAL_REPLAY** et l’import d’artifact disposent désormais de **scaffolds minimaux codés**, sans constituer encore un runtime complet opéré
-- **Build-11 à Build-17** restent des cibles canoniques futures
-- `COMPLETE` ne doit toujours pas être lu comme pleinement runtime-ready tant que Build-14 à Build-17 ne sont pas réellement validés
+- **Build-11 à Build-17** restent des étapes canoniques de validation et
+  d'extension du rollout, pas des architectures concurrentes
+- l'architecture complete doit etre lue comme la cible de reference deja
+  documentee ; son activation reelle reste simplement gouvernee et progressive
 
 ## 0.2 Invariants local / VPS
 
@@ -53,6 +56,73 @@ Interdictions canoniques :
 - toute seconde V5.3 locale ou VPS
 - toute promotion implicite d’une idée locale vers le live
 - tout fork local / VPS
+
+## 0.3 Intégration des audits tiers — Principe officiel
+
+Les audits tiers sont de la **matière de correction**, jamais une source de vérité active.
+Chaque finding est classé (NOW_P0 / NOW_LIGHT / NEXT_BUILD14 / RESEARCH_LOCAL / REJECT) et absorbé dans le fichier MD cible.
+Le rapport de triage officiel est `V5_3_AUDIT_INTEGRATION_DECISIONS.md`.
+
+## 0.4 HARD STATE documentaire — Cycle de vie officiel
+
+Chaque brique, build, moteur ou couche du système V5.3 est décrite par un **état officiel unique et non ambigu** :
+
+| Hard State | Signification |
+|---|---|
+| `CODED` | Le code existe dans le dépôt |
+| `DOCUMENTED` | La spécification canonique est écrite et cohérente |
+| `SHADOW_ENABLED` | Activé à 100% en mode SHADOW, pleinement utilisé et observé |
+| `SHADOW_VALIDATED` | Les 30 jours de Shadow sont terminés avec verdict positif |
+| `MICRO_LIVE_ELIGIBLE` | Éligible au passage Micro-live après verdict Shadow |
+| `LIVE_LIGHT_ELIGIBLE` | Éligible au passage Live-Light après Micro-live validé |
+| `COMPLETE_ELIGIBLE` | Éligible au passage Live-Complete après Shadow Complete validé |
+| `PROMOTED` | Activé en production dans le profil autorisé |
+| `DORMANT` | Codé et documenté mais volontairement non activé |
+| `FORBIDDEN` | Interdit en V5.3 prod (RL live, POMDP live, etc.) |
+
+Règles :
+- `CODED` ≠ `SHADOW_VALIDATED` ≠ `PROMOTED`
+- `SHADOW_ENABLED` = activé à 100% et pleinement utilisé en Shadow, pas en lecture seule
+- Build-14 `CODED` ≠ Build-14 `PROMOTED`
+- Complete enablers `SHADOW_ENABLED` ≠ activation Complete live
+- Activation en Shadow ≠ promotion automatique vers Live
+
+## 0.6 HARD STATEMENT — Règle de promotion temporelle obligatoire
+
+> **NON NÉGOCIABLE. Aucune dérogation, aucun raccourci, aucune exception.**
+
+Toute la solution V5.3 (Light + Complete, Builds 1→17) est **codée intégralement**.
+Mais le code existant ne donne **aucun droit de promotion automatique**.
+
+### Pipeline de promotion hard
+
+```
+[TOUT CODÉ] → Light Shadow 30j → Light Live → Complete Shadow 30j → Complete Live
+```
+
+0. **Shadow = phase de vérité système complète** : pendant les 30 jours, la solution est testée dans sa forme complète utile. Build-14 activé à 100%, moteurs A/B/C/D actifs, tous les enrichissements observés. Le Shadow n'est plus une validation Light minimale.
+1. **Light Shadow 30 jours** : Light trade en SHADOW sur données réelles pendant 30 jours calendaires consécutifs minimum. Build-14, C/D et enrichissements activés à 100% en Shadow. Interruption > 24h = compteur à zéro. Rapport shadow exploitable obligatoire incluant comparaison inter-moteurs et contribution Build-14.
+2. **Verdict post-Shadow** : à l'issue des 30 jours, décision de promotion composant par composant. Activation Shadow ≠ promotion Live automatique. Possibilité de rollback, downgrade ou désactivation sélective.
+3. **Light Live** : activation Live-Light uniquement après les 30 jours de shadow validés et verdict positif.
+4. **Complete Shadow 30 jours** : Complete trade en SHADOW pendant 30 jours calendaires consécutifs minimum, en parallèle de Light live. Non-régression Light obligatoire. Dégradation = désactivation + compteur à zéro.
+5. **Complete Live** : activation Live-Complete uniquement après les 30 jours de shadow Complete validés + rapport comparatif Light vs Complete approuvé.
+
+**Aucun opérateur, aucune IA, aucun audit ne peut bypasser ces délais. L'activation complète en Shadow est un essai structuré, pas une promotion déguisée.**
+
+## 0.5 Guardrails P0 issus des audits (invariants système)
+
+1. **Crossed book** : DepthEvent doit valider `best_ask >= best_bid`
+2. **Epsilon risk/reward** : `risk < 1e-6 → None`
+3. **Imports dynamiques** : DAG validator signale `importlib.import_module` comme wildcard
+4. **Recovery backoff** : exponential backoff + vérification libération ressources I/O
+5. **Buffer drop_oldest** : deque(maxlen=K), jamais drop_newest
+6. **Jitter tolerance** : fenêtre configurable (5-10ms) avant TIMESTAMP_REVERSAL
+7. **Latence monotone** : clock monotone, filtrage valeurs aberrantes
+8. **Kill switch persistant** : état circuit breaker persisté sur disque (écriture atomique)
+9. **Persistance atomique** : write-tmp-then-rename pour tout état critique
+10. **Stale guard runtime** : rejet si delta exchange_time vs local_time > seuil
+11. **Persistance minimale stores critiques** : flush périodique DTR, états portefeuille, logs audit
+12. **Kill switch externe** : mécanisme hors processus Python (fichier flag ou API admin)
 
 ---
 
@@ -104,7 +174,7 @@ La V5.3 existe pour corriger cela.
 
 ## 2.3 Contraintes de gouvernance
 
-- source de vérité unique
+- respect de la source de vérité unique portée par `V5_3_MASTER_FINAL_UNIQUE.md`
 - modules versionnés
 - interfaces explicites
 - contract tests obligatoires
@@ -197,74 +267,110 @@ Objectif : réengager proprement un edge déjà validé, sans reconstruire un mo
 
 ## 4.4 Principe central
 
-L’architecture complète existe comme **cible produit**, mais la production peut être activée en **profil Light** ou **profil Complete** selon l’état de validation.
+La V5.3 est documentee comme une **solution complete cible unique**.
+
+`LIGHT` et `COMPLETE` ne decrivent pas deux architectures differentes.
+Ils decrivent deux **enveloppes officielles de rollout et d'activation reelle**
+d'une meme architecture complete, prod-safe et gouvernee.
+
+Cela implique explicitement :
+
+- l'architecture de reference couvre 12 paires cibles, 4 moteurs A/B/C/D,
+  une UI capable de superviser l'etat complet, et des protocoles complets
+  de risque, d'execution, de journalisation et de rollback
+- le deploiement reel initial reste borne a 6 paires
+- l'activation reelle des moteurs reste gouvernee par gates, budgets,
+  observabilite et valeur marginale demontree
+- C et D ne sont pas interdits par principe dans la doctrine cible
+- aucun profil custom n'est autorise
 
 ---
 
-# 5. Profils officiels d’activation
+# 5. Profils officiels de rollout et d’activation
 
 ## 5.1 Principe
 
-Il n’existe pas plusieurs V5.3 documentaires.  
-Il existe **une seule V5.3**, avec **deux profils d’activation officiels**.
+Il n’existe pas plusieurs V5.3 documentaires.
+Il existe **une seule V5.3**, avec **deux enveloppes officielles de rollout**.
+
+La difference entre `LIGHT` et `COMPLETE` porte sur :
+
+- la borne de paires activables en production
+- l'ampleur de l'activation reelle deja autorisee
+- le niveau de preuve exige pour etendre le rollout
+
+Elle ne porte pas sur l'existence doctrinale des modules, moteurs, UI et
+protocoles de la solution de reference.
 
 ## 5.2 Profil A — V5.3 Light
 
-### Univers
-- 6 paires maximum
+### Finalite
+- premier rollout reel prudent et gouverne
+- validation economique et operationnelle sur un univers borne
+- verification que l'architecture complete reste prod-safe en conditions reelles
 
-### Moteurs autorisés
-- Moteur A
-- Moteur B
+### Architecture disponible
+- modules complets de la V5.3
+- moteurs A, B, C et D presents dans la solution de reference
+- UI et supervision capables d'afficher les etats disponible / arme / actif /
+  borne / suspendu / non deploye
+- protocoles complets de risque, execution, observabilite et rollback
 
-### Couches obligatoires
-- Data engine
-- Data quality
-- Risk
-- Execution
-- Portfolio minimal
-- T1 minimal
+### Bornes runtime initiales
+- 6 paires maximum en production reelle
+- activation reelle borne par paire, moteur, budget et regime
+- A et B constituent le coeur attendu du rollout live initial
+- **C, D et Build-14 sont activés à 100% pendant le Shadow 30 jours** : scorés, classés, arbitrés, observés et comparés à A/B
+- promotion live de C/D conditionnelle au verdict post-Shadow (non automatique)
+- chaque composant suit le cycle Hard State : `SHADOW_ENABLED` → verdict → `SHADOW_VALIDATED` ou `DORMANT`
+
+### Exigences obligatoires
+- data engine
+- data quality
+- risk backbone complet et non contournable
+- execution et reconciliation completes
+- portfolio complet gouverne
+- T1 prudent
 - T2 prudent
-- T3 complet
-
-### Objectif
-- rentabilité robuste initiale
-- validation de fréquence utile
-- validation coût réel
-- validation capital efficiency
-- validation infra
+- T3 complet mais strictement borne par budget
+- logs, DTR, alerting et rollback auditables
 
 ### Interdictions
-- moteurs C et D en live
-- 12 paires complètes en live
-- RL
-- POMDP
-- optimal stopping complet
-- sophistication non nécessaire
+- profil custom
+- activation reelle au-dela des gates ou des budgets
+- ouverture > 6 paires sans validation de rollout
+- activation de C ou D sans preuve marginale, sans observabilite ou sans plan
+  de desactivation
+- RL directionnel live
+- POMDP live
+- sophistication opaque sans valeur prod-safe demontree
 
 ## 5.3 Profil B — V5.3 Complete
 
-### Univers
-- 12 paires
+### Finalite
+- extension gouvernee du rollout de la meme architecture complete
+- passage progressif de 6 vers 8/10 puis 12 paires
+- activation reelle elargie des moteurs et des capacites enrichies
 
-### Moteurs autorisés
-- A, B, C, D
-
-### Couches autorisées
-- orchestration portefeuille complète
-- analytics plus riches
+### Enveloppe cible
+- jusqu'a 12 paires actives
+- A, B, C et D activables sous gouvernance
+- orchestration portefeuille complete
+- analytics enrichis
 - sizing tiers complet
-- corrélation complète
-- monitoring enrichi
+- correlation et contribution risque completes
+- monitoring enrichi et pilotable sans opacite
 
-### Conditions d’accès
-- Light validé
-- coût réel stable
-- fréquence utile validée
-- capital efficiency positive
-- budget corrélation maîtrisé
+### Conditions d’acces
+- rollout LIGHT stable sur 6 paires
+- cout reel stable
+- frequence utile et edge net credibles
+- capital efficiency positive ou degradation explicitement justifiee
+- budget correlation maitrise
 - infra stable
-- pas de dérive de logs ni d’état
+- pas de derive de logs ni d'etat
+- preuve que l'extension ne cree pas de faux sentiment de diversification
+- preuve que C et D ont une valeur marginale et restent desactivables proprement
 
 ## 5.4 Runtime modes officiels
 
@@ -367,8 +473,8 @@ Rôle :
 - features de flux
 
 Obligatoire :
-- Light : version minimale
-- Complete : version enrichie
+- LIGHT : base gouvernée compatible rollout initial
+- COMPLETE : couche enrichie gouvernée
 
 ## 7.4 regime_engine
 Rôle :
@@ -377,8 +483,8 @@ Rôle :
 - segmentation utile de l’edge
 
 Obligatoire :
-- Light : version simple ou stable
-- Complete : version plus riche
+- LIGHT : version gouvernée pour rollout initial
+- COMPLETE : version enrichie si stable et utile
 
 ## 7.5 signal_engine
 Rôle :
@@ -484,8 +590,8 @@ Servent à classer les opportunités :
 
 ## 9.1 Moteur A — Premium Trend
 Usage :
-- Light : oui
-- Complete : oui
+- LIGHT : oui, coeur attendu du rollout initial
+- COMPLETE : oui, enveloppe elargie
 
 Niveau de priorité :
 - P0
@@ -496,8 +602,8 @@ But :
 
 ## 9.2 Moteur B — Mean Reversion Intraday
 Usage :
-- Light : oui
-- Complete : oui
+- LIGHT : oui, coeur attendu du rollout initial
+- COMPLETE : oui, enveloppe elargie
 
 Niveau de priorité :
 - P0
@@ -508,8 +614,9 @@ But :
 
 ## 9.3 Moteur C — Breakout Continuation
 Usage :
-- Light : non
-- Complete : oui
+- LIGHT : activable seulement sous gates specifiques, budget cout et
+  observabilite renforces
+- COMPLETE : oui, enveloppe elargie si valeur marginale demontree
 
 Niveau de priorité :
 - P1
@@ -519,8 +626,9 @@ But :
 
 ## 9.4 Moteur D — Re-entry / Second Chance
 Usage :
-- Light : non
-- Complete : oui
+- LIGHT : activable seulement sous gates specifiques, budget correlation et
+  discipline de re-entry explicites
+- COMPLETE : oui, enveloppe elargie si valeur marginale demontree
 
 Niveau de priorité :
 - P1
@@ -561,9 +669,11 @@ Le portefeuille doit avoir :
 
 # 11. Mathématiques : classification officielle
 
-Le système documente toute l’architecture mathématique, mais **tout n’est pas à implémenter immédiatement**.
+Le systeme documente toute l'architecture mathematique.
+La difference canonique porte sur l'ordre de verification et d'activation
+reelle, pas sur l'existence doctrinale des composants.
 
-## 11.1 NOW — à implémenter dans Light
+## 11.1 Obligatoire avant rollout reel initial
 
 - rendement net par trade
 - coût total réel
@@ -582,7 +692,7 @@ Le système documente toute l’architecture mathématique, mais **tout n’est 
 - logs minimaux mathématiquement suffisants
 - critères Phase 1
 
-## 11.2 NEXT — à implémenter dans Complete
+## 11.2 Obligatoire avant extension gouvernée du rollout
 
 - microstructure enrichie
 - OFI dynamique
@@ -780,28 +890,28 @@ Chaque merge doit être :
 - conventions logs
 - conventions tests
 
-## Phase Build-1 — cœur Light
+## Phase Build-1 — socle commun de la solution complete
 - data engine
 - data quality
-- execution minimal
-- risk minimal
-- portfolio minimal
+- execution backbone
+- risk backbone
+- portfolio gouverne
 
-## Phase Build-2 — moteurs Light
+## Phase Build-2 — moteurs du rollout initial
 - moteur A
 - moteur B
 - scoring hard / soft / rank
 - break-even réel
 - capital efficiency
 
-## Phase Build-3 — meta & monitoring
+## Phase Build-3 — monitoring, meta et pilotage prod-safe
 - DTR
 - CRA
 - dashboards
 - pass-rate économique
 - facteurs BTC / corrélation
 
-## Phase Build-4 — validation Light
+## Phase Build-4 — rollout réel initial borné
 - shadow
 - micro-live
 - live-light
@@ -823,14 +933,14 @@ Chaque merge doit être :
 
 Les enrichissements classés `Build14_enabler` :
 
-- entrent d’abord en lecture seule
-- peuvent ensuite avoir une influence limitée
+- sont **activés à 100% en Shadow** (`SHADOW_ENABLED`) : pleinement utilisés, tracés, auditables
+- promotion live non automatique : soumis au verdict post-Shadow
 - ne deviennent jamais des moteurs autonomes
 - ne bypassent jamais A/B/C/D, le risk backbone, le portfolio ni les gates de promotion
 
-## Phase Build-5 — extension Complete
-- 12 paires
-- moteurs C / D
+## Phase Build-5 — extension gouvernée de la meme architecture
+- montée 6 -> 8/10 -> 12 paires
+- activation réelle élargie de C / D si gates passées
 - covariance robuste
 - HMM enrichi
 - sizing tiers complet
@@ -838,7 +948,7 @@ Les enrichissements classés `Build14_enabler` :
 
 ---
 
-# 17. Go / No-Go Light
+# 17. Go / No-Go LIGHT — rollout reel initial
 
 Le passage en LIVE-LIGHT n’est autorisé que si :
 
@@ -850,21 +960,24 @@ Le passage en LIVE-LIGHT n’est autorisé que si :
 - logs / DTR fiables
 - corrélation maîtrisée
 - pas de stérilisation excessive
+- architecture complete toujours gouvernee et observable
+- aucun angle mort critique non traite n'est laisse hors surveillance
 
 ---
 
-# 18. Go / No-Go Complete
+# 18. Go / No-Go COMPLETE — extension gouvernee du rollout
 
 Le passage en LIVE-COMPLETE n’est autorisé que si :
 
-- Light rentable ou au moins économiquement crédible
+- LIGHT rentable ou au moins économiquement crédible
 - 6 paires déjà stables
-- moteurs A / B validés
-- coût additionnel des 6 paires restantes sous contrôle
+- coût additionnel des paliers 6 -> 8/10 -> 12 sous contrôle
 - budget BTC / clusters maîtrisé
 - K_eff augmente réellement
 - moteurs C / D apportent soit alpha, soit diversification
 - aucun backlog infra critique
+- aucune inflation de complexité UI ou de veto non gouvernée
+- aucun contournement opérateur possible
 
 ---
 
@@ -907,24 +1020,50 @@ Usage :
 
 ---
 
-# 21. Registre des risques canoniques
+# 21. Registre des risques canoniques et angles morts
 
-Risques à surveiller en permanence :
+Chaque angle mort ci-dessous doit etre traite explicitement par la doctrine,
+les gates, les tests et la supervision runtime.
 
-- non-stationnarité
-- coût réel sous-estimé
-- faux multi-edge
-- facteur BTC caché
-- faux signal microstructure
-- drawdown psychologique
-- stérilisation économique
-- surcharge streaming
-- stale data
-- dérive documentaire
-- sur-complexité développeur
-- faux positifs statistiques
-- panne de recovery
-- mauvaise qualité de logs
+- duplication A vs C : risque de faux nouveau moteur ; impact = sur-activation
+  et faux multi-edge ; garde-fou = test de non-duplication, budget cout,
+  comparaison alpha marginal ; signal = correlation inter-moteurs, gain marginal
+- duplication A vs D : risque de re-entry redondant ; impact = concentration
+  cachee ; garde-fou = budget correlation libre, historique trade-aware,
+  desactivation ; signal = concentration moteur/paire, CE marginale
+- B contre vraie cassure : risque de mean reversion toxique ; impact = pertes
+  contre breakout reel ; garde-fou = hard blockers regime/cout ; signal =
+  taux de fade toxique, drawdown par regime
+- C declenche trop tard : risque de breakout deja trop couteux ; impact =
+  destruction de l'edge ; garde-fou = gate cout/slippage ; signal = cout de
+  capture, faux breakout, rendement net C
+- D derive en surconcentration : risque de re-entry agressif ; impact = budget
+  portefeuille consomme sans diversite ; garde-fou = cap par paire/moteur,
+  re-entry budget ; signal = exposition marginale, drawdown conditionnel
+- illusion de diversite d'edge : risque de pluralite nominale sans vraie
+  diversification ; impact = faux sentiment de securite ; garde-fou =
+  K_eff, budget cluster, contribution risque ; signal = facteur BTC cache,
+  correlation portefeuille
+- cout implicite destructeur : risque de frequence non rentable ; impact =
+  edge net negatif ; garde-fou = cout reel suivi et gates go/no-go ; signal =
+  cout moyen/p90, break-even prudent, CE
+- latence, backlog, stale : risque de runtime qui degrade sans alerte ; impact
+  = decisions obsoletes ; garde-fou = charge streaming, stale gates,
+  degradation gracieuse ; signal = lambda/mu_s, backlog, stale rate
+- desalignement etat local / exchange : risque de reconciliation fausse ;
+  impact = execution incoherente ; garde-fou = reconciliation stricte,
+  recovery et HALTED ; signal = ecarts d'etat, erreurs de recovery
+- inflation de veto ou de complexite UI : risque de systeme prod-safe en
+  theorie mais inoperable ; impact = alertes noyees ou sterilisation ; garde-
+  fou = UI gouvernee, review d'ergonomie critique ; signal = sterilization
+  rate, alert fatigue, overrides demandes
+- contournement operateur : risque de bypass manuel ; impact = rupture de
+  gouvernance ; garde-fou = pas d'override non journalise ; signal = journal
+  d'actions admin, refus traces
+- derive documentaire : risque d'ecart entre architecture, rollout,
+  manifests et runtime ; impact = incoherence de production ; garde-fou =
+  source canonique unique et revue croisee ; signal = diff doctrinal,
+  contradiction master/build/gates
 
 ---
 
@@ -955,9 +1094,9 @@ La V5.3 est donc définie comme :
 ### Une architecture cible complète à 12 paires / 4 moteurs
 **documentée intégralement**
 
-### avec deux profils officiels :
-- Light
-- Complete
+### avec deux enveloppes officielles de rollout :
+- LIGHT = rollout réel initial prudent et borne
+- COMPLETE = extension gouvernée du meme systeme
 
 ### avec une implémentation autorisée :
 - progressive
@@ -998,6 +1137,29 @@ Aucun ne doit être utilisé comme source active concurrente à ce fichier.
    - boutons autorisés
    - états  
 5. Produire les merge gates détaillés  
+
+---
+
+---
+
+# 26. Build-14 — Conditions d'activation et de promotion
+
+Build-14 est **activé à 100% en Shadow** (`SHADOW_ENABLED`) : pleinement utilisé dans les décisions Shadow, tracé, comparé, auditable.
+Sa promotion live reste non automatique : soumise au verdict post-Shadow.
+Jamais un hard blocker central en live sans verdict. Jamais une activation implicite de Complete.
+Non-régression Light obligatoire : tout enrichissement qui dégrade les métriques Light est désactivé.
+
+Hard State : `CODED` → `SHADOW_ENABLED` → verdict → `SHADOW_VALIDATED` ou `DORMANT`
+
+**HARD STATEMENT** : Light doit avoir tradé en shadow complet 30 jours consécutifs minimum (A/B/C/D + Build-14 à 100%) avant toute activation live.
+**HARD STATEMENT** : Complete doit avoir tradé en shadow 30 jours consécutifs minimum (après Light live stable) avant toute activation live Complete.
+**HARD STATEMENT** : Tout le code est implémenté, mais le code ne donne aucun droit de promotion automatique. L'activation complète en Shadow est un essai structuré, pas une promotion déguisée.
+
+---
+
+# 27. Protocole d'intégration des audits
+
+1. Freeze documentaire → 2. Triage findings → 3. Patch builds P0 → 4. Réalignement docs → code → 5. Interdiction promotion implicite → 6. Requalification builds 1→14
 
 ---
 

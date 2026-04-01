@@ -21,8 +21,10 @@ Les modules couverts ici sont :
 3. `health_dashboard_backend`
 4. `ui_light_locked`
 
-Build-10 ne cherche pas encore à produire l’interface complète de la V5.3 Complete.  
-Il doit produire une **UI Light verrouillée**, orientée risque, coût, santé infra, état portefeuille et explicabilité minimale.
+Build-10 ne cherche pas encore à produire toute la surface UI finale.
+Il doit produire une **UI LIGHT verrouillée**, orientée risque, coût, santé
+infra, état portefeuille et supervision de l’architecture complète sous borne
+de rollout.
 
 ---
 
@@ -111,8 +113,8 @@ Vue consolidée de l’état du portefeuille, des moteurs, des paires et de l’
 ## 2.4 UI Light verrouillée
 Interface opérateur qui expose la supervision et les actions autorisées du profil Light, sans permettre :
 - profil custom
-- activation C/D
-- activation 12 paires
+- activation d’un moteur hors gates ou hors budget
+- activation > 6 paires en LIGHT
 - override des hard guards
 
 ---
@@ -708,8 +710,8 @@ Fournir une interface opérateur Light verrouillée, lisible, orientée risque/c
 ## 7.4 Ce que ce module ne doit pas faire
 
 - autoriser un profil custom
-- activer moteurs C/D
-- activer 12 paires
+- activer un moteur hors gates ou hors budget
+- activer > 6 paires en LIGHT
 - bypass les hard blockers
 - modifier les caps portefeuille
 - devenir un cockpit de bricolage
@@ -805,7 +807,7 @@ Rôle :
 - accès direct à l’exécution live sans guards
 - overrides des caps
 - profil custom
-- activation C/D
+- activation moteur hors gates ou hors budget
 - activation > 6 paires
 
 ## 7.13 Actions autorisées Light
@@ -981,6 +983,38 @@ Si Build-10 est mal fait :
 Donc :
 
 > Build-10 doit être traité comme un **build bloquant de supervision et d’interface sécurisée**, pas comme une simple couche de présentation.
+
+---
+
+# Guardrails issus des audits — Renforcements Build-10
+
+## Dashboards high-water marks / drop rate / stale spikes (GEM-18)
+- Le monitoring ne doit pas se limiter à des compteurs instantanés (snapshots)
+- Métriques obligatoires :
+  - **High-water mark** : valeur maximale atteinte par le backlog depuis le dernier reset
+  - **Drop rate** : pourcentage de messages perdus par buffer overflow
+  - **Stale spike count** : nombre de messages marqués stale dans la fenêtre
+  - **Recovery retry count** : nombre de tentatives de recovery depuis le dernier succès
+  - **Kill switch state** : état actuel du kill switch (actif / inactif + timestamp)
+
+## Distinction metrics in-memory vs observabilité réelle (GEM-18, QWEN-03)
+- Un compteur en mémoire qui se remet à zéro au redémarrage n'est pas de l'observabilité
+- Le monitoring doit distinguer :
+  - métriques volatiles (compteurs de session)
+  - métriques persistées (historique backlog, drop rate cumulé)
+- Les métriques critiques doivent survivre aux redémarrages
+
+## Alertes d'illusion verte / snapshot trompeur (GEM-18)
+- Le dashboard doit signaler les conditions où "Health: OK" cache un problème :
+  - backlog qui a explosé puis s'est vidé par drop
+  - stale rate élevé masqué par un refresh récent
+  - recovery qui boucle sans succès stable
+- Pattern : si high-water mark > 10x seuil normal dans la dernière heure, alerter même si valeur actuelle est basse
+
+## Canal de notification opérateur (QWEN-06)
+- Les alertes CRITICAL doivent être livrées à l'opérateur humain
+- Un module de notification (webhook Slack/Telegram ou équivalent) est requis en trajectoire Build-13+
+- En Build-10, le contrat de notification doit être défini même si l'implémentation réseau est différée
 
 ---
 

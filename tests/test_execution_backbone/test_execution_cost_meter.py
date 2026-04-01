@@ -1,4 +1,6 @@
 """Tests for execution_backbone.execution_cost_meter — Build-3."""
+import logging
+
 import pytest
 
 from execution_backbone.execution_cost_meter.fee_meter import (
@@ -173,3 +175,9 @@ class TestCostAggregator:
         )
         assert c.market_impact == pytest.approx(0.0003)
         assert c.total_cost == pytest.approx(0.00165)
+
+    def test_aggregator_emits_structured_logs(self, caplog: pytest.LogCaptureFixture):
+        caplog.set_level(logging.INFO)
+        agg = CostAggregator()
+        agg.record(compute_trade_cost("o1", "BTC", "A", 0.001, 0.0002))
+        assert any(record.message == "execution_trade_cost_recorded" for record in caplog.records)

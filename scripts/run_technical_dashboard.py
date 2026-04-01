@@ -29,6 +29,8 @@ from complete_enablers import (  # noqa: E402
 )
 from interface_contracts import PairHealthLevel, ProfileId, RuntimeMode, StrategyClassification  # noqa: E402
 from local_replay_runtime import (  # noqa: E402
+    LocalReplayEvidenceRecorder,
+    LocalReplayEvidenceRecorderConfig,
     LocalReplayOrchestrator,
     LocalReplayRequest,
     ReplayClockRef,
@@ -67,6 +69,11 @@ from monitoring import (  # noqa: E402
     collect_portfolio_metrics,
 )
 from protocols import (  # noqa: E402
+    ShadowComponentAssessment,
+    ShadowComponentKind,
+    ShadowComponentVerdict,
+    ShadowRuntimeEvidenceRecorder,
+    ShadowRuntimeEvidenceRecorderConfig,
     build_live_light_input_from_micro_live,
     build_live_light_projection,
     build_micro_live_input_from_shadow,
@@ -89,6 +96,8 @@ class DashboardArtifacts:
     payload_json_path: Path | None = None
     view_json_path: Path | None = None
     observability_text_path: Path | None = None
+    local_replay_evidence_json_path: Path | None = None
+    shadow_runtime_evidence_json_path: Path | None = None
 
 
 def _configure_stdio() -> None:
@@ -341,7 +350,17 @@ def _build_demo_replay_projection(bundle):
         tick_count=60,
     )
     review_export_ref = f"exports/{bundle.correlation_id}.md"
-    payload_refs = (review_export_ref,) + tuple(
+    feature_bridge_ref = f"feature_bridge:{bundle.correlation_id}"
+    parity_diagnostics_ref = f"parity_diagnostics:{bundle.correlation_id}"
+    replay_metrics_ref = f"replay_metrics:{bundle.correlation_id}"
+    replay_dtr_ref = f"replay_dtr:{bundle.correlation_id}"
+    payload_refs = (
+        review_export_ref,
+        feature_bridge_ref,
+        parity_diagnostics_ref,
+        replay_metrics_ref,
+        replay_dtr_ref,
+    ) + tuple(
         f"diagnostic:{diagnostic.diagnostic_id}" for diagnostic in bundle.diagnostics
     ) + tuple(
         f"candidate:{candidate.candidate_id}" for candidate in bundle.candidates
@@ -356,6 +375,10 @@ def _build_demo_replay_projection(bundle):
         diagnostic_ids=tuple(diagnostic.diagnostic_id for diagnostic in bundle.diagnostics),
         candidate_ids=tuple(candidate.candidate_id for candidate in bundle.candidates),
         review_export_ref=review_export_ref,
+        feature_bridge_ref=feature_bridge_ref,
+        parity_diagnostics_ref=parity_diagnostics_ref,
+        replay_metrics_ref=replay_metrics_ref,
+        replay_dtr_ref=replay_dtr_ref,
         notes="Demo replay plan generated for the local dashboard launcher",
     )
     import_request = ArtifactImportRequest(
@@ -397,7 +420,84 @@ def _build_demo_replay_projection(bundle):
     return replay_plan, import_summary, onboarding_decision, projection
 
 
-def _build_demo_shadow_projection(payload):
+def _materialize_demo_local_replay_evidence(replay_plan, output_dir: Path):
+    evidence_path = output_dir / "technical_dashboard.local_replay_evidence.json"
+    recorder = LocalReplayEvidenceRecorder(
+        config=LocalReplayEvidenceRecorderConfig(
+            state_dir=output_dir,
+            persist_state=True,
+            state_filename="technical_dashboard.local_replay_evidence.state.json",
+        )
+    )
+    recorder.load_execution_plan(replay_plan)
+    recorder.mark_payloads_generated(replay_plan.bundle.payload_refs)
+    evidence = recorder.build_evidence()
+    evidence_path.write_text(evidence.model_dump_json(indent=2), encoding="utf-8")
+    return evidence, evidence_path
+
+
+def _build_demo_shadow_projection(
+    payload,
+    *,
+    local_replay_evidence,
+    output_dir: Path,
+):
+    component_assessments = (
+        ShadowComponentAssessment(
+            component_id="engine_a",
+            component_kind=ShadowComponentKind.ENGINE,
+            verdict=ShadowComponentVerdict.SHADOW_VALIDATED,
+            evidence_summary="Engine A stayed reproducible during the governed demo run.",
+        ),
+        ShadowComponentAssessment(
+            component_id="engine_b",
+            component_kind=ShadowComponentKind.ENGINE,
+            verdict=ShadowComponentVerdict.SHADOW_VALIDATED,
+            evidence_summary="Engine B stayed reproducible during the governed demo run.",
+        ),
+        ShadowComponentAssessment(
+            component_id="engine_c",
+            component_kind=ShadowComponentKind.ENGINE,
+            verdict=ShadowComponentVerdict.DORMANT,
+            evidence_summary="Engine C remains dormant in the Light demo surface.",
+        ),
+        ShadowComponentAssessment(
+            component_id="engine_d",
+            component_kind=ShadowComponentKind.ENGINE,
+            verdict=ShadowComponentVerdict.DORMANT,
+            evidence_summary="Engine D remains dormant in the Light demo surface.",
+        ),
+        ShadowComponentAssessment(
+            component_id="build14_microstructure",
+            component_kind=ShadowComponentKind.BUILD14_ENABLER,
+            verdict=ShadowComponentVerdict.SHADOW_VALIDATED,
+            evidence_summary="Build-14 microstructure enrichment is available for governed Shadow review.",
+        ),
+        ShadowComponentAssessment(
+            component_id="build14_regime",
+            component_kind=ShadowComponentKind.BUILD14_ENABLER,
+            verdict=ShadowComponentVerdict.SHADOW_VALIDATED,
+            evidence_summary="Build-14 regime enrichment is available for governed Shadow review.",
+        ),
+        ShadowComponentAssessment(
+            component_id="build14_covariance",
+            component_kind=ShadowComponentKind.BUILD14_ENABLER,
+            verdict=ShadowComponentVerdict.SHADOW_VALIDATED,
+            evidence_summary="Build-14 covariance enrichment is available for governed Shadow review.",
+        ),
+        ShadowComponentAssessment(
+            component_id="build14_risk_contribution",
+            component_kind=ShadowComponentKind.BUILD14_ENABLER,
+            verdict=ShadowComponentVerdict.SHADOW_VALIDATED,
+            evidence_summary="Build-14 risk contribution enrichment is available for governed Shadow review.",
+        ),
+        ShadowComponentAssessment(
+            component_id="build14_edge_diversity",
+            component_kind=ShadowComponentKind.BUILD14_ENABLER,
+            verdict=ShadowComponentVerdict.SHADOW_VALIDATED,
+            evidence_summary="Build-14 edge diversity enrichment is available for governed Shadow review.",
+        ),
+    )
     baseline_payload = payload.model_copy(
         update={
             "correlation_id": f"{payload.correlation_id}:baseline",
@@ -421,14 +521,46 @@ def _build_demo_shadow_projection(payload):
             ),
         }
     )
+    shadow_candidate_payload = payload.model_copy(
+        update={
+            "system": payload.system.model_copy(
+                update={
+                    "active_engines": ("engine_a", "engine_b", "engine_c", "engine_d"),
+                    "build14_status": "healthy",
+                }
+            ),
+        }
+    )
+    evidence_path = output_dir / "technical_dashboard.shadow_runtime_evidence.json"
+    recorder = ShadowRuntimeEvidenceRecorder(
+        local_replay_evidence=local_replay_evidence,
+        config=ShadowRuntimeEvidenceRecorderConfig(
+            state_dir=output_dir,
+            persist_state=True,
+            state_filename="technical_dashboard.shadow_runtime_evidence.state.json",
+        ),
+    )
+    recorder.mark_runtime_source("recorded_replay")
+    recorder.mark_config_loaded("config:light.shadow.official")
+    recorder.mark_shadow_dtr_persisted(f"shadow_dtr:{payload.correlation_id}")
+    recorder.record_event_loop_tick(1_700_000_000_000)
+    recorder.record_event_loop_tick(1_700_086_400_000)
+    runtime_evidence = recorder.build_evidence()
+    evidence_path.write_text(runtime_evidence.model_dump_json(indent=2), encoding="utf-8")
     shadow_input = build_shadow_input_from_payloads(
         baseline_payload,
-        payload,
+        shadow_candidate_payload,
         truth_ref="shadow_truth:demo_baseline",
         validation_ref=f"shadow_validation:{payload.replay_import.artifact_id}",
+        component_assessments=component_assessments,
+        shadow_days_completed=30,
+        shadow_report_ready=True,
+        inter_engine_comparison_ready=True,
+        build14_contribution_ready=True,
+        runtime_evidence=runtime_evidence,
     )
     summary = run_shadow_validation(shadow_input, run_id="shadow-demo-run")
-    return summary, build_shadow_projection(summary)
+    return summary, build_shadow_projection(summary), evidence_path
 
 
 def _build_demo_micro_live_projection(
@@ -464,15 +596,42 @@ def _build_demo_live_light_projection(
     onboarding_decision,
     build14_report,
 ) -> tuple[object, LiveLightProjection]:
+    if not micro_live_summary.execution_plan.planned_engines:
+        blocking_reasons = micro_live_summary.decision.blocking_reasons or (
+            "Build-13 demo remains blocked because Build-12 produced no governed Light execution plan.",
+        )
+        return None, LiveLightProjection(
+            status="warning",
+            run_state="blocked",
+            verdict="blocked",
+            micro_live_run_id=micro_live_summary.run_id,
+            micro_live_verdict=micro_live_summary.decision.verdict,
+            planned_pairs=micro_live_summary.execution_plan.planned_pairs,
+            planned_engines=micro_live_summary.execution_plan.planned_engines,
+            blocking_reasons=blocking_reasons,
+            build14_influence_mode=str(getattr(build14_report, "influence_mode", "read_only")),
+            build14_action=str(getattr(build14_report, "action", "observe")),
+            build14_severity=str(getattr(build14_report, "severity", "nominal")),
+            build14_summary=str(getattr(build14_report, "summary", "")),
+            build14_reason_codes=tuple(getattr(build14_report, "reason_codes", ()) or ()),
+            build14_confidence_penalty_weight=float(
+                getattr(build14_report, "confidence_penalty_weight", 0.0)
+            ),
+            build14_recommended_budget_factor=float(
+                getattr(build14_report, "recommended_budget_factor", 1.0)
+            ),
+        )
+
     live_light_input = build_live_light_input_from_micro_live(
         micro_live_summary,
         micro_live_payload,
-        live_pairs=("BTCUSDT", "ETHUSDT"),
+        live_pairs=micro_live_summary.execution_plan.planned_pairs,
         requested_total_notional_usdt=90.0,
         requested_pair_notional_usdt=45.0,
         max_total_notional_usdt=100.0,
         max_pair_notional_usdt=50.0,
         execution_order_limit=3,
+        micro_live_stable_days=7,
         observability_ready=True,
         halt_ready=True,
         execution_ready=True,
@@ -907,6 +1066,8 @@ def export_technical_dashboard(output_dir: Path, *, demo: bool = False) -> Dashb
     payload_json_path: Path | None = None
     view_json_path: Path | None = None
     observability_text_path: Path | None = None
+    local_replay_evidence_json_path: Path | None = None
+    shadow_runtime_evidence_json_path: Path | None = None
 
     future_panels = (
         "technical_supervision",
@@ -932,7 +1093,11 @@ def export_technical_dashboard(output_dir: Path, *, demo: bool = False) -> Dashb
             break_even_report,
             edge_report,
         )
-        _, import_summary, onboarding_decision, replay_projection = _build_demo_replay_projection(bundle)
+        replay_plan, import_summary, onboarding_decision, replay_projection = _build_demo_replay_projection(bundle)
+        local_replay_evidence, local_replay_evidence_json_path = _materialize_demo_local_replay_evidence(
+            replay_plan,
+            output_dir,
+        )
         active_modules = tuple(module.module_name for module in get_modules_for_profile(ProfileId.LIGHT))
         active_engines = tuple(
             engine.value for engine in sorted(get_engines_for_profile(ProfileId.LIGHT), key=lambda item: item.value)
@@ -944,7 +1109,11 @@ def export_technical_dashboard(output_dir: Path, *, demo: bool = False) -> Dashb
             build9x_projection=build9x_projection,
             replay_projection=replay_projection,
         )
-        shadow_summary, shadow_projection = _build_demo_shadow_projection(payload)
+        shadow_summary, shadow_projection, shadow_runtime_evidence_json_path = _build_demo_shadow_projection(
+            payload,
+            local_replay_evidence=local_replay_evidence,
+            output_dir=output_dir,
+        )
         micro_live_summary, micro_live_projection = _build_demo_micro_live_projection(
             shadow_summary,
             payload,
@@ -1029,6 +1198,8 @@ def export_technical_dashboard(output_dir: Path, *, demo: bool = False) -> Dashb
         payload_json_path=payload_json_path,
         view_json_path=view_json_path,
         observability_text_path=observability_text_path,
+        local_replay_evidence_json_path=local_replay_evidence_json_path,
+        shadow_runtime_evidence_json_path=shadow_runtime_evidence_json_path,
     )
 
 
@@ -1060,6 +1231,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Technical view JSON: {artifacts.view_json_path}")
     if artifacts.observability_text_path is not None:
         print(f"Observability export: {artifacts.observability_text_path}")
+    if artifacts.local_replay_evidence_json_path is not None:
+        print(f"Local replay evidence: {artifacts.local_replay_evidence_json_path}")
+    if artifacts.shadow_runtime_evidence_json_path is not None:
+        print(f"Shadow runtime evidence: {artifacts.shadow_runtime_evidence_json_path}")
     print("Open the HTML file in a browser to inspect the local technical interface.")
     return 0
 

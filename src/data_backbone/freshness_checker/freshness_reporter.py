@@ -6,9 +6,13 @@ Invariant: all stale events are visible. No silent degradation.
 
 from __future__ import annotations
 
+import logging
 from pydantic import BaseModel, Field
 
 from .stale_hard_guard import StaleVerdict
+
+
+logger = logging.getLogger(__name__)
 
 
 class FreshnessEvent(BaseModel, frozen=True):
@@ -46,6 +50,19 @@ class FreshnessReporter:
         self._by_pair[event.pair] = event.verdict
         if event.age_s > self._max_age:
             self._max_age = event.age_s
+        level = logging.WARNING if event.verdict == StaleVerdict.HARD_STALE else logging.INFO
+        logger.log(
+            level,
+            "freshness_event_recorded",
+            extra={
+                "pair": event.pair,
+                "stream_type": event.stream_type,
+                "verdict": event.verdict.value,
+                "age_s": event.age_s,
+                "penalty": event.penalty,
+                "timestamp": event.timestamp,
+            },
+        )
 
     def get_stats(self) -> FreshnessStats:
         fresh = sum(1 for e in self._events if e.verdict == StaleVerdict.FRESH)

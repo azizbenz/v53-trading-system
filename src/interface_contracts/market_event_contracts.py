@@ -47,10 +47,20 @@ class DepthEvent(TimestampedModel):
 
     @field_validator("asks")
     @classmethod
-    def validate_asks_order(cls, v: list[DepthLevel]) -> list[DepthLevel]:
+    def validate_asks_order_and_no_cross(cls, v: list[DepthLevel], info: ValidationInfo) -> list[DepthLevel]:
+        """Validate asks sorted ascending + GEM-01: reject crossed book."""
         for i in range(len(v) - 1):
             if v[i].price > v[i + 1].price:
                 raise ValueError("Asks doivent être triés croissant par prix")
+        # GEM-01: crossed book guard
+        data = info.data
+        if "bids" in data and data["bids"] and v:
+            best_bid = data["bids"][0].price
+            best_ask = v[0].price
+            if best_bid > best_ask:
+                raise ValueError(
+                    f"Crossed book: best_bid ({best_bid}) > best_ask ({best_ask})"
+                )
         return v
 
     @property

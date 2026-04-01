@@ -9,6 +9,7 @@ Dependencies: interface_contracts, manifest_registry, contract_test_suite, dag_v
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from smoke_bootstrap_recovery.smoke_models import (
@@ -34,7 +35,10 @@ from smoke_bootstrap_recovery.config_validator import (
 )
 from smoke_bootstrap_recovery.recovery_runner import run_recovery_cycle
 from smoke_bootstrap_recovery.state_sanity_checker import (
+    capture_fd_count,
     check_dag_clean,
+    check_fd_leak,
+    check_kill_switch_persisted,
     check_manifest_consistency,
     check_module_importable,
     run_sanity_checks,
@@ -93,7 +97,62 @@ class _Build1ModuleAdapter:
         self._module = None
 
 
-def run_build1_smoke() -> SmokeReport:
+def _build_resource_release_checker(
+    before_fd_count: int | None,
+    fd_count_provider: Any | None,
+) -> Any:
+    fd_leak_check = check_fd_leak(before_fd_count, fd_counter=fd_count_provider)
+
+    def _checker() -> bool:
+        ok, _ = fd_leak_check()
+        return ok
+
+    return _checker
+
+
+def _resolve_kill_switch_smoke(
+    *,
+    module_name: str,
+    kill_switch_state_dir: str | Path | None,
+    kill_switch_factory: Any,
+    kill_switch_trip_reason: Any,
+    kill_switch_tripped_state: Any,
+) -> tuple[str, Any] | None:
+    provided = (
+        kill_switch_state_dir is not None,
+        kill_switch_factory is not None,
+        kill_switch_trip_reason is not None,
+        kill_switch_tripped_state is not None,
+    )
+    if not any(provided):
+        return None
+    if not all(provided):
+        raise ValueError(
+            "Kill switch smoke requires state_dir, factory, trip_reason, and tripped_state"
+        )
+    if module_name != "smoke_bootstrap_recovery":
+        return None
+
+    state_root = Path(kill_switch_state_dir) / module_name
+    return (
+        "kill_switch_persisted",
+        check_kill_switch_persisted(
+            str(state_root),
+            breaker_factory=kill_switch_factory,
+            trip_reason=kill_switch_trip_reason,
+            tripped_state=kill_switch_tripped_state,
+        ),
+    )
+
+
+def run_build1_smoke(
+    *,
+    fd_count_provider: Any | None = None,
+    kill_switch_state_dir: str | Path | None = None,
+    kill_switch_factory: Any = None,
+    kill_switch_trip_reason: Any = None,
+    kill_switch_tripped_state: Any = None,
+) -> SmokeReport:
     """Run the full Build-1 smoke test suite.
 
     For each Build-1 module:
@@ -105,8 +164,6 @@ def run_build1_smoke() -> SmokeReport:
     Spec 7.9: no partial init considered OK.
     Spec 7.15: import OK != bootstrap OK.
     """
-    from typing import Any
-
     # Config checks
     config_checks = validate_build1_configs()
     config_map = {c.module_name: c for c in config_checks}
@@ -114,16 +171,27 @@ def run_build1_smoke() -> SmokeReport:
     module_reports: list[ModuleSmokeReport] = []
 
     for mod_name in BUILD1_MODULES:
+        before_fd_count = capture_fd_count(fd_count_provider)
+
         # 1. Full bootstrap (import + __all__ verification)
         boot = bootstrap_full(mod_name)
 
         # 2. Recovery cycle via adapter
         adapter = _Build1ModuleAdapter(mod_name)
-        recovery = run_recovery_cycle(mod_name, adapter, {})
+        recovery = run_recovery_cycle(
+            mod_name,
+            adapter,
+            {},
+            resource_release_checker=_build_resource_release_checker(
+                before_fd_count,
+                fd_count_provider,
+            ),
+        )
 
         # 3. Per-module sanity checks
         sanity_checks: dict[str, Any] = {
             f"importable_{mod_name}": check_module_importable(mod_name),
+            "fd_leak": check_fd_leak(before_fd_count, fd_counter=fd_count_provider),
         }
         # Add global checks to manifest_registry module
         if mod_name == "manifest_registry":
@@ -131,6 +199,16 @@ def run_build1_smoke() -> SmokeReport:
         # Add DAG check to dag_validator module
         if mod_name == "dag_validator":
             sanity_checks["dag_clean"] = check_dag_clean()
+        kill_switch_check = _resolve_kill_switch_smoke(
+            module_name=mod_name,
+            kill_switch_state_dir=kill_switch_state_dir,
+            kill_switch_factory=kill_switch_factory,
+            kill_switch_trip_reason=kill_switch_trip_reason,
+            kill_switch_tripped_state=kill_switch_tripped_state,
+        )
+        if kill_switch_check is not None:
+            check_name, check_fn = kill_switch_check
+            sanity_checks[check_name] = check_fn
 
         sanity = run_sanity_checks(mod_name, sanity_checks)
 

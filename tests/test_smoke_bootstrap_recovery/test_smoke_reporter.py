@@ -256,3 +256,124 @@ class TestFullBuild1Smoke:
             assert "API verified" in mr.bootstrap.message, (
                 f"{mr.module_name}: bootstrap used import-only, not full bootstrap"
             )
+
+    def test_build1_smoke_passes_resource_release_checker_to_recovery(self, monkeypatch):
+        import smoke_bootstrap_recovery as sbr
+
+        resource_results: list[tuple[str, bool]] = []
+
+        def _fake_recovery(module_name, factory, config, **kwargs):
+            checker = kwargs.get("resource_release_checker")
+            assert checker is not None
+            resource_results.append((module_name, checker()))
+            return RecoveryResult(
+                module_name=module_name,
+                status=SmokeStatus.PASS,
+                pre_state_valid=True,
+                post_state_valid=True,
+            )
+
+        monkeypatch.setattr(sbr, "run_recovery_cycle", _fake_recovery)
+
+        report = sbr.run_build1_smoke(fd_count_provider=lambda: 10)
+        assert report.passed
+        assert len(resource_results) == 5
+        assert all(ok for _, ok in resource_results)
+
+    def test_build1_smoke_executes_fd_leak_check_for_each_module(self, monkeypatch):
+        import smoke_bootstrap_recovery as sbr
+
+        fd_checks: list[int | None] = []
+
+        def _fake_fd_leak(before_fd_count, fd_counter=None):
+            def _check():
+                fd_checks.append(before_fd_count)
+                return True, "fd ok"
+            return _check
+
+        def _fake_recovery(module_name, factory, config, **kwargs):
+            return RecoveryResult(
+                module_name=module_name,
+                status=SmokeStatus.PASS,
+                pre_state_valid=True,
+                post_state_valid=True,
+            )
+
+        monkeypatch.setattr(sbr, "check_fd_leak", _fake_fd_leak)
+        monkeypatch.setattr(sbr, "run_recovery_cycle", _fake_recovery)
+
+        report = sbr.run_build1_smoke(fd_count_provider=lambda: 7)
+        assert report.passed
+        assert fd_checks == [7, 7, 7, 7, 7]
+
+    def test_build1_smoke_executes_kill_switch_check_when_injected(
+        self,
+        monkeypatch,
+        repo_tmp_path,
+    ):
+        import smoke_bootstrap_recovery as sbr
+
+        kill_switch_calls: list[str] = []
+
+        def _fake_kill_switch(state_dir_path, breaker_factory=None, trip_reason=None, tripped_state=None):
+            def _check():
+                kill_switch_calls.append(str(state_dir_path))
+                return True, "kill switch ok"
+            return _check
+
+        def _fake_recovery(module_name, factory, config, **kwargs):
+            return RecoveryResult(
+                module_name=module_name,
+                status=SmokeStatus.PASS,
+                pre_state_valid=True,
+                post_state_valid=True,
+            )
+
+        monkeypatch.setattr(sbr, "check_kill_switch_persisted", _fake_kill_switch)
+        monkeypatch.setattr(sbr, "run_recovery_cycle", _fake_recovery)
+
+        report = sbr.run_build1_smoke(
+            fd_count_provider=lambda: 10,
+            kill_switch_state_dir=repo_tmp_path,
+            kill_switch_factory=object(),
+            kill_switch_trip_reason="trip",
+            kill_switch_tripped_state="tripped",
+        )
+        assert report.passed
+        assert len(kill_switch_calls) == 1
+        assert "smoke_bootstrap_recovery" in kill_switch_calls[0]
+
+    def test_build1_smoke_fails_when_kill_switch_check_fails(
+        self,
+        monkeypatch,
+        repo_tmp_path,
+    ):
+        import smoke_bootstrap_recovery as sbr
+
+        def _fake_kill_switch(state_dir_path, breaker_factory=None, trip_reason=None, tripped_state=None):
+            def _check():
+                return False, "kill switch failed"
+            return _check
+
+        def _fake_recovery(module_name, factory, config, **kwargs):
+            return RecoveryResult(
+                module_name=module_name,
+                status=SmokeStatus.PASS,
+                pre_state_valid=True,
+                post_state_valid=True,
+            )
+
+        monkeypatch.setattr(sbr, "check_kill_switch_persisted", _fake_kill_switch)
+        monkeypatch.setattr(sbr, "run_recovery_cycle", _fake_recovery)
+
+        report = sbr.run_build1_smoke(
+            fd_count_provider=lambda: 10,
+            kill_switch_state_dir=repo_tmp_path,
+            kill_switch_factory=object(),
+            kill_switch_trip_reason="trip",
+            kill_switch_tripped_state="tripped",
+        )
+        assert not report.passed
+        smoke_module = next(m for m in report.module_reports if m.module_name == "smoke_bootstrap_recovery")
+        assert smoke_module.state_sanity is not None
+        assert any("kill_switch_persisted" in anomaly for anomaly in smoke_module.state_sanity.anomalies)

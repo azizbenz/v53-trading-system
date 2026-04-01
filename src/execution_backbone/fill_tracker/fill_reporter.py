@@ -7,9 +7,13 @@ Metrics: PFR = N_partial/N_orders, RejectRate = N_reject/N_orders, FullFillRate 
 
 from __future__ import annotations
 
+import logging
 from pydantic import BaseModel, Field
 
 from .order_state_tracker import OrderState, TERMINAL_STATES
+
+
+logger = logging.getLogger(__name__)
 
 
 class FillStats(BaseModel, frozen=True):
@@ -42,6 +46,10 @@ class FillReporter:
     def record_order_created(self) -> None:
         self._total += 1
         self._open += 1
+        logger.info(
+            "execution_order_created",
+            extra={"total_orders": self._total, "open_orders": self._open},
+        )
 
     def record_terminal(self, state: OrderState, had_partial_fills: bool = False) -> None:
         if self._open > 0:
@@ -61,6 +69,22 @@ class FillReporter:
                 self._expired += 1
         elif state == OrderState.REJECTED:
             self._rejected += 1
+
+        level = logging.WARNING if state in {OrderState.CANCELLED, OrderState.EXPIRED, OrderState.REJECTED} else logging.INFO
+        logger.log(
+            level,
+            "execution_order_terminal",
+            extra={
+                "state": state.value,
+                "had_partial_fills": had_partial_fills,
+                "open_orders": self._open,
+                "full_fills": self._full,
+                "partial_fills": self._partial,
+                "cancellations": self._cancelled,
+                "rejections": self._rejected,
+                "expirations": self._expired,
+            },
+        )
 
     def get_stats(self) -> FillStats:
         total = self._total if self._total > 0 else 1  # avoid div/0

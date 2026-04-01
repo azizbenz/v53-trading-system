@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, model_validator
 
 from interface_contracts import ProfileId, RuntimeMode, StrategyClassification
@@ -89,10 +91,25 @@ class ReplayExecutionPlan(BaseModel, frozen=True):
         return self
 
 
+class LocalReplayRuntimeEvidence(BaseModel, frozen=True):
+    """Typed proof that a LOCAL_REPLAY plan is materially useful, not decorative."""
+
+    artifact_id: str = Field(..., min_length=1)
+    lineage_version: str = Field(..., min_length=1)
+    data_source: Literal["unknown", "recorded_replay"] = "unknown"
+    feature_bridge_ready: bool = False
+    parity_diagnostics_ready: bool = False
+    replay_metrics_ready: bool = False
+    replay_dtr_ready: bool = False
+    replay_useful_ready: bool = False
+    evidence_summary: str = "No local replay runtime evidence recorded"
+
+
 __all__ = [
     "ReplayDatasetRef",
     "ReplayClockRef",
     "LocalReplayRequest",
     "ReplayBundle",
     "ReplayExecutionPlan",
+    "LocalReplayRuntimeEvidence",
 ]

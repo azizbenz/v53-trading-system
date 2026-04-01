@@ -3,7 +3,9 @@
 import pytest
 
 from smoke_bootstrap_recovery.state_sanity_checker import (
+    check_fd_leak,
     check_dag_clean,
+    check_kill_switch_persisted,
     check_manifest_consistency,
     check_module_importable,
     run_sanity_checks,
@@ -87,3 +89,41 @@ class TestBuiltInChecks:
         check = check_dag_clean()
         ok, detail = check()
         assert ok, f"DAG not clean: {detail}"
+
+    def test_fd_leak_check_uses_injected_counter(self):
+        check = check_fd_leak(10, fd_counter=lambda: 12)
+        ok, detail = check()
+        assert ok
+        assert "No FD leak" in detail
+
+    def test_fd_leak_check_fails_when_delta_exceeds_tolerance(self):
+        check = check_fd_leak(10, fd_counter=lambda: 20)
+        ok, detail = check()
+        assert not ok
+        assert "FD leak detected" in detail
+
+    def test_kill_switch_persistence_with_fake_factory(self, repo_tmp_path):
+        class FakeBreaker:
+            def __init__(self, state_dir):
+                self._state_dir = state_dir
+                self._state_file = state_dir / "kill_switch_state.json"
+                self.current_state = "armed"
+                if self._state_file.exists():
+                    self.current_state = "tripped"
+
+            def trip(self, reason, detail):
+                self.current_state = "tripped"
+                self._state_file.write_text("tripped", encoding="utf-8")
+
+            def is_trading_allowed(self):
+                return self.current_state != "tripped"
+
+        check = check_kill_switch_persisted(
+            str(repo_tmp_path),
+            breaker_factory=FakeBreaker,
+            trip_reason="reason",
+            tripped_state="tripped",
+        )
+        ok, detail = check()
+        assert ok
+        assert "verified" in detail.lower()

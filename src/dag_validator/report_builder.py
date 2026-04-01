@@ -42,6 +42,8 @@ class ValidationReport(BaseModel, frozen=True):
     cycle_count: int = 0
     violation_count: int = 0
     layer_violation_count: int = 0
+    declared_dynamic_import_count: int = 0
+    undeclared_dynamic_import_count: int = 0
     files_scanned: int = 0
     total_imports: int = 0
     authorized_imports: int = 0
@@ -104,6 +106,26 @@ def build_report(
             message=lv.message,
         ))
 
+    for record in match_result.declared_dynamic_imports:
+        entries.append(ReportEntry(
+            severity=Severity.INFO,
+            category="declared_dynamic_import",
+            message=(
+                f"Declared dynamic import {record.call_text} "
+                f"in {record.source_file}:{record.line_number}"
+            ),
+        ))
+
+    for record in match_result.undeclared_dynamic_imports:
+        entries.append(ReportEntry(
+            severity=Severity.WARNING,
+            category="dynamic_import",
+            message=(
+                f"Undeclared dynamic import {record.call_text} "
+                f"in {record.source_file}:{record.line_number}"
+            ),
+        ))
+
     # Scan errors are warnings
     for err in scan_errors:
         entries.append(ReportEntry(
@@ -114,14 +136,17 @@ def build_report(
 
     # Pass only if zero errors — spec 5.9: aucune violation silencieuse
     has_errors = any(e.severity == Severity.ERROR for e in entries)
+    has_undeclared_dynamic_imports = len(match_result.undeclared_dynamic_imports) > 0
 
     return ValidationReport(
         manifest_version=manifest_version,
-        passed=not has_errors,
+        passed=not has_errors and not has_undeclared_dynamic_imports,
         entries=tuple(entries),
         cycle_count=cycle_result.cycle_count,
         violation_count=len(match_result.violations),
         layer_violation_count=len(layer_result.violations),
+        declared_dynamic_import_count=len(match_result.declared_dynamic_imports),
+        undeclared_dynamic_import_count=len(match_result.undeclared_dynamic_imports),
         files_scanned=files_scanned,
         total_imports=match_result.total_imports,
         authorized_imports=match_result.authorized_count,
@@ -145,12 +170,19 @@ def format_report(report: ValidationReport) -> str:
         f"Cycles           : {report.cycle_count}",
         f"Violations       : {report.violation_count}",
         f"Layer violations : {report.layer_violation_count}",
+        f"Declared dyn     : {report.declared_dynamic_import_count}",
+        f"Undeclared dyn   : {report.undeclared_dynamic_import_count}",
         "-" * 60,
     ]
 
     if report.entries:
         for entry in report.entries:
-            prefix = "ERROR" if entry.severity == Severity.ERROR else "WARN "
+            if entry.severity == Severity.ERROR:
+                prefix = "ERROR"
+            elif entry.severity == Severity.WARNING:
+                prefix = "WARN "
+            else:
+                prefix = "INFO "
             lines.append(f"  [{prefix}] [{entry.category}] {entry.message}")
     else:
         lines.append("  No issues found.")

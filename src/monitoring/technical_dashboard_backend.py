@@ -11,6 +11,7 @@ from monitoring.contracts import (
     LiveLightProjection,
     MicroLiveProjection,
     MonitoringSnapshot,
+    OperatorRuntimeProjection,
     ReplayImportProjection,
     ShadowProjection,
     SystemProjection,
@@ -39,6 +40,21 @@ def _default_build9x_projection(*, active_modules: tuple[str, ...]) -> Build9XPr
         latest_memory_summary="No memory records",
         review_export_ready=False,
         review_export_ref="",
+        learning_queue_depth=0,
+        learning_queue_oldest_age_ms=0,
+        learning_worker_cpu_pct=0.0,
+        learning_worker_rss_mb=0.0,
+        learning_write_latency_ms=0.0,
+        learning_export_failures_total=0,
+        learning_log_loss_total=0,
+        learning_unprocessed_items_count=0,
+        learning_backlog_state="normal",
+        learning_capture_mode="full_capture",
+        learning_observability_reduced=False,
+        learning_backpressure_active=False,
+        review_blocked_due_to_incomplete_data=False,
+        promotion_blocked_due_to_incomplete_data=False,
+        learning_capacity_summary="queue=0 / backlog=normal / mode=full_capture",
     )
 
 
@@ -137,7 +153,7 @@ def _default_build14_projection(*, active_modules: tuple[str, ...]) -> Build14Pr
         status="info" if module_active else "planned",
         hard_state="shadow_enabled" if module_active else "coded",
         live_promotion_eligible=False,
-        influence_mode="shadow_enabled" if module_active else "observe",
+        influence_mode="shadow_enabled" if module_active else "read_only",
         action="shadow_apply" if module_active else "observe",
         severity="nominal",
         summary=(
@@ -183,14 +199,23 @@ def _build_alert_projection(
     snapshot: MonitoringSnapshot,
     *,
     headline_status: str,
+    operator_runtime: OperatorRuntimeProjection | None = None,
 ) -> AlertProjection:
     return AlertProjection(
         headline_status=headline_status,
         active_alert_count=snapshot.active_alert_count,
         alert_ids=tuple(alert.alert_id for alert in snapshot.alerts),
         queue_backlog=snapshot.infra.queue_backlog,
+        backlog_high_water_mark=snapshot.infra.backlog_high_water_mark,
+        drop_rate_pct=snapshot.infra.drop_rate_pct,
         stale_pair_count=snapshot.stale_pair_count,
         stale_pairs=snapshot.infra.stale_pairs,
+        stale_spike_count=snapshot.infra.stale_spike_count,
+        recovery_retry_count=snapshot.infra.recovery_retry_count,
+        kill_switch_active=snapshot.infra.kill_switch_active,
+        kill_switch_timestamp_ms=snapshot.infra.kill_switch_timestamp_ms,
+        persisted_metric_names=snapshot.infra.persisted_metric_names,
+        volatile_metric_names=snapshot.infra.volatile_metric_names,
         backlog_stale_status=(
             "warning" if snapshot.backlog_warning or snapshot.stale_warning else "healthy"
         ),
@@ -205,6 +230,7 @@ def _build_alert_projection(
             if snapshot.meta.break_even_drift_alert or snapshot.meta.edge_degraded_count > 0
             else "healthy"
         ),
+        operator_runtime=operator_runtime or OperatorRuntimeProjection(),
     )
 
 
@@ -219,11 +245,15 @@ def build_technical_dashboard_payload(
     live_light_projection: LiveLightProjection | None = None,
     build14_projection: Build14Projection | None = None,
     replay_projection: ReplayImportProjection | None = None,
+    operator_runtime: OperatorRuntimeProjection | None = None,
 ) -> TechnicalDashboardPayload:
     """Normalize runtime supervision truth into a typed Build-10 payload."""
 
     resolved_snapshot = _resolve_snapshot(snapshot)
-    headline_status = build_health_dashboard_payload(resolved_snapshot).headline_status
+    headline_status = build_health_dashboard_payload(
+        resolved_snapshot,
+        operator_runtime=operator_runtime,
+    ).headline_status
     build9x = build9x_projection or _default_build9x_projection(active_modules=active_modules)
     shadow = shadow_projection or _default_shadow_projection(active_modules=active_modules)
     micro_live = micro_live_projection or _default_micro_live_projection(active_modules=active_modules)
@@ -258,6 +288,9 @@ def build_technical_dashboard_payload(
             ),
         ),
         portfolio=resolved_snapshot.portfolio,
+        engines=resolved_snapshot.engines,
+        pairs=resolved_snapshot.pairs,
+        infra=resolved_snapshot.infra,
         build9_meta=_build_build9_meta_projection(resolved_snapshot),
         build9x=build9x,
         shadow=shadow,
@@ -265,7 +298,11 @@ def build_technical_dashboard_payload(
         live_light=live_light,
         build14=build14,
         replay_import=replay_import,
-        alerts=_build_alert_projection(resolved_snapshot, headline_status=headline_status),
+        alerts=_build_alert_projection(
+            resolved_snapshot,
+            headline_status=headline_status,
+            operator_runtime=operator_runtime,
+        ),
     )
 
 

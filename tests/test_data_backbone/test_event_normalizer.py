@@ -1,4 +1,6 @@
 """Tests for data_backbone.event_normalizer — Build-2."""
+import logging
+
 import pytest
 
 from data_backbone.event_normalizer.schema_mapper import (
@@ -184,3 +186,12 @@ class TestNormalizationReporter:
         assert reporter.reject_rate == 0.0
         reporter.record_rejected("test")
         assert reporter.reject_rate == 1.0
+
+    def test_reporter_emits_structured_logs(self, caplog: pytest.LogCaptureFixture):
+        caplog.set_level(logging.INFO)
+        reporter = NormalizationReporter()
+        reporter.record_normalized("trade")
+        reporter.record_rejected("missing_field")
+        messages = {record.message for record in caplog.records}
+        assert "normalization_event_normalized" in messages
+        assert "normalization_event_rejected" in messages

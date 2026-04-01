@@ -18,16 +18,67 @@ BASE_TS = 1_700_000_000.0
 ONE_DAY = 86_400.0
 
 
+def _complete_shadow_metrics(day_index: int) -> dict[str, float]:
+    metrics = {
+        "dtr_coverage": 1.0,
+        "ce_net": 0.0012 + day_index * 0.000001,
+        "estimated_cost_bps": 4.2,
+        "edge_net": 0.0015,
+        "drawdown_pct": 0.018,
+        "stale_rate": 0.01,
+        "economic_pass_rate": 0.67,
+        "pair_health_ratio": 0.98,
+        "backlog_avg": 2.0,
+        "dtr_complete": 1.0,
+        "decisions_reproducible": 1.0,
+        "infra_stable": 1.0,
+        "costs_plausible": 1.0,
+    }
+    for engine_id, gross_frequency in (
+        ("engine_a", 8.0),
+        ("engine_b", 7.0),
+        ("engine_c", 6.0),
+        ("engine_d", 5.0),
+    ):
+        metrics[f"{engine_id}.gross_frequency"] = gross_frequency
+        metrics[f"{engine_id}.useful_frequency"] = gross_frequency * 0.4
+        metrics[f"{engine_id}.estimated_cost_bps"] = 4.0
+        metrics[f"{engine_id}.edge_net"] = 0.0012
+        metrics[f"{engine_id}.economic_pass_rate"] = 0.66
+        metrics[f"{engine_id}.conflict_rate"] = 0.04
+        metrics[f"{engine_id}.marginal_edge"] = 0.0003
+    for component_id, contribution_score in (
+        ("build14_microstructure", 0.32),
+        ("build14_regime", 0.28),
+        ("build14_covariance", 0.25),
+        ("build14_risk_contribution", 0.22),
+        ("build14_edge_diversity", 0.20),
+    ):
+        metrics[f"{component_id}.contribution_score"] = contribution_score
+        metrics[f"{component_id}.interaction_score"] = 0.08
+    return metrics
+
+
 @pytest.fixture
 def gate_dir(repo_tmp_path):
     return repo_tmp_path
 
 
-def _fill_shadow_days(state_dir, profile: ShadowProfile, count: int):
+def _fill_shadow_days(
+    state_dir,
+    profile: ShadowProfile,
+    count: int,
+    *,
+    with_complete_report: bool = False,
+):
     """Helper: record N consecutive passing shadow days."""
     c = ShadowDayCounter(state_dir=state_dir, profile=profile)
     for i in range(count):
-        c.record_shadow_day(passed_all_gates=True, now=BASE_TS + i * ONE_DAY * 0.5)
+        c.record_shadow_day(
+            passed_all_gates=True,
+            metrics_summary=_complete_shadow_metrics(i) if with_complete_report else None,
+            now=BASE_TS + i * ONE_DAY * 0.5,
+        )
 
 
 class TestLightToMicroLive:
@@ -48,7 +99,9 @@ class TestLightToMicroLive:
         assert "1 days remaining" in result.message
 
     def test_accepts_with_30_days(self, gate_dir):
-        _fill_shadow_days(gate_dir, ShadowProfile.LIGHT, 30)
+        _fill_shadow_days(
+            gate_dir, ShadowProfile.LIGHT, 30, with_complete_report=True
+        )
         result = check_light_to_micro_live(gate_dir)
         assert result.passed is True
         assert result.consecutive_days == 30
@@ -56,9 +109,17 @@ class TestLightToMicroLive:
         assert result.message == "PASSED"
 
     def test_accepts_with_more_than_30_days(self, gate_dir):
-        _fill_shadow_days(gate_dir, ShadowProfile.LIGHT, 35)
+        _fill_shadow_days(
+            gate_dir, ShadowProfile.LIGHT, 35, with_complete_report=True
+        )
         result = check_light_to_micro_live(gate_dir)
         assert result.passed is True
+
+    def test_blocks_30_days_without_complete_shadow_report(self, gate_dir):
+        _fill_shadow_days(gate_dir, ShadowProfile.LIGHT, 30)
+        result = check_light_to_micro_live(gate_dir)
+        assert result.passed is False
+        assert "shadow report incomplete" in result.message
 
     def test_gate_name(self, gate_dir):
         result = check_light_to_micro_live(gate_dir)
@@ -81,7 +142,9 @@ class TestCompleteToLive:
         assert result.remaining_days == 15
 
     def test_accepts_with_30_days(self, gate_dir):
-        _fill_shadow_days(gate_dir, ShadowProfile.COMPLETE, 30)
+        _fill_shadow_days(
+            gate_dir, ShadowProfile.COMPLETE, 30, with_complete_report=True
+        )
         result = check_complete_to_live(gate_dir)
         assert result.passed is True
         assert result.message == "PASSED"
@@ -101,7 +164,9 @@ class TestCheckAllGates:
         assert all(not r.passed for r in results)
 
     def test_light_passes_complete_fails(self, gate_dir):
-        _fill_shadow_days(gate_dir, ShadowProfile.LIGHT, 30)
+        _fill_shadow_days(
+            gate_dir, ShadowProfile.LIGHT, 30, with_complete_report=True
+        )
         results = check_all_gates(gate_dir)
         light_result = [r for r in results if r.profile == "light"][0]
         complete_result = [r for r in results if r.profile == "complete"][0]
@@ -109,8 +174,12 @@ class TestCheckAllGates:
         assert complete_result.passed is False
 
     def test_both_pass(self, gate_dir):
-        _fill_shadow_days(gate_dir, ShadowProfile.LIGHT, 30)
-        _fill_shadow_days(gate_dir, ShadowProfile.COMPLETE, 30)
+        _fill_shadow_days(
+            gate_dir, ShadowProfile.LIGHT, 30, with_complete_report=True
+        )
+        _fill_shadow_days(
+            gate_dir, ShadowProfile.COMPLETE, 30, with_complete_report=True
+        )
         results = check_all_gates(gate_dir)
         assert all(r.passed for r in results)
 

@@ -1,4 +1,6 @@
 """Tests for data_backbone.pair_health_scorer — Build-2."""
+import logging
+
 import pytest
 
 from data_backbone.pair_health_scorer.quality_aggregator import (
@@ -182,3 +184,11 @@ class TestHealthReporter:
         unhealthy = reporter.get_unhealthy_pairs(threshold=0.5)
         assert len(unhealthy) == 1
         assert unhealthy[0].pair == "ETH"
+
+    def test_reporter_emits_structured_logs(self, caplog: pytest.LogCaptureFixture):
+        caplog.set_level(logging.INFO)
+        reporter = HealthReporter()
+        reporter.update_report(PairHealthReport(
+            pair="ETH", state=PairHealthState.SUSPENDED, health_score=0.2,
+        ))
+        assert any(record.message == "pair_health_report_updated" for record in caplog.records)

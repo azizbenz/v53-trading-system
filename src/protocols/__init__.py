@@ -10,9 +10,13 @@ from protocols.contracts import (
     MicroLiveInput,
     MicroLiveRunSummary,
     ShadowComparison,
+    ShadowBuild14Contribution,
     ShadowComponentAssessment,
     ShadowDecision,
+    ShadowEngineReport,
     ShadowInput,
+    ShadowRuntimeEvidence,
+    ShadowReportArtifact,
     ShadowRunSummary,
     ShadowTruthSet,
     ShadowValidationSet,
@@ -65,9 +69,15 @@ from protocols.shadow_dashboard import (
     build_shadow_projection,
 )
 from protocols.shadow_runtime import (
+    build_shadow_runtime_evidence,
     build_shadow_input_from_payloads,
     compare_shadow_candidate,
     run_shadow_validation,
+)
+from protocols.shadow_runtime_evidence import (
+    ShadowRuntimeEvidenceRecorder,
+    ShadowRuntimeEvidenceRecorderConfig,
+    ShadowRuntimeEvidenceRecorderState,
 )
 
 __all__ = [
@@ -102,7 +112,11 @@ __all__ = [
     "ShadowTruthSet",
     "ShadowValidationSet",
     "ShadowInput",
+    "ShadowRuntimeEvidence",
     "ShadowComparison",
+    "ShadowEngineReport",
+    "ShadowBuild14Contribution",
+    "ShadowReportArtifact",
     "ShadowComponentAssessment",
     "ShadowDecision",
     "ShadowRunSummary",
@@ -117,6 +131,10 @@ __all__ = [
     "ShadowInputError",
     "ShadowLineageError",
     "ShadowGateError",
+    "ShadowRuntimeEvidenceRecorderConfig",
+    "ShadowRuntimeEvidenceRecorderState",
+    "ShadowRuntimeEvidenceRecorder",
+    "build_shadow_runtime_evidence",
     "build_shadow_input_from_payloads",
     "compare_shadow_candidate",
     "run_shadow_validation",

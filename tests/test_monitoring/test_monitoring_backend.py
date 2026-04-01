@@ -30,6 +30,8 @@ from monitoring import (
     Build9XProjection,
     LiveLightProjection,
     MicroLiveProjection,
+    OperatorRuntimeEvent,
+    OperatorRuntimeProjection,
     ReplayImportProjection,
     ShadowProjection,
     build_health_dashboard_payload,
@@ -226,8 +228,23 @@ def test_monitoring_alerts_and_dashboard_payload_are_actionable():
     assert len(alerts) >= 4
     assert payload.headline_status == "critical"
     assert payload.active_alert_count == len(alerts)
+    assert set(payload.active_alert_ids) == {alert.alert_id for alert in alerts}
+    assert payload.alert_history
+    assert {entry.alert_id for entry in payload.alert_history} == {alert.alert_id for alert in alerts}
+    assert payload.pairs[0].pair == "BTCUSDT"
+    assert payload.engines[0].engine_id == "engine_a"
+    assert payload.reconnect_count == 2
+    assert payload.dtr_loss_count == 1
+    assert payload.cpu_pct == 35.0
     assert payload.future_learning_diagnostics == 2
     assert payload.future_learning_hypotheses == 1
+    assert payload.cra_alert_count == 1
+    assert payload.deployment_state.value == "shadow"
+    assert payload.last_transition_summary == "entered shadow"
+    assert payload.shadow_status == "healthy"
+    assert payload.micro_live_status == "planned"
+    assert payload.live_light_status == "planned"
+    assert payload.pnl_net_usdt == 0.0
 
 
 def test_health_dashboard_payload_preserves_identifiers_and_modes():
@@ -255,6 +272,76 @@ def test_health_dashboard_payload_preserves_identifiers_and_modes():
     assert payload.timestamp_ms == 1_700_000_123_456
     assert payload.profile == ProfileId.LIGHT
     assert payload.runtime_mode == RuntimeMode.SHADOW
+    assert payload.deployment_state.value == "shadow"
+    assert payload.last_transition_summary == "entered shadow"
+
+
+def test_health_and_technical_payloads_project_operator_runtime_state():
+    dtr_summary, cra_report, break_even_report, edge_report = _sample_build9_reports()
+    snapshot = collect_monitoring_snapshot(
+        correlation_id="corr-operator-projection",
+        profile=ProfileId.LIGHT,
+        runtime_mode=RuntimeMode.SHADOW,
+        timestamp_ms=1_700_000_123_456,
+        portfolio=collect_portfolio_metrics(
+            allocated_opportunities=1,
+            gross_capacity_used_pct=10.0,
+            loss_capacity_used_pct=2.0,
+            beta_utilization=0.1,
+            capital_deployed_usdt=500.0,
+            ce_net=0.0010,
+        ),
+        infra=collect_infra_metrics(),
+        meta=collect_meta_metrics(dtr_summary, cra_report, break_even_report, edge_report),
+    )
+    operator_runtime = OperatorRuntimeProjection(
+        event_count=3,
+        latest_event_type="critical_alert_acknowledged",
+        latest_event_message="critical alert acknowledged",
+        recent_event_log=(
+            OperatorRuntimeEvent(
+                timestamp_ms=1_700_000_123_450,
+                correlation_id="corr-operator-projection",
+                event_type="operator_action_requested",
+                action="set_halted",
+                target="",
+                accepted=False,
+                message="operator action requested: set_halted",
+            ),
+            OperatorRuntimeEvent(
+                timestamp_ms=1_700_000_123_456,
+                correlation_id="corr-operator-projection",
+                event_type="operator_action_rejected",
+                action="modify_risk_caps",
+                target="risk",
+                accepted=False,
+                message="operator action rejected: modify_risk_caps",
+                rejection_reason="risk cap changes are forbidden in the locked Light UI",
+            ),
+        ),
+        rejection_event_count=1,
+        latest_rejection_reason="risk cap changes are forbidden in the locked Light UI",
+        pending_notification_count=1,
+        pending_notification_alert_ids=("corr-operator-projection:loss",),
+        acknowledged_notification_count=2,
+        latest_acknowledged_alert_id="corr-operator-projection:latency",
+    )
+
+    health_payload = build_health_dashboard_payload(snapshot, operator_runtime=operator_runtime)
+    technical_payload = build_technical_dashboard_payload(snapshot, operator_runtime=operator_runtime)
+
+    assert health_payload.operator_runtime.event_count == 3
+    assert health_payload.operator_runtime.rejection_event_count == 1
+    assert health_payload.operator_runtime.latest_rejection_reason == (
+        "risk cap changes are forbidden in the locked Light UI"
+    )
+    assert health_payload.operator_runtime.pending_notification_count == 1
+    assert health_payload.last_transition_summary == "critical alert acknowledged"
+    assert technical_payload.alerts.operator_runtime.latest_event_message == "critical alert acknowledged"
+    assert technical_payload.alerts.operator_runtime.recent_event_log[-1].event_type == "operator_action_rejected"
+    assert technical_payload.alerts.operator_runtime.latest_acknowledged_alert_id == (
+        "corr-operator-projection:latency"
+    )
 
 
 def test_critical_alert_overrides_warning_only_flags():
@@ -294,6 +381,38 @@ def test_critical_alert_overrides_warning_only_flags():
     )
 
     assert payload.headline_status == "critical"
+
+
+def test_health_payload_accepts_rollout_status_overrides_for_light_surface():
+    dtr_summary, cra_report, break_even_report, edge_report = _sample_build9_reports()
+    snapshot = collect_monitoring_snapshot(
+        correlation_id="corr-rollout-health",
+        profile=ProfileId.LIGHT,
+        runtime_mode=RuntimeMode.MICRO_LIVE,
+        timestamp_ms=1_700_000_000_000,
+        portfolio=collect_portfolio_metrics(
+            allocated_opportunities=1,
+            gross_capacity_used_pct=10.0,
+            loss_capacity_used_pct=2.0,
+            beta_utilization=0.1,
+            capital_deployed_usdt=500.0,
+            ce_net=0.0010,
+            pnl_net_usdt=42.0,
+        ),
+        infra=collect_infra_metrics(),
+        meta=collect_meta_metrics(dtr_summary, cra_report, break_even_report, edge_report),
+    )
+
+    payload = build_health_dashboard_payload(
+        snapshot,
+        shadow_status="healthy",
+        micro_live_status="warning",
+        live_light_status="planned",
+    )
+
+    assert payload.deployment_state.value == "degraded"
+    assert payload.last_transition_summary == "micro_live -> degraded"
+    assert payload.pnl_net_usdt == 42.0
 
 
 def test_warning_payload_without_critical_loss_stays_warning():
@@ -471,7 +590,7 @@ def test_technical_dashboard_payload_defaults_governed_sections_without_raw_prot
     assert payload.build14.status == "planned"
     assert payload.build14.hard_state == "coded"
     assert payload.build14.live_promotion_eligible is False
-    assert payload.build14.influence_mode == "observe"
+    assert payload.build14.influence_mode == "read_only"
     assert payload.replay_import.status == "info"
     assert payload.replay_import.validation_status == "not_run"
     assert payload.alerts.backlog_stale_status == "healthy"

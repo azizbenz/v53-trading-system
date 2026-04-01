@@ -4,7 +4,11 @@
 
 from __future__ import annotations
 
+import logging
 from pydantic import BaseModel, Field
+
+
+logger = logging.getLogger(__name__)
 
 
 class ConsistencyScore(BaseModel, frozen=True):
@@ -60,18 +64,42 @@ class ConsistencyReporter:
 
     def update_score(self, score: ConsistencyScore) -> None:
         self._scores[score.pair] = score
+        logger.info(
+            "consistency_score_updated",
+            extra={
+                "pair": score.pair,
+                "score": score.score,
+                "gap_rate": score.gap_rate,
+                "dup_rate": score.dup_rate,
+                "disorder_rate": score.disorder_rate,
+                "contradiction_rate": score.contradiction_rate,
+            },
+        )
 
     def record_gap(self, count: int = 1) -> None:
         self._total_gaps += count
+        logger.warning("consistency_gap_recorded", extra={"count": count, "total_gaps": self._total_gaps})
 
     def record_duplicate(self, count: int = 1) -> None:
         self._total_duplicates += count
+        logger.warning(
+            "consistency_duplicate_recorded",
+            extra={"count": count, "total_duplicates": self._total_duplicates},
+        )
 
     def record_disorder(self, count: int = 1) -> None:
         self._total_disorders += count
+        logger.warning(
+            "consistency_disorder_recorded",
+            extra={"count": count, "total_disorders": self._total_disorders},
+        )
 
     def record_contradiction(self, count: int = 1) -> None:
         self._total_contradictions += count
+        logger.warning(
+            "consistency_contradiction_recorded",
+            extra={"count": count, "total_contradictions": self._total_contradictions},
+        )
 
     def get_score(self, pair: str) -> ConsistencyScore | None:
         return self._scores.get(pair)

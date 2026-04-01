@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, model_validator
 
 from interface_contracts import LIGHT_PAIRS, ProfileId, PromotionState, ReviewState, RuntimeMode
@@ -53,6 +55,21 @@ class ShadowTruthSet(BaseModel, frozen=True):
     queue_backlog: int = Field(..., ge=0)
 
 
+class ShadowRuntimeEvidence(BaseModel, frozen=True):
+    """Typed Build-11 runtime evidence combined from replay and shadow execution."""
+
+    data_source: Literal["unknown", "live_websocket", "recorded_replay"] = "unknown"
+    feature_bridge_ready: bool = False
+    parity_diagnostics_ready: bool = False
+    replay_metrics_ready: bool = False
+    replay_dtr_ready: bool = False
+    event_loop_ready: bool = False
+    config_loaded: bool = False
+    shadow_dtr_persisted: bool = False
+    continuous_hours: float = Field(default=0.0, ge=0.0)
+    evidence_summary: str = "No real runtime evidence recorded"
+
+
 class ShadowValidationSet(BaseModel, frozen=True):
     """Candidate validation set measured in Shadow conditions."""
 
@@ -69,6 +86,16 @@ class ShadowValidationSet(BaseModel, frozen=True):
     import_artifact_id: str = ""
     import_lineage_version: str = ""
     import_rejection_reasons: tuple[str, ...] = ()
+    runtime_data_source: Literal["unknown", "live_websocket", "recorded_replay"] = "unknown"
+    runtime_feature_bridge_ready: bool = False
+    runtime_parity_diagnostics_ready: bool = False
+    runtime_replay_metrics_ready: bool = False
+    runtime_replay_dtr_ready: bool = False
+    runtime_event_loop_ready: bool = False
+    runtime_config_loaded: bool = False
+    runtime_shadow_dtr_persisted: bool = False
+    runtime_continuous_hours: float = Field(default=0.0, ge=0.0)
+    runtime_evidence_summary: str = "No real runtime evidence recorded"
     build9x_diagnostics_count: int = Field(default=0, ge=0)
     open_hypotheses: int = Field(default=0, ge=0)
     replay_candidate_count: int = Field(default=0, ge=0)
@@ -211,6 +238,17 @@ class ShadowRunSummary(BaseModel, frozen=True):
     decision: ShadowDecision
     import_artifact_id: str = ""
     import_lineage_version: str = ""
+    runtime_data_source: Literal["unknown", "live_websocket", "recorded_replay"] = "unknown"
+    runtime_feature_bridge_ready: bool = False
+    runtime_parity_diagnostics_ready: bool = False
+    runtime_replay_metrics_ready: bool = False
+    runtime_replay_dtr_ready: bool = False
+    runtime_event_loop_ready: bool = False
+    runtime_config_loaded: bool = False
+    runtime_shadow_dtr_persisted: bool = False
+    runtime_continuous_hours: float = Field(default=0.0, ge=0.0)
+    runtime_evidence_ready: bool = False
+    runtime_evidence_summary: str = "No real runtime evidence recorded"
     build9x_diagnostics_count: int = Field(default=0, ge=0)
     open_hypotheses: int = Field(default=0, ge=0)
     replay_candidate_count: int = Field(default=0, ge=0)
@@ -263,6 +301,156 @@ class ShadowRunSummary(BaseModel, frozen=True):
     @property
     def remaining_shadow_days(self) -> int:
         return max(0, self.shadow_required_days - self.shadow_days_completed)
+
+
+class ShadowEngineReport(BaseModel, frozen=True):
+    """Aggregated per-engine evidence rendered by the Build-11 shadow report."""
+
+    engine_id: str = Field(..., min_length=1)
+    gross_frequency: float = Field(..., ge=0.0)
+    useful_frequency: float = Field(..., ge=0.0)
+    estimated_cost_bps: float = Field(..., ge=0.0)
+    edge_net: float
+    economic_pass_rate: float = Field(..., ge=0.0, le=1.0)
+    conflict_rate: float = Field(..., ge=0.0, le=1.0)
+    marginal_edge: float = 0.0
+    observations: int = Field(..., ge=1)
+
+    @model_validator(mode="after")
+    def validate_engine_scope(self) -> "ShadowEngineReport":
+        if self.engine_id not in _REQUIRED_SHADOW_ENGINE_IDS:
+            raise ValueError("Build-11 shadow report engine is out of canonical scope")
+        if self.useful_frequency > self.gross_frequency:
+            raise ValueError(
+                "Build-11 shadow report useful_frequency must stay within gross_frequency"
+            )
+        return self
+
+
+class ShadowBuild14Contribution(BaseModel, frozen=True):
+    """Aggregated Build-14 evidence rendered by the Build-11 shadow report."""
+
+    component_id: str = Field(..., min_length=1)
+    contribution_score: float
+    interaction_score: float = 0.0
+    observations: int = Field(..., ge=1)
+
+    @model_validator(mode="after")
+    def validate_component_scope(self) -> "ShadowBuild14Contribution":
+        if self.component_id not in _REQUIRED_SHADOW_BUILD14_COMPONENT_IDS:
+            raise ValueError(
+                "Build-11 shadow report Build-14 contribution is out of canonical scope"
+            )
+        return self
+
+
+class ShadowReportArtifact(BaseModel, frozen=True):
+    """Persisted Build-11 shadow report required before promotion."""
+
+    report_id: str = Field(..., min_length=1)
+    report_version: str = "build11.shadow.v1"
+    profile: str = Field(..., min_length=1)
+    report_generated_at: float
+    consecutive_days: int = Field(..., ge=0)
+    required_days: int = Field(default=30, ge=1)
+    remaining_days: int = Field(..., ge=0)
+    is_complete: bool = False
+    started_at: float | None = None
+    last_shadow_timestamp: float | None = None
+    total_resets: int = Field(default=0, ge=0)
+    daily_records_count: int = Field(default=0, ge=0)
+    dtr_coverage: float | None = Field(default=None, ge=0.0, le=1.0)
+    dtr_complete: bool = False
+    ce_net: float | None = None
+    estimated_cost_bps: float | None = Field(default=None, ge=0.0)
+    edge_net: float | None = None
+    drawdown_pct: float | None = None
+    stale_rate: float | None = Field(default=None, ge=0.0)
+    economic_pass_rate: float | None = Field(default=None, ge=0.0, le=1.0)
+    pair_health_ratio: float | None = Field(default=None, ge=0.0, le=1.0)
+    backlog_avg: float | None = Field(default=None, ge=0.0)
+    decisions_reproducible: bool = False
+    infra_stable: bool = False
+    costs_plausible: bool = False
+    shadow_report_ready: bool = False
+    inter_engine_comparison_ready: bool = False
+    build14_contribution_ready: bool = False
+    inter_engine_comparison: tuple[ShadowEngineReport, ...] = ()
+    build14_contribution: tuple[ShadowBuild14Contribution, ...] = ()
+    missing_sections: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_report(self) -> "ShadowReportArtifact":
+        if self.required_days != 30:
+            raise ValueError("Build-11 shadow report requires required_days=30")
+        if self.remaining_days != max(0, self.required_days - self.consecutive_days):
+            raise ValueError(
+                "Build-11 shadow report remaining_days must reflect the 30-day counter"
+            )
+
+        engine_ids = tuple(
+            entry.engine_id for entry in self.inter_engine_comparison
+        )
+        if len(engine_ids) != len(set(engine_ids)):
+            raise ValueError(
+                "Build-11 shadow report inter_engine_comparison must stay unique per engine"
+            )
+        build14_ids = tuple(
+            entry.component_id for entry in self.build14_contribution
+        )
+        if len(build14_ids) != len(set(build14_ids)):
+            raise ValueError(
+                "Build-11 shadow report build14_contribution must stay unique per component"
+            )
+
+        if self.inter_engine_comparison_ready and set(engine_ids) != _REQUIRED_SHADOW_ENGINE_IDS:
+            raise ValueError(
+                "Build-11 shadow report inter_engine_comparison_ready=True requires A/B/C/D evidence"
+            )
+        if (
+            self.build14_contribution_ready
+            and set(build14_ids) != _REQUIRED_SHADOW_BUILD14_COMPONENT_IDS
+        ):
+            raise ValueError(
+                "Build-11 shadow report build14_contribution_ready=True requires all Build-14 enablers"
+            )
+
+        if self.shadow_report_ready:
+            missing: list[str] = []
+            for field_name in (
+                "dtr_coverage",
+                "ce_net",
+                "estimated_cost_bps",
+                "edge_net",
+                "drawdown_pct",
+                "stale_rate",
+                "economic_pass_rate",
+                "pair_health_ratio",
+                "backlog_avg",
+            ):
+                if getattr(self, field_name) is None:
+                    missing.append(field_name)
+            if not self.is_complete:
+                missing.append("30_day_counter")
+            if not self.dtr_complete:
+                missing.append("dtr_complete")
+            if not self.decisions_reproducible:
+                missing.append("decisions_reproducible")
+            if not self.infra_stable:
+                missing.append("infra_stable")
+            if not self.costs_plausible:
+                missing.append("costs_plausible")
+            if not self.inter_engine_comparison_ready:
+                missing.append("inter_engine_comparison")
+            if not self.build14_contribution_ready:
+                missing.append("build14_contribution")
+            if missing:
+                raise ValueError(
+                    "Build-11 shadow report cannot be ready while required sections are missing: "
+                    + ", ".join(missing)
+                )
+
+        return self
 
 
 class MicroLiveInput(BaseModel, frozen=True):
@@ -765,11 +953,15 @@ ShadowValidationSet.model_rebuild()
 
 __all__ = [
     "ShadowTruthSet",
+    "ShadowRuntimeEvidence",
     "ShadowValidationSet",
     "ShadowInput",
     "ShadowComparison",
     "ShadowDecision",
     "ShadowRunSummary",
+    "ShadowEngineReport",
+    "ShadowBuild14Contribution",
+    "ShadowReportArtifact",
     "MicroLiveInput",
     "MicroLiveDecision",
     "MicroLiveExecutionPlan",

@@ -12,7 +12,10 @@ Ce document couvre **Build-17** du plan officiel V5.3.
 
 Build-17 a une mission unique :
 
-> définir la **UI Complete** et le protocole officiel de **Live-Complete**, c’est-à-dire l’extension de la V5.3 vers sa cible 12 paires / 4 moteurs, sans casser la stabilité, la discipline et la lisibilité acquises en Light.
+> définir la **UI Complete** et le protocole officiel de **Live-Complete**,
+> c’est-à-dire l’extension gouvernée du rollout de la même architecture complète
+> vers sa cible 12 paires / 4 moteurs, sans casser la stabilité, la discipline
+> et la lisibilité acquises en LIGHT.
 
 Build-17 n’est pas une simple “version plus grande” de la Light.  
 C’est une phase qui doit démontrer que l’architecture complète :
@@ -29,7 +32,9 @@ C’est une phase qui doit démontrer que l’architecture complète :
 
 Build-17 existe pour répondre à une question centrale :
 
-> la V5.3 peut-elle passer de **Light disciplinée** à **Complete élargie** sans transformer une base saine en système opaque, trop corrélé, trop coûteux ou trop lourd à opérer ?
+> la V5.3 peut-elle etendre de manière gouvernée son rollout de **LIGHT discipliné**
+> vers **COMPLETE élargi** sans transformer une base saine en système opaque,
+> trop corrélé, trop coûteux ou trop lourd à opérer ?
 
 Il faut donc formaliser simultanément :
 
@@ -57,6 +62,17 @@ Build-17 est :
 - une **phase de gouvernance renforcée**
 - une **phase de preuve d’utilité systémique**
 
+## Relation avec le Shadow complet
+
+La UI Complete doit être préparée pour :
+
+- **visualiser les résultats du Shadow complet** (30 jours avec A/B/C/D + Build-14 à 100%)
+- **montrer les verdicts individuels** sur chaque moteur (A/B/C/D) et chaque enabler Build-14
+- **afficher la contribution des enablers Build-14** : microstructure, régime, covariance, risk contribution, edge diversity
+- **afficher les Hard States** de chaque composant (`SHADOW_ENABLED`, `SHADOW_VALIDATED`, `DORMANT`, `PROMOTED`)
+- **soutenir la décision de promotion / non-promotion** avec données comparatives
+- **montrer les risques** de duplication, churn, coût, concentration entre moteurs
+
 ---
 
 # 3. Position de Build-17 dans le plan global
@@ -75,7 +91,7 @@ Les conditions suivantes doivent être satisfaites :
 
 ## Après Build-17
 Si Build-17 est validé, alors :
-- la V5.3 Complete peut entrer dans une trajectoire de production contrôlée
+- la V5.3 COMPLETE peut entrer dans une trajectoire de production contrôlée
 - la gouvernance complète du système est formalisée
 - le projet atteint son périmètre cible
 
@@ -149,13 +165,15 @@ Build-17 ne peut pas commencer si une des conditions suivantes n’est pas satis
 
 ## 7.1 Light
 - 6 paires
-- 2 moteurs
-- priorité à la stabilité et à la lisibilité minimale
-- objectif : produire une base rentable crédible
+- architecture complète visible et supervisable
+- coeur runtime attendu : A/B
+- C/D armables ou activables seulement sous gates spécifiques et bornes strictes
+- priorité à la stabilité et à la lisibilité gouvernée
+- objectif : produire un rollout rentable crédible
 
 ## 7.2 Complete
 - 12 paires
-- 4 moteurs
+- 4 moteurs activables sous gouvernance
 - analytics enrichis
 - plus de variété de contextes
 - plus de corrélation potentielle
@@ -577,19 +595,21 @@ La Complete ne démarre pas avec 12 paires et 4 moteurs à intensité maximale.
 
 Elle doit suivre une montée prudente par :
 - paliers de paires
-- paliers de moteurs
 - paliers de tailles
-- paliers de complexité
+- paliers de capital
+- paliers de charge opératoire
 
 ## 22.2 Règle générale
-La montée en charge se fait par étapes documentées, par exemple :
+La montée en charge Live-Complete se fait **après Shadow Complete validé**, par étapes documentées, par exemple :
 
-1. 6 paires / A+B / UI Complete lecture seule  
-2. 8–9 paires / A+B+C shadow ou influence limitée  
-3. 10–12 paires / A+B+C / D shadow  
-4. 12 paires / A+B+C+D / Live-Complete contrôlé  
+1. 6 paires / UI Complete active / seuls les composants déjà `SHADOW_VALIDATED` sont autorisés en live
+2. 8–9 paires / mêmes composants validés / budgets et monitoring renforcés
+3. 10–12 paires / extension prudente des paires / aucune promotion implicite de composant supplémentaire
+4. 12 paires / Live-Complete contrôlé / seuls les composants explicitement `PROMOTED` restent actifs en live
 
 L’ordre exact dépend des validations précédentes.
+
+Les paliers de Build-17 portent sur le rollout live des composants déjà jugés après Shadow ; ils ne recréent pas une activation Shadow partielle de A/B/C/D ou de Build-14.
 
 ## 22.3 Interdictions
 - activer 12 paires + 4 moteurs d’un seul coup

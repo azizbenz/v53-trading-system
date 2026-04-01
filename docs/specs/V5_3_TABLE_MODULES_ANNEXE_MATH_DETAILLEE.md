@@ -1,6 +1,6 @@
 # V5.3 — TABLE DÉTAILLÉE DES MODULES + ANNEXE MATHÉMATIQUE PAR MODULE
 ## Spécification développeur prod-safe
-### Complément canonique au `V5_3_MASTER_FINAL_CANONICAL.md`
+### Complément canonique subordonné au `V5_3_MASTER_FINAL_UNIQUE.md`
 ### Architecture cible complète + profils Light / Complete
 ### Sans code
 
@@ -8,7 +8,7 @@
 
 # 0. Objet du document
 
-Ce document transforme le master canonique en **spécification développeur détaillée**.
+Ce document transforme le master officiel unique en **spécification développeur détaillée**.
 
 Il fournit pour chaque module :
 
@@ -25,6 +25,16 @@ Il fournit pour chaque module :
 - priorité d’implémentation
 - dérives possibles
 - interdits de conception
+
+## 0.1 Règle d’alignement doctrinal
+
+Cette annexe mathématique :
+
+- est **subordonnée** au `V5_3_MASTER_FINAL_UNIQUE.md`
+- décrit les briques enrichies Build-14 comme **pleinement actives en Shadow** (`SHADOW_ENABLED`)
+- décrit les moteurs C/D comme **activés et observés en Shadow** dans la phase de vérité système complète
+- ne donne **jamais** de droit de promotion live : seul le verdict post-Shadow peut conduire à `SHADOW_VALIDATED`, `DORMANT` puis à une promotion explicite
+- ne peut jamais servir de source concurrente pour redéfinir les Hard States, les gates de promotion ou la hiérarchie documentaire
 
 Le but n’est pas d’empiler des idées.  
 Le but est de rendre la V5.3 **implémentable sans ambiguïté**.

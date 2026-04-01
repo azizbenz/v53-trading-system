@@ -19,6 +19,47 @@ BASE_TS = 1_700_000_000.0  # Reference timestamp
 ONE_DAY = 86_400.0
 
 
+def _complete_shadow_metrics(day_index: int) -> dict[str, float]:
+    metrics = {
+        "dtr_coverage": 1.0,
+        "ce_net": 0.0012 + day_index * 0.000001,
+        "estimated_cost_bps": 4.2,
+        "edge_net": 0.0015,
+        "drawdown_pct": 0.018,
+        "stale_rate": 0.01,
+        "economic_pass_rate": 0.67,
+        "pair_health_ratio": 0.98,
+        "backlog_avg": 2.0,
+        "dtr_complete": 1.0,
+        "decisions_reproducible": 1.0,
+        "infra_stable": 1.0,
+        "costs_plausible": 1.0,
+    }
+    for engine_id, gross_frequency in (
+        ("engine_a", 8.0),
+        ("engine_b", 7.0),
+        ("engine_c", 6.0),
+        ("engine_d", 5.0),
+    ):
+        metrics[f"{engine_id}.gross_frequency"] = gross_frequency
+        metrics[f"{engine_id}.useful_frequency"] = gross_frequency * 0.4
+        metrics[f"{engine_id}.estimated_cost_bps"] = 4.0 + 0.1 * day_index
+        metrics[f"{engine_id}.edge_net"] = 0.0012
+        metrics[f"{engine_id}.economic_pass_rate"] = 0.66
+        metrics[f"{engine_id}.conflict_rate"] = 0.04
+        metrics[f"{engine_id}.marginal_edge"] = 0.0003
+    for component_id, contribution_score in (
+        ("build14_microstructure", 0.32),
+        ("build14_regime", 0.28),
+        ("build14_covariance", 0.25),
+        ("build14_risk_contribution", 0.22),
+        ("build14_edge_diversity", 0.20),
+    ):
+        metrics[f"{component_id}.contribution_score"] = contribution_score
+        metrics[f"{component_id}.interaction_score"] = 0.08
+    return metrics
+
+
 @pytest.fixture
 def counter_dir(repo_tmp_path):
     return repo_tmp_path
@@ -154,6 +195,7 @@ class TestReport:
         assert report_path.exists()
         data = json.loads(report_path.read_text(encoding="utf-8"))
         assert data["consecutive_days"] == 1
+        assert data["shadow_report_ready"] is False
 
     def test_report_at_30_days_shows_complete(self, counter_dir):
         c = ShadowDayCounter(state_dir=counter_dir, profile=ShadowProfile.COMPLETE)
@@ -162,6 +204,21 @@ class TestReport:
         report = c.generate_report()
         assert report["is_complete"] is True
         assert report["remaining_days"] == 0
+
+    def test_report_ready_requires_full_build11_sections(self, counter_dir):
+        c = ShadowDayCounter(state_dir=counter_dir, profile=ShadowProfile.LIGHT)
+        for i in range(30):
+            c.record_shadow_day(
+                passed_all_gates=True,
+                metrics_summary=_complete_shadow_metrics(i),
+                now=BASE_TS + i * ONE_DAY * 0.5,
+            )
+        report = c.generate_report()
+        assert report["shadow_report_ready"] is True
+        assert report["inter_engine_comparison_ready"] is True
+        assert report["build14_contribution_ready"] is True
+        assert len(report["inter_engine_comparison"]) == 4
+        assert len(report["build14_contribution"]) == 5
 
 
 class TestMetricsSummary:

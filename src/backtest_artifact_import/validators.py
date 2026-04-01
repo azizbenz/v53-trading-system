@@ -51,6 +51,22 @@ def validate_import_request(request: ArtifactImportRequest) -> ArtifactImportDec
 
     if not request.manifest.dataset_ref or not request.manifest.clock_ref:
         reasons.append("dataset and clock refs are required for governed import")
+    if not request.manifest.feature_bridge_ref:
+        reasons.append("feature bridge ref is required for governed import")
+    elif request.manifest.feature_bridge_ref not in request.payload_refs:
+        reasons.append("feature bridge ref must be included in payload refs")
+    if not request.manifest.parity_diagnostics_ref:
+        reasons.append("parity diagnostics ref is required for governed import")
+    elif request.manifest.parity_diagnostics_ref not in request.payload_refs:
+        reasons.append("parity diagnostics ref must be included in payload refs")
+    if not request.manifest.replay_metrics_ref:
+        reasons.append("replay metrics ref is required for governed import")
+    elif request.manifest.replay_metrics_ref not in request.payload_refs:
+        reasons.append("replay metrics ref must be included in payload refs")
+    if not request.manifest.replay_dtr_ref:
+        reasons.append("replay dtr ref is required for governed import")
+    elif request.manifest.replay_dtr_ref not in request.payload_refs:
+        reasons.append("replay dtr ref must be included in payload refs")
 
     accepted = len(reasons) == 0
     normalized_state = (
@@ -81,6 +97,10 @@ def summarize_import_request(
         exported_from=request.manifest.exported_from,
         dataset_ref=request.manifest.dataset_ref,
         clock_ref=request.manifest.clock_ref,
+        feature_bridge_ref=request.manifest.feature_bridge_ref,
+        parity_diagnostics_ref=request.manifest.parity_diagnostics_ref,
+        replay_metrics_ref=request.manifest.replay_metrics_ref,
+        replay_dtr_ref=request.manifest.replay_dtr_ref,
         review_export_ref=request.manifest.review_export_ref,
         payload_ref_count=len(request.payload_refs),
         accepted=decision.accepted,

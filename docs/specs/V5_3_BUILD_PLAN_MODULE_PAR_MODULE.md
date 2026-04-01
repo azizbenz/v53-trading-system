@@ -1,5 +1,5 @@
 # V5.3 BUILD PLAN — MODULE PAR MODULE
-## Plan exécutable dérivé du master canonique
+## Plan exécutable dérivé du master officiel unique
 ### Version développeur / chef de projet / orchestration IA
 ### Sans code
 
@@ -28,7 +28,8 @@ Pour l’état documentaire actuel :
 - **Build-10** dispose maintenant d’une première implémentation codée exploitable côté monitoring/backend UI
 - **Build-9X** dispose maintenant d’une première implémentation codée gouvernée
 - `LOCAL_REPLAY` et l’import d’artifact disposent de scaffolds minimaux codés, sans runtime complet opéré
-- **Build-11 à Build-17** restent des étapes canoniques futures et ne doivent pas être lues comme déjà validées
+- **Build-11 à Build-17** restent des étapes canoniques de validation et
+  d'extension du rollout, et ne doivent pas être lues comme déjà validées
 
 ## 0.2 Invariant local / VPS
 
@@ -49,7 +50,8 @@ Le plan s’appuie sur une seule V5.3 commune local + VPS :
 - aucun code sans tests
 - aucun merge sans audit croisé
 - aucun passage de phase sans critères go/no-go
-- aucun développement Complete tant que Light n’est pas validé
+- aucune extension de rollout COMPLETE tant que le rollout LIGHT n’est pas
+  validé et que les gates d'extension ne sont pas passés
 
 ## 1.2 Pipeline IA officiel
 1. ChatGPT : spec du module  
@@ -71,19 +73,19 @@ Le plan s’appuie sur une seule V5.3 commune local + VPS :
 | 3 | Execution Backbone | commun | P0 | exécution et coûts |
 | 4 | Risk Backbone | commun | P0 | budgets risque |
 | 5 | Scoring Backbone | commun | P0 | hard/soft/rank |
-| 6 | Moteur A | Light | P0 | cœur premium |
-| 7 | Moteur B | Light | P0 | fréquence utile |
-| 8 | Portfolio Minimal | Light | P0 | arbitrage A/B |
-| 9 | Meta Minimal | Light | P0 | DTR, CRA, break-even |
+| 6 | Moteur A | LIGHT rollout | P0 | cœur premium du rollout initial |
+| 7 | Moteur B | LIGHT rollout | P0 | fréquence utile du rollout initial |
+| 8 | Portfolio Minimal | LIGHT rollout | P0 | arbitrage gouverné sur 6 paires |
+| 9 | Meta Minimal | LIGHT rollout | P0 | DTR, CRA, break-even |
 | 9X | Meta Learning Governed Layer | documentaire | P1/P2 | diagnostics, hypothèses, replay bundles, sans effet live direct |
-| 10 | Monitoring + UI Light | Light | P0/P1 | supervision verrouillée |
-| 11 | Shadow Light | Light | P0 | validation sans capital |
-| 12 | Micro-live Light | Light | P0 | coûts réels |
-| 13 | Live-Light | Light | P0 | première prod |
-| 14 | Complete Enablers | Complete | P1/P2 | enrichissements non bloquants |
-| 15 | Moteur C | Complete | P1 | breakout continuation |
-| 16 | Moteur D | Complete | P1 | re-entry |
-| 17 | UI Complete + Live-Complete | Complete | P1 | extension finale |
+| 10 | Monitoring + UI Light | LIGHT rollout | P0/P1 | supervision verrouillée du système complet |
+| 11 | Shadow Light | LIGHT rollout | P0 | validation sans capital |
+| 12 | Micro-live Light | LIGHT rollout | P0 | coûts réels |
+| 13 | Live-Light | LIGHT rollout | P0 | premier rollout réel borné |
+| 14 | Complete Enablers | architecture complète | P1/P2 | enablers prod-safe et angles morts |
+| 15 | Moteur C | architecture complète | P1 | breakout continuation gouverné |
+| 16 | Moteur D | architecture complète | P1 | re-entry gouverné |
+| 17 | UI Complete + Live-Complete | COMPLETE rollout | P1 | extension gouvernée du rollout |
 
 ---
 
@@ -111,6 +113,40 @@ Geler :
 - plusieurs docs actifs restent en concurrence
 - noms de modules encore mouvants
 - profil Light/Complete non verrouillé
+
+---
+
+## Phase Audit Integration Pass (post Build-0, pre-qualification)
+
+### Objectif
+Intégrer les enseignements des audits tiers dans le corpus documentaire sans modifier le code.
+
+### Étapes
+1. **Freeze documentaire** — gel du corpus canonique avant modifications
+2. **Triage des findings** — classification NOW_P0 / NOW_LIGHT / NEXT_BUILD14 / RESEARCH_LOCAL / REJECT
+3. **Patch des specs** — injection des invariants P0 dans les builds concernés
+4. **Réalignement docs → code** — plan de vérification que le code respecte les docs patchées
+5. **Interdiction de promotion implicite** — aucun build ne change de statut par le seul fait du patch
+6. **Requalification des builds 1→14** — chaque build déjà codé est requalifié selon le nouveau corpus
+
+### Livrables
+- `V5_3_AUDIT_INTEGRATION_DECISIONS.md` (rapport de triage)
+- `V5_3_DOC_TO_CODE_ALIGNMENT_PLAN.md` (plan de réalignement)
+- Patches dans chaque spec de build concernée
+- Changelog documentaire
+
+### Règles
+- ne pas modifier le code dans cette phase
+- ne pas activer Complete implicitement
+- ne pas promouvoir Build-14
+- ne pas créer d'architecture concurrente
+- un audit tiers n'est jamais une source de vérité active
+
+### Go/No-Go
+- rapport de triage complet
+- tous les fichiers MD patchés
+- aucune contradiction introduite
+- plan d'alignement code prêt
 
 ---
 
@@ -339,7 +375,8 @@ Ajouter fréquence utile et rotation du capital.
 - allocation_router
 
 ## Objectif
-Arbitrer les opportunités A/B sur 6 paires.
+Arbitrer les opportunités du rollout initial sur 6 paires sans casser
+l'extensibilité de l'architecture complète.
 
 ## Tests obligatoires
 - arbitrage simultané
@@ -436,11 +473,12 @@ Ajouter une couche méta gouvernée qui produit :
 Rendre le système gouvernable sans le rendre permissif.
 
 ## Tests obligatoires
-- profils Light visibles
+- profils et états de rollout visibles
 - état système
 - overview portefeuille
 - paires / moteurs / risque / coûts / infra
-- impossibilité d’activer C/D ou 12 paires
+- impossibilité d'activer un moteur, une paire ou un budget au-dela des gates
+  et de la borne de rollout
 
 ## Go si
 - UI actionnable
@@ -458,24 +496,44 @@ Rendre le système gouvernable sans le rendre permissif.
 ## Objectif
 Valider la logique sans capital réel.
 
+## HARD STATEMENT — Shadow = phase de vérité système complète (30 jours)
+- La version Light doit trader en mode SHADOW pendant **30 jours calendaires consécutifs minimum**
+- Données réelles obligatoires (WebSocket ou replay réaliste)
+- Pipeline complet : data → engine → scoring → portfolio → execution simulée
+- **Build-14, moteurs C/D et tous les enrichissements activés à 100% pendant le Shadow**
+- Moteurs A/B/C/D actifs, scorés, classés, arbitrés et observés
+- Build-14 enablers pleinement utilisés dans les décisions Shadow
+- DTR complet produit pendant les 30 jours
+- Interruption > 24h = compteur reprend à zéro
+- Rapport shadow exploitable obligatoire (CE, coûts estimés, edge, drawdown, stale rate, **comparaison inter-moteurs A/B/C/D, contribution Build-14**)
+- **Aucune activation Micro-live ni Live-Light avant l'expiration de cette période**
+- **Activation Shadow ≠ promotion Live** : chaque composant sera jugé individuellement au verdict post-Shadow
+
 ## KPI obligatoires
-- fréquence brute
-- fréquence utile
-- coût simulé prudent
+- fréquence brute et utile par moteur (A/B/C/D)
+- coût simulé prudent par moteur
 - DTR complets
 - pass-rate économique
 - pair health
 - backlog stable
+- comparaison inter-moteurs (non-duplication, edge marginal)
+- contribution Build-14 (microstructure, régime, covariance, risk contribution, edge diversity)
+- interactions et conflits A/B/C/D
 
 ## Go si
+- **HARD : 30 jours de shadow consécutifs atteints**
 - décisions reproductibles
 - infra stable
 - coût simulé crédible
+- rapport shadow produit et approuvé
+- verdict composant par composant rendu (chaque moteur/enabler : `SHADOW_VALIDATED` ou `DORMANT`)
 
 ## No-go si
+- 30 jours non atteints
 - signaux non explicables
 - DTR incomplets
 - saturation latente
+- verdict post-Shadow non rendu
 
 ---
 
@@ -483,6 +541,11 @@ Valider la logique sans capital réel.
 
 ## Objectif
 Valider coûts réels, fills, stale rate, reconciliation.
+
+## Prérequis
+- **Verdict post-Shadow rendu** : seuls les composants `SHADOW_VALIDATED` passent en Micro-live
+- L'activation complète en Shadow ne signifie pas activation Micro-live automatique de tous les composants
+- Les moteurs/enablers marqués `DORMANT` au verdict restent inactifs en Micro-live
 
 ## Contraintes
 - petit notional
@@ -514,16 +577,26 @@ Valider coûts réels, fills, stale rate, reconciliation.
 ## Objectif
 Première production réelle disciplinée.
 
+## Prérequis HARD
+- **HARD : 30 jours de shadow complet consécutifs atteints et rapport approuvé**
+- **HARD : Verdict post-Shadow rendu composant par composant**
+- **HARD : Micro-live stable (minimum 7 jours)**
+
 ## Conditions go
+- 30 jours shadow complet validés
 - fréquence utile > V5.2
 - edge net > 0 ou crédible
 - CE > V5.2
 - A/B stables
+- verdict C/D/Build-14 disponible (promu ou maintenu dormant)
 - budgets risque respectés
 - beta BTC maîtrisé
 - logs + DTR fiables
+- notification opérateur fonctionnelle
+- kill switch externe testé
 
 ## Conditions no-go
+- 30 jours shadow non atteints
 - coût trop élevé
 - moteur B dégrade la CE
 - moteur A trop rare
@@ -542,14 +615,16 @@ Première production réelle disciplinée.
 - K_eff enrichi
 
 ## Objectif
-Préparer Complete sans casser Light.
+Renforcer la solution complete deja assumee sans casser le rollout LIGHT et
+sans ouvrir d'activation reelle non gouvernee.
 
 ## Gouvernance obligatoire
-- introduction d’abord en lecture seule
-- influence limitée seulement après preuve
+- **activé à 100% en Shadow** : pleinement utilisé dans les décisions, tracé, comparé, auditable
+- promotion live non automatique : soumis au verdict post-Shadow
 - jamais moteur autonome
 - jamais bypass des moteurs A/B/C/D, du risk backbone, du portfolio ni des protocoles de promotion
 - intégration des candidats classés `Build14_enabler` via le protocole d’onboarding officiel
+- Hard State : `CODED` → `SHADOW_ENABLED` → verdict → `SHADOW_VALIDATED` ou `DORMANT`
 
 ## Go si
 - aucune régression Light
@@ -564,7 +639,9 @@ Préparer Complete sans casser Light.
 # 18. Build-15 — Moteur C
 
 ## Objectif
-Ajouter breakout continuation seulement s’il apporte quelque chose que A n’apporte pas déjà.
+Documenter et valider le moteur C comme moteur natif de la solution complete.
+C est **activé à 100% en Shadow** dès le début des 30 jours, scoré et comparé à A/B.
+Sa promotion live reste strictement gouvernée par le verdict post-Shadow.
 
 ## KPI
 - alpha net C
@@ -588,7 +665,9 @@ Ajouter breakout continuation seulement s’il apporte quelque chose que A n’a
 # 19. Build-16 — Moteur D
 
 ## Objectif
-Ajouter re-entry seulement si contribution marginale positive.
+Documenter et valider le moteur D comme moteur natif de la solution complete.
+D est **activé à 100% en Shadow** dès le début des 30 jours, scoré et comparé à A/B/C.
+Sa promotion live reste strictement gouvernée par le verdict post-Shadow et la preuve de contribution marginale positive.
 
 ## KPI
 - alpha marginal D
@@ -611,9 +690,18 @@ Ajouter re-entry seulement si contribution marginale positive.
 # 20. Build-17 — UI Complete + Live-Complete
 
 ## Objectif
-Ouvrir 12 paires / 4 moteurs seulement si la complexité supplémentaire paie réellement.
+Formaliser l'extension gouvernee du rollout de la meme architecture complete :
+6 -> 8/10 -> 12 paires, UI complete pleinement exploitable, et activation
+runtime sous budgets, gates et rollback.
+
+## Prérequis HARD
+- **HARD : Complete a tradé en shadow 30 jours calendaires consécutifs minimum**
+- **HARD : Non-régression Light démontrée pendant ces 30 jours**
+- **HARD : Rapport comparatif Light vs Complete produit et approuvé par l’opérateur**
+- **HARD : Light live stable au moment du passage**
 
 ## Conditions go
+- 30 jours shadow Complete validés
 - Live-Light stable
 - A/B validés
 - C/D validés
@@ -621,12 +709,15 @@ Ouvrir 12 paires / 4 moteurs seulement si la complexité supplémentaire paie r�
 - CE portefeuille augmente ou reste acceptable
 - coût des 6 paires additionnelles sous contrôle
 - infra stable
+- rapport comparatif approuvé
 
 ## Conditions no-go
+- 30 jours shadow Complete non atteints
 - fréquence brute seule augmente
 - CE baisse trop
 - C/D n’ajoutent rien
 - saturation infra ou DTR loss
+- non-régression Light non démontrée
 
 ---
 
@@ -673,10 +764,11 @@ Ouvrir 12 paires / 4 moteurs seulement si la complexité supplémentaire paie r�
 - non-promouvable tant que non validé par les gates normales
 
 ## 21.9 Sortie Build-11/12/13
-- Light validé
+- rollout LIGHT valide sur 6 paires, sans confusion avec une architecture A/B-only
 
 ## 21.10 Sortie Build-14/15/16/17
-- Complete seulement si gain réel
+- extension COMPLETE autorisable seulement si gain reel, angles morts traites
+  et gouvernance runtime non contournable
 
 ---
 
@@ -697,8 +789,22 @@ Ouvrir 12 paires / 4 moteurs seulement si la complexité supplémentaire paie r�
 - vous avez un chemin de build clair
 - Claude Pro et ChatGPT Pro peuvent être orchestrés proprement
 - le projet avance sans perdre sa cohérence
-- la V5.3 Light devient l’étape rentable crédible
-- la V5.3 Complete reste une extension conditionnelle, pas un saut de foi
+- la V5.3 LIGHT devient le premier rollout rentable, prudent et credible
+- la V5.3 COMPLETE reste l'extension gouvernee de la meme architecture, pas
+  un saut de foi ni une architecture concurrente
+
+---
+
+## Règle transversale — Distinction codé / validé / promu
+
+Pour tous les builds :
+- **codé** = le code existe dans le dépôt
+- **validé** = tests passent, gates vertes, code audité
+- **promu** = build activable en production dans le profil autorisé
+
+Un build codé n'est PAS automatiquement validé ni promu.
+Build-14 codé ≠ Build-14 promu.
+Complete enablers codés ≠ activation Complete.
 
 ---
 

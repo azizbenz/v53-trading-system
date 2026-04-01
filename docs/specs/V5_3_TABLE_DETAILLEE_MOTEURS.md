@@ -1,6 +1,6 @@
 # V5.3 — TABLE DÉTAILLÉE DES MOTEURS
 ## Spécification développeur / quant / risk
-### Complément canonique au `V5_3_MASTER_FINAL_CANONICAL.md`
+### Complément canonique subordonné au `V5_3_MASTER_FINAL_UNIQUE.md`
 ### Sans code — prod-safe
 
 ---
@@ -59,16 +59,48 @@ Pour chaque moteur, il précise :
 - soit une meilleure capital efficiency
 - idéalement les trois
 
+## 1.4 Doctrine d’activation
+
+Les quatre moteurs A/B/C/D appartiennent a la solution de reference.
+
+La difference entre `LIGHT` et `COMPLETE` porte sur l’enveloppe de rollout et
+le niveau d’activation reelle deja autorise, pas sur l’existence doctrinale des
+moteurs.
+
+## 1.5 Hard States des moteurs
+
+Chaque moteur suit le cycle de vie Hard State officiel :
+
+| Hard State | Signification |
+|---|---|
+| `CODED` | Code implémenté dans le dépôt |
+| `DOCUMENTED` | Spécification canonique écrite |
+| `SHADOW_ENABLED` | Activé à 100% en Shadow, pleinement utilisé et observé |
+| `SHADOW_VALIDATED` | 30 jours de Shadow terminés avec verdict positif |
+| `PROMOTED` | Activé en production dans le profil autorisé |
+| `DORMANT` | Volontairement non activé après verdict |
+
+### Statut actuel des moteurs
+
+| Moteur | Hard State Shadow |
+|---|---|
+| A — Premium Trend | `SHADOW_ENABLED` |
+| B — Mean Reversion | `SHADOW_ENABLED` |
+| C — Breakout | `SHADOW_ENABLED` |
+| D — Re-entry | `SHADOW_ENABLED` |
+
+Les 4 moteurs sont **activés à 100% pendant le Shadow 30 jours** : scorés, classés, arbitrés, observés et comparés. Leur promotion live reste conditionnelle au verdict post-Shadow.
+
 ---
 
 # 2. Tableau maître des moteurs
 
 | Moteur | Profil Light | Profil Complete | Priorité | Fréquence attendue | Qualité de signal | Risque majeur |
 |---|---:|---:|---:|---|---|---|
-| A — Premium Trend | oui | oui | P0 | faible à modérée | très élevée | sur-rareté / sur-filtrage |
-| B — Mean Reversion | oui | oui | P0 | modérée | moyenne à élevée | mean reversion contre cassure réelle |
-| C — Breakout | non | oui | P1 | modérée | moyenne | faux breakout / duplication A |
-| D — Re-entry | non | oui | P1 | faible à modérée | dépend du contexte | doublon de A / surconcentration |
+| A — Premium Trend | oui (live) | oui | P0 | faible à modérée | très élevée | sur-rareté / sur-filtrage |
+| B — Mean Reversion | oui (live) | oui | P0 | modérée | moyenne à élevée | mean reversion contre cassure réelle |
+| C — Breakout | `SHADOW_ENABLED` à 100%, promotion live par verdict | oui | P1 | modérée | moyenne | faux breakout / duplication A |
+| D — Re-entry | `SHADOW_ENABLED` à 100%, promotion live par verdict | oui | P1 | faible à modérée | dépend du contexte | doublon de A / surconcentration |
 
 ---
 
@@ -99,8 +131,8 @@ Il existe pour produire les trades qui justifient :
 
 ## 3.3 Profil d’activation
 
-- Light : **autorisé**
-- Complete : **autorisé**
+- LIGHT : **autorisé**
+- COMPLETE : **autorisé**
 
 ## 3.4 Priorité
 
@@ -296,8 +328,8 @@ Il existe pour générer :
 
 ## 4.3 Profil d’activation
 
-- Light : **autorisé**
-- Complete : **autorisé**
+- LIGHT : **autorisé**
+- COMPLETE : **autorisé**
 
 ## 4.4 Priorité
 
@@ -474,8 +506,9 @@ S’il n’apporte qu’une duplication du moteur A, il doit être supprimé.
 
 ## 5.3 Profil d’activation
 
-- Light : **interdit**
-- Complete : **autorisé**
+- LIGHT : **activable seulement sous gates spécifiques, budget coût strict,
+  observabilité renforcée et plan de désactivation**
+- COMPLETE : **autorisé**
 
 ## 5.4 Priorité
 
@@ -483,7 +516,11 @@ S’il n’apporte qu’une duplication du moteur A, il doit être supprimé.
 
 ## 5.5 Paires autorisées
 
-### Complete seulement
+### LIGHT
+- activation réelle très bornée seulement sur paires dont le coût et la
+  qualité d'exécution ont déjà été validés
+
+### COMPLETE
 - BTC/USDT
 - ETH/USDT
 - SOL/USDT
@@ -602,8 +639,8 @@ Désactiver C si :
 
 ## 5.16 Verdict
 
-- ne pas implémenter en Light
-- implémenter **plus tard** en Complete après validation de A + B
+- moteur natif de la solution complete
+- activation reelle strictement gouvernee en LIGHT comme en COMPLETE
 
 ---
 
@@ -620,8 +657,9 @@ Il doit être conçu comme une extension contrôlée d’un edge déjà validé,
 
 ## 6.3 Profil d’activation
 
-- Light : **interdit**
-- Complete : **autorisé**
+- LIGHT : **activable seulement sous gates spécifiques, budget corrélation
+  strict, historique trade-aware et observabilité renforcée**
+- COMPLETE : **autorisé**
 
 ## 6.4 Priorité
 
@@ -733,9 +771,9 @@ Désactiver D si :
 
 ## 6.16 Verdict
 
-- ne pas implémenter en Light
-- implémenter **plus tard** en Complete
-- le traiter comme extension disciplinée, pas comme moteur autonome majeur
+- moteur natif de la solution complete
+- activation reelle strictement gouvernee en LIGHT comme en COMPLETE
+- le traiter comme extension disciplinee, pas comme moteur autonome majeur
 
 ---
 
@@ -889,27 +927,55 @@ Doit prouver :
 |---|---|
 | A | implémenter maintenant |
 | B | implémenter maintenant |
-| C | implémenter plus tard |
-| D | implémenter plus tard |
+| C | moteur natif de la solution complète, activation réelle strictement gouvernée |
+| D | moteur natif de la solution complète, activation réelle strictement gouvernée |
 
 ---
 
 # 15. Conclusion
 
-La V5.3 n’a pas besoin de 4 moteurs actifs immédiatement pour être cohérente.
+La V5.3 n’a pas besoin de 4 moteurs activés largement dès le premier rollout
+pour être cohérente.
 
 Elle a besoin :
 
 1. d’une **architecture cible complète**
 2. d’un **ordre d’activation discipliné**
-3. de **2 moteurs immédiatement rentables ou prometteurs**
-4. de **2 moteurs supplémentaires seulement s’ils ajoutent un vrai edge ou une vraie diversification**
+3. d’un **coeur A/B immédiatement crédible**
+4. de **moteurs C/D natifs mais activés seulement s’ils ajoutent un vrai edge
+   ou une vraie diversification**
 
 Le rôle de ce document est précisément d’empêcher :
 
 - la confusion entre ambition cible et activation réelle
 - la duplication d’edge sous des noms différents
 - la création de moteurs “prestige” sans utilité économique
+
+---
+
+# Guardrails issus des audits — Renforcements moteurs
+
+## Engine B : régime gate obligatoire (GEM-12)
+- L'Engine B (Mean Reversion) doit consulter le `regime_classifier` avant d'émettre un signal
+- Si le régime est classé `TRENDING` (H > 0.6 ou ADX fort), Engine B est automatiquement désactivé
+- Interdiction de tenter un mean reversion contre une tendance forte (syndrome “attraper un couteau qui tombe”)
+- Le `DecisionBackbone` doit intégrer cette logique de gate régime → engine
+
+## Time-based invalidation (GEM-13)
+- Les niveaux d'invalidation (Stop Loss) calculés à l'émission ne suffisent pas
+- Si le retour attendu ne se produit pas dans une fenêtre de temps configurable, la thèse est invalidée
+- L'invalidation temporelle s'applique en priorité à Engine B (mean reversion) et Engine D (re-entry)
+- Protection contre les queues épaisses (fat tails) et la Martingale déguisée
+
+## Anti-churn inter-engines (GEM-14)
+- Si Engine A émet un signal d'achat et Engine B un signal de vente sur la même paire dans une fenêtre réduite, le système reste neutre
+- Le `signal_aggregator` doit implémenter cette règle de neutralisation
+- Le churn (ouverture + fermeture immédiate) est un destructeur d'edge net
+
+## Engine A : confirmation microstructure (NEXT_BUILD14)
+- En Build-14, Engine A pourra bénéficier d'une confirmation de profondeur du carnet (LOB deep filter)
+- Un breakout sans résilience du carnet (liquidité fantôme) est un piège
+- Cette confirmation est un **enabler Build-14**, pas un hard blocker Light
 
 ---
 

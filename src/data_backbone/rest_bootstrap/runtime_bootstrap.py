@@ -4,6 +4,7 @@ Minimal injectable runtime path for Build-2 REST bootstrap.
 
 from __future__ import annotations
 
+import logging
 from typing import Protocol
 
 from pydantic import BaseModel
@@ -12,6 +13,9 @@ from .bootstrap_reporter import BootstrapEvent, BootstrapOutcome, BootstrapRepor
 from .gap_fill_controller import GapFillDecision, GapFillResult, evaluate_gap_fill
 from .rate_limit_guard import RateLimitGuard
 from .snapshot_fetcher import Snapshot, SnapshotStatus, validate_snapshot_age
+
+
+logger = logging.getLogger(__name__)
 
 
 class SnapshotProvider(Protocol):
@@ -58,6 +62,15 @@ class RestBootstrapRuntime:
         now: float,
         max_age_s: float = 10.0,
     ) -> BootstrapRunResult:
+        logger.info(
+            "rest_bootstrap_requested",
+            extra={
+                "pair": pair,
+                "data_type": data_type,
+                "timestamp": now,
+                "max_age_s": max_age_s,
+            },
+        )
         if not self._rate_limit.record_call(now):
             return self._record(
                 pair=pair,
@@ -112,6 +125,18 @@ class RestBootstrapRuntime:
         max_gap_s: float = 300.0,
         max_age_s: float = 10.0,
     ) -> BootstrapRunResult:
+        logger.info(
+            "rest_gap_fill_requested",
+            extra={
+                "pair": pair,
+                "data_type": data_type,
+                "gap_start": gap_start,
+                "gap_end": gap_end,
+                "timestamp": now,
+                "max_gap_s": max_gap_s,
+                "max_age_s": max_age_s,
+            },
+        )
         gap_fill = evaluate_gap_fill(
             pair,
             gap_start,

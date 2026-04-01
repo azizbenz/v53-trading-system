@@ -4,6 +4,7 @@ Minimal injectable runtime path for Build-2 WebSocket gateway.
 
 from __future__ import annotations
 
+import logging
 from typing import Protocol
 
 from pydantic import BaseModel, Field
@@ -13,6 +14,9 @@ from .heartbeat_monitor import HeartbeatMonitor, HeartbeatState
 from .raw_message_emitter import RawMessage, RawMessageEmitter
 from .reconnect_controller import ReconnectController, ReconnectEvent
 from .subscription_manager import SubscriptionRegistry
+
+
+logger = logging.getLogger(__name__)
 
 
 class AdapterMessage(BaseModel, frozen=True):
@@ -81,6 +85,14 @@ class WebSocketGatewayRuntime:
     def subscribe(self, pair: str, stream_type: str, endpoint: str) -> None:
         self._connections.register_endpoint(endpoint)
         self._subscriptions.subscribe(pair, stream_type, endpoint)
+        logger.info(
+            "websocket_gateway_subscription_registered",
+            extra={
+                "endpoint": endpoint,
+                "pair": pair,
+                "stream_type": stream_type,
+            },
+        )
 
     def connect(self, endpoint: str, now: float) -> ConnectionStatus:
         self._connections.register_endpoint(endpoint)
@@ -89,8 +101,20 @@ class WebSocketGatewayRuntime:
             self._adapter.connect(endpoint)
             status = self._connections.mark_connected(endpoint, now)
             self._resubscribe(endpoint)
+            logger.info(
+                "websocket_gateway_connected",
+                extra={
+                    "endpoint": endpoint,
+                    "timestamp": now,
+                    "connect_count": status.connect_count,
+                },
+            )
             return status
         except Exception as exc:
+            logger.warning(
+                "websocket_gateway_connect_failed",
+                extra={"endpoint": endpoint, "timestamp": now, "error": str(exc)},
+            )
             return self._connections.mark_failed(endpoint, str(exc))
 
     def disconnect(self, endpoint: str, now: float, error: str = "") -> ConnectionStatus:
@@ -98,6 +122,10 @@ class WebSocketGatewayRuntime:
             self._adapter.disconnect(endpoint)
         except Exception:
             pass
+        logger.info(
+            "websocket_gateway_disconnected",
+            extra={"endpoint": endpoint, "timestamp": now, "error": error},
+        )
         return self._connections.mark_disconnected(endpoint, now, error=error)
 
     def poll_once(self, endpoint: str, now: float) -> GatewayPollResult:
@@ -108,6 +136,10 @@ class WebSocketGatewayRuntime:
         heartbeat_state = self._heartbeat.check_status(endpoint, now)
 
         if status.state != ConnectionState.CONNECTED:
+            logger.warning(
+                "websocket_gateway_poll_without_connection",
+                extra={"endpoint": endpoint, "timestamp": now, "state": status.state.value},
+            )
             return GatewayPollResult(
                 endpoint=endpoint,
                 connection_status=status,
@@ -120,6 +152,10 @@ class WebSocketGatewayRuntime:
         try:
             message = self._adapter.recv(endpoint)
         except Exception as exc:
+            logger.warning(
+                "websocket_gateway_recv_failed",
+                extra={"endpoint": endpoint, "timestamp": now, "error": str(exc)},
+            )
             return self._recover(endpoint, now, str(exc))
 
         if message is None:
@@ -163,6 +199,10 @@ class WebSocketGatewayRuntime:
     def _recover(self, endpoint: str, now: float, error: str) -> GatewayPollResult:
         status = self.disconnect(endpoint, now, error=error)
         if not self._reconnect.should_retry(endpoint):
+            logger.warning(
+                "websocket_gateway_retry_exhausted",
+                extra={"endpoint": endpoint, "timestamp": now, "error": error},
+            )
             failed = self._connections.mark_failed(endpoint, error)
             return GatewayPollResult(
                 endpoint=endpoint,
@@ -181,6 +221,16 @@ class WebSocketGatewayRuntime:
             success=False,
             timestamp=now,
         )
+        logger.warning(
+            "websocket_gateway_reconnect_scheduled",
+            extra={
+                "endpoint": endpoint,
+                "timestamp": now,
+                "reason": error,
+                "delay_s": reconnect_event.delay_s,
+                "attempt": reconnect_event.attempt,
+            },
+        )
         reconnect_error = ""
         try:
             self._adapter.connect(endpoint)
@@ -193,9 +243,17 @@ class WebSocketGatewayRuntime:
                 success=True,
                 timestamp=now,
             )
+            logger.info(
+                "websocket_gateway_reconnected",
+                extra={"endpoint": endpoint, "timestamp": now},
+            )
         except Exception as exc:
             reconnect_error = str(exc)
             self._connections.mark_failed(endpoint, reconnect_error)
+            logger.warning(
+                "websocket_gateway_reconnect_failed",
+                extra={"endpoint": endpoint, "timestamp": now, "error": reconnect_error},
+            )
 
         return GatewayPollResult(
             endpoint=endpoint,

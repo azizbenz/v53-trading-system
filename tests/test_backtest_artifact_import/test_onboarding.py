@@ -25,6 +25,10 @@ def _manifest(**overrides) -> ArtifactManifest:
         lineage_version="a.v3.1",
         dataset_ref="dataset-1",
         clock_ref="clock-1",
+        feature_bridge_ref="exports/feature_bridge.json",
+        parity_diagnostics_ref="exports/parity.json",
+        replay_metrics_ref="exports/replay_metrics.json",
+        replay_dtr_ref="exports/replay_dtr.json",
         review_export_ref="exports/review.md",
         diagnostic_ids=("diag-1",),
         candidate_ids=("cand-1",),
@@ -37,7 +41,14 @@ def _import_request(**overrides) -> ArtifactImportRequest:
     defaults = dict(
         manifest=_manifest(),
         artifact_kind=ReplayArtifactKind.REVIEW_PACKET,
-        payload_refs=("exports/review.md", "exports/bundle.json"),
+        payload_refs=(
+            "exports/review.md",
+            "exports/feature_bridge.json",
+            "exports/parity.json",
+            "exports/replay_metrics.json",
+            "exports/replay_dtr.json",
+            "exports/bundle.json",
+        ),
     )
     defaults.update(overrides)
     return ArtifactImportRequest(**defaults)
@@ -149,6 +160,7 @@ def test_onboarding_propagates_import_gate_failures():
     assert decision.accepted is False
     assert "import gate: payload refs are required for governed import" in decision.reasons
     assert "import gate: review export ref must be included in payload refs" in decision.reasons
+    assert "import gate: feature bridge ref must be included in payload refs" in decision.reasons
 
 
 def test_onboarding_request_rejects_manifest_classification_mismatch():

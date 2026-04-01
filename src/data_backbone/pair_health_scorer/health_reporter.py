@@ -6,9 +6,13 @@ Invariant: health state is consultable. Suspension/recovery reasons are explicit
 
 from __future__ import annotations
 
+import logging
 from pydantic import BaseModel, Field
 
 from .health_state_tracker import PairHealthState
+
+
+logger = logging.getLogger(__name__)
 
 
 class PairHealthReport(BaseModel, frozen=True):
@@ -46,6 +50,22 @@ class HealthReporter:
 
     def update_report(self, report: PairHealthReport) -> None:
         self._reports[report.pair] = report
+        level = (
+            logging.WARNING
+            if report.state in {PairHealthState.DEGRADED, PairHealthState.SUSPENDED}
+            else logging.INFO
+        )
+        logger.log(
+            level,
+            "pair_health_report_updated",
+            extra={
+                "pair": report.pair,
+                "state": report.state.value,
+                "health_score": report.health_score,
+                "suspension_reason": report.suspension_reason,
+                "transition_count": report.transition_count,
+            },
+        )
 
     def get_report(self, pair: str) -> PairHealthReport | None:
         return self._reports.get(pair)

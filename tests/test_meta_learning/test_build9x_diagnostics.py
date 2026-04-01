@@ -128,6 +128,8 @@ def test_post_trade_diagnostics_detect_build9_issues():
 
     categories = {diagnostic.category for diagnostic in diagnostics}
     assert {"trace_coverage", "sterilization", "cost_drift", "edge_degraded"} <= categories
+    assert all(diagnostic.actionability_level for diagnostic in diagnostics)
+    assert any(diagnostic.evidence for diagnostic in diagnostics)
 
 
 def test_near_miss_analyzer_flags_high_score_blocked_records():
@@ -137,6 +139,7 @@ def test_near_miss_analyzer_flags_high_score_blocked_records():
     assert len(near_misses) == 1
     assert near_misses[0].category == "near_miss"
     assert "BTCUSDT" in near_misses[0].summary
+    assert near_misses[0].counterfactual_summary
 
 
 def test_mistake_classifier_deduplicates_classes():

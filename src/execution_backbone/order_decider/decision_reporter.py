@@ -7,9 +7,13 @@ Invariant: every decision is traceable. Every order type is explainable ex post.
 
 from __future__ import annotations
 
+import logging
 from pydantic import BaseModel, Field
 
 from .intent_builder import ExecutionIntent, NoTradeDecision, OrderType
+
+
+logger = logging.getLogger(__name__)
 
 
 class DecisionEvent(BaseModel, frozen=True):
@@ -45,7 +49,7 @@ class DecisionReporter:
         self._events: list[DecisionEvent] = []
 
     def record_trade(self, intent: ExecutionIntent, timestamp: float = 0.0) -> None:
-        self._events.append(DecisionEvent(
+        event = DecisionEvent(
             pair=intent.pair,
             engine_id=intent.engine_id,
             order_type=intent.order_type,
@@ -55,10 +59,23 @@ class DecisionReporter:
             expected_gain=intent.expected_gain,
             net_expected=intent.expected_gain - intent.expected_cost,
             timestamp=timestamp,
-        ))
+        )
+        self._events.append(event)
+        logger.info(
+            "execution_decision_trade_recorded",
+            extra={
+                "pair": event.pair,
+                "engine_id": event.engine_id,
+                "order_type": event.order_type.value,
+                "expected_cost": event.expected_cost,
+                "expected_gain": event.expected_gain,
+                "net_expected": event.net_expected,
+                "timestamp": event.timestamp,
+            },
+        )
 
     def record_no_trade(self, decision: NoTradeDecision, timestamp: float = 0.0) -> None:
-        self._events.append(DecisionEvent(
+        event = DecisionEvent(
             pair=decision.pair,
             engine_id=decision.engine_id,
             order_type=OrderType.NO_TRADE,
@@ -68,7 +85,20 @@ class DecisionReporter:
             expected_gain=decision.expected_gain,
             net_expected=decision.expected_gain - decision.expected_cost,
             timestamp=timestamp,
-        ))
+        )
+        self._events.append(event)
+        logger.warning(
+            "execution_decision_no_trade_recorded",
+            extra={
+                "pair": event.pair,
+                "engine_id": event.engine_id,
+                "expected_cost": event.expected_cost,
+                "expected_gain": event.expected_gain,
+                "net_expected": event.net_expected,
+                "timestamp": event.timestamp,
+                "detail": event.justification,
+            },
+        )
 
     def get_stats(self) -> DecisionStats:
         trades = [e for e in self._events if e.is_trade]

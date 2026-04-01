@@ -58,6 +58,17 @@ Build-16 est :
 - une **phase de test de valeur marginale**
 - une **phase de protection contre la redondance stratégique**
 
+## Doctrine d'activation Shadow
+
+Le moteur D est **activé à 100% pendant le Shadow 30 jours** (`SHADOW_ENABLED`) :
+- scoré, classé, arbitré et observé aux côtés de A/B/C
+- sa valeur marginale est mesurée (économique, concentration, corrélation)
+- ses performances sont comparées pour vérifier la non-redondance avec A
+- sa contribution portefeuille est auditée (edge marginal, churn, coût)
+- sa promotion live reste strictement conditionnelle au verdict post-Shadow
+- activation Shadow ≠ promotion live automatique
+- Hard State : `SHADOW_ENABLED` → verdict → `SHADOW_VALIDATED` ou `DORMANT`
+
 ---
 
 # 3. Position de Build-16 dans le plan global
@@ -73,11 +84,11 @@ Les conditions suivantes doivent être satisfaites :
 - lecture portefeuille suffisamment mature
 - compréhension explicite des effets de concentration et de redondance
 
-## Après Build-16
-Si Build-16 est validé, alors seulement :
-- D devient candidat à une activation contrôlée dans la trajectoire Complete
-- Build-17 peut intégrer une UI Complete sachant quoi montrer pour D
-- la Complete peut être jugée avec 4 moteurs sur une base cohérente
+## Activation en Shadow
+- D est **activé à 100% en Shadow** dès le début des 30 jours, aux côtés de A/B/C
+- sa valeur marginale est prouvée pendant ces 30 jours de Shadow complet
+- sa promotion réelle dépend des résultats observés (verdict post-Shadow)
+- il n'est plus "attendu seulement plus tard" : il est essayé tôt en Shadow, promu tard si validé
 
 ---
 
@@ -125,9 +136,10 @@ D peut-il exister sans faire exploser la concentration, les budgets corrélés o
 # 6. Positionnement du moteur D dans les profils
 
 ## 6.1 Light
-- **interdit**
-- jamais activable en Light
-- éventuellement observable analytiquement seulement si explicitement prévu
+- **non interdit par principe**
+- activable seulement sous gates spécifiques, budget corrélation strict,
+  historique trade-aware et bornes runtime très serrées
+- observable analytiquement si explicitement prévu
 
 ## 6.2 Complete
 - **candidat autorisé**
@@ -705,12 +717,13 @@ Refuser Build-16 si :
 
 # 27. Verdict final Build-16
 
-Build-16 est la phase où la V5.3 doit prouver qu’une logique de réentrée mérite d’exister **en plus** des moteurs d’entrée initiale.
+Build-16 est la phase où la V5.3 doit prouver qu’une logique de réentrée
+mérite une activation réelle **en plus** du coeur initial A/B.
 
 Si Build-16 est bien fait :
 - D apporte une vraie valeur marginale
 - le portefeuille peut réallouer intelligemment du capital
-- la Complete future gagne un moteur discipliné supplémentaire
+- l’extension COMPLETE du rollout gagne un moteur discipliné supplémentaire
 
 Si Build-16 est mal fait :
 - D deviendra un moteur de surconcentration

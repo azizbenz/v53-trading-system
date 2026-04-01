@@ -24,6 +24,10 @@ def _manifest(**overrides) -> ArtifactManifest:
         lineage_version="a.v1.1",
         dataset_ref="dataset-1",
         clock_ref="clock-1",
+        feature_bridge_ref="exports/feature_bridge.json",
+        parity_diagnostics_ref="exports/parity.json",
+        replay_metrics_ref="exports/replay_metrics.json",
+        replay_dtr_ref="exports/replay_dtr.json",
         review_export_ref="exports/review.md",
         diagnostic_ids=("diag-1",),
         candidate_ids=("cand-1",),
@@ -36,7 +40,14 @@ def _request(**overrides) -> ArtifactImportRequest:
     defaults = dict(
         manifest=_manifest(),
         artifact_kind=ReplayArtifactKind.REVIEW_PACKET,
-        payload_refs=("exports/review.md", "exports/bundle.json"),
+        payload_refs=(
+            "exports/review.md",
+            "exports/feature_bridge.json",
+            "exports/parity.json",
+            "exports/replay_metrics.json",
+            "exports/replay_dtr.json",
+            "exports/bundle.json",
+        ),
     )
     defaults.update(overrides)
     return ArtifactImportRequest(**defaults)
@@ -77,7 +88,14 @@ def test_import_request_rejects_multiple_policy_violations():
         _request(
             target_runtime_mode=RuntimeMode.LIVE,
             requested_promotion_state=PromotionState.LIVE_CANDIDATE,
-            payload_refs=("exports/review.md", "exports/review.md"),
+            payload_refs=(
+                "exports/review.md",
+                "exports/review.md",
+                "exports/feature_bridge.json",
+                "exports/parity.json",
+                "exports/replay_metrics.json",
+                "exports/replay_dtr.json",
+            ),
         )
     )
 
@@ -101,6 +119,10 @@ def test_import_request_rejects_missing_review_bundle_refs():
     assert decision.accepted is False
     assert set(decision.reasons) == {
         "review packets require a review export ref",
+        "feature bridge ref must be included in payload refs",
+        "parity diagnostics ref must be included in payload refs",
+        "replay metrics ref must be included in payload refs",
+        "replay dtr ref must be included in payload refs",
     }
 
 
@@ -117,6 +139,10 @@ def test_import_request_rejects_incomplete_payload_and_origin_drift():
         "unsupported artifact origin",
         "payload refs are required for governed import",
         "review export ref must be included in payload refs",
+        "feature bridge ref must be included in payload refs",
+        "parity diagnostics ref must be included in payload refs",
+        "replay metrics ref must be included in payload refs",
+        "replay dtr ref must be included in payload refs",
     }
 
 
@@ -129,6 +155,27 @@ def test_import_request_rejects_missing_dataset_or_clock_refs():
 
     assert decision.accepted is False
     assert "dataset and clock refs are required for governed import" in decision.reasons
+
+
+def test_import_request_rejects_missing_replay_usefulness_refs():
+    decision = validate_import_request(
+        _request(
+            manifest=_manifest(
+                feature_bridge_ref="",
+                parity_diagnostics_ref="",
+                replay_metrics_ref="",
+                replay_dtr_ref="",
+            ),
+        )
+    )
+
+    assert decision.accepted is False
+    assert set(decision.reasons) == {
+        "feature bridge ref is required for governed import",
+        "parity diagnostics ref is required for governed import",
+        "replay metrics ref is required for governed import",
+        "replay dtr ref is required for governed import",
+    }
 
 
 def test_import_request_acceptance_keeps_pending_review():
@@ -145,6 +192,8 @@ def test_import_summary_projects_clean_monitoring_facts():
 
     assert summary.artifact_id == "artifact-1"
     assert summary.validation_status == "accepted"
-    assert summary.payload_ref_count == 2
+    assert summary.payload_ref_count == 6
+    assert summary.feature_bridge_ref == "exports/feature_bridge.json"
+    assert summary.parity_diagnostics_ref == "exports/parity.json"
     assert summary.review_export_ref == "exports/review.md"
     assert summary.accepted is True

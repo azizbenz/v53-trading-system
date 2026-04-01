@@ -1,4 +1,6 @@
 """Tests for data_backbone.internal_router — Build-2."""
+import logging
+
 import pytest
 
 from data_backbone.internal_router.consumer_registry import (
@@ -178,3 +180,14 @@ class TestRoutingReporter:
         reporter.record_dispatch("c1")
         reporter.record_drop("c1")
         assert reporter.drop_rate == 0.5
+
+    def test_reporter_emits_structured_logs(self, caplog: pytest.LogCaptureFixture):
+        caplog.set_level(logging.INFO)
+        reporter = RoutingReporter()
+        reporter.record_dispatch("c1")
+        reporter.record_drop("c1")
+        reporter.record_backpressure()
+        messages = {record.message for record in caplog.records}
+        assert "routing_dispatch_recorded" in messages
+        assert "routing_drop_recorded" in messages
+        assert "routing_backpressure_recorded" in messages

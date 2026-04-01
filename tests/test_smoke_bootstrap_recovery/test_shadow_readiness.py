@@ -21,7 +21,7 @@ def test_shadow_readiness_auto_detects_current_preflight_stack():
     assert report.build9x_governed_ready is True
     assert report.replay_import_ready is True
     assert report.onboarding_ready is True
-    assert report.build14_read_only_fenced is True
+    assert report.build14_shadow_governance_ready is True
     assert report.final_verdict == "ready_for_shadow"
 
 
@@ -32,7 +32,7 @@ def test_shadow_readiness_lists_missing_items_when_gates_are_not_ready():
         build9x_governed_ready=True,
         replay_import_ready=False,
         onboarding_ready=False,
-        build14_read_only_fenced=False,
+        build14_shadow_governance_ready=False,
     )
 
     assert report.final_verdict == "not_ready_for_shadow"
@@ -41,5 +41,5 @@ def test_shadow_readiness_lists_missing_items_when_gates_are_not_ready():
         "Build-10 supervision layer is not ready",
         "LOCAL_REPLAY / import governed MVP is not ready",
         "strategy onboarding governance is not ready",
-        "Build-14 read-only fencing is not ready",
+        "Build-14 Shadow governance is not ready",
     }

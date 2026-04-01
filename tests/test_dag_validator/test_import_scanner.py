@@ -162,3 +162,23 @@ class TestScanImports:
         assert len(result.imports) == 0
         assert result.discovered_modules == ()
         assert result.unknown_modules == ()
+
+    def test_scan_records_dynamic_imports(self, isolated_tmp_path: Path):
+        src = isolated_tmp_path / "src"
+        pkg = src / "mod_a"
+        pkg.mkdir(parents=True)
+        (pkg / "__init__.py").write_text(
+            "import importlib\n"
+            "importlib.import_module('x')\n"
+            "__import__('y')\n",
+            encoding="utf-8",
+        )
+
+        result = scan_imports(src, frozenset({"mod_a"}))
+
+        assert len(result.dynamic_imports) == 2
+        assert result.dynamic_imports[0].source_module == "mod_a"
+        assert {record.call_text for record in result.dynamic_imports} == {
+            "importlib.import_module",
+            "__import__",
+        }

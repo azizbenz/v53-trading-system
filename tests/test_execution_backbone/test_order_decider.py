@@ -1,4 +1,6 @@
 """Tests for execution_backbone.order_decider — Build-3."""
+import logging
+
 import pytest
 
 from execution_backbone.order_decider.intent_builder import (
@@ -190,3 +192,19 @@ class TestDecisionReporter:
         events = reporter.get_events(pair="BTC")
         assert len(events) == 1
         assert len(reporter.get_events(pair="ETH")) == 0
+
+    def test_reporter_emits_structured_logs(self, caplog: pytest.LogCaptureFixture):
+        caplog.set_level(logging.INFO)
+        reporter = DecisionReporter()
+        intent = build_intent(
+            "i1", "BTC", "A", "buy", OrderType.MARKET, 1.0,
+            0.001, 0.01, 0.9, "strong signal",
+        )
+        reporter.record_trade(intent, timestamp=100.0)
+        reporter.record_no_trade(
+            NoTradeDecision(pair="ETH", engine_id="B", reason=NoTradeReason.COST_EXCEEDS_GAIN),
+            timestamp=101.0,
+        )
+        messages = {record.message for record in caplog.records}
+        assert "execution_decision_trade_recorded" in messages
+        assert "execution_decision_no_trade_recorded" in messages

@@ -1,0 +1,274 @@
+"""Build-10 runtime orchestration across snapshot, alerting, dashboard, and UI."""
+
+from __future__ import annotations
+
+import importlib
+import json
+from pathlib import Path
+
+from pydantic import BaseModel, Field
+
+from interface_contracts import PairHealthLevel, ProfileId, RuntimeMode
+from interface_contracts.atomic_io import atomic_write_json
+from monitoring.alert_manager import AlertLifecycleTracker, build_monitoring_alerts
+from monitoring.contracts import (
+    AlertHistoryEntry,
+    Build14Projection,
+    Build9XProjection,
+    EngineMetrics,
+    HealthDashboardPayload,
+    InfraMetrics,
+    LiveLightProjection,
+    MetaMetrics,
+    MicroLiveProjection,
+    MonitoringSnapshot,
+    ObservabilityExport,
+    PairMetrics,
+    PortfolioMetrics,
+    ReplayImportProjection,
+    ShadowProjection,
+    TechnicalDashboardPayload,
+)
+from monitoring.health_dashboard_backend import build_health_dashboard_payload
+from monitoring.metrics_collector import collect_monitoring_snapshot
+from monitoring.observability import build_observability_export
+from monitoring.technical_dashboard_backend import build_technical_dashboard_payload
+
+
+def _ui_module():
+    return importlib.import_module("ui")
+
+
+class MonitoringRuntimeConfig(BaseModel, frozen=True):
+    """Runtime persistence options for Build-10 guardrail state."""
+
+    state_dir: Path | None = None
+    persist_runtime_state: bool = False
+    state_filename: str = "monitoring_runtime_state.json"
+    alert_history_limit: int = Field(default=20, ge=1)
+
+
+class MonitoringRuntimeState(BaseModel):
+    """Persisted session guardrail state for Build-10 monitoring."""
+
+    backlog_high_water_mark: int = Field(default=0, ge=0)
+    stale_spike_count: int = Field(default=0, ge=0)
+    last_stale_pair_count: int = Field(default=0, ge=0)
+    alert_history: tuple[AlertHistoryEntry, ...] = ()
+
+
+class MonitoringRuntimeResult(BaseModel, frozen=True):
+    """Audit-ready Build-10 runtime result."""
+
+    snapshot: MonitoringSnapshot
+    health_payload: HealthDashboardPayload
+    light_view: BaseModel
+    technical_payload: TechnicalDashboardPayload
+    technical_view: BaseModel
+    observability_export: ObservabilityExport
+    state_path: str = ""
+
+
+class MonitoringRuntime:
+    """Stateful Build-10 runtime chaining snapshot -> alerts -> dashboard -> UI."""
+
+    def __init__(
+        self,
+        *,
+        light_ui_runtime: object | None = None,
+        config: MonitoringRuntimeConfig | None = None,
+    ) -> None:
+        self._config = config or MonitoringRuntimeConfig()
+        self._state_path = (
+            self._config.state_dir / self._config.state_filename
+            if self._config.state_dir is not None
+            else None
+        )
+        state = self._load_or_create()
+        self._backlog_high_water_mark = state.backlog_high_water_mark
+        self._stale_spike_count = state.stale_spike_count
+        self._last_stale_pair_count = state.last_stale_pair_count
+        self._alert_lifecycle_tracker = AlertLifecycleTracker(
+            history_limit=self._config.alert_history_limit,
+            history=state.alert_history,
+        )
+        self._light_ui_runtime = light_ui_runtime or _ui_module().LightUIRuntime()
+
+    def evaluate(
+        self,
+        *,
+        correlation_id: str,
+        profile: ProfileId,
+        runtime_mode: RuntimeMode,
+        timestamp_ms: int,
+        portfolio: PortfolioMetrics,
+        infra: InfraMetrics,
+        meta: MetaMetrics,
+        engines: tuple[EngineMetrics, ...] = (),
+        pairs: tuple[PairMetrics, ...] = (),
+        active_modules: tuple[str, ...] = (),
+        active_engines: tuple[str, ...] = (),
+        build9x_projection: Build9XProjection | None = None,
+        shadow_projection: ShadowProjection | None = None,
+        micro_live_projection: MicroLiveProjection | None = None,
+        live_light_projection: LiveLightProjection | None = None,
+        build14_projection: Build14Projection | None = None,
+        replay_projection: ReplayImportProjection | None = None,
+    ) -> MonitoringRuntimeResult:
+        """Evaluate the full Build-10 runtime path on real runtime inputs."""
+
+        resolved_infra = self._resolve_infra(infra=infra, pairs=pairs)
+        snapshot = collect_monitoring_snapshot(
+            correlation_id=correlation_id,
+            profile=profile,
+            runtime_mode=runtime_mode,
+            timestamp_ms=timestamp_ms,
+            portfolio=portfolio,
+            infra=resolved_infra,
+            meta=meta,
+            engines=engines,
+            pairs=pairs,
+        )
+        alerts = build_monitoring_alerts(snapshot)
+        resolved_snapshot = snapshot.model_copy(update={"alerts": alerts})
+        alert_history = self._alert_lifecycle_tracker.update(
+            alerts=alerts,
+            timestamp_ms=timestamp_ms,
+        )
+        preliminary_health_payload = build_health_dashboard_payload(
+            resolved_snapshot,
+            alert_history=alert_history,
+            shadow_status=(
+                shadow_projection.status if shadow_projection is not None else None
+            ),
+            micro_live_status=(
+                micro_live_projection.status if micro_live_projection is not None else None
+            ),
+            live_light_status=(
+                live_light_projection.status if live_light_projection is not None else None
+            ),
+        )
+        light_runtime_result = self._light_ui_runtime.build_view(
+            preliminary_health_payload,
+            alerts=resolved_snapshot.alerts,
+        )
+        operator_runtime = self._light_ui_runtime.get_operator_projection()
+        health_payload = build_health_dashboard_payload(
+            resolved_snapshot,
+            alert_history=alert_history,
+            operator_runtime=operator_runtime,
+            shadow_status=(
+                shadow_projection.status if shadow_projection is not None else None
+            ),
+            micro_live_status=(
+                micro_live_projection.status if micro_live_projection is not None else None
+            ),
+            live_light_status=(
+                live_light_projection.status if live_light_projection is not None else None
+            ),
+        )
+        technical_payload = build_technical_dashboard_payload(
+            resolved_snapshot,
+            active_modules=active_modules,
+            active_engines=active_engines,
+            build9x_projection=build9x_projection,
+            shadow_projection=shadow_projection,
+            micro_live_projection=micro_live_projection,
+            live_light_projection=live_light_projection,
+            build14_projection=build14_projection,
+            replay_projection=replay_projection,
+            operator_runtime=operator_runtime,
+        )
+        self._persist(alert_history=alert_history)
+        return MonitoringRuntimeResult(
+            snapshot=resolved_snapshot,
+            health_payload=health_payload,
+            light_view=light_runtime_result.view,
+            technical_payload=technical_payload,
+            technical_view=_ui_module().build_technical_dashboard_view(technical_payload),
+            observability_export=build_observability_export(technical_payload),
+            state_path=str(self._state_path) if self._state_path is not None else "",
+        )
+
+    def _resolve_infra(
+        self,
+        *,
+        infra: InfraMetrics,
+        pairs: tuple[PairMetrics, ...],
+    ) -> InfraMetrics:
+        stale_pair_count = len(infra.stale_pairs) or sum(
+            1
+            for pair in pairs
+            if pair.health
+            in {
+                PairHealthLevel.STALE,
+                PairHealthLevel.OFFLINE,
+                PairHealthLevel.SUSPENDED,
+            }
+        )
+        if stale_pair_count > self._last_stale_pair_count and stale_pair_count > 0:
+            self._stale_spike_count += 1
+        self._last_stale_pair_count = stale_pair_count
+        self._backlog_high_water_mark = max(
+            self._backlog_high_water_mark,
+            infra.backlog_high_water_mark,
+            infra.queue_backlog,
+        )
+
+        persisted_metrics = tuple(dict.fromkeys(infra.persisted_metric_names))
+        volatile_metrics = (
+            infra.volatile_metric_names
+            or tuple(
+                metric_name
+                for metric_name in (
+                    "queue_backlog",
+                    "backlog_high_water_mark",
+                    "drop_rate_pct",
+                    "stale_spike_count",
+                    "recovery_retry_count",
+                    "kill_switch_active",
+                )
+                if metric_name not in set(persisted_metrics)
+            )
+        )
+
+        return infra.model_copy(
+            update={
+                "backlog_high_water_mark": max(infra.backlog_high_water_mark, self._backlog_high_water_mark),
+                "stale_spike_count": max(infra.stale_spike_count, self._stale_spike_count),
+                "volatile_metric_names": volatile_metrics,
+                "persisted_metric_names": persisted_metrics,
+            }
+        )
+
+    def _load_or_create(self) -> MonitoringRuntimeState:
+        if self._state_path is not None and self._state_path.exists():
+            try:
+                data = json.loads(self._state_path.read_text(encoding="utf-8"))
+                return MonitoringRuntimeState(**data)
+            except (json.JSONDecodeError, OSError, ValueError):
+                pass
+        return MonitoringRuntimeState()
+
+    def _persist(self, *, alert_history: tuple[AlertHistoryEntry, ...]) -> None:
+        if not self._config.persist_runtime_state or self._state_path is None:
+            return
+        if self._config.state_dir is not None:
+            self._config.state_dir.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(
+            self._state_path,
+            MonitoringRuntimeState(
+                backlog_high_water_mark=self._backlog_high_water_mark,
+                stale_spike_count=self._stale_spike_count,
+                last_stale_pair_count=self._last_stale_pair_count,
+                alert_history=alert_history,
+            ).model_dump(mode="json"),
+        )
+
+
+__all__ = [
+    "MonitoringRuntime",
+    "MonitoringRuntimeConfig",
+    "MonitoringRuntimeResult",
+    "MonitoringRuntimeState",
+]

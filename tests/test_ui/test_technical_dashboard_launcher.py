@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 import shutil
 import sys
@@ -65,10 +66,24 @@ def test_export_technical_dashboard_writes_demo_sidecars():
         assert artifacts.payload_json_path is not None and artifacts.payload_json_path.exists()
         assert artifacts.view_json_path is not None and artifacts.view_json_path.exists()
         assert artifacts.observability_text_path is not None and artifacts.observability_text_path.exists()
+        assert (
+            artifacts.local_replay_evidence_json_path is not None
+            and artifacts.local_replay_evidence_json_path.exists()
+        )
+        assert (
+            artifacts.shadow_runtime_evidence_json_path is not None
+            and artifacts.shadow_runtime_evidence_json_path.exists()
+        )
 
         html = artifacts.html_path.read_text(encoding="utf-8")
         payload_json = artifacts.payload_json_path.read_text(encoding="utf-8")
         observability_text = artifacts.observability_text_path.read_text(encoding="utf-8")
+        local_replay_evidence = json.loads(
+            artifacts.local_replay_evidence_json_path.read_text(encoding="utf-8")
+        )
+        shadow_runtime_evidence = json.loads(
+            artifacts.shadow_runtime_evidence_json_path.read_text(encoding="utf-8")
+        )
 
         assert "demo payload" in html.lower()
         assert "Build-11 Shadow" in html
@@ -87,6 +102,15 @@ def test_export_technical_dashboard_writes_demo_sidecars():
         assert "v53_micro_live_run_state" in observability_text
         assert "v53_live_light_run_state" in observability_text
         assert "v53_build14_status" in observability_text
+        assert '"validation_status": "accepted"' in payload_json
+        assert '"run_state": "completed"' in payload_json
+        assert local_replay_evidence["data_source"] == "recorded_replay"
+        assert local_replay_evidence["replay_useful_ready"] is True
+        assert shadow_runtime_evidence["data_source"] == "recorded_replay"
+        assert shadow_runtime_evidence["event_loop_ready"] is True
+        assert shadow_runtime_evidence["config_loaded"] is True
+        assert shadow_runtime_evidence["shadow_dtr_persisted"] is True
+        assert shadow_runtime_evidence["continuous_hours"] >= 24.0
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)
 

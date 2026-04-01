@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from interface_contracts import AlertCategory, AlertSeverity, PairHealthLevel, ProfileId, RuntimeMode
+from interface_contracts import AlertCategory, AlertRecord, AlertSeverity, PairHealthLevel, ProfileId, RuntimeMode
 from monitoring import (
+    AlertLifecycleTracker,
     build_monitoring_alerts,
     collect_engine_metrics,
     collect_infra_metrics,
@@ -151,6 +152,99 @@ class TestAlertManagerLoss:
         assert len(loss_alerts) == 1
 
 
+class TestAlertManagerRiskAndMetaCoverage:
+    def test_capacity_thresholds_produce_near_full_alerts(self):
+        snapshot = _snapshot(
+            portfolio=collect_portfolio_metrics(
+                allocated_opportunities=1,
+                gross_capacity_used_pct=82.0,
+                loss_capacity_used_pct=84.0,
+                beta_utilization=0.3,
+                capital_deployed_usdt=500.0,
+                ce_net=0.001,
+            ),
+        )
+        alerts = build_monitoring_alerts(snapshot)
+        alert_ids = {alert.alert_id.split(":")[-1] for alert in alerts}
+
+        assert "gross_cap_near_full" in alert_ids
+        assert "loss_budget_near_full" in alert_ids
+
+    def test_capacity_thresholds_produce_full_alerts(self):
+        snapshot = _snapshot(
+            portfolio=collect_portfolio_metrics(
+                allocated_opportunities=1,
+                gross_capacity_used_pct=100.0,
+                loss_capacity_used_pct=100.0,
+                beta_utilization=0.3,
+                capital_deployed_usdt=500.0,
+                ce_net=0.001,
+            ),
+        )
+        alerts = build_monitoring_alerts(snapshot)
+        full_alerts = {alert.alert_id.split(":")[-1]: alert for alert in alerts}
+
+        assert full_alerts["gross_cap_full"].severity == AlertSeverity.CRITICAL
+        assert full_alerts["loss_budget_full"].severity == AlertSeverity.CRITICAL
+
+    def test_beta_cluster_and_sterilization_alerts_are_actionable(self):
+        snapshot = _snapshot(
+            portfolio=collect_portfolio_metrics(
+                allocated_opportunities=1,
+                gross_capacity_used_pct=30.0,
+                loss_capacity_used_pct=10.0,
+                beta_utilization=1.15,
+                capital_deployed_usdt=500.0,
+                ce_net=0.001,
+                dominant_cluster="trend",
+                breaches=("cluster_limit", "beta_limit"),
+            ),
+            meta=collect_meta_metrics(
+                build_dtr_summary(
+                    (build_dtr(
+                        dtr_id="d1", pair="BTCUSDT", engine_id="engine_a",
+                        decision_state=DecisionState.SELECTED, timestamp=1000.0),),
+                    total_opportunities=1,
+                ),
+                build_cra_report(
+                    (SterilizationResult(
+                        pair="BTCUSDT", engine_id="engine_a",
+                        classification=SterilizationClass.PHANTOM_PROBABLE,
+                        multiplier=0.5, phantom_risk_score=0.8),),
+                    alerts=(
+                        CRAAlert(
+                            scope="engine_a",
+                            sterilization_rate=0.5,
+                            total_trades=2,
+                            sterilized_count=1,
+                            alert_level=CRAAlertLevel.WARNING,
+                            dominant_cause="spread_drift",
+                        ),
+                    ),
+                ),
+                build_break_even_report(
+                    (BreakEvenView(
+                        scope="engine_a", sample_size=20, mean_realized_cost=0.001,
+                        mean_expected_cost=0.001, mean_cost_drift=0.0, profitable_rate=0.6),)
+                ),
+                build_edge_report(
+                    (EdgeClassification(
+                        scope="engine_a", status=EdgeStatus.CREDIBLE,
+                        mean_net_return=0.003, standard_error=0.0003,
+                        sample_size=30, sharpe_per_trade=0.5,
+                        mean_cost_p90=0.001, ce_observed=0.0005,
+                        cluster_utilization=0.15),)
+                ),
+            ),
+        )
+        alerts = build_monitoring_alerts(snapshot)
+        alert_ids = {alert.alert_id.split(":")[-1] for alert in alerts}
+
+        assert "beta_btc_breach" in alert_ids
+        assert "cluster_breach" in alert_ids
+        assert "sterilization_spike" in alert_ids
+
+
 class TestAlertManagerEdgeDegradation:
     def test_edge_degraded_produces_alert(self):
         meta = collect_meta_metrics(
@@ -209,7 +303,14 @@ class TestAlertManagerCombined:
         )
         alerts = build_monitoring_alerts(snapshot)
         alert_ids = {a.alert_id.split(":")[-1] for a in alerts}
-        assert {"stale", "backlog", "loss", "cost_drift", "edge_degraded"} == alert_ids
+        assert {
+            "stale",
+            "backlog",
+            "loss",
+            "cost_drift",
+            "edge_degraded",
+            "observability_gap",
+        } == alert_ids
 
     def test_alert_ids_contain_correlation_id(self):
         snapshot = _snapshot(
@@ -217,3 +318,28 @@ class TestAlertManagerCombined:
         )
         alerts = build_monitoring_alerts(snapshot)
         assert all("corr-test" in a.alert_id for a in alerts)
+
+
+class TestAlertLifecycleTracker:
+    def test_tracker_marks_alert_resolved_when_missing_from_next_snapshot(self):
+        tracker = AlertLifecycleTracker()
+        open_history = tracker.update(
+            (
+                AlertRecord(
+                    timestamp_ms=1_700_000_000_000,
+                    alert_id="corr-open:backlog",
+                    severity=AlertSeverity.WARNING,
+                    category=AlertCategory.INFRA,
+                    message="Queue backlog elevated at 80",
+                    module="monitoring",
+                ),
+            ),
+            timestamp_ms=1_700_000_000_000,
+        )
+
+        resolved_history = tracker.update((), timestamp_ms=1_700_000_000_500)
+
+        assert open_history[0].status == "open"
+        assert open_history[0].alert_id == "corr-open:backlog"
+        assert resolved_history[0].status == "resolved"
+        assert resolved_history[0].resolved_ms == 1_700_000_000_500

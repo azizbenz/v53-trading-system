@@ -19,6 +19,12 @@ Il remplace l’usage opérationnel parallèle de :
 
 Ces documents restent utiles comme matière de travail, mais **ne doivent plus être utilisés comme références concurrentes**.
 
+Par stabilisation documentaire finale :
+
+- `V5_3_MASTER_FINAL_UNIQUE.md` est le **seul master actif**
+- `V5_3_MASTER_FINAL_CANONICAL.md`, s'il est conservé, n'est qu'un **miroir secondaire**
+- aucune table, annexe, addendum ou note transverse ne peut se comporter comme une source autonome si elle contredit ce master
+
 ## Règle absolue
 Un développeur, un opérateur ou une IA ne doit jamais implémenter une brique sur la base d’un document secondaire si ce document contredit ou dépasse ce master.
 
@@ -30,7 +36,9 @@ Pour éviter toute double vérité :
 - **Build-10** dispose désormais d’une première implémentation codée côté monitoring backend et projection UI Light verrouillée
 - **Build-9X** est une extension méta **post-Build-9** maintenant codée dans une première version gouvernée, tout en restant soumise au pipeline canonique
 - `LOCAL_REPLAY`, l’export d’artifact et l’import VPS disposent désormais de **scaffolds minimaux codés** ; cela ne vaut pas ouverture d’un runtime complet autonome
-- **Build-11 à Build-17** restent des cibles futures et ne doivent pas être lus comme déjà validés
+- **Build-11 à Build-17** restent des etapes canoniques de validation et
+  d'extension du rollout ; ils ne doivent pas etre lus comme des architectures
+  concurrentes ni comme deja valides
 
 ## 0.2 Invariants local / VPS
 
@@ -52,6 +60,121 @@ Interdictions canoniques :
 - `LOCAL_PROFILE`
 - toute seconde V5.3 locale ou VPS
 - toute promotion implicite d’une idée locale vers le live
+
+## 0.3 Intégration des audits tiers — Principe officiel
+
+Les audits tiers (Gemini, Opus, Qwen, ou tout futur audit) sont de la **matière de correction**, jamais une source de vérité active.
+
+Règles d’intégration :
+- chaque finding est classé dans une catégorie unique : NOW_P0 / NOW_LIGHT / NEXT_BUILD14 / RESEARCH_LOCAL / REJECT
+- un finding classé est absorbé dans le fichier MD cible concerné, pas dans un document concurrent
+- un audit ne peut jamais créer une architecture concurrente, un nouveau profil, un nouveau moteur hors A/B/C/D, ou un bypass de gate
+- le rapport de triage officiel est `V5_3_AUDIT_INTEGRATION_DECISIONS.md`
+
+## 0.4 HARD STATE documentaire — Cycle de vie officiel
+
+Chaque brique, build, moteur ou couche du système V5.3 est décrite par un **état officiel unique et non ambigu** :
+
+| Hard State | Signification |
+|---|---|
+| `CODED` | Le code existe dans le dépôt |
+| `DOCUMENTED` | La spécification canonique est écrite et cohérente |
+| `SHADOW_ENABLED` | Activé à 100% en mode SHADOW, pleinement utilisé et observé |
+| `SHADOW_VALIDATED` | Les 30 jours de Shadow sont terminés avec verdict positif |
+| `MICRO_LIVE_ELIGIBLE` | Éligible au passage Micro-live après verdict Shadow |
+| `LIVE_LIGHT_ELIGIBLE` | Éligible au passage Live-Light après Micro-live validé |
+| `COMPLETE_ELIGIBLE` | Éligible au passage Live-Complete après Shadow Complete validé |
+| `PROMOTED` | Activé en production dans le profil autorisé |
+| `DORMANT` | Codé et documenté mais volontairement non activé |
+| `FORBIDDEN` | Interdit en V5.3 prod (RL live, POMDP live, etc.) |
+
+Règles :
+- Un build `CODED` n’est PAS un build `SHADOW_VALIDATED`.
+- Un build `SHADOW_VALIDATED` n’est PAS un build `PROMOTED`.
+- `SHADOW_ENABLED` signifie **activé à 100% et pleinement utilisé** en Shadow, pas en lecture seule.
+- En particulier : Build-14 `CODED` ≠ Build-14 `PROMOTED`.
+- Complete enablers `SHADOW_ENABLED` ≠ activation Complete live.
+- Activation en Shadow ≠ promotion automatique vers Live.
+
+## 0.6 HARD STATEMENT — Règle de promotion temporelle obligatoire
+
+> **Cette règle est NON NÉGOCIABLE. Aucune dérogation, aucun raccourci, aucune exception.**
+
+### Principe fondamental
+
+Toute la solution V5.3 (Light + Complete, Builds 1→17) est **codée intégralement**.
+Mais le code existant ne donne **aucun droit de promotion automatique**.
+La promotion suit un pipeline temporel hard :
+
+### Pipeline de promotion hard
+
+```
+[TOUT CODÉ] → Light Shadow 30j → Light Live → Complete Shadow 30j → Complete Live
+```
+
+### Règle 1 — Shadow = phase de vérité système complète
+
+- Le Shadow 30 jours est la **phase de vérité système** où la solution est testée dans sa forme complète utile
+- Pendant ces 30 jours, **tous les composants sont activés à 100%** :
+  - Moteurs A, B, C et D actifs, scorés, classés, arbitrés et observés
+  - Build-14 (Complete Enablers) activé à 100%, pleinement utilisé dans les décisions Shadow
+  - Enrichissements microstructure, régime, covariance robuste, risk contribution, edge diversity actifs
+  - Monitoring, DTR, coût, risk, portefeuille, toxicité complets
+- Le Shadow n’est plus une simple validation Light minimale ; il est la **phase où l’on observe la solution complète avant de décider quoi promouvoir**
+
+### Règle 2 — Light Shadow obligatoire 30 jours
+
+- La version **Light** doit trader en mode **SHADOW** pendant un minimum de **30 jours calendaires consécutifs** avant toute activation en live
+- Pendant ces 30 jours : données réelles, pipeline complet, DTR complet, aucun ordre réel envoyé
+- **Build-14, moteurs C/D et tous les enrichissements sont activés à 100% en Shadow** pour observer leur comportement réel
+- Si un incident interrompt le shadow pendant plus de 24h, le compteur reprend à zéro
+- Aucune activation Micro-live ni Live-Light n’est autorisée avant l’expiration de cette période
+- Les 30 jours doivent produire un rapport shadow exploitable (CE, coûts estimés, edge, drawdown, stale rate, comparaison inter-moteurs A/B/C/D, contribution Build-14)
+
+### Règle 3 — Activation Shadow ≠ promotion Live
+
+- L’activation complète en Shadow (Build-14 à 100%, C/D actifs) **ne signifie pas promotion automatique vers Live**
+- La promotion reste strictement conditionnelle au **verdict post-Shadow**
+- Possibilité de rollback, downgrade ou désactivation sélective à l’issue des 30 jours
+- Chaque composant est jugé individuellement : un moteur peut être validé en Shadow mais non promu en Live
+
+### Règle 4 — Light Live = condition préalable à Complete Live
+
+- La version Light doit être **stable en Live-Light** avant toute considération de Complete Live
+- "Stable" signifie : CE positive ou économiquement crédible, pas de kill switch déclenché, DTR complet, réconciliation sans divergence critique
+
+### Règle 5 — Complete Shadow obligatoire 30 jours
+
+- La version **Complete** (activation des enablers Build-14, engines C/D, 12 paires) doit trader en mode **SHADOW** pendant un minimum de **30 jours calendaires consécutifs** avant toute activation en live
+- Pendant ces 30 jours : la version Complete tourne en parallèle de la version Light live
+- Si l’enrichissement Complete dégrade les métriques Light shadow, il est désactivé et le compteur reprend à zéro
+- Non-régression Light obligatoire : Complete shadow doit démontrer que Light n’est pas dégradée
+- Les 30 jours doivent produire un rapport comparatif Light vs Complete
+
+### Règle 6 — Aucun raccourci
+
+- Aucun opérateur, aucune IA, aucun audit ne peut bypasser ces délais
+- "Le code est prêt" n’est pas un argument pour réduire la période de shadow
+- "Les tests passent" n’est pas un argument pour réduire la période de shadow
+- Seul le temps réel de marché valide un système de trading
+- L’activation complète en Shadow est un **essai structuré**, pas une promotion déguisée
+
+## 0.5 Guardrails P0 issus des audits (invariants système)
+
+Les invariants suivants sont **obligatoires** dans tout le système V5.3 :
+
+1. **Crossed book** : toute structure DepthEvent doit valider `best_ask >= best_bid` ; un carnet croisé est rejeté, jamais traité
+2. **Epsilon risk/reward** : tout calcul risk/reward doit avoir un epsilon minimum (`risk < 1e-6 → None`) ; pas de ratio aberrant
+3. **Imports dynamiques** : le DAG validator doit signaler tout usage de `importlib.import_module` comme dépendance wildcard potentielle
+4. **Recovery backoff** : tout cycle recovery doit implémenter un exponential backoff avec vérification de libération des ressources I/O
+5. **Buffer drop_oldest** : tout buffer de messages doit utiliser une politique drop_oldest (deque maxlen), jamais drop_newest
+6. **Jitter tolerance** : le contradiction checker doit tolérer un jitter réseau configurable (5-10ms) avant de lever TIMESTAMP_REVERSAL
+7. **Latence monotone** : toute mesure de latence doit utiliser un clock monotone et filtrer les valeurs aberrantes (négatives ou > seuil)
+8. **Kill switch persistant** : l’état du circuit breaker doit être persisté sur disque (écriture atomique) et survivre aux redémarrages
+9. **Persistance atomique** : toute écriture d’état critique doit passer par write-tmp-then-rename
+10. **Stale guard runtime** : tout message dont le delta exchange_time vs local_time dépasse un seuil configurable est rejeté du pipeline de décision
+11. **Persistance minimale stores critiques** : DTR, états portefeuille et logs d’audit doivent avoir un flush périodique vers fichier
+12. **Kill switch externe** : un mécanisme hors processus Python (fichier flag ou API admin) doit pouvoir couper le trading instantanément
 
 ---
 
@@ -192,36 +315,44 @@ Extension disciplinée d’un edge déjà validé ; jamais un moteur de “reven
 
 ---
 
-# 5. Profils officiels d’activation
+# 5. Profils officiels de rollout et d’activation
 
 ## 5.1 Principe
-Il n’existe pas plusieurs V5.3 documentaires.  
-Il existe **une V5.3 unique** avec **deux profils officiels**.
+Il n’existe pas plusieurs V5.3 documentaires.
+Il existe **une V5.3 unique** avec **deux enveloppes officielles de rollout**.
+
+`LIGHT` et `COMPLETE` ne decrivent pas deux architectures differentes.
+Ils decrivent deux envelopes d'activation reelle d'une meme architecture
+complete, prod-safe et gouvernee.
 
 ## 5.2 V5.3 Light
-- 6 paires maximum
-- moteurs A + B uniquement
-- T1 minimal utile
-- T2 prudent
-- T3 complet
-- UI verrouillée Light
-- pas de moteurs C/D live
-- pas de RL
-- pas de POMDP
-- pas d’optimal stopping sophistiqué live
+- premier rollout reel prudent et gouverne
+- 6 paires maximum en production reelle
+- architecture complete disponible et documentee
+- moteurs A/B/C/D presents dans la solution de reference
+- A/B attendus au coeur du rollout initial live
+- **C/D et Build-14 activés à 100% pendant le Shadow 30 jours** : scorés, classés, arbitrés, observés et comparés à A/B
+- promotion live de C/D conditionnelle au verdict post-Shadow (non automatique)
+- portfolio, risk, execution, UI et logs complets et auditables
+- pas de profil custom
+- pas de RL live
+- pas de POMDP live
+- pas de sophistication opaque sans valeur prod-safe demontree
 
 ## 5.3 V5.3 Complete
-- 12 paires
-- moteurs A + B + C + D
-- corrélation enrichie
+- extension gouvernee du meme systeme
+- jusqu'a 12 paires
+- A/B/C/D activables sous gouvernance
+- correlation enrichie
 - sizing tiers complet
 - analytics enrichis
-- UI complète
-- uniquement après validation Light
+- UI complete
+- uniquement apres stabilisation du rollout LIGHT et validation des paliers
 
 ## 5.4 Règle critique
-Le document décrit le système complet.  
-Le **profil actif** décrit ce qui a le droit d’exister en production aujourd’hui.
+Le document decrit le systeme complet.
+Le **profil actif** decrit ce qui peut etre active en production aujourd'hui,
+pas ce qui existe doctrinalement dans l'architecture cible.
 
 ## 5.5 Runtime modes officiels
 
@@ -374,8 +505,8 @@ Dérives interdites :
 - feature microstructure utilisée seule
 
 Profil :
-- Light : minimal
-- Complete : enrichi
+- LIGHT : base gouvernee compatible rollout initial
+- COMPLETE : couche enrichie gouvernee
 
 ---
 
@@ -402,8 +533,8 @@ Dérives interdites :
 - ambiguïté de régime transformée en veto
 
 Profil :
-- Light : version simple
-- Complete : version enrichie si stable
+- LIGHT : version gouvernee pour rollout initial
+- COMPLETE : version enrichie si stable et utile
 
 ---
 
@@ -416,8 +547,8 @@ Invariants :
 - aucun moteur ne doit exister s’il ne produit ni alpha net ni diversification
 
 Profil :
-- Light : A + B
-- Complete : A + B + C + D
+- LIGHT : A/B coeur attendu en live ; C/D activés à 100% en Shadow, promus seulement si validés
+- COMPLETE : A/B/C/D dans une enveloppe de rollout elargie
 
 ---
 
@@ -549,8 +680,8 @@ Dérives interdites :
 - croire à la diversification nominale
 
 Profil :
-- Light : minimal
-- Complete : enrichi
+- LIGHT : base gouvernee compatible rollout initial
+- COMPLETE : couche enrichie gouvernee
 
 ---
 
@@ -600,8 +731,8 @@ Dérives interdites :
 - posterior utilisé comme vérité absolue
 
 Profil :
-- Light : minimal utile
-- Complete : enrichi
+- LIGHT : socle explicatif obligatoire
+- COMPLETE : couche enrichie gouvernee
 
 ---
 
@@ -647,8 +778,8 @@ Mission :
 Dérives interdites :
 - profil custom libre
 - bypass des hard blockers
-- activer C/D en Light
-- 12 paires activables en Light
+- activer un moteur sans gates, budgets ou journalisation
+- ouvrir > 6 paires en LIGHT sans validation de rollout
 
 Profil :
 - Light : NOW
@@ -737,7 +868,9 @@ Mission :
 - capter les continuations non déjà absorbées par A
 
 Paires autorisées :
-- Complete seulement : BTC, ETH, SOL, XRP, BNB, AVAX, LINK
+- SHADOW : toutes paires Light (activé à 100%, scoré, comparé à A/B)
+- LIVE LIGHT : promu seulement si verdict Shadow positif, gates C validées
+- COMPLETE : BTC, ETH, SOL, XRP, BNB, AVAX, LINK puis extension gouvernee
 
 Formules :
 \[
@@ -748,17 +881,20 @@ Vol_t > \theta_{Vol}
 \]
 
 Contraintes :
-- pas en Light
+- activé à 100% en Shadow, pas en live par défaut
 - pas de Tier 3 initial
-- doit prouver non-duplication avec A
+- doit prouver non-duplication avec A pendant les 30 jours Shadow
 
 Dérives interdites :
 - faux breakout
 - A plus nerveux rebaptisé C
 - exécutions tardives chères
+- confondre activation Shadow et promotion live
+
+Hard State : `SHADOW_ENABLED` → verdict → `SHADOW_VALIDATED` ou `DORMANT`
 
 Verdict :
-- implémenter plus tard
+- moteur natif de la solution complete, activé à 100% en Shadow, promotion live strictement gouvernee par verdict post-Shadow
 
 ---
 
@@ -768,7 +904,9 @@ Mission :
 - réengager une structure déjà validée sans overtrading
 
 Paires autorisées :
-- Complete : BTC, ETH, BNB, SOL, LINK en priorité
+- SHADOW : toutes paires Light (activé à 100%, scoré, comparé à A/B/C)
+- LIVE LIGHT : promu seulement si verdict Shadow positif, gates D validées
+- COMPLETE : BTC, ETH, BNB, SOL, LINK en priorite puis extension gouvernee
 
 Formules :
 \[
@@ -779,20 +917,27 @@ Contraintes :
 - moteur marginal, pas central
 - coût marginal strict
 - jamais de concentration agressive au début
+- activé à 100% en Shadow, pas en live par défaut
 
 Dérives interdites :
 - revenge trading automatisé
 - doublon de A
 - surconcentration
+- confondre activation Shadow et promotion live
+
+Hard State : `SHADOW_ENABLED` → verdict → `SHADOW_VALIDATED` ou `DORMANT`
 
 Verdict :
-- implémenter plus tard
+- moteur natif de la solution complete, activé à 100% en Shadow, promotion live strictement gouvernee par verdict post-Shadow
 
 ---
 
 # 9. Architecture mathématique canonique
 
-## 9.1 NOW — à implémenter en Light
+La difference canonique porte sur l'ordre de verification et d'activation
+reelle, pas sur l'existence doctrinale des composants.
+
+## 9.1 Obligatoire avant rollout reel initial
 - rendement net par trade :
 \[
 r_i = g_i - c_i
@@ -820,7 +965,7 @@ Var(R_p)=w^\top \Sigma w
 - charge streaming \(\lambda/\mu_s\)
 - logs minimaux
 
-## 9.2 NEXT — pour Complete
+## 9.2 Obligatoire avant extension gouvernée du rollout
 - OFI dynamique
 - microprice
 - Ledoit-Wolf
@@ -925,35 +1070,49 @@ Conditions :
 - DTR fiables
 - budgets risque respectés
 - beta BTC contrôlé
+- architecture complete toujours observable et non contournable
 
 ## 11.6 Gate live-complete
 Conditions :
-- Light déjà stable
+- LIGHT déjà stable
 - A/B validés
 - C et D apportent alpha ou diversification
 - K_eff augmente
 - CE portefeuille augmente ou ne se dégrade pas excessivement
 - infra toujours stable
+- aucune inflation de complexité UI ou de veto non gouvernée
 
 ---
 
-# 12. Registre des risques canoniques
+# 12. Registre des risques canoniques et angles morts
 
-Risques à surveiller en permanence :
-- non-stationnarité
-- coût réel sous-estimé
-- faux multi-edge
-- facteur BTC caché
-- faux signal microstructure
-- drawdown psychologique
-- stérilisation économique
-- surcharge streaming
-- stale data
-- dérive documentaire
-- sur-complexité développeur
-- faux positifs statistiques
-- panne de recovery
-- mauvaise qualité de logs
+Chaque angle mort critique doit etre documente avec risque, impact, garde-fou
+et signal de surveillance.
+
+- duplication A vs C : faux nouveau moteur ; impact = sur-activation et faux
+  multi-edge ; garde-fou = test de non-duplication, budget cout ; signal =
+  correlation inter-moteurs, gain marginal
+- duplication A vs D : re-entry redondant ; impact = concentration cachee ;
+  garde-fou = budget correlation et historique trade-aware ; signal =
+  exposition marginale, CE marginale
+- B contre vraie cassure : mean reversion toxique ; impact = pertes de regime ;
+  garde-fou = blockers regime/cout ; signal = drawdown par regime
+- C trop tardif : breakout deja trop cher ; impact = edge detruit ; garde-fou
+  = gate cout/slippage ; signal = cout de capture, faux breakout
+- D en surconcentration : impact = portefeuille fragilise ; garde-fou =
+  cap par paire/moteur ; signal = concentration et drawdown conditionnel
+- illusion de diversite d'edge : impact = faux sentiment de securite ; garde-
+  fou = K_eff, contribution risque ; signal = facteur BTC cache, correlation
+- latence / backlog / stale : impact = decisions obsoletes ; garde-fou =
+  charge streaming, stale gates ; signal = lambda/mu_s, backlog, stale rate
+- desalignement etat local / exchange : impact = execution incoherente ; garde-
+  fou = reconciliation stricte ; signal = ecarts d'etat et recovery failures
+- inflation de veto ou de complexite UI : impact = sterilisation ou alertes
+  noyees ; garde-fou = UI gouvernee ; signal = sterilization rate, alert fatigue
+- contournement operateur : impact = rupture de gouvernance ; garde-fou = pas
+  d'override non journalise ; signal = journal d'actions admin
+- derive documentaire : impact = contradiction architecture/rollout/runtime ;
+  garde-fou = source canonique unique ; signal = ecarts master/build/gates
 
 ---
 
@@ -1267,8 +1426,10 @@ Modules :
 
 Objectif :
 - préparer le passage Complete sans casser Light
-- introduire d’abord les enrichissements **en lecture seule**
-- n’autoriser qu’ensuite une influence limitée, jamais un moteur autonome
+- **activer les enrichissements à 100% en Shadow** (`SHADOW_ENABLED`)
+- pleinement utilisés dans les décisions Shadow, tracés, comparés, auditables
+- promotion live non automatique : soumis au verdict post-Shadow
+- jamais un moteur autonome
 - absorber les `Build14_enabler` issus du protocole d’onboarding sans bypass des moteurs A/B/C/D, du risk backbone, du portfolio ni des gates de promotion
 
 Go :
@@ -1309,6 +1470,9 @@ Go :
 - K_eff augmente
 - CE portefeuille meilleure ou stable
 - infra stable
+- **HARD : Complete a tradé en shadow 30 jours consécutifs minimum**
+- **HARD : non-régression Light démontrée pendant ces 30 jours**
+- **HARD : rapport comparatif Light vs Complete produit et approuvé**
 
 ---
 
@@ -1326,6 +1490,47 @@ Le projet n’est considéré V5.3 prod-safe que si :
   - fréquence utile
   - corrélation réelle
   - stabilité d’infrastructure
+
+---
+
+---
+
+# 17. Build-14 — Conditions d'activation et de promotion
+
+Build-14 est **activé à 100% en Shadow** (`SHADOW_ENABLED`) :
+- pleinement utilisé dans les décisions Shadow
+- ses outputs sont tracés, comparés, auditables
+- il influence activement le scoring, le risk et le portefeuille en Shadow
+
+Build-14 reste **non-promu en Live** tant que :
+- le verdict post-Shadow n'a pas été rendu
+- **HARD : 30 jours de Shadow complet consécutifs minimum**
+- les gates Shadow et Micro-live ne sont pas vertes
+- aucun enabler Build-14 n'a démontré de valeur pendant le Shadow
+
+Build-14 ne doit **jamais** :
+- être un **hard blocker central** qui modifie le flux de décision Light en live sans verdict
+- être une **activation implicite de Complete**
+- échapper à la **non-régression Light obligatoire** : tout enrichissement Build-14 qui dégrade les métriques Light est désactivé
+
+Hard State : `CODED` → `SHADOW_ENABLED` → verdict → `SHADOW_VALIDATED` ou `DORMANT`
+
+Les enablers issus des audits tiers absorbés dans Build-14 (LOB deep filter, OBI, Hurst enrichi, anti-spoofing) suivent exactement ces mêmes règles.
+
+**HARD STATEMENT** : Même si tout le code Complete est implémenté, testé et prêt, la promotion de Complete vers le live exige 30 jours supplémentaires de shadow Complete après la stabilisation de Light en live. L'activation complète en Shadow est un essai structuré, pas une promotion déguisée.
+
+---
+
+# 18. Protocole d'intégration des audits
+
+Le pass documentaire d'intégration des audits suit ce protocole :
+
+1. **Freeze documentaire** : gel du canon avant modifications
+2. **Triage des findings** : classification NOW_P0 / NOW_LIGHT / NEXT_BUILD14 / RESEARCH_LOCAL / REJECT
+3. **Patch des builds P0** : injection des invariants dans les specs concernées
+4. **Réalignement docs → code** : vérification que le code respecte les docs patchées
+5. **Interdiction de promotion implicite** : aucun build ne change de statut par le seul fait du patch documentaire
+6. **Requalification** : les builds 1→14 déjà codés sont requalifiés selon le nouveau corpus patché
 
 ---
 

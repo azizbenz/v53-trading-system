@@ -9,6 +9,7 @@ actually executable end-to-end when an adapter is injected.
 from __future__ import annotations
 
 from enum import StrEnum
+import logging
 from typing import Protocol
 
 from pydantic import BaseModel, Field
@@ -21,7 +22,7 @@ from .execution_cost_meter.partial_fill_cost_meter import compute_partial_fill_c
 from .fill_tracker.fill_aggregator import FillAggregator, FillEvent
 from .fill_tracker.fill_reporter import FillReporter, FillStats
 from .fill_tracker.latency_meter import LatencyMeter, LatencyStats
-from .fill_tracker.order_state_tracker import OrderState, OrderStateTracker
+from .fill_tracker.order_state_tracker import OrderState, OrderStateTracker, TERMINAL_STATES
 from .fill_tracker.order_terminal_state_resolver import TerminalResolution, resolve_terminal
 from .order_decider.decision_reporter import DecisionReporter, DecisionStats
 from .order_decider.execution_guard import BlockReason, GuardResult, GuardVerdict, check_execution_guards
@@ -39,6 +40,9 @@ from .reconciliation_layer.fill_reconciler import FillReconciliationResult, reco
 from .reconciliation_layer.order_reconciler import OrderReconciliationResult, reconcile_orders
 from .reconciliation_layer.position_reconciler import PositionReconciliationResult, reconcile_positions
 from .reconciliation_layer.recovery_trigger import RecoveryDecision, RecoveryTrigger
+
+
+logger = logging.getLogger(__name__)
 
 
 _KNOWN_QUOTE_SUFFIXES = (
@@ -256,6 +260,16 @@ class ExecutionRuntime:
                 score=opportunity.score,
             )
             self._decision_reporter.record_no_trade(no_trade, timestamp=now)
+            logger.warning(
+                "execution_submission_no_trade",
+                extra={
+                    "intent_id": opportunity.intent_id,
+                    "pair": opportunity.pair,
+                    "engine_id": opportunity.engine_id,
+                    "reason": no_trade.reason.value,
+                    "timestamp": now,
+                },
+            )
             return ExecutionSubmission(
                 status=ExecutionSubmissionStatus.NO_TRADE,
                 no_trade=no_trade,
@@ -283,6 +297,16 @@ class ExecutionRuntime:
                 score=opportunity.score,
             )
             self._decision_reporter.record_no_trade(no_trade, timestamp=now)
+            logger.warning(
+                "execution_submission_blocked",
+                extra={
+                    "intent_id": opportunity.intent_id,
+                    "pair": opportunity.pair,
+                    "engine_id": opportunity.engine_id,
+                    "blocks": tuple(block.value for block in guard.blocks),
+                    "timestamp": now,
+                },
+            )
             return ExecutionSubmission(
                 status=ExecutionSubmissionStatus.BLOCKED,
                 no_trade=no_trade,
@@ -304,6 +328,15 @@ class ExecutionRuntime:
                 score=opportunity.score,
             )
             self._decision_reporter.record_no_trade(no_trade, timestamp=now)
+            logger.warning(
+                "execution_submission_invalid_limit",
+                extra={
+                    "intent_id": opportunity.intent_id,
+                    "pair": opportunity.pair,
+                    "engine_id": opportunity.engine_id,
+                    "timestamp": now,
+                },
+            )
             return ExecutionSubmission(
                 status=ExecutionSubmissionStatus.NO_TRADE,
                 no_trade=no_trade,
@@ -329,6 +362,17 @@ class ExecutionRuntime:
         receipt = self._adapter.submit_order(intent, now)
         self._register_live_order(receipt.order_id, intent, receipt.submitted_at)
         self._decision_reporter.record_trade(intent, timestamp=now)
+        logger.info(
+            "execution_submission_submitted",
+            extra={
+                "intent_id": intent.intent_id,
+                "order_id": receipt.order_id,
+                "pair": intent.pair,
+                "engine_id": intent.engine_id,
+                "order_type": intent.order_type.value,
+                "timestamp": now,
+            },
+        )
         return ExecutionSubmission(
             status=ExecutionSubmissionStatus.SUBMITTED,
             order_id=receipt.order_id,
@@ -364,6 +408,16 @@ class ExecutionRuntime:
         self._finalize_terminal_order(order_id)
         self._register_live_order(receipt.replacement_order_id, replacement_intent, receipt.submitted_at)
         self._decision_reporter.record_trade(replacement_intent, timestamp=now)
+        logger.info(
+            "execution_submission_replaced",
+            extra={
+                "replaced_order_id": order_id,
+                "replacement_order_id": receipt.replacement_order_id,
+                "pair": replacement_intent.pair,
+                "engine_id": replacement_intent.engine_id,
+                "timestamp": now,
+            },
+        )
         return ExecutionSubmission(
             status=ExecutionSubmissionStatus.REPLACED,
             order_id=receipt.replacement_order_id,
@@ -386,6 +440,10 @@ class ExecutionRuntime:
             self._adapter.cancel_order(record.order_id, now, reason="timeout")
             self._pending_cancels.add(record.order_id)
             cancelled_order_ids.append(record.order_id)
+            logger.warning(
+                "execution_timeout_cancel_requested",
+                extra={"order_id": record.order_id, "timestamp": now, "timeout_s": timeout_s},
+            )
         return TimeoutSweepResult(cancelled_order_ids=tuple(cancelled_order_ids))
 
     def process_events(self) -> RuntimeProcessingSummary:
@@ -395,6 +453,14 @@ class ExecutionRuntime:
         for event in events:
             record = self._state_tracker.get(event.order_id)
             if record is None:
+                logger.warning(
+                    "execution_event_unknown_order",
+                    extra={
+                        "order_id": event.order_id,
+                        "event_type": event.event_type.value,
+                        "timestamp": event.timestamp,
+                    },
+                )
                 continue
 
             if event.event_type == VenueOrderEventType.ACK:
@@ -440,7 +506,10 @@ class ExecutionRuntime:
     def reconcile(self, now: float) -> RuntimeReconciliationResult:
         """Run local vs remote reconciliation against an adapter-backed external state."""
         remote_state = self._adapter.fetch_remote_state()
-        order_result = reconcile_orders(self._local_order_states(), remote_state.orders)
+        order_result = reconcile_orders(
+            self._local_open_order_states(),
+            self._remote_open_order_states(remote_state.orders),
+        )
         fill_result = reconcile_fills(self._local_fill_quantities(), remote_state.fills)
         position_result = reconcile_positions(dict(self._local_positions), remote_state.positions)
 
@@ -459,6 +528,17 @@ class ExecutionRuntime:
             divergence_count=summary.total_divergences,
         )
         self._recovery_trigger.record_reconciliation(now)
+        logger.info(
+            "execution_reconciliation_completed",
+            extra={
+                "timestamp": now,
+                "order_aligned": order_result.aligned,
+                "fill_aligned": fill_result.aligned,
+                "position_aligned": position_result.aligned,
+                "max_severity": summary.max_severity.value,
+                "recovery_action": recovery_decision.action.value,
+            },
+        )
         return RuntimeReconciliationResult(
             order_result=order_result,
             fill_result=fill_result,
@@ -627,8 +707,16 @@ class ExecutionRuntime:
         signed_quantity = quantity if side.lower() == "buy" else -quantity
         self._local_positions[base_asset] = self._local_positions.get(base_asset, 0.0) + signed_quantity
 
-    def _local_order_states(self) -> dict[str, str]:
-        return {record.order_id: record.state.value for record in self._state_tracker.get_all()}
+    def _local_open_order_states(self) -> dict[str, str]:
+        return {record.order_id: record.state.value for record in self._state_tracker.get_open_orders()}
+
+    def _remote_open_order_states(self, remote_orders: dict[str, str]) -> dict[str, str]:
+        terminal_values = {state.value for state in TERMINAL_STATES}
+        return {
+            order_id: state
+            for order_id, state in remote_orders.items()
+            if state not in terminal_values
+        }
 
     def _local_fill_quantities(self) -> dict[str, float]:
         return {

@@ -1,6 +1,6 @@
 # V5.3 — TABLE DÉTAILLÉE DE L’INTERFACE UTILISATEUR
 ## Spécification UI / Console opérateur / Supervision
-### Complément canonique au `V5_3_MASTER_FINAL_CANONICAL.md`
+### Complément canonique subordonné au `V5_3_MASTER_FINAL_UNIQUE.md`
 ### Sans code — prod-safe
 
 ---
@@ -30,7 +30,8 @@ Lecture honnête :
 
 - le **core Build-1 à Build-9** est la base exécutable / gelable actuelle
 - Build-10 dispose désormais d’une première implémentation backend / projection UI Light
-- Build-11 à Build-17 restent des phases futures
+- Build-11 à Build-17 restent des phases canoniques de validation et
+  d'extension du rollout
 - les vues `Build-9X`, `LOCAL_REPLAY`, `artifact import` et `strategy onboarding` décrites plus bas restent **partiellement implémentées au mieux** : quelques projections backend existent, mais la surface UI complète n’est pas finie
 - ces vues futures restent liées à des `runtime_mode` gouvernés et jamais à un fork local / VPS
 
@@ -40,8 +41,8 @@ Lecture honnête :
 
 ## 1.1 L’UI ne doit pas permettre
 - d’activer des modules interdits par le profil
-- de forcer 12 paires en mode Light
-- de forcer les moteurs C ou D en mode Light
+- de forcer > 6 paires en mode LIGHT
+- de forcer un moteur ou une paire au-dela des gates, budgets ou borne runtime
 - de contourner les hard blockers
 - de bypass le risk engine
 - d’éditer des paramètres critiques en live sans journalisation
@@ -54,6 +55,13 @@ Lecture honnête :
 - la consultation des métriques
 - la traçabilité des changements
 - l’accès rapide aux alertes et journaux critiques
+- la distinction explicite entre `disponible`, `armé`, `actif`, `borné`,
+  `suspendu` et `non déployé`
+- **l'affichage des Hard States** de chaque composant : `SHADOW_ENABLED`, `SHADOW_VALIDATED`, `PROMOTED`, `DORMANT`
+- **la visualisation des moteurs actifs en Shadow** : A/B/C/D avec statut individuel
+- **la visualisation des enablers Build-14 actifs en Shadow** : microstructure, régime, covariance, risk contribution, edge diversity
+- **les verdicts post-Shadow** par composant
+- **la contribution de chaque moteur/enabler** : edge marginal, coût, churn, duplication, concentration, risk contribution
 
 ## 1.3 Toute action opérateur doit être
 - journalisée
@@ -158,7 +166,8 @@ CE_{port} = \frac{\sum_i PnL_i}{\sum_i x_i h_i}
 # 4. Écran 2 — PROFILS & ÉTAT DE DÉPLOIEMENT
 
 ## 4.1 Mission
-Permettre de voir et charger uniquement les profils validés.
+Permettre de voir et charger uniquement les profils validés, ainsi que l'etat
+de rollout et d'activation reelle.
 
 ## 4.2 États officiels
 - SHADOW
@@ -167,17 +176,24 @@ Permettre de voir et charger uniquement les profils validés.
 - LIVE-COMPLETE
 - DEGRADED
 - HALTED
+- disponible
+- armé
+- actif
+- borné
+- suspendu
+- non déployé
 
 ## 4.3 Actions autorisées
 - charger le profil Light si toutes conditions compatibles
 - charger le profil Complete seulement si autorisé
+- voir les composants armes mais non actifs
 - passer en HALTED
 - repasser en DEGRADED automatiquement en cas de breach
 
 ## 4.4 Actions interdites
 - charger Complete si gates non passées
 - composer un profil custom
-- activer moteurs interdits
+- activer un moteur ou une paire hors gates, hors budget ou hors borne de rollout
 - dépasser le nombre max de paires du profil
 
 ## 4.5 Champs obligatoires
@@ -196,13 +212,14 @@ Permettre de voir et charger uniquement les profils validés.
 # 5. Écran 3 — PAIRES
 
 ## 5.1 Mission
-Superviser, activer et suspendre les paires dans le cadre du profil actif.
+Superviser, armer, activer et suspendre les paires dans le cadre du profil
+actif et de la borne de rollout.
 
 ## 5.2 Vue tableau obligatoire
 Colonnes :
 - paire
 - classe (A/B/C)
-- active / suspendue
+- état runtime
 - santé \(H_j\)
 - stale rate
 - coût moyen
@@ -210,6 +227,7 @@ Colonnes :
 - CE moyenne
 - fréquence utile
 - moteur(s) autorisés
+- moteur(s) armés
 - raison de suspension si suspendue
 
 ## 5.3 Métriques mathématiques associées
@@ -231,7 +249,7 @@ CE_j = \frac{\sum_{i \in j} PnL_i}{\sum_{i \in j} x_i h_i}
 ## 5.5 Actions interdites
 - réactiver une paire hard-blocked sans cause levée
 - activer une paire non autorisée par le profil
-- dépasser la capacité max du profil
+- dépasser la capacité max du profil ou la borne de rollout
 
 ## 5.6 Dérives à éviter
 - écran liste sans raisons explicites
@@ -249,7 +267,7 @@ Superviser le comportement des moteurs A/B/C/D.
 Colonnes :
 - moteur
 - autorisé par profil
-- actif / suspendu
+- état runtime
 - fréquence utile
 - rendement net
 - coût moyen
@@ -257,6 +275,7 @@ Colonnes :
 - Sharpe par trade
 - drawdown
 - corrélation avec portefeuille
+- risque de duplication d'edge
 - paires actives
 - raison de suspension
 
@@ -277,7 +296,7 @@ CE_k = \frac{\sum_{i \in k} PnL_i}{\sum_{i \in k} x_i h_i}
 - afficher coût et CE par régime
 
 ## 6.5 Actions interdites
-- activer C ou D en Light
+- activer un moteur hors gates, hors budget ou sans journalisation
 - réactiver un moteur sans journalisation
 - changer son budget live sans passer par risk engine
 
@@ -525,14 +544,15 @@ Exposer les actions administratives strictement nécessaires.
 
 ## 13.1 Light
 - 6 paires max
-- moteurs A et B uniquement
-- widgets C/D visibles en lecture seule ou masqués
-- pas de bouton d’activation Complete
-- risque renforcé, simplicité maximale
+- architecture complete visible
+- A/B attendus au coeur du rollout initial
+- C/D visibles avec etat `non deploye`, `arme`, `borne` ou `actif` selon gates
+- pas de bouton d'override de rollout
+- risque renforcé, simplicité gouvernée
 
 ## 13.2 Complete
 - 12 paires max
-- moteurs A/B/C/D
+- moteurs A/B/C/D activables sous gouvernance
 - budgets corrélation enrichis
 - écrans C et D déverrouillés
 - analytics plus riches
@@ -593,18 +613,19 @@ Mais elle ne doit jamais permettre :
 - de promouvoir implicitement une hypothèse locale vers le live
 
 ## 14 bis.3 Build-14 enrichi
-Les briques `Build14_enabler` ne doivent apparaître d’abord qu’en :
+Les briques `Build14_enabler` doivent apparaître d’abord comme :
 
-- lecture seule
-- diagnostics
-- alertes enrichies
-- projections portefeuille limitées
+- composants `SHADOW_ENABLED` du Shadow complet
+- contributions enrichies visibles dans le scoring, le risk et le portefeuille Shadow
+- verdicts post-Shadow (`SHADOW_VALIDATED` ou `DORMANT`)
+- projections comparatives de coût, concentration, duplication et risk contribution
 
 et non comme :
 
 - moteur autonome
 - source de hard block live immédiat
 - voie de contournement des gates de promotion
+- composant auto-promu en live sans verdict
 
 ---
 

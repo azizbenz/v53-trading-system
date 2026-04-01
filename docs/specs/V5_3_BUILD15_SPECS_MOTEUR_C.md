@@ -54,8 +54,18 @@ Build-15 est :
 
 - une **spécification de continuation disciplinée**
 - une **couche testant une hypothèse économique distincte**
-- une **préparation rationnelle de la Complete**
+- une **formalisation d’un moteur natif de la solution complète**
 - une **phase de validation de non-redondance**
+
+## Doctrine d’activation Shadow
+
+Le moteur C est **activé à 100% pendant le Shadow 30 jours** (`SHADOW_ENABLED`) :
+- scoré, classé, arbitré et observé aux côtés de A/B
+- ses performances sont comparées à A pour vérifier la non-duplication
+- sa contribution portefeuille est mesurée (fréquence utile, edge marginal, coût)
+- sa promotion live reste strictement conditionnelle au verdict post-Shadow
+- activation Shadow ≠ promotion live automatique
+- Hard State : `SHADOW_ENABLED` → verdict → `SHADOW_VALIDATED` ou `DORMANT`
 
 ---
 
@@ -71,11 +81,11 @@ Les conditions suivantes doivent être satisfaites :
 - microstructure enrichie et régime enrichi au moins lisibles
 - lecture portefeuille suffisamment mature pour juger la contribution marginale de C
 
-## Après Build-15
-Si Build-15 est validé, alors seulement :
-- C devient candidat à une activation contrôlée dans la trajectoire Complete
-- il peut être confronté à D et au portefeuille enrichi
-- Build-16 peut être abordé sans confusion sur la place de C
+## Activation en Shadow
+- C est **activé à 100% en Shadow** dès le début des 30 jours, aux côtés de A/B/D
+- son utilité est prouvée pendant ces 30 jours de Shadow complet
+- sa promotion réelle dépend des résultats observés (verdict post-Shadow)
+- il n'est plus "attendu seulement plus tard" : il est essayé tôt en Shadow, promu tard si validé
 
 ---
 
@@ -123,9 +133,10 @@ C améliore-t-il la fréquence utile ou la diversité d’edge, sans détériore
 # 6. Positionnement du moteur C dans les profils
 
 ## 6.1 Light
-- **interdit**
-- jamais activable en Light
-- éventuellement observable en shadow analytique seulement si explicitement prévu
+- **non interdit par principe**
+- activable seulement sous gates spécifiques, budget coût strict, observabilité
+  renforcée et bornes runtime très serrées
+- shadow analytique autorisé si explicitement prévu
 
 ## 6.2 Complete
 - **candidat autorisé**
@@ -734,12 +745,13 @@ Refuser Build-15 si :
 
 # 27. Verdict final Build-15
 
-Build-15 est la phase où la V5.3 doit prouver qu’un moteur de continuation mérite d’exister **en plus** du moteur premium A.
+Build-15 est la phase où la V5.3 doit prouver qu’un moteur de continuation
+mérite une activation réelle **en plus** du coeur initial A/B.
 
 Si Build-15 est bien fait :
 - C apporte une logique identifiable
 - le portefeuille gagne potentiellement une fréquence utile ou une diversité réelle
-- la Complete future repose sur une vraie base
+- l’extension COMPLETE du rollout repose sur une vraie base
 
 Si Build-15 est mal fait :
 - C ne sera qu’un doublon coûteux

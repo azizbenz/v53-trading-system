@@ -30,6 +30,7 @@ class BlockReason(str, Enum):
     PROFILE_MISMATCH = "profile_mismatch"
     COOLDOWN_ACTIVE = "cooldown_active"
     MAX_POSITIONS_REACHED = "max_positions_reached"
+    SIGNAL_EXPIRED = "signal_expired"  # GEM-11: time-based invalidation
 
 @unique
 class RiskVerdict(str, Enum):
@@ -69,13 +70,25 @@ class SignalCandidate(TimestampedModel):
     max_hold_ms: Optional[int] = Field(default=None, gt=0)
     reason: Optional[str] = Field(default=None)
 
+    _EPSILON_RISK: float = 1e-6  # GEM-02: guard against near-zero risk division
+
+    def is_expired(self, now_ms: int) -> bool:
+        """GEM-11: time-based signal invalidation.
+
+        A signal with max_hold_ms is expired if now_ms > timestamp_ms + max_hold_ms.
+        Signals without max_hold_ms never expire via this check.
+        """
+        if self.max_hold_ms is None:
+            return False
+        return now_ms > self.timestamp_ms + self.max_hold_ms
+
     @property
     def expected_risk_reward(self) -> Optional[float]:
         if self.stop_loss is None or self.take_profit is None:
             return None
         risk = abs(self.entry_price - self.stop_loss)
         reward = abs(self.take_profit - self.entry_price)
-        if risk == 0:
+        if risk < self._EPSILON_RISK:
             return None
         return reward / risk
 

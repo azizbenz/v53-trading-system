@@ -75,7 +75,7 @@ Avant chaque usage de Claude Pro ou ChatGPT Pro, les règles suivantes doivent �
 4. **aucun ajout de module non demandé**
 5. **aucune simplification silencieuse des garde-fous**
 6. **aucun bypass des hard blockers / budgets risque / profils**
-7. **aucune activation Complete implicite quand on travaille en Light**
+7. **aucune extension COMPLETE implicite quand on travaille en LIGHT, et aucune activation hors gates**
 8. **aucune réécriture globale non explicitement demandée**
 9. **aucun code avant clarification de l’interface et des invariants**
 10. **toujours séparer : spec / code / audit / correction / merge gate**
@@ -979,7 +979,7 @@ Je veux vérifier :
 - coût / CE / risque visibles
 - alertes actionnables
 - UI non permissive
-- impossibilité d’activer C/D ou > 6 paires
+- impossibilité d’activer un moteur ou > 6 paires hors gates/budgets
 ```
 
 ## 29.2 Prompt Claude Pro
@@ -1088,7 +1088,7 @@ Je veux vérifier :
 - CE Light
 - utilité réelle de A et B
 - DEGRADED / HALTED / rollback
-- readiness ou non pour Complete Enablers
+- readiness ou non pour l’extension gouvernée du rollout et pour Complete Enablers
 ```
 
 ## 32.2 Prompt Claude Pro

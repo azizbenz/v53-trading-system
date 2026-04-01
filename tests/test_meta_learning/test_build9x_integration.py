@@ -14,10 +14,12 @@ from meta_learning import (
     LearningMemoryRecord,
     LearningMemoryStore,
     TradeLearningInput,
+    build_build9x_projection,
     build_breakdown_report,
     build_improvement_candidates,
     build_learning_checklist,
     build_learning_hypotheses,
+    evaluate_learning_capacity,
     export_learning_review,
     run_meta_learning_review,
 )
@@ -166,7 +168,12 @@ def test_build9x_full_review_flow_stays_governed():
 
     assert store.latest() == record
     assert "## Summary" in review_export.markdown_body
+    assert "## Hypotheses" in review_export.markdown_body
     assert "## Candidates" in review_export.markdown_body
+    assert "## Review Decisions" in review_export.markdown_body
+    assert "## Archive Eligibility" in review_export.markdown_body
+    assert "## Lifecycle Transitions" in review_export.markdown_body
+    assert "## Replay Bundles" in review_export.markdown_body
     assert all(candidate.auto_promotion_enabled is False for candidate in review_export.candidates)
     assert all(candidate.promotion_state.value == "replay_only" for candidate in review_export.candidates)
 
@@ -187,7 +194,75 @@ def test_run_meta_learning_review_returns_governed_bundle():
     assert {"trace_coverage", "sterilization", "cost_drift", "edge_degraded", "near_miss"} <= categories
     assert bundle.memory_record.candidate_count == len(bundle.candidates)
     assert bundle.review_export.correlation_id == bundle.correlation_id
+    assert bundle.review_decisions
+    assert bundle.review_decisions[0].actor == "system_build9x"
+    assert bundle.review_decisions[0].review_state.value == "pending"
+    assert bundle.archive_eligibility
+    assert any(entry.entity_kind == "diagnostic" for entry in bundle.archive_eligibility)
     assert all(candidate.promotion_state.value == "replay_only" for candidate in bundle.candidates)
+    assert len(bundle.replay_bundles) == len(bundle.candidates)
+    assert bundle.review_export.replay_bundles == bundle.replay_bundles
+    assert bundle.review_export.review_decisions == bundle.review_decisions
+    assert bundle.review_export.archive_eligibility == bundle.archive_eligibility
+    assert all(hypothesis.governance_stage.value == "under_review" for hypothesis in bundle.hypotheses)
+    assert all(candidate.governance_stage.value in {"tests_pending", "ready_for_replay"} for candidate in bundle.candidates)
+    assert bundle.lifecycle_transitions
+    assert any(
+        transition.from_state == "draft" and transition.to_state == "under_review"
+        for transition in bundle.lifecycle_transitions
+    )
+    assert any(
+        transition.from_state == "prepared" and transition.to_state == "tests_pending"
+        for transition in bundle.lifecycle_transitions
+    )
+
+
+def test_run_meta_learning_review_blocks_handoff_when_capacity_is_incomplete():
+    records, dtr_summary, cra_report, break_even_report, edge_report = _reports()
+    capacity_snapshot = evaluate_learning_capacity(
+        queue_depth=5400,
+        queue_oldest_age_ms=800,
+        log_loss_total=1,
+        export_failures_total=1,
+    )
+
+    bundle = run_meta_learning_review(
+        _trade_input(),
+        dtr_records=records,
+        dtr_summary=dtr_summary,
+        cra_report=cra_report,
+        break_even_report=break_even_report,
+        edge_report=edge_report,
+        capacity_snapshot=capacity_snapshot,
+    )
+
+    projection = build_build9x_projection(bundle)
+
+    assert bundle.replay_bundles == ()
+    assert bundle.review_export.review_blocked_due_to_incomplete_data is True
+    assert bundle.review_export.capture_mode.value == "capture_minimale"
+    assert "## Capacity Guard" in bundle.review_export.markdown_body
+    assert bundle.review_decisions[0].review_state.value == "needs_revision"
+    assert bundle.review_decisions[0].final_verdict_recorded is False
+    assert all(entry.eligible is False for entry in bundle.archive_eligibility)
+    assert "## Lifecycle Transitions" in bundle.review_export.markdown_body
+    assert all(hypothesis.governance_stage.value == "under_review" for hypothesis in bundle.hypotheses)
+    assert all(candidate.governance_stage.value == "prepared" for candidate in bundle.candidates)
+    assert all(candidate.replay_bundle_reference == "" for candidate in bundle.candidates)
+    assert bundle.memory_record.verdict == "incomplete_capture_blocked"
+    assert bundle.checklist.ready_for_local_replay is False
+    assert projection.status == "critical"
+    assert projection.review_export_ready is False
+    assert projection.learning_capture_mode == "capture_minimale"
+    assert projection.learning_backpressure_active is True
+    assert any(
+        transition.from_state == "draft" and transition.to_state == "under_review"
+        for transition in bundle.lifecycle_transitions
+    )
+    assert any(
+        transition.from_state == "open" and transition.to_state == "escalated"
+        for transition in bundle.lifecycle_transitions
+    )
 
 
 def test_breakdown_report_fallback_and_empty_candidate_export():
@@ -211,6 +286,10 @@ def test_breakdown_report_fallback_and_empty_candidate_export():
     assert report.near_miss_pairs == ()
     assert "# Build-9X Review - corr-empty" in review_export.markdown_body
     assert "## Candidates" in review_export.markdown_body
+    assert "## Capacity Guard" in review_export.markdown_body
+    assert "## Review Decisions" in review_export.markdown_body
+    assert "## Archive Eligibility" in review_export.markdown_body
+    assert "## Lifecycle Transitions" in review_export.markdown_body
     assert "- none" in review_export.markdown_body
 
 

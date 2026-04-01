@@ -24,6 +24,10 @@ class ArtifactManifest(BaseModel, frozen=True):
     exported_from: str = Field(default="local", min_length=1)
     dataset_ref: str = ""
     clock_ref: str = ""
+    feature_bridge_ref: str = ""
+    parity_diagnostics_ref: str = ""
+    replay_metrics_ref: str = ""
+    replay_dtr_ref: str = ""
     diagnostic_ids: tuple[str, ...] = ()
     candidate_ids: tuple[str, ...] = ()
     review_export_ref: str = ""

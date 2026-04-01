@@ -109,10 +109,13 @@ class TestRecoveryAfterPartialState:
 
     def test_crash_on_restart_fails(self):
         mod = CrashOnRestartModule()
-        result = run_recovery_cycle("test_crash", mod, {})
+        result = run_recovery_cycle(
+            "test_crash", mod, {},
+            max_retries=0,  # no retries for faster test
+        )
         assert not result.passed
         assert result.status == SmokeStatus.FAIL
-        assert "RuntimeError" in result.message
+        assert "Re-bootstrap failed" in result.message or "State corrupted" in result.message
 
     def test_crash_on_shutdown_fails(self):
         mod = CrashOnShutdownModule()
@@ -142,3 +145,34 @@ class TestRecoveryAfterPartialState:
         )
         assert not result.passed
         assert not result.pre_state_valid
+
+    def test_resource_release_failure_blocks_rebootstrap(self):
+        mod = CleanModule()
+        result = run_recovery_cycle(
+            "test_resource_block",
+            mod,
+            {},
+            resource_release_checker=lambda: False,
+            max_retries=0,
+        )
+        assert not result.passed
+        assert mod.boot_count == 1
+        assert "Resource release check failed" in result.message
+
+    def test_resource_release_checker_is_executed(self):
+        mod = CleanModule()
+        calls: list[str] = []
+
+        def _resource_check() -> bool:
+            calls.append("called")
+            return True
+
+        result = run_recovery_cycle(
+            "test_resource_called",
+            mod,
+            {},
+            resource_release_checker=_resource_check,
+            max_retries=0,
+        )
+        assert result.passed
+        assert calls == ["called"]

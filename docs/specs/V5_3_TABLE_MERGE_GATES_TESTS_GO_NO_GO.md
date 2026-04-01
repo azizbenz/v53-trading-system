@@ -1,6 +1,6 @@
 # V5.3 — TABLE DES MERGE GATES / TESTS / CRITÈRES GO-NO-GO
 ## Spécification prod-safe de livraison et de déploiement
-### Complément canonique au `V5_3_MASTER_FINAL_CANONICAL.md`
+### Complément canonique subordonné au `V5_3_MASTER_FINAL_UNIQUE.md`
 ### Sans code
 
 ---
@@ -12,7 +12,7 @@ Ce document définit les règles obligatoires de :
 - merge de module
 - validation de build
 - passage shadow → micro-live → live
-- activation Light / Complete
+- activation LIGHT / COMPLETE
 - critères go / no-go
 
 L’objectif est simple :
@@ -29,14 +29,14 @@ L’objectif est simple :
 3. **Gate de profil**
 4. **Gate de déploiement**
 5. **Gate économique**
-6. **Gate d’extension Complete**
+6. **Gate d’extension gouvernée du rollout**
 
 ## 1.2 Principe
 Un niveau ne compense jamais un autre.  
 Exemple :
 - un module mathématiquement élégant mais sans recovery test = refus
 - un build complet avec bon PnL shadow mais sans logs suffisants = refus
-- un profil Complete sans Light validé = refus
+- une extension COMPLETE sans preuves LIGHT suffisantes = refus
 
 ## 1.3 Invariants local / VPS et runtime_mode
 
@@ -219,20 +219,21 @@ Refus si :
 
 # 4. GATE DE BUILD
 
-## 4.1 Un build Light est recevable seulement si
-- tous les modules P0 Light sont présents
+## 4.1 Un build LIGHT est recevable seulement si
+- tous les modules P0 du socle commun et du rollout LIGHT sont présents
 - les interfaces sont cohérentes
 - les smoke tests passent
 - les logs critiques remontent
-- la UI minimale fonctionne
+- la UI critique fonctionne
 - aucun module FORBIDDEN n’est activé
 
-## 4.2 Un build Complete est recevable seulement si
-- build Light déjà stable
-- modules P1 Complete ajoutés sans casser P0
-- moteurs C/D présents mais encore validables
+## 4.2 Un build COMPLETE est recevable seulement si
+- build LIGHT déjà stable
+- modules P1 d'extension ajoutés sans casser le socle commun
+- moteurs C/D présents, gouvernés et encore désactivables proprement
 - budgets corrélation enrichis
 - saturation infra toujours sous contrôle
+- angles morts critiques explicitement testés
 
 ## 4.3 Refus automatique du build si
 - backlog critique
@@ -247,25 +248,29 @@ Refus si :
 
 ## 5.1 Profil Light — conditions
 - maximum 6 paires actives
-- moteurs A/B seulement
+- moteurs A/B supervisés et opérationnels
+- C/D non interdits par principe, mais activables seulement sous gates
+  spécifiques, budgets stricts, observabilité renforcée et plan de rollback
 - budgets risque activés
 - coût réel mesuré
 - CE affichée
 - UI verrouillée Light
 - tous les modules P0 présents
+- états runtime explicites : disponible / armé / actif / borné / suspendu
 
 ## 5.2 Profil Complete — conditions
-- Light déjà validé
-- maximum 12 paires
-- moteurs A/B/C/D
+- LIGHT déjà validé
+- montée 6 -> 8/10 -> 12 paires documentée et testée
+- moteurs A/B/C/D activables sous gouvernance
 - corrélation enrichie
 - CE et K_eff suivis
-- moteurs C/D mesurés avant activation pleine
+- moteurs C/D mesurés avant activation large
+- surcharge UI/CPU/mémoire/observabilité sous contrôle
 
 ## 5.3 Refus automatique
 - profil hybride
-- activation manuelle de C/D en Light
-- 12 paires en Light
+- activation d'un moteur sans gate ou sans journalisation
+- > 6 paires en LIGHT
 - configuration non signée / non journalisée
 
 ---
@@ -304,31 +309,107 @@ Encadrer le chemin documentaire et futur d’introduction d’une nouvelle hypot
 # 6. GATE SHADOW
 
 ## 6.1 Objectif
-Valider la logique sans risque capital.
+Valider la **solution complète utile** sans risque capital. Le Shadow est la phase de vérité système.
 
 ## 6.2 Métriques minimales
-- fréquence brute
-- fréquence utile
-- coût attendu
-- coût simulé
+- fréquence brute et utile **par moteur** (A/B/C/D)
+- coût attendu et simulé **par moteur**
 - DTR complets
 - pass-rate économique
 - santé infra
 - backlog
 - pair health
+- **comparaison inter-moteurs** (non-duplication, edge marginal, concentration)
+- **contribution Build-14** (microstructure, régime, covariance, risk contribution, edge diversity)
 
-## 6.3 Conditions de sortie de Shadow
+## 6.3 HARD STATEMENT — Durée de shadow obligatoire
+
+> **NON NÉGOCIABLE. Aucune dérogation.**
+
+### Light Shadow — Phase de vérité système complète
+- **30 jours calendaires consécutifs minimum** en mode SHADOW sur données réelles
+- Pipeline complet obligatoire : data → engine → scoring → portfolio → execution simulée
+- **A/B/C/D activés à 100%** : scorés, classés, arbitrés et observés
+- **Build-14 activé à 100%** : microstructure, régime, covariance, risk contribution, edge diversity
+- DTR complet produit pendant les 30 jours
+- Interruption > 24h = compteur reprend à zéro
+- Rapport shadow exploitable obligatoire incluant **comparaison inter-moteurs et contribution Build-14**
+- **Aucune activation Micro-live ni Live-Light avant l’expiration**
+- **Activation Shadow ≠ promotion Live** : verdict composant par composant obligatoire
+
+### Complete Shadow
+- **30 jours calendaires consécutifs minimum** en mode SHADOW après Light live stable
+- Complete tourne en parallèle de Light live
+- Non-régression Light obligatoire pendant les 30 jours
+- Si enrichissement Complete dégrade Light → désactivation + compteur à zéro
+- Rapport comparatif Light vs Complete obligatoire
+- **Aucune activation Live-Complete avant l’expiration**
+
+## 6.4 Conditions de sortie de Shadow
+- **HARD : 30 jours consécutifs atteints**
 - pas de panne d’état majeure
 - décisions reproductibles
 - coûts plausibles
 - corrélation portefeuille lisible
 - aucun module critique instable
+- rapport shadow produit et approuvé
+- **verdict composant par composant rendu** : chaque moteur/enabler reçoit `SHADOW_VALIDATED` ou `DORMANT`
 
-## 6.4 Refus si
+## 6.5 Refus si
+- **30 jours non atteints**
 - DTR incomplets
 - signaux non explicables
 - coûts simulés incohérents
 - infra déjà proche de saturation
+
+---
+
+## Guardrails P0 issus des audits — Invariants obligatoires pour toute merge gate
+
+Les invariants suivants sont obligatoires dans toute merge gate, indépendamment du build :
+
+### Invariants contrats (Build-1+)
+- Crossed book : `best_ask >= best_bid` validé dans DepthEvent
+- Epsilon risk/reward : `risk < 1e-6 → None` dans tout calcul R/R
+- Imports dynamiques : `importlib.import_module` signalé par DAG validator comme wildcard
+
+### Invariants infrastructure (Build-1+)
+- Recovery backoff : exponential backoff + resource release verification
+- Persistance atomique : write-tmp-then-rename pour état critique
+- Kill switch persistant : état circuit breaker survit aux redémarrages
+- Kill switch externe : mécanisme hors processus Python disponible
+- Persistance minimale : DTR, portfolio state, audit logs flush périodique
+
+### Invariants data (Build-2+)
+- Buffer policy : drop_oldest (deque maxlen), jamais drop_newest
+- Jitter tolerance : fenêtre configurable (5-10ms) avant TIMESTAMP_REVERSAL
+- Latence monotone : clock monotone, filtrage valeurs aberrantes
+- Stale guard : rejet si delta exchange_time vs local_time > seuil configurable
+
+### Invariants execution (Build-3+)
+- Market impact prudent : coût réel = slippage + impact estimé + fees
+- No-trade : rejet explicite si coût estimé détruit l'edge net
+
+### Invariants portfolio (Build-8+)
+- Anti-churn A/B : neutralisation signaux contradictoires dans fenêtre temporelle
+- Rejet relatif : opportunités redondantes rejetées de manière auditable
+
+### Invariants monitoring (Build-10+)
+- High-water marks : backlog max, drop rate %, stale spikes
+- Distinction metrics in-memory vs observabilité réelle
+- Alertes recovery, stale, backlog, state-loss
+
+### Invariants runtime réel (Build-11+)
+- Shadow ≠ validable sur modèles in-memory seuls
+- Micro-live requiert I/O réel, event loop, persistance, réconciliation exchange
+- Live-Light requiert config loading, sortie de positions, notification opérateur
+
+### Invariants Build-14
+- **Activé à 100% en Shadow** (`SHADOW_ENABLED`) : pleinement utilisé, tracé, auditable
+- Promotion live non automatique : soumis au verdict post-Shadow (`SHADOW_VALIDATED` ou `DORMANT`)
+- Jamais hard blocker central en live sans verdict
+- Jamais activation implicite de Complete
+- Non-régression Light obligatoire
 
 ---
 
@@ -369,7 +450,7 @@ Valider :
 # 8. GATE LIVE-LIGHT
 
 ## 8.1 Objectif
-Autoriser la production initiale.
+Autoriser le rollout reel initial sur la meme architecture complete.
 
 ## 8.2 Conditions go
 - fréquence utile Light > V5.2
@@ -382,6 +463,8 @@ Autoriser la production initiale.
 - beta BTC contrôlé
 - drawdown supportable
 - sterilization rate acceptable
+- architecture complète toujours observable et gouvernée
+- aucun angle mort critique non surveillé
 
 ## 8.3 Conditions no-go
 - coût non maîtrisé
@@ -391,12 +474,20 @@ Autoriser la production initiale.
 - corrélation cluster non contrôlée
 - infra instable
 
+### Test d'intégration minimal obligatoire (Build-3+)
+
+Avant toute promotion au-delà de Shadow, le pipeline doit démontrer un test d'intégration minimal :
+- data → engine → scoring → portfolio → execution (chemin complet)
+- protocole ≠ runtime réel si non branché : un test qui passe sur mock ≠ validation prod
+- réconciliation à source externe comme obligation de trajectoire prod
+
 ---
 
 # 9. GATE LIVE-COMPLETE
 
 ## 9.1 Objectif
-Passer à 12 paires / 4 moteurs seulement si la complexité supplémentaire apporte un gain réel.
+Etendre gouvernement le rollout 6 -> 8/10 -> 12 paires et l'activation réelle
+des moteurs seulement si la complexité supplémentaire apporte un gain réel.
 
 ## 9.2 Conditions go
 - Live-Light stable sur durée suffisante
@@ -404,11 +495,14 @@ Passer à 12 paires / 4 moteurs seulement si la complexité supplémentaire appo
 - moteurs A/B validés
 - C apporte alpha ou fréquence utile
 - D apporte valeur marginale
-- coût des paires additionnelles soutenable
+- coût des paliers additionnels soutenable
 - budget BTC et clusters sous contrôle
 - K_eff augmente
 - CE portefeuille augmente ou au minimum ne se dégrade pas excessivement
 - infra toujours stable
+- duplication d'edge, dérive de corrélation et faux sentiment de diversification
+  explicitement maîtrisés
+- opérateur non capable de contourner gates, budgets ou rollback
 
 ## 9.3 Conditions no-go
 - C duplique A
@@ -417,17 +511,19 @@ Passer à 12 paires / 4 moteurs seulement si la complexité supplémentaire appo
 - K_eff reste quasi constant
 - backlog / logs / DTR se dégradent
 - le profil Complete n’améliore que la fréquence brute
+- inflation de complexité UI ou inflation de veto non gouvernée
+- surcharge CPU / mémoire / observabilité
 
 ---
 
 # 9 bis. GATE BUILD-14 ENRICHI
 
-## 9 bis.1 Règle d’introduction
-Toute brique `Build14_enabler` doit suivre trois étapes :
+## 9 bis.1 Règle d’activation
+Toute brique `Build14_enabler` suit le cycle Hard State :
 
-1. lecture seule
-2. influence limitée
-3. candidature éventuelle vers Build-15/16/17
+1. `CODED` → `SHADOW_ENABLED` : activé à 100% en Shadow, pleinement utilisé
+2. Verdict post-Shadow : `SHADOW_VALIDATED` ou `DORMANT`
+3. Promotion live conditionnelle au verdict
 
 ## 9 bis.2 Refus automatique
 - moteur autonome déguisé

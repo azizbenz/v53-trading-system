@@ -837,6 +837,55 @@ Pourquoi :
 
 ---
 
+# 10bis. Guardrails P0 issus des audits — Invariants Build-1
+
+Les invariants suivants ont été identifiés par les audits tiers et sont désormais obligatoires dans Build-1.
+
+## Crossed book (GEM-01)
+- Toute structure `DepthEvent` doit valider `best_ask >= best_bid`
+- Un carnet croisé doit être rejeté, jamais traité
+- Ajouter validation dans `market_event_contracts`
+
+## Epsilon risk/reward (GEM-02)
+- Tout calcul risk/reward dans `decision_contracts` doit avoir un epsilon minimum
+- `if risk < 1e-6: return None`
+- Évite les ratios aberrants causés par l'imprécision flottante
+
+## Imports dynamiques dans DAG validator (GEM-03)
+- `import_scanner` doit signaler tout usage de `importlib.import_module` comme dépendance wildcard potentielle
+- Les imports dynamiques ne sont pas interdits, mais doivent être flaggés et documentés
+- Le DAG ne doit pas rapporter "clean" si des imports dynamiques non déclarés existent
+
+## Recovery non synchrone (GEM-04, GEM-17)
+- `recovery_runner` doit implémenter un exponential backoff entre tentatives
+- `recovery_runner` doit vérifier la libération réelle des ressources I/O avant re-bootstrap
+- Pattern : `time.sleep(min(current_delay * 2, max_delay))` dans la boucle de recovery
+- Protection contre : IP bannie par exchange, saturation CPU, boucle infinie
+
+## Persistance atomique (GEM-19)
+- Toute écriture d'état critique doit utiliser le pattern write-tmp-then-rename
+- `state.json.tmp` → `os.rename` → `state.json`
+- Garantit l'atomicité au niveau OS même en cas de SIGKILL
+
+## Kill switch persistant (GEM-10, QWEN-07)
+- L'état du circuit breaker doit être persisté sur disque
+- Pattern : écriture atomique d'un fichier flag
+- Au redémarrage, le système doit vérifier l'état persisté avant toute reprise
+- Un kill switch externe (fichier flag ou API admin) doit pouvoir couper le trading hors processus Python
+
+## Persistance minimale stores critiques (QWEN-01)
+- Les stores critiques (DTR, états portefeuille, logs audit) doivent avoir un flush périodique vers fichier
+- La perte totale au redémarrage n'est pas acceptable pour les données de décision
+
+## Smoke tests enrichis (GEM-20)
+- Les smoke tests doivent inclure :
+  - test de fuite de descripteurs de fichiers (FD leak)
+  - test de relance après état partiel
+  - test de kill switch persisté
+  - vérification que les modules stateful ferment explicitement leurs ressources
+
+---
+
 # 11. Conditions de sortie de Build-1
 
 Build-1 est terminé si :
@@ -869,6 +918,11 @@ Refuser Build-1 si :
 - considérer les interfaces comme documentation facultative
 - faire des smoke tests manuels non reproductibles
 - laisser les IA inventer leurs propres contrats implicites
+- accepter un DAG "clean" sans avoir vérifié les imports dynamiques
+- considérer qu'un shutdown synchrone suivi d'un bootstrap immédiat fonctionne en production
+- stocker l'état critique uniquement en mémoire volatile
+- écrire un fichier d'état sans atomicité (sans write-tmp-then-rename)
+- ignorer la persistance du kill switch
 
 ---
 

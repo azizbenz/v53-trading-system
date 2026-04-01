@@ -8,7 +8,18 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from dag_validator.import_scanner import ScanResult
+from dag_validator.import_scanner import DynamicImportRecord, ScanResult
+
+
+_DECLARED_DYNAMIC_IMPORTS = frozenset({
+    ("meta_learning/monitoring_projection.py", "importlib.import_module"),
+    ("meta_learning/replay_bundle_builder.py", "importlib.import_module"),
+    ("monitoring/monitoring_runtime.py", "importlib.import_module"),
+    ("smoke_bootstrap_recovery/__init__.py", "importlib.import_module"),
+    ("smoke_bootstrap_recovery/bootstrap_runner.py", "importlib.import_module"),
+    ("smoke_bootstrap_recovery/shadow_readiness.py", "importlib.import_module"),
+    ("smoke_bootstrap_recovery/state_sanity_checker.py", "__import__"),
+})
 
 
 class Violation(BaseModel, frozen=True):
@@ -28,10 +39,12 @@ class MatchResult(BaseModel, frozen=True):
     violations: tuple[Violation, ...]
     authorized_count: int
     total_imports: int
+    declared_dynamic_imports: tuple[DynamicImportRecord, ...] = ()
+    undeclared_dynamic_imports: tuple[DynamicImportRecord, ...] = ()
 
     @property
     def is_clean(self) -> bool:
-        return len(self.violations) == 0
+        return len(self.violations) == 0 and len(self.undeclared_dynamic_imports) == 0
 
 
 def _missing_module_violation(module_name: str) -> Violation:
@@ -44,6 +57,11 @@ def _missing_module_violation(module_name: str) -> Violation:
         violation_type="missing_from_manifest",
         message=f"First-party module '{module_name}' exists on disk but is not registered in the manifest",
     )
+
+
+def _is_declared_dynamic_import(record: DynamicImportRecord) -> bool:
+    normalized_source = record.source_file.replace("\\", "/")
+    return (normalized_source, record.call_text) in _DECLARED_DYNAMIC_IMPORTS
 
 
 def match_dependencies(
@@ -103,8 +121,17 @@ def match_dependencies(
                 ),
             ))
 
+    declared_dynamic_imports = tuple(
+        record for record in scan.dynamic_imports if _is_declared_dynamic_import(record)
+    )
+    undeclared_dynamic_imports = tuple(
+        record for record in scan.dynamic_imports if not _is_declared_dynamic_import(record)
+    )
+
     return MatchResult(
         violations=tuple(violations),
         authorized_count=authorized_count,
         total_imports=len(scan.imports),
+        declared_dynamic_imports=declared_dynamic_imports,
+        undeclared_dynamic_imports=undeclared_dynamic_imports,
     )

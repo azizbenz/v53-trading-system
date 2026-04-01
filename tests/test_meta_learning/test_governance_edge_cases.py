@@ -9,10 +9,13 @@ from interface_contracts import (
     EngineId,
     ProfileId,
     PromotionState,
+    ReviewState,
     RuntimeMode,
     StrategyClassification,
 )
 from meta_learning import (
+    append_human_review_decision,
+    build_system_review_decisions,
     CandidateKind,
     ImprovementCandidate,
     LearningChecklist,
@@ -192,3 +195,45 @@ class TestMemoryStore:
                 correlation_id="corr-1", diagnostics_count=-1,
                 hypothesis_count=0, candidate_count=0, summary="bad",
             )
+
+
+class TestReviewGovernance:
+    def test_system_review_decision_defaults_to_pending_when_candidates_exist(self):
+        decisions = build_system_review_decisions(
+            correlation_id="corr-review",
+            review_entity_id="meta_learning_review:corr-review",
+            review_blocked_due_to_incomplete_data=False,
+            has_candidates=True,
+        )
+
+        assert decisions[0].actor == "system_build9x"
+        assert decisions[0].review_state == ReviewState.PENDING
+        assert decisions[0].final_verdict_recorded is False
+
+    def test_human_review_decision_requires_explicit_actor(self):
+        with pytest.raises(ValidationError, match="non-system actor"):
+            append_human_review_decision(
+                (),
+                review_entity_id="meta_learning_review:corr-review",
+                correlation_id="corr-review",
+                actor="system_build9x",
+                review_state=ReviewState.APPROVED,
+                verdict="accepted_for_replay",
+                final_verdict_recorded=True,
+            )
+
+    def test_human_review_decision_appends_approved_final_verdict(self):
+        decisions = append_human_review_decision(
+            (),
+            review_entity_id="meta_learning_review:corr-review",
+            correlation_id="corr-review",
+            actor="alice.ops",
+            review_state=ReviewState.APPROVED,
+            verdict="accepted_for_replay",
+            rationale="Evidence is sufficient",
+            final_verdict_recorded=True,
+        )
+
+        assert decisions[0].is_human_review is True
+        assert decisions[0].actor == "alice.ops"
+        assert decisions[0].review_state == ReviewState.APPROVED

@@ -1,4 +1,5 @@
 """Runtime tests for execution_backbone Build-3."""
+import logging
 
 import pytest
 
@@ -124,7 +125,7 @@ class TestExecutionRuntime:
         assert runtime.get_local_positions()["BTC"] == pytest.approx(0.25)
 
         adapter.remote_state = RemoteExecutionState(
-            orders={"ord-1": "filled"},
+            orders={},
             fills={"ord-1": 0.25},
             positions={"BTC": 0.25},
         )
@@ -133,6 +134,44 @@ class TestExecutionRuntime:
         assert reconciliation.order_result.aligned is True
         assert reconciliation.fill_result.aligned is True
         assert reconciliation.position_result.aligned is True
+        assert reconciliation.recovery_decision.action == RecoveryAction.NONE
+
+    def test_runtime_reconciliation_ignores_terminal_orders_returned_by_remote(self):
+        adapter = FakeExecutionVenue()
+        runtime = ExecutionRuntime(adapter, max_recon_age_s=30.0)
+
+        submission = runtime.submit_opportunity(_opportunity(), now=100.0)
+        assert submission.status == ExecutionSubmissionStatus.SUBMITTED
+
+        adapter.push_events(
+            VenueOrderEvent(order_id="ord-1", event_type=VenueOrderEventType.ACK, timestamp=100.1),
+            VenueOrderEvent(
+                order_id="ord-1",
+                event_type=VenueOrderEventType.FILL,
+                timestamp=100.5,
+                fill_id="fill-1",
+                fill_quantity=0.25,
+                fill_price=50010.0,
+                fee_amount=12.5,
+                mid_price=50000.0,
+                post_fill_mid_price=49980.0,
+                current_mid=49990.0,
+            ),
+        )
+        runtime.process_events()
+
+        adapter.remote_state = RemoteExecutionState(
+            orders={"ord-1": "filled"},
+            fills={"ord-1": 0.25},
+            positions={"BTC": 0.25},
+        )
+        first_reconciliation = runtime.reconcile(now=100.6)
+        assert first_reconciliation.recovery_decision.action == RecoveryAction.SOFT_RESYNC
+
+        reconciliation = runtime.reconcile(now=100.7)
+        assert reconciliation.order_result.aligned is True
+        assert reconciliation.order_result.order_diff == 0
+        assert reconciliation.divergence_summary.is_critical is False
         assert reconciliation.recovery_decision.action == RecoveryAction.NONE
 
     def test_runtime_rejects_no_trade_when_cost_kills_edge(self):
@@ -245,3 +284,32 @@ class TestExecutionRuntime:
         assert reconciliation.position_result.aligned is False
         assert reconciliation.divergence_summary.is_critical is True
         assert reconciliation.recovery_decision.action == RecoveryAction.HALT_TRADING
+
+    def test_runtime_emits_structured_logs(self, caplog: pytest.LogCaptureFixture):
+        caplog.set_level(logging.INFO)
+        adapter = FakeExecutionVenue()
+        runtime = ExecutionRuntime(adapter)
+
+        submission = runtime.submit_opportunity(_opportunity(), now=100.0)
+        assert submission.status == ExecutionSubmissionStatus.SUBMITTED
+        assert any(record.message == "execution_submission_submitted" for record in caplog.records)
+
+        adapter.push_events(
+            VenueOrderEvent(order_id="ord-1", event_type=VenueOrderEventType.ACK, timestamp=100.1),
+            VenueOrderEvent(
+                order_id="ord-1",
+                event_type=VenueOrderEventType.FILL,
+                timestamp=100.2,
+                fill_id="fill-1",
+                fill_quantity=0.25,
+                fill_price=50010.0,
+                fee_amount=12.5,
+                mid_price=50000.0,
+                post_fill_mid_price=49980.0,
+                current_mid=49990.0,
+            ),
+        )
+        runtime.process_events()
+        adapter.remote_state = RemoteExecutionState(orders={}, fills={"ord-1": 0.25}, positions={"BTC": 0.25})
+        runtime.reconcile(now=100.3)
+        assert any(record.message == "execution_reconciliation_completed" for record in caplog.records)

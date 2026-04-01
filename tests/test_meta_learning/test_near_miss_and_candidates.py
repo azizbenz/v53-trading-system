@@ -74,11 +74,11 @@ class TestCandidateKindSelection:
         )
         assert candidates[0].kind == CandidateKind.OBSERVABILITY_ONLY
 
-    def test_build14_enabler_maps_to_read_only(self):
+    def test_build14_enabler_maps_to_build14_enabler_kind(self):
         candidates = build_improvement_candidates(
             "corr-1", StrategyClassification.BUILD14_ENABLER, (self._hyp("sterilization"),),
         )
-        assert candidates[0].kind == CandidateKind.BUILD14_READ_ONLY
+        assert candidates[0].kind == CandidateKind.BUILD14_ENABLER
 
     def test_trace_coverage_wins_over_build14(self):
         candidates = build_improvement_candidates(

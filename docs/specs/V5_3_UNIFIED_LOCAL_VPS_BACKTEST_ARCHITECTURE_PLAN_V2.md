@@ -16,10 +16,11 @@
 En cas de conflit :
 
 1. `V5_3_MASTER_FINAL_UNIQUE.md`
-2. `V5_3_MASTER_FINAL_CANONICAL.md`
-3. `V5_3_BUILD_PLAN_MODULE_PAR_MODULE.md`
-4. les specs de build officielles
-5. le présent document
+2. `V5_3_BUILD_PLAN_MODULE_PAR_MODULE.md`
+3. les specs de build officielles
+4. le présent document
+
+`V5_3_MASTER_FINAL_CANONICAL.md`, s'il est conservé, n'est qu'un miroir secondaire et ne constitue pas une source de vérité autonome.
 
 ## 0.2 Réalité d’implémentation à respecter
 
@@ -166,6 +167,53 @@ Ce plan fixe une seule doctrine :
 - quatre runtime modes seulement
 - promotion toujours gouvernée
 - aucun fork local / VPS
+
+## 7.1 Relation avec le Shadow complet
+
+- Le local replay peut préparer des hypothèses et des artifacts
+- Mais la **vérité complète de la solution enrichie** se joue dans le **Shadow 30 jours**
+- Pendant le Shadow : Build-14, moteurs C/D et tous les enrichissements sont **activés à 100%**
+- Le local replay ne remplace jamais le Shadow comme phase de vérité
+- Le Shadow est le seul endroit où la solution complète est testée en conditions réelles
+- Les résultats du local replay sont indicatifs ; seul le Shadow produit un verdict de promotion
+
+---
+
+# Guardrails issus des audits — Renforcements LOCAL/VPS
+
+## Feature bridge obligatoire prix → features → engines (GEM-15)
+- Le local replay doit matérialiser le chemin complet : données brutes → features calculées → engines → scoring
+- Un replay qui importe directement des signaux pré-calculés sans passer par le pipeline de features est un court-circuit
+- Le bridge prix → features → engines doit être identique en local replay et en production
+
+## Parity diagnostics explicites
+- Le local replay doit produire des diagnostics de parité avec le pipeline production :
+  - mêmes features calculées ?
+  - mêmes décisions pour les mêmes inputs ?
+  - mêmes coûts estimés ?
+- Toute divergence doit être loggée et expliquée
+
+## research_local vs shadow_fidelity — Séparation explicite
+- `LOCAL_REPLAY` est un mode de recherche et de diagnostic, pas de validation prod
+- La fidélité du replay est inférieure à celle du shadow (pas d'I/O réel, pas de market impact réel)
+- Les résultats de local replay sont indicatifs, jamais une preuve de performance prod
+- Distinction claire : `research_local` (exploration) vs `shadow_fidelity` (validation pré-live)
+
+## Pas de fork logique local/VPS
+- Le même code tourne en local et en VPS
+- Le seul paramètre qui change est `runtime_mode`
+- Aucune branche `if local:` / `if vps:` dans la logique métier
+
+## Obligation de matérialiser replay utile
+- Un replay qui importe des artefacts mais ne les joue pas à travers le pipeline est inutile
+- Le replay doit produire des DTR exploitables, des métriques de coût, des diagnostics de performance
+- Un replay décoratif (qui tourne mais ne produit pas de diagnostics) n'est pas un replay utile
+
+## Avertissement market impact en replay (GEM-15)
+- Le replay utilise les prix historiques et assume des fills à 100% au prix du tick
+- Cela ignore le market impact : en réalité, un ordre modifie le carnet
+- Les backtests sont donc structurellement optimistes pour les tailles significatives
+- Les résultats de replay doivent être lus avec cette réserve explicite
 
 ---
 

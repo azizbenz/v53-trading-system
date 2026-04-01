@@ -1,7 +1,8 @@
 """Real Build-10 monitoring backend for the Light runtime."""
 
-from monitoring.alert_manager import build_monitoring_alerts
+from monitoring.alert_manager import AlertLifecycleTracker, build_monitoring_alerts
 from monitoring.contracts import (
+    AlertHistoryEntry,
     AlertProjection,
     Build14Projection,
     Build9MetaProjection,
@@ -15,6 +16,8 @@ from monitoring.contracts import (
     MetaMetrics,
     MonitoringSnapshot,
     ObservabilityExport,
+    OperatorRuntimeEvent,
+    OperatorRuntimeProjection,
     PairMetrics,
     PortfolioMetrics,
     ProjectionStatus,
@@ -42,6 +45,9 @@ __all__ = [
     "InfraMetrics",
     "MetaMetrics",
     "MonitoringSnapshot",
+    "AlertHistoryEntry",
+    "OperatorRuntimeEvent",
+    "OperatorRuntimeProjection",
     "HealthDashboardPayload",
     "ProjectionStatus",
     "SystemProjection",
@@ -62,8 +68,32 @@ __all__ = [
     "collect_infra_metrics",
     "collect_meta_metrics",
     "collect_monitoring_snapshot",
+    "MonitoringRuntime",
+    "MonitoringRuntimeConfig",
+    "MonitoringRuntimeResult",
+    "MonitoringRuntimeState",
     "build_monitoring_alerts",
     "build_health_dashboard_payload",
     "build_technical_dashboard_payload",
     "build_observability_export",
+    "AlertLifecycleTracker",
 ]
+
+
+def __getattr__(name: str):
+    if name in {"MonitoringRuntime", "MonitoringRuntimeConfig", "MonitoringRuntimeResult", "MonitoringRuntimeState"}:
+        from monitoring.monitoring_runtime import (
+            MonitoringRuntime,
+            MonitoringRuntimeConfig,
+            MonitoringRuntimeResult,
+            MonitoringRuntimeState,
+        )
+
+        exports = {
+            "MonitoringRuntime": MonitoringRuntime,
+            "MonitoringRuntimeConfig": MonitoringRuntimeConfig,
+            "MonitoringRuntimeResult": MonitoringRuntimeResult,
+            "MonitoringRuntimeState": MonitoringRuntimeState,
+        }
+        return exports[name]
+    raise AttributeError(f"module 'monitoring' has no attribute {name!r}")

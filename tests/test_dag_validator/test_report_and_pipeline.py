@@ -6,7 +6,7 @@ import pytest
 
 from dag_validator.cycle_detector import CycleResult
 from dag_validator.dependency_matcher import MatchResult, Violation
-from dag_validator.import_scanner import ImportRecord, ScanResult
+from dag_validator.import_scanner import DynamicImportRecord, ImportRecord, ScanResult
 from dag_validator.layer_validator import LayerResult, LayerViolation
 from dag_validator.report_builder import (
     ReportEntry,
@@ -166,6 +166,45 @@ class TestReportBuildFailOnCritical:
         assert report.passed is False
         assert report.error_count == 3
 
+    def test_undeclared_dynamic_import_fails_verdict(self):
+        match = MatchResult(
+            violations=(),
+            authorized_count=0,
+            total_imports=0,
+            undeclared_dynamic_imports=(
+                DynamicImportRecord(
+                    source_module="mod_a",
+                    source_file="mod_a/__init__.py",
+                    line_number=3,
+                    call_text="importlib.import_module",
+                ),
+            ),
+        )
+        report = build_report(match, _clean_cycles(), _clean_layers(), manifest_version="1.1.0")
+        assert report.passed is False
+        assert report.warning_count == 1
+        assert report.undeclared_dynamic_import_count == 1
+        assert any(e.category == "dynamic_import" for e in report.entries)
+
+    def test_declared_dynamic_import_is_reported_without_failing(self):
+        match = MatchResult(
+            violations=(),
+            authorized_count=0,
+            total_imports=0,
+            declared_dynamic_imports=(
+                DynamicImportRecord(
+                    source_module="smoke_bootstrap_recovery",
+                    source_file="smoke_bootstrap_recovery/bootstrap_runner.py",
+                    line_number=40,
+                    call_text="importlib.import_module",
+                ),
+            ),
+        )
+        report = build_report(match, _clean_cycles(), _clean_layers(), manifest_version="1.1.0")
+        assert report.passed is True
+        assert report.declared_dynamic_import_count == 1
+        assert any(e.category == "declared_dynamic_import" for e in report.entries)
+
 
 @pytest.mark.build1
 class TestFormatReport:
@@ -206,6 +245,25 @@ class TestFormatReport:
         text = format_report(report)
         assert "[ERROR]" in text
         assert "cycle" in text.lower()
+
+    def test_format_shows_dynamic_import_counts(self):
+        match = MatchResult(
+            violations=(),
+            authorized_count=0,
+            total_imports=0,
+            undeclared_dynamic_imports=(
+                DynamicImportRecord(
+                    source_module="mod_a",
+                    source_file="mod_a/__init__.py",
+                    line_number=3,
+                    call_text="__import__",
+                ),
+            ),
+        )
+        report = build_report(match, _clean_cycles(), _clean_layers(), manifest_version="1.1.0")
+        text = format_report(report)
+        assert "Undeclared dyn" in text
+        assert "dynamic import" in text.lower()
 
 
 @pytest.mark.build1
@@ -340,4 +398,45 @@ class TestFullPipeline:
         )
         assert report.passed is False, (
             f"Pipeline must FAIL on self-contained first-party package:\n{format_report(report)}"
+        )
+
+    def test_undeclared_dynamic_import_detected_end_to_end(self, isolated_tmp_path: Path):
+        from dag_validator.import_scanner import scan_imports
+        from dag_validator.dependency_matcher import match_dependencies
+        from dag_validator.cycle_detector import detect_cycles_in_manifest
+        from dag_validator.layer_validator import validate_layers
+        from dag_validator.report_builder import build_report, format_report
+        from interface_contracts.domain_types import ModuleLayer
+
+        src = isolated_tmp_path / "src"
+        pkg = src / "registered_mod"
+        pkg.mkdir(parents=True)
+        (pkg / "__init__.py").write_text(
+            "import importlib\n"
+            "importlib.import_module('x')\n",
+            encoding="utf-8",
+        )
+
+        known_modules = frozenset({"registered_mod"})
+        allowed_deps = {"registered_mod": frozenset()}
+        module_layers = {"registered_mod": ModuleLayer.DATA}
+
+        scan = scan_imports(src, known_modules)
+        assert len(scan.dynamic_imports) == 1
+
+        match = match_dependencies(scan, allowed_deps, known_modules)
+        assert len(match.undeclared_dynamic_imports) == 1
+        assert match.is_clean is False
+
+        cycles = detect_cycles_in_manifest(allowed_deps)
+        layers = validate_layers(allowed_deps, module_layers)
+        report = build_report(
+            match,
+            cycles,
+            layers,
+            manifest_version="test",
+            files_scanned=scan.files_scanned,
+        )
+        assert report.passed is False, (
+            f"Pipeline must FAIL on undeclared dynamic import:\n{format_report(report)}"
         )

@@ -17,6 +17,8 @@ from monitoring import (
     Build9XProjection,
     LiveLightProjection,
     MicroLiveProjection,
+    OperatorRuntimeEvent,
+    OperatorRuntimeProjection,
     ReplayImportProjection,
     ShadowProjection,
     build_observability_export,
@@ -38,6 +40,7 @@ def _payload(
     live_light_projection: LiveLightProjection | None = None,
     build14_projection: Build14Projection | None = None,
     replay_projection: ReplayImportProjection | None = None,
+    operator_runtime: OperatorRuntimeProjection | None = None,
     active_modules: tuple[str, ...] = (),
     active_engines: tuple[str, ...] = (),
 ):
@@ -154,6 +157,7 @@ def _payload(
         live_light_projection=live_light_projection,
         build14_projection=build14_projection,
         replay_projection=replay_projection,
+        operator_runtime=operator_runtime,
     )
 
 
@@ -166,7 +170,28 @@ def test_monitoring_exports_observability_symbols():
 
 
 def test_observability_export_contains_grouped_metrics():
-    payload = _payload()
+    payload = _payload(
+        operator_runtime=OperatorRuntimeProjection(
+            event_count=2,
+            latest_event_type="screen_opened",
+            latest_event_message="screen opened: overview",
+            recent_event_log=(
+                OperatorRuntimeEvent(
+                    timestamp_ms=1_700_000_000_000,
+                    correlation_id="corr-obs",
+                    event_type="screen_opened",
+                    action="view_critical_screens",
+                    target="overview",
+                    accepted=True,
+                    message="screen opened: overview",
+                ),
+            ),
+            pending_notification_count=1,
+            pending_notification_alert_ids=("corr-obs:loss",),
+            acknowledged_notification_count=1,
+            latest_acknowledged_alert_id="corr-obs:latency",
+        )
+    )
     export = build_observability_export(payload)
     names = {sample.name for sample in export.samples}
 
@@ -177,6 +202,9 @@ def test_observability_export_contains_grouped_metrics():
     assert "v53_live_light_run_state" in names
     assert "v53_build14_status" in names
     assert "v53_alert_active_count" in names
+    assert "v53_alert_operator_event_count" in names
+    assert "v53_alert_operator_pending_notification_count" in names
+    assert "v53_alert_operator_recent_event" in names
     assert export.correlation_id == "corr-obs"
     assert 'profile="light"' in export.text_payload
     assert 'runtime_mode="shadow"' in export.text_payload
@@ -198,6 +226,21 @@ def test_observability_export_tracks_modules_engines_and_governed_flags():
             latest_memory_summary="Most recent governed memory stored",
             review_export_ready=True,
             review_export_ref="exports/review.md",
+            learning_queue_depth=5400,
+            learning_queue_oldest_age_ms=900,
+            learning_worker_cpu_pct=12.5,
+            learning_worker_rss_mb=300.0,
+            learning_write_latency_ms=18.0,
+            learning_export_failures_total=1,
+            learning_log_loss_total=2,
+            learning_unprocessed_items_count=400,
+            learning_backlog_state="protection",
+            learning_capture_mode="capture_minimale",
+            learning_observability_reduced=True,
+            learning_backpressure_active=True,
+            review_blocked_due_to_incomplete_data=True,
+            promotion_blocked_due_to_incomplete_data=True,
+            learning_capacity_summary="queue=5400 / backlog=protection / mode=capture_minimale",
         ),
         shadow_projection=ShadowProjection(
             status="warning",
@@ -294,6 +337,47 @@ def test_observability_export_tracks_modules_engines_and_governed_flags():
             review_state="needs_revision",
             rejection_reasons=("lineage mismatch",),
         ),
+        operator_runtime=OperatorRuntimeProjection(
+            event_count=4,
+            latest_event_type="critical_alert_acknowledged",
+            latest_event_message="critical alert acknowledged",
+            recent_event_log=(
+                OperatorRuntimeEvent(
+                    timestamp_ms=1_700_000_000_010,
+                    correlation_id="corr-obs",
+                    event_type="operator_action_requested",
+                    action="acknowledge_critical_alert",
+                    target="corr-obs:loss",
+                    accepted=False,
+                    message="operator action requested: acknowledge_critical_alert",
+                ),
+                OperatorRuntimeEvent(
+                    timestamp_ms=1_700_000_000_011,
+                    correlation_id="corr-obs",
+                    event_type="operator_action_rejected",
+                    action="modify_risk_caps",
+                    target="risk",
+                    accepted=False,
+                    message="operator action rejected: modify_risk_caps",
+                    rejection_reason="risk cap changes are forbidden in the locked Light UI",
+                ),
+                OperatorRuntimeEvent(
+                    timestamp_ms=1_700_000_000_012,
+                    correlation_id="corr-obs",
+                    event_type="critical_alert_acknowledged",
+                    action="acknowledge_critical_alert",
+                    target="corr-obs:loss",
+                    accepted=True,
+                    message="critical alert acknowledged",
+                ),
+            ),
+            rejection_event_count=1,
+            latest_rejection_reason="risk cap changes are forbidden in the locked Light UI",
+            pending_notification_count=2,
+            pending_notification_alert_ids=("corr-obs:loss", "corr-obs:kill"),
+            acknowledged_notification_count=1,
+            latest_acknowledged_alert_id="corr-obs:latency",
+        ),
     )
     export = build_observability_export(payload)
 
@@ -304,6 +388,9 @@ def test_observability_export_tracks_modules_engines_and_governed_flags():
     stale_b = next(sample for sample in engine_samples if sample.labels["engine"] == "engine_b")
     assert stale_b.value == 1.0
     assert any(sample.name == "v53_build9x_recent_diagnostics" and sample.value == 4.0 for sample in export.samples)
+    assert any(sample.name == "v53_build9x_learning_queue_depth" and sample.value == 5400.0 for sample in export.samples)
+    assert any(sample.name == "v53_build9x_learning_capture_mode" and sample.labels["mode"] == "capture_minimale" for sample in export.samples)
+    assert any(sample.name == "v53_build9x_review_blocked_due_to_incomplete_data" and sample.value == 1.0 for sample in export.samples)
     assert any(sample.name == "v53_shadow_divergent_comparison_count" and sample.value == 2.0 for sample in export.samples)
     assert any(sample.name == "v53_micro_live_allowed_to_probe" and sample.value == 0.0 for sample in export.samples)
     assert any(sample.name == "v53_micro_live_blocking_reason_count" and sample.value == 1.0 for sample in export.samples)
@@ -317,6 +404,35 @@ def test_observability_export_tracks_modules_engines_and_governed_flags():
     assert any(sample.name == "v53_build14_requires_manual_review" and sample.value == 1.0 for sample in export.samples)
     assert any(sample.name == "v53_build14_reason_code_count" and sample.value == 2.0 for sample in export.samples)
     assert any(sample.name == "v53_replay_validation_accepted" and sample.value == 0.0 for sample in export.samples)
+    assert any(sample.name == "v53_alert_operator_event_count" and sample.value == 4.0 for sample in export.samples)
+    assert any(
+        sample.name == "v53_alert_operator_rejection_event_count" and sample.value == 1.0
+        for sample in export.samples
+    )
+    assert any(
+        sample.name == "v53_alert_operator_pending_notification_count" and sample.value == 2.0
+        for sample in export.samples
+    )
+    assert any(
+        sample.name == "v53_alert_operator_latest_event"
+        and sample.labels["event_type"] == "critical_alert_acknowledged"
+        for sample in export.samples
+    )
+    assert any(
+        sample.name == "v53_alert_operator_latest_ack"
+        and sample.labels["alert_id"] == "corr-obs:latency"
+        for sample in export.samples
+    )
+    assert any(
+        sample.name == "v53_alert_operator_latest_rejection"
+        and sample.labels["reason"] == "risk cap changes are forbidden in the locked Light UI"
+        for sample in export.samples
+    )
+    assert any(
+        sample.name == "v53_alert_operator_recent_rejection"
+        and sample.labels["reason"] == "risk cap changes are forbidden in the locked Light UI"
+        for sample in export.samples
+    )
 
 
 def test_observability_export_marks_import_as_not_started_when_absent():

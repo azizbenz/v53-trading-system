@@ -988,4 +988,29 @@ Donc :
 
 ---
 
+# Guardrails issus des audits — Renforcements Build-9
+
+## Distinction entre méta utile et méta vide
+- Le méta-engine doit produire des diagnostics basés sur de vrais chemins de décision et d'exécution
+- Un DTR qui n'est pas alimenté par des trades réels (ou shadow réels) est un DTR vide
+- Un edge_tracker qui s'auto-alimente sur des séries synthétiques est un piège d'auto-référence
+
+## Exigence que DTR / edge / break-even soient alimentés par vrais chemins
+- Le `dtr_core` doit tracer le chemin complet : data → engine → scoring → portfolio → execution
+- Si un maillon du chemin est manquant ou mocké, le DTR doit le signaler explicitement
+- Le `break_even_dashboard` doit utiliser les coûts réels mesurés, pas des estimations décoratives
+
+## Garde contre auto-référence sur séries synthétiques
+- Le `edge_tracker_prudent` ne doit pas calculer un edge sur des données générées par le système lui-même
+- L'edge doit être mesuré sur des données de marché réelles (historiques ou live)
+- En `LOCAL_REPLAY`, l'edge est indicatif et ne constitue pas une validation prod
+- Le `amd_monitor` (Asset Model Drift) doit signaler si les inputs sont synthétiques
+
+## Persistance DTR obligatoire (QWEN-01)
+- Les records DTR doivent être persistés périodiquement vers fichier
+- La perte totale du DTR au redémarrage n'est pas acceptable
+- Pattern minimal : flush JSON périodique + rotation de fichiers
+
+---
+
 ## Fin du document

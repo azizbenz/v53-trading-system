@@ -711,4 +711,34 @@ Donc :
 
 ---
 
+# Guardrails issus des audits — Renforcements Build-8
+
+## Anti-churn A/B (GEM-14)
+- Si Engine A et Engine B émettent des signaux contradictoires sur la même paire dans une fenêtre de temps réduite, le système doit rester neutre
+- Règle de neutralisation : signaux opposés A↔B dans une fenêtre configurable → aucun trade
+- Le churn (open A + close B immédiat) détruit l'edge par les frais de transaction
+- Le `opportunity_selector` doit implémenter cette logique de neutralisation
+
+## Conflit d'opportunités redondantes (GEM-14)
+- L'`opportunity_selector` doit rejeter de manière auditable les opportunités redondantes
+- Deux signaux sur la même paire, même direction, même fenêtre = une seule opportunité retenue
+- Le rejet relatif doit être loggé dans le DTR avec raison explicite
+
+## Coût d'opportunité du capital (GEM-07b)
+- L'`allocation_router` doit intégrer le coût d'opportunité du capital dans sa décision
+- Allouer du capital à un trade marginal empêche de le déployer sur un trade meilleur
+- Le ranking doit favoriser le CE (Capital Efficiency) et non le score brut seul
+
+## No-trade si coût détruit edge (GEM-07b)
+- Le portfolio doit appliquer le filtre no-trade en complément du Build-3
+- Si le coût estimé total dépasse l'edge net attendu après allocation, le trade est rejeté
+- Ce rejet est loggé comme `COST_EXCEEDS_EDGE_AFTER_ALLOCATION`
+
+## Time-based invalidation (GEM-13)
+- Les signaux retenus par le portfolio doivent avoir une durée de validité maximale
+- Si un signal n'est pas exécuté dans la fenêtre de validité, il est invalidé
+- Protection contre les positions maintenues sur une thèse morte
+
+---
+
 ## Fin du document
