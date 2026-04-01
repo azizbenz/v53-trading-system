@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from complete_enablers.enums import (
     Build14InfluenceAction,
+    Build14HardState,
     Build14InfluenceMode,
     Build14Severity,
     Build14SignalFamily,
@@ -14,14 +15,16 @@ from interface_contracts import StrategyClassification
 
 
 class Build14EnablerContract(BaseModel, frozen=True):
-    """Read-only first, limited influence later, never autonomous."""
+    """Canonical Build-14 enabler contract: SHADOW_ENABLED in Shadow, never autonomous."""
 
     correlation_id: str = Field(..., min_length=1)
     signal_family: Build14SignalFamily
     summary: str = Field(..., min_length=1)
     classification: StrategyClassification = StrategyClassification.BUILD14_ENABLER
-    influence_mode: Build14InfluenceMode = Build14InfluenceMode.READ_ONLY
-    max_influence_weight: float = Field(default=0.0, ge=0.0, le=0.25)
+    hard_state: Build14HardState = Build14HardState.SHADOW_ENABLED
+    live_promotion_eligible: bool = False
+    influence_mode: Build14InfluenceMode = Build14InfluenceMode.SHADOW_ENABLED
+    max_influence_weight: float = Field(default=1.0, ge=0.0, le=1.0)
     can_override_engines: bool = False
     can_bypass_risk: bool = False
     can_bypass_portfolio: bool = False
@@ -35,7 +38,18 @@ class Build14EnablerContract(BaseModel, frozen=True):
             raise ValueError("Build-14 must never bypass engines, risk, or portfolio")
         if self.can_trade_autonomously:
             raise ValueError("Build-14 must never become an autonomous engine")
-        if self.influence_mode == Build14InfluenceMode.READ_ONLY and self.max_influence_weight != 0.0:
+        if self.live_promotion_eligible and self.hard_state != Build14HardState.SHADOW_VALIDATED:
+            raise ValueError(
+                "Build-14 live promotion eligibility requires hard_state=shadow_validated"
+            )
+        if self.influence_mode == Build14InfluenceMode.SHADOW_ENABLED:
+            if self.hard_state == Build14HardState.DORMANT:
+                raise ValueError("Dormant Build-14 contracts cannot stay shadow_enabled")
+            if self.max_influence_weight != 1.0:
+                raise ValueError(
+                    "Shadow-enabled Build-14 contracts must keep max_influence_weight=1.0"
+                )
+        elif self.influence_mode == Build14InfluenceMode.READ_ONLY and self.max_influence_weight != 0.0:
             raise ValueError("Read-only Build-14 contracts must have zero influence weight")
         if self.influence_mode == Build14InfluenceMode.LIMITED_INFLUENCE and self.max_influence_weight <= 0.0:
             raise ValueError("Limited influence mode requires a positive bounded weight")
@@ -43,7 +57,7 @@ class Build14EnablerContract(BaseModel, frozen=True):
 
 
 class Build14ObservationInput(BaseModel, frozen=True):
-    """Read-only facts collected from existing Build-9 / Build-10 surfaces."""
+    """Observed facts collected from existing Build-9 / Build-10 surfaces."""
 
     correlation_id: str = Field(..., min_length=1)
     dtr_coverage: float = Field(..., ge=0.0, le=1.0)
@@ -59,7 +73,7 @@ class Build14ObservationInput(BaseModel, frozen=True):
 
 
 class Build14EnablerSnapshot(Build14EnablerContract):
-    """Traceable read-only analytical snapshot emitted by a concrete Build-14 reader."""
+    """Traceable SHADOW_ENABLED analytical snapshot emitted by a concrete Build-14 reader."""
 
     reader_name: str = Field(..., min_length=1)
     observed_value: float = Field(..., ge=0.0)
@@ -70,10 +84,12 @@ class Build14EnablerSnapshot(Build14EnablerContract):
 
 
 class Build14InfluenceSignal(BaseModel, frozen=True):
-    """Governed and bounded Build-14 recommendation for limited influence."""
+    """Governed Build-14 signal: SHADOW_ENABLED in Shadow, bounded after post-Shadow verdict."""
 
     correlation_id: str = Field(..., min_length=1)
     classification: StrategyClassification = StrategyClassification.BUILD14_ENABLER
+    hard_state: Build14HardState = Build14HardState.SHADOW_ENABLED
+    live_promotion_eligible: bool = False
     influence_mode: Build14InfluenceMode = Build14InfluenceMode.READ_ONLY
     action: Build14InfluenceAction = Build14InfluenceAction.OBSERVE
     severity: Build14Severity = Build14Severity.NOMINAL
@@ -99,9 +115,24 @@ class Build14InfluenceSignal(BaseModel, frozen=True):
             raise ValueError("Build-14 influence must never bypass engines, risk, or portfolio")
         if self.can_trade_autonomously:
             raise ValueError("Build-14 influence must never become an autonomous engine")
+        if self.live_promotion_eligible and self.hard_state != Build14HardState.SHADOW_VALIDATED:
+            raise ValueError(
+                "Build-14 live promotion eligibility requires hard_state=shadow_validated"
+            )
         if not self.non_regression_required:
-            raise ValueError("Build-14 limited influence must keep non_regression_required=True")
-        if self.influence_mode == Build14InfluenceMode.READ_ONLY:
+            raise ValueError("Build-14 influence must keep non_regression_required=True")
+        if self.influence_mode == Build14InfluenceMode.SHADOW_ENABLED:
+            if self.hard_state == Build14HardState.DORMANT:
+                raise ValueError("Dormant Build-14 signals cannot stay shadow_enabled")
+            if not self.families:
+                raise ValueError("Shadow-enabled Build-14 signals must reference at least one signal family")
+            if self.action != Build14InfluenceAction.SHADOW_APPLY:
+                raise ValueError("Shadow-enabled Build-14 signals must keep action=shadow_apply")
+            if self.requires_manual_review:
+                raise ValueError("Shadow-enabled Build-14 signals must stay automated inside Shadow")
+            if self.candidate_effect != "shadow_enabled":
+                raise ValueError("Shadow-enabled Build-14 signals must expose candidate_effect=shadow_enabled")
+        elif self.influence_mode == Build14InfluenceMode.READ_ONLY:
             if self.action != Build14InfluenceAction.OBSERVE:
                 raise ValueError("Read-only Build-14 influence must keep action=observe")
             if self.confidence_penalty_weight != 0.0:
@@ -138,9 +169,11 @@ class Build14InfluenceSignal(BaseModel, frozen=True):
 
 
 class Build14InfluenceReport(BaseModel, frozen=True):
-    """Traceable Build-14 phase-2 report: observations plus bounded recommendation."""
+    """Traceable Build-14 report: SHADOW activation evidence plus optional post-Shadow live recommendation."""
 
     correlation_id: str = Field(..., min_length=1)
+    hard_state: Build14HardState = Build14HardState.SHADOW_ENABLED
+    live_promotion_eligible: bool = False
     snapshots: tuple[Build14EnablerSnapshot, ...] = ()
     signal: Build14InfluenceSignal
 
@@ -150,6 +183,12 @@ class Build14InfluenceReport(BaseModel, frozen=True):
             raise ValueError("Build-14 report requires matching correlation_id across all snapshots")
         if self.signal.correlation_id != self.correlation_id:
             raise ValueError("Build-14 report requires matching correlation_id across signal and report")
+        if self.signal.hard_state != self.hard_state:
+            raise ValueError("Build-14 report requires matching hard_state across signal and report")
+        if self.signal.live_promotion_eligible != self.live_promotion_eligible:
+            raise ValueError(
+                "Build-14 report requires matching live_promotion_eligible across signal and report"
+            )
         return self
 
 

@@ -1,4 +1,4 @@
-"""Read-only market toxicity reader for Build-14."""
+"""Market toxicity reader for Build-14 SHADOW_ENABLED enablers."""
 
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ def build_market_toxicity_snapshot(observation: Build14ObservationInput) -> Buil
             f"stale_pair_count:{observation.stale_pair_count}",
             f"cra_alert_count:{observation.cra_alert_count}",
         ),
-        structured_log_key="build14.read_only.market_toxicity",
+        structured_log_key="build14.shadow_enabled.market_toxicity",
     )
 
 

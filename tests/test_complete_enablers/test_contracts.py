@@ -9,6 +9,8 @@ import complete_enablers
 from complete_enablers import (
     Build14EnablerContract,
     Build14InfluenceAction,
+    Build14HardState,
+    Build14InfluenceReport,
     Build14InfluenceSignal,
     Build14Severity,
     Build14InfluenceMode,
@@ -17,6 +19,7 @@ from complete_enablers import (
     build_execution_fragility_score,
     build_market_toxicity_snapshot,
     evaluate_build14_limited_influence,
+    evaluate_build14_shadow_activation,
 )
 
 
@@ -26,24 +29,28 @@ def test_complete_enablers_exports_expected_symbols():
         "Build14ObservationInput",
         "Build14InfluenceMode",
         "Build14InfluenceAction",
+        "Build14HardState",
         "Build14InfluenceSignal",
         "Build14Severity",
         "Build14SignalFamily",
         "build_market_toxicity_snapshot",
         "build_execution_fragility_score",
+        "evaluate_build14_shadow_activation",
         "evaluate_build14_limited_influence",
     }.issubset(set(complete_enablers.__all__))
 
 
-def test_build14_contract_defaults_to_read_only():
+def test_build14_contract_defaults_to_shadow_enabled():
     contract = Build14EnablerContract(
         correlation_id="corr-1",
         signal_family=Build14SignalFamily.AI_EDGE,
-        summary="Observe AI edge enrichments without affecting decisions",
+        summary="Build-14 AI edge enrichment is active in Shadow and still governed",
     )
 
-    assert contract.influence_mode == Build14InfluenceMode.READ_ONLY
-    assert contract.max_influence_weight == 0.0
+    assert contract.hard_state == Build14HardState.SHADOW_ENABLED
+    assert contract.live_promotion_eligible is False
+    assert contract.influence_mode == Build14InfluenceMode.SHADOW_ENABLED
+    assert contract.max_influence_weight == 1.0
 
 
 def test_build14_limited_influence_requires_positive_weight():
@@ -67,7 +74,7 @@ def test_build14_cannot_bypass_risk_or_trade_autonomously():
         )
 
 
-def test_market_toxicity_snapshot_is_traceable_and_read_only():
+def test_market_toxicity_snapshot_is_traceable_and_shadow_enabled():
     snapshot = build_market_toxicity_snapshot(
         Build14ObservationInput(
             correlation_id="corr-14",
@@ -85,10 +92,11 @@ def test_market_toxicity_snapshot_is_traceable_and_read_only():
     )
 
     assert snapshot.signal_family == Build14SignalFamily.MICROSTRUCTURE
-    assert snapshot.influence_mode == Build14InfluenceMode.READ_ONLY
-    assert snapshot.max_influence_weight == 0.0
+    assert snapshot.hard_state == Build14HardState.SHADOW_ENABLED
+    assert snapshot.influence_mode == Build14InfluenceMode.SHADOW_ENABLED
+    assert snapshot.max_influence_weight == 1.0
     assert snapshot.observed_value > 0.0
-    assert snapshot.structured_log_key == "build14.read_only.market_toxicity"
+    assert snapshot.structured_log_key == "build14.shadow_enabled.market_toxicity"
 
 
 def test_execution_fragility_score_uses_existing_build9_and_build10_facts_only():
@@ -134,6 +142,31 @@ def test_build14_limited_influence_stays_read_only_when_signals_are_nominal():
     assert report.signal.influence_mode == Build14InfluenceMode.READ_ONLY
     assert report.signal.action == Build14InfluenceAction.OBSERVE
     assert report.signal.recommended_budget_factor == 1.0
+    assert report.signal.requires_manual_review is False
+
+
+def test_build14_shadow_activation_is_fully_active_in_shadow_but_not_live_promoted():
+    report = evaluate_build14_shadow_activation(
+        Build14ObservationInput(
+            correlation_id="corr-14shadow",
+            dtr_coverage=0.75,
+            cra_sterilization_rate=0.45,
+            cra_alert_count=2,
+            break_even_drift_alert=True,
+            edge_degraded_count=1,
+            queue_backlog=55,
+            stale_pair_count=0,
+            dtr_loss_count=0,
+            log_loss_count=0,
+            ce_net=0.0012,
+        )
+    )
+
+    assert report.hard_state == Build14HardState.SHADOW_ENABLED
+    assert report.live_promotion_eligible is False
+    assert report.signal.influence_mode == Build14InfluenceMode.SHADOW_ENABLED
+    assert report.signal.action == Build14InfluenceAction.SHADOW_APPLY
+    assert report.signal.candidate_effect == "shadow_enabled"
     assert report.signal.requires_manual_review is False
 
 
@@ -197,4 +230,24 @@ def test_build14_influence_signal_rejects_any_attempt_to_bypass_guardrails():
             confidence_penalty_weight=0.10,
             recommended_budget_factor=0.85,
             can_bypass_risk=True,
+        )
+
+
+def test_build14_report_requires_matching_signal_correlation_id():
+    with pytest.raises(ValidationError):
+        Build14InfluenceReport(
+            correlation_id="corr-14g",
+            signal=Build14InfluenceSignal(
+                correlation_id="corr-14h",
+                influence_mode=Build14InfluenceMode.LIMITED_INFLUENCE,
+                action=Build14InfluenceAction.DOWNGRADE_CONFIDENCE,
+                severity=Build14Severity.ELEVATED,
+                families=(Build14SignalFamily.MICROSTRUCTURE,),
+                summary="Correlation mismatch must be rejected",
+                reason_codes=("market_toxicity_snapshot_elevated",),
+                confidence_penalty_weight=0.10,
+                recommended_budget_factor=0.85,
+                requires_manual_review=False,
+                candidate_effect="confidence_downgrade",
+            ),
         )

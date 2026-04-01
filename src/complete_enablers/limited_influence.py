@@ -1,4 +1,4 @@
-"""Governed Build-14 phase-2 limited influence evaluator."""
+"""Governed Build-14 evaluators for Shadow activation and post-Shadow live influence."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from complete_enablers.contracts import (
 )
 from complete_enablers.enums import (
     Build14InfluenceAction,
+    Build14HardState,
     Build14InfluenceMode,
     Build14Severity,
     Build14SignalFamily,
@@ -28,15 +29,75 @@ def _reason_code(reader_name: str, status: Build14Severity) -> str:
     return f"{reader_name}_{status.value}"
 
 
-def evaluate_build14_limited_influence(
+def _build_snapshots(
     observation: Build14ObservationInput,
-) -> Build14InfluenceReport:
-    """Evaluate the bounded Build-14 phase-2 recommendation from existing readers."""
-
-    snapshots = (
+) -> tuple:
+    return (
         build_market_toxicity_snapshot(observation),
         build_execution_fragility_score(observation),
     )
+
+
+def evaluate_build14_shadow_activation(
+    observation: Build14ObservationInput,
+) -> Build14InfluenceReport:
+    """Materialize Build-14 as SHADOW_ENABLED and fully active inside the Shadow truth phase."""
+
+    snapshots = _build_snapshots(observation)
+    reason_codes = tuple(
+        _reason_code(snapshot.reader_name, snapshot.status)
+        for snapshot in snapshots
+        if snapshot.status != Build14Severity.NOMINAL
+    )
+    overall_severity = max(
+        (snapshot.status for snapshot in snapshots),
+        key=lambda severity: _SEVERITY_RANK[severity],
+    )
+    if overall_severity == Build14Severity.CRITICAL:
+        confidence_penalty_weight = 0.25
+        recommended_budget_factor = 0.0
+    elif overall_severity == Build14Severity.ELEVATED:
+        confidence_penalty_weight = 0.10
+        recommended_budget_factor = 0.85
+    else:
+        confidence_penalty_weight = 0.0
+        recommended_budget_factor = 1.0
+
+    signal = Build14InfluenceSignal(
+        correlation_id=observation.correlation_id,
+        hard_state=Build14HardState.SHADOW_ENABLED,
+        live_promotion_eligible=False,
+        influence_mode=Build14InfluenceMode.SHADOW_ENABLED,
+        action=Build14InfluenceAction.SHADOW_APPLY,
+        severity=overall_severity,
+        families=tuple(
+            sorted({snapshot.signal_family for snapshot in snapshots}, key=lambda item: item.value)
+        ),
+        summary=(
+            "Build-14 enablers are SHADOW_ENABLED and actively influence Shadow decisions; "
+            "live promotion remains gated post-Shadow"
+        ),
+        reason_codes=reason_codes,
+        confidence_penalty_weight=confidence_penalty_weight,
+        recommended_budget_factor=recommended_budget_factor,
+        requires_manual_review=False,
+        candidate_effect="shadow_enabled",
+    )
+    return Build14InfluenceReport(
+        correlation_id=observation.correlation_id,
+        hard_state=Build14HardState.SHADOW_ENABLED,
+        live_promotion_eligible=False,
+        snapshots=snapshots,
+        signal=signal,
+    )
+
+
+def evaluate_build14_limited_influence(
+    observation: Build14ObservationInput,
+) -> Build14InfluenceReport:
+    """Evaluate the bounded post-Shadow live recommendation from existing Build-14 readers."""
+
+    snapshots = _build_snapshots(observation)
     severities = {snapshot.status for snapshot in snapshots}
     reason_codes = tuple(
         _reason_code(snapshot.reader_name, snapshot.status)
@@ -114,11 +175,14 @@ def evaluate_build14_limited_influence(
 
     return Build14InfluenceReport(
         correlation_id=observation.correlation_id,
+        hard_state=Build14HardState.SHADOW_ENABLED,
+        live_promotion_eligible=False,
         snapshots=snapshots,
         signal=signal,
     )
 
 
 __all__ = [
+    "evaluate_build14_shadow_activation",
     "evaluate_build14_limited_influence",
 ]

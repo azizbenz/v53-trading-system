@@ -469,7 +469,9 @@ def test_technical_dashboard_payload_defaults_governed_sections_without_raw_prot
     assert payload.live_light.status == "planned"
     assert payload.live_light.verdict == "not_run"
     assert payload.build14.status == "planned"
-    assert payload.build14.influence_mode == "read_only"
+    assert payload.build14.hard_state == "coded"
+    assert payload.build14.live_promotion_eligible is False
+    assert payload.build14.influence_mode == "observe"
     assert payload.replay_import.status == "info"
     assert payload.replay_import.validation_status == "not_run"
     assert payload.alerts.backlog_stale_status == "healthy"
@@ -653,6 +655,8 @@ def test_technical_dashboard_payload_accepts_build14_projection_summary():
         active_engines=("engine_a", "engine_b"),
         build14_projection=Build14Projection(
             status="warning",
+            hard_state="shadow_enabled",
+            live_promotion_eligible=False,
             influence_mode="limited_influence",
             action="downgrade_confidence",
             severity="elevated",
@@ -670,6 +674,8 @@ def test_technical_dashboard_payload_accepts_build14_projection_summary():
     )
 
     assert payload.system.build14_status == "warning"
+    assert payload.build14.hard_state == "shadow_enabled"
+    assert payload.build14.live_promotion_eligible is False
     assert payload.build14.action == "downgrade_confidence"
     assert payload.build14.recommended_budget_factor == 0.85
     assert payload.build14.reason_codes == ("market_toxicity_snapshot_elevated",)

@@ -1,4 +1,4 @@
-"""Read-only execution fragility reader for Build-14."""
+"""Execution fragility reader for Build-14 SHADOW_ENABLED enablers."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ def build_execution_fragility_score(observation: Build14ObservationInput) -> Bui
             f"edge_degraded_count:{observation.edge_degraded_count}",
             f"ce_net:{observation.ce_net:.6f}",
         ),
-        structured_log_key="build14.read_only.execution_fragility",
+        structured_log_key="build14.shadow_enabled.execution_fragility",
     )
 
 

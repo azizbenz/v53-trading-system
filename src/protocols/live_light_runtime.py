@@ -240,6 +240,12 @@ def _build14_guardrail_reasons(
     if not non_regression_required:
         reasons.append("Build-14 influence must keep non_regression_required=True")
 
+    if influence_mode == "shadow_enabled":
+        reasons.append(
+            "Shadow-enabled Build-14 outputs require explicit post-Shadow live translation before Live-Light"
+        )
+        return tuple(reasons)
+
     if influence_mode == "read_only":
         if action != "observe":
             reasons.append("read-only Build-14 influence must keep action=observe")

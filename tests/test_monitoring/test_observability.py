@@ -268,6 +268,8 @@ def test_observability_export_tracks_modules_engines_and_governed_flags():
         ),
         build14_projection=Build14Projection(
             status="critical",
+            hard_state="shadow_enabled",
+            live_promotion_eligible=False,
             influence_mode="limited_influence",
             action="review_only",
             severity="critical",
@@ -309,6 +311,8 @@ def test_observability_export_tracks_modules_engines_and_governed_flags():
     assert any(sample.name == "v53_live_light_blocking_reason_count" and sample.value == 1.0 for sample in export.samples)
     assert any(sample.name == "v53_live_light_broker_ready" and sample.value == 0.0 for sample in export.samples)
     assert any(sample.name == "v53_system_build14_status" and sample.labels["status"] == "critical" for sample in export.samples)
+    assert any(sample.name == "v53_build14_hard_state" and sample.labels["hard_state"] == "shadow_enabled" for sample in export.samples)
+    assert any(sample.name == "v53_build14_live_promotion_eligible" and sample.value == 0.0 for sample in export.samples)
     assert any(sample.name == "v53_build14_action" and sample.labels["action"] == "review_only" for sample in export.samples)
     assert any(sample.name == "v53_build14_requires_manual_review" and sample.value == 1.0 for sample in export.samples)
     assert any(sample.name == "v53_build14_reason_code_count" and sample.value == 2.0 for sample in export.samples)

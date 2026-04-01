@@ -400,6 +400,18 @@ def build_observability_export(payload: TechnicalDashboardPayload) -> Observabil
             labels={**base_labels, "status": payload.build14.status},
         ),
         _sample(
+            "v53_build14_hard_state",
+            kind="state",
+            value=1.0,
+            labels={**base_labels, "hard_state": payload.build14.hard_state},
+        ),
+        _sample(
+            "v53_build14_live_promotion_eligible",
+            kind="state",
+            value=1.0 if payload.build14.live_promotion_eligible else 0.0,
+            labels=base_labels,
+        ),
+        _sample(
             "v53_build14_influence_mode",
             kind="state",
             value=1.0,

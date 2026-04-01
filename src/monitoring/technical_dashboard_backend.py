@@ -135,13 +135,15 @@ def _default_build14_projection(*, active_modules: tuple[str, ...]) -> Build14Pr
     module_active = "complete_enablers" in active_modules
     return Build14Projection(
         status="info" if module_active else "planned",
-        influence_mode="read_only",
-        action="observe",
+        hard_state="shadow_enabled" if module_active else "coded",
+        live_promotion_eligible=False,
+        influence_mode="shadow_enabled" if module_active else "observe",
+        action="shadow_apply" if module_active else "observe",
         severity="nominal",
         summary=(
-            "Build-14 readers are available but no bounded influence evaluation was materialized"
+            "Build-14 enablers are SHADOW_ENABLED in Shadow; live promotion remains gated"
             if module_active
-            else "Build-14 limited influence has not been materialized"
+            else "Build-14 enablers are not materialized"
         ),
         market_toxicity_value=0.0,
         market_toxicity_status="nominal",
@@ -251,7 +253,7 @@ def build_technical_dashboard_payload(
             build14_status=build14.status,
             replay_import_status=replay_import.status,
             governed_extensions_detail=(
-                "Build-9X, Shadow, Micro-live, Live-Light, replay/import, and Build-14 limited influence remain governed. "
+                "Build-9X, Shadow, Micro-live, Live-Light, replay/import, and Build-14 enablers remain governed. "
                 "Complete stays closed and Build-14 does not bypass engines, risk, or portfolio."
             ),
         ),

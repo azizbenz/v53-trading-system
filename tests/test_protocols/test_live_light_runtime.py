@@ -16,6 +16,7 @@ from complete_enablers import (
     Build14Severity,
     Build14SignalFamily,
     evaluate_build14_limited_influence,
+    evaluate_build14_shadow_activation,
 )
 from interface_contracts import PairHealthLevel, ProfileId, ReviewState, RuntimeMode
 from monitoring import (
@@ -610,6 +611,52 @@ def test_run_live_light_gate_blocks_build14_influence_without_explicit_live_elig
     assert summary.decision.allowed_to_execute_small is False
     assert (
         "Build-14 live influence requires explicit post-Shadow live eligibility"
+        in summary.decision.blocking_reasons
+    )
+
+
+def test_run_live_light_gate_blocks_shadow_enabled_build14_report_in_live_light():
+    report = evaluate_build14_shadow_activation(
+        Build14ObservationInput(
+            correlation_id="corr-live",
+            dtr_coverage=0.75,
+            cra_sterilization_rate=0.45,
+            cra_alert_count=2,
+            break_even_drift_alert=True,
+            edge_degraded_count=1,
+            queue_backlog=55,
+            stale_pair_count=0,
+            dtr_loss_count=0,
+            log_loss_count=0,
+            ce_net=0.0012,
+        )
+    )
+
+    summary = run_live_light_gate(
+        build_live_light_input_from_micro_live(
+            _micro_live_summary(),
+            _micro_live_payload(),
+            live_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=80.0,
+            requested_pair_notional_usdt=40.0,
+            max_total_notional_usdt=100.0,
+            max_pair_notional_usdt=50.0,
+            micro_live_stable_days=7,
+            observability_ready=True,
+            halt_ready=True,
+            execution_ready=True,
+            broker_ready=True,
+            exchange_ready=True,
+            onboarding_accepted=True,
+            build14_live_eligible=True,
+        ),
+        build14_influence=report,
+    )
+
+    assert summary.decision.verdict == LiveLightVerdict.BLOCKED
+    assert summary.decision.allowed_to_execute_small is False
+    assert (
+        "Shadow-enabled Build-14 outputs require explicit post-Shadow live translation before Live-Light"
         in summary.decision.blocking_reasons
     )
 

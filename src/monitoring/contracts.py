@@ -269,10 +269,12 @@ class LiveLightProjection(BaseModel, frozen=True):
 
 
 class Build14Projection(BaseModel, frozen=True):
-    """Normalized Build-14 limited-influence summary consumed by Build-10."""
+    """Normalized Build-14 enabler status consumed by Build-10."""
 
     status: ProjectionStatus = "planned"
-    influence_mode: str = "read_only"
+    hard_state: str = "coded"
+    live_promotion_eligible: bool = False
+    influence_mode: str = "observe"
     action: str = "observe"
     severity: str = "nominal"
     summary: str = "No Build-14 evaluation materialized"
