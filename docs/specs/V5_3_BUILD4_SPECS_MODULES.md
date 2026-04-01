@@ -826,4 +826,35 @@ Donc :
 
 ---
 
+# Guardrails issus des audits — Renforcements Build-4
+
+## Drawdown protection active (GEM-09)
+- Le risk backbone doit inclure un drawdown guard actif dès Build-4 en trajectoire Light
+- Si le drawdown intraday dépasse un seuil configurable, le système réduit l'exposition ou passe en observation
+- Build-4 n'est pas validé si ce garde-fou reste une métrique décorative ou une simple note documentaire
+
+## Limites beta statique / clusters fixes (GEM-09, QWEN-09)
+- Le `correlation_cluster_guard` utilise des clusters définis en dur (DEFAULT_CLUSTERS)
+- Limitation explicite : en cas de krach, toutes les corrélations tendent vers 1
+- La diversification par cluster peut échouer exactement quand on en a besoin
+- Le canon reconnaît cette limite et prévoit une calibration dynamique future (Build-14+)
+
+## Clarification proxy risk vs risk réel (GEM-09)
+- Le risk backbone Build-4 mesure un **proxy de risque** basé sur des corrélations statiques
+- Ce proxy est utile mais ne capture pas le risque factoriel complet
+- Le canon distingue explicitement :
+  - **proxy risk** (Build-4) : corrélations statiques, clusters fixes, beta BTC estimé
+  - **risk réel enrichi** (Build-14+) : Ledoit-Wolf, corrélation dynamique, risk contribution
+- Le proxy risk est suffisant pour Light mais ne doit pas être confondu avec le risk réel
+
+## Besoin de calibration dynamique future (GEM-09)
+- Le passage à Build-14 doit apporter :
+  - recalcul périodique des matrices de corrélation
+  - Ledoit-Wolf ou estimation robuste
+  - risk contribution monitor enrichi
+- Ces enrichissements sont **activés à 100% en Shadow** (`SHADOW_ENABLED`), pleinement utilisés et observés
+- Leur promotion live reste conditionnelle au verdict post-Shadow
+
+---
+
 ## Fin du document
