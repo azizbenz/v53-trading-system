@@ -12,6 +12,8 @@ from protocols.contracts import (
     ShadowRunSummary,
 )
 from protocols.enums import (
+    ShadowComponentKind,
+    ShadowComponentVerdict,
     MicroLiveRunState,
     MicroLiveVerdict,
     ShadowRunState,
@@ -68,6 +70,35 @@ def _validate_shadow_import_consistency(
         )
 
 
+def _resolve_shadow_component_verdicts(
+    shadow_summary: ShadowRunSummary,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    if not shadow_summary.component_assessments:
+        raise MicroLiveInputError(
+            "Build-12 Micro-live requires component verdicts from the Build-11 Shadow report"
+        )
+
+    validated_light_engines = tuple(
+        assessment.component_id
+        for assessment in shadow_summary.component_assessments
+        if assessment.component_kind == ShadowComponentKind.ENGINE
+        and assessment.component_id in {"engine_a", "engine_b"}
+        and assessment.verdict == ShadowComponentVerdict.SHADOW_VALIDATED
+    )
+    dormant_components = tuple(
+        assessment.component_id
+        for assessment in shadow_summary.component_assessments
+        if assessment.verdict == ShadowComponentVerdict.DORMANT
+    )
+
+    if not validated_light_engines:
+        raise MicroLiveInputError(
+            "Build-12 Micro-live requires at least one SHADOW_VALIDATED Light engine from Build-11"
+        )
+
+    return validated_light_engines, dormant_components
+
+
 def build_micro_live_input_from_shadow(
     shadow_summary: ShadowRunSummary,
     shadow_payload: TechnicalDashboardPayload,
@@ -89,6 +120,31 @@ def build_micro_live_input_from_shadow(
 
     _validate_shadow_source_payload_scope(shadow_payload)
     _validate_shadow_import_consistency(shadow_summary, shadow_payload)
+    if shadow_summary.shadow_days_completed < shadow_summary.shadow_required_days:
+        raise MicroLiveInputError(
+            "Build-12 Micro-live requires a completed 30-day Shadow"
+        )
+    if not shadow_summary.shadow_report_ready:
+        raise MicroLiveInputError(
+            "Build-12 Micro-live requires shadow_report_ready=True"
+        )
+    if not shadow_summary.inter_engine_comparison_ready:
+        raise MicroLiveInputError(
+            "Build-12 Micro-live requires inter-engine comparison evidence from Build-11"
+        )
+    if not shadow_summary.build14_contribution_ready:
+        raise MicroLiveInputError(
+            "Build-12 Micro-live requires Build-14 contribution evidence from Build-11"
+        )
+    validated_light_engines, dormant_components = _resolve_shadow_component_verdicts(
+        shadow_summary
+    )
+    resolved_active_engines = active_engines or validated_light_engines
+    if not set(resolved_active_engines).issubset(set(validated_light_engines)):
+        raise MicroLiveInputError(
+            "Build-12 Micro-live active_engines must be SHADOW_VALIDATED in Build-11"
+        )
+
     return MicroLiveInput(
         correlation_id=shadow_summary.correlation_id,
         profile=shadow_payload.profile,
@@ -99,6 +155,13 @@ def build_micro_live_input_from_shadow(
         shadow_verdict=shadow_summary.decision.verdict,
         shadow_run_state=shadow_summary.run_state,
         shadow_blocking_reasons=shadow_summary.decision.blocking_reasons,
+        shadow_days_completed=shadow_summary.shadow_days_completed,
+        shadow_required_days=shadow_summary.shadow_required_days,
+        shadow_report_ready=shadow_summary.shadow_report_ready,
+        inter_engine_comparison_ready=shadow_summary.inter_engine_comparison_ready,
+        build14_contribution_ready=shadow_summary.build14_contribution_ready,
+        shadow_validated_engines=validated_light_engines,
+        shadow_dormant_components=dormant_components,
         shadow_import_artifact_id=shadow_summary.import_artifact_id,
         shadow_import_lineage_version=shadow_summary.import_lineage_version,
         import_artifact_id=shadow_payload.replay_import.artifact_id,
@@ -111,7 +174,7 @@ def build_micro_live_input_from_shadow(
         review_export_ready=shadow_summary.review_export_ready,
         observability_ready=observability_ready,
         halt_ready=halt_ready,
-        active_engines=active_engines or shadow_payload.system.active_engines,
+        active_engines=resolved_active_engines,
         probe_pairs=probe_pairs,
         requested_total_notional_usdt=requested_total_notional_usdt,
         requested_pair_notional_usdt=requested_pair_notional_usdt,
@@ -300,6 +363,8 @@ def run_micro_live_gate(
         observability_ready=micro_live_input.observability_ready,
         halt_ready=micro_live_input.halt_ready,
         onboarding_ready=micro_live_input.onboarding_accepted,
+        shadow_validated_engines=micro_live_input.shadow_validated_engines,
+        shadow_dormant_components=micro_live_input.shadow_dormant_components,
     )
 
 

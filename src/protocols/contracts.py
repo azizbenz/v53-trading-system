@@ -277,6 +277,13 @@ class MicroLiveInput(BaseModel, frozen=True):
     shadow_verdict: ShadowVerdict
     shadow_run_state: ShadowRunState
     shadow_blocking_reasons: tuple[str, ...] = ()
+    shadow_days_completed: int = Field(default=0, ge=0)
+    shadow_required_days: int = Field(default=30, ge=1)
+    shadow_report_ready: bool = False
+    inter_engine_comparison_ready: bool = False
+    build14_contribution_ready: bool = False
+    shadow_validated_engines: tuple[str, ...] = ()
+    shadow_dormant_components: tuple[str, ...] = ()
     shadow_import_artifact_id: str = Field(..., min_length=1)
     shadow_import_lineage_version: str = Field(..., min_length=1)
     import_artifact_id: str = Field(..., min_length=1)
@@ -312,6 +319,24 @@ class MicroLiveInput(BaseModel, frozen=True):
             raise ValueError("Local/VPS profile forks are forbidden")
         if self.automatic_live_promotion_requested:
             raise ValueError("Micro-live must not request automatic promotion to LIVE")
+        if self.shadow_required_days != 30:
+            raise ValueError("Build-12 Micro-live requires shadow_required_days=30")
+        if self.shadow_days_completed < self.shadow_required_days:
+            raise ValueError(
+                "Build-12 Micro-live requires a completed 30-day Shadow"
+            )
+        if not self.shadow_report_ready:
+            raise ValueError(
+                "Build-12 Micro-live requires shadow_report_ready=True"
+            )
+        if not self.inter_engine_comparison_ready:
+            raise ValueError(
+                "Build-12 Micro-live requires inter_engine_comparison_ready=True"
+            )
+        if not self.build14_contribution_ready:
+            raise ValueError(
+                "Build-12 Micro-live requires build14_contribution_ready=True"
+            )
 
         normalized_status = self.import_validation_status.strip().casefold()
         if normalized_status not in _ACCEPTED_IMPORT_STATUSES:
@@ -359,6 +384,25 @@ class MicroLiveInput(BaseModel, frozen=True):
         if unknown_engines:
             raise ValueError(
                 "Build-12 Micro-live allows only engine_a and engine_b"
+            )
+        if not self.shadow_validated_engines:
+            raise ValueError(
+                "Build-12 Micro-live requires at least one SHADOW_VALIDATED Light engine"
+            )
+        unknown_shadow_validated = (
+            set(self.shadow_validated_engines) - _MICRO_LIVE_ALLOWED_ENGINES
+        )
+        if unknown_shadow_validated:
+            raise ValueError(
+                "Build-12 Micro-live shadow_validated_engines must stay within engine_a/engine_b"
+            )
+        if not set(self.active_engines).issubset(set(self.shadow_validated_engines)):
+            raise ValueError(
+                "Build-12 Micro-live active_engines must be SHADOW_VALIDATED in Shadow"
+            )
+        if set(self.active_engines) & set(self.shadow_dormant_components):
+            raise ValueError(
+                "Build-12 Micro-live must not activate components marked DORMANT in Shadow"
             )
 
         if not self.probe_pairs:
@@ -449,6 +493,8 @@ class MicroLiveRunSummary(BaseModel, frozen=True):
     observability_ready: bool = False
     halt_ready: bool = False
     onboarding_ready: bool = False
+    shadow_validated_engines: tuple[str, ...] = ()
+    shadow_dormant_components: tuple[str, ...] = ()
 
     @property
     def blocking_reason_count(self) -> int:

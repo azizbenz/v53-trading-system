@@ -21,6 +21,10 @@ from protocols import (
     MicroLiveInputError,
     MicroLiveVerdict,
     ShadowComparison,
+    ShadowComponentAssessment,
+    ShadowComponentHardState,
+    ShadowComponentKind,
+    ShadowComponentVerdict,
     ShadowComparisonStatus,
     ShadowDecision,
     ShadowDivergenceSeverity,
@@ -31,6 +35,57 @@ from protocols import (
     run_micro_live_gate,
 )
 from interface_contracts import PromotionState
+
+
+def _shadow_component_assessments(
+    *,
+    dormant_component_ids: tuple[str, ...] = (
+        "engine_c",
+        "engine_d",
+        "build14_microstructure",
+        "build14_regime",
+        "build14_covariance",
+        "build14_risk_contribution",
+        "build14_edge_diversity",
+    ),
+) -> tuple[ShadowComponentAssessment, ...]:
+    dormant = set(dormant_component_ids)
+    assessments: list[ShadowComponentAssessment] = []
+    for component_id in ("engine_a", "engine_b", "engine_c", "engine_d"):
+        assessments.append(
+            ShadowComponentAssessment(
+                component_id=component_id,
+                component_kind=ShadowComponentKind.ENGINE,
+                hard_state=ShadowComponentHardState.SHADOW_ENABLED,
+                verdict=(
+                    ShadowComponentVerdict.DORMANT
+                    if component_id in dormant
+                    else ShadowComponentVerdict.SHADOW_VALIDATED
+                ),
+                evidence_summary=f"{component_id} shadow verdict rendered",
+            )
+        )
+    for component_id in (
+        "build14_microstructure",
+        "build14_regime",
+        "build14_covariance",
+        "build14_risk_contribution",
+        "build14_edge_diversity",
+    ):
+        assessments.append(
+            ShadowComponentAssessment(
+                component_id=component_id,
+                component_kind=ShadowComponentKind.BUILD14_ENABLER,
+                hard_state=ShadowComponentHardState.SHADOW_ENABLED,
+                verdict=(
+                    ShadowComponentVerdict.DORMANT
+                    if component_id in dormant
+                    else ShadowComponentVerdict.SHADOW_VALIDATED
+                ),
+                evidence_summary=f"{component_id} shadow verdict rendered",
+            )
+        )
+    return tuple(assessments)
 
 
 def _shadow_payload(
@@ -146,6 +201,11 @@ def _shadow_summary(
     *,
     verdict: ShadowVerdict = ShadowVerdict.ACCEPTED,
     run_state: ShadowRunState = ShadowRunState.COMPLETED,
+    shadow_days_completed: int = 30,
+    shadow_report_ready: bool = True,
+    inter_engine_comparison_ready: bool = True,
+    build14_contribution_ready: bool = True,
+    component_assessments: tuple[ShadowComponentAssessment, ...] | None = None,
 ) -> ShadowRunSummary:
     return ShadowRunSummary(
         run_id="shadow-run-1",
@@ -185,6 +245,14 @@ def _shadow_summary(
         open_hypotheses=0,
         replay_candidate_count=0,
         review_export_ready=True,
+        active_engines=("engine_a", "engine_b", "engine_c", "engine_d"),
+        build14_status="warning",
+        shadow_days_completed=shadow_days_completed,
+        shadow_required_days=30,
+        shadow_report_ready=shadow_report_ready,
+        inter_engine_comparison_ready=inter_engine_comparison_ready,
+        build14_contribution_ready=build14_contribution_ready,
+        component_assessments=component_assessments or _shadow_component_assessments(),
     )
 
 
@@ -207,6 +275,39 @@ def test_build_micro_live_input_from_shadow_maps_governed_inputs():
     assert micro_input.shadow_import_artifact_id == "artifact-1"
     assert micro_input.shadow_import_lineage_version == "a.v1.0.r1"
     assert micro_input.import_validation_status == "accepted"
+    assert micro_input.active_engines == ("engine_a", "engine_b")
+    assert micro_input.shadow_validated_engines == ("engine_a", "engine_b")
+
+
+def test_build_micro_live_input_from_shadow_filters_to_shadow_validated_light_engines():
+    micro_input = build_micro_live_input_from_shadow(
+        _shadow_summary(
+            component_assessments=_shadow_component_assessments(
+                dormant_component_ids=(
+                    "engine_b",
+                    "engine_c",
+                    "engine_d",
+                    "build14_microstructure",
+                    "build14_regime",
+                    "build14_covariance",
+                    "build14_risk_contribution",
+                    "build14_edge_diversity",
+                )
+            )
+        ),
+        _shadow_payload(),
+        probe_pairs=("BTCUSDT",),
+        requested_total_notional_usdt=20.0,
+        requested_pair_notional_usdt=10.0,
+        max_total_notional_usdt=25.0,
+        max_pair_notional_usdt=12.5,
+        observability_ready=True,
+        halt_ready=True,
+        onboarding_accepted=True,
+    )
+
+    assert micro_input.active_engines == ("engine_a",)
+    assert "engine_b" in micro_input.shadow_dormant_components
 
 
 def test_build_micro_live_input_from_shadow_rejects_non_shadow_source_payload():
@@ -266,6 +367,39 @@ def test_build_micro_live_input_from_shadow_rejects_shadow_import_lineage_mismat
         )
 
 
+def test_build_micro_live_input_from_shadow_rejects_requesting_dormant_or_unvalidated_engine():
+    with pytest.raises(
+        MicroLiveInputError,
+        match="active_engines must be SHADOW_VALIDATED",
+    ):
+        build_micro_live_input_from_shadow(
+            _shadow_summary(
+                component_assessments=_shadow_component_assessments(
+                    dormant_component_ids=(
+                        "engine_b",
+                        "engine_c",
+                        "engine_d",
+                        "build14_microstructure",
+                        "build14_regime",
+                        "build14_covariance",
+                        "build14_risk_contribution",
+                        "build14_edge_diversity",
+                    )
+                )
+            ),
+            _shadow_payload(),
+            probe_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=20.0,
+            requested_pair_notional_usdt=10.0,
+            max_total_notional_usdt=25.0,
+            max_pair_notional_usdt=12.5,
+            observability_ready=True,
+            halt_ready=True,
+            onboarding_accepted=True,
+            active_engines=("engine_b",),
+        )
+
+
 def test_build_micro_live_input_from_shadow_rejects_non_empty_import_rejection_reasons():
     with pytest.raises(
         MicroLiveInputError,
@@ -274,6 +408,42 @@ def test_build_micro_live_input_from_shadow_rejects_non_empty_import_rejection_r
         build_micro_live_input_from_shadow(
             _shadow_summary(),
             _shadow_payload(replay_rejection_reasons=("lineage mismatch",)),
+            probe_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=20.0,
+            requested_pair_notional_usdt=10.0,
+            max_total_notional_usdt=25.0,
+            max_pair_notional_usdt=12.5,
+            observability_ready=True,
+            halt_ready=True,
+            onboarding_accepted=True,
+        )
+
+
+def test_build_micro_live_input_from_shadow_rejects_incomplete_shadow_gate():
+    with pytest.raises(
+        MicroLiveInputError,
+        match="completed 30-day Shadow",
+    ):
+        build_micro_live_input_from_shadow(
+            _shadow_summary(shadow_days_completed=29),
+            _shadow_payload(),
+            probe_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=20.0,
+            requested_pair_notional_usdt=10.0,
+            max_total_notional_usdt=25.0,
+            max_pair_notional_usdt=12.5,
+            observability_ready=True,
+            halt_ready=True,
+            onboarding_accepted=True,
+        )
+
+    with pytest.raises(
+        MicroLiveInputError,
+        match="shadow_report_ready=True",
+    ):
+        build_micro_live_input_from_shadow(
+            _shadow_summary(shadow_report_ready=False),
+            _shadow_payload(),
             probe_pairs=("BTCUSDT",),
             requested_total_notional_usdt=20.0,
             requested_pair_notional_usdt=10.0,
@@ -324,6 +494,7 @@ def test_run_micro_live_gate_allows_probe_when_shadow_and_governance_are_ready()
     assert summary.decision.verdict == MicroLiveVerdict.ALLOWED_TO_PROBE
     assert summary.decision.allowed_to_probe is True
     assert summary.execution_plan.approved_total_notional_usdt == 20.0
+    assert summary.shadow_validated_engines == ("engine_a", "engine_b")
 
 
 def test_run_micro_live_gate_blocks_when_observability_or_onboarding_is_missing():
