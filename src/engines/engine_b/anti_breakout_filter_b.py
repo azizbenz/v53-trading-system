@@ -29,6 +29,7 @@ class BreakoutInput(BaseModel, frozen=True):
     volume_anomaly: float = 0.0  # [0,1] — abnormal volume in move direction
     structural_break: float = 0.0  # [0,1] — confirmation of level breach
     continuation_momentum: float = 0.0  # [0,1] — momentum continuation signal
+    microstructure_breakout_confirmation: float = 0.0  # [0,1] — order-flow confirms breakout
 
 
 class BreakoutResult(BaseModel, frozen=True):
@@ -60,6 +61,7 @@ def evaluate_breakout_risk(inputs: BreakoutInput) -> BreakoutResult:
         + 0.25 * inputs.structural_break
         + 0.20 * inputs.continuation_momentum
     )
+    score = min(1.0, score + 0.15 * inputs.microstructure_breakout_confirmation)
 
     if score >= _BLOCKED_THRESHOLD:
         verdict = BreakoutVerdict.BLOCKED

@@ -182,6 +182,25 @@ class TestAntiBreakoutFilter:
         assert result.verdict == BreakoutVerdict.CLEAR
         assert result.breakout_score == pytest.approx(0.0)
 
+    def test_microstructure_confirmation_increases_breakout_risk(self):
+        base = evaluate_breakout_risk(BreakoutInput(
+            pair="BTCUSDT",
+            regime_trend_strength=0.3,
+            volume_anomaly=0.2,
+            structural_break=0.2,
+            continuation_momentum=0.2,
+            microstructure_breakout_confirmation=0.0,
+        ))
+        confirmed = evaluate_breakout_risk(BreakoutInput(
+            pair="BTCUSDT",
+            regime_trend_strength=0.3,
+            volume_anomaly=0.2,
+            structural_break=0.2,
+            continuation_momentum=0.2,
+            microstructure_breakout_confirmation=1.0,
+        ))
+        assert confirmed.breakout_score > base.breakout_score
+
 
 # ── cost_feasibility_b ──
 
@@ -376,9 +395,11 @@ def _emit_inputs(**overrides) -> EngineBInput:
         volume_anomaly=0.1,
         structural_break=0.0,
         continuation_momentum=0.1,
+        microstructure_breakout_confirmation=0.0,
         regime_favorability=0.7,
         pair_health=0.8,
         data_freshness=0.9,
+        flow_coherence=0.8,
         expected_gain=0.003,
         expected_cost=0.001,
         candidate_size=100.0,
@@ -507,3 +528,30 @@ class TestEngineBRunner:
         output = run_engine_b(_emit_inputs())
         assert output.excess_score > 0.0
         assert output.excess_verdict == ExcessVerdict.EXPLOITABLE
+
+    def test_flow_coherence_feeds_runtime_conviction_path(self):
+        weak_flow = run_engine_b(_emit_inputs(flow_coherence=0.0))
+        strong_flow = run_engine_b(_emit_inputs(flow_coherence=1.0))
+        assert weak_flow.decision == EngineBDecision.EMIT
+        assert strong_flow.decision == EngineBDecision.EMIT
+        assert strong_flow.raw_score > weak_flow.raw_score
+        assert strong_flow.block_scores["context"] > weak_flow.block_scores["context"]
+
+    def test_microstructure_confirmation_can_upgrade_warning_to_blocked(self):
+        warning = run_engine_b(_emit_inputs(
+            regime_trend_strength=0.7,
+            volume_anomaly=0.5,
+            structural_break=0.5,
+            continuation_momentum=0.4,
+            microstructure_breakout_confirmation=0.0,
+        ))
+        blocked = run_engine_b(_emit_inputs(
+            regime_trend_strength=0.7,
+            volume_anomaly=0.5,
+            structural_break=0.5,
+            continuation_momentum=0.4,
+            microstructure_breakout_confirmation=1.0,
+        ))
+        assert warning.breakout_verdict == BreakoutVerdict.WARNING
+        assert blocked.decision == EngineBDecision.NO_TRADE
+        assert blocked.breakout_verdict == BreakoutVerdict.BLOCKED

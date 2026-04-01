@@ -133,10 +133,12 @@ class EngineBInput(BaseModel, frozen=True):
     volume_anomaly: float = 0.0
     structural_break: float = 0.0
     continuation_momentum: float = 0.0
+    microstructure_breakout_confirmation: float = 0.0
     # Context scores (for conviction)
     regime_favorability: float = 0.5
     pair_health: float = 0.5
     data_freshness: float = 0.5
+    flow_coherence: float = 0.5
     # Cost inputs
     expected_gain: float = 0.0
     expected_cost: float = 0.0
@@ -257,6 +259,7 @@ def run_engine_b(inputs: EngineBInput) -> EngineBOutput:
         volume_anomaly=inputs.volume_anomaly,
         structural_break=inputs.structural_break,
         continuation_momentum=inputs.continuation_momentum,
+        microstructure_breakout_confirmation=inputs.microstructure_breakout_confirmation,
     ))
     logs.append(EngineBLogEntry(
         event="engine_b_breakout_evaluated",
@@ -329,8 +332,13 @@ def run_engine_b(inputs: EngineBInput) -> EngineBOutput:
         )
 
     # ── 5. Conviction building ──
-    # Context score: average of regime_favorability, pair_health, data_freshness
-    context_score = (inputs.regime_favorability + inputs.pair_health + inputs.data_freshness) / 3.0
+    # Context score: regime, health, freshness, and flow coherence all matter for B.
+    context_score = (
+        inputs.regime_favorability
+        + inputs.pair_health
+        + inputs.data_freshness
+        + inputs.flow_coherence
+    ) / 4.0
 
     conviction = build_conviction_b(ConvictionInputB(
         pair=inputs.pair,
