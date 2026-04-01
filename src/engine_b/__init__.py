@@ -13,11 +13,21 @@ from engines.engine_b.engine_b_runner import (
     EngineBOutput,
     run_engine_b,
 )
+from engines.engine_b.engine_b_runtime import (
+    EngineBRuntime,
+    EngineBRuntimeInput,
+    EngineBRuntimeResult,
+    EngineBRuntimeStatus,
+)
 
 __all__ = [
     "EngineBDecision",
     "EngineBInput",
     "EngineBLogEntry",
     "EngineBOutput",
+    "EngineBRuntime",
+    "EngineBRuntimeInput",
+    "EngineBRuntimeResult",
+    "EngineBRuntimeStatus",
     "run_engine_b",
 ]
