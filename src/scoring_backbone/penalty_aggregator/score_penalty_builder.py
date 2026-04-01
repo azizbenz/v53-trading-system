@@ -10,6 +10,11 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from scoring_backbone.penalty_aggregator.penalty_registry import (
+    PenaltyRegistry,
+    validate_penalty_ids,
+)
+
 
 class ScorePenaltyItem(BaseModel, frozen=True):
     """A single score penalty contribution."""
@@ -31,8 +36,13 @@ class ScorePenaltyResult(BaseModel, frozen=True):
 def build_score_penalty(
     raw_score: float,
     penalties: tuple[ScorePenaltyItem, ...],
+    registry: PenaltyRegistry,
 ) -> ScorePenaltyResult:
     """Compute S_i = S_i^raw - Pen_i where Pen_i = Σ pen_{i,ℓ}."""
+    validate_penalty_ids(
+        tuple(p.penalty_id for p in penalties),
+        registry=registry,
+    )
     total = sum(p.value for p in penalties)
     adjusted = raw_score - total
 

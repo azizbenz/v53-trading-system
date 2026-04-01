@@ -6,6 +6,7 @@ from scoring_backbone.penalty_aggregator.penalty_registry import (
     PenaltyType,
     PenaltyDefinition,
     PenaltyRegistry,
+    validate_penalty_ids,
 )
 from scoring_backbone.penalty_aggregator.score_penalty_builder import (
     ScorePenaltyItem,
@@ -26,6 +27,16 @@ from scoring_backbone.penalty_aggregator.penalty_reporter import (
     PenaltyEvent,
     PenaltyReporter,
 )
+
+
+def build_registry() -> PenaltyRegistry:
+    reg = PenaltyRegistry()
+    reg.register(PenaltyDefinition(penalty_id="stale", name="Staleness", penalty_type=PenaltyType.SCORE))
+    reg.register(PenaltyDefinition(penalty_id="spread", name="Spread", penalty_type=PenaltyType.SCORE))
+    reg.register(PenaltyDefinition(penalty_id="regime", name="Regime", penalty_type=PenaltyType.SCORE))
+    reg.register(PenaltyDefinition(penalty_id="size_stale", name="Staleness sizing", penalty_type=PenaltyType.SIZE))
+    reg.register(PenaltyDefinition(penalty_id="size_spread", name="Spread sizing", penalty_type=PenaltyType.SIZE))
+    return reg
 
 
 # ── penalty_registry ──
@@ -59,46 +70,73 @@ class TestPenaltyRegistry:
         reg = PenaltyRegistry()
         assert reg.get("nope") is None
 
+    def test_validate_penalty_ids_rejects_duplicates_and_unauthorised(self):
+        reg = build_registry()
+        with pytest.raises(ValueError, match="unauthorised penalties: rogue; duplicate penalties: stale"):
+            validate_penalty_ids(("stale", "stale", "rogue"), reg)
+
 
 # ── score_penalty_builder ──
 
 
 class TestScorePenaltyBuilder:
     def test_single_penalty(self):
+        reg = build_registry()
         penalties = (ScorePenaltyItem(penalty_id="stale", value=0.5),)
-        result = build_score_penalty(raw_score=3.0, penalties=penalties)
+        result = build_score_penalty(raw_score=3.0, penalties=penalties, registry=reg)
         assert result.total_penalty == pytest.approx(0.5)
         assert result.adjusted_score == pytest.approx(2.5)
 
     def test_multiple_additive(self):
         """Pen_i = Σ pen_{i,ℓ}."""
+        reg = build_registry()
         penalties = (
             ScorePenaltyItem(penalty_id="stale", value=0.3),
             ScorePenaltyItem(penalty_id="spread", value=0.2),
             ScorePenaltyItem(penalty_id="regime", value=0.1),
         )
-        result = build_score_penalty(raw_score=3.0, penalties=penalties)
+        result = build_score_penalty(raw_score=3.0, penalties=penalties, registry=reg)
         assert result.total_penalty == pytest.approx(0.6)
         assert result.adjusted_score == pytest.approx(2.4)
 
     def test_penalties_detail_exported(self):
+        reg = build_registry()
         penalties = (
             ScorePenaltyItem(penalty_id="stale", value=0.3, reason="data stale"),
             ScorePenaltyItem(penalty_id="spread", value=0.2, reason="wide spread"),
         )
-        result = build_score_penalty(raw_score=3.0, penalties=penalties)
+        result = build_score_penalty(raw_score=3.0, penalties=penalties, registry=reg)
         assert len(result.penalties) == 2
         assert result.penalties[0].reason == "data stale"
 
     def test_no_penalties(self):
-        result = build_score_penalty(raw_score=3.0, penalties=())
+        result = build_score_penalty(raw_score=3.0, penalties=(), registry=build_registry())
         assert result.adjusted_score == pytest.approx(3.0)
         assert result.total_penalty == 0.0
 
     def test_result_frozen(self):
-        result = build_score_penalty(3.0, ())
+        result = build_score_penalty(3.0, (), registry=build_registry())
         with pytest.raises(Exception):
             result.adjusted_score = 999.0
+
+    def test_rejects_unauthorised_penalty(self):
+        with pytest.raises(ValueError, match="unauthorised penalties: rogue"):
+            build_score_penalty(
+                raw_score=3.0,
+                penalties=(ScorePenaltyItem(penalty_id="rogue", value=0.5),),
+                registry=build_registry(),
+            )
+
+    def test_rejects_duplicate_penalty_ids(self):
+        with pytest.raises(ValueError, match="duplicate penalties: stale"):
+            build_score_penalty(
+                raw_score=3.0,
+                penalties=(
+                    ScorePenaltyItem(penalty_id="stale", value=0.3),
+                    ScorePenaltyItem(penalty_id="stale", value=0.2),
+                ),
+                registry=build_registry(),
+            )
 
 
 # ── size_penalty_builder ──
@@ -106,33 +144,54 @@ class TestScorePenaltyBuilder:
 
 class TestSizePenaltyBuilder:
     def test_single_multiplier(self):
-        penalties = (SizePenaltyItem(penalty_id="stale", multiplier=0.8),)
-        result = build_size_penalty(penalties)
+        penalties = (SizePenaltyItem(penalty_id="size_stale", multiplier=0.8),)
+        result = build_size_penalty(penalties, registry=build_registry())
         assert result.total_multiplier == pytest.approx(0.8)
 
     def test_multiple_multipliers(self):
         """m_i = Π m_{i,ℓ}."""
         penalties = (
-            SizePenaltyItem(penalty_id="stale", multiplier=0.8),
-            SizePenaltyItem(penalty_id="spread", multiplier=0.9),
+            SizePenaltyItem(penalty_id="size_stale", multiplier=0.8),
+            SizePenaltyItem(penalty_id="size_spread", multiplier=0.9),
         )
-        result = build_size_penalty(penalties)
+        result = build_size_penalty(penalties, registry=build_registry())
         assert result.total_multiplier == pytest.approx(0.72)
 
     def test_log_multiplier(self):
-        penalties = (SizePenaltyItem(penalty_id="a", multiplier=0.5),)
-        result = build_size_penalty(penalties)
+        reg = build_registry()
+        reg.register(PenaltyDefinition(penalty_id="size_a", name="A sizing", penalty_type=PenaltyType.SIZE))
+        penalties = (SizePenaltyItem(penalty_id="size_a", multiplier=0.5),)
+        result = build_size_penalty(penalties, registry=reg)
         assert result.log_multiplier == pytest.approx(math.log(0.5))
 
     def test_clamp_to_floor(self):
         """Multiplier clamped to 0.001 minimum."""
-        penalties = (SizePenaltyItem(penalty_id="bad", multiplier=-0.5),)
-        result = build_size_penalty(penalties)
+        reg = build_registry()
+        reg.register(PenaltyDefinition(penalty_id="size_bad", name="Bad sizing", penalty_type=PenaltyType.SIZE))
+        penalties = (SizePenaltyItem(penalty_id="size_bad", multiplier=-0.5),)
+        result = build_size_penalty(penalties, registry=reg)
         assert result.total_multiplier == pytest.approx(0.001)
 
     def test_no_penalties(self):
-        result = build_size_penalty(())
+        result = build_size_penalty((), registry=build_registry())
         assert result.total_multiplier == pytest.approx(1.0)
+
+    def test_rejects_unauthorised_penalty(self):
+        with pytest.raises(ValueError, match="unauthorised penalties: rogue"):
+            build_size_penalty(
+                (SizePenaltyItem(penalty_id="rogue", multiplier=0.8),),
+                registry=build_registry(),
+            )
+
+    def test_rejects_duplicate_penalty_ids(self):
+        with pytest.raises(ValueError, match="duplicate penalties: size_stale"):
+            build_size_penalty(
+                (
+                    SizePenaltyItem(penalty_id="size_stale", multiplier=0.9),
+                    SizePenaltyItem(penalty_id="size_stale", multiplier=0.8),
+                ),
+                registry=build_registry(),
+            )
 
 
 # ── penalty_cap_guard ──

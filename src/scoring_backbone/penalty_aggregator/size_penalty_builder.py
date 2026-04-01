@@ -11,6 +11,11 @@ import math
 
 from pydantic import BaseModel, Field
 
+from scoring_backbone.penalty_aggregator.penalty_registry import (
+    PenaltyRegistry,
+    validate_penalty_ids,
+)
+
 
 class SizePenaltyItem(BaseModel, frozen=True):
     """A single size multiplier penalty."""
@@ -30,11 +35,16 @@ class SizePenaltyResult(BaseModel, frozen=True):
 
 def build_size_penalty(
     penalties: tuple[SizePenaltyItem, ...],
+    registry: PenaltyRegistry,
 ) -> SizePenaltyResult:
     """Compute m_i = Π m_{i,ℓ}.
 
     Each multiplier is clamped to (0, 1].
     """
+    validate_penalty_ids(
+        tuple(p.penalty_id for p in penalties),
+        registry=registry,
+    )
     total = 1.0
     for p in penalties:
         clamped = max(0.001, min(1.0, p.multiplier))

@@ -51,3 +51,36 @@ class PenaltyRegistry:
     @property
     def count(self) -> int:
         return len(self._penalties)
+
+
+def validate_penalty_ids(
+    penalty_ids: tuple[str, ...],
+    registry: PenaltyRegistry,
+) -> tuple[str, ...]:
+    """Validate that penalty ids are authorised and not duplicated."""
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    unauthorised: list[str] = []
+
+    for penalty_id in penalty_ids:
+        if penalty_id in seen and penalty_id not in duplicates:
+            duplicates.append(penalty_id)
+        seen.add(penalty_id)
+
+        if not registry.is_authorised(penalty_id) and penalty_id not in unauthorised:
+            unauthorised.append(penalty_id)
+
+    problems: list[str] = []
+    if unauthorised:
+        problems.append(
+            "unauthorised penalties: " + ", ".join(sorted(unauthorised))
+        )
+    if duplicates:
+        problems.append(
+            "duplicate penalties: " + ", ".join(sorted(duplicates))
+        )
+
+    if problems:
+        raise ValueError("; ".join(problems))
+
+    return penalty_ids
