@@ -23,6 +23,26 @@ class ShadowVerdict(StrEnum):
     BLOCKED = "blocked"
 
 
+class ShadowComponentKind(StrEnum):
+    """Canonical component families evaluated during the 30-day Shadow."""
+
+    ENGINE = "engine"
+    BUILD14_ENABLER = "build14_enabler"
+
+
+class ShadowComponentHardState(StrEnum):
+    """Canonical Shadow entry hard state for Build-11 components."""
+
+    SHADOW_ENABLED = "shadow_enabled"
+
+
+class ShadowComponentVerdict(StrEnum):
+    """Canonical per-component verdict rendered at the end of Shadow."""
+
+    SHADOW_VALIDATED = "shadow_validated"
+    DORMANT = "dormant"
+
+
 class ShadowComparisonStatus(StrEnum):
     """Status of a single baseline-vs-candidate comparison."""
 
@@ -74,6 +94,9 @@ class LiveLightVerdict(StrEnum):
 __all__ = [
     "ShadowRunState",
     "ShadowVerdict",
+    "ShadowComponentKind",
+    "ShadowComponentHardState",
+    "ShadowComponentVerdict",
     "ShadowComparisonStatus",
     "ShadowDivergenceSeverity",
     "MicroLiveRunState",

@@ -204,6 +204,13 @@ class ShadowProjection(BaseModel, frozen=True):
     import_lineage_version: str = "n/a"
     blocking_reasons: tuple[str, ...] = ()
     manual_review_required: bool = False
+    shadow_days_completed: int = Field(default=0, ge=0)
+    shadow_required_days: int = Field(default=30, ge=1)
+    shadow_report_ready: bool = False
+    active_engine_count: int = Field(default=0, ge=0)
+    build14_enabler_count: int = Field(default=0, ge=0)
+    shadow_validated_component_count: int = Field(default=0, ge=0)
+    dormant_component_count: int = Field(default=0, ge=0)
 
 
 class MicroLiveProjection(BaseModel, frozen=True):

@@ -10,6 +10,9 @@ from protocols.enums import (
     LiveLightVerdict,
     MicroLiveRunState,
     MicroLiveVerdict,
+    ShadowComponentHardState,
+    ShadowComponentKind,
+    ShadowComponentVerdict,
     ShadowComparisonStatus,
     ShadowDivergenceSeverity,
     ShadowRunState,
@@ -20,6 +23,18 @@ from protocols.enums import (
 _ACCEPTED_IMPORT_STATUSES = frozenset({"accepted"})
 _ACCEPTED_ONBOARDING_REVIEW_STATES = frozenset(
     {ReviewState.PENDING, ReviewState.APPROVED}
+)
+_REQUIRED_SHADOW_ENGINE_IDS = frozenset(
+    {"engine_a", "engine_b", "engine_c", "engine_d"}
+)
+_REQUIRED_SHADOW_BUILD14_COMPONENT_IDS = frozenset(
+    {
+        "build14_microstructure",
+        "build14_regime",
+        "build14_covariance",
+        "build14_risk_contribution",
+        "build14_edge_diversity",
+    }
 )
 _MICRO_LIVE_ALLOWED_ENGINES = frozenset({"engine_a", "engine_b"})
 _LIVE_LIGHT_ALLOWED_ENGINES = frozenset({"engine_a", "engine_b"})
@@ -58,6 +73,14 @@ class ShadowValidationSet(BaseModel, frozen=True):
     open_hypotheses: int = Field(default=0, ge=0)
     replay_candidate_count: int = Field(default=0, ge=0)
     review_export_ready: bool = False
+    active_engines: tuple[str, ...] = ()
+    build14_status: str = "planned"
+    shadow_days_completed: int = Field(default=0, ge=0)
+    shadow_required_days: int = Field(default=30, ge=1)
+    shadow_report_ready: bool = False
+    inter_engine_comparison_ready: bool = False
+    build14_contribution_ready: bool = False
+    component_assessments: tuple["ShadowComponentAssessment", ...] = ()
 
     @model_validator(mode="after")
     def validate_import_consistency(self) -> "ShadowValidationSet":
@@ -78,6 +101,41 @@ class ShadowValidationSet(BaseModel, frozen=True):
                 "accepted import_validation_status requires accepted_import=True"
             )
 
+        if self.shadow_required_days != 30:
+            raise ValueError("Build-11 Shadow requires shadow_required_days=30")
+
+        if len(self.active_engines) != len(set(self.active_engines)):
+            raise ValueError("Build-11 Shadow active_engines must be unique")
+
+        component_ids = tuple(
+            assessment.component_id for assessment in self.component_assessments
+        )
+        if len(component_ids) != len(set(component_ids)):
+            raise ValueError(
+                "Build-11 Shadow component assessments must be unique per component"
+            )
+
+        return self
+
+
+class ShadowComponentAssessment(BaseModel, frozen=True):
+    """Per-component Shadow activation + verdict evidence for Build-11."""
+
+    component_id: str = Field(..., min_length=1)
+    component_kind: ShadowComponentKind
+    hard_state: ShadowComponentHardState = ShadowComponentHardState.SHADOW_ENABLED
+    verdict: ShadowComponentVerdict
+    evidence_summary: str = Field(..., min_length=1)
+
+    @model_validator(mode="after")
+    def validate_component_identity(self) -> "ShadowComponentAssessment":
+        if self.component_kind == ShadowComponentKind.ENGINE:
+            if self.component_id not in _REQUIRED_SHADOW_ENGINE_IDS:
+                raise ValueError("Build-11 Shadow engine assessment is out of scope")
+        elif self.component_id not in _REQUIRED_SHADOW_BUILD14_COMPONENT_IDS:
+            raise ValueError(
+                "Build-11 Shadow Build-14 assessment is out of scope"
+            )
         return self
 
 
@@ -157,6 +215,14 @@ class ShadowRunSummary(BaseModel, frozen=True):
     open_hypotheses: int = Field(default=0, ge=0)
     replay_candidate_count: int = Field(default=0, ge=0)
     review_export_ready: bool = False
+    active_engines: tuple[str, ...] = ()
+    build14_status: str = "planned"
+    shadow_days_completed: int = Field(default=0, ge=0)
+    shadow_required_days: int = Field(default=30, ge=1)
+    shadow_report_ready: bool = False
+    inter_engine_comparison_ready: bool = False
+    build14_contribution_ready: bool = False
+    component_assessments: tuple[ShadowComponentAssessment, ...] = ()
 
     @property
     def blocking_comparison_count(self) -> int:
@@ -169,6 +235,34 @@ class ShadowRunSummary(BaseModel, frozen=True):
             for comparison in self.comparisons
             if comparison.status == ShadowComparisonStatus.DIVERGENT
         )
+
+    @property
+    def shadow_validated_component_count(self) -> int:
+        return sum(
+            1
+            for assessment in self.component_assessments
+            if assessment.verdict == ShadowComponentVerdict.SHADOW_VALIDATED
+        )
+
+    @property
+    def dormant_component_count(self) -> int:
+        return sum(
+            1
+            for assessment in self.component_assessments
+            if assessment.verdict == ShadowComponentVerdict.DORMANT
+        )
+
+    @property
+    def build14_component_count(self) -> int:
+        return sum(
+            1
+            for assessment in self.component_assessments
+            if assessment.component_kind == ShadowComponentKind.BUILD14_ENABLER
+        )
+
+    @property
+    def remaining_shadow_days(self) -> int:
+        return max(0, self.shadow_required_days - self.shadow_days_completed)
 
 
 class MicroLiveInput(BaseModel, frozen=True):
@@ -588,6 +682,9 @@ class LiveLightRunSummary(BaseModel, frozen=True):
     @property
     def planned_engine_count(self) -> int:
         return len(self.execution_intent.planned_engines)
+
+
+ShadowValidationSet.model_rebuild()
 
 
 __all__ = [

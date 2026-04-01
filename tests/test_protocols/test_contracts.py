@@ -21,6 +21,10 @@ from protocols import (
     MicroLiveRunSummary,
     MicroLiveVerdict,
     ShadowComparison,
+    ShadowComponentAssessment,
+    ShadowComponentHardState,
+    ShadowComponentKind,
+    ShadowComponentVerdict,
     ShadowComparisonStatus,
     ShadowDecision,
     ShadowDivergenceSeverity,
@@ -55,8 +59,12 @@ def test_protocols_exports_expected_symbols():
         "ShadowValidationSet",
         "ShadowInput",
         "ShadowComparison",
+        "ShadowComponentAssessment",
         "ShadowDecision",
         "ShadowRunSummary",
+        "ShadowComponentKind",
+        "ShadowComponentHardState",
+        "ShadowComponentVerdict",
         "build_shadow_input_from_payloads",
         "compare_shadow_candidate",
         "run_shadow_validation",
@@ -250,6 +258,52 @@ def test_shadow_validation_set_rejects_accepted_status_when_accept_flag_is_false
             import_validation_status="accepted",
             import_artifact_id="artifact-1",
             import_lineage_version="a.v1.0.r1",
+        )
+
+
+def test_shadow_validation_set_rejects_non_30_day_required_gate():
+    with pytest.raises(ValidationError, match="shadow_required_days=30"):
+        ShadowValidationSet(
+            validation_ref="validation-1",
+            dtr_coverage=0.81,
+            cra_sterilization_rate=0.12,
+            break_even_drift_scope_count=0,
+            edge_degraded_count=0,
+            ce_net=0.0009,
+            active_alert_count=1,
+            queue_backlog=14,
+            accepted_import=True,
+            import_validation_status="accepted",
+            import_artifact_id="artifact-1",
+            import_lineage_version="a.v1.0.r1",
+            shadow_required_days=29,
+        )
+
+
+def test_shadow_validation_set_rejects_duplicate_component_assessments():
+    assessment = ShadowComponentAssessment(
+        component_id="engine_a",
+        component_kind=ShadowComponentKind.ENGINE,
+        hard_state=ShadowComponentHardState.SHADOW_ENABLED,
+        verdict=ShadowComponentVerdict.SHADOW_VALIDATED,
+        evidence_summary="engine_a remained useful throughout Shadow",
+    )
+
+    with pytest.raises(ValidationError, match="component assessments must be unique"):
+        ShadowValidationSet(
+            validation_ref="validation-1",
+            dtr_coverage=0.81,
+            cra_sterilization_rate=0.12,
+            break_even_drift_scope_count=0,
+            edge_degraded_count=0,
+            ce_net=0.0009,
+            active_alert_count=1,
+            queue_backlog=14,
+            accepted_import=True,
+            import_validation_status="accepted",
+            import_artifact_id="artifact-1",
+            import_lineage_version="a.v1.0.r1",
+            component_assessments=(assessment, assessment),
         )
 
 

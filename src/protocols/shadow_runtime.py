@@ -1,11 +1,17 @@
-"""Minimal real Build-11 Shadow orchestration."""
+"""Minimal real Build-11 Shadow orchestration.
+
+HARD STATEMENT §0.6: 30 consecutive shadow days required before promotion.
+"""
 
 from __future__ import annotations
+
+from pathlib import Path
 
 from interface_contracts import ProfileId, PromotionState, ReviewState, RuntimeMode
 from monitoring import TechnicalDashboardPayload
 from protocols.contracts import (
     ShadowComparison,
+    ShadowComponentAssessment,
     ShadowDecision,
     ShadowInput,
     ShadowRunSummary,
@@ -13,12 +19,25 @@ from protocols.contracts import (
     ShadowValidationSet,
 )
 from protocols.enums import (
+    ShadowComponentKind,
     ShadowComparisonStatus,
     ShadowDivergenceSeverity,
     ShadowRunState,
     ShadowVerdict,
 )
 from protocols.errors import ShadowInputError
+
+
+_REQUIRED_SHADOW_ENGINES = frozenset({"engine_a", "engine_b", "engine_c", "engine_d"})
+_REQUIRED_BUILD14_COMPONENTS = frozenset(
+    {
+        "build14_microstructure",
+        "build14_regime",
+        "build14_covariance",
+        "build14_risk_contribution",
+        "build14_edge_diversity",
+    }
+)
 
 
 def _validate_shadow_payload_scope(
@@ -42,6 +61,11 @@ def build_shadow_input_from_payloads(
     *,
     truth_ref: str,
     validation_ref: str,
+    component_assessments: tuple[ShadowComponentAssessment, ...],
+    shadow_days_completed: int,
+    shadow_report_ready: bool,
+    inter_engine_comparison_ready: bool,
+    build14_contribution_ready: bool,
     max_allowed_dtr_coverage_drop: float = 0.05,
     max_allowed_cra_increase: float = 0.10,
     max_allowed_break_even_drift_scope_increase: int = 0,
@@ -83,6 +107,14 @@ def build_shadow_input_from_payloads(
         open_hypotheses=candidate_payload.build9x.open_hypotheses,
         replay_candidate_count=candidate_payload.build9x.replay_candidate_count,
         review_export_ready=candidate_payload.build9x.review_export_ready,
+        active_engines=candidate_payload.system.active_engines,
+        build14_status=candidate_payload.system.build14_status,
+        shadow_days_completed=shadow_days_completed,
+        shadow_required_days=30,
+        shadow_report_ready=shadow_report_ready,
+        inter_engine_comparison_ready=inter_engine_comparison_ready,
+        build14_contribution_ready=build14_contribution_ready,
+        component_assessments=component_assessments,
     )
     return ShadowInput(
         correlation_id=candidate_payload.correlation_id,
@@ -98,6 +130,26 @@ def build_shadow_input_from_payloads(
         max_allowed_alert_count_increase=max_allowed_alert_count_increase,
         max_allowed_queue_backlog_increase=max_allowed_queue_backlog_increase,
     )
+
+
+def _missing_shadow_components(
+    assessments: tuple[ShadowComponentAssessment, ...],
+) -> tuple[str, ...]:
+    seen_engines = {
+        assessment.component_id
+        for assessment in assessments
+        if assessment.component_kind == ShadowComponentKind.ENGINE
+    }
+    seen_build14 = {
+        assessment.component_id
+        for assessment in assessments
+        if assessment.component_kind == ShadowComponentKind.BUILD14_ENABLER
+    }
+    missing = sorted(
+        (_REQUIRED_SHADOW_ENGINES - seen_engines)
+        | (_REQUIRED_BUILD14_COMPONENTS - seen_build14)
+    )
+    return tuple(missing)
 
 
 def _comparison(
@@ -221,6 +273,11 @@ def run_shadow_validation(
     blocking_reasons: list[str] = []
     structurally_blocked = False
     normalized_validation_status = validation.import_validation_status.strip().casefold()
+    missing_engines = tuple(
+        sorted(_REQUIRED_SHADOW_ENGINES - set(validation.active_engines))
+    )
+    missing_components = _missing_shadow_components(validation.component_assessments)
+    normalized_build14_status = validation.build14_status.strip().casefold()
 
     if not validation.accepted_import:
         structurally_blocked = True
@@ -241,6 +298,43 @@ def run_shadow_validation(
     blocking_reasons.extend(
         f"import gate: {reason}" for reason in validation.import_rejection_reasons
     )
+    if validation.shadow_days_completed < validation.shadow_required_days:
+        structurally_blocked = True
+        blocking_reasons.append(
+            "Build-11 Shadow requires 30 consecutive days before the verdict gate"
+        )
+    if not validation.shadow_report_ready:
+        structurally_blocked = True
+        blocking_reasons.append(
+            "Build-11 Shadow requires a complete shadow report before the verdict gate"
+        )
+    if not validation.inter_engine_comparison_ready:
+        structurally_blocked = True
+        blocking_reasons.append(
+            "Build-11 Shadow requires an inter-engine A/B/C/D comparison in the report"
+        )
+    if not validation.build14_contribution_ready:
+        structurally_blocked = True
+        blocking_reasons.append(
+            "Build-11 Shadow requires Build-14 contribution evidence in the report"
+        )
+    if missing_engines:
+        structurally_blocked = True
+        blocking_reasons.append(
+            "Build-11 Shadow requires A/B/C/D active in Shadow: "
+            + ", ".join(missing_engines)
+        )
+    if normalized_build14_status == "planned":
+        structurally_blocked = True
+        blocking_reasons.append(
+            "Build-11 Shadow requires Build-14 to be active, not planned"
+        )
+    if missing_components:
+        structurally_blocked = True
+        blocking_reasons.append(
+            "Build-11 Shadow requires component verdicts for all engines and Build-14 enablers: "
+            + ", ".join(missing_components)
+        )
 
     blocking_reasons.extend(
         comparison.summary for comparison in comparisons if comparison.blocking
@@ -307,11 +401,41 @@ def run_shadow_validation(
         open_hypotheses=validation.open_hypotheses,
         replay_candidate_count=validation.replay_candidate_count,
         review_export_ready=validation.review_export_ready,
+        active_engines=validation.active_engines,
+        build14_status=validation.build14_status,
+        shadow_days_completed=validation.shadow_days_completed,
+        shadow_required_days=validation.shadow_required_days,
+        shadow_report_ready=validation.shadow_report_ready,
+        inter_engine_comparison_ready=validation.inter_engine_comparison_ready,
+        build14_contribution_ready=validation.build14_contribution_ready,
+        component_assessments=validation.component_assessments,
     )
+
+
+def check_shadow_30j_gate(
+    state_dir: Path,
+    profile: str = "light",
+) -> tuple[bool, dict]:
+    """HARD STATEMENT §0.6: check if 30 consecutive shadow days are met.
+
+    Args:
+        state_dir: Directory containing persisted shadow counter state.
+        profile: "light" or "complete".
+
+    Returns:
+        (gate_passed, report_dict)
+    """
+    from protocols.shadow_day_counter import ShadowDayCounter, ShadowProfile
+
+    shadow_profile = ShadowProfile(profile)
+    counter = ShadowDayCounter(state_dir=state_dir, profile=shadow_profile)
+    report = counter.generate_report()
+    return counter.is_promotion_ready(), report
 
 
 __all__ = [
     "build_shadow_input_from_payloads",
     "compare_shadow_candidate",
     "run_shadow_validation",
+    "check_shadow_30j_gate",
 ]

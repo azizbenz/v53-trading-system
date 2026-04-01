@@ -38,6 +38,13 @@ def build_shadow_projection(summary: ShadowRunSummary) -> ShadowProjection:
         import_lineage_version=summary.import_lineage_version or "n/a",
         blocking_reasons=summary.decision.blocking_reasons,
         manual_review_required=summary.decision.manual_review_required,
+        shadow_days_completed=summary.shadow_days_completed,
+        shadow_required_days=summary.shadow_required_days,
+        shadow_report_ready=summary.shadow_report_ready,
+        active_engine_count=len(summary.active_engines),
+        build14_enabler_count=summary.build14_component_count,
+        shadow_validated_component_count=summary.shadow_validated_component_count,
+        dormant_component_count=summary.dormant_component_count,
     )
 
 
@@ -76,6 +83,25 @@ def build_shadow_dashboard_section(summary: ShadowRunSummary) -> DashboardSectio
                 ),
             ),
             DashboardCard(
+                key="shadow_day_counter",
+                label="Shadow 30-Day Gate",
+                value=(
+                    f"{projection.shadow_days_completed}/"
+                    f"{projection.shadow_required_days}"
+                ),
+                status=(
+                    "healthy"
+                    if projection.shadow_days_completed >= projection.shadow_required_days
+                    and projection.shadow_report_ready
+                    else "critical"
+                ),
+                detail=(
+                    "shadow report ready"
+                    if projection.shadow_report_ready
+                    else "shadow report incomplete"
+                ),
+            ),
+            DashboardCard(
                 key="shadow_divergences",
                 label="Divergences",
                 value=comparison_detail,
@@ -108,6 +134,24 @@ def build_shadow_dashboard_section(summary: ShadowRunSummary) -> DashboardSectio
                 value=projection.import_lineage_version,
                 status="healthy" if projection.import_lineage_version != "n/a" else "critical",
                 detail=projection.import_artifact_id or "No import artifact id",
+            ),
+            DashboardCard(
+                key="shadow_component_verdicts",
+                label="Component Verdicts",
+                value=(
+                    f"validated={projection.shadow_validated_component_count} / "
+                    f"dormant={projection.dormant_component_count}"
+                ),
+                status=(
+                    "healthy"
+                    if projection.build14_enabler_count >= 5
+                    and projection.active_engine_count >= 4
+                    else "critical"
+                ),
+                detail=(
+                    f"engines={projection.active_engine_count} / "
+                    f"build14={projection.build14_enabler_count}"
+                ),
             ),
             DashboardCard(
                 key="shadow_blocking_reasons",
