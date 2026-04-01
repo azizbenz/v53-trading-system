@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
+from pydantic import ValidationError
 
 from complete_enablers import (
     Build14InfluenceAction,
     Build14InfluenceMode,
+    Build14InfluenceReport,
     Build14InfluenceSignal,
+    Build14ObservationInput,
     Build14Severity,
     Build14SignalFamily,
+    evaluate_build14_limited_influence,
 )
 from interface_contracts import PairHealthLevel, ProfileId, ReviewState, RuntimeMode
 from monitoring import (
@@ -124,6 +130,13 @@ def _micro_live_payload(
             import_lineage_version=lineage_version,
             blocking_reasons=(),
             manual_review_required=False,
+            shadow_days_completed=30,
+            shadow_required_days=30,
+            shadow_report_ready=True,
+            active_engine_count=4,
+            build14_enabler_count=4,
+            shadow_validated_component_count=6,
+            dormant_component_count=1,
         ),
         micro_live=MicroLiveProjection(
             status="healthy",
@@ -228,6 +241,7 @@ def test_build_live_light_input_from_micro_live_maps_governed_inputs():
         requested_pair_notional_usdt=40.0,
         max_total_notional_usdt=100.0,
         max_pair_notional_usdt=50.0,
+        micro_live_stable_days=7,
         observability_ready=True,
         halt_ready=True,
         execution_ready=True,
@@ -255,6 +269,7 @@ def test_build_live_light_input_from_micro_live_rejects_non_micro_live_source_pa
             requested_pair_notional_usdt=40.0,
             max_total_notional_usdt=100.0,
             max_pair_notional_usdt=50.0,
+            micro_live_stable_days=7,
             observability_ready=True,
             halt_ready=True,
             execution_ready=True,
@@ -277,6 +292,7 @@ def test_build_live_light_input_from_micro_live_rejects_import_artifact_mismatch
             requested_pair_notional_usdt=40.0,
             max_total_notional_usdt=100.0,
             max_pair_notional_usdt=50.0,
+            micro_live_stable_days=7,
             observability_ready=True,
             halt_ready=True,
             execution_ready=True,
@@ -299,6 +315,7 @@ def test_build_live_light_input_from_micro_live_rejects_import_lineage_mismatch(
             requested_pair_notional_usdt=40.0,
             max_total_notional_usdt=100.0,
             max_pair_notional_usdt=50.0,
+            micro_live_stable_days=7,
             observability_ready=True,
             halt_ready=True,
             execution_ready=True,
@@ -321,6 +338,7 @@ def test_build_live_light_input_from_micro_live_rejects_non_empty_import_rejecti
             requested_pair_notional_usdt=40.0,
             max_total_notional_usdt=100.0,
             max_pair_notional_usdt=50.0,
+            micro_live_stable_days=7,
             observability_ready=True,
             halt_ready=True,
             execution_ready=True,
@@ -343,6 +361,60 @@ def test_build_live_light_input_from_micro_live_rejects_live_pairs_outside_micro
             requested_pair_notional_usdt=40.0,
             max_total_notional_usdt=100.0,
             max_pair_notional_usdt=50.0,
+            micro_live_stable_days=7,
+            observability_ready=True,
+            halt_ready=True,
+            execution_ready=True,
+            broker_ready=True,
+            exchange_ready=True,
+            onboarding_accepted=True,
+        )
+
+
+def test_build_live_light_input_from_micro_live_rejects_incomplete_shadow_from_payload():
+    payload = _micro_live_payload().model_copy(
+        update={
+            "shadow": _micro_live_payload().shadow.model_copy(
+                update={
+                    "shadow_days_completed": 29,
+                    "shadow_report_ready": False,
+                    "shadow_validated_component_count": 0,
+                    "dormant_component_count": 0,
+                }
+            )
+        }
+    )
+
+    with pytest.raises(ValidationError, match="completed 30-day Shadow"):
+        build_live_light_input_from_micro_live(
+            _micro_live_summary(),
+            payload,
+            live_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=80.0,
+            requested_pair_notional_usdt=40.0,
+            max_total_notional_usdt=100.0,
+            max_pair_notional_usdt=50.0,
+            micro_live_stable_days=7,
+            observability_ready=True,
+            halt_ready=True,
+            execution_ready=True,
+            broker_ready=True,
+            exchange_ready=True,
+            onboarding_accepted=True,
+        )
+
+
+def test_build_live_light_input_from_micro_live_rejects_insufficient_stable_days():
+    with pytest.raises(ValidationError, match="requires 7 stable Micro-live days"):
+        build_live_light_input_from_micro_live(
+            _micro_live_summary(),
+            _micro_live_payload(),
+            live_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=80.0,
+            requested_pair_notional_usdt=40.0,
+            max_total_notional_usdt=100.0,
+            max_pair_notional_usdt=50.0,
+            micro_live_stable_days=6,
             observability_ready=True,
             halt_ready=True,
             execution_ready=True,
@@ -362,6 +434,7 @@ def test_run_live_light_gate_allows_small_execution_when_micro_live_and_guards_a
             requested_pair_notional_usdt=40.0,
             max_total_notional_usdt=100.0,
             max_pair_notional_usdt=50.0,
+            micro_live_stable_days=7,
             observability_ready=True,
             halt_ready=True,
             execution_ready=True,
@@ -387,12 +460,14 @@ def test_run_live_light_gate_applies_build14_budget_downgrade_without_bypass():
             requested_pair_notional_usdt=40.0,
             max_total_notional_usdt=100.0,
             max_pair_notional_usdt=50.0,
+            micro_live_stable_days=7,
             observability_ready=True,
             halt_ready=True,
             execution_ready=True,
             broker_ready=True,
             exchange_ready=True,
             onboarding_accepted=True,
+            build14_live_eligible=True,
         ),
         build14_influence=Build14InfluenceSignal(
             correlation_id="corr-live",
@@ -426,12 +501,14 @@ def test_run_live_light_gate_keeps_build14_review_only_governed():
             requested_pair_notional_usdt=40.0,
             max_total_notional_usdt=100.0,
             max_pair_notional_usdt=50.0,
+            micro_live_stable_days=7,
             observability_ready=True,
             halt_ready=True,
             execution_ready=True,
             broker_ready=True,
             exchange_ready=True,
             onboarding_accepted=True,
+            build14_live_eligible=True,
         ),
         build14_influence=Build14InfluenceSignal(
             correlation_id="corr-live",
@@ -454,6 +531,89 @@ def test_run_live_light_gate_keeps_build14_review_only_governed():
     assert "build14 gate: execution_fragility_score_critical" in summary.decision.blocking_reasons
 
 
+def test_run_live_light_gate_accepts_typed_build14_report_with_matching_correlation():
+    report = evaluate_build14_limited_influence(
+        Build14ObservationInput(
+            correlation_id="corr-live",
+            dtr_coverage=0.75,
+            cra_sterilization_rate=0.45,
+            cra_alert_count=2,
+            break_even_drift_alert=True,
+            edge_degraded_count=1,
+            queue_backlog=55,
+            stale_pair_count=0,
+            dtr_loss_count=0,
+            log_loss_count=0,
+            ce_net=0.0012,
+        )
+    )
+    summary = run_live_light_gate(
+        build_live_light_input_from_micro_live(
+            _micro_live_summary(),
+            _micro_live_payload(),
+            live_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=80.0,
+            requested_pair_notional_usdt=40.0,
+            max_total_notional_usdt=100.0,
+            max_pair_notional_usdt=50.0,
+            micro_live_stable_days=7,
+            observability_ready=True,
+            halt_ready=True,
+            execution_ready=True,
+            broker_ready=True,
+            exchange_ready=True,
+            onboarding_accepted=True,
+            build14_live_eligible=True,
+        ),
+        build14_influence=report,
+    )
+
+    assert summary.decision.verdict == LiveLightVerdict.ALLOWED_TO_EXECUTE_SMALL
+    assert summary.execution_intent.approved_total_notional_usdt == 68.0
+    assert summary.build14_action == "downgrade_confidence"
+
+
+def test_run_live_light_gate_blocks_build14_influence_without_explicit_live_eligibility():
+    summary = run_live_light_gate(
+        build_live_light_input_from_micro_live(
+            _micro_live_summary(),
+            _micro_live_payload(),
+            live_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=80.0,
+            requested_pair_notional_usdt=40.0,
+            max_total_notional_usdt=100.0,
+            max_pair_notional_usdt=50.0,
+            micro_live_stable_days=7,
+            observability_ready=True,
+            halt_ready=True,
+            execution_ready=True,
+            broker_ready=True,
+            exchange_ready=True,
+            onboarding_accepted=True,
+        ),
+        build14_influence=Build14InfluenceSignal(
+            correlation_id="corr-live",
+            influence_mode=Build14InfluenceMode.LIMITED_INFLUENCE,
+            action=Build14InfluenceAction.DOWNGRADE_CONFIDENCE,
+            severity=Build14Severity.ELEVATED,
+            families=(Build14SignalFamily.MICROSTRUCTURE,),
+            summary="Build-14 live influence must stay gated post-Shadow",
+            reason_codes=("market_toxicity_snapshot_elevated",),
+            confidence_penalty_weight=0.10,
+            recommended_budget_factor=0.85,
+            requires_manual_review=False,
+            candidate_effect="confidence_downgrade",
+        ),
+    )
+
+    assert summary.decision.verdict == LiveLightVerdict.BLOCKED
+    assert summary.decision.allowed_to_execute_small is False
+    assert (
+        "Build-14 live influence requires explicit post-Shadow live eligibility"
+        in summary.decision.blocking_reasons
+    )
+
+
 def test_run_live_light_gate_blocks_when_execution_or_onboarding_is_missing():
     summary = run_live_light_gate(
         build_live_light_input_from_micro_live(
@@ -464,6 +624,7 @@ def test_run_live_light_gate_blocks_when_execution_or_onboarding_is_missing():
             requested_pair_notional_usdt=40.0,
             max_total_notional_usdt=100.0,
             max_pair_notional_usdt=50.0,
+            micro_live_stable_days=7,
             observability_ready=True,
             halt_ready=True,
             execution_ready=False,
@@ -492,6 +653,7 @@ def test_run_live_light_gate_stays_dry_run_only_when_micro_live_needs_review():
             requested_pair_notional_usdt=40.0,
             max_total_notional_usdt=100.0,
             max_pair_notional_usdt=50.0,
+            micro_live_stable_days=7,
             observability_ready=True,
             halt_ready=True,
             execution_ready=True,
@@ -519,6 +681,7 @@ def test_run_live_light_gate_keeps_hard_blockers_stronger_than_dry_run():
             requested_pair_notional_usdt=40.0,
             max_total_notional_usdt=100.0,
             max_pair_notional_usdt=50.0,
+            micro_live_stable_days=7,
             observability_ready=True,
             halt_ready=False,
             execution_ready=True,
@@ -541,12 +704,14 @@ def test_run_live_light_gate_blocks_model_constructed_import_provenance_mismatch
         requested_pair_notional_usdt=40.0,
         max_total_notional_usdt=100.0,
         max_pair_notional_usdt=50.0,
+        micro_live_stable_days=7,
         observability_ready=True,
         halt_ready=True,
         execution_ready=True,
         broker_ready=True,
         exchange_ready=True,
         onboarding_accepted=True,
+        build14_live_eligible=True,
     )
 
     contradictory_input = LiveLightInput.model_construct(
@@ -571,12 +736,14 @@ def test_run_live_light_gate_blocks_model_constructed_onboarding_contradiction()
         requested_pair_notional_usdt=40.0,
         max_total_notional_usdt=100.0,
         max_pair_notional_usdt=50.0,
+        micro_live_stable_days=7,
         observability_ready=True,
         halt_ready=True,
         execution_ready=True,
         broker_ready=True,
         exchange_ready=True,
         onboarding_accepted=True,
+        build14_live_eligible=True,
     )
 
     contradictory_input = LiveLightInput.model_construct(
@@ -592,6 +759,181 @@ def test_run_live_light_gate_blocks_model_constructed_onboarding_contradiction()
     assert "accepted onboarding must keep a pending or approved review_state" in summary.decision.blocking_reasons
 
 
+def test_run_live_light_gate_blocks_typed_build14_signal_with_foreign_correlation_id():
+    live_input = build_live_light_input_from_micro_live(
+        _micro_live_summary(),
+        _micro_live_payload(),
+        live_pairs=("BTCUSDT",),
+        requested_total_notional_usdt=80.0,
+        requested_pair_notional_usdt=40.0,
+        max_total_notional_usdt=100.0,
+        max_pair_notional_usdt=50.0,
+        micro_live_stable_days=7,
+        observability_ready=True,
+        halt_ready=True,
+        execution_ready=True,
+        broker_ready=True,
+        exchange_ready=True,
+        onboarding_accepted=True,
+        build14_live_eligible=True,
+    )
+
+    summary = run_live_light_gate(
+        live_input,
+        build14_influence=Build14InfluenceSignal(
+            correlation_id="corr-other",
+            influence_mode=Build14InfluenceMode.LIMITED_INFLUENCE,
+            action=Build14InfluenceAction.REVIEW_ONLY,
+            severity=Build14Severity.CRITICAL,
+            families=(Build14SignalFamily.AI_EDGE,),
+            summary="Foreign Build-14 signal must be rejected",
+            reason_codes=("execution_fragility_score_critical",),
+            confidence_penalty_weight=0.15,
+            recommended_budget_factor=0.0,
+            requires_manual_review=True,
+            candidate_effect="review_only",
+        ),
+    )
+
+    assert summary.decision.verdict == LiveLightVerdict.BLOCKED
+    assert summary.decision.allowed_to_execute_small is False
+    assert (
+        "Build-14 influence correlation_id must match the current Live-Light run"
+        in summary.decision.blocking_reasons
+    )
+
+
+def test_run_live_light_gate_blocks_untyped_build14_object():
+    live_input = build_live_light_input_from_micro_live(
+        _micro_live_summary(),
+        _micro_live_payload(),
+        live_pairs=("BTCUSDT",),
+        requested_total_notional_usdt=80.0,
+        requested_pair_notional_usdt=40.0,
+        max_total_notional_usdt=100.0,
+        max_pair_notional_usdt=50.0,
+        micro_live_stable_days=7,
+        observability_ready=True,
+        halt_ready=True,
+        execution_ready=True,
+        broker_ready=True,
+        exchange_ready=True,
+        onboarding_accepted=True,
+        build14_live_eligible=True,
+    )
+    rogue_object = SimpleNamespace(
+        correlation_id="corr-live",
+        influence_mode="limited_influence",
+        action="review_only",
+        severity="critical",
+        families=("ai_edge",),
+        summary="Untyped object must be rejected",
+        reason_codes=("execution_fragility_score_critical",),
+        confidence_penalty_weight=0.15,
+        recommended_budget_factor=0.0,
+        requires_manual_review=True,
+        candidate_effect="review_only",
+        stability_confirmed=True,
+        non_regression_required=True,
+        can_override_engines=False,
+        can_bypass_risk=False,
+        can_bypass_portfolio=False,
+        can_trade_autonomously=False,
+    )
+
+    summary = run_live_light_gate(live_input, build14_influence=rogue_object)
+
+    assert summary.decision.verdict == LiveLightVerdict.BLOCKED
+    assert summary.decision.allowed_to_execute_small is False
+    assert (
+        "Build-14 influence must be a typed Build14InfluenceSignal or Build14InfluenceReport"
+        in summary.decision.blocking_reasons
+    )
+
+
+def test_run_live_light_gate_blocks_model_constructed_partial_build14_report():
+    live_input = build_live_light_input_from_micro_live(
+        _micro_live_summary(),
+        _micro_live_payload(),
+        live_pairs=("BTCUSDT",),
+        requested_total_notional_usdt=80.0,
+        requested_pair_notional_usdt=40.0,
+        max_total_notional_usdt=100.0,
+        max_pair_notional_usdt=50.0,
+        micro_live_stable_days=7,
+        observability_ready=True,
+        halt_ready=True,
+        execution_ready=True,
+        broker_ready=True,
+        exchange_ready=True,
+        onboarding_accepted=True,
+        build14_live_eligible=True,
+    )
+    contradictory_report = Build14InfluenceReport.model_construct(
+        correlation_id="corr-live",
+        snapshots=(),
+        signal=None,
+    )
+
+    summary = run_live_light_gate(live_input, build14_influence=contradictory_report)
+
+    assert summary.decision.verdict == LiveLightVerdict.BLOCKED
+    assert summary.decision.allowed_to_execute_small is False
+    assert any(
+        "Build-14 influence failed typed contract validation" in reason
+        for reason in summary.decision.blocking_reasons
+    )
+
+
+def test_run_live_light_gate_blocks_model_constructed_build14_foreign_correlation():
+    live_input = build_live_light_input_from_micro_live(
+        _micro_live_summary(),
+        _micro_live_payload(),
+        live_pairs=("BTCUSDT",),
+        requested_total_notional_usdt=80.0,
+        requested_pair_notional_usdt=40.0,
+        max_total_notional_usdt=100.0,
+        max_pair_notional_usdt=50.0,
+        micro_live_stable_days=7,
+        observability_ready=True,
+        halt_ready=True,
+        execution_ready=True,
+        broker_ready=True,
+        exchange_ready=True,
+        onboarding_accepted=True,
+        build14_live_eligible=True,
+    )
+    contradictory_signal = Build14InfluenceSignal.model_construct(
+        correlation_id="corr-other",
+        influence_mode=Build14InfluenceMode.LIMITED_INFLUENCE,
+        action=Build14InfluenceAction.REVIEW_ONLY,
+        severity=Build14Severity.CRITICAL,
+        families=(Build14SignalFamily.AI_EDGE,),
+        summary="Foreign model-constructed signal must be rejected",
+        reason_codes=("execution_fragility_score_critical",),
+        confidence_penalty_weight=0.15,
+        recommended_budget_factor=0.0,
+        requires_manual_review=True,
+        candidate_effect="review_only",
+        stability_confirmed=True,
+        non_regression_required=True,
+        can_override_engines=False,
+        can_bypass_risk=False,
+        can_bypass_portfolio=False,
+        can_trade_autonomously=False,
+        classification="build14_enabler",
+    )
+
+    summary = run_live_light_gate(live_input, build14_influence=contradictory_signal)
+
+    assert summary.decision.verdict == LiveLightVerdict.BLOCKED
+    assert summary.decision.allowed_to_execute_small is False
+    assert (
+        "Build-14 influence correlation_id must match the current Live-Light run"
+        in summary.decision.blocking_reasons
+    )
+
+
 def test_run_live_light_gate_blocks_model_constructed_build14_guardrail_bypass():
     live_input = build_live_light_input_from_micro_live(
         _micro_live_summary(),
@@ -601,12 +943,14 @@ def test_run_live_light_gate_blocks_model_constructed_build14_guardrail_bypass()
         requested_pair_notional_usdt=40.0,
         max_total_notional_usdt=100.0,
         max_pair_notional_usdt=50.0,
+        micro_live_stable_days=7,
         observability_ready=True,
         halt_ready=True,
         execution_ready=True,
         broker_ready=True,
         exchange_ready=True,
         onboarding_accepted=True,
+        build14_live_eligible=True,
     )
     contradictory_signal = Build14InfluenceSignal.model_construct(
         correlation_id="corr-live",
@@ -633,4 +977,7 @@ def test_run_live_light_gate_blocks_model_constructed_build14_guardrail_bypass()
 
     assert summary.decision.verdict == LiveLightVerdict.BLOCKED
     assert summary.decision.allowed_to_execute_small is False
-    assert "Build-14 influence must never bypass engines, risk, or portfolio" in summary.decision.blocking_reasons
+    assert any(
+        "Build-14 influence must never bypass engines, risk, or portfolio" in reason
+        for reason in summary.decision.blocking_reasons
+    )

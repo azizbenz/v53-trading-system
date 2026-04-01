@@ -1,6 +1,13 @@
-"""Minimal governed Build-13 Live-Light gate and execution-intent builder."""
+"""Minimal governed Build-13 Live-Light gate and execution-intent builder.
+
+HARD STATEMENT §0.6: 30j shadow prerequisite enforced before Live-Light.
+"""
 
 from __future__ import annotations
+
+from pathlib import Path
+
+from pydantic import ValidationError
 
 from interface_contracts import PromotionState, ProfileId, ReviewState, RuntimeMode
 from monitoring import TechnicalDashboardPayload
@@ -19,6 +26,10 @@ from protocols.enums import (
 )
 from protocols.errors import LiveLightInputError
 
+_BUILD14_CONTRACTS_MODULE = "complete_enablers.contracts"
+_BUILD14_SIGNAL_CLASS = "Build14InfluenceSignal"
+_BUILD14_REPORT_CLASS = "Build14InfluenceReport"
+
 
 def _normalized_value(value: object, default: str) -> str:
     if value is None:
@@ -27,10 +38,78 @@ def _normalized_value(value: object, default: str) -> str:
     return str(enum_value)
 
 
-def _build14_signal_object(build14_influence: object | None) -> object | None:
+def _is_typed_build14_contract(value: object, *, class_name: str) -> bool:
+    return (
+        value.__class__.__module__ == _BUILD14_CONTRACTS_MODULE
+        and value.__class__.__name__ == class_name
+    )
+
+
+def _revalidate_typed_build14_contract(value: object) -> object:
+    model_dump = getattr(value, "model_dump", None)
+    model_validate = getattr(value.__class__, "model_validate", None)
+    if not callable(model_dump) or not callable(model_validate):
+        raise TypeError("Build-14 influence must expose Pydantic model_dump/model_validate")
+    return model_validate(model_dump())
+
+
+def _resolve_validated_build14_signal(
+    build14_influence: object | None,
+    *,
+    expected_correlation_id: str,
+) -> tuple[object | None, tuple[str, ...]]:
     if build14_influence is None:
-        return None
-    return getattr(build14_influence, "signal", build14_influence)
+        return None, ()
+
+    if _is_typed_build14_contract(build14_influence, class_name=_BUILD14_SIGNAL_CLASS):
+        contract_kind = "signal"
+    elif _is_typed_build14_contract(build14_influence, class_name=_BUILD14_REPORT_CLASS):
+        contract_kind = "report"
+    else:
+        return None, (
+            "Build-14 influence must be a typed Build14InfluenceSignal or Build14InfluenceReport",
+        )
+
+    try:
+        validated_contract = _revalidate_typed_build14_contract(build14_influence)
+    except ValidationError as exc:
+        first_error = exc.errors()[0] if exc.errors() else {}
+        detail = str(first_error.get("msg", "")).strip()
+        if not detail:
+            detail = "Build-14 influence failed typed contract validation"
+        return None, (f"Build-14 influence failed typed contract validation: {detail}",)
+    except (TypeError, ValueError) as exc:
+        detail = str(exc).strip() or "Build-14 influence failed typed contract validation"
+        return None, (f"Build-14 influence failed typed contract validation: {detail}",)
+
+    if contract_kind == "report":
+        report_correlation_id = str(getattr(validated_contract, "correlation_id", "")).strip()
+        if not report_correlation_id:
+            return None, ("Build-14 influence report must expose a concrete correlation_id",)
+        if report_correlation_id != expected_correlation_id:
+            return None, (
+                "Build-14 influence correlation_id must match the current Live-Light run",
+            )
+        signal = getattr(validated_contract, "signal", None)
+        if signal is None or not _is_typed_build14_contract(
+            signal,
+            class_name=_BUILD14_SIGNAL_CLASS,
+        ):
+            return None, (
+                "Build-14 influence report must carry a typed Build14InfluenceSignal",
+            )
+    else:
+        signal = validated_contract
+
+    signal_correlation_id = str(getattr(signal, "correlation_id", "")).strip()
+    if not signal_correlation_id:
+        return None, ("Build-14 influence must expose a concrete correlation_id",)
+    if signal_correlation_id != expected_correlation_id:
+        return None, (
+            "Build-14 influence correlation_id must match the current Live-Light run",
+        )
+
+    return signal, ()
 
 
 def _build14_reason_codes(signal: object | None) -> tuple[str, ...]:
@@ -207,6 +286,13 @@ def build_live_light_input_from_micro_live(
     max_pair_notional_usdt: float,
     execution_order_limit: int = 3,
     active_engines: tuple[str, ...] | None = None,
+    shadow_days_completed: int | None = None,
+    shadow_required_days: int | None = None,
+    component_verdicts_rendered: bool | None = None,
+    shadow_report_ready: bool | None = None,
+    micro_live_stable_days: int,
+    micro_live_required_days: int = 7,
+    build14_live_eligible: bool = False,
     observability_ready: bool = False,
     halt_ready: bool = False,
     execution_ready: bool = False,
@@ -221,6 +307,31 @@ def build_live_light_input_from_micro_live(
     _validate_micro_live_source_payload_scope(micro_live_payload)
     _validate_micro_live_consistency(micro_live_summary, micro_live_payload)
     resolved_active_engines = active_engines or micro_live_summary.execution_plan.planned_engines
+    shadow_projection = micro_live_payload.shadow
+    resolved_shadow_days_completed = (
+        shadow_projection.shadow_days_completed
+        if shadow_days_completed is None
+        else shadow_days_completed
+    )
+    resolved_shadow_required_days = (
+        shadow_projection.shadow_required_days
+        if shadow_required_days is None
+        else shadow_required_days
+    )
+    resolved_shadow_report_ready = (
+        shadow_projection.shadow_report_ready
+        if shadow_report_ready is None
+        else shadow_report_ready
+    )
+    resolved_component_verdicts_rendered = (
+        (
+            shadow_projection.shadow_validated_component_count
+            + shadow_projection.dormant_component_count
+        )
+        > 0
+        if component_verdicts_rendered is None
+        else component_verdicts_rendered
+    )
     _validate_live_light_surface(
         micro_live_summary,
         live_pairs=live_pairs,
@@ -235,6 +346,13 @@ def build_live_light_input_from_micro_live(
         micro_live_verdict=micro_live_summary.decision.verdict,
         micro_live_run_state=micro_live_summary.run_state,
         micro_live_blocking_reasons=micro_live_summary.decision.blocking_reasons,
+        shadow_days_completed=resolved_shadow_days_completed,
+        shadow_required_days=resolved_shadow_required_days,
+        component_verdicts_rendered=resolved_component_verdicts_rendered,
+        shadow_report_ready=resolved_shadow_report_ready,
+        micro_live_stable_days=micro_live_stable_days,
+        micro_live_required_days=micro_live_required_days,
+        build14_live_eligible=build14_live_eligible,
         micro_live_import_artifact_id=micro_live_summary.import_artifact_id,
         micro_live_import_lineage_version=micro_live_summary.import_lineage_version,
         import_artifact_id=micro_live_payload.replay_import.artifact_id,
@@ -265,14 +383,33 @@ def run_live_light_gate(
     *,
     run_id: str | None = None,
     build14_influence: object | None = None,
+    shadow_state_dir: Path | None = None,
 ) -> LiveLightRunSummary:
-    """Run the minimal Build-13 gate without opening Complete or full live execution."""
+    """Run the minimal Build-13 gate without opening Complete or full live execution.
+
+    HARD STATEMENT §0.6: if shadow_state_dir is provided, verifies 30 consecutive
+    shadow days before allowing Live-Light promotion.
+    """
 
     hard_blocking_reasons: list[str] = []
+
+    # HARD STATEMENT §0.6: 30j shadow prerequisite
+    if shadow_state_dir is not None:
+        from protocols.shadow_runtime import check_shadow_30j_gate
+        gate_passed, report = check_shadow_30j_gate(shadow_state_dir, profile="light")
+        if not gate_passed:
+            days = report.get("consecutive_days", 0)
+            hard_blocking_reasons.append(
+                f"HARD STATEMENT: Light shadow requires 30 consecutive days, "
+                f"currently at {days}/30"
+            )
     micro_live_needs_review = False
     build14_requires_review = False
     normalized_import_status = live_light_input.import_validation_status.strip().casefold()
-    build14_signal = _build14_signal_object(build14_influence)
+    build14_signal, build14_validation_reasons = _resolve_validated_build14_signal(
+        build14_influence,
+        expected_correlation_id=live_light_input.correlation_id,
+    )
     build14_influence_mode = _normalized_value(
         getattr(build14_signal, "influence_mode", None),
         "read_only",
@@ -290,6 +427,13 @@ def run_live_light_gate(
     confidence_penalty_weight = 0.0
     recommended_budget_factor = 1.0
     build14_reason_lines: tuple[str, ...] = ()
+
+    hard_blocking_reasons.extend(build14_validation_reasons)
+
+    if build14_signal is not None and not live_light_input.build14_live_eligible:
+        hard_blocking_reasons.append(
+            "Build-14 live influence requires explicit post-Shadow live eligibility"
+        )
 
     if live_light_input.micro_live_run_state != MicroLiveRunState.READY_TO_PROBE:
         hard_blocking_reasons.append(
@@ -526,6 +670,7 @@ def run_live_light_gate(
         build14_reason_codes=build14_reason_codes,
         build14_confidence_penalty_weight=confidence_penalty_weight,
         build14_recommended_budget_factor=recommended_budget_factor,
+        build14_live_eligible=live_light_input.build14_live_eligible,
     )
 
 

@@ -520,6 +520,13 @@ class LiveLightInput(BaseModel, frozen=True):
     micro_live_verdict: MicroLiveVerdict
     micro_live_run_state: MicroLiveRunState
     micro_live_blocking_reasons: tuple[str, ...] = ()
+    shadow_days_completed: int = Field(..., ge=0)
+    shadow_required_days: int = Field(..., ge=1)
+    component_verdicts_rendered: bool
+    shadow_report_ready: bool
+    micro_live_stable_days: int = Field(..., ge=0)
+    micro_live_required_days: int = Field(..., ge=1)
+    build14_live_eligible: bool = False
     micro_live_import_artifact_id: str = Field(..., min_length=1)
     micro_live_import_lineage_version: str = Field(..., min_length=1)
     import_artifact_id: str = Field(..., min_length=1)
@@ -559,6 +566,28 @@ class LiveLightInput(BaseModel, frozen=True):
         if self.automatic_complete_promotion_requested:
             raise ValueError(
                 "Build-13 Live-Light must not request automatic promotion to Complete"
+            )
+        if self.shadow_required_days != 30:
+            raise ValueError("Build-13 Live-Light requires shadow_required_days=30")
+        if self.shadow_days_completed < self.shadow_required_days:
+            raise ValueError(
+                "Build-13 Live-Light requires a completed 30-day Shadow"
+            )
+        if not self.component_verdicts_rendered:
+            raise ValueError(
+                "Build-13 Live-Light requires rendered post-Shadow component verdicts"
+            )
+        if not self.shadow_report_ready:
+            raise ValueError(
+                "Build-13 Live-Light requires shadow_report_ready=True"
+            )
+        if self.micro_live_required_days != 7:
+            raise ValueError(
+                "Build-13 Live-Light requires micro_live_required_days=7"
+            )
+        if self.micro_live_stable_days < self.micro_live_required_days:
+            raise ValueError(
+                "Build-13 Live-Light requires 7 stable Micro-live days"
             )
 
         normalized_status = self.import_validation_status.strip().casefold()
@@ -716,6 +745,7 @@ class LiveLightRunSummary(BaseModel, frozen=True):
     build14_reason_codes: tuple[str, ...] = ()
     build14_confidence_penalty_weight: float = Field(default=0.0, ge=0.0, le=0.25)
     build14_recommended_budget_factor: float = Field(default=1.0, ge=0.0, le=1.0)
+    build14_live_eligible: bool = False
 
     @property
     def blocking_reason_count(self) -> int:
