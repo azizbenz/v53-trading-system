@@ -1,5 +1,15 @@
-"""Build-5 — scoring_backbone: decision logic layer.
+"""Build-5 - scoring_backbone: auditable hard/soft/rank runtime."""
 
-Transforms candidate signals into auditable, gradual, economically coherent decisions.
-Chain: raw_score_builder → penalty_aggregator → hard_block_gate → ranking_router.
-"""
+from .scoring_runtime import (
+    ScoringCandidateInput,
+    ScoringCandidateAudit,
+    ScoringRoundResult,
+    ScoringRuntime,
+)
+
+__all__ = [
+    "ScoringCandidateAudit",
+    "ScoringCandidateInput",
+    "ScoringRoundResult",
+    "ScoringRuntime",
+]
