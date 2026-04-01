@@ -931,4 +931,36 @@ Donc :
 
 ---
 
+# Guardrails issus des audits — Renforcements Build-3
+
+## Coût réel prudent (GEM-07)
+- Le `execution_cost_meter` ne doit pas se limiter au slippage
+- Coût réel = slippage + market impact estimé + exchange fees
+- Le market impact doit être modélisé de manière prudente (surestimer plutôt que sous-estimer)
+- Pour les petites tailles initiales (Light), l'impact est faible mais le principe doit être documenté
+
+## Market impact prudent minimal (GEM-07)
+- Même si le système Light opère avec de petites tailles, le cost model doit inclure une composante d'impact
+- Formule minimale : `impact_estimate = size * impact_coefficient * spread_bps`
+- Le coefficient doit être calibrable et conservateur par défaut
+
+## No-trade explicite (GEM-07b)
+- Si le coût estimé total (slippage + impact + fees) dépasse l'edge net attendu, le trade est rejeté
+- Ce rejet doit être loggé dans le DTR avec raison `COST_EXCEEDS_EDGE`
+- Le `order_decider` doit intégrer ce filtre avant émission
+
+## Latence plausible / monotone (GEM-08)
+- Les mesures de latence d'exécution doivent utiliser un clock monotone
+- Les valeurs aberrantes doivent être filtrées
+- La latence d'exécution ne doit pas corrompre les statistiques moyennes
+
+## Réconciliation à source externe (GEM-07c, QWEN-03)
+- La `reconciliation_layer` doit être conçue pour accepter une source externe (état exchange réel)
+- En trajectoire prod (Build-12+), la réconciliation exchange devient obligatoire
+- En Build-3, un chemin runtime branché sur un adapter externe doit déjà exister et être testé de bout en bout
+- Clarification : protocole ≠ runtime réel si non branché sur un adapter exchange
+- Donc : Build-3 n'est pas validé si seule la surface contractuelle existe sans exécution réelle, suivi de fills, coût calculé et réconciliation branchée
+
+---
+
 ## Fin du document
