@@ -78,6 +78,22 @@ Modules clefs :
 La chaine complete peut etre lancee par :
 - [run_local_replay_shadow.py](../../scripts/run_local_replay_shadow.py)
 
+## 2.5 Service VPS autonome
+
+Le mode service VPS existe aussi maintenant :
+- [run_shadow_vps_service.py](../../scripts/run_shadow_vps_service.py)
+
+Il supporte :
+- `--exports-root`
+- `--raw-inputs-root`
+- `--websocket-streams-root`
+- `--live-websocket-config`
+
+Le mode `live_websocket` natif s'appuie sur :
+- [shadow_live_websocket.py](../../src/protocols/shadow_live_websocket.py)
+- [shadow_websocket_ingest.py](../../src/protocols/shadow_websocket_ingest.py)
+- le runtime Build-2 `websocket_gateway`
+
 ---
 
 # 3. Capacites ajoutees
@@ -159,6 +175,13 @@ cd "E:\claude  v5.3\v53_trading_system"
 python scripts/run_local_replay_shadow.py --output-dir build\local_replay_shadow_real --export-dir build\local_replay_real
 ```
 
+## 4.5 Service VPS live_websocket natif
+
+```powershell
+cd "E:\claude  v5.3\v53_trading_system"
+python scripts/run_shadow_vps_service.py --service-dir build\shadow_vps_service --orchestrator-output-dir build\shadow_vps_orchestrator --shadow-output-dir build\shadow_session --live-websocket-config build\shadow_live_websocket_config.json --live-captures-root build\shadow_live_captures --auto-exports-root build\shadow_auto_exports
+```
+
 ---
 
 # 5. Fichiers produits importants
@@ -190,6 +213,7 @@ Ce que la chaine sait faire aujourd'hui :
 - produire une evidence `LOCAL_REPLAY`
 - produire une evidence `SHADOW`
 - rendre un verdict shadow sur un run gouverne
+- faire tourner un service VPS autonome avec capture `live_websocket` native codee
 
 Verdict :
 - `OPERATIONAL FOR GOVERNED REPLAY / SHADOW CHAIN`
@@ -197,6 +221,7 @@ Verdict :
 Ce que la chaine n'implique pas encore automatiquement :
 - que tous les builds Shadow aval soient clos `ALIGNED`
 - qu'on ait deja une equivalence prod totale pour tous les cas operateur
+- que le mode `live_websocket` ait deja ete smoke contre le vrai reseau exchange dans cet environnement
 
 ---
 

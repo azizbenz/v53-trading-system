@@ -309,7 +309,7 @@ Encadrer le chemin documentaire et futur d’introduction d’une nouvelle hypot
 # 6. GATE SHADOW
 
 ## 6.1 Objectif
-Valider la **solution complète utile** sans risque capital. Le Shadow est la phase de vérité système.
+Valider la **solution intégrale observée** sans risque capital. Le Shadow est la phase de vérité système.
 
 ## 6.2 Métriques minimales
 - fréquence brute et utile **par moteur** (A/B/C/D)
@@ -326,7 +326,7 @@ Valider la **solution complète utile** sans risque capital. Le Shadow est la ph
 
 > **NON NÉGOCIABLE. Aucune dérogation.**
 
-### Light Shadow — Phase de vérité système complète
+### Shadow intégral (profil `LIGHT`) — Phase de vérité système
 - **30 jours calendaires consécutifs minimum** en mode SHADOW sur données réelles
 - Pipeline complet obligatoire : data → engine → scoring → portfolio → execution simulée
 - **A/B/C/D activés à 100%** : scorés, classés, arbitrés et observés
@@ -335,7 +335,7 @@ Valider la **solution complète utile** sans risque capital. Le Shadow est la ph
 - Interruption > 24h = compteur reprend à zéro
 - Rapport shadow exploitable obligatoire incluant **comparaison inter-moteurs et contribution Build-14**
 - **Aucune activation Micro-live ni Live-Light avant l’expiration**
-- **Activation Shadow ≠ promotion Live** : verdict composant par composant obligatoire
+- **Activation intégrale en Shadow ≠ promotion Live** : verdict composant par composant obligatoire
 
 ### Complete Shadow
 - **30 jours calendaires consécutifs minimum** en mode SHADOW après Light live stable

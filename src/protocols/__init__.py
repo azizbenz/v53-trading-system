@@ -15,6 +15,7 @@ from protocols.contracts import (
     ShadowDecision,
     ShadowEngineReport,
     ShadowInput,
+    ShadowReportSection,
     ShadowRuntimeEvidence,
     ShadowReportArtifact,
     ShadowRunSummary,
@@ -68,11 +69,47 @@ from protocols.shadow_dashboard import (
     build_shadow_dashboard_section,
     build_shadow_projection,
 )
+from protocols.shadow_day_counter import ShadowDayCounter, ShadowProfile
 from protocols.shadow_runtime import (
     build_shadow_runtime_evidence,
     build_shadow_input_from_payloads,
     compare_shadow_candidate,
     run_shadow_validation,
+)
+from protocols.shadow_report_builder import build_shadow_daily_metrics_summary
+from protocols.shadow_daily_orchestrator import (
+    ShadowDailyExecutionRecord,
+    ShadowDailyOrchestrator,
+    ShadowDailyOrchestratorState,
+    ShadowDailyPlanSlot,
+)
+from protocols.shadow_vps_service import (
+    ShadowLiveWebSocketCaptureResult,
+    ShadowLiveWebSocketConfig,
+    ShadowVpsRawInputConfig,
+    ShadowVpsRawInputSlot,
+    ShadowVpsWebsocketInputSlot,
+    ShadowVpsServiceEvent,
+    ShadowVpsServiceState,
+    ShadowVpsServiceStatus,
+    ShadowVpsServiceStore,
+)
+from protocols.shadow_websocket_ingest import (
+    InjectedWebSocketFrame,
+    ObservedWebSocketMessage,
+    ShadowWebsocketSnapshotBuildResult,
+    build_snapshot_batch_from_observed_websocket_messages,
+    build_snapshot_batch_from_injected_websocket_stream,
+    load_injected_websocket_frames,
+)
+from protocols.shadow_live_websocket import (
+    BinanceSpotLiveWebSocketAdapter,
+    capture_live_websocket_snapshot_batch,
+)
+from protocols.shadow_session_registry import (
+    ShadowSessionEntry,
+    ShadowSessionRegistry,
+    ShadowSessionRegistryState,
 )
 from protocols.shadow_runtime_evidence import (
     ShadowRuntimeEvidenceRecorder,
@@ -116,6 +153,7 @@ __all__ = [
     "ShadowComparison",
     "ShadowEngineReport",
     "ShadowBuild14Contribution",
+    "ShadowReportSection",
     "ShadowReportArtifact",
     "ShadowComponentAssessment",
     "ShadowDecision",
@@ -134,10 +172,37 @@ __all__ = [
     "ShadowRuntimeEvidenceRecorderConfig",
     "ShadowRuntimeEvidenceRecorderState",
     "ShadowRuntimeEvidenceRecorder",
+    "ShadowDayCounter",
+    "ShadowProfile",
     "build_shadow_runtime_evidence",
     "build_shadow_input_from_payloads",
     "compare_shadow_candidate",
     "run_shadow_validation",
+    "build_shadow_daily_metrics_summary",
+    "ShadowDailyPlanSlot",
+    "ShadowDailyExecutionRecord",
+    "ShadowDailyOrchestratorState",
+    "ShadowDailyOrchestrator",
+    "ShadowVpsServiceStatus",
+    "ShadowVpsServiceState",
+    "ShadowVpsRawInputConfig",
+    "ShadowVpsRawInputSlot",
+    "ShadowVpsWebsocketInputSlot",
+    "ShadowLiveWebSocketConfig",
+    "ShadowLiveWebSocketCaptureResult",
+    "ShadowVpsServiceEvent",
+    "ShadowVpsServiceStore",
+    "InjectedWebSocketFrame",
+    "ObservedWebSocketMessage",
+    "ShadowWebsocketSnapshotBuildResult",
+    "load_injected_websocket_frames",
+    "build_snapshot_batch_from_observed_websocket_messages",
+    "build_snapshot_batch_from_injected_websocket_stream",
+    "BinanceSpotLiveWebSocketAdapter",
+    "capture_live_websocket_snapshot_batch",
+    "ShadowSessionEntry",
+    "ShadowSessionRegistryState",
+    "ShadowSessionRegistry",
     "build_shadow_projection",
     "build_shadow_dashboard_section",
 ]

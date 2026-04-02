@@ -18,12 +18,12 @@ Build-13 a une mission unique :
 
 > **NON NÉGOCIABLE. Aucune dérogation.**
 
-- **HARD : Light a tradé en shadow complet 30 jours calendaires consécutifs minimum** (Build-11 validé, avec A/B/C/D et Build-14 activés à 100%)
+- **HARD : Light a tradé en Shadow intégral 30 jours calendaires consécutifs minimum** (Build-11 validé, avec A/B/C/D et Build-14 activés à 100%)
 - **HARD : Verdict post-Shadow rendu composant par composant** (chaque moteur/enabler : `SHADOW_VALIDATED` ou `DORMANT`)
 - **HARD : Micro-live stable minimum 7 jours** (Build-12 validé, avec uniquement les composants `SHADOW_VALIDATED`)
 - **HARD : Rapport shadow produit, exploitable et approuvé** (incluant comparaison inter-moteurs et contribution Build-14)
 - Sans ces prérequis, Build-13 ne peut pas être activé, même si tout le code est prêt
-- L'activation complète en Shadow ne signifie pas promotion live automatique de tous les composants
+- L'activation intégrale en Shadow ne signifie pas promotion live automatique de tous les composants
 
 Le Live-Light n’est pas une architecture partielle distincte de la V5.3.
 C’est le premier **rollout reel borne** de la meme architecture complete,

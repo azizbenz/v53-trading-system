@@ -16,6 +16,10 @@ Build-14 a une mission unique :
 > d’enrichissement strictement utiles**, sans casser la stabilite du rollout
 > LIGHT et sans confondre sophistication de recherche et valeur de production.
 
+`COMPLETE` désigne ici exclusivement l'enveloppe de rollout élargie.
+Le Shadow du profil `LIGHT` avec Build-14, C/D et les enrichissements activés
+à 100% en observation est appelé `Shadow intégral`.
+
 Les composants couverts ici sont :
 
 1. `microstructure_enriched_layer`
@@ -39,7 +43,7 @@ doctrine cible unique.
 
 Même si tout le code Complete (Builds 14→17) est implémenté et testé :
 
-1. **Light doit avoir tradé en shadow 30 jours consécutifs minimum** avant toute activation live Light
+1. **Light doit avoir tradé en Shadow intégral 30 jours consécutifs minimum** avant toute activation live Light
 2. **Light doit être stable en Live-Light** avant toute considération de Complete
 3. **Complete doit avoir tradé en shadow 30 jours consécutifs minimum** (en parallèle de Light live) avant toute activation Live-Complete
 4. **Non-régression Light obligatoire** pendant les 30 jours de shadow Complete — dégradation = désactivation + compteur à zéro
@@ -60,7 +64,7 @@ Build-14 n’est considéré codé, testable et validable que si le dépôt four
   `risk_contribution_monitor`,
   `effective_edge_diversity_enriched`
 - leurs contrats, outputs, logs structurés et projections de supervision
-- leur activation complète en Shadow (`SHADOW_ENABLED`)
+- leur activation intégrale en Shadow (`SHADOW_ENABLED`)
 - une séparation nette entre activation Shadow et promotion live
 
 Un contrat seul, quelques readers isolés ou un socle analytique partiel ne suffisent jamais à eux seuls pour déclarer Build-14 complet.
@@ -200,10 +204,10 @@ Build-14 ne peut pas commencer si une des conditions suivantes n’est pas satis
 
 ## 6.1 Profil actif
 - **LIGHT comme enveloppe de rollout**
-- Build-14 enablers **activés à 100% en Shadow** (`SHADOW_ENABLED`)
+- Build-14 enablers **activés à 100% en Shadow intégral** (`SHADOW_ENABLED`)
 
 ## 6.2 Mode d’activation
-Les enablers sont activés à 100% pendant le Shadow 30 jours :
+Les enablers sont activés à 100% pendant le `Shadow intégral` de 30 jours :
 - pleinement utilisés dans les décisions Shadow
 - leurs outputs sont tracés, comparés, auditables
 - ils ne sont pas en lecture seule : ils influencent activement le scoring, le risk et le portefeuille en Shadow

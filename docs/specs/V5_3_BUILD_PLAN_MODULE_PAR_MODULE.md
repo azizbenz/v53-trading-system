@@ -38,6 +38,8 @@ Le plan s’appuie sur une seule V5.3 commune local + VPS :
 - deux profils métier uniquement : `LIGHT`, `COMPLETE`
 - quatre `runtime_mode` uniquement : `LOCAL_REPLAY`, `SHADOW`, `MICRO_LIVE`, `LIVE`
 - aucun `BACKTEST_PROFILE`
+- `Shadow intégral` désigne le Shadow du profil `LIGHT` avec A/B/C/D et
+  Build-14 activés à 100% en observation ; ce n'est pas le profil `COMPLETE`
 - aucun fork local / VPS
 - pipeline officiel : `classification -> versioning -> shared core -> LOCAL_REPLAY -> export artifact -> import VPS -> candidature contrôlée`
 
@@ -79,7 +81,7 @@ Le plan s’appuie sur une seule V5.3 commune local + VPS :
 | 9 | Meta Minimal | LIGHT rollout | P0 | DTR, CRA, break-even |
 | 9X | Meta Learning Governed Layer | documentaire | P1/P2 | diagnostics, hypothèses, replay bundles, sans effet live direct |
 | 10 | Monitoring + UI Light | LIGHT rollout | P0/P1 | supervision verrouillée du système complet |
-| 11 | Shadow Light | LIGHT rollout | P0 | validation sans capital |
+| 11 | Shadow Light (`Shadow intégral`) | LIGHT rollout | P0 | validation sans capital |
 | 12 | Micro-live Light | LIGHT rollout | P0 | coûts réels |
 | 13 | Live-Light | LIGHT rollout | P0 | premier rollout réel borné |
 | 14 | Complete Enablers | architecture complète | P1/P2 | enablers prod-safe et angles morts |
@@ -496,18 +498,18 @@ Rendre le système gouvernable sans le rendre permissif.
 ## Objectif
 Valider la logique sans capital réel.
 
-## HARD STATEMENT — Shadow = phase de vérité système complète (30 jours)
+## HARD STATEMENT — Shadow intégral = phase de vérité système (30 jours)
 - La version Light doit trader en mode SHADOW pendant **30 jours calendaires consécutifs minimum**
 - Données réelles obligatoires (WebSocket ou replay réaliste)
 - Pipeline complet : data → engine → scoring → portfolio → execution simulée
-- **Build-14, moteurs C/D et tous les enrichissements activés à 100% pendant le Shadow**
+- **Build-14, moteurs C/D et tous les enrichissements activés à 100% pendant le Shadow intégral**
 - Moteurs A/B/C/D actifs, scorés, classés, arbitrés et observés
 - Build-14 enablers pleinement utilisés dans les décisions Shadow
 - DTR complet produit pendant les 30 jours
 - Interruption > 24h = compteur reprend à zéro
 - Rapport shadow exploitable obligatoire (CE, coûts estimés, edge, drawdown, stale rate, **comparaison inter-moteurs A/B/C/D, contribution Build-14**)
 - **Aucune activation Micro-live ni Live-Light avant l'expiration de cette période**
-- **Activation Shadow ≠ promotion Live** : chaque composant sera jugé individuellement au verdict post-Shadow
+- **Activation intégrale en Shadow ≠ promotion Live** : chaque composant sera jugé individuellement au verdict post-Shadow
 
 ## KPI obligatoires
 - fréquence brute et utile par moteur (A/B/C/D)
@@ -544,7 +546,7 @@ Valider coûts réels, fills, stale rate, reconciliation.
 
 ## Prérequis
 - **Verdict post-Shadow rendu** : seuls les composants `SHADOW_VALIDATED` passent en Micro-live
-- L'activation complète en Shadow ne signifie pas activation Micro-live automatique de tous les composants
+- L'activation intégrale en Shadow ne signifie pas activation Micro-live automatique de tous les composants
 - Les moteurs/enablers marqués `DORMANT` au verdict restent inactifs en Micro-live
 
 ## Contraintes
@@ -578,12 +580,12 @@ Valider coûts réels, fills, stale rate, reconciliation.
 Première production réelle disciplinée.
 
 ## Prérequis HARD
-- **HARD : 30 jours de shadow complet consécutifs atteints et rapport approuvé**
+- **HARD : 30 jours de Shadow intégral consécutifs atteints et rapport approuvé**
 - **HARD : Verdict post-Shadow rendu composant par composant**
 - **HARD : Micro-live stable (minimum 7 jours)**
 
 ## Conditions go
-- 30 jours shadow complet validés
+- 30 jours de Shadow intégral validés
 - fréquence utile > V5.2
 - edge net > 0 ou crédible
 - CE > V5.2

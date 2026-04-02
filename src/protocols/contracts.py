@@ -344,6 +344,23 @@ class ShadowBuild14Contribution(BaseModel, frozen=True):
         return self
 
 
+class ShadowReportSection(BaseModel, frozen=True):
+    """Audit-ready section rendered inside the final Build-11 shadow report."""
+
+    section_id: Literal[
+        "data_infra_report",
+        "decisions_dtr_report",
+        "costs_break_even_report",
+        "engine_comparison_report",
+        "portfolio_report",
+        "ui_alerting_report",
+        "go_no_go_report",
+    ]
+    title: str = Field(..., min_length=1)
+    ready: bool = False
+    summary: str = Field(..., min_length=1)
+
+
 class ShadowReportArtifact(BaseModel, frozen=True):
     """Persisted Build-11 shadow report required before promotion."""
 
@@ -369,14 +386,37 @@ class ShadowReportArtifact(BaseModel, frozen=True):
     economic_pass_rate: float | None = Field(default=None, ge=0.0, le=1.0)
     pair_health_ratio: float | None = Field(default=None, ge=0.0, le=1.0)
     backlog_avg: float | None = Field(default=None, ge=0.0)
+    capital_simulated_usdt: float | None = Field(default=None, ge=0.0)
+    gross_exposure_shadow_pct: float | None = Field(default=None, ge=0.0)
+    loss_budget_shadow_pct: float | None = Field(default=None, ge=0.0)
+    capital_free_usdt: float | None = None
+    beta_btc_shadow: float | None = None
+    dominant_cluster: str = ""
+    pnl_shadow: float | None = None
+    dtr_loss_rate: float | None = Field(default=None, ge=0.0, le=1.0)
+    log_loss_rate: float | None = Field(default=None, ge=0.0, le=1.0)
+    event_latency_ms: float | None = Field(default=None, ge=0.0)
+    hard_block_rate: float | None = Field(default=None, ge=0.0, le=1.0)
+    phantom_trade_count: int | None = Field(default=None, ge=0)
     decisions_reproducible: bool = False
     infra_stable: bool = False
     costs_plausible: bool = False
+    break_even_visible: bool = False
+    critical_alerts_visible: bool = False
+    operator_actions_logged: bool = False
+    ui_locked: bool = False
     shadow_report_ready: bool = False
+    data_infra_report_ready: bool = False
+    decisions_dtr_report_ready: bool = False
+    costs_break_even_report_ready: bool = False
     inter_engine_comparison_ready: bool = False
     build14_contribution_ready: bool = False
+    portfolio_report_ready: bool = False
+    ui_alerting_report_ready: bool = False
+    go_no_go_report_ready: bool = False
     inter_engine_comparison: tuple[ShadowEngineReport, ...] = ()
     build14_contribution: tuple[ShadowBuild14Contribution, ...] = ()
+    rendered_sections: tuple[ShadowReportSection, ...] = ()
     missing_sections: tuple[str, ...] = ()
 
     @model_validator(mode="after")
@@ -401,6 +441,11 @@ class ShadowReportArtifact(BaseModel, frozen=True):
         if len(build14_ids) != len(set(build14_ids)):
             raise ValueError(
                 "Build-11 shadow report build14_contribution must stay unique per component"
+            )
+        section_ids = tuple(section.section_id for section in self.rendered_sections)
+        if len(section_ids) != len(set(section_ids)):
+            raise ValueError(
+                "Build-11 shadow report rendered_sections must stay unique per section"
             )
 
         if self.inter_engine_comparison_ready and set(engine_ids) != _REQUIRED_SHADOW_ENGINE_IDS:
@@ -427,9 +472,22 @@ class ShadowReportArtifact(BaseModel, frozen=True):
                 "economic_pass_rate",
                 "pair_health_ratio",
                 "backlog_avg",
+                "capital_simulated_usdt",
+                "gross_exposure_shadow_pct",
+                "loss_budget_shadow_pct",
+                "capital_free_usdt",
+                "beta_btc_shadow",
+                "pnl_shadow",
+                "dtr_loss_rate",
+                "log_loss_rate",
+                "event_latency_ms",
+                "hard_block_rate",
+                "phantom_trade_count",
             ):
                 if getattr(self, field_name) is None:
                     missing.append(field_name)
+            if not self.dominant_cluster:
+                missing.append("dominant_cluster")
             if not self.is_complete:
                 missing.append("30_day_counter")
             if not self.dtr_complete:
@@ -440,10 +498,30 @@ class ShadowReportArtifact(BaseModel, frozen=True):
                 missing.append("infra_stable")
             if not self.costs_plausible:
                 missing.append("costs_plausible")
+            if not self.break_even_visible:
+                missing.append("break_even_visible")
+            if not self.critical_alerts_visible:
+                missing.append("critical_alerts_visible")
+            if not self.operator_actions_logged:
+                missing.append("operator_actions_logged")
+            if not self.ui_locked:
+                missing.append("ui_locked")
+            if not self.data_infra_report_ready:
+                missing.append("data_infra_report")
+            if not self.decisions_dtr_report_ready:
+                missing.append("decisions_dtr_report")
+            if not self.costs_break_even_report_ready:
+                missing.append("costs_break_even_report")
             if not self.inter_engine_comparison_ready:
                 missing.append("inter_engine_comparison")
             if not self.build14_contribution_ready:
                 missing.append("build14_contribution")
+            if not self.portfolio_report_ready:
+                missing.append("portfolio_report")
+            if not self.ui_alerting_report_ready:
+                missing.append("ui_alerting_report")
+            if not self.go_no_go_report_ready:
+                missing.append("go_no_go_report")
             if missing:
                 raise ValueError(
                     "Build-11 shadow report cannot be ready while required sections are missing: "
@@ -961,6 +1039,7 @@ __all__ = [
     "ShadowRunSummary",
     "ShadowEngineReport",
     "ShadowBuild14Contribution",
+    "ShadowReportSection",
     "ShadowReportArtifact",
     "MicroLiveInput",
     "MicroLiveDecision",

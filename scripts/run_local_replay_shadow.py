@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+from datetime import date, datetime, time as time_of_day, timedelta, timezone
+import json
 import sys
 from pathlib import Path
 
@@ -59,8 +61,13 @@ from protocols import (  # noqa: E402
     ShadowComponentAssessment,
     ShadowComponentKind,
     ShadowComponentVerdict,
+    ShadowDayCounter,
+    ShadowProfile,
+    ShadowSessionEntry,
+    ShadowSessionRegistry,
     ShadowRuntimeEvidenceRecorder,
     ShadowRuntimeEvidenceRecorderConfig,
+    build_shadow_daily_metrics_summary,
     build_shadow_input_from_payloads,
     run_shadow_validation,
 )
@@ -79,6 +86,11 @@ class LocalReplayShadowArtifacts:
     shadow_input_json_path: Path
     shadow_runtime_evidence_json_path: Path
     shadow_summary_json_path: Path
+    shadow_day_record_json_path: Path
+    shadow_report_json_path: Path
+    shadow_days_dir_path: Path
+    shadow_session_summary_json_path: Path
+    shadow_session_registry_json_path: Path
 
 
 @dataclass(frozen=True)
@@ -372,6 +384,18 @@ def _run_manifest_from_export_dir(export_dir: Path) -> ReplayRunManifest | None:
     return ReplayRunManifest.model_validate_json(data)
 
 
+def _load_json_payload_from_ref(ref: str) -> dict | None:
+    candidate = Path(ref)
+    if not candidate.is_file():
+        return None
+    if candidate.suffix.lower() not in {".json", ".jsonl"}:
+        return None
+    try:
+        return json.loads(candidate.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+
+
 def _build_replay_projection(import_summary) -> ReplayImportProjection:
     return ReplayImportProjection(
         status="healthy" if import_summary.accepted else "warning",
@@ -489,14 +513,71 @@ def _build_demo_payload(
     )
 
 
+def _day_candidate_payload(
+    payload: object,
+    *,
+    absolute_day_number: int,
+    timestamp_ms: int,
+) -> object:
+    return payload.model_copy(
+        update={
+            "correlation_id": f"{payload.correlation_id}:day-{absolute_day_number}",
+            "timestamp_ms": timestamp_ms,
+        }
+    )
+
+
+def _next_shadow_day_timestamp_ms(
+    *,
+    template_timestamp_ms: int,
+    session_date: date,
+) -> int:
+    template_dt = datetime.fromtimestamp(template_timestamp_ms / 1000.0, tz=timezone.utc)
+    resolved = datetime.combine(
+        session_date,
+        time_of_day(
+            hour=template_dt.hour,
+            minute=template_dt.minute,
+            second=template_dt.second,
+            microsecond=template_dt.microsecond,
+            tzinfo=timezone.utc,
+        ),
+    )
+    return int(resolved.timestamp() * 1000)
+
+
+def _resolve_base_session_date(
+    *,
+    requested_session_date: str | None,
+    last_session_date: date | None,
+    run_manifest: ReplayRunManifest | None,
+    candidate_payload_timestamp_ms: int,
+) -> date:
+    if requested_session_date:
+        return date.fromisoformat(requested_session_date)
+    if last_session_date is not None:
+        return last_session_date + timedelta(days=1)
+    if run_manifest is not None:
+        return datetime.fromtimestamp(
+            run_manifest.start_timestamp_ms / 1000.0, tz=timezone.utc
+        ).date()
+    return datetime.fromtimestamp(
+        candidate_payload_timestamp_ms / 1000.0, tz=timezone.utc
+    ).date()
+
+
 def export_local_replay_shadow_run(
     output_dir: Path,
     *,
     export_dir: Path | None = None,
+    shadow_days: int = 1,
+    session_date: str | None = None,
 ) -> LocalReplayShadowArtifacts:
     """Materialize the governed LOCAL_REPLAY -> import VPS -> SHADOW chain."""
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    shadow_days_dir_path = output_dir / "shadow_days"
+    shadow_days_dir_path.mkdir(parents=True, exist_ok=True)
     run_manifest = (
         _run_manifest_from_export_dir(export_dir)
         if export_dir is not None
@@ -513,6 +594,7 @@ def export_local_replay_shadow_run(
         if export_dir is not None
         else _demo_payload_refs(correlation_id)
     )
+    replay_metrics_payload = _load_json_payload_from_ref(payload_refs.replay_metrics_ref)
     if run_manifest is not None and export_dir is not None:
         run_manifest_json_path = output_dir / "local_replay_shadow.run_manifest.json"
         run_manifest_json_path.write_text(
@@ -721,6 +803,113 @@ def export_local_replay_shadow_run(
         shadow_summary.model_dump_json(indent=2),
         encoding="utf-8",
     )
+    shadow_counter = ShadowDayCounter(state_dir=output_dir, profile=ShadowProfile.LIGHT)
+    shadow_registry = ShadowSessionRegistry(state_dir=output_dir)
+    status_before_run = shadow_counter.get_status()
+    starting_consecutive_days = status_before_run.consecutive_days
+    base_session_date = _resolve_base_session_date(
+        requested_session_date=session_date,
+        last_session_date=shadow_registry.last_session_date(),
+        run_manifest=run_manifest,
+        candidate_payload_timestamp_ms=candidate_payload.timestamp_ms,
+    )
+    planned_session_dates = tuple(
+        (base_session_date + timedelta(days=day_index)).isoformat()
+        for day_index in range(shadow_days)
+    )
+    shadow_registry.validate_session_dates(planned_session_dates)
+    daily_record_paths: list[str] = []
+    daily_session_dates: list[str] = []
+    registry_entries: list[ShadowSessionEntry] = []
+    shadow_day_record = None
+    for day_index in range(shadow_days):
+        absolute_day_number = starting_consecutive_days + day_index + 1
+        current_session_date = date.fromisoformat(planned_session_dates[day_index])
+        day_timestamp_ms = _next_shadow_day_timestamp_ms(
+            template_timestamp_ms=candidate_payload.timestamp_ms,
+            session_date=current_session_date,
+        )
+        day_payload = _day_candidate_payload(
+            candidate_payload,
+            absolute_day_number=absolute_day_number,
+            timestamp_ms=day_timestamp_ms,
+        )
+        shadow_day_metrics = build_shadow_daily_metrics_summary(
+            day_payload,
+            shadow_summary,
+            capital_simulated_usdt=10_000.0,
+            replay_metrics_payload=replay_metrics_payload,
+            hard_block_rate=0.0,
+            phantom_trade_count=0,
+            operator_actions_logged=True,
+            ui_locked=True,
+            go_no_go_rendered=True,
+        )
+        shadow_day_record = shadow_counter.record_shadow_day(
+            passed_all_gates=shadow_summary.decision.accepted,
+            metrics_summary=shadow_day_metrics,
+            now=day_payload.timestamp_ms / 1000.0,
+        )
+        day_record_path = (
+            shadow_days_dir_path / f"local_replay_shadow.day_{absolute_day_number:04d}.json"
+        )
+        day_record_path.write_text(
+            shadow_day_record.model_dump_json(indent=2),
+            encoding="utf-8",
+        )
+        daily_record_paths.append(str(day_record_path))
+        daily_session_dates.append(current_session_date.isoformat())
+        registry_entries.append(
+            ShadowSessionEntry(
+                session_date=current_session_date.isoformat(),
+                counter_day_number=shadow_day_record.day_number,
+                correlation_id=day_payload.correlation_id,
+                run_id=shadow_summary.run_id,
+                artifact_id=import_summary.artifact_id,
+                lineage_version=import_summary.lineage_version,
+                day_record_ref=str(day_record_path),
+                export_dir_ref=str(export_dir.resolve()) if export_dir is not None else "",
+            )
+        )
+    assert shadow_day_record is not None
+    shadow_registry.append_entries(tuple(registry_entries))
+    shadow_day_record_json_path = output_dir / "local_replay_shadow.shadow_day_record.json"
+    shadow_day_record_json_path.write_text(
+        shadow_day_record.model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    shadow_report = shadow_counter.generate_report()
+    shadow_report_json_path = output_dir / "local_replay_shadow.shadow_report.json"
+    shadow_report_json_path.write_text(
+        json.dumps(shadow_report, indent=2),
+        encoding="utf-8",
+    )
+    shadow_session_summary_json_path = (
+        output_dir / "local_replay_shadow.shadow_session_summary.json"
+    )
+    shadow_session_summary_json_path.write_text(
+        json.dumps(
+            {
+                "requested_shadow_days": shadow_days,
+                "recorded_shadow_days_this_run": shadow_days,
+                "session_resumed": starting_consecutive_days > 0,
+                "starting_consecutive_days": starting_consecutive_days,
+                "base_session_date": base_session_date.isoformat(),
+                "session_dates": daily_session_dates,
+                "consecutive_days": shadow_report["consecutive_days"],
+                "remaining_days": shadow_report["remaining_days"],
+                "shadow_report_ready": shadow_report["shadow_report_ready"],
+                "promotion_gate_passed": (
+                    shadow_report["consecutive_days"] >= shadow_report["required_days"]
+                    and shadow_report["shadow_report_ready"]
+                ),
+                "daily_record_paths": daily_record_paths,
+                "registry_path": str(shadow_registry.state_path),
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
     return LocalReplayShadowArtifacts(
         run_manifest_json_path=run_manifest_json_path,
@@ -732,6 +921,11 @@ def export_local_replay_shadow_run(
         shadow_input_json_path=shadow_input_json_path,
         shadow_runtime_evidence_json_path=shadow_runtime_evidence_json_path,
         shadow_summary_json_path=shadow_summary_json_path,
+        shadow_day_record_json_path=shadow_day_record_json_path,
+        shadow_report_json_path=shadow_report_json_path,
+        shadow_days_dir_path=shadow_days_dir_path,
+        shadow_session_summary_json_path=shadow_session_summary_json_path,
+        shadow_session_registry_json_path=shadow_registry.state_path,
     )
 
 
@@ -759,11 +953,31 @@ def main(argv: list[str] | None = None) -> int:
             "(review_export, feature_bridge, parity_diagnostics, replay_metrics, replay_dtr)."
         ),
     )
+    parser.add_argument(
+        "--shadow-days",
+        type=int,
+        default=1,
+        help=(
+            "Number of governed Shadow day records to materialize in this run. "
+            "Each recorded day stays within the 24h no-reset rule."
+        ),
+    )
+    parser.add_argument(
+        "--session-date",
+        type=str,
+        default=None,
+        help=(
+            "Optional ISO date (YYYY-MM-DD) used as the first governed Shadow day "
+            "for this invocation. If omitted, the runner resumes from the next day."
+        ),
+    )
     args = parser.parse_args(argv)
 
     artifacts = export_local_replay_shadow_run(
         args.output_dir,
         export_dir=args.export_dir,
+        shadow_days=max(1, args.shadow_days),
+        session_date=args.session_date,
     )
     if artifacts.run_manifest_json_path is not None:
         print(f"Run manifest JSON: {artifacts.run_manifest_json_path}")
@@ -775,6 +989,11 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Shadow input JSON: {artifacts.shadow_input_json_path}")
     print(f"Shadow runtime evidence JSON: {artifacts.shadow_runtime_evidence_json_path}")
     print(f"Shadow summary JSON: {artifacts.shadow_summary_json_path}")
+    print(f"Shadow day record JSON: {artifacts.shadow_day_record_json_path}")
+    print(f"Shadow report JSON: {artifacts.shadow_report_json_path}")
+    print(f"Shadow days dir: {artifacts.shadow_days_dir_path}")
+    print(f"Shadow session summary JSON: {artifacts.shadow_session_summary_json_path}")
+    print(f"Shadow session registry JSON: {artifacts.shadow_session_registry_json_path}")
     print(
         "Inspect the JSON sidecars to review the governed LOCAL_REPLAY -> VPS import -> SHADOW chain."
     )

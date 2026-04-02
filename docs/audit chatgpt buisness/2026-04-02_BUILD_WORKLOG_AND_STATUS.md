@@ -155,6 +155,8 @@ Travail effectif :
 - evidence runtime typed explicite
 - recorders runtime pour `LOCAL_REPLAY` et `SHADOW`
 - production d'evidence automatiquement branchee dans les launchers et runners
+- service `Shadow VPS autonome` ajoute
+- support `raw inputs`, `websocket streams injectes` et maintenant `live_websocket` natif code
 
 Fichiers clefs :
 - [contracts.py](../../src/protocols/contracts.py)
@@ -168,6 +170,7 @@ Verdict :
 Raison :
 - la gouvernance et les preuves typed sont solides
 - mais le build n'a pas encore ete re-audite de bout en bout comme `ALIGNED` final
+- et le mode `live_websocket` natif n'a pas encore ete valide en condition reseau reelle exchange dans cet environnement
 
 ## 3.6 Build-14
 

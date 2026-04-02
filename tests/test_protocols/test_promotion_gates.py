@@ -19,7 +19,7 @@ ONE_DAY = 86_400.0
 
 
 def _complete_shadow_metrics(day_index: int) -> dict[str, float]:
-    metrics = {
+    metrics: dict[str, float | str] = {
         "dtr_coverage": 1.0,
         "ce_net": 0.0012 + day_index * 0.000001,
         "estimated_cost_bps": 4.2,
@@ -29,10 +29,27 @@ def _complete_shadow_metrics(day_index: int) -> dict[str, float]:
         "economic_pass_rate": 0.67,
         "pair_health_ratio": 0.98,
         "backlog_avg": 2.0,
+        "capital_simulated_usdt": 10_000.0,
+        "gross_exposure_shadow_pct": 32.0,
+        "loss_budget_shadow_pct": 11.0,
+        "capital_free_usdt": 6_800.0,
+        "beta_btc_shadow": 0.27,
+        "dominant_cluster": "majors",
+        "pnl_shadow": 12.5 + day_index,
+        "dtr_loss_rate": 0.0,
+        "log_loss_rate": 0.0,
+        "event_latency_ms": 42.0,
+        "hard_block_rate": 0.18,
+        "phantom_trade_count": 0.0,
         "dtr_complete": 1.0,
         "decisions_reproducible": 1.0,
         "infra_stable": 1.0,
         "costs_plausible": 1.0,
+        "break_even_visible": 1.0,
+        "critical_alerts_visible": 1.0,
+        "operator_actions_logged": 1.0,
+        "ui_locked": 1.0,
+        "go_no_go_rendered": 1.0,
     }
     for engine_id, gross_frequency in (
         ("engine_a", 8.0),

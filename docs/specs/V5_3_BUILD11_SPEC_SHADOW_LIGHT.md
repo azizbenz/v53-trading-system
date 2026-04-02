@@ -12,12 +12,12 @@ Ce document couvre **Build-11** du plan officiel V5.3.
 
 Build-11 a une mission unique :
 
-> valider la **V5.3 Light en mode Shadow**, c’est-à-dire dans des conditions de flux et de logique aussi proches que possible du réel, mais sans engager de capital.
+> valider la **V5.3 Light en mode Shadow intégral**, c’est-à-dire dans des conditions de flux et de logique aussi proches que possible du réel, mais sans engager de capital.
 
 Build-11 ne crée pas un nouveau moteur ni un nouveau module central.
 Il définit le **protocole de vérité pré-micro-live**.
 
-## HARD STATEMENT — 30 jours de shadow Light obligatoires
+## HARD STATEMENT — 30 jours de Shadow intégral (profil `LIGHT`) obligatoires
 
 > **NON NÉGOCIABLE. Aucune dérogation, aucun raccourci, aucune exception.**
 
@@ -30,9 +30,9 @@ Il définit le **protocole de vérité pré-micro-live**.
 - **Aucune activation Micro-live ni Live-Light n’est autorisée avant l’expiration de cette période**
 - "Le code est prêt" ou "les tests passent" ne sont PAS des arguments pour réduire cette durée
 
-Le Shadow Light doit répondre à une question simple :
+Le Shadow intégral doit répondre à une question simple :
 
-> si l’on injecte des données réalistes, des coûts prudents, des budgets portefeuille et la logique complète de décision, le système reste-t-il cohérent, explicable, stable et économiquement crédible ?
+> si l’on injecte des données réalistes, des coûts prudents, des budgets portefeuille et la logique intégrale de décision, le système reste-t-il cohérent, explicable, stable et économiquement crédible ?
 
 ## 0.1 Statut documentaire vs implémentation
 
@@ -65,9 +65,16 @@ Build-11 reste strictement dans la V5.3 unifiée :
 
 ---
 
-# 1. Mission du Shadow — Phase de vérité système complète
+# 1. Mission du Shadow intégral — Phase de vérité système
 
-Le Shadow existe pour tester **la solution complète utile** simultanément :
+## 1.0 Règle lexicale
+
+- `LIGHT` et `COMPLETE` restent les deux seuls profils de rollout
+- dans ce document, `Shadow intégral` désigne le Shadow du profil `LIGHT`
+  où A/B/C/D et Build-14 sont activés à 100% en observation
+- `Shadow intégral` n'est pas le profil `COMPLETE`
+
+Le Shadow existe pour tester **la solution intégrale observée** simultanément :
 
 - la qualité de la chaîne data
 - la cohérence scoring / hard-soft-rank
@@ -79,9 +86,9 @@ Le Shadow existe pour tester **la solution complète utile** simultanément :
 - **les enrichissements Build-14** (microstructure, régime, covariance, risk contribution, edge diversity) activés à 100%
 - **les interactions inter-moteurs** A/B/C/D : conflits, duplication, concentration, complémentarité
 - **la robustesse portefeuille** avec 4 moteurs et enrichissements complets
-- **le coût réel simulé prudent** avec solution complète
+- **le coût réel simulé prudent** avec activation intégrale
 
-Le Shadow n’est plus une simple validation Light minimale. Il est la **phase de vérité système** où l’on observe la solution complète avant de décider quoi promouvoir.
+Le Shadow n’est plus une simple validation Light minimale. Il est la **phase de vérité système** où l’on observe la solution intégrale avant de décider quoi promouvoir.
 
 Sans ce protocole, un passage direct au micro-live serait aveugle.
 
@@ -174,12 +181,12 @@ Build-11 ne peut pas commencer si une des conditions suivantes n’est pas satis
 
 ---
 
-# 6. Périmètre du Shadow Light
+# 6. Périmètre du Shadow intégral
 
 ## 6.1 Profil actif
 - **LIGHT comme enveloppe de rollout**
 - 6 paires maximum
-- **Solution complète utile activée en Shadow** : A/B/C/D + Build-14
+- **Shadow intégral actif** : A/B/C/D + Build-14
 
 ## 6.2 Paires autorisées
 - BTC/USDT

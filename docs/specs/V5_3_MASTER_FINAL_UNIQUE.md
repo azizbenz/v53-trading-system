@@ -109,18 +109,18 @@ La promotion suit un pipeline temporel hard :
 ### Pipeline de promotion hard
 
 ```
-[TOUT CODÉ] → Light Shadow 30j → Light Live → Complete Shadow 30j → Complete Live
+[TOUT CODÉ] → Light Shadow intégral 30j → Light Live → Complete Shadow 30j → Complete Live
 ```
 
-### Règle 1 — Shadow = phase de vérité système complète
+### Règle 1 — Shadow intégral = phase de vérité système
 
-- Le Shadow 30 jours est la **phase de vérité système** où la solution est testée dans sa forme complète utile
+- Le Shadow 30 jours est la **phase de vérité système** où la solution est testée dans sa forme intégrale observée
 - Pendant ces 30 jours, **tous les composants sont activés à 100%** :
   - Moteurs A, B, C et D actifs, scorés, classés, arbitrés et observés
   - Build-14 (Complete Enablers) activé à 100%, pleinement utilisé dans les décisions Shadow
   - Enrichissements microstructure, régime, covariance robuste, risk contribution, edge diversity actifs
   - Monitoring, DTR, coût, risk, portefeuille, toxicité complets
-- Le Shadow n’est plus une simple validation Light minimale ; il est la **phase où l’on observe la solution complète avant de décider quoi promouvoir**
+- Le Shadow n’est plus une simple validation Light minimale ; il est la **phase où l’on observe la solution intégrale avant de décider quoi promouvoir**
 
 ### Règle 2 — Light Shadow obligatoire 30 jours
 
@@ -133,7 +133,7 @@ La promotion suit un pipeline temporel hard :
 
 ### Règle 3 — Activation Shadow ≠ promotion Live
 
-- L’activation complète en Shadow (Build-14 à 100%, C/D actifs) **ne signifie pas promotion automatique vers Live**
+- L’activation intégrale en Shadow (Build-14 à 100%, C/D actifs) **ne signifie pas promotion automatique vers Live**
 - La promotion reste strictement conditionnelle au **verdict post-Shadow**
 - Possibilité de rollback, downgrade ou désactivation sélective à l’issue des 30 jours
 - Chaque composant est jugé individuellement : un moteur peut être validé en Shadow mais non promu en Live
@@ -157,7 +157,7 @@ La promotion suit un pipeline temporel hard :
 - "Le code est prêt" n’est pas un argument pour réduire la période de shadow
 - "Les tests passent" n’est pas un argument pour réduire la période de shadow
 - Seul le temps réel de marché valide un système de trading
-- L’activation complète en Shadow est un **essai structuré**, pas une promotion déguisée
+- L’activation intégrale en Shadow est un **essai structuré**, pas une promotion déguisée
 
 ## 0.5 Guardrails P0 issus des audits (invariants système)
 
@@ -324,6 +324,11 @@ Il existe **une V5.3 unique** avec **deux enveloppes officielles de rollout**.
 `LIGHT` et `COMPLETE` ne decrivent pas deux architectures differentes.
 Ils decrivent deux envelopes d'activation reelle d'une meme architecture
 complete, prod-safe et gouvernee.
+
+`COMPLETE` désigne exclusivement l'enveloppe de rollout élargie.
+Le Shadow du profil `LIGHT` avec A/B/C/D et Build-14 activés à 100% en
+observation est nommé `Shadow intégral`.
+`Shadow intégral` n'est pas le profil `COMPLETE`.
 
 ## 5.2 V5.3 Light
 - premier rollout reel prudent et gouverne
@@ -1517,7 +1522,7 @@ Hard State : `CODED` → `SHADOW_ENABLED` → verdict → `SHADOW_VALIDATED` ou 
 
 Les enablers issus des audits tiers absorbés dans Build-14 (LOB deep filter, OBI, Hurst enrichi, anti-spoofing) suivent exactement ces mêmes règles.
 
-**HARD STATEMENT** : Même si tout le code Complete est implémenté, testé et prêt, la promotion de Complete vers le live exige 30 jours supplémentaires de shadow Complete après la stabilisation de Light en live. L'activation complète en Shadow est un essai structuré, pas une promotion déguisée.
+**HARD STATEMENT** : Même si tout le code Complete est implémenté, testé et prêt, la promotion de Complete vers le live exige 30 jours supplémentaires de shadow Complete après la stabilisation de Light en live. L'activation intégrale en Shadow est un essai structuré, pas une promotion déguisée.
 
 ---
 

@@ -9,6 +9,8 @@ import shutil
 import sys
 from uuid import uuid4
 
+import pytest
+
 from interface_contracts import ProfileId, StrategyClassification
 from local_replay_runtime import (
     HistoricalReplayDataset,
@@ -21,6 +23,7 @@ from local_replay_runtime import (
 )
 from meta_minimal.dtr_core.decision_state_encoder import DecisionState
 from meta_minimal.dtr_core.dtr_record_builder import build_dtr
+from protocols import ShadowDayCounter, ShadowProfile, ShadowSessionRegistry
 
 
 def _load_runner_module():
@@ -229,6 +232,11 @@ def test_export_local_replay_shadow_run_writes_governed_chain_sidecars():
         assert artifacts.shadow_input_json_path.exists()
         assert artifacts.shadow_runtime_evidence_json_path.exists()
         assert artifacts.shadow_summary_json_path.exists()
+        assert artifacts.shadow_day_record_json_path.exists()
+        assert artifacts.shadow_report_json_path.exists()
+        assert artifacts.shadow_days_dir_path.exists()
+        assert artifacts.shadow_session_summary_json_path.exists()
+        assert artifacts.shadow_session_registry_json_path.exists()
 
         import_summary = json.loads(artifacts.import_summary_json_path.read_text(encoding="utf-8"))
         local_replay_evidence = json.loads(
@@ -242,6 +250,18 @@ def test_export_local_replay_shadow_run_writes_governed_chain_sidecars():
             artifacts.shadow_runtime_evidence_json_path.read_text(encoding="utf-8")
         )
         shadow_summary = json.loads(artifacts.shadow_summary_json_path.read_text(encoding="utf-8"))
+        shadow_day_record = json.loads(
+            artifacts.shadow_day_record_json_path.read_text(encoding="utf-8")
+        )
+        shadow_report = json.loads(
+            artifacts.shadow_report_json_path.read_text(encoding="utf-8")
+        )
+        shadow_session_summary = json.loads(
+            artifacts.shadow_session_summary_json_path.read_text(encoding="utf-8")
+        )
+        shadow_session_registry = json.loads(
+            artifacts.shadow_session_registry_json_path.read_text(encoding="utf-8")
+        )
 
         assert import_summary["accepted"] is True
         assert import_summary["validation_status"] == "accepted"
@@ -258,6 +278,21 @@ def test_export_local_replay_shadow_run_writes_governed_chain_sidecars():
         assert shadow_summary["decision"]["accepted"] is True
         assert shadow_summary["decision"]["verdict"] == "accepted"
         assert shadow_summary["runtime_evidence_ready"] is True
+        assert shadow_day_record["passed_all_gates"] is True
+        assert shadow_day_record["metrics_summary"]["dominant_cluster"] == "unclustered"
+        assert shadow_report["consecutive_days"] == 1
+        assert shadow_report["data_infra_report_ready"] is True
+        assert shadow_report["inter_engine_comparison_ready"] is True
+        assert shadow_report["build14_contribution_ready"] is True
+        assert shadow_report["portfolio_report_ready"] is True
+        assert shadow_report["ui_alerting_report_ready"] is True
+        assert len(shadow_report["rendered_sections"]) == 7
+        assert "30_day_counter" in shadow_report["missing_sections"]
+        assert shadow_session_summary["requested_shadow_days"] == 1
+        assert shadow_session_summary["recorded_shadow_days_this_run"] == 1
+        assert len(shadow_session_summary["daily_record_paths"]) == 1
+        assert len(shadow_session_registry["entries"]) == 1
+        assert shadow_session_registry["entries"][0]["session_date"] == "2023-11-14"
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)
 
@@ -278,6 +313,9 @@ def test_export_local_replay_shadow_run_accepts_real_export_directory():
             artifacts.local_replay_evidence_json_path.read_text(encoding="utf-8")
         )
         run_manifest = json.loads(artifacts.run_manifest_json_path.read_text(encoding="utf-8"))
+        shadow_day_record = json.loads(
+            artifacts.shadow_day_record_json_path.read_text(encoding="utf-8")
+        )
 
         assert import_summary["accepted"] is True
         assert import_summary["artifact_id"] == "artifact-hash-local-export-1"
@@ -303,9 +341,11 @@ def test_export_local_replay_shadow_run_accepts_real_export_directory():
         assert run_manifest["strategy_id"] == "strategy-a-1"
         assert run_manifest["performance_mode"] == "research_fast_mode"
         assert local_replay_evidence["replay_useful_ready"] is True
+        assert abs(shadow_day_record["metrics_summary"]["dtr_coverage"] - (2 / 3)) < 1e-6
+        assert shadow_day_record["metrics_summary"]["hard_block_rate"] == 0.0
+        assert shadow_day_record["metrics_summary"]["phantom_trade_count"] == 0.0
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)
-        shutil.rmtree(export_dir, ignore_errors=True)
 
 
 def test_runner_main_accepts_output_dir():
@@ -332,6 +372,7 @@ def test_export_local_replay_shadow_run_accepts_chunked_aggregate_export_directo
         import_summary = json.loads(artifacts.import_summary_json_path.read_text(encoding="utf-8"))
         shadow_summary = json.loads(artifacts.shadow_summary_json_path.read_text(encoding="utf-8"))
         run_manifest = json.loads(artifacts.run_manifest_json_path.read_text(encoding="utf-8"))
+        shadow_report = json.loads(artifacts.shadow_report_json_path.read_text(encoding="utf-8"))
 
         assert import_summary["accepted"] is True
         assert import_summary["artifact_id"] == "artifact-run-local-export-chunked-1"
@@ -340,6 +381,82 @@ def test_export_local_replay_shadow_run_accepts_chunked_aggregate_export_directo
         assert run_manifest["record_count"] == 3
         assert shadow_summary["decision"]["accepted"] is True
         assert shadow_summary["runtime_evidence_ready"] is True
+        assert shadow_report["go_no_go_report_ready"] is True
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)
-        shutil.rmtree(export_dir, ignore_errors=True)
+
+
+def test_export_local_replay_shadow_run_materializes_multiple_governed_days():
+    runner = _load_runner_module()
+    output_dir = _scratch_dir("multi_days")
+
+    try:
+        artifacts = runner.export_local_replay_shadow_run(output_dir, shadow_days=3)
+
+        shadow_report = json.loads(artifacts.shadow_report_json_path.read_text(encoding="utf-8"))
+        shadow_session_summary = json.loads(
+            artifacts.shadow_session_summary_json_path.read_text(encoding="utf-8")
+        )
+
+        assert shadow_report["consecutive_days"] == 3
+        assert shadow_session_summary["requested_shadow_days"] == 3
+        assert shadow_session_summary["recorded_shadow_days_this_run"] == 3
+        assert len(shadow_session_summary["daily_record_paths"]) == 3
+        for record_path in shadow_session_summary["daily_record_paths"]:
+            assert Path(record_path).exists()
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_export_local_replay_shadow_run_resumes_existing_shadow_session():
+    runner = _load_runner_module()
+    output_dir = _scratch_dir("resume_days")
+
+    try:
+        runner.export_local_replay_shadow_run(output_dir, shadow_days=2)
+        artifacts = runner.export_local_replay_shadow_run(output_dir, shadow_days=2)
+
+        shadow_report = json.loads(artifacts.shadow_report_json_path.read_text(encoding="utf-8"))
+        shadow_session_summary = json.loads(
+            artifacts.shadow_session_summary_json_path.read_text(encoding="utf-8")
+        )
+
+        assert shadow_report["consecutive_days"] == 4
+        assert shadow_session_summary["session_resumed"] is True
+        assert shadow_session_summary["starting_consecutive_days"] == 2
+        assert shadow_session_summary["recorded_shadow_days_this_run"] == 2
+        assert len(shadow_session_summary["daily_record_paths"]) == 2
+        assert Path(shadow_session_summary["daily_record_paths"][0]).name.endswith("0003.json")
+        assert Path(shadow_session_summary["daily_record_paths"][1]).name.endswith("0004.json")
+        assert (artifacts.shadow_days_dir_path / "local_replay_shadow.day_0001.json").exists()
+        assert (artifacts.shadow_days_dir_path / "local_replay_shadow.day_0004.json").exists()
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_export_local_replay_shadow_run_rejects_duplicate_session_date_before_counter_mutation():
+    runner = _load_runner_module()
+    output_dir = _scratch_dir("duplicate_session_date")
+
+    try:
+        runner.export_local_replay_shadow_run(
+            output_dir,
+            shadow_days=1,
+            session_date="2026-04-01",
+        )
+
+        with pytest.raises(ValueError, match="already recorded session_date"):
+            runner.export_local_replay_shadow_run(
+                output_dir,
+                shadow_days=1,
+                session_date="2026-04-01",
+            )
+
+        counter = ShadowDayCounter(output_dir, ShadowProfile.LIGHT)
+        registry = ShadowSessionRegistry(output_dir)
+        assert counter.get_status().consecutive_days == 1
+        assert len(registry.get_entries()) == 1
+        assert registry.get_entries()[0].session_date == "2026-04-01"
+        assert not (output_dir / "shadow_days" / "local_replay_shadow.day_0002.json").exists()
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)

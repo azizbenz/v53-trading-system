@@ -65,23 +65,94 @@
     {
       "date": "2026-04-02",
       "command": "rtk pytest tests/test_regression_alignment.py -q",
-      "result": "50 passed, 2 failed",
-      "classification": "blocking_alignment_gap",
+      "result": "53 passed",
+      "classification": "aligned_after_regression_fix",
+      "notes": [
+        "Regression tests were updated to reflect the canonical Build-11/Build-13 rule: 30 consecutive days plus a complete shadow report."
+      ]
+    },
+    {
+      "date": "2026-04-02",
+      "command": "rtk pytest tests/test_interface_contracts tests/test_manifest_registry tests/test_dag_validator tests/test_contract_test_suite tests/test_smoke_bootstrap_recovery -q",
+      "result": "389 passed, 6 failed",
+      "classification": "build1_architecture_regression_detected",
       "failure_focus": [
-        "TestShadow30jGate.test_gate_passes_with_30_days",
-        "TestLiveLightShadowPrerequisite.test_passes_when_shadow_30j_met"
+        "Full DAG validation fails on unauthorized imports",
+        "Build-1 smoke fails because dag_clean is not clean"
+      ]
+    },
+    {
+      "date": "2026-04-02",
+      "command": "rtk pytest tests/test_data_backbone -q",
+      "result": "164 passed"
+    },
+    {
+      "date": "2026-04-02",
+      "command": "rtk pytest tests/test_execution_backbone -q",
+      "result": "110 passed"
+    },
+    {
+      "date": "2026-04-02",
+      "command": "pytest tests/test_risk_backbone -q",
+      "result": "127 passed, 14 errors",
+      "classification": "environment_or_fixture_issue_detected",
+      "failure_focus": [
+        "tests/test_risk_backbone/test_circuit_breaker.py",
+        "PermissionError while pytest creates/scans tmp_path base directories"
+      ]
+    },
+    {
+      "date": "2026-04-02",
+      "command": "rtk pytest tests/test_scoring_backbone -q",
+      "result": "117 passed"
+    },
+    {
+      "date": "2026-04-02",
+      "command": "rtk pytest tests/test_engines -q",
+      "result": "125 passed"
+    },
+    {
+      "date": "2026-04-02",
+      "command": "rtk pytest tests/test_portfolio_minimal -q",
+      "result": "82 passed"
+    },
+    {
+      "date": "2026-04-02",
+      "command": "rtk pytest tests/test_meta_minimal -q",
+      "result": "78 passed"
+    },
+    {
+      "date": "2026-04-02",
+      "command": "rtk pytest tests/test_monitoring tests/test_ui -q",
+      "result": "130 passed"
+    },
+    {
+      "date": "2026-04-02",
+      "command": "rtk pytest tests/test_protocols tests/test_complete_enablers -q",
+      "result": "155 passed",
+      "classification": "build11_to_build14_green_test_surface",
+      "notes": [
+        "This validates protocol and Build-14 package surfaces.",
+        "It does not by itself prove doctrinal closure of Build-11 or real runtime closure of Build-13."
       ]
     }
   ],
   "current_status_by_build": {
+    "build_1": "STILL_PARTIAL",
     "build_2": "ALIGNED",
     "build_3": "ALIGNED",
+    "build_4": "STILL_PARTIAL",
+    "build_5": "ALIGNED",
+    "build_6": "ALIGNED",
+    "build_7": "ALIGNED",
+    "build_8": "ALIGNED",
+    "build_9": "ALIGNED",
     "build_9x": "ALIGNED",
     "build_10": "ALIGNED",
     "build_11": "STILL_PARTIAL",
     "build_12": "NOT_READY",
     "build_13": "NOT_READY",
-    "build_14": "PARTIAL_AND_DOCTRINALLY_SENSITIVE",
+    "build_14": "STILL_PARTIAL",
     "build_15": "NOT_READY",
     "build_16": "NOT_READY",
     "build_17": "PARTIAL_SURFACE_ONLY"
@@ -114,6 +185,14 @@
       "status": "pending_explicit_governance_decision",
       "blocking_reason": "Changing the duration impacts the master, build plan, Build-12, Build-13, merge gates, tests, and promotion semantics.",
       "rule_until_decided": "Keep the canon at 7 days and treat 15 days as a change request, not as an automatic markdown correction."
+    },
+    {
+      "decision_id": "GOV-002",
+      "topic": "Lexical clarification for Build-11 Shadow",
+      "current_canon": "The LIGHT shadow truth phase activated A/B/C/D and Build-14 at 100%, which created ambiguity with the COMPLETE rollout envelope.",
+      "proposed_change": "Reserve COMPLETE for the rollout envelope only, and name the Build-11 full-observation phase 'Shadow intégral'.",
+      "status": "accepted_and_applied_to_canonical_docs",
+      "rule_until_decided": "Use 'Shadow intégral' for the LIGHT shadow truth phase. Do not use 'solution complète' or 'shadow complet' when the intent is the Build-11 LIGHT shadow with all components active in observation."
     }
   ],
   "targeted_audits": [
@@ -125,6 +204,54 @@
       "conclusion": "The official rule is not '30 days only'. It is 30 consecutive shadow days plus a complete/exploitable shadow report and post-shadow component verdicts before promotion.",
       "code_mapping": "shadow_report_ready is the runtime representation of the canonical 'rapport shadow exploitable/complet' requirement.",
       "action_taken": "Regression tests expecting 30-days-only behavior must be updated."
+    },
+    {
+      "audit_id": "AUDIT-002",
+      "date": "2026-04-02",
+      "scope": "Build-1 -> Build-14 critical audit execution plan",
+      "record_path": "docs/audit chatgpt buisness/2026-04-02_BUILD1_TO_BUILD14_CRITICAL_AUDIT_PLAN.md",
+      "conclusion": "The audit must proceed in structured waves: base architecture, Light rollout core, promotion gates, Build-14 enablers, then transversal consolidation.",
+      "action_taken": "Use the plan as the execution frame and update memory after each audit wave."
+    },
+    {
+      "audit_id": "AUDIT-003",
+      "date": "2026-04-02",
+      "scope": "Build-1 -> Build-5 critical audit",
+      "record_path": "docs/audit chatgpt buisness/2026-04-02_BUILD1_TO_BUILD5_AUDIT.md",
+      "conclusion": "Build-2, Build-3 and Build-5 are aligned in the current evidence frame. Build-1 is still partial because global DAG validation fails. Build-4 is still partial because its canonical modules look green but the package-level circuit breaker suite is not clean in this environment.",
+      "action_taken": "Open a targeted Build-1 dependency audit and keep Build-4 under test-environment scrutiny."
+    },
+    {
+      "audit_id": "AUDIT-004",
+      "date": "2026-04-02",
+      "scope": "Build-6 -> Build-10 critical audit",
+      "record_path": "docs/audit chatgpt buisness/2026-04-02_BUILD6_TO_BUILD10_AUDIT.md",
+      "conclusion": "Build-6, Build-7, Build-8, Build-9 and Build-10 are aligned in the current evidence frame.",
+      "action_taken": "Use this green Light-core baseline before consolidating Build-11 to Build-14."
+    },
+    {
+      "audit_id": "AUDIT-005",
+      "date": "2026-04-02",
+      "scope": "Build-11 -> Build-14 critical audit",
+      "record_path": "docs/audit chatgpt buisness/2026-04-02_BUILD11_TO_BUILD14_AUDIT.md",
+      "conclusion": "Build-11 remains still partial, Build-12 and Build-13 are not ready, and Build-14 remains still partial. Gates are strict and mostly aligned with canon, but doctrinal closure and exposed-state consistency are not complete.",
+      "action_taken": "Keep downstream promotions blocked and open a targeted correction wave on Build-11 closure and Build-14 exposed-state normalization."
+    },
+    {
+      "audit_id": "AUDIT-006",
+      "date": "2026-04-02",
+      "scope": "Build-1 -> Build-14 consolidated gap register",
+      "record_path": "docs/audit chatgpt buisness/2026-04-02_BUILD1_TO_BUILD14_CONSOLIDATED_GAPS.md",
+      "conclusion": "The two primary critical fronts are the Build-1 architectural DAG drift and the incomplete closure of the Shadow-to-live chain around Build-11 and Build-14.",
+      "action_taken": "Prioritize corrections in the order: Build-1 DAG, Build-11 closure, Build-14 exposed-state normalization, then downstream requalification."
+    },
+    {
+      "audit_id": "AUDIT-007",
+      "date": "2026-04-02",
+      "scope": "Git build-branch map and integration status for Build-1 to Build-14",
+      "record_path": "docs/audit chatgpt buisness/2026-04-02_GIT_BUILD_BRANCH_MAP_AND_INTEGRATION_AUDIT.md",
+      "conclusion": "Local checkpoint branches do exist for Builds 2 to 14, but every inspected tip is already integrated into main and the current branch. Build-1 has no dedicated checkpoint branch and is mainly anchored by the initial commit plus later integrated work.",
+      "action_taken": "Treat the current dirty worktree as the real unsafeguarded area. Do not use old checkpoint branches as the primary recovery base."
     }
   ],
   "known_critical_gaps": [
@@ -173,7 +300,23 @@
       "priority": "P0",
       "scope": "Regression alignment around Shadow 30j gate",
       "doc_expectation": "Build-11 / Build-13 gate semantics must be consistent across canonical docs, runtime gates, and regression tests.",
-      "code_or_runtime_reality": "Current runtime gate effectively requires 30 consecutive days plus shadow_report_ready, while part of the regression suite still expects the older 30-days-only behavior.",
+      "code_or_runtime_reality": "Current runtime gate requires 30 consecutive days plus shadow_report_ready. The targeted regression suite was updated and is now aligned.",
+      "status": "closed_for_targeted_regression_scope"
+    },
+    {
+      "gap_id": "GAP-007",
+      "priority": "P0",
+      "scope": "Build-1 dependency architecture drift",
+      "doc_expectation": "The global module DAG must stay valid and the manifest dependency registry must match real authorized imports.",
+      "code_or_runtime_reality": "DAG validation currently fails on unauthorized imports from local_replay_runtime to meta and from protocols to local_replay_runtime.",
+      "status": "open"
+    },
+    {
+      "gap_id": "GAP-008",
+      "priority": "P2",
+      "scope": "Build-4 circuit breaker verification environment",
+      "doc_expectation": "Risk-related verification should run cleanly in the target audit environment.",
+      "code_or_runtime_reality": "tests/test_risk_backbone/test_circuit_breaker.py errors out on tmp_path PermissionError, preventing a clean package-level verdict for risk_backbone.",
       "status": "open"
     }
   ],
@@ -196,7 +339,7 @@
     {
       "batch_id": "B2",
       "title": "Audit Build-11/12/13/14 docs vs code",
-      "status": "pending",
+      "status": "completed",
       "scope": [
         "src/protocols",
         "scripts",
@@ -210,7 +353,7 @@
     {
       "batch_id": "B3",
       "title": "Audit monitoring/UI/Hard States",
-      "status": "pending",
+      "status": "completed",
       "scope": [
         "src/monitoring",
         "src/ui",
@@ -263,6 +406,53 @@
         "Runtime evidence stored.",
         "No premature ALIGNED verdict."
       ]
+    },
+    {
+      "batch_id": "B7",
+      "title": "Audit Build-1 to Build-5",
+      "status": "completed",
+      "scope": [
+        "Dependency architecture",
+        "Data backbone",
+        "Execution backbone",
+        "Risk backbone",
+        "Scoring backbone"
+      ],
+      "done_criteria": [
+        "Each base build mapped doc -> code -> tests.",
+        "No foundational contradiction left unclassified."
+      ]
+    },
+    {
+      "batch_id": "B8",
+      "title": "Audit Build-6 to Build-10",
+      "status": "completed",
+      "scope": [
+        "Engine A",
+        "Engine B",
+        "Portfolio minimal",
+        "Meta minimal",
+        "Monitoring/UI Light"
+      ],
+      "done_criteria": [
+        "Rollout Light core re-audited.",
+        "Any A/B/portfolio/meta/UI contradiction classified."
+      ]
+    },
+    {
+      "batch_id": "B9",
+      "title": "Consolidated Build-1 to Build-14 gap register",
+      "status": "completed",
+      "scope": [
+        "Cross-build contradictions",
+        "Doc vs code",
+        "Code vs tests",
+        "Runtime evidence gaps"
+      ],
+      "done_criteria": [
+        "One owner per gap.",
+        "One correction order per gap family."
+      ]
     }
   ],
   "evidence_policy": {
@@ -309,7 +499,7 @@
     }
   },
   "next_recommended_action": {
-    "step": "Secure the docs/memory commit first, then audit and resolve the Build-11/Build-13 regression-alignment gap before any merge-ready code commit.",
-    "reason": "This preserves the current investigation without overstating the maturity of the Shadow/VPS code bundle."
+    "step": "Start the first correction wave on the Build-1 DAG drift, then open the second correction wave on Build-11 closure and Build-14 exposed-state normalization.",
+    "reason": "The Build-1 -> Build-14 audit is now consolidated. The highest-risk remaining work is architectural integrity first, then honest closure of the Shadow-to-live chain."
   }
 }

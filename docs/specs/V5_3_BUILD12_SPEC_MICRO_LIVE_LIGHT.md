@@ -69,9 +69,9 @@ Le Micro-live Light existe pour tester simultanément :
 
 ## Relation avec le verdict post-Shadow
 
-Le Micro-live n’active que les composants ayant reçu le verdict `SHADOW_VALIDATED` à l’issue des 30 jours de Shadow complet.
+Le Micro-live n’active que les composants ayant reçu le verdict `SHADOW_VALIDATED` à l’issue des 30 jours de `Shadow intégral` du profil `LIGHT`.
 
-- L’activation complète en Shadow (Build-14, C/D à 100%) **ne signifie pas activation Micro-live automatique** de tous ces composants
+- L’activation intégrale en Shadow (Build-14, C/D à 100%) **ne signifie pas activation Micro-live automatique** de tous ces composants
 - Seuls les composants dont la valeur a été démontrée pendant le Shadow passent en Micro-live
 - Les composants marqués `DORMANT` au verdict post-Shadow restent inactifs
 - Il peut y avoir rollback ou filtrage avant Micro-live
