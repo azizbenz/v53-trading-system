@@ -483,6 +483,14 @@
       "record_path": "docs/audit chatgpt buisness/2026-04-03_BUILD11_OPTION_B_LOCAL_SHADOW_CHAIN_FIX_AUDIT.md",
       "conclusion": "The post-Option-B local regression in scripts/run_local_replay_shadow.py is repaired. The local replay runner, daily orchestrator, Shadow VPS launcher, and focused Build-11 local suites are green again on the A/B + Build-14 perimeter.",
       "action_taken": "Keep Build-11 partial only for real runtime-proof reasons, not for a broken local A/B chain."
+    },
+    {
+      "audit_id": "AUDIT-014",
+      "date": "2026-04-03",
+      "scope": "Build-15 to Build-17 code vs md audit",
+      "record_path": "docs/audit chatgpt buisness/2026-04-03_BUILD15_TO_BUILD17_CODE_VS_MD_AUDIT.md",
+      "conclusion": "Build-15 and Build-16 remain spec-only package surfaces, while Build-17 is partially implemented through a local UI/demo launcher only. The branch must not treat C/D as already coded or Build-17 as a real Live-Complete runtime.",
+      "action_taken": "Patch the Build-15/16 specs to remove the Shadow timing contradiction with Option B, and keep future Engine C/D work as a dedicated later implementation lot."
     }
   ],
   "known_critical_gaps": [
@@ -758,7 +766,7 @@
   },
   "branch_overrides": {
     "option_b_realignment_commit": "99cf170",
-    "effective_next_action": "Continue the build-by-build audit/correction pass from the repaired Option B baseline. Keep Build-11 focused on honest runtime proof and target-environment evidence, keep Build-12 / Build-13 blocked until Build-11 is truly closed, and keep Build-4 tmp-path verification as a separate environment task.",
-    "effective_reason": "The doctrinal contradiction between Build-11 and Build-15/16/17 is resolved on the current branch, and the local Build-11 replay-to-Shadow chain is repaired. The remaining blockers are now honest runtime proof and build closure, not canon ambiguity or a broken local chain."
+    "effective_next_action": "Continue the build-by-build audit/correction pass from the repaired Option B baseline. Keep Build-11 focused on honest runtime proof and target-environment evidence, keep Build-12 / Build-13 blocked until Build-11 is truly closed, keep Build-15 / Build-16 out of the current rollout wave because they remain spec-only, and keep Build-17 labeled UI/demo only until a real Live-Complete protocol exists.",
+    "effective_reason": "The doctrinal contradiction between Build-11 and Build-15/16/17 is resolved on the current branch, the local Build-11 replay-to-Shadow chain is repaired, and the late-build audit now cleanly separates spec-only Engine C/D work from the partial Build-17 UI/demo surface. The remaining blockers are runtime proof and future dedicated implementation waves, not canon ambiguity."
   }
 }

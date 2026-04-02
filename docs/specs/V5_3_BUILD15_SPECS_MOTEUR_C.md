@@ -59,7 +59,10 @@ Build-15 est :
 
 ## Doctrine d’activation Shadow
 
-Le moteur C est **activé à 100% pendant le Shadow 30 jours** (`SHADOW_ENABLED`) :
+Le moteur C n’appartient pas au **Build-11 Light Shadow**.
+
+Une fois **Build-15** ouvert, le moteur C est **activé à 100% pendant sa propre
+fenêtre Shadow gouvernée** (`SHADOW_ENABLED`) :
 - scoré, classé, arbitré et observé aux côtés de A/B
 - ses performances sont comparées à A pour vérifier la non-duplication
 - sa contribution portefeuille est mesurée (fréquence utile, edge marginal, coût)
@@ -82,10 +85,11 @@ Les conditions suivantes doivent être satisfaites :
 - lecture portefeuille suffisamment mature pour juger la contribution marginale de C
 
 ## Activation en Shadow
-- C est **activé à 100% en Shadow** dès le début des 30 jours, aux côtés de A/B/D
-- son utilité est prouvée pendant ces 30 jours de Shadow complet
+- C est **activé à 100% pendant la fenêtre Shadow dédiée de Build-15**
+- cette fenêtre n’est pas le `Shadow intégral` initial de Build-11
+- son utilité est prouvée pendant cette phase Shadow dédiée, aux côtés de A/B
 - sa promotion réelle dépend des résultats observés (verdict post-Shadow)
-- il n'est plus "attendu seulement plus tard" : il est essayé tôt en Shadow, promu tard si validé
+- C reste un moteur essayé plus tard dans le rollout, puis promu seulement si validé
 
 ---
 

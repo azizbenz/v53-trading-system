@@ -60,7 +60,11 @@ Build-16 est :
 
 ## Doctrine d'activation Shadow
 
-Le moteur D est **activé à 100% pendant le Shadow 30 jours** (`SHADOW_ENABLED`) :
+Le moteur D n’appartient ni au **Build-11 Light Shadow**, ni au Shadow dédié de
+Build-15.
+
+Une fois **Build-16** ouvert, le moteur D est **activé à 100% pendant sa propre
+fenêtre Shadow gouvernée** (`SHADOW_ENABLED`) :
 - scoré, classé, arbitré et observé aux côtés de A/B/C
 - sa valeur marginale est mesurée (économique, concentration, corrélation)
 - ses performances sont comparées pour vérifier la non-redondance avec A
@@ -85,10 +89,13 @@ Les conditions suivantes doivent être satisfaites :
 - compréhension explicite des effets de concentration et de redondance
 
 ## Activation en Shadow
-- D est **activé à 100% en Shadow** dès le début des 30 jours, aux côtés de A/B/C
-- sa valeur marginale est prouvée pendant ces 30 jours de Shadow complet
+- D est **activé à 100% pendant la fenêtre Shadow dédiée de Build-16**
+- cette fenêtre n’est ni le `Shadow intégral` initial de Build-11, ni la
+  fenêtre Shadow dédiée de Build-15
+- sa valeur marginale est prouvée pendant cette phase Shadow dédiée, aux côtés
+  de A/B/C
 - sa promotion réelle dépend des résultats observés (verdict post-Shadow)
-- il n'est plus "attendu seulement plus tard" : il est essayé tôt en Shadow, promu tard si validé
+- D reste un moteur essayé plus tard dans le rollout, puis promu seulement si validé
 
 ---
 
