@@ -20,6 +20,8 @@ from protocols import (
     MicroLiveInput,
     MicroLiveInputError,
     MicroLiveVerdict,
+    OperatorSafingAction,
+    OperatorSafingRequest,
     ShadowComparison,
     ShadowComponentAssessment,
     ShadowComponentHardState,
@@ -517,6 +519,38 @@ def test_run_micro_live_gate_blocks_when_observability_or_onboarding_is_missing(
     assert summary.decision.verdict == MicroLiveVerdict.BLOCKED
     assert "Build-10 observability must be ready before Micro-live capital exposure" in summary.decision.blocking_reasons
     assert "strategy onboarding must be accepted before Micro-live" in summary.decision.blocking_reasons
+
+
+def test_run_micro_live_gate_blocks_when_operator_requests_downgrade_to_shadow():
+    summary = run_micro_live_gate(
+        build_micro_live_input_from_shadow(
+            _shadow_summary(),
+            _shadow_payload(),
+            probe_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=20.0,
+            requested_pair_notional_usdt=10.0,
+            max_total_notional_usdt=25.0,
+            max_pair_notional_usdt=12.5,
+            observability_ready=True,
+            halt_ready=True,
+            operator_safing_request=OperatorSafingRequest(
+                timestamp_ms=1_700_000_000_000,
+                request_id="safing-micro-1",
+                action=OperatorSafingAction.DOWNGRADE_TO_SHADOW,
+                source_runtime_mode=RuntimeMode.MICRO_LIVE,
+                target_runtime_mode=RuntimeMode.SHADOW,
+                reason="manual requalification requested",
+            ),
+            onboarding_accepted=True,
+        )
+    )
+
+    assert summary.run_state == summary.run_state.__class__.BLOCKED
+    assert summary.operator_safing_request is not None
+    assert any(
+        "operator safing request: downgrade_to_shadow (micro_live -> shadow)" in reason
+        for reason in summary.decision.blocking_reasons
+    )
 
 
 def test_run_micro_live_gate_stays_dry_run_only_when_shadow_needs_review():

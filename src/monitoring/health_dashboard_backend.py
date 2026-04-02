@@ -28,6 +28,8 @@ def _default_projection_status(
 def _operator_halted(operator_runtime: OperatorRuntimeProjection | None) -> bool:
     if operator_runtime is None:
         return False
+    if operator_runtime.latest_safing_action == "set_halted":
+        return True
     return operator_runtime.latest_event_message.endswith("set_halted")
 
 

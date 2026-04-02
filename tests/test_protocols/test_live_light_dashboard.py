@@ -6,6 +6,8 @@ from interface_contracts import PromotionState, ReviewState
 from protocols import (
     LiveLightDecision,
     LiveLightExecutionIntent,
+    OperatorSafingAction,
+    OperatorSafingRequest,
     LiveLightRunState,
     LiveLightRunSummary,
     LiveLightVerdict,
@@ -76,6 +78,7 @@ def test_build_live_light_projection_returns_normalized_monitoring_summary():
     assert projection.planned_pairs == ("BTCUSDT", "ETHUSDT")
     assert projection.build14_action == "downgrade_confidence"
     assert projection.build14_recommended_budget_factor == 0.85
+    assert projection.operator_safing_action == ""
 
 
 def test_build_live_light_dashboard_section_renders_expected_cards():
@@ -89,6 +92,7 @@ def test_build_live_light_dashboard_section_renders_expected_cards():
         "live_light_budget",
         "live_light_surface",
         "live_light_readiness",
+        "live_light_safing_request",
         "live_light_blocking_reasons",
     }
     verdict = next(card for card in section.cards if card.key == "live_light_verdict")
@@ -96,3 +100,28 @@ def test_build_live_light_dashboard_section_renders_expected_cards():
     assert verdict.value == "allowed_to_execute_small"
     assert verdict.status == "healthy"
     assert "build14=downgrade_confidence@0.85" in budget.detail
+
+
+def test_build_live_light_dashboard_section_surfaces_manual_safing_request():
+    summary = _summary().model_copy(
+        update={
+            "operator_safing_request": OperatorSafingRequest(
+                timestamp_ms=1_700_000_000_000,
+                request_id="live-safing-1",
+                action=OperatorSafingAction.DOWNGRADE_TO_MICRO_LIVE,
+                source_runtime_mode="live",
+                target_runtime_mode="micro_live",
+                reason="execution drift requires step-down",
+            )
+        }
+    )
+
+    projection = build_live_light_projection(summary)
+    section = build_live_light_dashboard_section(summary)
+
+    assert projection.operator_safing_action == "downgrade_to_micro_live"
+    assert projection.operator_safing_target_runtime_mode == "micro_live"
+    card = next(card for card in section.cards if card.key == "live_light_safing_request")
+    assert card.value == "downgrade_to_micro_live -> micro_live"
+    assert card.status == "warning"
+    assert card.detail == "execution drift requires step-down"

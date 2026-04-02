@@ -151,3 +151,25 @@ def test_light_ui_runtime_projects_rejections_into_monitoring_log_tail():
     assert projection.recent_event_log[-1].rejection_reason == (
         "risk cap changes are forbidden in the locked Light UI"
     )
+
+
+def test_light_ui_runtime_projects_latest_safing_request_from_accepted_manual_action():
+    runtime = LightUIRuntime()
+
+    outcome = runtime.submit_action(
+        OperatorActionRequest(
+            timestamp_ms=1_700_000_000_400,
+            correlation_id="corr-ui-runtime",
+            profile=ProfileId.LIGHT,
+            runtime_mode=RuntimeMode.LIVE,
+            action=OperatorActionType.DOWNGRADE_TO_MICRO_LIVE,
+            reason="execution drift requires step-down",
+        ),
+    )
+    projection = runtime.get_operator_projection()
+
+    assert outcome.accepted is True
+    assert projection.latest_safing_action == "downgrade_to_micro_live"
+    assert projection.latest_safing_source_runtime_mode == "live"
+    assert projection.latest_safing_target_runtime_mode == "micro_live"
+    assert projection.latest_safing_reason == "execution drift requires step-down"

@@ -46,6 +46,14 @@ La V5.3 reste :
 - deux profils métier uniquement : `LIGHT`, `COMPLETE`
 - quatre `runtime_mode` uniquement : `LOCAL_REPLAY`, `SHADOW`, `MICRO_LIVE`, `LIVE`
 
+Lecture canonique des états :
+
+- `profil=LIGHT`, `runtime_mode=SHADOW` : Build-11 / `Shadow intégral`
+- `profil=LIGHT`, `runtime_mode=MICRO_LIVE` : Build-12
+- `profil=LIGHT`, `runtime_mode=LIVE` : Build-13 / `Live-Light`
+- `profil=COMPLETE`, `runtime_mode=SHADOW` : Shadow Complete
+- `profil=COMPLETE`, `runtime_mode=LIVE` : Live-Complete
+
 Refus immédiat si l’on introduit :
 
 - `BACKTEST_PROFILE`

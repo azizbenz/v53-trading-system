@@ -128,6 +128,16 @@
     },
     {
       "date": "2026-04-02",
+      "command": "rtk pytest tests/test_protocols/test_contracts.py tests/test_protocols/test_micro_live_runtime.py tests/test_protocols/test_live_light_runtime.py tests/test_protocols/test_micro_live_dashboard.py tests/test_protocols/test_live_light_dashboard.py tests/test_ui/test_operator_actions.py tests/test_ui/test_light_dashboard.py tests/test_ui/test_light_ui_runtime.py tests/test_ui/test_technical_dashboard.py tests/test_ui/test_technical_dashboard_launcher.py tests/test_monitoring/test_monitoring_backend.py tests/test_monitoring/test_monitoring_runtime.py -q",
+      "result": "135 passed",
+      "classification": "operator_safing_protocol_ui_monitoring_green_surface",
+      "notes": [
+        "This covers the current safing contract, launcher propagation, technical dashboard operator controls, and protocol gating surfaces.",
+        "It is the focused green evidence set for the current accumulated safe lot before commit."
+      ]
+    },
+    {
+      "date": "2026-04-02",
       "command": "rtk pytest tests/test_protocols tests/test_complete_enablers -q",
       "result": "155 passed",
       "classification": "build11_to_build14_green_test_surface",
@@ -193,6 +203,41 @@
       "proposed_change": "Reserve COMPLETE for the rollout envelope only, and name the Build-11 full-observation phase 'Shadow intégral'.",
       "status": "accepted_and_applied_to_canonical_docs",
       "rule_until_decided": "Use 'Shadow intégral' for the LIGHT shadow truth phase. Do not use 'solution complète' or 'shadow complet' when the intent is the Build-11 LIGHT shadow with all components active in observation."
+    },
+    {
+      "decision_id": "GOV-003",
+      "topic": "Canonical state reading",
+      "current_canon": "Some active docs still used narrative wording that could blur profiles, runtime modes, and named phases.",
+      "proposed_change": "Read every rollout state as 'profil + runtime_mode', and keep named phases as human-readable aliases only.",
+      "status": "accepted_and_applied_to_canonical_docs",
+      "rule_until_decided": "Use the canonical matrix: LIGHT+SHADOW, LIGHT+MICRO_LIVE, LIGHT+LIVE, COMPLETE+SHADOW, COMPLETE+LIVE. Do not describe LIGHT as if it 'contains' stages."
+    },
+    {
+      "decision_id": "GOV-004",
+      "topic": "Single prod-safe chain doctrine",
+      "current_canon": "The active canon keeps two rollout envelopes: LIGHT then COMPLETE, with Build-11/12/13 on LIGHT and a later COMPLETE Shadow/Live path.",
+      "proposed_change": "Migrate to one complete V5.3 rollout chain: full development, Shadow proof 30 days, Shadow confirmation 15 days, Micro-live 15 days, then Live.",
+      "status": "pending_explicit_governance_decision",
+      "blocking_reason": "This would rewrite the rollout doctrine and impacts the master, build plan, Build-11 to Build-14 specs, merge gates, protocol contracts, tests, runtime counters, and monitoring/UI semantics.",
+      "rule_until_decided": "Keep the current canon active. Treat the single-chain doctrine as a target proposal only, documented separately, until an explicit governance decision approves the migration."
+    },
+    {
+      "decision_id": "GOV-005",
+      "topic": "Operator-governed degradation and emergency manual kill",
+      "current_canon": "The active canon already requires rollback, DEGRADED, HALTED, kill-switch readiness, and a locked UI, but it does not yet define the future single-chain downgrade protocol as a local UI-governed control plane.",
+      "proposed_change": "In the target doctrine, all visible degradation transitions must be manually triggered through the local operator UI, with a mandatory emergency manual kill action, confirmation, reason capture, and structured audit logging.",
+      "status": "accepted_for_target_doctrine_pending_canon_migration",
+      "blocking_reason": "This requirement must be reflected later in protocol contracts, runtime state transitions, monitoring projections, and the future local operator UI.",
+      "rule_until_decided": "For the target single-chain migration, keep phase downgrades operator-governed via local UI. Hard safety interlocks may still auto-block order emission, but they must not silently perform a rollout phase transition."
+    },
+    {
+      "decision_id": "GOV-006",
+      "topic": "Fixed requalification matrix for the target doctrine",
+      "current_canon": "The active canon allows rollback and downgrade logic in spirit, but it does not yet define one fixed transition matrix with explicit requalification durations and a phase field.",
+      "proposed_change": "Freeze the target doctrine around one governed transition matrix: SHADOW_PROOF_30D -> SHADOW_CONFIRMATION_15D -> MICRO_LIVE_15D -> LIVE, plus fixed downgrade paths toward MICRO_LIVE_15D, SHADOW_CONFIRMATION_15D, SHADOW_PROOF_30D, or HALTED.",
+      "status": "formalized_as_target_doctrine_pending_canon_migration",
+      "blocking_reason": "The matrix is documented, but it still requires explicit governance approval before replacing the active LIGHT/COMPLETE canon and before code-wide migration.",
+      "rule_until_decided": "Use the fixed 15-day and 30-day requalification matrix as the target doctrine reference only. Do not silently inject it into the active canon or broad code surfaces before the build-by-build audit and governance checkpoint."
     }
   ],
   "targeted_audits": [
@@ -252,6 +297,30 @@
       "record_path": "docs/audit chatgpt buisness/2026-04-02_GIT_BUILD_BRANCH_MAP_AND_INTEGRATION_AUDIT.md",
       "conclusion": "Local checkpoint branches do exist for Builds 2 to 14, but every inspected tip is already integrated into main and the current branch. Build-1 has no dedicated checkpoint branch and is mainly anchored by the initial commit plus later integrated work.",
       "action_taken": "Treat the current dirty worktree as the real unsafeguarded area. Do not use old checkpoint branches as the primary recovery base."
+    },
+    {
+      "audit_id": "AUDIT-008",
+      "date": "2026-04-02",
+      "scope": "Target doctrine decision for a single prod-safe rollout chain",
+      "record_path": "docs/audit chatgpt buisness/2026-04-02_TARGET_DOCTRINE_DECISION_SINGLE_PROD_SAFE_CHAIN.md",
+      "conclusion": "A serious alternative doctrine was formalized: one complete V5.3, then Shadow 30d, Shadow confirmation 15d, Micro-live 15d, then Live. It is clearer operationally, but it is a governance refactor rather than a simple doc patch.",
+      "action_taken": "Keep this target doctrine as a pending governance decision until an explicit choice is made between the current canon and the single-chain migration."
+    },
+    {
+      "audit_id": "AUDIT-009",
+      "date": "2026-04-02",
+      "scope": "Target doctrine transitions and requalification matrix",
+      "record_path": "docs/audit chatgpt buisness/2026-04-02_TARGET_DOCTRINE_TRANSITIONS_AND_REQUALIFICATION_MATRIX.md",
+      "conclusion": "The target doctrine now has a fixed forward chain, fixed downgrade paths, fixed 15-day and 30-day durations, and a strict distinction between manual rollout transitions and automatic hard safety interlocks.",
+      "action_taken": "Use this matrix as the anti-hallucination reference for any later migration discussion, but keep the active canon unchanged until the build-by-build audit and governance checkpoint are complete."
+    },
+    {
+      "audit_id": "AUDIT-010",
+      "date": "2026-04-02",
+      "scope": "Prod-safe orchestration plan for commit, audit, drift correction, and later migration",
+      "record_path": "docs/audit chatgpt buisness/2026-04-02_PROD_SAFE_ORCHESTRATION_PLAN_TARGET_DOCTRINE_AND_BUILD_AUDIT.md",
+      "conclusion": "The next critical phase is now sequenced explicitly: freeze doctrine inputs, commit the safe lot, perform the build-by-build audit against the active canon, classify drifts, and only then decide whether to continue on the active frame or migrate the doctrine.",
+      "action_taken": "Use this orchestration plan as the execution frame for the next audit and correction waves."
     }
   ],
   "known_critical_gaps": [
@@ -453,6 +522,20 @@
         "One owner per gap.",
         "One correction order per gap family."
       ]
+    },
+    {
+      "batch_id": "B10",
+      "title": "Freeze target transition matrix and prod-safe orchestration frame",
+      "status": "completed",
+      "scope": [
+        "Target doctrine proposal",
+        "Requalification matrix",
+        "Commit/audit/correction orchestration"
+      ],
+      "done_criteria": [
+        "Target doctrine transitions are written without replacing the active canon.",
+        "The next critical phase has a fixed execution order before more coding."
+      ]
     }
   ],
   "evidence_policy": {
@@ -499,7 +582,7 @@
     }
   },
   "next_recommended_action": {
-    "step": "Start the first correction wave on the Build-1 DAG drift, then open the second correction wave on Build-11 closure and Build-14 exposed-state normalization.",
-    "reason": "The Build-1 -> Build-14 audit is now consolidated. The highest-risk remaining work is architectural integrity first, then honest closure of the Shadow-to-live chain."
+    "step": "Create one clean local commit for the accumulated safe lot, then reopen the build-by-build code-vs-doc audit on the active canon before any broader doctrine migration.",
+    "reason": "The target doctrine and orchestration frame are now documented. The prod-safe sequence is commit first, audit second, classify drifts third, and only then continue coding on an approved frame."
   }
 }

@@ -374,6 +374,28 @@ Le pipeline canonique de promotion reste :
 
 `classification -> versioning -> shared core -> LOCAL_REPLAY -> export artifact -> import VPS -> candidature contrôlée -> Shadow -> Micro-live -> Live`
 
+## 5.6 Matrice canonique des états
+
+Un état de rollout se lit toujours comme :
+
+- `profil + runtime_mode`
+
+Repères canoniques :
+
+- `profil=LIGHT`, `runtime_mode=LOCAL_REPLAY` : préparation locale et preuve
+  avant candidature
+- `profil=LIGHT`, `runtime_mode=SHADOW` : Build-11, nommé `Shadow intégral`
+- `profil=LIGHT`, `runtime_mode=MICRO_LIVE` : Build-12
+- `profil=LIGHT`, `runtime_mode=LIVE` : Build-13, nommé `Live-Light`
+- `profil=COMPLETE`, `runtime_mode=SHADOW` : Shadow Complete
+- `profil=COMPLETE`, `runtime_mode=LIVE` : Live-Complete
+
+Règle de lecture :
+
+- `LIGHT` et `COMPLETE` sont des profils
+- `SHADOW`, `MICRO_LIVE` et `LIVE` sont des contextes d'exécution
+- `Shadow intégral` est un nom de phase, pas un troisième profil
+
 ---
 
 # 6. Réforme décisionnelle centrale : hard / soft / rank
@@ -1386,6 +1408,7 @@ Go :
 ## Build-11 — Shadow Light
 Objectif :
 - valider la logique sans capital
+- état canonique : `profil=LIGHT`, `runtime_mode=SHADOW`
 
 Go :
 - décisions reproductibles
@@ -1398,6 +1421,7 @@ Go :
 ## Build-12 — Micro-live Light
 Objectif :
 - valider exécution réelle et coûts
+- état canonique : `profil=LIGHT`, `runtime_mode=MICRO_LIVE`
 
 Go :
 - coûts réels acceptables
@@ -1410,6 +1434,7 @@ Go :
 ## Build-13 — Live-Light
 Objectif :
 - première production réelle
+- état canonique : `profil=LIGHT`, `runtime_mode=LIVE`
 
 Go :
 - fréquence utile > V5.2

@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from interface_contracts import LIGHT_PAIRS, ProfileId, PromotionState, ReviewState, RuntimeMode
+from interface_contracts import (
+    LIGHT_PAIRS,
+    ProfileId,
+    PromotionState,
+    ReviewState,
+    RuntimeMode,
+    TimestampedModel,
+)
 from protocols.enums import (
     LiveLightRunState,
     LiveLightVerdict,
@@ -40,6 +48,60 @@ _REQUIRED_SHADOW_BUILD14_COMPONENT_IDS = frozenset(
 )
 _MICRO_LIVE_ALLOWED_ENGINES = frozenset({"engine_a", "engine_b"})
 _LIVE_LIGHT_ALLOWED_ENGINES = frozenset({"engine_a", "engine_b"})
+
+
+class OperatorSafingAction(StrEnum):
+    """Manual operator safing actions that can block or downgrade runtime exposure."""
+
+    SET_HALTED = "set_halted"
+    DOWNGRADE_TO_MICRO_LIVE = "downgrade_to_micro_live"
+    DOWNGRADE_TO_SHADOW = "downgrade_to_shadow"
+
+
+class OperatorSafingRequest(TimestampedModel):
+    """Audit-ready operator safing request propagated into protocol gates."""
+
+    request_id: str = Field(..., min_length=1)
+    action: OperatorSafingAction
+    source_runtime_mode: RuntimeMode
+    target_runtime_mode: RuntimeMode | None = None
+    requested_by: str = Field(default="operator", min_length=1)
+    ui_channel: str = Field(default="local_operator_ui", min_length=1)
+    reason: str = Field(..., min_length=1)
+
+    @model_validator(mode="after")
+    def validate_request(self) -> "OperatorSafingRequest":
+        if self.source_runtime_mode == RuntimeMode.LOCAL_REPLAY:
+            raise ValueError(
+                "operator safing requests are forbidden from runtime_mode=LOCAL_REPLAY"
+            )
+        if not self.reason.strip():
+            raise ValueError("operator safing requests require a non-empty reason")
+        if self.action == OperatorSafingAction.SET_HALTED:
+            if self.target_runtime_mode is not None:
+                raise ValueError("set_halted must not declare a target_runtime_mode")
+            return self
+        if self.action == OperatorSafingAction.DOWNGRADE_TO_MICRO_LIVE:
+            if self.source_runtime_mode != RuntimeMode.LIVE:
+                raise ValueError(
+                    "downgrade_to_micro_live requires source_runtime_mode=LIVE"
+                )
+            if self.target_runtime_mode != RuntimeMode.MICRO_LIVE:
+                raise ValueError(
+                    "downgrade_to_micro_live requires target_runtime_mode=MICRO_LIVE"
+                )
+            return self
+        if self.action == OperatorSafingAction.DOWNGRADE_TO_SHADOW:
+            if self.source_runtime_mode not in {RuntimeMode.MICRO_LIVE, RuntimeMode.LIVE}:
+                raise ValueError(
+                    "downgrade_to_shadow requires source_runtime_mode=MICRO_LIVE or LIVE"
+                )
+            if self.target_runtime_mode != RuntimeMode.SHADOW:
+                raise ValueError(
+                    "downgrade_to_shadow requires target_runtime_mode=SHADOW"
+                )
+            return self
+        return self
 
 
 class ShadowTruthSet(BaseModel, frozen=True):
@@ -562,6 +624,7 @@ class MicroLiveInput(BaseModel, frozen=True):
     review_export_ready: bool = False
     observability_ready: bool = False
     halt_ready: bool = False
+    operator_safing_request: OperatorSafingRequest | None = None
     active_engines: tuple[str, ...] = ()
     probe_pairs: tuple[str, ...] = ()
     requested_total_notional_usdt: float = Field(..., gt=0.0)
@@ -585,6 +648,13 @@ class MicroLiveInput(BaseModel, frozen=True):
             raise ValueError("Local/VPS profile forks are forbidden")
         if self.automatic_live_promotion_requested:
             raise ValueError("Micro-live must not request automatic promotion to LIVE")
+        if (
+            self.operator_safing_request is not None
+            and self.operator_safing_request.source_runtime_mode != self.runtime_mode
+        ):
+            raise ValueError(
+                "Build-12 Micro-live operator_safing_request must match source_runtime_mode=MICRO_LIVE"
+            )
         if self.shadow_required_days != 30:
             raise ValueError("Build-12 Micro-live requires shadow_required_days=30")
         if self.shadow_days_completed < self.shadow_required_days:
@@ -759,6 +829,7 @@ class MicroLiveRunSummary(BaseModel, frozen=True):
     observability_ready: bool = False
     halt_ready: bool = False
     onboarding_ready: bool = False
+    operator_safing_request: OperatorSafingRequest | None = None
     shadow_validated_engines: tuple[str, ...] = ()
     shadow_dormant_components: tuple[str, ...] = ()
 
@@ -805,6 +876,7 @@ class LiveLightInput(BaseModel, frozen=True):
     review_export_ready: bool = False
     observability_ready: bool = False
     halt_ready: bool = False
+    operator_safing_request: OperatorSafingRequest | None = None
     execution_ready: bool = False
     broker_ready: bool = False
     exchange_ready: bool = False
@@ -832,6 +904,13 @@ class LiveLightInput(BaseModel, frozen=True):
         if self.automatic_complete_promotion_requested:
             raise ValueError(
                 "Build-13 Live-Light must not request automatic promotion to Complete"
+            )
+        if (
+            self.operator_safing_request is not None
+            and self.operator_safing_request.source_runtime_mode != self.runtime_mode
+        ):
+            raise ValueError(
+                "Build-13 Live-Light operator_safing_request must match source_runtime_mode=LIVE"
             )
         if self.shadow_required_days != 30:
             raise ValueError("Build-13 Live-Light requires shadow_required_days=30")
@@ -1000,6 +1079,7 @@ class LiveLightRunSummary(BaseModel, frozen=True):
     import_lineage_version: str = Field(..., min_length=1)
     observability_ready: bool = False
     halt_ready: bool = False
+    operator_safing_request: OperatorSafingRequest | None = None
     execution_ready: bool = False
     broker_ready: bool = False
     exchange_ready: bool = False
@@ -1033,6 +1113,8 @@ __all__ = [
     "ShadowTruthSet",
     "ShadowRuntimeEvidence",
     "ShadowValidationSet",
+    "OperatorSafingAction",
+    "OperatorSafingRequest",
     "ShadowInput",
     "ShadowComparison",
     "ShadowDecision",

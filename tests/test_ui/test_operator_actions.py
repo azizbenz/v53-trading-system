@@ -18,25 +18,42 @@ def _request(
     *,
     target: str = "",
     requested_pair_count: int = 0,
+    runtime_mode: RuntimeMode = RuntimeMode.SHADOW,
+    reason: str = "",
 ) -> OperatorActionRequest:
     return OperatorActionRequest(
         timestamp_ms=1_700_000_000_000,
         correlation_id="corr-operator",
         profile=ProfileId.LIGHT,
-        runtime_mode=RuntimeMode.SHADOW,
+        runtime_mode=runtime_mode,
         action=action,
         target=target,
         requested_pair_count=requested_pair_count,
+        reason=reason,
     )
 
 
 def test_allowed_action_surface_matches_light_spec():
-    assert build_light_allowed_actions() == (
+    assert build_light_allowed_actions(RuntimeMode.SHADOW) == (
         OperatorActionType.VIEW_CRITICAL_SCREENS,
         OperatorActionType.SUSPEND_PAIR,
         OperatorActionType.REQUEST_PAIR_RESUME,
         OperatorActionType.SUSPEND_ENGINE,
         OperatorActionType.SET_HALTED,
+        OperatorActionType.VIEW_ALERT_HISTORY,
+        OperatorActionType.ACKNOWLEDGE_CRITICAL_ALERT,
+    )
+
+
+def test_live_surface_exposes_manual_downgrade_actions():
+    assert build_light_allowed_actions(RuntimeMode.LIVE) == (
+        OperatorActionType.VIEW_CRITICAL_SCREENS,
+        OperatorActionType.SUSPEND_PAIR,
+        OperatorActionType.REQUEST_PAIR_RESUME,
+        OperatorActionType.SUSPEND_ENGINE,
+        OperatorActionType.SET_HALTED,
+        OperatorActionType.DOWNGRADE_TO_MICRO_LIVE,
+        OperatorActionType.DOWNGRADE_TO_SHADOW,
         OperatorActionType.VIEW_ALERT_HISTORY,
         OperatorActionType.ACKNOWLEDGE_CRITICAL_ALERT,
     )
@@ -96,6 +113,49 @@ def test_acknowledging_visible_critical_alert_emits_dedicated_log_event():
     assert outcome.resulting_state == "critical_alert_acknowledged"
     assert outcome.log_entries[-1].event_type == OperatorEventType.CRITICAL_ALERT_ACKNOWLEDGED
     assert outcome.log_entries[-1].message == "critical alert acknowledged"
+
+
+def test_manual_halt_requires_operator_reason():
+    outcome = evaluate_light_operator_action(
+        _request(OperatorActionType.SET_HALTED),
+    )
+
+    assert outcome.accepted is False
+    assert outcome.rejection_reason == "set_halted requires an operator reason"
+
+
+def test_live_downgrade_to_micro_live_requires_live_runtime_and_reason():
+    rejected = evaluate_light_operator_action(
+        _request(
+            OperatorActionType.DOWNGRADE_TO_MICRO_LIVE,
+            runtime_mode=RuntimeMode.LIVE,
+        ),
+    )
+    accepted = evaluate_light_operator_action(
+        _request(
+            OperatorActionType.DOWNGRADE_TO_MICRO_LIVE,
+            runtime_mode=RuntimeMode.LIVE,
+            reason="execution drift above threshold",
+        ),
+    )
+
+    assert rejected.accepted is False
+    assert rejected.rejection_reason == "downgrade_to_micro_live requires an operator reason"
+    assert accepted.accepted is True
+    assert accepted.resulting_state == "micro_live_downgrade_requested"
+
+
+def test_micro_live_downgrade_to_shadow_is_rejected_from_shadow_runtime():
+    outcome = evaluate_light_operator_action(
+        _request(
+            OperatorActionType.DOWNGRADE_TO_SHADOW,
+            runtime_mode=RuntimeMode.SHADOW,
+            reason="manual requalification requested",
+        ),
+    )
+
+    assert outcome.accepted is False
+    assert outcome.rejection_reason == "action is outside the governed Light UI surface"
 
 
 def test_record_screen_open_creates_auditable_entry():

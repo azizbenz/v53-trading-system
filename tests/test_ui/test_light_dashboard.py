@@ -191,3 +191,29 @@ def test_light_dashboard_view_projects_pairs_engines_and_alert_history():
     assert alerts.cards[1].detail == "open: Queue backlog elevated"
     assert alerts.cards[2].detail == "operator action accepted: suspend_pair"
     assert alerts.cards[3].value == "pending=1 / ack=2"
+
+
+def test_live_dashboard_view_exposes_manual_downgrade_actions():
+    view = build_light_dashboard_view(
+        _payload().model_copy(
+            update={
+                "runtime_mode": RuntimeMode.LIVE,
+                "deployment_state": "live_light",
+                "live_light_status": "healthy",
+                "micro_live_status": "healthy",
+                "shadow_status": "healthy",
+            }
+        )
+    )
+
+    assert view.allowed_actions == (
+        ui.OperatorActionType.VIEW_CRITICAL_SCREENS,
+        ui.OperatorActionType.SUSPEND_PAIR,
+        ui.OperatorActionType.REQUEST_PAIR_RESUME,
+        ui.OperatorActionType.SUSPEND_ENGINE,
+        ui.OperatorActionType.SET_HALTED,
+        ui.OperatorActionType.DOWNGRADE_TO_MICRO_LIVE,
+        ui.OperatorActionType.DOWNGRADE_TO_SHADOW,
+        ui.OperatorActionType.VIEW_ALERT_HISTORY,
+        ui.OperatorActionType.ACKNOWLEDGE_CRITICAL_ALERT,
+    )

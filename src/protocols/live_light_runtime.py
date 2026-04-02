@@ -31,6 +31,19 @@ _BUILD14_SIGNAL_CLASS = "Build14InfluenceSignal"
 _BUILD14_REPORT_CLASS = "Build14InfluenceReport"
 
 
+def _format_operator_safing_reason(request) -> str:
+    target_mode = (
+        f" -> {request.target_runtime_mode.value}"
+        if request.target_runtime_mode is not None
+        else ""
+    )
+    return (
+        "operator safing request: "
+        f"{request.action.value} ({request.source_runtime_mode.value}{target_mode}) "
+        f"reason={request.reason}"
+    )
+
+
 def _normalized_value(value: object, default: str) -> str:
     if value is None:
         return default
@@ -301,6 +314,7 @@ def build_live_light_input_from_micro_live(
     build14_live_eligible: bool = False,
     observability_ready: bool = False,
     halt_ready: bool = False,
+    operator_safing_request=None,
     execution_ready: bool = False,
     broker_ready: bool = False,
     exchange_ready: bool = False,
@@ -371,6 +385,7 @@ def build_live_light_input_from_micro_live(
         review_export_ready=micro_live_payload.shadow.review_export_ready,
         observability_ready=observability_ready,
         halt_ready=halt_ready,
+        operator_safing_request=operator_safing_request,
         execution_ready=execution_ready,
         broker_ready=broker_ready,
         exchange_ready=exchange_ready,
@@ -519,6 +534,10 @@ def run_live_light_gate(
         hard_blocking_reasons.append(
             "operator halt guard must be ready before Live-Light execution"
         )
+    if live_light_input.operator_safing_request is not None:
+        hard_blocking_reasons.append(
+            _format_operator_safing_reason(live_light_input.operator_safing_request)
+        )
     if not live_light_input.execution_ready:
         hard_blocking_reasons.append(
             "execution readiness must be confirmed before Live-Light execution"
@@ -665,6 +684,7 @@ def run_live_light_gate(
         import_lineage_version=live_light_input.import_lineage_version,
         observability_ready=live_light_input.observability_ready,
         halt_ready=live_light_input.halt_ready,
+        operator_safing_request=live_light_input.operator_safing_request,
         execution_ready=live_light_input.execution_ready,
         broker_ready=live_light_input.broker_ready,
         exchange_ready=live_light_input.exchange_ready,

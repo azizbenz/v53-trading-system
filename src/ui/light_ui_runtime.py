@@ -31,6 +31,13 @@ from ui.ui_light_locked import build_light_dashboard_view
 
 
 _OPERATOR_PROJECTION_EVENT_LIMIT = 10
+_OPERATOR_SAFING_ACTIONS = frozenset(
+    {
+        OperatorActionType.SET_HALTED.value,
+        OperatorActionType.DOWNGRADE_TO_MICRO_LIVE.value,
+        OperatorActionType.DOWNGRADE_TO_SHADOW.value,
+    }
+)
 
 
 class LightUIRuntimeConfig(BaseModel, frozen=True):
@@ -109,7 +116,7 @@ class LightUIRuntime:
             view=base_view.model_copy(
                 update={
                     "event_log": tuple(self._tail_events()),
-                    "allowed_actions": build_light_allowed_actions(),
+                    "allowed_actions": build_light_allowed_actions(payload.runtime_mode),
                     "notification_contract": OperatorNotificationContract(
                         critical_delivery_required=True,
                         implementation_status="contract_only",
@@ -275,9 +282,20 @@ class LightUIRuntime:
                 correlation_id=event.correlation_id,
                 event_type=event.event_type.value,
                 action=event.action.value,
+                source_runtime_mode=(
+                    event.source_runtime_mode.value
+                    if event.source_runtime_mode is not None
+                    else ""
+                ),
+                target_runtime_mode=(
+                    event.target_runtime_mode.value
+                    if event.target_runtime_mode is not None
+                    else ""
+                ),
                 target=event.target,
                 accepted=event.accepted,
                 message=event.message,
+                operator_reason=event.operator_reason,
                 rejection_reason=event.rejection_reason,
             )
             for event in self._tail_events()[-_OPERATOR_PROJECTION_EVENT_LIMIT :]
@@ -291,6 +309,15 @@ class LightUIRuntime:
             acknowledged_notifications,
             key=lambda notification: notification.acknowledged_ms or 0,
             default=None,
+        )
+        latest_safing_event = next(
+            (
+                event
+                for event in reversed(self._state.event_log)
+                if event.accepted
+                and event.action.value in _OPERATOR_SAFING_ACTIONS
+            ),
+            None,
         )
         return OperatorRuntimeProjection(
             event_count=len(self._state.event_log),
@@ -312,6 +339,26 @@ class LightUIRuntime:
             acknowledged_notification_count=len(acknowledged_notifications),
             latest_acknowledged_alert_id=(
                 latest_acknowledged.alert_id if latest_acknowledged is not None else ""
+            ),
+            latest_safing_action=(
+                latest_safing_event.action.value if latest_safing_event is not None else ""
+            ),
+            latest_safing_source_runtime_mode=(
+                latest_safing_event.source_runtime_mode.value
+                if latest_safing_event is not None
+                and latest_safing_event.source_runtime_mode is not None
+                else ""
+            ),
+            latest_safing_target_runtime_mode=(
+                latest_safing_event.target_runtime_mode.value
+                if latest_safing_event is not None
+                and latest_safing_event.target_runtime_mode is not None
+                else ""
+            ),
+            latest_safing_reason=(
+                latest_safing_event.operator_reason
+                if latest_safing_event is not None
+                else ""
             ),
         )
 

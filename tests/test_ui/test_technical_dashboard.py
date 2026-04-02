@@ -243,6 +243,7 @@ def test_technical_dashboard_view_exposes_system_meta_build9x_and_replay_section
         "Build-12 Micro-live",
         "Build-13 Live-Light",
         "Build-14 Limited Influence",
+        "Operator Controls",
         "Replay & Import",
         "Alerts",
     }
@@ -447,6 +448,9 @@ def test_technical_dashboard_view_projects_micro_live_summary_when_available():
             observability_ready=True,
             halt_ready=True,
             onboarding_ready=True,
+            operator_safing_action="downgrade_to_shadow",
+            operator_safing_target_runtime_mode="shadow",
+            operator_safing_reason="manual requalification requested",
             blocking_reasons=(),
         ),
     )
@@ -459,6 +463,12 @@ def test_technical_dashboard_view_projects_micro_live_summary_when_available():
     assert "micro=healthy" in governed.value
     assert next(card for card in micro.cards if card.key == "micro_live_verdict").value == "allowed_to_probe"
     assert next(card for card in micro.cards if card.key == "micro_live_guardrails").status == "healthy"
+    assert next(card for card in micro.cards if card.key == "micro_live_safing_request").value == (
+        "downgrade_to_shadow -> shadow"
+    )
+    assert next(card for card in micro.cards if card.key == "micro_live_safing_request").detail == (
+        "manual requalification requested"
+    )
 
 
 def test_technical_dashboard_view_projects_live_light_summary_when_available():
@@ -486,6 +496,9 @@ def test_technical_dashboard_view_projects_live_light_summary_when_available():
             execution_ready=True,
             broker_ready=True,
             exchange_ready=True,
+            operator_safing_action="downgrade_to_micro_live",
+            operator_safing_target_runtime_mode="micro_live",
+            operator_safing_reason="execution drift requires step-down",
             blocking_reasons=(),
         ),
     )
@@ -498,6 +511,52 @@ def test_technical_dashboard_view_projects_live_light_summary_when_available():
     assert "live=healthy" in governed.value
     assert next(card for card in live.cards if card.key == "live_light_verdict").value == "allowed_to_execute_small"
     assert next(card for card in live.cards if card.key == "live_light_readiness").status == "healthy"
+    assert next(card for card in live.cards if card.key == "live_light_safing_request").value == (
+        "downgrade_to_micro_live -> micro_live"
+    )
+    assert next(card for card in live.cards if card.key == "live_light_safing_request").detail == (
+        "execution drift requires step-down"
+    )
+
+
+def test_technical_dashboard_view_exposes_operator_controls_for_current_runtime():
+    payload = build_technical_dashboard_payload(
+        _snapshot(runtime_mode=RuntimeMode.LIVE, infra=collect_infra_metrics(kill_switch_active=True)),
+        active_modules=("protocols", "monitoring", "ui"),
+        active_engines=("engine_a", "engine_b"),
+        operator_runtime=OperatorRuntimeProjection(
+            event_count=3,
+            latest_event_type="operator_action_accepted",
+            latest_event_message="manual safing accepted",
+            latest_safing_action="downgrade_to_micro_live",
+            latest_safing_source_runtime_mode="live",
+            latest_safing_target_runtime_mode="micro_live",
+            latest_safing_reason="execution drift requires step-down",
+            pending_notification_count=0,
+            acknowledged_notification_count=1,
+            latest_acknowledged_alert_id="corr-tech:loss",
+        ),
+    )
+
+    view = build_technical_dashboard_view(payload)
+    operator = next(section for section in view.sections if section.title == "Operator Controls")
+
+    assert next(card for card in operator.cards if card.key == "operator_manual_scope").detail == (
+        "view_critical_screens, suspend_pair, request_pair_resume, suspend_engine, "
+        "set_halted, downgrade_to_micro_live, downgrade_to_shadow, view_alert_history, "
+        "acknowledge_critical_alert"
+    )
+    assert next(card for card in operator.cards if card.key == "operator_safing_controls").detail == (
+        "set_halted, downgrade_to_micro_live, downgrade_to_shadow"
+    )
+    assert next(card for card in operator.cards if card.key == "operator_latest_safing").value == (
+        "downgrade_to_micro_live -> micro_live"
+    )
+    assert next(card for card in operator.cards if card.key == "operator_latest_safing").detail == (
+        "execution drift requires step-down"
+    )
+    assert next(card for card in operator.cards if card.key == "operator_kill_path").value == "active"
+    assert next(card for card in operator.cards if card.key == "operator_kill_path").status == "critical"
 
 
 def test_technical_dashboard_view_projects_build14_limited_influence_when_available():

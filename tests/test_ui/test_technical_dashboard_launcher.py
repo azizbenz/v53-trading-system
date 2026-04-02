@@ -9,6 +9,10 @@ import shutil
 import sys
 from uuid import uuid4
 
+from interface_contracts import ProfileId, RuntimeMode
+from monitoring import MonitoringRuntime
+from ui import LightUIRuntime, OperatorActionRequest, OperatorActionType
+
 
 def _load_launcher_module():
     repo_root = Path(__file__).resolve().parents[2]
@@ -124,5 +128,85 @@ def test_launcher_main_accepts_demo_output_dir():
 
         assert exit_code == 0
         assert (output_dir / "technical_dashboard.html").exists()
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_export_technical_dashboard_propagates_micro_live_safing_request():
+    launcher = _load_launcher_module()
+    output_dir = _scratch_dir("demo_micro_live_safing")
+    light_ui_runtime = LightUIRuntime()
+    light_ui_runtime.submit_action(
+        OperatorActionRequest(
+            timestamp_ms=1_700_000_000_250,
+            correlation_id="corr-tech-demo",
+            profile=ProfileId.LIGHT,
+            runtime_mode=RuntimeMode.MICRO_LIVE,
+            action=OperatorActionType.DOWNGRADE_TO_SHADOW,
+            reason="manual requalification requested",
+        )
+    )
+    monitoring_runtime = MonitoringRuntime(light_ui_runtime=light_ui_runtime)
+
+    try:
+        artifacts = launcher.export_technical_dashboard(
+            output_dir,
+            demo=True,
+            monitoring_runtime=monitoring_runtime,
+        )
+
+        assert artifacts.payload_json_path is not None
+        payload = json.loads(artifacts.payload_json_path.read_text(encoding="utf-8"))
+        assert payload["micro_live"]["operator_safing_action"] == "downgrade_to_shadow"
+        assert payload["micro_live"]["operator_safing_target_runtime_mode"] == "shadow"
+        assert payload["micro_live"]["operator_safing_reason"] == "manual requalification requested"
+        assert payload["micro_live"]["run_state"] == "blocked"
+        assert payload["micro_live"]["verdict"] == "blocked"
+        assert any(
+            "operator safing request: downgrade_to_shadow (micro_live -> shadow) reason=manual requalification requested"
+            in reason
+            for reason in payload["micro_live"]["blocking_reasons"]
+        )
+        assert payload["live_light"]["operator_safing_action"] == ""
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_export_technical_dashboard_propagates_live_safing_request():
+    launcher = _load_launcher_module()
+    output_dir = _scratch_dir("demo_live_safing")
+    light_ui_runtime = LightUIRuntime()
+    light_ui_runtime.submit_action(
+        OperatorActionRequest(
+            timestamp_ms=1_700_000_000_260,
+            correlation_id="corr-tech-demo",
+            profile=ProfileId.LIGHT,
+            runtime_mode=RuntimeMode.LIVE,
+            action=OperatorActionType.DOWNGRADE_TO_MICRO_LIVE,
+            reason="execution drift requires step-down",
+        )
+    )
+    monitoring_runtime = MonitoringRuntime(light_ui_runtime=light_ui_runtime)
+
+    try:
+        artifacts = launcher.export_technical_dashboard(
+            output_dir,
+            demo=True,
+            monitoring_runtime=monitoring_runtime,
+        )
+
+        assert artifacts.payload_json_path is not None
+        payload = json.loads(artifacts.payload_json_path.read_text(encoding="utf-8"))
+        assert payload["live_light"]["operator_safing_action"] == "downgrade_to_micro_live"
+        assert payload["live_light"]["operator_safing_target_runtime_mode"] == "micro_live"
+        assert payload["live_light"]["operator_safing_reason"] == "execution drift requires step-down"
+        assert payload["live_light"]["run_state"] == "blocked"
+        assert payload["live_light"]["verdict"] == "blocked"
+        assert any(
+            "operator safing request: downgrade_to_micro_live (live -> micro_live) reason=execution drift requires step-down"
+            in reason
+            for reason in payload["live_light"]["blocking_reasons"]
+        )
+        assert payload["micro_live"]["operator_safing_action"] == ""
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)

@@ -21,6 +21,8 @@ from protocols import (
     MicroLiveRunState,
     MicroLiveRunSummary,
     MicroLiveVerdict,
+    OperatorSafingAction,
+    OperatorSafingRequest,
     ShadowComparison,
     ShadowBuild14Contribution,
     ShadowComponentAssessment,
@@ -62,6 +64,8 @@ def test_protocols_exports_expected_symbols():
         "run_micro_live_gate",
         "build_micro_live_projection",
         "build_micro_live_dashboard_section",
+        "OperatorSafingAction",
+        "OperatorSafingRequest",
         "ShadowTruthSet",
         "ShadowRuntimeEvidence",
         "ShadowValidationSet",
@@ -143,6 +147,28 @@ def test_shadow_input_rejects_wrong_runtime_mode():
                 import_artifact_id="artifact-1",
                 import_lineage_version="a.v1.0.r1",
             ),
+        )
+
+
+def test_operator_safing_request_rejects_invalid_transition_contracts():
+    with pytest.raises(ValidationError, match="set_halted must not declare a target_runtime_mode"):
+        OperatorSafingRequest(
+            timestamp_ms=1_700_000_000_000,
+            request_id="safing-1",
+            action=OperatorSafingAction.SET_HALTED,
+            source_runtime_mode=RuntimeMode.LIVE,
+            target_runtime_mode=RuntimeMode.SHADOW,
+            reason="hard stop",
+        )
+
+    with pytest.raises(ValidationError, match="downgrade_to_micro_live requires source_runtime_mode=LIVE"):
+        OperatorSafingRequest(
+            timestamp_ms=1_700_000_000_000,
+            request_id="safing-2",
+            action=OperatorSafingAction.DOWNGRADE_TO_MICRO_LIVE,
+            source_runtime_mode=RuntimeMode.MICRO_LIVE,
+            target_runtime_mode=RuntimeMode.MICRO_LIVE,
+            reason="de-escalate",
         )
 
 
@@ -641,6 +667,50 @@ def test_micro_live_input_rejects_wrong_runtime_mode_and_budget_overflow():
         )
 
 
+def test_micro_live_input_rejects_operator_safing_request_with_mismatched_source_runtime():
+    with pytest.raises(ValidationError, match="source_runtime_mode=MICRO_LIVE"):
+        MicroLiveInput(
+            correlation_id="corr-micro",
+            profile=ProfileId.LIGHT,
+            runtime_mode=RuntimeMode.MICRO_LIVE,
+            shadow_run_id="shadow-run-1",
+            shadow_truth_set_ref="truth-1",
+            shadow_validation_set_ref="validation-1",
+            shadow_verdict=ShadowVerdict.ACCEPTED,
+            shadow_run_state=ShadowRunState.COMPLETED,
+            shadow_days_completed=30,
+            shadow_required_days=30,
+            shadow_report_ready=True,
+            inter_engine_comparison_ready=True,
+            build14_contribution_ready=True,
+            shadow_validated_engines=("engine_a",),
+            shadow_dormant_components=("engine_b",),
+            shadow_import_artifact_id="artifact-1",
+            shadow_import_lineage_version="a.v1.0.r1",
+            import_artifact_id="artifact-1",
+            import_lineage_version="a.v1.0.r1",
+            import_validation_status="accepted",
+            onboarding_accepted=True,
+            review_export_ready=True,
+            observability_ready=True,
+            halt_ready=True,
+            operator_safing_request=OperatorSafingRequest(
+                timestamp_ms=1_700_000_000_000,
+                request_id="safing-3",
+                action=OperatorSafingAction.DOWNGRADE_TO_MICRO_LIVE,
+                source_runtime_mode=RuntimeMode.LIVE,
+                target_runtime_mode=RuntimeMode.MICRO_LIVE,
+                reason="wrong source for micro input",
+            ),
+            active_engines=("engine_a",),
+            probe_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=20.0,
+            requested_pair_notional_usdt=10.0,
+            max_total_notional_usdt=25.0,
+            max_pair_notional_usdt=12.5,
+        )
+
+
 def test_micro_live_input_rejects_shadow_import_provenance_mismatch():
     with pytest.raises(ValidationError):
         MicroLiveInput(
@@ -915,6 +985,52 @@ def test_live_light_input_rejects_wrong_runtime_mode_and_budget_overflow():
             requested_pair_notional_usdt=30.0,
             max_total_notional_usdt=50.0,
             max_pair_notional_usdt=25.0,
+        )
+
+
+def test_live_light_input_rejects_operator_safing_request_with_mismatched_source_runtime():
+    with pytest.raises(ValidationError, match="source_runtime_mode=LIVE"):
+        LiveLightInput(
+            correlation_id="corr-live",
+            profile=ProfileId.LIGHT,
+            runtime_mode=RuntimeMode.LIVE,
+            micro_live_run_id="micro-run-1",
+            shadow_run_id="shadow-run-1",
+            micro_live_verdict=MicroLiveVerdict.ALLOWED_TO_PROBE,
+            micro_live_run_state=MicroLiveRunState.READY_TO_PROBE,
+            shadow_days_completed=30,
+            shadow_required_days=30,
+            component_verdicts_rendered=True,
+            shadow_report_ready=True,
+            micro_live_stable_days=7,
+            micro_live_required_days=7,
+            micro_live_import_artifact_id="artifact-1",
+            micro_live_import_lineage_version="a.v1.0.r1",
+            import_artifact_id="artifact-1",
+            import_lineage_version="a.v1.0.r1",
+            import_validation_status="accepted",
+            onboarding_accepted=True,
+            onboarding_review_state=ReviewState.PENDING,
+            review_export_ready=True,
+            observability_ready=True,
+            halt_ready=True,
+            operator_safing_request=OperatorSafingRequest(
+                timestamp_ms=1_700_000_000_000,
+                request_id="safing-4",
+                action=OperatorSafingAction.DOWNGRADE_TO_SHADOW,
+                source_runtime_mode=RuntimeMode.MICRO_LIVE,
+                target_runtime_mode=RuntimeMode.SHADOW,
+                reason="wrong source for live input",
+            ),
+            execution_ready=True,
+            broker_ready=True,
+            exchange_ready=True,
+            active_engines=("engine_a",),
+            live_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=40.0,
+            requested_pair_notional_usdt=20.0,
+            max_total_notional_usdt=60.0,
+            max_pair_notional_usdt=30.0,
         )
 
 

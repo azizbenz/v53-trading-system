@@ -18,6 +18,24 @@ def _status_from_summary(summary: LiveLightRunSummary) -> str:
     return "healthy"
 
 
+def _operator_safing_value(summary: LiveLightRunSummary) -> str:
+    request = summary.operator_safing_request
+    if request is None:
+        return "none"
+    if request.target_runtime_mode is None:
+        return request.action.value
+    return f"{request.action.value} -> {request.target_runtime_mode.value}"
+
+
+def _operator_safing_status(summary: LiveLightRunSummary) -> str:
+    request = summary.operator_safing_request
+    if request is None:
+        return "info"
+    if request.action.value == "set_halted":
+        return "critical"
+    return "warning"
+
+
 def build_live_light_projection(summary: LiveLightRunSummary) -> LiveLightProjection:
     """Project a governed Build-13 summary into the normalized supervision surface."""
 
@@ -41,6 +59,22 @@ def build_live_light_projection(summary: LiveLightRunSummary) -> LiveLightProjec
         execution_ready=summary.execution_ready,
         broker_ready=summary.broker_ready,
         exchange_ready=summary.exchange_ready,
+        operator_safing_action=(
+            summary.operator_safing_request.action.value
+            if summary.operator_safing_request is not None
+            else ""
+        ),
+        operator_safing_target_runtime_mode=(
+            summary.operator_safing_request.target_runtime_mode.value
+            if summary.operator_safing_request is not None
+            and summary.operator_safing_request.target_runtime_mode is not None
+            else ""
+        ),
+        operator_safing_reason=(
+            summary.operator_safing_request.reason
+            if summary.operator_safing_request is not None
+            else ""
+        ),
         blocking_reasons=summary.decision.blocking_reasons,
         build14_influence_mode=summary.build14_influence_mode,
         build14_action=summary.build14_action,
@@ -126,6 +160,16 @@ def build_live_light_dashboard_section(summary: LiveLightRunSummary) -> Dashboar
                     else "critical"
                 ),
                 detail=projection.build14_summary or projection.import_lineage_version,
+            ),
+            DashboardCard(
+                key="live_light_safing_request",
+                label="Safing Request",
+                value=_operator_safing_value(summary),
+                status=_operator_safing_status(summary),
+                detail=(
+                    projection.operator_safing_reason
+                    or "No manual safing request projected"
+                ),
             ),
             DashboardCard(
                 key="live_light_blocking_reasons",

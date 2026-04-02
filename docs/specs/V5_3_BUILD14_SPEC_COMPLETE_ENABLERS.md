@@ -151,7 +151,7 @@ Build-14 est :
 Les conditions suivantes doivent être satisfaites :
 
 - Build-1 à Build-13 validés
-- Live-Light techniquement stable
+- `profil=LIGHT`, `runtime_mode=LIVE` techniquement stable
 - coûts réels suffisamment compris
 - A/B compris économiquement
 - portefeuille Light crédible
@@ -203,7 +203,8 @@ Build-14 ne peut pas commencer si une des conditions suivantes n’est pas satis
 # 6. Périmètre du Build-14
 
 ## 6.1 Profil actif
-- **LIGHT comme enveloppe de rollout**
+- état canonique d'observation initiale : `profil=LIGHT`, `runtime_mode=SHADOW`
+- `Build-14` y entre comme enabler `SHADOW_ENABLED`
 - Build-14 enablers **activés à 100% en Shadow intégral** (`SHADOW_ENABLED`)
 
 ## 6.2 Mode d’activation

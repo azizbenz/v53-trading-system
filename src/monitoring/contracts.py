@@ -156,9 +156,12 @@ class OperatorRuntimeEvent(BaseModel, frozen=True):
     correlation_id: str = Field(..., min_length=1)
     event_type: str = Field(..., min_length=1)
     action: str = Field(..., min_length=1)
+    source_runtime_mode: str = ""
+    target_runtime_mode: str = ""
     target: str = ""
     accepted: bool = False
     message: str = Field(..., min_length=1)
+    operator_reason: str = ""
     rejection_reason: str = ""
 
 
@@ -175,6 +178,10 @@ class OperatorRuntimeProjection(BaseModel, frozen=True):
     pending_notification_alert_ids: tuple[str, ...] = ()
     acknowledged_notification_count: int = Field(default=0, ge=0)
     latest_acknowledged_alert_id: str = ""
+    latest_safing_action: str = ""
+    latest_safing_source_runtime_mode: str = ""
+    latest_safing_target_runtime_mode: str = ""
+    latest_safing_reason: str = ""
 
 
 class HealthDashboardPayload(TimestampedModel):
@@ -361,6 +368,9 @@ class MicroLiveProjection(BaseModel, frozen=True):
     observability_ready: bool = False
     halt_ready: bool = False
     onboarding_ready: bool = False
+    operator_safing_action: str = ""
+    operator_safing_target_runtime_mode: str = ""
+    operator_safing_reason: str = ""
     blocking_reasons: tuple[str, ...] = ()
 
 
@@ -386,6 +396,9 @@ class LiveLightProjection(BaseModel, frozen=True):
     execution_ready: bool = False
     broker_ready: bool = False
     exchange_ready: bool = False
+    operator_safing_action: str = ""
+    operator_safing_target_runtime_mode: str = ""
+    operator_safing_reason: str = ""
     blocking_reasons: tuple[str, ...] = ()
     build14_influence_mode: str = "read_only"
     build14_action: str = "observe"

@@ -114,8 +114,8 @@ Build-13 est :
 Les conditions suivantes doivent être satisfaites :
 
 - Build-1 à Build-10 validés
-- Build-11 Shadow Light validé
-- Build-12 Micro-live Light validé avec verdict GO
+- Build-11 `profil=LIGHT`, `runtime_mode=SHADOW` validé
+- Build-12 `profil=LIGHT`, `runtime_mode=MICRO_LIVE` validé avec verdict GO
 - coûts réels compatibles avec les hypothèses prudentes
 - réconciliation fiable
 - UI Light verrouillée
@@ -176,7 +176,8 @@ Build-13 ne peut pas commencer si une des conditions suivantes n’est pas satis
 # 6. Périmètre du Live-Light
 
 ## 6.1 Profil actif
-- **LIGHT comme enveloppe active**
+- état canonique : `profil=LIGHT`, `runtime_mode=LIVE`
+- nom de phase lisible : `Live-Light`
 - 6 paires maximum
 - coeur runtime attendu : moteurs A et B
 

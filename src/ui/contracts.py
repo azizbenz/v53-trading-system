@@ -21,6 +21,8 @@ class OperatorActionType(StrEnum):
     REQUEST_PAIR_RESUME = "request_pair_resume"
     SUSPEND_ENGINE = "suspend_engine"
     SET_HALTED = "set_halted"
+    DOWNGRADE_TO_MICRO_LIVE = "downgrade_to_micro_live"
+    DOWNGRADE_TO_SHADOW = "downgrade_to_shadow"
     VIEW_ALERT_HISTORY = "view_alert_history"
     ACKNOWLEDGE_CRITICAL_ALERT = "acknowledge_critical_alert"
     LOAD_COMPLETE = "load_complete"
@@ -96,9 +98,12 @@ class OperatorActionLogEntry(TimestampedModel):
     correlation_id: str = Field(..., min_length=1)
     event_type: OperatorEventType
     action: OperatorActionType
+    source_runtime_mode: RuntimeMode | None = None
+    target_runtime_mode: RuntimeMode | None = None
     target: str = ""
     accepted: bool = False
     message: str = Field(..., min_length=1)
+    operator_reason: str = ""
     rejection_reason: str = ""
 
 

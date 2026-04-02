@@ -22,6 +22,19 @@ from protocols.enums import (
 from protocols.errors import MicroLiveInputError
 
 
+def _format_operator_safing_reason(request) -> str:
+    target_mode = (
+        f" -> {request.target_runtime_mode.value}"
+        if request.target_runtime_mode is not None
+        else ""
+    )
+    return (
+        "operator safing request: "
+        f"{request.action.value} ({request.source_runtime_mode.value}{target_mode}) "
+        f"reason={request.reason}"
+    )
+
+
 def _validate_shadow_source_payload_scope(payload: TechnicalDashboardPayload) -> None:
     if payload.profile != ProfileId.LIGHT:
         raise MicroLiveInputError(
@@ -112,6 +125,7 @@ def build_micro_live_input_from_shadow(
     active_engines: tuple[str, ...] | None = None,
     observability_ready: bool = False,
     halt_ready: bool = False,
+    operator_safing_request=None,
     onboarding_accepted: bool = False,
     onboarding_review_state: ReviewState = ReviewState.PENDING,
     onboarding_reasons: tuple[str, ...] = (),
@@ -174,6 +188,7 @@ def build_micro_live_input_from_shadow(
         review_export_ready=shadow_summary.review_export_ready,
         observability_ready=observability_ready,
         halt_ready=halt_ready,
+        operator_safing_request=operator_safing_request,
         active_engines=resolved_active_engines,
         probe_pairs=probe_pairs,
         requested_total_notional_usdt=requested_total_notional_usdt,
@@ -271,6 +286,10 @@ def run_micro_live_gate(
         hard_blocking_reasons.append(
             "operator halt guard must be ready before Micro-live capital exposure"
         )
+    if micro_live_input.operator_safing_request is not None:
+        hard_blocking_reasons.append(
+            _format_operator_safing_reason(micro_live_input.operator_safing_request)
+        )
 
     if hard_blocking_reasons:
         decision = MicroLiveDecision(
@@ -363,6 +382,7 @@ def run_micro_live_gate(
         observability_ready=micro_live_input.observability_ready,
         halt_ready=micro_live_input.halt_ready,
         onboarding_ready=micro_live_input.onboarding_accepted,
+        operator_safing_request=micro_live_input.operator_safing_request,
         shadow_validated_engines=micro_live_input.shadow_validated_engines,
         shadow_dormant_components=micro_live_input.shadow_dormant_components,
     )

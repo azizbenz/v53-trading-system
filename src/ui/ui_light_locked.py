@@ -31,7 +31,7 @@ def build_light_dashboard_view(payload: HealthDashboardPayload) -> LightDashboar
         profile=payload.profile,
         runtime_mode=payload.runtime_mode,
         sections=sections,
-        allowed_actions=build_light_allowed_actions(),
+        allowed_actions=build_light_allowed_actions(payload.runtime_mode),
         event_log=(
             record_screen_open(
                 correlation_id=payload.correlation_id,

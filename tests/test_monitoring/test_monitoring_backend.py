@@ -325,6 +325,10 @@ def test_health_and_technical_payloads_project_operator_runtime_state():
         pending_notification_alert_ids=("corr-operator-projection:loss",),
         acknowledged_notification_count=2,
         latest_acknowledged_alert_id="corr-operator-projection:latency",
+        latest_safing_action="downgrade_to_shadow",
+        latest_safing_source_runtime_mode="micro_live",
+        latest_safing_target_runtime_mode="shadow",
+        latest_safing_reason="manual requalification requested",
     )
 
     health_payload = build_health_dashboard_payload(snapshot, operator_runtime=operator_runtime)
@@ -342,6 +346,8 @@ def test_health_and_technical_payloads_project_operator_runtime_state():
     assert technical_payload.alerts.operator_runtime.latest_acknowledged_alert_id == (
         "corr-operator-projection:latency"
     )
+    assert technical_payload.micro_live.operator_safing_action == "downgrade_to_shadow"
+    assert technical_payload.micro_live.operator_safing_reason == "manual requalification requested"
 
 
 def test_critical_alert_overrides_warning_only_flags():

@@ -22,6 +22,7 @@ from monitoring import (
     collect_pair_metrics,
     collect_portfolio_metrics,
 )
+from ui import LightUIRuntime, OperatorActionRequest, OperatorActionType
 
 
 def _scratch_dir(name: str) -> Path:
@@ -288,6 +289,83 @@ def test_monitoring_runtime_tracks_session_high_water_mark_and_stale_spikes():
     assert first.snapshot.infra.stale_spike_count == 0
     assert second.snapshot.infra.backlog_high_water_mark == 20
     assert second.snapshot.infra.stale_spike_count == 1
+
+
+def test_monitoring_runtime_propagates_ui_safing_request_into_technical_payload_defaults():
+    light_ui_runtime = LightUIRuntime()
+    outcome = light_ui_runtime.submit_action(
+        OperatorActionRequest(
+            timestamp_ms=1_700_000_000_250,
+            correlation_id="corr-runtime-safing",
+            profile=ProfileId.LIGHT,
+            runtime_mode=RuntimeMode.MICRO_LIVE,
+            action=OperatorActionType.DOWNGRADE_TO_SHADOW,
+            reason="manual requalification requested",
+        )
+    )
+    runtime = MonitoringRuntime(light_ui_runtime=light_ui_runtime)
+
+    result = runtime.evaluate(
+        correlation_id="corr-runtime-safing",
+        profile=ProfileId.LIGHT,
+        runtime_mode=RuntimeMode.MICRO_LIVE,
+        timestamp_ms=1_700_000_000_500,
+        portfolio=collect_portfolio_metrics(
+            allocated_opportunities=1,
+            gross_capacity_used_pct=10.0,
+            loss_capacity_used_pct=2.0,
+            beta_utilization=0.1,
+            capital_deployed_usdt=250.0,
+            ce_net=0.001,
+        ),
+        infra=collect_infra_metrics(queue_backlog=5),
+        meta=_meta_metrics(),
+        active_modules=("monitoring", "ui", "protocols"),
+        active_engines=("engine_a", "engine_b"),
+    )
+
+    assert outcome.accepted is True
+    assert result.technical_payload.micro_live.operator_safing_action == "downgrade_to_shadow"
+    assert result.technical_payload.micro_live.operator_safing_target_runtime_mode == "shadow"
+    assert result.technical_payload.micro_live.operator_safing_reason == "manual requalification requested"
+    assert result.technical_payload.micro_live.run_state == "operator_safing_requested"
+    assert any(
+        "operator safing request: downgrade_to_shadow (micro_live -> shadow) reason=manual requalification requested"
+        in reason
+        for reason in result.technical_payload.micro_live.blocking_reasons
+    )
+    micro_section = next(
+        section for section in result.technical_view.sections if section.title == "Build-12 Micro-live"
+    )
+    assert any(
+        card.key == "micro_live_safing_request"
+        and card.detail == "manual requalification requested"
+        for card in micro_section.cards
+    )
+
+
+def test_monitoring_runtime_builds_typed_operator_safing_request_from_ui_state():
+    light_ui_runtime = LightUIRuntime()
+    light_ui_runtime.submit_action(
+        OperatorActionRequest(
+            timestamp_ms=1_700_000_000_260,
+            correlation_id="corr-runtime-safing-live",
+            profile=ProfileId.LIGHT,
+            runtime_mode=RuntimeMode.LIVE,
+            action=OperatorActionType.DOWNGRADE_TO_MICRO_LIVE,
+            reason="execution drift requires step-down",
+        )
+    )
+    runtime = MonitoringRuntime(light_ui_runtime=light_ui_runtime)
+
+    request = runtime.build_latest_operator_safing_request()
+
+    assert request is not None
+    assert request.action.value == "downgrade_to_micro_live"
+    assert request.source_runtime_mode.value == "live"
+    assert request.target_runtime_mode is not None
+    assert request.target_runtime_mode.value == "micro_live"
+    assert request.reason == "execution drift requires step-down"
 
 
 def test_monitoring_runtime_tracks_alert_open_and_resolution_history():

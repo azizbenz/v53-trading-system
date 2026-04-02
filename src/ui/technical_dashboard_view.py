@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from monitoring.contracts import TechnicalDashboardPayload
 from ui.contracts import DashboardCard, DashboardSection, LightDashboardView
+from ui.operator_actions import build_light_allowed_actions
 
 
 def _join(values: tuple[str, ...], *, empty: str) -> str:
@@ -33,6 +34,72 @@ def _engine_card(payload: TechnicalDashboardPayload) -> DashboardCard:
         value=str(len(payload.system.active_engines)),
         status=status,
         detail=detail,
+    )
+
+
+def _operator_safing_value(payload: TechnicalDashboardPayload) -> str:
+    action = payload.alerts.operator_runtime.latest_safing_action
+    target = payload.alerts.operator_runtime.latest_safing_target_runtime_mode
+    if not action:
+        return "none"
+    return f"{action} -> {target}" if target else action
+
+
+def _operator_controls_section(payload: TechnicalDashboardPayload) -> DashboardSection:
+    allowed_actions = build_light_allowed_actions(payload.runtime_mode)
+    safing_actions = tuple(
+        action.value
+        for action in allowed_actions
+        if action.value in {"set_halted", "downgrade_to_micro_live", "downgrade_to_shadow"}
+    )
+    latest_safing_action = payload.alerts.operator_runtime.latest_safing_action
+    kill_path_active = payload.alerts.kill_switch_active or latest_safing_action == "set_halted"
+
+    return DashboardSection(
+        title="Operator Controls",
+        cards=(
+            DashboardCard(
+                key="operator_manual_scope",
+                label="Manual Scope",
+                value=f"{len(allowed_actions)} actions",
+                status="info",
+                detail=_join(tuple(action.value for action in allowed_actions), empty="No action exposed"),
+            ),
+            DashboardCard(
+                key="operator_safing_controls",
+                label="Safing Controls",
+                value=str(len(safing_actions)),
+                status="healthy" if safing_actions else "planned",
+                detail=_join(safing_actions, empty="No safing action exposed"),
+            ),
+            DashboardCard(
+                key="operator_latest_safing",
+                label="Latest Safing",
+                value=_operator_safing_value(payload),
+                status=(
+                    "critical"
+                    if latest_safing_action == "set_halted"
+                    else "warning"
+                    if latest_safing_action
+                    else "info"
+                ),
+                detail=(
+                    payload.alerts.operator_runtime.latest_safing_reason
+                    or "No manual safing request recorded"
+                ),
+            ),
+            DashboardCard(
+                key="operator_kill_path",
+                label="Kill Path",
+                value="active" if kill_path_active else "armed",
+                status="critical" if kill_path_active else "healthy",
+                detail=(
+                    "SET_HALTED is available via the local operator UI"
+                    if not payload.alerts.kill_switch_active
+                    else "Infra kill switch is active; trading must remain halted"
+                ),
+            ),
+        ),
     )
 
 
@@ -648,6 +715,31 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LightD
                     detail=payload.micro_live.import_lineage_version,
                 ),
                 DashboardCard(
+                    key="micro_live_safing_request",
+                    label="Safing Request",
+                    value=(
+                        f"{payload.micro_live.operator_safing_action}"
+                        + (
+                            f" -> {payload.micro_live.operator_safing_target_runtime_mode}"
+                            if payload.micro_live.operator_safing_target_runtime_mode
+                            else ""
+                        )
+                        if payload.micro_live.operator_safing_action
+                        else "none"
+                    ),
+                    status=(
+                        "critical"
+                        if payload.micro_live.operator_safing_action == "set_halted"
+                        else "warning"
+                        if payload.micro_live.operator_safing_action
+                        else "info"
+                    ),
+                    detail=(
+                        payload.micro_live.operator_safing_reason
+                        or "No manual safing request projected"
+                    ),
+                ),
+                DashboardCard(
                     key="micro_live_blocking_reasons",
                     label="Blocking Reasons",
                     value=str(len(payload.micro_live.blocking_reasons)),
@@ -731,6 +823,31 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LightD
                     detail=payload.live_light.build14_summary or payload.live_light.import_lineage_version,
                 ),
                 DashboardCard(
+                    key="live_light_safing_request",
+                    label="Safing Request",
+                    value=(
+                        f"{payload.live_light.operator_safing_action}"
+                        + (
+                            f" -> {payload.live_light.operator_safing_target_runtime_mode}"
+                            if payload.live_light.operator_safing_target_runtime_mode
+                            else ""
+                        )
+                        if payload.live_light.operator_safing_action
+                        else "none"
+                    ),
+                    status=(
+                        "critical"
+                        if payload.live_light.operator_safing_action == "set_halted"
+                        else "warning"
+                        if payload.live_light.operator_safing_action
+                        else "info"
+                    ),
+                    detail=(
+                        payload.live_light.operator_safing_reason
+                        or "No manual safing request projected"
+                    ),
+                ),
+                DashboardCard(
                     key="live_light_blocking_reasons",
                     label="Blocking Reasons",
                     value=str(len(payload.live_light.blocking_reasons)),
@@ -802,6 +919,7 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LightD
                 ),
             ),
         ),
+        _operator_controls_section(payload),
         DashboardSection(
             title="Replay & Import",
             cards=(

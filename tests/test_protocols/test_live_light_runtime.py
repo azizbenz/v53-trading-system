@@ -40,6 +40,8 @@ from protocols import (
     MicroLiveRunState,
     MicroLiveRunSummary,
     MicroLiveVerdict,
+    OperatorSafingAction,
+    OperatorSafingRequest,
     ShadowVerdict,
     build_live_light_input_from_micro_live,
     run_live_light_gate,
@@ -685,6 +687,42 @@ def test_run_live_light_gate_blocks_when_execution_or_onboarding_is_missing():
     assert summary.decision.verdict == LiveLightVerdict.BLOCKED
     assert "execution readiness must be confirmed before Live-Light execution" in summary.decision.blocking_reasons
     assert "strategy onboarding must be accepted before Live-Light" in summary.decision.blocking_reasons
+
+
+def test_run_live_light_gate_blocks_when_operator_requests_downgrade_to_micro_live():
+    summary = run_live_light_gate(
+        build_live_light_input_from_micro_live(
+            _micro_live_summary(),
+            _micro_live_payload(),
+            live_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=80.0,
+            requested_pair_notional_usdt=40.0,
+            max_total_notional_usdt=100.0,
+            max_pair_notional_usdt=50.0,
+            micro_live_stable_days=7,
+            observability_ready=True,
+            halt_ready=True,
+            operator_safing_request=OperatorSafingRequest(
+                timestamp_ms=1_700_000_000_000,
+                request_id="safing-live-1",
+                action=OperatorSafingAction.DOWNGRADE_TO_MICRO_LIVE,
+                source_runtime_mode=RuntimeMode.LIVE,
+                target_runtime_mode=RuntimeMode.MICRO_LIVE,
+                reason="execution drift requires step-down",
+            ),
+            execution_ready=True,
+            broker_ready=True,
+            exchange_ready=True,
+            onboarding_accepted=True,
+        )
+    )
+
+    assert summary.run_state == summary.run_state.__class__.BLOCKED
+    assert summary.operator_safing_request is not None
+    assert any(
+        "operator safing request: downgrade_to_micro_live (live -> micro_live)" in reason
+        for reason in summary.decision.blocking_reasons
+    )
 
 
 def test_run_live_light_gate_stays_dry_run_only_when_micro_live_needs_review():

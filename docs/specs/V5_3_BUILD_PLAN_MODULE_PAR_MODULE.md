@@ -43,6 +43,14 @@ Le plan s’appuie sur une seule V5.3 commune local + VPS :
 - aucun fork local / VPS
 - pipeline officiel : `classification -> versioning -> shared core -> LOCAL_REPLAY -> export artifact -> import VPS -> candidature contrôlée`
 
+Matrice canonique des états :
+
+- `profil=LIGHT`, `runtime_mode=SHADOW` : Build-11 / `Shadow intégral`
+- `profil=LIGHT`, `runtime_mode=MICRO_LIVE` : Build-12
+- `profil=LIGHT`, `runtime_mode=LIVE` : Build-13 / `Live-Light`
+- `profil=COMPLETE`, `runtime_mode=SHADOW` : Shadow Complete
+- `profil=COMPLETE`, `runtime_mode=LIVE` : Live-Complete
+
 ---
 
 # 1. Principes de build
@@ -498,6 +506,11 @@ Rendre le système gouvernable sans le rendre permissif.
 ## Objectif
 Valider la logique sans capital réel.
 
+## État canonique
+- `profil=LIGHT`
+- `runtime_mode=SHADOW`
+- nom de phase lisible : `Shadow intégral`
+
 ## HARD STATEMENT — Shadow intégral = phase de vérité système (30 jours)
 - La version Light doit trader en mode SHADOW pendant **30 jours calendaires consécutifs minimum**
 - Données réelles obligatoires (WebSocket ou replay réaliste)
@@ -544,6 +557,11 @@ Valider la logique sans capital réel.
 ## Objectif
 Valider coûts réels, fills, stale rate, reconciliation.
 
+## État canonique
+- `profil=LIGHT`
+- `runtime_mode=MICRO_LIVE`
+- nom de phase lisible : `Micro-live Light`
+
 ## Prérequis
 - **Verdict post-Shadow rendu** : seuls les composants `SHADOW_VALIDATED` passent en Micro-live
 - L'activation intégrale en Shadow ne signifie pas activation Micro-live automatique de tous les composants
@@ -578,6 +596,11 @@ Valider coûts réels, fills, stale rate, reconciliation.
 
 ## Objectif
 Première production réelle disciplinée.
+
+## État canonique
+- `profil=LIGHT`
+- `runtime_mode=LIVE`
+- nom de phase lisible : `Live-Light`
 
 ## Prérequis HARD
 - **HARD : 30 jours de Shadow intégral consécutifs atteints et rapport approuvé**

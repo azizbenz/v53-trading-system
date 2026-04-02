@@ -184,7 +184,8 @@ Build-11 ne peut pas commencer si une des conditions suivantes n’est pas satis
 # 6. Périmètre du Shadow intégral
 
 ## 6.1 Profil actif
-- **LIGHT comme enveloppe de rollout**
+- état canonique : `profil=LIGHT`, `runtime_mode=SHADOW`
+- nom de phase lisible : `Shadow intégral`
 - 6 paires maximum
 - **Shadow intégral actif** : A/B/C/D + Build-14
 

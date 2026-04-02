@@ -190,6 +190,46 @@ class MonitoringRuntime:
             state_path=str(self._state_path) if self._state_path is not None else "",
         )
 
+    def build_latest_operator_safing_request(self):
+        """Translate the latest accepted UI safing action into a typed protocol request."""
+
+        operator_runtime = self._light_ui_runtime.get_operator_projection()
+        if not operator_runtime.latest_safing_action:
+            return None
+
+        safing_event = next(
+            (
+                event
+                for event in reversed(operator_runtime.recent_event_log)
+                if event.accepted
+                and event.action == operator_runtime.latest_safing_action
+            ),
+            None,
+        )
+        if safing_event is None:
+            return None
+
+        from protocols import OperatorSafingAction, OperatorSafingRequest
+
+        return OperatorSafingRequest(
+            timestamp_ms=safing_event.timestamp_ms,
+            request_id=(
+                f"{safing_event.correlation_id}:"
+                f"{operator_runtime.latest_safing_action}:"
+                f"{safing_event.timestamp_ms}"
+            ),
+            action=OperatorSafingAction(operator_runtime.latest_safing_action),
+            source_runtime_mode=RuntimeMode(operator_runtime.latest_safing_source_runtime_mode),
+            target_runtime_mode=(
+                RuntimeMode(operator_runtime.latest_safing_target_runtime_mode)
+                if operator_runtime.latest_safing_target_runtime_mode
+                else None
+            ),
+            requested_by="operator",
+            ui_channel="local_operator_ui",
+            reason=operator_runtime.latest_safing_reason or safing_event.operator_reason,
+        )
+
     def _resolve_infra(
         self,
         *,

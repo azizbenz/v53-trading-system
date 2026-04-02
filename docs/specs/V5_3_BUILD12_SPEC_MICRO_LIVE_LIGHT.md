@@ -105,7 +105,7 @@ Build-12 est :
 Les conditions suivantes doivent être satisfaites :
 
 - Build-1 à Build-10 validés
-- Build-11 Shadow Light validé avec verdict GO
+- Build-11 `profil=LIGHT`, `runtime_mode=SHADOW` validé avec verdict GO
 - profil Light verrouillé
 - UI Light verrouillée
 - exécution live réelle disponible
@@ -173,12 +173,13 @@ Build-12 ne peut pas commencer si une des conditions suivantes n’est pas satis
 # 6. Périmètre du Micro-live Light
 
 ## 6.1 Profil actif
-- **LIGHT comme enveloppe active**
+- état canonique : `profil=LIGHT`, `runtime_mode=MICRO_LIVE`
+- nom de phase lisible : `Micro-live Light`
 - 6 paires maximum
 - coeur runtime attendu : moteurs A et B
 
 ## 6.2 Paires autorisées
-Seulement les paires validées en Shadow Light, en pratique :
+Seulement les paires validées en `Shadow intégral`, en pratique :
 - BTC/USDT
 - ETH/USDT
 - SOL/USDT

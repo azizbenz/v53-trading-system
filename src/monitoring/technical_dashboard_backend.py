@@ -234,6 +234,101 @@ def _build_alert_projection(
     )
 
 
+def _operator_safing_message(operator_runtime: OperatorRuntimeProjection) -> str:
+    if not operator_runtime.latest_safing_action:
+        return ""
+    target = (
+        f" -> {operator_runtime.latest_safing_target_runtime_mode}"
+        if operator_runtime.latest_safing_target_runtime_mode
+        else ""
+    )
+    reason = (
+        f" reason={operator_runtime.latest_safing_reason}"
+        if operator_runtime.latest_safing_reason
+        else ""
+    )
+    return (
+        "operator safing request: "
+        f"{operator_runtime.latest_safing_action} "
+        f"({operator_runtime.latest_safing_source_runtime_mode}{target})"
+        f"{reason}"
+    )
+
+
+def _apply_operator_safing_to_micro_live_projection(
+    projection: MicroLiveProjection,
+    *,
+    operator_runtime: OperatorRuntimeProjection | None,
+) -> MicroLiveProjection:
+    if operator_runtime is None:
+        return projection
+    if operator_runtime.latest_safing_source_runtime_mode != "micro_live":
+        return projection
+    if not operator_runtime.latest_safing_action:
+        return projection
+    reasons = list(projection.blocking_reasons)
+    safing_message = _operator_safing_message(operator_runtime)
+    if safing_message and safing_message not in reasons:
+        reasons.append(safing_message)
+    status = projection.status
+    if operator_runtime.latest_safing_action == "set_halted":
+        status = "critical"
+    elif status in {"planned", "info", "healthy"}:
+        status = "warning"
+    run_state = (
+        "operator_safing_requested"
+        if projection.run_state in {"", "not_run"}
+        else projection.run_state
+    )
+    return projection.model_copy(
+        update={
+            "status": status,
+            "run_state": run_state,
+            "operator_safing_action": operator_runtime.latest_safing_action,
+            "operator_safing_target_runtime_mode": operator_runtime.latest_safing_target_runtime_mode,
+            "operator_safing_reason": operator_runtime.latest_safing_reason,
+            "blocking_reasons": tuple(reasons),
+        }
+    )
+
+
+def _apply_operator_safing_to_live_light_projection(
+    projection: LiveLightProjection,
+    *,
+    operator_runtime: OperatorRuntimeProjection | None,
+) -> LiveLightProjection:
+    if operator_runtime is None:
+        return projection
+    if operator_runtime.latest_safing_source_runtime_mode != "live":
+        return projection
+    if not operator_runtime.latest_safing_action:
+        return projection
+    reasons = list(projection.blocking_reasons)
+    safing_message = _operator_safing_message(operator_runtime)
+    if safing_message and safing_message not in reasons:
+        reasons.append(safing_message)
+    status = projection.status
+    if operator_runtime.latest_safing_action == "set_halted":
+        status = "critical"
+    elif status in {"planned", "info", "healthy"}:
+        status = "warning"
+    run_state = (
+        "operator_safing_requested"
+        if projection.run_state in {"", "not_run"}
+        else projection.run_state
+    )
+    return projection.model_copy(
+        update={
+            "status": status,
+            "run_state": run_state,
+            "operator_safing_action": operator_runtime.latest_safing_action,
+            "operator_safing_target_runtime_mode": operator_runtime.latest_safing_target_runtime_mode,
+            "operator_safing_reason": operator_runtime.latest_safing_reason,
+            "blocking_reasons": tuple(reasons),
+        }
+    )
+
+
 def build_technical_dashboard_payload(
     snapshot: MonitoringSnapshot,
     *,
@@ -256,8 +351,14 @@ def build_technical_dashboard_payload(
     ).headline_status
     build9x = build9x_projection or _default_build9x_projection(active_modules=active_modules)
     shadow = shadow_projection or _default_shadow_projection(active_modules=active_modules)
-    micro_live = micro_live_projection or _default_micro_live_projection(active_modules=active_modules)
-    live_light = live_light_projection or _default_live_light_projection(active_modules=active_modules)
+    micro_live = _apply_operator_safing_to_micro_live_projection(
+        micro_live_projection or _default_micro_live_projection(active_modules=active_modules),
+        operator_runtime=operator_runtime,
+    )
+    live_light = _apply_operator_safing_to_live_light_projection(
+        live_light_projection or _default_live_light_projection(active_modules=active_modules),
+        operator_runtime=operator_runtime,
+    )
     build14 = build14_projection or _default_build14_projection(active_modules=active_modules)
     replay_import = replay_projection or _default_replay_projection(active_modules=active_modules)
     stale_engines = tuple(

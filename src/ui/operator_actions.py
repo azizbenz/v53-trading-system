@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from interface_contracts import ProfileId
+from interface_contracts import ProfileId, RuntimeMode
 from ui.contracts import (
     OperatorActionLogEntry,
     OperatorActionOutcome,
@@ -23,11 +23,43 @@ _LIGHT_ALLOWED_ACTIONS = (
 )
 
 _LIGHT_SUSPENDABLE_ENGINES = frozenset({"engine_a", "engine_b"})
+_OPERATOR_REASON_REQUIRED_ACTIONS = frozenset(
+    {
+        OperatorActionType.SET_HALTED,
+        OperatorActionType.DOWNGRADE_TO_MICRO_LIVE,
+        OperatorActionType.DOWNGRADE_TO_SHADOW,
+    }
+)
 
 
-def build_light_allowed_actions() -> tuple[OperatorActionType, ...]:
+def _target_runtime_mode_for_action(
+    action: OperatorActionType,
+) -> RuntimeMode | None:
+    if action == OperatorActionType.DOWNGRADE_TO_MICRO_LIVE:
+        return RuntimeMode.MICRO_LIVE
+    if action == OperatorActionType.DOWNGRADE_TO_SHADOW:
+        return RuntimeMode.SHADOW
+    return None
+
+
+def build_light_allowed_actions(
+    runtime_mode: RuntimeMode = RuntimeMode.SHADOW,
+) -> tuple[OperatorActionType, ...]:
     """Return the governed action surface exposed by the Light UI."""
 
+    if runtime_mode == RuntimeMode.LIVE:
+        return (
+            *_LIGHT_ALLOWED_ACTIONS[:5],
+            OperatorActionType.DOWNGRADE_TO_MICRO_LIVE,
+            OperatorActionType.DOWNGRADE_TO_SHADOW,
+            *_LIGHT_ALLOWED_ACTIONS[5:],
+        )
+    if runtime_mode == RuntimeMode.MICRO_LIVE:
+        return (
+            *_LIGHT_ALLOWED_ACTIONS[:5],
+            OperatorActionType.DOWNGRADE_TO_SHADOW,
+            *_LIGHT_ALLOWED_ACTIONS[5:],
+        )
     return _LIGHT_ALLOWED_ACTIONS
 
 
@@ -65,9 +97,12 @@ def evaluate_light_operator_action(
         correlation_id=request.correlation_id,
         event_type=OperatorEventType.ACTION_REQUESTED,
         action=request.action,
+        source_runtime_mode=request.runtime_mode,
+        target_runtime_mode=_target_runtime_mode_for_action(request.action),
         target=request.target,
         accepted=False,
         message=f"operator action requested: {request.action.value}",
+        operator_reason=request.reason,
     )
 
     rejection_reason = _rejection_reason(
@@ -89,9 +124,12 @@ def evaluate_light_operator_action(
                     correlation_id=request.correlation_id,
                     event_type=OperatorEventType.ACTION_REJECTED,
                     action=request.action,
+                    source_runtime_mode=request.runtime_mode,
+                    target_runtime_mode=_target_runtime_mode_for_action(request.action),
                     target=request.target,
                     accepted=False,
                     message=f"operator action rejected: {request.action.value}",
+                    operator_reason=request.reason,
                     rejection_reason=rejection_reason,
                 ),
             ),
@@ -106,6 +144,10 @@ def evaluate_light_operator_action(
         resulting_state = "critical_alert_acknowledged"
     elif request.action == OperatorActionType.SET_HALTED:
         resulting_state = "halted"
+    elif request.action == OperatorActionType.DOWNGRADE_TO_MICRO_LIVE:
+        resulting_state = "micro_live_downgrade_requested"
+    elif request.action == OperatorActionType.DOWNGRADE_TO_SHADOW:
+        resulting_state = "shadow_downgrade_requested"
     elif request.action == OperatorActionType.SUSPEND_PAIR:
         resulting_state = "pair_suspended"
     elif request.action == OperatorActionType.REQUEST_PAIR_RESUME:
@@ -127,9 +169,12 @@ def evaluate_light_operator_action(
                 correlation_id=request.correlation_id,
                 event_type=result_event,
                 action=request.action,
+                source_runtime_mode=request.runtime_mode,
+                target_runtime_mode=_target_runtime_mode_for_action(request.action),
                 target=request.target,
                 accepted=True,
                 message=result_message,
+                operator_reason=request.reason,
             ),
         ),
     )
@@ -145,8 +190,11 @@ def _rejection_reason(
 ) -> str:
     if request.profile != ProfileId.LIGHT:
         return "only profile=LIGHT is supported by the locked Light UI"
-    if request.action not in _LIGHT_ALLOWED_ACTIONS:
+    allowed_actions = build_light_allowed_actions(request.runtime_mode)
+    if request.action not in allowed_actions:
         return _forbidden_reason(request, max_light_pairs=max_light_pairs)
+    if request.action in _OPERATOR_REASON_REQUIRED_ACTIONS and not request.reason.strip():
+        return f"{request.action.value} requires an operator reason"
     if request.action == OperatorActionType.SUSPEND_PAIR:
         if not request.target:
             return "suspend_pair requires a pair target"
@@ -172,6 +220,14 @@ def _rejection_reason(
     if request.action == OperatorActionType.VIEW_CRITICAL_SCREENS:
         return ""
     if request.action == OperatorActionType.SET_HALTED:
+        return ""
+    if request.action == OperatorActionType.DOWNGRADE_TO_MICRO_LIVE:
+        if request.runtime_mode != RuntimeMode.LIVE:
+            return "downgrade_to_micro_live requires runtime_mode=LIVE"
+        return ""
+    if request.action == OperatorActionType.DOWNGRADE_TO_SHADOW:
+        if request.runtime_mode not in {RuntimeMode.MICRO_LIVE, RuntimeMode.LIVE}:
+            return "downgrade_to_shadow requires runtime_mode=MICRO_LIVE or LIVE"
         return ""
     if request.action == OperatorActionType.VIEW_ALERT_HISTORY:
         return ""

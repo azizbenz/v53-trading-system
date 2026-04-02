@@ -18,6 +18,24 @@ def _status_from_summary(summary: MicroLiveRunSummary) -> str:
     return "healthy"
 
 
+def _operator_safing_value(summary: MicroLiveRunSummary) -> str:
+    request = summary.operator_safing_request
+    if request is None:
+        return "none"
+    if request.target_runtime_mode is None:
+        return request.action.value
+    return f"{request.action.value} -> {request.target_runtime_mode.value}"
+
+
+def _operator_safing_status(summary: MicroLiveRunSummary) -> str:
+    request = summary.operator_safing_request
+    if request is None:
+        return "info"
+    if request.action.value == "set_halted":
+        return "critical"
+    return "warning"
+
+
 def build_micro_live_projection(summary: MicroLiveRunSummary) -> MicroLiveProjection:
     """Project a governed Build-12 summary into the normalized supervision surface."""
 
@@ -39,6 +57,22 @@ def build_micro_live_projection(summary: MicroLiveRunSummary) -> MicroLiveProjec
         observability_ready=summary.observability_ready,
         halt_ready=summary.halt_ready,
         onboarding_ready=summary.onboarding_ready,
+        operator_safing_action=(
+            summary.operator_safing_request.action.value
+            if summary.operator_safing_request is not None
+            else ""
+        ),
+        operator_safing_target_runtime_mode=(
+            summary.operator_safing_request.target_runtime_mode.value
+            if summary.operator_safing_request is not None
+            and summary.operator_safing_request.target_runtime_mode is not None
+            else ""
+        ),
+        operator_safing_reason=(
+            summary.operator_safing_request.reason
+            if summary.operator_safing_request is not None
+            else ""
+        ),
         blocking_reasons=summary.decision.blocking_reasons,
     )
 
@@ -104,6 +138,16 @@ def build_micro_live_dashboard_section(summary: MicroLiveRunSummary) -> Dashboar
                     else "critical"
                 ),
                 detail=projection.import_lineage_version,
+            ),
+            DashboardCard(
+                key="micro_live_safing_request",
+                label="Safing Request",
+                value=_operator_safing_value(summary),
+                status=_operator_safing_status(summary),
+                detail=(
+                    projection.operator_safing_reason
+                    or "No manual safing request projected"
+                ),
             ),
             DashboardCard(
                 key="micro_live_blocking_reasons",

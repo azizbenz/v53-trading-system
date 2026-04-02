@@ -6,6 +6,8 @@ from interface_contracts import PromotionState, ReviewState
 from protocols import (
     MicroLiveDecision,
     MicroLiveExecutionPlan,
+    OperatorSafingAction,
+    OperatorSafingRequest,
     MicroLiveRunState,
     MicroLiveRunSummary,
     MicroLiveVerdict,
@@ -61,6 +63,7 @@ def test_build_micro_live_projection_returns_normalized_monitoring_summary():
     assert projection.verdict == "allowed_to_probe"
     assert projection.approved_total_notional_usdt == 20.0
     assert projection.planned_pairs == ("BTCUSDT", "ETHUSDT")
+    assert projection.operator_safing_action == ""
 
 
 def test_build_micro_live_dashboard_section_renders_expected_cards():
@@ -74,8 +77,34 @@ def test_build_micro_live_dashboard_section_renders_expected_cards():
         "micro_live_budget",
         "micro_live_surface",
         "micro_live_guardrails",
+        "micro_live_safing_request",
         "micro_live_blocking_reasons",
     }
     verdict = next(card for card in section.cards if card.key == "micro_live_verdict")
     assert verdict.value == "allowed_to_probe"
     assert verdict.status == "healthy"
+
+
+def test_build_micro_live_dashboard_section_surfaces_manual_safing_request():
+    summary = _summary().model_copy(
+        update={
+            "operator_safing_request": OperatorSafingRequest(
+                timestamp_ms=1_700_000_000_000,
+                request_id="micro-safing-1",
+                action=OperatorSafingAction.DOWNGRADE_TO_SHADOW,
+                source_runtime_mode="micro_live",
+                target_runtime_mode="shadow",
+                reason="manual requalification requested",
+            )
+        }
+    )
+
+    projection = build_micro_live_projection(summary)
+    section = build_micro_live_dashboard_section(summary)
+
+    assert projection.operator_safing_action == "downgrade_to_shadow"
+    assert projection.operator_safing_target_runtime_mode == "shadow"
+    card = next(card for card in section.cards if card.key == "micro_live_safing_request")
+    assert card.value == "downgrade_to_shadow -> shadow"
+    assert card.status == "warning"
+    assert card.detail == "manual requalification requested"

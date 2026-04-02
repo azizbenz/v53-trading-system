@@ -567,7 +567,13 @@ def _build_demo_micro_live_projection(
     shadow_summary,
     payload,
     onboarding_decision,
+    *,
+    monitoring_runtime=None,
 ) -> tuple[object, MicroLiveProjection]:
+    operator_safing_request = _resolve_stage_operator_safing_request(
+        monitoring_runtime,
+        source_runtime_mode=RuntimeMode.MICRO_LIVE,
+    )
     micro_live_input = build_micro_live_input_from_shadow(
         shadow_summary,
         payload,
@@ -579,6 +585,7 @@ def _build_demo_micro_live_projection(
         order_probe_limit=2,
         observability_ready=True,
         halt_ready=True,
+        operator_safing_request=operator_safing_request,
         onboarding_accepted=onboarding_decision.accepted,
         onboarding_review_state=onboarding_decision.review_state,
         onboarding_reasons=onboarding_decision.reasons,
@@ -595,6 +602,8 @@ def _build_demo_live_light_projection(
     micro_live_payload,
     onboarding_decision,
     build14_report,
+    *,
+    monitoring_runtime=None,
 ) -> tuple[object, LiveLightProjection]:
     if not micro_live_summary.execution_plan.planned_engines:
         blocking_reasons = micro_live_summary.decision.blocking_reasons or (
@@ -622,6 +631,10 @@ def _build_demo_live_light_projection(
             ),
         )
 
+    operator_safing_request = _resolve_stage_operator_safing_request(
+        monitoring_runtime,
+        source_runtime_mode=RuntimeMode.LIVE,
+    )
     live_light_input = build_live_light_input_from_micro_live(
         micro_live_summary,
         micro_live_payload,
@@ -634,6 +647,7 @@ def _build_demo_live_light_projection(
         micro_live_stable_days=7,
         observability_ready=True,
         halt_ready=True,
+        operator_safing_request=operator_safing_request,
         execution_ready=True,
         broker_ready=True,
         exchange_ready=True,
@@ -694,6 +708,26 @@ def _build_build14_report_and_projection(payload) -> tuple[object, Build14Projec
         candidate_effect=report.signal.candidate_effect,
         reason_codes=report.signal.reason_codes,
     )
+
+
+def _resolve_stage_operator_safing_request(
+    monitoring_runtime,
+    *,
+    source_runtime_mode: RuntimeMode,
+):
+    """Return the latest typed operator safing request when it targets the current stage."""
+
+    if monitoring_runtime is None:
+        return None
+    build_request = getattr(monitoring_runtime, "build_latest_operator_safing_request", None)
+    if not callable(build_request):
+        return None
+    operator_safing_request = build_request()
+    if operator_safing_request is None:
+        return None
+    if operator_safing_request.source_runtime_mode != source_runtime_mode:
+        return None
+    return operator_safing_request
 
 
 def _build_readiness_section() -> DashboardSection:
@@ -1057,7 +1091,12 @@ def _availability_sections() -> tuple[DashboardSection, ...]:
     )
 
 
-def export_technical_dashboard(output_dir: Path, *, demo: bool = False) -> DashboardArtifacts:
+def export_technical_dashboard(
+    output_dir: Path,
+    *,
+    demo: bool = False,
+    monitoring_runtime=None,
+) -> DashboardArtifacts:
     """Export the local technical supervision interface to a static HTML file."""
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1118,6 +1157,7 @@ def export_technical_dashboard(output_dir: Path, *, demo: bool = False) -> Dashb
             shadow_summary,
             payload,
             onboarding_decision,
+            monitoring_runtime=monitoring_runtime,
         )
         micro_live_snapshot = snapshot.model_copy(update={"runtime_mode": RuntimeMode.MICRO_LIVE})
         micro_live_payload = build_technical_dashboard_payload(
@@ -1137,6 +1177,7 @@ def export_technical_dashboard(output_dir: Path, *, demo: bool = False) -> Dashb
             micro_live_payload,
             onboarding_decision,
             build14_report,
+            monitoring_runtime=monitoring_runtime,
         )
         live_snapshot = snapshot.model_copy(update={"runtime_mode": RuntimeMode.LIVE})
         payload = build_technical_dashboard_payload(
