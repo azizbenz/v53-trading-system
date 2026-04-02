@@ -1,0 +1,315 @@
+{
+  "meta": {
+    "document_id": "2026-04-02_prod_safe_code_vs_doc_memory",
+    "date": "2026-04-02",
+    "status": "active",
+    "purpose": "Persistent working memory for the V5.3 prod-safe code-vs-doc audit and correction pass."
+  },
+  "source_of_truth": {
+    "priority_order": [
+      "docs/specs/V5_3_MASTER_FINAL_UNIQUE.md",
+      "docs/specs/V5_3_BUILD_PLAN_MODULE_PAR_MODULE.md",
+      "docs/specs/V5_3_BUILD11_SPEC_SHADOW_LIGHT.md",
+      "docs/specs/V5_3_BUILD12_SPEC_MICRO_LIVE_LIGHT.md",
+      "docs/specs/V5_3_BUILD13_SPEC_LIVE_LIGHT.md",
+      "docs/specs/V5_3_BUILD14_SPEC_COMPLETE_ENABLERS.md",
+      "docs/specs/V5_3_TABLE_MERGE_GATES_TESTS_GO_NO_GO.md"
+    ],
+    "secondary_support_docs": [
+      "docs/specs/V5_3_INDEX_MAITRE_FINAL_CORPUS.md",
+      "docs/specs/V5_3_DOC_TO_CODE_ALIGNMENT_PLAN.md",
+      "docs/specs/V5_3_CORPUS_STABILIZATION_REPORT.md",
+      "docs/specs/V5_3_AUDIT_INTEGRATION_DECISIONS.md",
+      "docs/specs/V5_3_UNIFIED_LOCAL_VPS_BACKTEST_ARCHITECTURE_PLAN_V2.md",
+      "docs/specs/V5_3_LOCAL_REPLAY_BACKTEST_RUNTIME_SPEC.md",
+      "docs/specs/V5_3_STRATEGY_ONBOARDING_PROTOCOL.md"
+    ],
+    "non_canonical_but_important_context": [
+      "docs/audit chatgpt buisness/2026-04-02_CHATGPT_CONTINUITY_HANDOFF_5_DAYS.md",
+      "docs/audit chatgpt buisness/2026-04-02_BUILD_WORKLOG_AND_STATUS.md",
+      "docs/audit chatgpt buisness/2026-04-02_LOCAL_VPS_SHADOW_CHAIN_HANDOFF.md"
+    ]
+  },
+  "repo_state": {
+    "branch": "codex/build-11-reaudit-20260402",
+    "worktree_dirty": true,
+    "branch_alignment": {
+      "main_commit": "e28de12",
+      "origin_main_commit": "e28de12",
+      "current_branch_commit": "e28de12",
+      "branch_divergence_detected": false,
+      "interpretation": "No active branch divergence. Primary risk is the dirty worktree."
+    },
+    "notes": [
+      "Do not reset hard.",
+      "Do not bulk delete untracked files.",
+      "Dirty worktree contains useful Shadow/VPS work in progress."
+    ]
+  },
+  "validated_test_evidence": [
+    {
+      "date": "2026-04-02",
+      "command": "rtk pytest tests/test_protocols tests/test_local_replay_runtime tests/test_backtest_artifact_import -q",
+      "result": "210 passed"
+    },
+    {
+      "date": "2026-04-02",
+      "command": "rtk pytest tests/test_protocols/test_shadow_day_counter.py tests/test_protocols/test_promotion_gates.py tests/test_protocols/test_local_replay_shadow_runner.py tests/test_protocols/test_contracts.py -q",
+      "result": "66 passed"
+    },
+    {
+      "date": "2026-04-02",
+      "command": "rtk pytest tests/test_protocols/test_shadow_report_builder.py tests/test_protocols/test_shadow_session_registry.py tests/test_protocols/test_shadow_daily_orchestrator.py tests/test_protocols/test_shadow_daily_orchestrator_launcher.py tests/test_protocols/test_shadow_websocket_ingest.py tests/test_protocols/test_shadow_live_websocket.py tests/test_protocols/test_shadow_vps_service_launcher.py -q",
+      "result": "15 passed"
+    },
+    {
+      "date": "2026-04-02",
+      "command": "rtk pytest tests/test_regression_alignment.py -q",
+      "result": "50 passed, 2 failed",
+      "classification": "blocking_alignment_gap",
+      "failure_focus": [
+        "TestShadow30jGate.test_gate_passes_with_30_days",
+        "TestLiveLightShadowPrerequisite.test_passes_when_shadow_30j_met"
+      ]
+    }
+  ],
+  "current_status_by_build": {
+    "build_2": "ALIGNED",
+    "build_3": "ALIGNED",
+    "build_9x": "ALIGNED",
+    "build_10": "ALIGNED",
+    "build_11": "STILL_PARTIAL",
+    "build_12": "NOT_READY",
+    "build_13": "NOT_READY",
+    "build_14": "PARTIAL_AND_DOCTRINALLY_SENSITIVE",
+    "build_15": "NOT_READY",
+    "build_16": "NOT_READY",
+    "build_17": "PARTIAL_SURFACE_ONLY"
+  },
+  "hard_constraints": {
+    "allowed_profiles": [
+      "LIGHT",
+      "COMPLETE"
+    ],
+    "allowed_runtime_modes": [
+      "LOCAL_REPLAY",
+      "SHADOW",
+      "MICRO_LIVE",
+      "LIVE"
+    ],
+    "forbidden_actions": [
+      "Create BACKTEST_PROFILE or LOCAL_PROFILE.",
+      "Introduce a second V5.3 for local or VPS.",
+      "Bypass SHADOW -> MICRO_LIVE -> LIVE.",
+      "Declare ALIGNED without doc + code + tests + runtime coherence.",
+      "Rewrite the canon globally before audit."
+    ]
+  },
+  "governance_decisions": [
+    {
+      "decision_id": "GOV-001",
+      "topic": "Micro-live minimum duration",
+      "current_canon": "7 days minimum",
+      "proposed_change": "15 days minimum",
+      "status": "pending_explicit_governance_decision",
+      "blocking_reason": "Changing the duration impacts the master, build plan, Build-12, Build-13, merge gates, tests, and promotion semantics.",
+      "rule_until_decided": "Keep the canon at 7 days and treat 15 days as a change request, not as an automatic markdown correction."
+    }
+  ],
+  "targeted_audits": [
+    {
+      "audit_id": "AUDIT-001",
+      "date": "2026-04-02",
+      "scope": "Build-11 / Build-12 / Build-13 Shadow gate semantics",
+      "record_path": "docs/audit chatgpt buisness/2026-04-02_BUILD11_BUILD13_SHADOW_RULE_AUDIT.md",
+      "conclusion": "The official rule is not '30 days only'. It is 30 consecutive shadow days plus a complete/exploitable shadow report and post-shadow component verdicts before promotion.",
+      "code_mapping": "shadow_report_ready is the runtime representation of the canonical 'rapport shadow exploitable/complet' requirement.",
+      "action_taken": "Regression tests expecting 30-days-only behavior must be updated."
+    }
+  ],
+  "known_critical_gaps": [
+    {
+      "gap_id": "GAP-001",
+      "priority": "P0",
+      "scope": "Build-11 doctrine vs actual closure criteria",
+      "doc_expectation": "Shadow 30 days as full system truth phase with A/B/C/D and Build-14 SHADOW_ENABLED, then post-Shadow verdict.",
+      "code_or_runtime_reality": "Autonomous Shadow VPS service and live_websocket support exist, but final operational proof and full doctrinal closure are not yet established.",
+      "status": "open"
+    },
+    {
+      "gap_id": "GAP-002",
+      "priority": "P0",
+      "scope": "Moteurs C/D",
+      "doc_expectation": "C and D are SHADOW_ENABLED during the complete Shadow truth phase.",
+      "code_or_runtime_reality": "engine_c and engine_d package entrypoints still raise ImportError and some module inventory statuses remain planned.",
+      "status": "open"
+    },
+    {
+      "gap_id": "GAP-003",
+      "priority": "P1",
+      "scope": "Build-14 representation across monitoring/UI/live-light surfaces",
+      "doc_expectation": "Build-14 is SHADOW_ENABLED in Shadow, fully active there, then SHADOW_VALIDATED or DORMANT by verdict.",
+      "code_or_runtime_reality": "Some contracts and UI/monitoring payloads still default to read_only or limited_influence language.",
+      "status": "open"
+    },
+    {
+      "gap_id": "GAP-004",
+      "priority": "P1",
+      "scope": "Hard State exposure consistency",
+      "doc_expectation": "Hard States must be explicit and coherent across protocols, monitoring, UI, and promotion gates.",
+      "code_or_runtime_reality": "Partial exposure exists, but the whole stack is not yet clearly normalized around one final vocabulary.",
+      "status": "open"
+    },
+    {
+      "gap_id": "GAP-005",
+      "priority": "P1",
+      "scope": "Runtime proof for native live_websocket",
+      "doc_expectation": "Runtime-relevant features need real proof before final requalification.",
+      "code_or_runtime_reality": "The feature is coded and tested, but exchange-network proof is still pending in this environment.",
+      "status": "open"
+    },
+    {
+      "gap_id": "GAP-006",
+      "priority": "P0",
+      "scope": "Regression alignment around Shadow 30j gate",
+      "doc_expectation": "Build-11 / Build-13 gate semantics must be consistent across canonical docs, runtime gates, and regression tests.",
+      "code_or_runtime_reality": "Current runtime gate effectively requires 30 consecutive days plus shadow_report_ready, while part of the regression suite still expects the older 30-days-only behavior.",
+      "status": "open"
+    }
+  ],
+  "work_batches": [
+    {
+      "batch_id": "B1",
+      "title": "Freeze canonical reading frame",
+      "status": "done",
+      "scope": [
+        "Master unique",
+        "Build plan",
+        "Build-11 to Build-14 specs",
+        "Merge gates"
+      ],
+      "done_criteria": [
+        "Truth hierarchy frozen.",
+        "No active document treated as a new canon by mistake."
+      ]
+    },
+    {
+      "batch_id": "B2",
+      "title": "Audit Build-11/12/13/14 docs vs code",
+      "status": "pending",
+      "scope": [
+        "src/protocols",
+        "scripts",
+        "tests/test_protocols"
+      ],
+      "done_criteria": [
+        "Each normative requirement mapped to code reality.",
+        "Each gap classified as doc, code, or runtime evidence."
+      ]
+    },
+    {
+      "batch_id": "B3",
+      "title": "Audit monitoring/UI/Hard States",
+      "status": "pending",
+      "scope": [
+        "src/monitoring",
+        "src/ui",
+        "protocol payload contracts"
+      ],
+      "done_criteria": [
+        "Hard State vocabulary normalized.",
+        "Read-only remnants identified and classified."
+      ]
+    },
+    {
+      "batch_id": "B4",
+      "title": "Decide doc patch vs code patch",
+      "status": "pending",
+      "scope": [
+        "Only active canonical docs",
+        "Only scoped code surfaces"
+      ],
+      "done_criteria": [
+        "Every contradiction has an owner: docs, code, or governance.",
+        "No global rewrite."
+      ]
+    },
+    {
+      "batch_id": "B5",
+      "title": "Patch in small prod-safe lots",
+      "status": "pending",
+      "scope": [
+        "Contracts and gates",
+        "Shadow reporting",
+        "Monitoring/UI",
+        "Canonical docs impacted by verified contradictions"
+      ],
+      "done_criteria": [
+        "Small scoped patches.",
+        "Tests green for each lot.",
+        "Memory updated after each lot."
+      ]
+    },
+    {
+      "batch_id": "B6",
+      "title": "Runtime evidence and requalification",
+      "status": "pending",
+      "scope": [
+        "Shadow service",
+        "Native live_websocket smoke if environment allows",
+        "Final honest status"
+      ],
+      "done_criteria": [
+        "Runtime evidence stored.",
+        "No premature ALIGNED verdict."
+      ]
+    }
+  ],
+  "evidence_policy": {
+    "required_for_any_critical_claim": [
+      "doc_reference",
+      "code_reference",
+      "test_reference",
+      "runtime_reference_when_relevant"
+    ],
+    "allowed_verdicts": [
+      "ALIGNED",
+      "STILL PARTIAL",
+      "NOT READY"
+    ],
+    "forbidden_shortcuts": [
+      "Tests pass therefore build aligned.",
+      "Service runs therefore doctrine satisfied.",
+      "Handoff says done therefore canon changed."
+    ]
+  },
+  "memory_update_protocol": [
+    "After each audit batch, update this JSON before broadening scope.",
+    "Record exact durations and gate values from the canon, never from memory alone.",
+    "If a rule change is desired, add a governance decision entry before patching docs.",
+    "Do not collapse runtime readiness and doctrinal readiness into one status."
+  ],
+  "staging_commit_strategy": {
+    "recommended_first_safe_commit": {
+      "type": "docs_memory_only",
+      "status": "safe_now",
+      "files": [
+        "docs/audit chatgpt buisness/2026-04-02_PROD_SAFE_CODE_VS_DOC_WORKPLAN.md",
+        "docs/audit chatgpt buisness/2026-04-02_PROD_SAFE_CODE_VS_DOC_MEMORY.json",
+        "docs/audit chatgpt buisness/2026-04-02_GIT_BRANCH_AND_WORKTREE_AUDIT.md",
+        "docs/audit chatgpt buisness/2026-04-02_NON_DESTRUCTIVE_STAGING_COMMIT_PLAN.md"
+      ],
+      "commit_message": "docs(audit): freeze prod-safe audit and git recovery memory"
+    },
+    "code_preservation_commit": {
+      "type": "branch_wip_only",
+      "status": "allowed_for_preservation_not_for_merge_ready",
+      "reason": "Tracked and untracked Shadow/VPS files form one coherent bundle, but regression alignment remains open.",
+      "suggested_commit_message": "wip(build11): preserve shadow vps service bundle before alignment fix"
+    }
+  },
+  "next_recommended_action": {
+    "step": "Secure the docs/memory commit first, then audit and resolve the Build-11/Build-13 regression-alignment gap before any merge-ready code commit.",
+    "reason": "This preserves the current investigation without overstating the maturity of the Shadow/VPS code bundle."
+  }
+}
