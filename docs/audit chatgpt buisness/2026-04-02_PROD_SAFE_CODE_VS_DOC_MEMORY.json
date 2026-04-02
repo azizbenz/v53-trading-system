@@ -401,8 +401,8 @@
       "date": "2026-04-02",
       "scope": "Build-1 -> Build-5 critical audit",
       "record_path": "docs/audit chatgpt buisness/2026-04-02_BUILD1_TO_BUILD5_AUDIT.md",
-      "conclusion": "Build-1 is now aligned on the current branch after the dependency correction wave. Build-2, Build-3, and Build-5 remain aligned. Build-4 is still partial because its canonical modules look green but the package-level circuit breaker suite is not clean in this environment.",
-      "action_taken": "Freeze the Build-1 correction result in memory and keep Build-4 under test-environment scrutiny."
+      "conclusion": "Build-1 is now aligned on the current branch after the dependency correction wave. Build-2, Build-3, and Build-5 remain aligned. Build-4 is still partial because the package-level circuit breaker suite is blocked by a broader environment/sandbox write-path issue, not by a proven kill-switch logic regression.",
+      "action_taken": "Freeze the Build-1 correction result in memory and keep Build-4 under environment/sandbox scrutiny until a true product-level defect is isolated."
     },
     {
       "audit_id": "AUDIT-004",
@@ -761,12 +761,12 @@
     }
   },
   "next_recommended_action": {
-    "step": "Continue the build-by-build audit/correction pass from the Option-B baseline. Keep Build-11 focused on honest runtime proof and target-environment evidence, keep Build-12 / Build-13 blocked until Build-11 is truly closed, and keep Build-4 tmp-path verification as a separate environment task.",
-    "reason": "The doctrinal contradiction between Build-11 and Build-15/16/17 is resolved on the current branch, and the local Build-11 replay-to-Shadow chain is repaired. The next blocker is now real runtime proof rather than canon ambiguity or a broken local chain."
+    "step": "Continue the build-by-build audit/correction pass from the Option-B baseline. Keep Build-11 focused on honest runtime proof and target-environment evidence, keep Build-12 / Build-13 blocked until Build-11 is truly closed, and keep Build-4 write-path verification as a separate environment task outside the current sandbox frame.",
+    "reason": "The doctrinal contradiction between Build-11 and Build-15/16/17 is resolved on the current branch, the local Build-11 replay-to-Shadow chain is repaired, and the remaining Build-4 blocker now looks like an environment/sandbox write issue rather than a proven product regression."
   },
   "branch_overrides": {
     "option_b_realignment_commit": "99cf170",
-    "effective_next_action": "Continue the build-by-build audit/correction pass from the repaired Option B baseline. Keep Build-11 focused on honest runtime proof and target-environment evidence, keep Build-12 / Build-13 blocked until Build-11 is truly closed, keep Build-15 / Build-16 out of the current rollout wave because they remain spec-only, and keep Build-17 labeled UI/demo only until a real Live-Complete protocol exists.",
-    "effective_reason": "The doctrinal contradiction between Build-11 and Build-15/16/17 is resolved on the current branch, the local Build-11 replay-to-Shadow chain is repaired, and the late-build audit now cleanly separates spec-only Engine C/D work from the partial Build-17 UI/demo surface. The remaining blockers are runtime proof and future dedicated implementation waves, not canon ambiguity."
+    "effective_next_action": "Continue the build-by-build audit/correction pass from the repaired Option B baseline. Keep Build-11 focused on honest runtime proof and target-environment evidence, keep Build-12 / Build-13 blocked until Build-11 is truly closed, keep Build-15 / Build-16 out of the current rollout wave because they remain spec-only, keep Build-17 labeled UI/demo only until a real Live-Complete protocol exists, and keep Build-4 as a separate environment/sandbox write-path verification task.",
+    "effective_reason": "The doctrinal contradiction between Build-11 and Build-15/16/17 is resolved on the current branch, the local Build-11 replay-to-Shadow chain is repaired, the late-build audit cleanly separates spec-only Engine C/D work from the partial Build-17 UI/demo surface, and the Build-4 blocker now looks environmental rather than product-level. The remaining blockers are runtime proof and future dedicated implementation waves, not canon ambiguity."
   }
 }

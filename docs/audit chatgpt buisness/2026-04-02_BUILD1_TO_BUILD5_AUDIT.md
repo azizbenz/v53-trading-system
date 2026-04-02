@@ -86,6 +86,14 @@ Confirmed surfaces:
   - result: `14 errors`
   - observed cause: `PermissionError` while pytest tries to scan/create
     `C:\\Users\\azizbez\\AppData\\Local\\Temp\\pytest-of-azizbez`
+- `pytest tests/test_risk_backbone/test_circuit_breaker.py -q --basetemp=build/pytest-tmp`
+  - result: `14 errors`
+  - observed cause: pytest still fails during local temp cleanup on
+    `build\\pytest-tmp\\pytest-of-azizbez`
+- direct shell reproductions in the current environment:
+  - plain Python writes into repo-local scratch dirs can raise
+    `PermissionError`
+  - atomic write reproduction can hang inside the current shell sandbox
 - `rtk pytest tests/test_scoring_backbone -q`
   - result: `117 passed`
 
@@ -121,20 +129,27 @@ Evidence:
 
 - `pytest tests/test_risk_backbone/test_circuit_breaker.py -q`
   returns `14 errors`
-- the errors are setup-time fixture errors, not business assertion failures
-- all failures point to `PermissionError` on the pytest temp base directory
+- the first failure mode points to `PermissionError` on the global pytest temp
+  base directory
+- rerunning with a repo-local `--basetemp` does not clear the issue in the
+  current environment
+- direct shell reproductions show that even repo-local scratch-dir writes can
+  fail or hang under the current sandboxed execution context
+- no business assertion failure was isolated in the circuit-breaker logic itself
 
 Critical reading:
 
 - this does not currently prove a risk-logic regression
-- but it also does not let us claim a fully clean package-level Build-4 audit
+- it also does not let us claim a fully clean package-level Build-4 audit
+- the blocker now looks broader than `tmp_path` alone: it is an
+  environment/sandbox write-path issue until disproved
 - the emergency kill/circuit-breaker test surface remains unresolved in this
   environment
 
 Decision:
 
 - keep Build-4 at `STILL_PARTIAL`
-- treat this as an environment-or-fixture blocker until disproved
+- treat this as an environment/sandbox blocker until disproved
 
 ---
 
@@ -223,8 +238,8 @@ In other words:
 
 Treat Build-4 `circuit_breaker` separately:
 
-- verify whether the issue is only environmental
-- or whether its fixtures/test harness need local repair
+- verify the shell/runtime write permissions outside the current sandbox frame
+- do not patch product logic until a true circuit-breaker defect is isolated
 
 ## Action 2
 
