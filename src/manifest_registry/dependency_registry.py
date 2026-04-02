@@ -68,6 +68,7 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
     "local_replay_runtime": frozenset({
         "interface_contracts",
         "manifest_registry",
+        "meta",
     }),
     "backtest_artifact_import": frozenset({
         "interface_contracts",
@@ -103,6 +104,7 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
         "meta",
         "monitoring",
         "ui",
+        "local_replay_runtime",
     }),
     # Build-14: Complete Enablers
     "complete_enablers": frozenset({

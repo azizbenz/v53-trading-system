@@ -242,7 +242,7 @@ def test_technical_dashboard_view_exposes_system_meta_build9x_and_replay_section
         "Build-11 Shadow",
         "Build-12 Micro-live",
         "Build-13 Live-Light",
-        "Build-14 Limited Influence",
+        "Build-14 Enablers",
         "Operator Controls",
         "Replay & Import",
         "Alerts",
@@ -262,7 +262,7 @@ def test_technical_dashboard_view_exposes_system_meta_build9x_and_replay_section
     shadow = next(section for section in view.sections if section.title == "Build-11 Shadow")
     micro = next(section for section in view.sections if section.title == "Build-12 Micro-live")
     live = next(section for section in view.sections if section.title == "Build-13 Live-Light")
-    build14 = next(section for section in view.sections if section.title == "Build-14 Limited Influence")
+    build14 = next(section for section in view.sections if section.title == "Build-14 Enablers")
     pairs = next(section for section in view.sections if section.title == "Pairs")
     engines = next(section for section in view.sections if section.title == "Engines")
     risk = next(section for section in view.sections if section.title == "Risk")
@@ -294,7 +294,7 @@ def test_technical_dashboard_view_handles_empty_governed_state_cleanly():
     shadow = next(section for section in view.sections if section.title == "Build-11 Shadow")
     micro = next(section for section in view.sections if section.title == "Build-12 Micro-live")
     live = next(section for section in view.sections if section.title == "Build-13 Live-Light")
-    build14 = next(section for section in view.sections if section.title == "Build-14 Limited Influence")
+    build14 = next(section for section in view.sections if section.title == "Build-14 Enablers")
     replay = next(section for section in view.sections if section.title == "Replay & Import")
     assert next(card for card in build9x.cards if card.key == "diagnostics_recent").value == "0"
     assert next(card for card in build9x.cards if card.key == "memory_review").status == "planned"
@@ -306,6 +306,27 @@ def test_technical_dashboard_view_handles_empty_governed_state_cleanly():
     assert next(card for card in build14.cards if card.key == "build14_mode").status == "planned"
     assert next(card for card in replay.cards if card.key == "artifact_manifest").value == "none"
     assert next(card for card in replay.cards if card.key == "validation_status").value == "not_run"
+
+
+def test_technical_dashboard_view_projects_shadow_enabled_build14_when_module_active():
+    payload = build_technical_dashboard_payload(
+        _snapshot(infra=collect_infra_metrics()),
+        active_modules=("monitoring", "ui", "complete_enablers"),
+        active_engines=("engine_a", "engine_b"),
+    )
+
+    view = build_technical_dashboard_view(payload)
+    build14 = next(section for section in view.sections if section.title == "Build-14 Enablers")
+
+    assert next(card for card in build14.cards if card.key == "build14_mode").value == (
+        "shadow_enabled / shadow_apply"
+    )
+    assert next(card for card in build14.cards if card.key == "build14_candidate_effect").value == (
+        "shadow_enabled"
+    )
+    assert next(card for card in build14.cards if card.key == "build14_guardrails").value == (
+        "shadow_enabled"
+    )
 
 
 def test_technical_dashboard_view_projects_alerts_and_engine_staleness_without_prefilled_alerts():
@@ -614,7 +635,7 @@ def test_technical_dashboard_view_projects_build14_limited_influence_when_availa
     view = build_technical_dashboard_view(payload)
     system = next(section for section in view.sections if section.title == "System")
     live = next(section for section in view.sections if section.title == "Build-13 Live-Light")
-    build14 = next(section for section in view.sections if section.title == "Build-14 Limited Influence")
+    build14 = next(section for section in view.sections if section.title == "Build-14 Enablers")
 
     governed = next(card for card in system.cards if card.key == "governed_extensions")
     assert "b14=warning" in governed.value

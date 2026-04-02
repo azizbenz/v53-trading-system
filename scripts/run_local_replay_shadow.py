@@ -223,10 +223,10 @@ def _build14_projection() -> Build14Projection:
         market_toxicity_status="nominal",
         execution_fragility_value=0.12,
         execution_fragility_status="nominal",
-        confidence_penalty_weight=0.02,
-        recommended_budget_factor=0.95,
+        confidence_penalty_weight=0.0,
+        recommended_budget_factor=1.0,
         requires_manual_review=False,
-        candidate_effect="shadow_only",
+        candidate_effect="shadow_enabled",
         reason_codes=("build14_shadow_enabled",),
     )
 

@@ -23,6 +23,7 @@ from .market_event_contracts import *
 from .decision_contracts import *
 from .meta_contracts import *
 from .error_contracts import *
+from .operator_contracts import *
 
 __all__ = [
     # domain_types — Enums
@@ -50,4 +51,6 @@ __all__ = [
     "DataStaleError", "RiskBudgetExceededError", "PairSuspendedError",
     "EngineNotAllowedError", "InvalidProfileActivationError",
     "ReconciliationError", "BootstrapError",
+    # operator_contracts
+    "OperatorSafingAction", "OperatorSafingRequest",
 ]

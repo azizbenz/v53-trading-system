@@ -602,6 +602,38 @@ def test_technical_dashboard_payload_defaults_governed_sections_without_raw_prot
     assert payload.alerts.backlog_stale_status == "healthy"
 
 
+def test_technical_dashboard_payload_defaults_build14_to_shadow_enabled_when_module_active():
+    dtr_summary, cra_report, break_even_report, edge_report = _sample_build9_reports()
+    snapshot = collect_monitoring_snapshot(
+        correlation_id="corr-build14-default-active",
+        profile=ProfileId.LIGHT,
+        runtime_mode=RuntimeMode.SHADOW,
+        timestamp_ms=1_700_000_000_000,
+        portfolio=collect_portfolio_metrics(
+            allocated_opportunities=1,
+            gross_capacity_used_pct=10.0,
+            loss_capacity_used_pct=2.0,
+            beta_utilization=0.1,
+            capital_deployed_usdt=500.0,
+            ce_net=0.0010,
+        ),
+        infra=collect_infra_metrics(),
+        meta=collect_meta_metrics(dtr_summary, cra_report, break_even_report, edge_report),
+    )
+
+    payload = build_technical_dashboard_payload(
+        snapshot,
+        active_modules=("monitoring", "ui", "complete_enablers"),
+        active_engines=("engine_a", "engine_b"),
+    )
+
+    assert payload.system.build14_status == "info"
+    assert payload.build14.hard_state == "shadow_enabled"
+    assert payload.build14.influence_mode == "shadow_enabled"
+    assert payload.build14.action == "shadow_apply"
+    assert payload.build14.candidate_effect == "shadow_enabled"
+
+
 def test_technical_dashboard_payload_accepts_shadow_projection_summary():
     dtr_summary, cra_report, break_even_report, edge_report = _sample_build9_reports()
     snapshot = collect_monitoring_snapshot(

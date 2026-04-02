@@ -1050,7 +1050,7 @@ def _availability_sections() -> tuple[DashboardSection, ...]:
             ),
         ),
         DashboardSection(
-            title="Build-14 Limited Influence",
+            title="Build-14 Enablers",
             cards=(
                 DashboardCard(
                     key="build14_availability",
@@ -1061,10 +1061,10 @@ def _availability_sections() -> tuple[DashboardSection, ...]:
                 ),
                 DashboardCard(
                     key="build14_state",
-                    label="Governed Influence",
+                    label="Governed State",
                     value="not available",
                     status="planned",
-                    detail="No monitoring payload loaded to evaluate limited influence; Build-14 stays governed and non-autonomous in availability mode.",
+                    detail="No monitoring payload loaded to evaluate Build-14 enablers; the governed state remains shadow-only in availability mode.",
                 ),
             ),
         ),

@@ -1,12 +1,12 @@
-# V5.3 — AUDIT BUILD-6 À BUILD-10
-## Date : 2026-04-02
-## Statut : ACTIF
+# V5.3 - AUDIT BUILD-6 TO BUILD-10
+## Date: 2026-04-02
+## Status: ACTIVE
 
 ---
 
-# 0. Objet
+# 0. Object
 
-Ce document enregistre l'audit critique du coeur métier Light :
+This document records the critical audit of the Light functional core:
 
 - Build-6
 - Build-7
@@ -14,46 +14,47 @@ Ce document enregistre l'audit critique du coeur métier Light :
 - Build-9
 - Build-10
 
-Méthode :
+Method:
 
-- lecture des specs canoniques Build-6 à Build-10
-- cartographie des surfaces code
-- exécution des suites de tests ciblées
-- classement des écarts réellement observés
-
----
-
-# 1. Résumé exécutif
-
-Verdict provisoire du lot :
-
-- Build-6 : `ALIGNED`
-- Build-7 : `ALIGNED`
-- Build-8 : `ALIGNED`
-- Build-9 : `ALIGNED`
-- Build-10 : `ALIGNED`
-
-Lecture courte :
-
-- les moteurs A et B sont présents et testés
-- le portefeuille minimal est présent et testable
-- la couche meta minimale est présente et testable
-- le monitoring et l'UI Light passent leur preuve de test ciblée
-
-Important :
-
-- ce lot ne ferme pas les gaps transversaux déjà ouverts sur Build-1 ou sur la
-  représentation Build-14 dans certaines surfaces monitoring/UI
-- il dit seulement que le coeur Light canonique Build-6 à Build-10 ressort
-  propre dans ce cadre d'audit
+- read the active canonical Build-6 to Build-10 specs
+- map the real code surfaces
+- execute the most probative test suites
+- classify materially observed drifts
 
 ---
 
-# 2. Évidence exécutée
+# 1. Executive summary
 
-## 2.1 Lecture canonique
+Current lot verdict:
 
-Documents relus :
+- Build-6: `ALIGNED`
+- Build-7: `ALIGNED`
+- Build-8: `ALIGNED`
+- Build-9: `ALIGNED`
+- Build-10: `ALIGNED`
+
+Short reading:
+
+- engines A and B remain present and tested
+- the minimal portfolio layer remains present and tested
+- the minimal meta layer remains present and tested
+- monitoring and the locked Light UI remain green after the latest operator
+  safing work
+
+Important:
+
+- the previous Build-1 DAG drift was corrected on the current branch
+- it also does not close the later Build-14 and promotion-gate questions
+- it says only that the canonical Light core for Builds 6 to 10 remains
+  functionally clean in its own evidence frame
+
+---
+
+# 2. Executed evidence
+
+## 2.1 Canonical reading
+
+Documents reread:
 
 - `docs/specs/V5_3_BUILD6_SPECS_MOTEUR_A.md`
 - `docs/specs/V5_3_BUILD7_SPECS_MOTEUR_B.md`
@@ -61,9 +62,9 @@ Documents relus :
 - `docs/specs/V5_3_BUILD9_SPECS_META_MINIMAL.md`
 - `docs/specs/V5_3_BUILD10_SPECS_MONITORING_UI_LIGHT.md`
 
-## 2.2 Cartographie code
+## 2.2 Code mapping
 
-Surfaces confirmées :
+Confirmed surfaces:
 
 - `src/engines/engine_a`
 - `src/engines/engine_b`
@@ -72,186 +73,162 @@ Surfaces confirmées :
 - `src/monitoring`
 - `src/ui`
 
-## 2.3 Tests exécutés
+## 2.3 Tests executed
 
 - `rtk pytest tests/test_engines -q`
-  - résultat : `125 passed`
+  - result: `125 passed`
 - `rtk pytest tests/test_portfolio_minimal -q`
-  - résultat : `82 passed`
-- `rtk pytest tests/test_meta_minimal -q`
-  - résultat : `78 passed`
+  - result: `82 passed`
+- `rtk pytest tests/test_meta_minimal tests/test_monitoring tests/test_ui -q`
+  - result: `219 passed`
 - `rtk pytest tests/test_monitoring tests/test_ui -q`
-  - résultat : `130 passed`
+  - result: `141 passed`
 
 ---
 
 # 3. Findings
 
-## Aucun finding P0/P1 nouveau confirmé dans ce lot
+## No new P0/P1 functional finding confirmed inside this lot
 
-Ce lot ne fait pas émerger de contradiction bloquante nouvelle sur :
+This wave does not expose a new blocking contradiction on:
 
-- moteurs A/B
-- portefeuille minimal
+- engine A
+- engine B
+- portfolio minimal
 - meta minimal
-- monitoring/UI Light
+- monitoring and locked Light UI
 
-Le coeur métier Light ressort cohérent avec :
+The Light functional core remains coherent with:
 
-- les packages présents
-- les API racine
-- les suites de tests ciblées
+- the packages present on disk
+- the expected surface APIs
+- the targeted test evidence
 
-## Caveat transversal hors lot
+## Cross-build caveat outside the lot
 
-Le lot ne ferme pas les gaps déjà identifiés ailleurs sur :
+This lot still does not close later rollout drifts on:
 
-- la dérive du DAG Build-1
-- certains reliquats Build-14 / hard states dans monitoring/UI
-
-Ces sujets restent ouverts, mais ils ne suffisent pas ici à invalider le noyau
-canonique Build-6 à Build-10.
+- later Build-14 vocabulary and exposure questions
 
 ---
 
-# 4. Verdict par build
+# 4. Verdict by build
 
-## 4.1 Build-6 — Moteur A
+## 4.1 Build-6 - Engine A
 
-Verdict :
-
-- `ALIGNED`
-
-Pourquoi :
-
-- le package moteur A existe bien dans `src/engines/engine_a`
-- l'API racine documente explicitement le moteur de conviction premium
-- les tests moteurs passent dans la suite `tests/test_engines`
-
-Lecture :
-
-- rien n'indique ici une dérive majeure du moteur A hors de son rôle canonique
-
-## 4.2 Build-7 — Moteur B
-
-Verdict :
+Verdict:
 
 - `ALIGNED`
 
-Pourquoi :
+Why:
 
-- le package moteur B existe bien dans `src/engines/engine_b`
-- l'API racine expose un moteur de mean reversion intraday distinct d'A
-- les tests moteurs passent dans la suite `tests/test_engines`
+- the canonical engine A surface exists
+- the engine suite remains green
+- no new drift was observed in this wave
 
-Lecture :
+## 4.2 Build-7 - Engine B
 
-- rien n'indique ici une confusion manifeste entre moteur B et moteur A
-
-## 4.3 Build-8 — Portfolio Minimal
-
-Verdict :
+Verdict:
 
 - `ALIGNED`
 
-Pourquoi :
+Why:
 
-- `src/portfolio_minimal` expose bien les deux briques canoniques :
-  - `opportunity_selector`
-  - `allocation_router`
-- la suite ciblée passe : `82 passed`
+- the canonical engine B surface exists
+- the engine suite remains green
+- no new drift was observed in this wave
 
-Lecture :
+## 4.3 Build-8 - Portfolio Minimal
 
-- le portefeuille minimal existe comme couche distincte et testée
-
-## 4.4 Build-9 — Meta Minimal
-
-Verdict :
+Verdict:
 
 - `ALIGNED`
 
-Pourquoi :
+Why:
 
-- `src/meta_minimal` expose bien les quatre briques canoniques :
-  - `dtr_core`
-  - `cra_monitor`
-  - `break_even_dashboard`
-  - `edge_tracker_prudent_minimal`
-- la suite ciblée passe : `78 passed`
+- `src/portfolio_minimal` remains present and distinct
+- the targeted suite remains green
+- no new drift was observed in this wave
 
-Lecture :
+## 4.4 Build-9 - Meta Minimal
 
-- la couche meta minimale ressort cohérente et effectivement branchée comme pack
-
-## 4.5 Build-10 — Monitoring + UI Light
-
-Verdict :
+Verdict:
 
 - `ALIGNED`
 
-Pourquoi :
+Why:
 
-- `src/monitoring` expose les briques attendues :
-  - `metrics_collector`
-  - `alert_manager`
-  - `health_dashboard_backend`
-  - surfaces runtime/projection de supervision
-- `src/ui` expose les surfaces Light verrouillées attendues
-- la suite monitoring + UI passe : `130 passed`
+- `src/meta_minimal` remains present and distinct
+- the targeted suite remains green
+- no new drift was observed in this wave
 
-Lecture :
+## 4.5 Build-10 - Monitoring and UI Light
 
-- le pack de supervision Light tient dans le cadre de preuve de ce lot
+Verdict:
+
+- `ALIGNED`
+
+Why:
+
+- `src/monitoring` and `src/ui` remain functionally green
+- the refreshed focused suite is green: `141 passed`
+- the broader refreshed suite with `meta_minimal` included is also green:
+  `219 passed`
+
+Important nuance:
+
+- the latest safing and launcher work did not break the Build-10 functional
+  surface
+- the earlier Build-1 architectural caveat tied to `monitoring_runtime` was
+  resolved in the dedicated Build-1 correction wave
 
 ---
 
-# 5. Lecture transversale
+# 5. Cross-build reading
 
-Le lot Build-6 -> Build-10 confirme un point important :
+The current Build-6 to Build-10 picture confirms something important:
 
-- le coeur fonctionnel Light est plus stable que le garde-fou d'architecture
-  global Build-1
+- the Light functional core is more stable than the repository-wide
+  rollout-closure problem
 
-Autrement dit :
+In practice:
 
-- les couches métier utiles tournent et testent bien
-- la dette principale visible reste structurelle / transversale, pas située dans
-  les moteurs A/B ou dans le portefeuille/meta/monitoring de base
+- the useful business layers are still holding
+- the main visible debt is now later in the rollout chain, not local to
+  engines A/B, portfolio, meta, or the functional monitoring/UI surface
 
 ---
 
-# 6. Actions recommandées
+# 6. Recommended actions
 
 ## Action 1
 
-Conserver `Build-6 -> Build-10` comme base verte de référence pour la suite de
-l'audit `Build-11 -> Build-14`.
+Keep Build-6 to Build-10 as the current green functional baseline while the
+rest of the audit continues.
 
 ## Action 2
 
-Ne pas oublier que certains gaps Build-14 sur monitoring/UI restent ouverts,
-mais les traiter dans la vague Build-14 plutôt que de requalifier trop tôt
-Build-10 à la baisse.
+Keep Build-10 as a green baseline while Build-11 closure and Build-14
+normalization continue downstream.
 
 ## Action 3
 
-Passer maintenant à `Build-11 -> Build-14`, avec vigilance renforcée sur :
+Continue now with Build-11 to Build-14, with specific attention on:
 
-- gates temporels
-- rapports Shadow
-- verdicts composants
-- promotion Micro-live / Live-Light
-- exposition Build-14 et hard states
+- Shadow temporal gates
+- report completeness
+- component verdicts
+- Micro-live and Live-Light promotion semantics
+- Build-14 exposure semantics
 
 ---
 
-# 7. Décision de lot
+# 7. Lot decision
 
-Décision retenue après audit :
+Decision after refresh:
 
-- Build-6 : aligné
-- Build-7 : aligné
-- Build-8 : aligné
-- Build-9 : aligné
-- Build-10 : aligné
+- Build-6: aligned
+- Build-7: aligned
+- Build-8: aligned
+- Build-9: aligned
+- Build-10: aligned

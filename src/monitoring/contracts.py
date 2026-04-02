@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from interface_contracts import (
     AlertCategory,
@@ -428,6 +428,40 @@ class Build14Projection(BaseModel, frozen=True):
     requires_manual_review: bool = False
     candidate_effect: str = "observe_only"
     reason_codes: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_projection(self) -> "Build14Projection":
+        if self.influence_mode == "shadow_enabled":
+            if self.action != "shadow_apply":
+                raise ValueError(
+                    "Build-14 shadow_enabled projections must keep action=shadow_apply"
+                )
+            if self.candidate_effect != "shadow_enabled":
+                raise ValueError(
+                    "Build-14 shadow_enabled projections must keep candidate_effect=shadow_enabled"
+                )
+            if self.confidence_penalty_weight != 0.0:
+                raise ValueError(
+                    "Build-14 shadow_enabled projections must keep confidence_penalty_weight=0.0"
+                )
+            if self.recommended_budget_factor != 1.0:
+                raise ValueError(
+                    "Build-14 shadow_enabled projections must keep recommended_budget_factor=1.0"
+                )
+            if self.requires_manual_review:
+                raise ValueError(
+                    "Build-14 shadow_enabled projections must stay automated inside Shadow"
+                )
+        if self.influence_mode == "read_only":
+            if self.action != "observe":
+                raise ValueError(
+                    "Build-14 read_only projections must keep action=observe"
+                )
+            if self.candidate_effect != "observe_only":
+                raise ValueError(
+                    "Build-14 read_only projections must keep candidate_effect=observe_only"
+                )
+        return self
 
 
 class AlertProjection(BaseModel, frozen=True):

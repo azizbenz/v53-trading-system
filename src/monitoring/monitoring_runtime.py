@@ -8,7 +8,13 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from interface_contracts import PairHealthLevel, ProfileId, RuntimeMode
+from interface_contracts import (
+    OperatorSafingAction,
+    OperatorSafingRequest,
+    PairHealthLevel,
+    ProfileId,
+    RuntimeMode,
+)
 from interface_contracts.atomic_io import atomic_write_json
 from monitoring.alert_manager import AlertLifecycleTracker, build_monitoring_alerts
 from monitoring.contracts import (
@@ -190,7 +196,7 @@ class MonitoringRuntime:
             state_path=str(self._state_path) if self._state_path is not None else "",
         )
 
-    def build_latest_operator_safing_request(self):
+    def build_latest_operator_safing_request(self) -> OperatorSafingRequest | None:
         """Translate the latest accepted UI safing action into a typed protocol request."""
 
         operator_runtime = self._light_ui_runtime.get_operator_projection()
@@ -208,8 +214,6 @@ class MonitoringRuntime:
         )
         if safing_event is None:
             return None
-
-        from protocols import OperatorSafingAction, OperatorSafingRequest
 
         return OperatorSafingRequest(
             timestamp_ms=safing_event.timestamp_ms,

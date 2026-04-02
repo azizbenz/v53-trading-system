@@ -168,7 +168,7 @@ def _default_build14_projection(*, active_modules: tuple[str, ...]) -> Build14Pr
         confidence_penalty_weight=0.0,
         recommended_budget_factor=1.0,
         requires_manual_review=False,
-        candidate_effect="observe_only",
+        candidate_effect="shadow_enabled" if module_active else "observe_only",
         reason_codes=(),
     )
 

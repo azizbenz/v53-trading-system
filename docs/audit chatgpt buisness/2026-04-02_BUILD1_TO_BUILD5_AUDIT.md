@@ -1,12 +1,12 @@
-# V5.3 — AUDIT BUILD-1 À BUILD-5
-## Date : 2026-04-02
-## Statut : ACTIF
+# V5.3 - AUDIT BUILD-1 TO BUILD-5
+## Date: 2026-04-02
+## Status: ACTIVE
 
 ---
 
-# 0. Objet
+# 0. Object
 
-Ce document enregistre l'audit critique du socle commun :
+This document records the critical audit of the common foundation:
 
 - Build-1
 - Build-2
@@ -14,38 +14,43 @@ Ce document enregistre l'audit critique du socle commun :
 - Build-4
 - Build-5
 
-Méthode :
+Method:
 
-- lecture des specs canoniques Build-1 à Build-5
-- cartographie des surfaces code
-- exécution des suites de tests ciblées
-- classement des écarts en `P0 / P1 / P2`
-
----
-
-# 1. Résumé exécutif
-
-Verdict provisoire du lot :
-
-- Build-1 : `STILL PARTIAL`
-- Build-2 : `ALIGNED`
-- Build-3 : `ALIGNED`
-- Build-4 : `STILL PARTIAL`
-- Build-5 : `ALIGNED`
-
-Lecture courte :
-
-- le socle data / execution / scoring tient bien
-- le risk backbone canonique tient globalement, mais une partie de la suite reste perturbée par un problème d'environnement de test sur `tmp_path`
-- le vrai point rouge du lot est Build-1 : le DAG global du dépôt ne passe plus, avec des imports non autorisés entre modules récents
+- read the active canonical Build-1 to Build-5 specs
+- map the real code surfaces
+- execute the most probative test suites
+- classify observed drifts as `P0 / P1 / P2`
 
 ---
 
-# 2. Évidence exécutée
+# 1. Executive summary
 
-## 2.1 Lecture canonique
+Current lot verdict:
 
-Documents relus :
+- Build-1: `ALIGNED`
+- Build-2: `ALIGNED`
+- Build-3: `ALIGNED`
+- Build-4: `STILL_PARTIAL`
+- Build-5: `ALIGNED`
+
+Short reading:
+
+- the data, execution, and scoring foundations remain green
+- the Build-1 correction wave is now applied on the current branch:
+  - operator safing contracts were extracted to `interface_contracts`
+  - the dependency registry was realigned with the actual allowed architecture
+  - the repository-wide DAG is clean again on the current branch
+- the risk backbone still looks functionally healthy, but its package-level
+  kill-switch suite is blocked by a local pytest tmp-path permission problem
+- the only remaining non-green item in this lot is Build-4 environment proof
+
+---
+
+# 2. Executed evidence
+
+## 2.1 Canonical reading
+
+Documents reread:
 
 - `docs/specs/V5_3_BUILD1_SPECS_MODULES.md`
 - `docs/specs/V5_3_BUILD2_SPECS_MODULES.md`
@@ -53,9 +58,9 @@ Documents relus :
 - `docs/specs/V5_3_BUILD4_SPECS_MODULES.md`
 - `docs/specs/V5_3_BUILD5_SPECS_MODULES.md`
 
-## 2.2 Cartographie code
+## 2.2 Code mapping
 
-Surfaces confirmées :
+Confirmed surfaces:
 
 - `src/interface_contracts`
 - `src/manifest_registry`
@@ -67,249 +72,173 @@ Surfaces confirmées :
 - `src/risk_backbone`
 - `src/scoring_backbone`
 
-## 2.3 Tests exécutés
+## 2.3 Tests executed
 
 - `rtk pytest tests/test_interface_contracts tests/test_manifest_registry tests/test_dag_validator tests/test_contract_test_suite tests/test_smoke_bootstrap_recovery -q`
-  - résultat : `389 passed, 6 failed`
-- `pytest tests/test_dag_validator/test_report_and_pipeline.py::TestFullPipeline::test_v53_codebase_passes_validation -q`
-  - résultat : `1 failed`
-- `pytest tests/test_smoke_bootstrap_recovery/test_smoke_reporter.py::TestFullBuild1Smoke::test_build1_smoke_passes -q`
-  - résultat : `1 failed`
+  - result: `398 passed`
+- `rtk pytest tests/test_interface_contracts tests/test_manifest_registry tests/test_dag_validator tests/test_contract_test_suite tests/test_smoke_bootstrap_recovery -q`
+  - historical pre-fix result: `389 passed, 6 failed`
 - `rtk pytest tests/test_data_backbone -q`
-  - résultat : `164 passed`
+  - result: `164 passed`
 - `rtk pytest tests/test_execution_backbone -q`
-  - résultat : `110 passed`
-- `pytest tests/test_risk_backbone -q`
-  - résultat : `127 passed, 14 errors`
-  - cause observée : `PermissionError` sur création/scan du répertoire temporaire `pytest`
+  - result: `110 passed`
+- `pytest tests/test_risk_backbone/test_circuit_breaker.py -q`
+  - result: `14 errors`
+  - observed cause: `PermissionError` while pytest tries to scan/create
+    `C:\\Users\\azizbez\\AppData\\Local\\Temp\\pytest-of-azizbez`
 - `rtk pytest tests/test_scoring_backbone -q`
-  - résultat : `117 passed`
+  - result: `117 passed`
 
 ---
 
 # 3. Findings
 
-## P0 — Build-1 DAG global cassé dans l'état courant du dépôt
+## P0 - Build-1 DAG regression was corrected on the current branch
 
-Preuve :
+Correction applied:
 
-- `tests/test_dag_validator/test_report_and_pipeline.py::TestFullPipeline::test_v53_codebase_passes_validation` échoue
-- `tests/test_smoke_bootstrap_recovery/test_smoke_reporter.py::TestFullBuild1Smoke::test_build1_smoke_passes` échoue
+- operator safing contracts were moved from `src/protocols/contracts.py` into
+  `src/interface_contracts/operator_contracts.py`
+- `src/monitoring/monitoring_runtime.py` now builds the typed safing request
+  from `interface_contracts`, not from `protocols`
+- `src/manifest_registry/dependency_registry.py` was realigned so the declared
+  DAG matches the actual authorized architecture for:
+  - `local_replay_runtime -> meta`
+  - `protocols -> local_replay_runtime`
 
-Erreur centrale observée :
+Fresh proof:
 
-- `local_replay_runtime` importe `meta` alors que cette dépendance n'est pas autorisée par `manifest_registry.dependency_registry`
-- `protocols` importe `local_replay_runtime` alors que cette dépendance n'est pas autorisée non plus
+- the Build-1 suite is now green on the current branch: `398 passed`
+- the DAG report no longer reports cycles or unauthorized imports
 
-Traces code relevées :
+Decision:
 
-- `src/manifest_registry/dependency_registry.py`
-- `src/local_replay_runtime/replay_metrics_collector.py`
-- `src/protocols/shadow_runtime.py`
-- `src/protocols/shadow_runtime_evidence.py`
-- `src/protocols/shadow_websocket_ingest.py`
+- Build-1 can now be declared `ALIGNED` on the current branch
 
-Lecture critique :
+## P2 - Build-4 package-level kill-switch suite remains blocked by environment
 
-- ce n'est pas un faux positif de test unitaire isolé
-- c'est une régression de la validation architecturale globale
-- Build-1 ne peut donc pas être déclaré aligné dans l'état courant de la branche
+Evidence:
 
-Owner probable :
+- `pytest tests/test_risk_backbone/test_circuit_breaker.py -q`
+  returns `14 errors`
+- the errors are setup-time fixture errors, not business assertion failures
+- all failures point to `PermissionError` on the pytest temp base directory
 
-- soit `dependency_registry` est devenu trop strict / incomplet pour l'architecture actuelle
-- soit des modules récents ont traversé une frontière d'architecture non autorisée
+Critical reading:
 
-Décision :
+- this does not currently prove a risk-logic regression
+- but it also does not let us claim a fully clean package-level Build-4 audit
+- the emergency kill/circuit-breaker test surface remains unresolved in this
+  environment
 
-- ne pas corriger à l'aveugle
-- traiter ce point comme un arbitrage d'architecture inter-builds avant tout verdict vert sur Build-1
+Decision:
 
-## P2 — Build-4 package-level test gap sur la suite `test_circuit_breaker`
-
-Preuve :
-
-- `pytest tests/test_risk_backbone -q` retourne `127 passed, 14 errors`
-- les erreurs ne pointent pas vers une assertion métier du risk backbone canonique
-- elles viennent d'un `PermissionError` lié à `tmp_path` / `pytest-of-azizbez`
-
-Lecture critique :
-
-- les modules canoniques Build-4 semblent passer :
-  - `btc_factor_guard`
-  - `correlation_cluster_guard`
-  - `exposure_budgeter`
-  - `loss_budgeter`
-- mais la suite package-level n'est pas propre
-- le sous-ensemble `emergency_kill_switch / circuit_breaker` n'est pas revalidé proprement dans cet environnement
-
-Décision :
-
-- ne pas classer Build-4 comme totalement vert
-- garder `STILL PARTIAL` avec caveat environnemental/test sur le kill switch
+- keep Build-4 at `STILL_PARTIAL`
+- treat this as an environment-or-fixture blocker until disproved
 
 ---
 
-# 4. Verdict par build
+# 4. Verdict by build
 
-## 4.1 Build-1 — Dependency Architecture
+## 4.1 Build-1 - Dependency Architecture
 
-Verdict :
-
-- `STILL PARTIAL`
-
-Pourquoi :
-
-- les briques canoniques existent bien :
-  - `interface_contracts`
-  - `manifest_registry`
-  - `dag_validator`
-  - `contract_test_suite`
-  - `smoke_bootstrap_recovery`
-- mais le DAG global du dépôt échoue sur des dépendances non autorisées
-- le smoke Build-1 hérite de cet échec
-
-Conclusion :
-
-- Build-1 est régressé au niveau architectural global
-
-## 4.2 Build-2 — Data Backbone
-
-Verdict :
+Verdict:
 
 - `ALIGNED`
 
-Pourquoi :
+Why:
 
-- les 7 briques canoniques existent bien dans `src/data_backbone`
-- la suite ciblée passe : `164 passed`
-- la structure racine du package correspond à la spec :
-  - `websocket_gateway`
-  - `rest_bootstrap`
-  - `event_normalizer`
-  - `internal_router`
-  - `freshness_checker`
-  - `consistency_checker`
-  - `pair_health_scorer`
+- all canonical Build-1 packages exist
+- the repository-wide DAG is now clean on the current branch
+- the Build-1 smoke passes again through `dag_clean`
 
-Conclusion :
+## 4.2 Build-2 - Data Backbone
 
-- aucun écart majeur observé sur le périmètre Build-2
-
-## 4.3 Build-3 — Execution Backbone
-
-Verdict :
+Verdict:
 
 - `ALIGNED`
 
-Pourquoi :
+Why:
 
-- les 4 briques canoniques existent bien dans `src/execution_backbone`
-- la suite ciblée passe : `110 passed`
-- la structure racine du package correspond à la spec :
-  - `order_decider`
-  - `fill_tracker`
-  - `execution_cost_meter`
-  - `reconciliation_layer`
+- the canonical Build-2 package exists as `src/data_backbone`
+- the focused suite is green: `164 passed`
+- no new drift was observed in this audit wave
 
-Conclusion :
+## 4.3 Build-3 - Execution Backbone
 
-- Build-3 ressort propre dans ce lot d'audit
-
-## 4.4 Build-4 — Risk Backbone
-
-Verdict :
-
-- `STILL PARTIAL`
-
-Pourquoi :
-
-- les briques canoniques Build-4 sont présentes :
-  - `exposure_budgeter`
-  - `loss_budgeter`
-  - `btc_factor_guard`
-  - `correlation_cluster_guard`
-- les tests métier canoniques passent visiblement
-- mais la suite package-level n'est pas entièrement propre à cause des erreurs sur `test_circuit_breaker`
-
-Conclusion :
-
-- Build-4 n'est pas classé rouge métier
-- mais il n'est pas assez net pour un verdict `ALIGNED` complet dans cet environnement
-
-## 4.5 Build-5 — Scoring Backbone
-
-Verdict :
+Verdict:
 
 - `ALIGNED`
 
-Pourquoi :
+Why:
 
-- les 4 briques canoniques existent bien dans `src/scoring_backbone`
-- la suite ciblée passe : `117 passed`
-- la structure racine du package correspond à la spec :
-  - `raw_score_builder`
-  - `penalty_aggregator`
-  - `hard_block_gate`
-  - `ranking_router`
+- the canonical Build-3 package exists as `src/execution_backbone`
+- the focused suite is green: `110 passed`
+- no new drift was observed in this audit wave
 
-Conclusion :
+## 4.4 Build-4 - Risk Backbone
 
-- Build-5 ressort propre dans ce lot d'audit
+Verdict:
+
+- `STILL_PARTIAL`
+
+Why:
+
+- the canonical Build-4 package exists as `src/risk_backbone`
+- the current blocker is not a proven logic failure
+- but the package-level kill-switch suite is not clean in this environment
+
+## 4.5 Build-5 - Scoring Backbone
+
+Verdict:
+
+- `ALIGNED`
+
+Why:
+
+- the canonical Build-5 package exists as `src/scoring_backbone`
+- the focused suite is green: `117 passed`
+- no new drift was observed in this audit wave
 
 ---
 
-# 5. Lecture transversale
+# 5. Cross-build reading
 
-Le lot Build-1 -> Build-5 raconte quelque chose de clair :
+The current Build-1 to Build-5 picture is clear:
 
-- les backbones métier du socle commun sont globalement en bon état
-- la plus forte dette visible n'est pas dans la logique data/execution/scoring
-- elle est dans la cohérence de l'architecture déclarative elle-même :
-  - le dépôt a évolué
-  - mais le DAG déclaré n'est plus cohérent avec toutes les dépendances réelles
+- the useful foundations remain mostly healthy
+- the Build-1 architectural guardrail is restored on the current branch
+- the only remaining open issue inside this lot is Build-4 environment proof
 
-Autrement dit :
+In other words:
 
-- le socle technique utile tient
-- le garde-fou Build-1 qui doit empêcher la dérive d'architecture n'est plus propre
+- the practical foundation works
+- the foundational DAG guardrail works again on the current branch
 
 ---
 
-# 6. Actions recommandées
+# 6. Recommended actions
 
 ## Action 1
 
-Ouvrir un audit ciblé Build-1 sur :
+Treat Build-4 `circuit_breaker` separately:
 
-- `src/manifest_registry/dependency_registry.py`
-- `src/local_replay_runtime/*`
-- `src/protocols/*`
-
-Question à trancher :
-
-- faut-il autoriser explicitement certaines dépendances devenues canoniques
-- ou faut-il découpler le code pour revenir au DAG déclaré
+- verify whether the issue is only environmental
+- or whether its fixtures/test harness need local repair
 
 ## Action 2
 
-Traiter Build-4 `circuit_breaker` comme point séparé :
-
-- vérifier si le problème est seulement environnemental
-- ou si le kill switch a besoin d'une révision de ses tests / fixtures
-
-## Action 3
-
-Passer ensuite au lot `Build-6 -> Build-10`, sans oublier que le verdict global Build-1 reste bloquant au niveau architectural
+Continue the audit with Build-6 to Build-10 and then Build-11 to Build-14,
+while keeping Build-11 closure as the next major correction priority.
 
 ---
 
-# 7. Décision de lot
+# 7. Lot decision
 
-Décision retenue après audit :
+Decision after refresh:
 
-- Build-1 : ne pas déclarer aligné
-- Build-2 : aligné
-- Build-3 : aligné
-- Build-4 : partiel avec caveat test/environnement
-- Build-5 : aligné
+- Build-1: aligned
+- Build-2: aligned
+- Build-3: aligned
+- Build-4: still partial with environment caveat
+- Build-5: aligned

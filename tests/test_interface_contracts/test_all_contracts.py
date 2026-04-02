@@ -29,6 +29,10 @@ from interface_contracts.error_contracts import (
     InvalidProfileActivationError, PairSuspendedError, ReconciliationError,
     RiskBudgetExceededError, V53BaseError,
 )
+from interface_contracts.operator_contracts import (
+    OperatorSafingAction,
+    OperatorSafingRequest,
+)
 
 
 NOW_MS = 1_700_000_000_000
@@ -323,6 +327,40 @@ class TestAlertRecord:
             category=AlertCategory.DATA, message="WS disconnected",
             pair="BTCUSDT", timestamp_ms=NOW_MS)
         assert a.severity == AlertSeverity.CRITICAL
+
+
+class TestOperatorSafingRequest:
+    def test_set_halted_request_valid(self):
+        request = OperatorSafingRequest(
+            timestamp_ms=NOW_MS,
+            request_id="req-1",
+            action=OperatorSafingAction.SET_HALTED,
+            source_runtime_mode=RuntimeMode.LIVE,
+            reason="critical incident",
+        )
+        assert request.target_runtime_mode is None
+
+    def test_downgrade_to_micro_live_requires_live_source(self):
+        with pytest.raises(ValidationError):
+            OperatorSafingRequest(
+                timestamp_ms=NOW_MS,
+                request_id="req-2",
+                action=OperatorSafingAction.DOWNGRADE_TO_MICRO_LIVE,
+                source_runtime_mode=RuntimeMode.MICRO_LIVE,
+                target_runtime_mode=RuntimeMode.MICRO_LIVE,
+                reason="invalid step down",
+            )
+
+    def test_downgrade_to_shadow_accepts_micro_live_source(self):
+        request = OperatorSafingRequest(
+            timestamp_ms=NOW_MS,
+            request_id="req-3",
+            action=OperatorSafingAction.DOWNGRADE_TO_SHADOW,
+            source_runtime_mode=RuntimeMode.MICRO_LIVE,
+            target_runtime_mode=RuntimeMode.SHADOW,
+            reason="manual requalification",
+        )
+        assert request.target_runtime_mode == RuntimeMode.SHADOW
 
 
 class TestErrors:

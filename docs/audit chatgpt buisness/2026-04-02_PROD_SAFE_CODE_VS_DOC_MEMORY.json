@@ -83,6 +83,16 @@
     },
     {
       "date": "2026-04-02",
+      "command": "rtk pytest tests/test_interface_contracts tests/test_manifest_registry tests/test_dag_validator tests/test_contract_test_suite tests/test_smoke_bootstrap_recovery -q",
+      "result": "398 passed",
+      "classification": "build1_architecture_green_after_contract_extraction_and_registry_alignment",
+      "notes": [
+        "Operator safing contracts were moved to interface_contracts and monitoring no longer imports protocols for typed safing reconstruction.",
+        "The dependency registry was realigned with the actual authorized architecture for local_replay_runtime -> meta and protocols -> local_replay_runtime."
+      ]
+    },
+    {
+      "date": "2026-04-02",
       "command": "rtk pytest tests/test_data_backbone -q",
       "result": "164 passed"
     },
@@ -123,8 +133,22 @@
     },
     {
       "date": "2026-04-02",
+      "command": "rtk pytest tests/test_meta_minimal tests/test_monitoring tests/test_ui -q",
+      "result": "219 passed",
+      "classification": "build9_build10_refresh_green_surface",
+      "notes": [
+        "This refreshed the Build-9 minimal meta surface together with the current Build-10 monitoring/UI surface on the current commit."
+      ]
+    },
+    {
+      "date": "2026-04-02",
       "command": "rtk pytest tests/test_monitoring tests/test_ui -q",
-      "result": "130 passed"
+      "result": "141 passed",
+      "classification": "build10_monitoring_ui_green_after_operator_safing_work",
+      "notes": [
+        "Build-10 monitoring and UI remain functionally green after the operator safing and launcher propagation changes.",
+        "This does not resolve the separate Build-1 architectural drift caused by cross-module dependency expansion."
+      ]
     },
     {
       "date": "2026-04-02",
@@ -145,10 +169,30 @@
         "This validates protocol and Build-14 package surfaces.",
         "It does not by itself prove doctrinal closure of Build-11 or real runtime closure of Build-13."
       ]
+    },
+    {
+      "date": "2026-04-02",
+      "command": "rtk pytest tests/test_protocols tests/test_complete_enablers -q",
+      "result": "162 passed",
+      "classification": "build11_to_build14_refresh_green_test_surface",
+      "notes": [
+        "This is the refreshed Build-11 to Build-14 package-level test surface on the current commit.",
+        "The green result still does not by itself prove doctrinal closure of Build-11 or real runtime closure of Build-13."
+      ]
+    },
+    {
+      "date": "2026-04-02",
+      "command": "rtk pytest tests/test_complete_enablers tests/test_protocols tests/test_monitoring tests/test_ui -q",
+      "result": "305 passed",
+      "classification": "build14_exposed_state_normalization_and_broad_green_surface",
+      "notes": [
+        "This covers the Build-14 package plus the protocol, monitoring, and UI surfaces after the exposed-state normalization wave.",
+        "It supports declaring Build-14 aligned on the current branch while keeping Build-11, Build-12, and Build-13 blocked upstream."
+      ]
     }
   ],
   "current_status_by_build": {
-    "build_1": "STILL_PARTIAL",
+    "build_1": "ALIGNED",
     "build_2": "ALIGNED",
     "build_3": "ALIGNED",
     "build_4": "STILL_PARTIAL",
@@ -162,7 +206,7 @@
     "build_11": "STILL_PARTIAL",
     "build_12": "NOT_READY",
     "build_13": "NOT_READY",
-    "build_14": "STILL_PARTIAL",
+    "build_14": "ALIGNED",
     "build_15": "NOT_READY",
     "build_16": "NOT_READY",
     "build_17": "PARTIAL_SURFACE_ONLY"
@@ -263,8 +307,8 @@
       "date": "2026-04-02",
       "scope": "Build-1 -> Build-5 critical audit",
       "record_path": "docs/audit chatgpt buisness/2026-04-02_BUILD1_TO_BUILD5_AUDIT.md",
-      "conclusion": "Build-2, Build-3 and Build-5 are aligned in the current evidence frame. Build-1 is still partial because global DAG validation fails. Build-4 is still partial because its canonical modules look green but the package-level circuit breaker suite is not clean in this environment.",
-      "action_taken": "Open a targeted Build-1 dependency audit and keep Build-4 under test-environment scrutiny."
+      "conclusion": "Build-1 is now aligned on the current branch after the dependency correction wave. Build-2, Build-3, and Build-5 remain aligned. Build-4 is still partial because its canonical modules look green but the package-level circuit breaker suite is not clean in this environment.",
+      "action_taken": "Freeze the Build-1 correction result in memory and keep Build-4 under test-environment scrutiny."
     },
     {
       "audit_id": "AUDIT-004",
@@ -279,8 +323,8 @@
       "date": "2026-04-02",
       "scope": "Build-11 -> Build-14 critical audit",
       "record_path": "docs/audit chatgpt buisness/2026-04-02_BUILD11_TO_BUILD14_AUDIT.md",
-      "conclusion": "Build-11 remains still partial, Build-12 and Build-13 are not ready, and Build-14 remains still partial. Gates are strict and mostly aligned with canon, but doctrinal closure and exposed-state consistency are not complete.",
-      "action_taken": "Keep downstream promotions blocked and open a targeted correction wave on Build-11 closure and Build-14 exposed-state normalization."
+      "conclusion": "Build-11 remains still partial and Build-12 / Build-13 remain not ready. Build-14 is now aligned on the current branch after the exposed-state normalization wave across monitoring, UI, launcher/demo, and projection contracts.",
+      "action_taken": "Keep downstream promotions blocked and shift the next correction focus from Build-14 exposure to honest Build-11 closure and runtime proof."
     },
     {
       "audit_id": "AUDIT-006",
@@ -345,16 +389,16 @@
       "priority": "P1",
       "scope": "Build-14 representation across monitoring/UI/live-light surfaces",
       "doc_expectation": "Build-14 is SHADOW_ENABLED in Shadow, fully active there, then SHADOW_VALIDATED or DORMANT by verdict.",
-      "code_or_runtime_reality": "Some contracts and UI/monitoring payloads still default to read_only or limited_influence language.",
-      "status": "open"
+      "code_or_runtime_reality": "The Build-14 monitoring/UI/demo exposure was normalized on the current branch. Projection contracts now enforce coherent shadow_enabled states and the technical dashboard exposes Build-14 as enablers instead of framing it only as limited influence.",
+      "status": "closed_on_current_branch"
     },
     {
       "gap_id": "GAP-004",
       "priority": "P1",
       "scope": "Hard State exposure consistency",
       "doc_expectation": "Hard States must be explicit and coherent across protocols, monitoring, UI, and promotion gates.",
-      "code_or_runtime_reality": "Partial exposure exists, but the whole stack is not yet clearly normalized around one final vocabulary.",
-      "status": "open"
+      "code_or_runtime_reality": "The current branch now exposes a coherent hard-state vocabulary for Build-14 across projection contracts, the technical dashboard, and demo payload generation. Remaining rollout blockage comes from Build-11 closure, not from Build-14 state vocabulary drift.",
+      "status": "closed_on_current_branch"
     },
     {
       "gap_id": "GAP-005",
@@ -377,8 +421,8 @@
       "priority": "P0",
       "scope": "Build-1 dependency architecture drift",
       "doc_expectation": "The global module DAG must stay valid and the manifest dependency registry must match real authorized imports.",
-      "code_or_runtime_reality": "DAG validation currently fails on unauthorized imports from local_replay_runtime to meta and from protocols to local_replay_runtime.",
-      "status": "open"
+      "code_or_runtime_reality": "The drift was corrected on the current branch. Operator safing contracts were extracted to interface_contracts, monitoring no longer imports protocols for typed safing reconstruction, and the dependency registry was realigned for local_replay_runtime -> meta and protocols -> local_replay_runtime. The refreshed Build-1 suite is now green: 398 passed.",
+      "status": "closed_on_current_branch"
     },
     {
       "gap_id": "GAP-008",
@@ -449,7 +493,7 @@
     {
       "batch_id": "B5",
       "title": "Patch in small prod-safe lots",
-      "status": "pending",
+      "status": "in_progress",
       "scope": [
         "Contracts and gates",
         "Shadow reporting",
@@ -582,7 +626,7 @@
     }
   },
   "next_recommended_action": {
-    "step": "Create one clean local commit for the accumulated safe lot, then reopen the build-by-build code-vs-doc audit on the active canon before any broader doctrine migration.",
-    "reason": "The target doctrine and orchestration frame are now documented. The prod-safe sequence is commit first, audit second, classify drifts third, and only then continue coding on an approved frame."
+    "step": "Open the next targeted correction wave on honest Build-11 closure: decide the engine_c / engine_d operability story and gather or simulate the strongest runtime-evidence path for the Shadow VPS / live_websocket flow. Keep Build-4 tmp-path verification as a separate environment task.",
+    "reason": "The highest-value structural lots are now corrected on the current branch: Build-1 DAG is green again and Build-14 exposed-state normalization is green across the broad package surface. The main remaining blocker in the rollout chain is no longer architectural vocabulary, but honest Build-11 closure and runtime proof."
   }
 }

@@ -1,53 +1,61 @@
-# V5.3 — AUDIT BUILD-11 À BUILD-14
-## Date : 2026-04-02
-## Statut : ACTIF
+# V5.3 - AUDIT BUILD-11 TO BUILD-14
+## Date: 2026-04-02
+## Status: ACTIVE
 
 ---
 
-# 0. Objet
+# 0. Object
 
-Ce document enregistre l'audit critique de la zone de promotion réelle :
+This document records the critical audit of the real-promotion zone:
 
 - Build-11
 - Build-12
 - Build-13
 - Build-14
 
-Méthode :
+Method:
 
-- relecture du canon Build-11 à Build-14
-- cartographie des surfaces code et des gates runtime
-- exécution des suites de tests ciblées
-- séparation stricte entre `doc`, `code`, `tests` et `preuve runtime réelle`
-
----
-
-# 1. Résumé exécutif
-
-Verdict provisoire du lot :
-
-- Build-11 : `STILL PARTIAL`
-- Build-12 : `NOT READY`
-- Build-13 : `NOT READY`
-- Build-14 : `STILL PARTIAL`
-
-Lecture courte :
-
-- les gates de promotion sont codées de manière stricte et cohérente avec le canon principal
-- les suites `protocols` et `complete_enablers` sont vertes dans le périmètre de preuve de test
-- mais la fermeture doctrinale Build-11 n'est pas acquise :
-  - les packages `engine_c` et `engine_d` restent non opérables en entrée de package
-  - la preuve runtime réelle du chemin Shadow VPS / `live_websocket` n'est pas close dans cet environnement
-- Build-12 et Build-13 restent donc bloqués par dépendance amont
-- Build-14 existe réellement en code, mais son exposition reste incohérente entre package coeur, monitoring, UI et certains contrats de payload
+- reread the active Build-11 to Build-14 canon
+- map the relevant code and runtime-gate surfaces
+- execute the most probative test suites
+- separate strictly:
+  - `docs`
+  - `code`
+  - `tests`
+  - `real runtime proof`
 
 ---
 
-# 2. Évidence exécutée
+# 1. Executive summary
 
-## 2.1 Lecture canonique
+Current lot verdict:
 
-Documents relus ou recoupés :
+- Build-11: `STILL_PARTIAL`
+- Build-12: `NOT READY`
+- Build-13: `NOT READY`
+- Build-14: `ALIGNED`
+
+Short reading:
+
+- the promotion gates remain coded in a strict way consistent with the main canon
+- the current protocol and Build-14 package test surfaces are green on the
+  current commit
+- the Build-14 exposed-state normalization wave is now applied on the current
+  branch across monitoring, UI, launcher/demo payloads, and projection
+  contracts
+- but Build-11 is still not honestly closed:
+  - `engine_c` and `engine_d` still fail at package entry
+  - real runtime proof for the Shadow VPS / `live_websocket` path is still not
+    closed in this environment
+- Build-12 and Build-13 therefore remain blocked upstream
+
+---
+
+# 2. Executed evidence
+
+## 2.1 Canonical reading
+
+Documents reread or cross-checked:
 
 - `docs/specs/V5_3_MASTER_FINAL_UNIQUE.md`
 - `docs/specs/V5_3_BUILD_PLAN_MODULE_PAR_MODULE.md`
@@ -57,18 +65,19 @@ Documents relus ou recoupés :
 - `docs/specs/V5_3_BUILD14_SPEC_COMPLETE_ENABLERS.md`
 - `docs/specs/V5_3_TABLE_MERGE_GATES_TESTS_GO_NO_GO.md`
 
-Points canoniques confirmés :
+Canonical points confirmed:
 
-- Shadow Light = `30 jours calendaires consécutifs minimum`
-- Shadow = phase de vérité système complète avec `A/B/C/D` et Build-14 actifs en Shadow
-- rapport Shadow exploitable / approuvé requis avant promotion
-- verdict post-Shadow composant par composant requis avant Micro-live
-- Micro-live minimum canonique = `7 jours`
-- Live-Light ne part pas tant que Shadow + Micro-live ne sont pas réellement validés
+- Shadow Light requires `30 consecutive calendar days minimum`
+- Shadow is a full system truth phase with A/B/C/D and Build-14 active in
+  observation
+- an exploitable and approved Shadow report is required before promotion
+- post-Shadow component verdicts are required before Micro-live
+- canonical Micro-live minimum remains `7 days`
+- Live-Light cannot open until both Shadow and Micro-live are truly validated
 
-## 2.2 Cartographie code
+## 2.2 Code mapping
 
-Surfaces confirmées :
+Confirmed surfaces:
 
 - `src/protocols`
 - `src/complete_enablers`
@@ -78,242 +87,242 @@ Surfaces confirmées :
 - `src/ui`
 - `scripts/run_shadow_vps_service.py`
 
-## 2.3 Tests exécutés
+## 2.3 Tests executed
 
 - `rtk pytest tests/test_protocols tests/test_complete_enablers -q`
-  - résultat : `155 passed`
-- `rtk pytest tests/test_protocols/test_shadow_day_counter.py tests/test_protocols/test_promotion_gates.py tests/test_protocols/test_local_replay_shadow_runner.py tests/test_protocols/test_contracts.py -q`
-  - résultat : `66 passed`
-- `rtk pytest tests/test_protocols/test_shadow_report_builder.py tests/test_protocols/test_shadow_session_registry.py tests/test_protocols/test_shadow_daily_orchestrator.py tests/test_protocols/test_shadow_daily_orchestrator_launcher.py tests/test_protocols/test_shadow_websocket_ingest.py tests/test_protocols/test_shadow_live_websocket.py tests/test_protocols/test_shadow_vps_service_launcher.py -q`
-  - résultat : `15 passed`
+  - result: `162 passed`
+- `rtk pytest tests/test_complete_enablers tests/test_protocols tests/test_monitoring tests/test_ui -q`
+  - result: `305 passed`
 - `rtk pytest tests/test_regression_alignment.py -q`
-  - résultat : `53 passed`
+  - result: `53 passed`
 
-## 2.4 Traces code critiques recoupées
+## 2.4 Critical code traces cross-checked
 
 - `src/engines/engine_c/__init__.py`
-  - l'entrée de package lève encore `ImportError`
+  - still raises `ImportError`
 - `src/engines/engine_d/__init__.py`
-  - l'entrée de package lève encore `ImportError`
+  - still raises `ImportError`
 - `src/protocols/contracts.py`
-  - encode `shadow_required_days=30`
-  - encode `shadow_report_ready`
-  - encode `inter_engine_comparison_ready`
-  - encode `build14_contribution_ready`
-  - encode aussi `micro_live_required_days=7`
+  - still encodes:
+    - `shadow_required_days=30`
+    - `shadow_report_ready`
+    - `inter_engine_comparison_ready`
+    - `build14_contribution_ready`
+    - `micro_live_required_days=7`
 - `src/protocols/shadow_runtime.py`
-  - bloque la sortie Shadow si `30 jours`, `shadow_report_ready`, comparaison inter-moteurs ou contribution Build-14 ne sont pas satisfaits
+  - still blocks promotion if `30 days`, `shadow_report_ready`,
+    inter-engine comparison, or Build-14 contribution evidence are missing
 - `src/protocols/micro_live_runtime.py`
-  - bloque Build-12 si `shadow_report_ready=False` ou si les prérequis Shadow restent incomplets
+  - still blocks Build-12 when upstream Shadow evidence is incomplete
 - `src/complete_enablers/contracts.py`
-  - porte bien le vocabulaire `shadow_enabled`
+  - carries the `shadow_enabled` vocabulary
 - `src/monitoring/contracts.py`
-  - garde encore des défauts `read_only`
-- `src/protocols/contracts.py`
-  - garde encore un défaut `build14_influence_mode="read_only"`
+  - now validates coherent Build-14 projection states, including
+    `shadow_enabled`
 - `src/ui/technical_dashboard_view.py`
-  - conserve un mapping `limited_influence` / `read_only`
+  - now exposes the normalized `Build-14 Enablers` section and an explicit
+    `shadow_enabled` guardrail state
+- `scripts/run_local_replay_shadow.py`
+  - now emits a coherent demo Build-14 `shadow_enabled` projection
 
 ---
 
 # 3. Findings
 
-## P0 — Build-11 n'est pas doctrinalement fermé malgré les tests verts
+## P0 - Build-11 is not doctrinally closed despite green tests
 
-Preuves convergentes :
+Converging evidence:
 
-- le canon impose une phase Shadow complète avec `A/B/C/D` et Build-14 actifs, puis verdict post-Shadow
-- les gates runtime codent bien cette logique stricte
-- mais `engine_c` et `engine_d` restent non opérables via leurs entrées de package
-- la preuve runtime réelle du flux Shadow VPS / `live_websocket` n'est pas close dans cet environnement
+- the canon requires a full Shadow truth phase with A/B/C/D and Build-14 active
+- the runtime gates encode that strict reading
+- but `engine_c` and `engine_d` still fail at package entry
+- and the real runtime proof of the Shadow VPS / `live_websocket` path is still
+  not closed in this environment
 
-Lecture critique :
+Critical reading:
 
-- les tests verts prouvent surtout la cohérence des contrats et des garde-fous
-- ils ne prouvent pas à eux seuls que Build-11 est fermé en production
-- il manque encore la jonction entre doctrine complète, activation réelle et preuve runtime honnête
+- the green tests mainly prove contract and gate coherence
+- they do not by themselves prove real production closure of Build-11
+- there is still a gap between the doctrinal expectation, actual operability,
+  and honest runtime proof
 
-Décision :
+Decision:
 
-- ne pas déclarer Build-11 `ALIGNED`
-- garder `STILL PARTIAL`
+- do not declare Build-11 `ALIGNED`
+- keep `STILL_PARTIAL`
 
-## P1 — Build-14 existe mais son exposition reste incohérente
+## P1 - Build-12 and Build-13 are blocked upstream, not missing gates
 
-Preuves convergentes :
+Converging evidence:
 
-- le coeur Build-14 encode bien `shadow_enabled`
-- le backend monitoring commence à exposer `shadow_enabled`
-- mais certains contrats et surfaces gardent encore `read_only`
-- l'UI technique garde encore un couplage `limited_influence` / `read_only`
+- Build-12 still blocks correctly on complete Shadow evidence
+- Build-13 still blocks correctly on complete Shadow plus stable Micro-live
+- regression alignment remains green on the strict Shadow rule
+- but Build-11 is still not honestly closed in this repository state
 
-Lecture critique :
+Critical reading:
 
-- le problème n'est pas l'absence de Build-14
-- le problème est l'incohérence de vocabulaire et d'état exposé
-- ce type d'écart peut fausser le diagnostic opérateur même si les tests package restent verts
+- do not confuse `correctly coded gates` with `system truly ready`
+- Build-12 and Build-13 are not red because their gate code is absent
+- they are `NOT READY` because upstream reality is not yet closed
 
-Décision :
+## P1 - Real runtime proof for `live_websocket` remains missing
 
-- ne pas déclarer Build-14 `ALIGNED`
-- garder `STILL PARTIAL`
+Converging evidence:
 
-## P1 — Build-12 et Build-13 sont bloqués par l'amont, pas par une absence de gates
+- the native path exists in code
+- the relevant tests are green
+- but no real network execution proof is recorded in this lot
 
-Preuves convergentes :
+Decision:
 
-- Build-12 code bien le blocage sur rapport Shadow complet, comparaison inter-moteurs et contribution Build-14
-- Build-13 code bien le blocage sur Shadow complet + `Micro-live` stable minimum `7 jours`
-- les tests de gates sont verts
-- mais Build-11 n'est pas clôturé honnêtement dans ce dépôt
+- keep this as a runtime-evidence gap, not as a proven code bug
 
-Lecture critique :
+## P1 - Latest manual safing work strengthens control surfaces without changing the build verdicts
 
-- il ne faut pas confondre `gates correctement codées` et `préconditions réellement satisfaites`
-- Build-12 et Build-13 ne sont donc pas rouges comme implémentation de gate
-- ils sont `NOT READY` comme état système
+Converging evidence:
 
-## P1 — La preuve réseau réelle de `live_websocket` reste à produire
+- the current commit adds typed operator safing requests, dashboard projection,
+  launcher propagation, and local operator-control surfaces
+- these additions improve Build-12 and Build-13 governance support
+- but they do not change the canonical readiness rules or upstream closure state
 
-Preuves convergentes :
+Critical reading:
 
-- le chemin natif existe en code
-- les tests dédiés sont verts
-- mais aucune preuve d'exécution réseau réelle n'est enregistrée dans ce lot
+- this is a meaningful governance improvement
+- it is not evidence that Build-12 or Build-13 are now ready
 
-Décision :
+## Resolved correction wave - Build-14 exposed-state normalization is now coherent on the current branch
 
-- garder cet écart comme gap runtime, pas comme bug code prouvé
+Converging evidence:
+
+- Build-14 projection contracts now reject incoherent `shadow_enabled`
+  payloads
+- the monitoring backend emits `candidate_effect=shadow_enabled` when the
+  Build-14 module is active in Shadow
+- the technical dashboard now exposes `Build-14 Enablers` instead of framing
+  everything as `Limited Influence`
+- the local replay to Shadow demo runner now emits a coherent Build-14
+  `shadow_enabled` projection
+- the broad package and surface suite is green: `305 passed`
+
+Decision:
+
+- Build-14 can now be declared `ALIGNED` on the current branch
+- downstream Build-11/12/13 verdicts remain unchanged
 
 ---
 
-# 4. Verdict par build
+# 4. Verdict by build
 
-## 4.1 Build-11 — Shadow Light
+## 4.1 Build-11 - Shadow Light
 
-Verdict :
+Verdict:
 
-- `STILL PARTIAL`
+- `STILL_PARTIAL`
 
-Pourquoi :
+Why:
 
-- le canon et les gates sont alignés sur une lecture stricte
-- `30 jours` seuls ne suffisent pas, il faut aussi un rapport exploitable et les verdicts associés
-- les tests `protocols` sont verts
-- mais la fermeture complète du Shadow système n'est pas démontrée
-- `engine_c` et `engine_d` restent non opérables au niveau package
-- la preuve runtime réelle Shadow VPS / `live_websocket` reste incomplète
+- the canon and the gates remain aligned on a strict reading
+- `30 days` alone are not enough; an exploitable report and component verdicts
+  are also required
+- the protocol tests are green
+- but complete Shadow system closure is still not demonstrated
+- `engine_c` and `engine_d` remain non-operable at package entry
+- the real Shadow VPS / `live_websocket` proof remains incomplete
 
-Conclusion :
+## 4.2 Build-12 - Micro-live Light
 
-- Build-11 est techniquement avancé mais pas encore clôturé honnêtement
-
-## 4.2 Build-12 — Micro-live Light
-
-Verdict :
+Verdict:
 
 - `NOT READY`
 
-Pourquoi :
+Why:
 
-- les gates sont codées correctement
-- le canon n'autorise l'activation Micro-live qu'après verdict post-Shadow
-- Build-11 n'est pas encore clôturé
+- the gates are coded correctly
+- the canon still allows Micro-live only after valid post-Shadow evidence
+- Build-11 is still not honestly closed
 
-Conclusion :
+## 4.3 Build-13 - Live-Light
 
-- Build-12 ne doit pas être requalifié à la hausse tant que Build-11 n'est pas fermé proprement
-
-## 4.3 Build-13 — Live-Light
-
-Verdict :
+Verdict:
 
 - `NOT READY`
 
-Pourquoi :
+Why:
 
-- le canon exige `30 jours` Shadow complets validés
-- le canon exige un `Micro-live` stable minimum `7 jours`
-- les gates sont codées dans ce sens
-- Build-11 reste partiel et Build-12 n'est pas prêt
-- aucune preuve runtime Live-Light réelle n'est produite ici
+- the canon still requires valid Shadow closure
+- the canon still requires a stable `7-day minimum` Micro-live
+- the gates are coded accordingly
+- Build-11 remains partial and Build-12 is not ready
+- no real Live-Light runtime proof is recorded in this lot
 
-Conclusion :
+## 4.4 Build-14 - Complete Enablers
 
-- Build-13 reste bloqué par préconditions amont non closes
+Verdict:
 
-## 4.4 Build-14 — Complete Enablers
+- `ALIGNED`
 
-Verdict :
+Why:
 
-- `STILL PARTIAL`
-
-Pourquoi :
-
-- les packages, contrats et tests dédiés existent réellement
-- Build-14 sait exprimer `shadow_enabled` au coeur de son modèle
-- mais l'exposition monitoring / UI / certains payloads protocole n'est pas normalisée
-
-Conclusion :
-
-- Build-14 n'est pas absent
-- il est partiellement intégré et encore doctrinalement sensible sur ses surfaces exposées
+- the packages, contracts, and tests are real
+- Build-14 can express `shadow_enabled` in the core model
+- the monitoring, UI, and demo/projection surfaces are now normalized around
+  coherent `shadow_enabled` exposure
+- the broad refreshed suite over `complete_enablers + protocols + monitoring +
+  ui` is green: `305 passed`
 
 ---
 
-# 5. Lecture transversale
+# 5. Cross-build reading
 
-Le lot Build-11 -> Build-14 montre une situation assez nette :
+The Build-11 to Build-14 picture is now quite clear:
 
-- la doctrine stricte `Shadow -> Micro-live -> Live-Light` est globalement bien encodée
-- la faiblesse principale n'est pas une permissivité cachée des gates
-- la faiblesse principale est la fermeture honnête du cycle :
-  - activation complète réellement opérable
-  - surfaces d'état cohérentes
-  - preuve runtime réelle suffisante
+- the strict `Shadow -> Micro-live -> Live-Light` doctrine is mostly well
+  encoded
+- the main weakness is not hidden permissiveness in the gates
+- the main weakness is honest closure of the full chain:
+  - full activation really operable
+  - enough real runtime proof
 
-Autrement dit :
+In other words:
 
-- les garde-fous existent
-- la vérité production n'est pas encore entièrement démontrée
+- the guardrails exist
+- Build-14 exposed-state coherence is restored on the current branch
+- production truth is still not fully demonstrated yet because Build-11 is not
+  honestly closed
 
 ---
 
-# 6. Actions recommandées
+# 6. Recommended actions
 
 ## Action 1
 
-Traiter le lot `Build-1 DAG` comme P0 architectural séparé et parallèle.
+Keep Build-11 closure as the main rollout priority now that the Build-1 DAG
+and Build-14 exposed-state lots are corrected on the current branch.
 
 ## Action 2
 
-Décider explicitement du statut réel de `engine_c` et `engine_d` :
+Decide the honest status of `engine_c` and `engine_d`:
 
-- soit ils doivent devenir opérables dans le cadre canonique Build-11
-- soit il faut documenter autrement leur statut pour éviter un faux récit de fermeture Shadow
+- either they must become operable in the canonical Build-11 frame
+- or their doctrinal story must be rewritten to avoid a false Shadow-closure
+  narrative
 
 ## Action 3
 
-Normaliser l'exposition Build-14 sur :
+Keep Build-12 and Build-13 blocked until:
 
-- `src/monitoring/contracts.py`
-- `src/protocols/contracts.py`
-- `src/ui/technical_dashboard_view.py`
-
-## Action 4
-
-Garder Build-12 et Build-13 bloqués tant que :
-
-- Build-11 n'est pas clôturé proprement
-- la preuve runtime utile n'est pas produite
+- Build-11 is honestly closed
+- the useful runtime proof is actually produced
 
 ---
 
-# 7. Décision de lot
+# 7. Lot decision
 
-Décision retenue après audit :
+Decision after refresh:
 
-- Build-11 : partiel
-- Build-12 : non prêt
-- Build-13 : non prêt
-- Build-14 : partiel
+- Build-11: still partial
+- Build-12: not ready
+- Build-13: not ready
+- Build-14: aligned

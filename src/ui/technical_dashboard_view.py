@@ -863,7 +863,7 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LightD
             ),
         ),
         DashboardSection(
-            title="Build-14 Limited Influence",
+            title="Build-14 Enablers",
             cards=(
                 DashboardCard(
                     key="build14_mode",
@@ -906,6 +906,8 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LightD
                         if payload.build14.requires_manual_review
                         else "bounded_modulation"
                         if payload.build14.influence_mode == "limited_influence"
+                        else "shadow_enabled"
+                        if payload.build14.influence_mode == "shadow_enabled"
                         else "read_only"
                     ),
                     status=(
