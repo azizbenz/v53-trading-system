@@ -36,7 +36,7 @@
     "branch_alignment": {
       "main_commit": "e28de12",
       "origin_main_commit": "e28de12",
-      "current_branch_commit": "b509e61",
+      "current_branch_commit": "c6fac13",
       "branch_divergence_detected": true,
       "interpretation": "The current branch is ahead of main by 6 local commits. There is still no conflicting split to resolve, but local audit/correction work now needs preservation discipline before any cleanup."
     },
@@ -405,6 +405,14 @@
       "record_path": "docs/audit chatgpt buisness/2026-04-02_PROD_SAFE_ORCHESTRATION_PLAN_TARGET_DOCTRINE_AND_BUILD_AUDIT.md",
       "conclusion": "The next critical phase is now sequenced explicitly: freeze doctrine inputs, commit the safe lot, perform the build-by-build audit against the active canon, classify drifts, and only then decide whether to continue on the active frame or migrate the doctrine.",
       "action_taken": "Use this orchestration plan as the execution frame for the next audit and correction waves."
+    },
+    {
+      "audit_id": "AUDIT-011",
+      "date": "2026-04-03",
+      "scope": "Canonical tension between Build-11 and Build-15/16/17",
+      "record_path": "docs/audit chatgpt buisness/2026-04-03_BUILD11_VS_BUILD15_17_CANON_TENSION_AUDIT.md",
+      "conclusion": "The active corpus currently contains a real tension: Build-11 / master / build-plan require A/B/C/D active during Shadow intégral, while Build-15 and Build-16 define C and D as later dedicated builds with Build-14 already validated as a prerequisite. The codebase currently behaves in the more conservative staged way.",
+      "action_taken": "Freeze the contradiction explicitly, avoid implementing Engine C/D inside a Build-11 fix wave, and treat the next step as a governance checkpoint rather than a silent code correction."
     }
   ],
   "known_critical_gaps": [
@@ -471,6 +479,14 @@
       "doc_expectation": "Risk-related verification should run cleanly in the target audit environment.",
       "code_or_runtime_reality": "tests/test_risk_backbone/test_circuit_breaker.py errors out on tmp_path PermissionError, preventing a clean package-level verdict for risk_backbone.",
       "status": "open"
+    },
+    {
+      "gap_id": "GAP-009",
+      "priority": "P0",
+      "scope": "Canonical contradiction between Build-11 and Build-15/16/17",
+      "doc_expectation": "The build order, Build-11 Shadow doctrine, Build-15 / Build-16 engine onboarding, and Build-17 Complete rollout should tell one coherent story.",
+      "code_or_runtime_reality": "Build-11 / master / build-plan still require A/B/C/D active in Shadow intégral, while Build-15 and Build-16 define C and D as later dedicated builds that start only after Build-14 is validated. The codebase currently follows the more conservative staged interpretation with engine_c and engine_d remaining planned spec_only facades.",
+      "status": "open_governance_checkpoint"
     }
   ],
   "work_batches": [
@@ -666,7 +682,7 @@
     }
   },
   "next_recommended_action": {
-    "step": "Commit the current Build-11 runtime-evidence bundle lot, then continue honest Build-11 closure by deciding the engine_c / engine_d operability story and, if the environment allows it, running a native live_websocket smoke in the real target environment. Keep Build-4 tmp-path verification as a separate environment task.",
-    "reason": "The current branch now has a stronger durable runtime-evidence chain for Build-11 in addition to the earlier Build-1 and Build-14 fixes. The main remaining blocker in the rollout chain is no longer missing evidence plumbing, but honest closure on engine operability and real native live runtime proof."
+    "step": "Pause Build-11 code expansion at the new governance checkpoint: decide whether the active canon keeps C/D inside Build-11 Shadow intégral or realigns them to Build-15 / Build-16. Until that choice is made, avoid implementing Engine C/D in a Build-11 wave and keep any new work limited to neutral evidence/runtime surfaces. Keep Build-4 tmp-path verification as a separate environment task.",
+    "reason": "The branch now has stronger Build-11 runtime-evidence plumbing, but the next remaining blocker is no longer mainly technical. It is the newly frozen canonical contradiction between Build-11 and Build-15/16/17. Coding through that contradiction would create a high risk of double work and a false prod-safe closure."
   }
 }
