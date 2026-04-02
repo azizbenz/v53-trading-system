@@ -124,6 +124,8 @@ def orchestrate_one_shadow_day(
         session_date=slot.session_date,
         export_dir_ref=slot.export_dir_ref,
         shadow_output_dir_ref=str(resolved_shadow_output_dir.resolve()),
+        local_replay_evidence_ref=str(artifacts.local_replay_evidence_json_path.resolve()),
+        shadow_runtime_evidence_ref=str(artifacts.shadow_runtime_evidence_json_path.resolve()),
         shadow_summary_ref=str(artifacts.shadow_summary_json_path.resolve()),
         shadow_report_ref=str(artifacts.shadow_report_json_path.resolve()),
         shadow_session_summary_ref=str(
@@ -146,6 +148,12 @@ def orchestrate_one_shadow_day(
                 "export_dir_ref": slot.export_dir_ref,
                 "state_path": str(orchestrator.state_path.resolve()),
                 "shadow_output_dir_ref": str(resolved_shadow_output_dir.resolve()),
+                "local_replay_evidence_ref": str(
+                    artifacts.local_replay_evidence_json_path.resolve()
+                ),
+                "shadow_runtime_evidence_ref": str(
+                    artifacts.shadow_runtime_evidence_json_path.resolve()
+                ),
                 "shadow_summary_ref": str(artifacts.shadow_summary_json_path.resolve()),
                 "shadow_report_ref": str(artifacts.shadow_report_json_path.resolve()),
                 "shadow_session_summary_ref": str(
@@ -167,6 +175,8 @@ def orchestrate_one_shadow_day(
     print(f"Orchestrator state JSON: {orchestrator.state_path}")
     print(f"Last run JSON: {last_run_path}")
     print(f"Shadow output dir: {resolved_shadow_output_dir}")
+    print(f"Local replay evidence JSON: {artifacts.local_replay_evidence_json_path}")
+    print(f"Shadow runtime evidence JSON: {artifacts.shadow_runtime_evidence_json_path}")
     print(f"Shadow summary JSON: {artifacts.shadow_summary_json_path}")
     print(f"Shadow report JSON: {artifacts.shadow_report_json_path}")
     return 0

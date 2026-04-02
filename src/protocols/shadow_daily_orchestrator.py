@@ -30,6 +30,8 @@ class ShadowDailyExecutionRecord(BaseModel, frozen=True):
     session_date: str = Field(..., min_length=10)
     export_dir_ref: str = ""
     shadow_output_dir_ref: str = Field(..., min_length=1)
+    local_replay_evidence_ref: str = ""
+    shadow_runtime_evidence_ref: str = ""
     shadow_summary_ref: str = Field(..., min_length=1)
     shadow_report_ref: str = Field(..., min_length=1)
     shadow_session_summary_ref: str = Field(..., min_length=1)

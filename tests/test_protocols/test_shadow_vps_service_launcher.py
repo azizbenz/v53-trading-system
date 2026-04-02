@@ -46,6 +46,16 @@ def _scratch_dir(label: str) -> Path:
     return output_dir
 
 
+def _read_runtime_evidence_bundle(service_dir: Path, session_date: str) -> dict:
+    return json.loads(
+        (
+            service_dir
+            / "runtime_evidence"
+            / f"{session_date}.shadow_vps_runtime_evidence.json"
+        ).read_text(encoding="utf-8")
+    )
+
+
 def _write_daily_export(export_dir: Path, session_date: str, run_suffix: str) -> None:
     execute_local_replay_export(
         export_dir,
@@ -350,16 +360,31 @@ def test_shadow_vps_service_processes_multiple_days_and_persists_logs():
                 encoding="utf-8"
             )
         )
+        runtime_bundle = _read_runtime_evidence_bundle(service_dir, "2026-04-02")
 
         assert state["service_status"] == "stopped"
         assert state["loop_count"] == 2
         assert state["success_count"] == 2
         assert state["failure_count"] == 0
         assert state["last_completed_session_date"] == "2026-04-02"
+        assert state["last_local_replay_evidence_ref"].endswith(
+            "local_replay_shadow.local_replay_evidence.json"
+        )
+        assert state["last_shadow_runtime_evidence_ref"].endswith(
+            "local_replay_shadow.shadow_runtime_evidence.json"
+        )
+        assert state["last_runtime_evidence_bundle_ref"].endswith(
+            "runtime_evidence\\2026-04-02.shadow_vps_runtime_evidence.json"
+        )
         assert shadow_session_summary["consecutive_days"] == 2
+        assert runtime_bundle["acquisition_mode"] == "dated_export"
+        assert runtime_bundle["runtime_data_source"] == "recorded_replay"
+        assert runtime_bundle["accepted"] is True
+        assert runtime_bundle["consecutive_days"] == 2
 
         event_types = [event["event_type"] for event in events]
         assert event_types[0] == "service_started"
+        assert event_types.count("runtime_evidence_bundle_written") == 2
         assert event_types.count("shadow_day_completed") == 2
         assert event_types[-1] == "service_stopped"
     finally:
@@ -497,12 +522,20 @@ def test_shadow_vps_service_auto_exports_raw_inputs_then_runs_shadow():
                 encoding="utf-8"
             )
         )
+        runtime_bundle = _read_runtime_evidence_bundle(service_dir, "2026-04-02")
 
         assert state["success_count"] == 2
         assert state["last_completed_session_date"] == "2026-04-02"
         assert state["last_raw_input_dir_ref"].endswith("raw_inputs_root\\2026-04-02")
         assert state["last_auto_export_dir_ref"].endswith("auto_exports\\2026-04-02")
+        assert state["last_runtime_evidence_bundle_ref"].endswith(
+            "runtime_evidence\\2026-04-02.shadow_vps_runtime_evidence.json"
+        )
         assert auto_manifest["strategy_id"] == "strategy-shadow-vps-native"
+        assert runtime_bundle["acquisition_mode"] == "raw_input_auto_export"
+        assert runtime_bundle["raw_input_dir_ref"].endswith("raw_inputs_root\\2026-04-02")
+        assert runtime_bundle["auto_export_dir_ref"].endswith("auto_exports\\2026-04-02")
+        assert runtime_bundle["runtime_data_source"] == "recorded_replay"
         assert any(
             event["event_type"] == "auto_export_completed"
             and event["session_date"] == "2026-04-01"
@@ -580,6 +613,7 @@ def test_shadow_vps_service_auto_builds_snapshots_from_websocket_streams():
                 encoding="utf-8"
             )
         )
+        runtime_bundle = _read_runtime_evidence_bundle(service_dir, "2026-04-02")
 
         assert state["success_count"] == 2
         assert state["last_completed_session_date"] == "2026-04-02"
@@ -588,9 +622,19 @@ def test_shadow_vps_service_auto_builds_snapshots_from_websocket_streams():
         )
         assert state["last_auto_snapshot_dir_ref"].endswith("auto_snapshots\\2026-04-02")
         assert state["last_auto_export_dir_ref"].endswith("auto_exports\\2026-04-02")
+        assert state["last_runtime_evidence_bundle_ref"].endswith(
+            "runtime_evidence\\2026-04-02.shadow_vps_runtime_evidence.json"
+        )
         assert snapshot_summary["accepted_message_count"] == 2
         assert snapshot_summary["event_types"] == ["snapshot"]
         assert auto_manifest["strategy_id"] == "strategy-shadow-vps-websocket"
+        assert runtime_bundle["acquisition_mode"] == "websocket_stream_auto_export"
+        assert runtime_bundle["websocket_input_dir_ref"].endswith(
+            "websocket_streams_root\\2026-04-02"
+        )
+        assert runtime_bundle["auto_snapshot_dir_ref"].endswith("auto_snapshots\\2026-04-02")
+        assert runtime_bundle["auto_export_dir_ref"].endswith("auto_exports\\2026-04-02")
+        assert runtime_bundle["runtime_data_source"] == "recorded_replay"
         assert any(
             event["event_type"] == "auto_snapshot_completed"
             and event["session_date"] == "2026-04-01"
@@ -720,13 +764,27 @@ def test_shadow_vps_service_captures_native_live_websocket_then_runs_shadow(monk
                 encoding="utf-8"
             )
         )
+        runtime_bundle = _read_runtime_evidence_bundle(service_dir, "2026-04-02")
 
         assert state["success_count"] == 1
         assert state["last_completed_session_date"] == "2026-04-02"
         assert state["last_live_capture_dir_ref"].endswith("live_captures\\2026-04-02")
         assert state["last_auto_export_dir_ref"].endswith("auto_exports\\2026-04-02")
+        assert state["last_shadow_runtime_evidence_ref"].endswith(
+            "local_replay_shadow.shadow_runtime_evidence.json"
+        )
+        assert state["last_runtime_evidence_bundle_ref"].endswith(
+            "runtime_evidence\\2026-04-02.shadow_vps_runtime_evidence.json"
+        )
         assert auto_manifest["strategy_id"] == "strategy-shadow-vps-live"
+        assert runtime_bundle["acquisition_mode"] == "native_live_websocket_auto_export"
+        assert runtime_bundle["live_capture_dir_ref"].endswith("live_captures\\2026-04-02")
+        assert runtime_bundle["auto_export_dir_ref"].endswith("auto_exports\\2026-04-02")
+        assert runtime_bundle["runtime_data_source"] == "recorded_replay"
         assert any(event["event_type"] == "live_capture_completed" for event in events)
+        assert any(
+            event["event_type"] == "runtime_evidence_bundle_written" for event in events
+        )
         assert any(event["event_type"] == "shadow_day_completed" for event in events)
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)

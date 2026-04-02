@@ -23,6 +23,7 @@ from protocols import (  # noqa: E402
     ShadowVpsServiceEvent,
     ShadowVpsRawInputConfig,
     ShadowVpsRawInputSlot,
+    ShadowVpsRuntimeEvidenceBundle,
     ShadowVpsWebsocketInputSlot,
     ShadowVpsServiceStatus,
     ShadowVpsServiceStore,
@@ -67,6 +68,15 @@ def _load_local_replay_export_module():
 def _read_last_run(orchestrator_output_dir: Path) -> dict:
     last_run_path = orchestrator_output_dir / "shadow_daily_orchestrator.last_run.json"
     return json.loads(last_run_path.read_text(encoding="utf-8"))
+
+
+def _read_optional_json(path_ref: str) -> dict:
+    if not path_ref:
+        return {}
+    try:
+        return json.loads(Path(path_ref).read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {}
 
 
 def _read_raw_input_config(config_path: Path | None) -> ShadowVpsRawInputConfig:
@@ -372,6 +382,79 @@ def _ensure_auto_export_from_live_websocket(
     return live_capture_dir, auto_export_dir
 
 
+def _resolve_acquisition_mode(
+    *,
+    raw_slot: ShadowVpsRawInputSlot | None,
+    websocket_slot: ShadowVpsWebsocketInputSlot | None,
+    live_capture_dir: Path | None,
+    export_dir_ref: str,
+) -> str:
+    if live_capture_dir is not None:
+        return "native_live_websocket_auto_export"
+    if websocket_slot is not None:
+        return "websocket_stream_auto_export"
+    if raw_slot is not None:
+        return "raw_input_auto_export"
+    if export_dir_ref:
+        return "dated_export"
+    return "demo"
+
+
+def _write_runtime_evidence_bundle(
+    *,
+    service_dir: Path,
+    session_date: str,
+    raw_slot: ShadowVpsRawInputSlot | None,
+    websocket_slot: ShadowVpsWebsocketInputSlot | None,
+    live_capture_dir: Path | None,
+    auto_snapshot_dir: Path | None,
+    auto_export_dir: Path | None,
+    last_run: dict,
+) -> Path:
+    bundle_dir = service_dir / "runtime_evidence"
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    bundle_path = bundle_dir / f"{session_date}.shadow_vps_runtime_evidence.json"
+    runtime_evidence_payload = _read_optional_json(
+        str(last_run.get("shadow_runtime_evidence_ref", ""))
+    )
+    bundle = ShadowVpsRuntimeEvidenceBundle(
+        session_date=session_date,
+        acquisition_mode=_resolve_acquisition_mode(
+            raw_slot=raw_slot,
+            websocket_slot=websocket_slot,
+            live_capture_dir=live_capture_dir,
+            export_dir_ref=str(last_run.get("export_dir_ref", "")),
+        ),
+        raw_input_dir_ref=raw_slot.raw_input_dir_ref if raw_slot is not None else "",
+        websocket_input_dir_ref=(
+            websocket_slot.websocket_input_dir_ref if websocket_slot is not None else ""
+        ),
+        live_capture_dir_ref=str(live_capture_dir.resolve()) if live_capture_dir is not None else "",
+        auto_snapshot_dir_ref=str(auto_snapshot_dir.resolve()) if auto_snapshot_dir is not None else "",
+        auto_export_dir_ref=str(auto_export_dir.resolve()) if auto_export_dir is not None else "",
+        export_dir_ref=str(last_run.get("export_dir_ref", "")),
+        local_replay_evidence_ref=str(last_run.get("local_replay_evidence_ref", "")),
+        shadow_runtime_evidence_ref=str(last_run.get("shadow_runtime_evidence_ref", "")),
+        shadow_summary_ref=str(last_run.get("shadow_summary_ref", "")),
+        shadow_report_ref=str(last_run.get("shadow_report_ref", "")),
+        shadow_session_summary_ref=str(last_run.get("shadow_session_summary_ref", "")),
+        shadow_session_registry_ref=str(last_run.get("shadow_session_registry_ref", "")),
+        orchestrator_state_ref=str(last_run.get("state_path", "")),
+        runtime_data_source=str(runtime_evidence_payload.get("data_source", "unknown")),
+        runtime_evidence_summary=str(
+            runtime_evidence_payload.get(
+                "evidence_summary",
+                "No real runtime evidence recorded",
+            )
+        ),
+        accepted=bool(last_run.get("accepted", False)),
+        consecutive_days=int(last_run.get("consecutive_days", 0)),
+        remaining_days=int(last_run.get("remaining_days", 0)),
+    )
+    bundle_path.write_text(bundle.model_dump_json(indent=2), encoding="utf-8")
+    return bundle_path
+
+
 def run_shadow_vps_service(
     service_dir: Path,
     *,
@@ -565,6 +648,16 @@ def run_shadow_vps_service(
                 )
 
             last_run = _read_last_run(resolved_orchestrator_output_dir)
+            runtime_evidence_bundle_path = _write_runtime_evidence_bundle(
+                service_dir=service_dir,
+                session_date=last_run["session_date"],
+                raw_slot=raw_slot,
+                websocket_slot=websocket_slot,
+                live_capture_dir=live_capture_dir,
+                auto_snapshot_dir=auto_snapshot_dir,
+                auto_export_dir=auto_export_dir,
+                last_run=last_run,
+            )
             state.success_count += 1
             state.service_status = ShadowVpsServiceStatus.RUNNING
             state.last_completed_session_date = last_run["session_date"]
@@ -582,6 +675,9 @@ def run_shadow_vps_service(
                 str(auto_export_dir.resolve()) if auto_export_dir is not None else state.last_auto_export_dir_ref
             )
             state.last_export_dir_ref = last_run.get("export_dir_ref", "")
+            state.last_local_replay_evidence_ref = last_run.get("local_replay_evidence_ref", "")
+            state.last_shadow_runtime_evidence_ref = last_run.get("shadow_runtime_evidence_ref", "")
+            state.last_runtime_evidence_bundle_ref = str(runtime_evidence_bundle_path.resolve())
             state.last_orchestrator_state_ref = last_run["state_path"]
             state.last_shadow_report_ref = last_run["shadow_report_ref"]
             state.last_shadow_session_summary_ref = last_run["shadow_session_summary_ref"]
@@ -590,6 +686,14 @@ def run_shadow_vps_service(
             ]
             state.last_error = ""
             store.persist()
+            store.append_event(
+                ShadowVpsServiceEvent(
+                    event_type="runtime_evidence_bundle_written",
+                    message="Durable Build-11 runtime evidence bundle was written.",
+                    session_date=last_run["session_date"],
+                    export_dir_ref=str(runtime_evidence_bundle_path.resolve()),
+                )
+            )
             store.append_event(
                 ShadowVpsServiceEvent(
                     event_type="shadow_day_completed",
@@ -636,6 +740,8 @@ def run_shadow_vps_service(
     print(f"Shadow VPS service events JSONL: {store.events_path}")
     print(f"Shadow daily orchestrator state JSON: {resolved_orchestrator_output_dir / 'shadow_daily_orchestrator.state.json'}")
     print(f"Shadow session summary JSON: {resolved_shadow_output_dir / 'local_replay_shadow.shadow_session_summary.json'}")
+    if state.last_runtime_evidence_bundle_ref:
+        print(f"Shadow runtime evidence bundle JSON: {state.last_runtime_evidence_bundle_ref}")
     return 0
 
 

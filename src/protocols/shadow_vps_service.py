@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 import json
 import time
 from enum import StrEnum
@@ -40,6 +41,9 @@ class ShadowVpsServiceState(BaseModel):
     last_auto_snapshot_dir_ref: str = ""
     last_auto_export_dir_ref: str = ""
     last_export_dir_ref: str = ""
+    last_local_replay_evidence_ref: str = ""
+    last_shadow_runtime_evidence_ref: str = ""
+    last_runtime_evidence_bundle_ref: str = ""
     last_shadow_report_ref: str = ""
     last_shadow_session_summary_ref: str = ""
     last_shadow_session_registry_ref: str = ""
@@ -120,6 +124,36 @@ class ShadowLiveWebSocketCaptureResult(BaseModel, frozen=True):
     event_types: tuple[str, ...] = ()
 
 
+class ShadowVpsRuntimeEvidenceBundle(BaseModel, frozen=True):
+    """Durable proof chain emitted by the autonomous VPS Shadow service."""
+
+    session_date: str = Field(..., min_length=10)
+    acquisition_mode: str = Field(..., min_length=1)
+    raw_input_dir_ref: str = ""
+    websocket_input_dir_ref: str = ""
+    live_capture_dir_ref: str = ""
+    auto_snapshot_dir_ref: str = ""
+    auto_export_dir_ref: str = ""
+    export_dir_ref: str = ""
+    local_replay_evidence_ref: str = ""
+    shadow_runtime_evidence_ref: str = ""
+    shadow_summary_ref: str = ""
+    shadow_report_ref: str = ""
+    shadow_session_summary_ref: str = ""
+    shadow_session_registry_ref: str = ""
+    orchestrator_state_ref: str = ""
+    runtime_data_source: str = "unknown"
+    runtime_evidence_summary: str = "No real runtime evidence recorded"
+    accepted: bool = False
+    consecutive_days: int = Field(default=0, ge=0)
+    remaining_days: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def validate_session_date(self) -> "ShadowVpsRuntimeEvidenceBundle":
+        date.fromisoformat(self.session_date)
+        return self
+
+
 class ShadowVpsServiceEvent(BaseModel, frozen=True):
     """Single structured event emitted by the autonomous VPS Shadow service."""
 
@@ -189,6 +223,7 @@ __all__ = [
     "ShadowVpsWebsocketInputSlot",
     "ShadowLiveWebSocketConfig",
     "ShadowLiveWebSocketCaptureResult",
+    "ShadowVpsRuntimeEvidenceBundle",
     "ShadowVpsServiceEvent",
     "ShadowVpsServiceStore",
 ]

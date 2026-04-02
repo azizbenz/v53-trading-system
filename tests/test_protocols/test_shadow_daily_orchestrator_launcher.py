@@ -157,6 +157,12 @@ def test_shadow_daily_orchestrator_launcher_consumes_next_dated_export_dir():
         assert completed_dates == ["2026-04-01", "2026-04-02"]
         assert last_run["session_date"] == "2026-04-02"
         assert last_run["consecutive_days"] == 2
+        assert last_run["local_replay_evidence_ref"].endswith(
+            "local_replay_shadow.local_replay_evidence.json"
+        )
+        assert last_run["shadow_runtime_evidence_ref"].endswith(
+            "local_replay_shadow.shadow_runtime_evidence.json"
+        )
         assert shadow_session_summary["consecutive_days"] == 2
         assert shadow_session_summary["session_dates"] == ["2026-04-02"]
     finally:

@@ -57,6 +57,8 @@ def test_shadow_daily_orchestrator_selects_next_pending_slot_after_recorded_run(
                 session_date="2026-04-01",
                 export_dir_ref=first_slot.export_dir_ref,
                 shadow_output_dir_ref="build/shadow_session",
+                local_replay_evidence_ref="build/local_replay_evidence.json",
+                shadow_runtime_evidence_ref="build/shadow_runtime_evidence.json",
                 shadow_summary_ref="build/summary.json",
                 shadow_report_ref="build/report.json",
                 shadow_session_summary_ref="build/session_summary.json",

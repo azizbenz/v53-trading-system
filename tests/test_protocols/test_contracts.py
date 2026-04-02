@@ -97,6 +97,7 @@ def test_protocols_exports_expected_symbols():
         "ShadowVpsWebsocketInputSlot",
         "ShadowLiveWebSocketConfig",
         "ShadowLiveWebSocketCaptureResult",
+        "ShadowVpsRuntimeEvidenceBundle",
         "ShadowVpsServiceEvent",
         "ShadowVpsServiceStore",
         "InjectedWebSocketFrame",

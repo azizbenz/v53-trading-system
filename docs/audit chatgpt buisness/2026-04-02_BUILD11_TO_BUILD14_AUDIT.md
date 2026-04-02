@@ -1,5 +1,5 @@
 # V5.3 - AUDIT BUILD-11 TO BUILD-14
-## Date: 2026-04-02
+## Date: 2026-04-03
 ## Status: ACTIVE
 
 ---
@@ -43,11 +43,14 @@ Short reading:
 - the Build-14 exposed-state normalization wave is now applied on the current
   branch across monitoring, UI, launcher/demo payloads, and projection
   contracts
+- the Build-11 Shadow VPS chain now persists local replay evidence refs, shadow
+  runtime evidence refs, and a durable per-session runtime evidence bundle from
+  the daily runner up to the long-running VPS service
 - but Build-11 is still not honestly closed:
   - `engine_c` and `engine_d` now import cleanly, but they remain `spec_only`
     facades without actual engine logic
-  - real runtime proof for the Shadow VPS / `live_websocket` path is still not
-    closed in this environment
+  - real exchange-network proof for the native `live_websocket` path is still
+    not closed in this environment
 - Build-12 and Build-13 therefore remain blocked upstream
 
 ---
@@ -100,6 +103,10 @@ Confirmed surfaces:
   - result: `305 passed`
 - `rtk pytest tests/test_regression_alignment.py -q`
   - result: `53 passed`
+- `rtk pytest tests/test_protocols/test_contracts.py tests/test_protocols/test_shadow_daily_orchestrator.py tests/test_protocols/test_shadow_daily_orchestrator_launcher.py tests/test_protocols/test_shadow_vps_service_launcher.py -q`
+  - result: `38 passed`
+- `rtk pytest tests/test_protocols/test_local_replay_shadow_runner.py tests/test_protocols/test_shadow_runtime.py tests/test_protocols/test_shadow_runtime_evidence.py tests/test_protocols/test_shadow_daily_orchestrator.py tests/test_protocols/test_shadow_daily_orchestrator_launcher.py tests/test_protocols/test_shadow_vps_service_launcher.py -q`
+  - result: `31 passed`
 
 ## 2.4 Critical code traces cross-checked
 
@@ -133,6 +140,15 @@ Confirmed surfaces:
     `shadow_enabled` guardrail state
 - `scripts/run_local_replay_shadow.py`
   - now emits a coherent demo Build-14 `shadow_enabled` projection
+- `scripts/run_shadow_daily_orchestrator.py`
+  - now persists `local_replay_evidence_ref` and `shadow_runtime_evidence_ref`
+    in the per-day execution record and in `shadow_daily_orchestrator.last_run.json`
+- `src/protocols/shadow_vps_service.py`
+  - now exposes `ShadowVpsRuntimeEvidenceBundle` and persists runtime-evidence
+    refs plus the last durable bundle path in service state
+- `scripts/run_shadow_vps_service.py`
+  - now writes one durable `runtime_evidence/<session_date>.shadow_vps_runtime_evidence.json`
+    bundle per completed day and logs `runtime_evidence_bundle_written`
 
 ---
 
@@ -144,9 +160,9 @@ Converging evidence:
 
 - the canon requires a full Shadow truth phase with A/B/C/D and Build-14 active
 - the runtime gates encode that strict reading
-- but `engine_c` and `engine_d` still fail at package entry
-- and the real runtime proof of the Shadow VPS / `live_websocket` path is still
-  not closed in this environment
+- but `engine_c` and `engine_d` still remain only `spec_only` facades
+- and the real exchange-network proof of the Shadow VPS / `live_websocket` path
+  is still not closed in this environment
 
 Critical reading:
 
@@ -181,11 +197,15 @@ Converging evidence:
 
 - the native path exists in code
 - the relevant tests are green
+- the current branch now persists a durable runtime evidence bundle that links
+  pre-Shadow capture/export refs with local replay and shadow runtime evidence
 - but no real network execution proof is recorded in this lot
 
 Decision:
 
 - keep this as a runtime-evidence gap, not as a proven code bug
+- count the new bundle chain as a meaningful closure improvement, not as final
+  production proof
 
 ## P1 - Latest manual safing work strengthens control surfaces without changing the build verdicts
 
@@ -239,7 +259,8 @@ Why:
 - but complete Shadow system closure is still not demonstrated
 - `engine_c` and `engine_d` no longer fail at package entry
 - but they still remain `spec_only` facades rather than implemented engines
-- the real Shadow VPS / `live_websocket` proof remains incomplete
+- the Shadow VPS chain now emits durable runtime evidence bundles
+- but the real Shadow VPS / `live_websocket` proof remains incomplete
 
 ## 4.2 Build-12 - Micro-live Light
 
@@ -294,6 +315,7 @@ The Build-11 to Build-14 picture is now quite clear:
 - the main weakness is honest closure of the full chain:
   - full activation really implemented and operable
   - enough real runtime proof
+  - real network confirmation for the native live path
 
 In other words:
 
@@ -325,6 +347,8 @@ Keep Build-12 and Build-13 blocked until:
 
 - Build-11 is honestly closed
 - the useful runtime proof is actually produced
+- the native `live_websocket` path is either truly smoked in the target
+  environment or explicitly kept as a still-open operational gap
 
 ---
 

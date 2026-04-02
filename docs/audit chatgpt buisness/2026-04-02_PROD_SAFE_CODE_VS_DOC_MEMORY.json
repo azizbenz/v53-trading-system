@@ -1,7 +1,7 @@
 {
   "meta": {
     "document_id": "2026-04-02_prod_safe_code_vs_doc_memory",
-    "date": "2026-04-02",
+    "date": "2026-04-03",
     "status": "active",
     "purpose": "Persistent working memory for the V5.3 prod-safe code-vs-doc audit and correction pass."
   },
@@ -36,14 +36,15 @@
     "branch_alignment": {
       "main_commit": "e28de12",
       "origin_main_commit": "e28de12",
-      "current_branch_commit": "e28de12",
-      "branch_divergence_detected": false,
-      "interpretation": "No active branch divergence. Primary risk is the dirty worktree."
+      "current_branch_commit": "b509e61",
+      "branch_divergence_detected": true,
+      "interpretation": "The current branch is ahead of main by 6 local commits. There is still no conflicting split to resolve, but local audit/correction work now needs preservation discipline before any cleanup."
     },
     "notes": [
       "Do not reset hard.",
       "Do not bulk delete untracked files.",
-      "Dirty worktree contains useful Shadow/VPS work in progress."
+      "Dirty worktree contains the active Build-11 runtime-evidence lot.",
+      "Preserve local commits and the current modified lot before any cleanup or push decision."
     ]
   },
   "validated_test_evidence": [
@@ -208,6 +209,26 @@
       "notes": [
         "The canonical manifest and bootstrap surfaces remain green after making engine_c and engine_d importable spec_only facades."
       ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_protocols/test_contracts.py tests/test_protocols/test_shadow_daily_orchestrator.py tests/test_protocols/test_shadow_daily_orchestrator_launcher.py tests/test_protocols/test_shadow_vps_service_launcher.py -q",
+      "result": "38 passed",
+      "classification": "build11_runtime_evidence_chain_green_surface",
+      "notes": [
+        "This covers the new runner -> daily orchestrator -> VPS service propagation of local_replay_evidence_ref, shadow_runtime_evidence_ref, and the durable runtime evidence bundle.",
+        "The green result proves the local evidence chain, not a real exchange-network proof."
+      ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_protocols/test_local_replay_shadow_runner.py tests/test_protocols/test_shadow_runtime.py tests/test_protocols/test_shadow_runtime_evidence.py tests/test_protocols/test_shadow_daily_orchestrator.py tests/test_protocols/test_shadow_daily_orchestrator_launcher.py tests/test_protocols/test_shadow_vps_service_launcher.py -q",
+      "result": "31 passed",
+      "classification": "build11_shadow_runtime_evidence_refresh_green_surface",
+      "notes": [
+        "This refreshes the focused Build-11 evidence surface around the local runner, runtime evidence recorder, daily orchestrator, and VPS service.",
+        "It strengthens the honest-closure story for Build-11 without changing the verdict that native live runtime proof is still pending."
+      ]
     }
   ],
   "current_status_by_build": {
@@ -339,11 +360,11 @@
     },
     {
       "audit_id": "AUDIT-005",
-      "date": "2026-04-02",
+      "date": "2026-04-03",
       "scope": "Build-11 -> Build-14 critical audit",
       "record_path": "docs/audit chatgpt buisness/2026-04-02_BUILD11_TO_BUILD14_AUDIT.md",
-      "conclusion": "Build-11 remains still partial and Build-12 / Build-13 remain not ready. Build-14 is now aligned on the current branch after the exposed-state normalization wave across monitoring, UI, launcher/demo, and projection contracts.",
-      "action_taken": "Keep downstream promotions blocked and shift the next correction focus from Build-14 exposure to honest Build-11 closure and runtime proof."
+      "conclusion": "Build-11 remains still partial and Build-12 / Build-13 remain not ready. Build-14 is aligned on the current branch, and the Build-11 Shadow VPS chain now persists durable runtime evidence bundles across the daily runner and long-running service.",
+      "action_taken": "Keep downstream promotions blocked, count the runtime-evidence bundle chain as a meaningful closure improvement, and keep the next correction focus on honest Build-11 closure plus native live runtime proof."
     },
     {
       "audit_id": "AUDIT-006",
@@ -392,7 +413,7 @@
       "priority": "P0",
       "scope": "Build-11 doctrine vs actual closure criteria",
       "doc_expectation": "Shadow 30 days as full system truth phase with A/B/C/D and Build-14 SHADOW_ENABLED, then post-Shadow verdict.",
-      "code_or_runtime_reality": "Autonomous Shadow VPS service and live_websocket support exist, but final operational proof and full doctrinal closure are not yet established.",
+      "code_or_runtime_reality": "Autonomous Shadow VPS service and live_websocket support exist, and the current branch now persists a durable runtime evidence bundle chain. Final operational proof and full doctrinal closure are still not yet established.",
       "status": "open"
     },
     {
@@ -424,7 +445,7 @@
       "priority": "P1",
       "scope": "Runtime proof for native live_websocket",
       "doc_expectation": "Runtime-relevant features need real proof before final requalification.",
-      "code_or_runtime_reality": "The feature is coded and tested, but exchange-network proof is still pending in this environment.",
+      "code_or_runtime_reality": "The feature is coded and tested, and the current branch now writes a durable per-session runtime evidence bundle linking capture/export refs with local replay and shadow runtime evidence. Exchange-network proof is still pending in this environment.",
       "status": "open"
     },
     {
@@ -645,7 +666,7 @@
     }
   },
   "next_recommended_action": {
-    "step": "Open the next targeted correction wave on honest Build-11 closure: decide the engine_c / engine_d operability story and gather or simulate the strongest runtime-evidence path for the Shadow VPS / live_websocket flow. Keep Build-4 tmp-path verification as a separate environment task.",
-    "reason": "The highest-value structural lots are now corrected on the current branch: Build-1 DAG is green again and Build-14 exposed-state normalization is green across the broad package surface. The main remaining blocker in the rollout chain is no longer architectural vocabulary, but honest Build-11 closure and runtime proof."
+    "step": "Commit the current Build-11 runtime-evidence bundle lot, then continue honest Build-11 closure by deciding the engine_c / engine_d operability story and, if the environment allows it, running a native live_websocket smoke in the real target environment. Keep Build-4 tmp-path verification as a separate environment task.",
+    "reason": "The current branch now has a stronger durable runtime-evidence chain for Build-11 in addition to the earlier Build-1 and Build-14 fixes. The main remaining blocker in the rollout chain is no longer missing evidence plumbing, but honest closure on engine operability and real native live runtime proof."
   }
 }
