@@ -145,7 +145,7 @@ def build_shadow_dashboard_section(summary: ShadowRunSummary) -> DashboardSectio
                 status=(
                     "healthy"
                     if projection.build14_enabler_count >= 5
-                    and projection.active_engine_count >= 4
+                    and projection.active_engine_count >= 2
                     else "critical"
                 ),
                 detail=(

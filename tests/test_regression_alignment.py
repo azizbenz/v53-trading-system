@@ -733,8 +733,6 @@ def _complete_shadow_metrics(day_index: int) -> dict[str, float | str]:
     for engine_id, gross_frequency in (
         ("engine_a", 8.0),
         ("engine_b", 7.0),
-        ("engine_c", 6.0),
-        ("engine_d", 5.0),
     ):
         metrics[f"{engine_id}.gross_frequency"] = gross_frequency
         metrics[f"{engine_id}.useful_frequency"] = gross_frequency * 0.4

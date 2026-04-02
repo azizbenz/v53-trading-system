@@ -38,7 +38,7 @@ Le plan s’appuie sur une seule V5.3 commune local + VPS :
 - deux profils métier uniquement : `LIGHT`, `COMPLETE`
 - quatre `runtime_mode` uniquement : `LOCAL_REPLAY`, `SHADOW`, `MICRO_LIVE`, `LIVE`
 - aucun `BACKTEST_PROFILE`
-- `Shadow intégral` désigne le Shadow du profil `LIGHT` avec A/B/C/D et
+- `Shadow intégral` désigne le Shadow du profil `LIGHT` avec A/B et
   Build-14 activés à 100% en observation ; ce n'est pas le profil `COMPLETE`
 - aucun fork local / VPS
 - pipeline officiel : `classification -> versioning -> shared core -> LOCAL_REPLAY -> export artifact -> import VPS -> candidature contrôlée`
@@ -515,17 +515,17 @@ Valider la logique sans capital réel.
 - La version Light doit trader en mode SHADOW pendant **30 jours calendaires consécutifs minimum**
 - Données réelles obligatoires (WebSocket ou replay réaliste)
 - Pipeline complet : data → engine → scoring → portfolio → execution simulée
-- **Build-14, moteurs C/D et tous les enrichissements activés à 100% pendant le Shadow intégral**
-- Moteurs A/B/C/D actifs, scorés, classés, arbitrés et observés
+- **Build-14 et tous les enrichissements du rollout Light activés à 100% pendant le Shadow intégral**
+- Moteurs A/B actifs, scorés, classés, arbitrés et observés
 - Build-14 enablers pleinement utilisés dans les décisions Shadow
 - DTR complet produit pendant les 30 jours
 - Interruption > 24h = compteur reprend à zéro
-- Rapport shadow exploitable obligatoire (CE, coûts estimés, edge, drawdown, stale rate, **comparaison inter-moteurs A/B/C/D, contribution Build-14**)
+- Rapport shadow exploitable obligatoire (CE, coûts estimés, edge, drawdown, stale rate, **comparaison inter-moteurs A/B, contribution Build-14**)
 - **Aucune activation Micro-live ni Live-Light avant l'expiration de cette période**
 - **Activation intégrale en Shadow ≠ promotion Live** : chaque composant sera jugé individuellement au verdict post-Shadow
 
 ## KPI obligatoires
-- fréquence brute et utile par moteur (A/B/C/D)
+- fréquence brute et utile par moteur (A/B)
 - coût simulé prudent par moteur
 - DTR complets
 - pass-rate économique
@@ -533,7 +533,7 @@ Valider la logique sans capital réel.
 - backlog stable
 - comparaison inter-moteurs (non-duplication, edge marginal)
 - contribution Build-14 (microstructure, régime, covariance, risk contribution, edge diversity)
-- interactions et conflits A/B/C/D
+- interactions et conflits A/B
 
 ## Go si
 - **HARD : 30 jours de shadow consécutifs atteints**
@@ -613,7 +613,7 @@ Première production réelle disciplinée.
 - edge net > 0 ou crédible
 - CE > V5.2
 - A/B stables
-- verdict C/D/Build-14 disponible (promu ou maintenu dormant)
+- verdict Build-14 disponible ; C/D restent hors scope du rollout Light jusqu'aux Build-15/16
 - budgets risque respectés
 - beta BTC maîtrisé
 - logs + DTR fiables
@@ -647,7 +647,7 @@ sans ouvrir d'activation reelle non gouvernee.
 - **activé à 100% en Shadow** : pleinement utilisé dans les décisions, tracé, comparé, auditable
 - promotion live non automatique : soumis au verdict post-Shadow
 - jamais moteur autonome
-- jamais bypass des moteurs A/B/C/D, du risk backbone, du portfolio ni des protocoles de promotion
+- jamais bypass des moteurs A/B dans le rollout Light, du risk backbone, du portfolio ni des protocoles de promotion
 - intégration des candidats classés `Build14_enabler` via le protocole d’onboarding officiel
 - Hard State : `CODED` → `SHADOW_ENABLED` → verdict → `SHADOW_VALIDATED` ou `DORMANT`
 

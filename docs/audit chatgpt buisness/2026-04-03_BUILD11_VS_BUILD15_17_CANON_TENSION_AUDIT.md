@@ -1,6 +1,6 @@
 # V5.3 - BUILD-11 VS BUILD-15/16/17 CANON TENSION AUDIT
 ## Date: 2026-04-03
-## Status: ACTIVE
+## Status: RESOLVED_ON_CURRENT_BRANCH
 
 ---
 
@@ -150,7 +150,24 @@ Impact:
 
 ---
 
-# 7. Recommended next step
+# 7. Resolution on the current branch
+
+The explicit governance choice `Option B` was adopted and applied on the
+current branch.
+
+Applied meaning:
+
+- Build-11 now validates `A/B + Build-14` in the active Light Shadow rollout
+- Build-15 keeps ownership of Engine C
+- Build-16 keeps ownership of Engine D
+- Build-17 remains the later Complete rollout stage
+
+This resolves the frozen contradiction for the current branch without claiming
+that Build-15 or Build-16 are implemented.
+
+---
+
+# 8. Recommended next step
 
 My recommendation is:
 

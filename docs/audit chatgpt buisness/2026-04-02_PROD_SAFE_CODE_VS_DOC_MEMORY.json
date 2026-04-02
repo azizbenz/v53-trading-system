@@ -229,6 +229,52 @@
         "This refreshes the focused Build-11 evidence surface around the local runner, runtime evidence recorder, daily orchestrator, and VPS service.",
         "It strengthens the honest-closure story for Build-11 without changing the verdict that native live runtime proof is still pending."
       ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_protocols/test_shadow_day_counter.py -q",
+      "result": "18 passed",
+      "classification": "option_b_shadow_counter_green_surface",
+      "notes": [
+        "The persisted 30-day Shadow report now aligns with the Option B A/B + Build-14 perimeter.",
+        "This closes the stale A/B/C/D expectation in the day-counter-generated report."
+      ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_protocols/test_shadow_runtime.py -q",
+      "result": "14 passed",
+      "classification": "option_b_shadow_runtime_green_surface",
+      "notes": [
+        "Build-11 shadow runtime now validates A/B + Build-14 only on the current branch."
+      ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_protocols/test_micro_live_runtime.py -q",
+      "result": "17 passed",
+      "classification": "option_b_micro_live_gate_green_surface",
+      "notes": [
+        "Build-12 now consumes the Option B Build-11 perimeter without implicit C/D assumptions."
+      ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_protocols/test_live_light_runtime.py -q",
+      "result": "25 passed",
+      "classification": "option_b_live_light_gate_green_surface",
+      "notes": [
+        "Build-13 remains green after the Option B realignment of the upstream Shadow evidence perimeter."
+      ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_regression_alignment.py -q",
+      "result": "53 passed",
+      "classification": "option_b_regression_alignment_green_surface",
+      "notes": [
+        "The targeted regression suite remains aligned after removing the false Build-11 C/D prerequisite."
+      ]
     }
   ],
   "current_status_by_build": {
@@ -322,6 +368,14 @@
       "status": "formalized_as_target_doctrine_pending_canon_migration",
       "blocking_reason": "The matrix is documented, but it still requires explicit governance approval before replacing the active LIGHT/COMPLETE canon and before code-wide migration.",
       "rule_until_decided": "Use the fixed 15-day and 30-day requalification matrix as the target doctrine reference only. Do not silently inject it into the active canon or broad code surfaces before the build-by-build audit and governance checkpoint."
+    },
+    {
+      "decision_id": "GOV-007",
+      "topic": "Build-11 vs Build-15/16 staged alignment",
+      "current_canon": "Build-11 / master / build-plan previously required A/B/C/D active during Shadow integral, while Build-15 and Build-16 defined C and D as later dedicated builds.",
+      "proposed_change": "Apply Option B: Build-11 validates A/B + Build-14 only in the active Light Shadow rollout, while Engine C stays reserved to Build-15 and Engine D stays reserved to Build-16.",
+      "status": "accepted_and_applied_on_current_branch",
+      "rule_until_decided": "Read Build-11 / Build-12 / Build-13 on the current branch as A/B + Build-14 only. Do not pull C/D implementation into Build-11 closure."
     }
   ],
   "targeted_audits": [
@@ -413,6 +467,14 @@
       "record_path": "docs/audit chatgpt buisness/2026-04-03_BUILD11_VS_BUILD15_17_CANON_TENSION_AUDIT.md",
       "conclusion": "The active corpus currently contains a real tension: Build-11 / master / build-plan require A/B/C/D active during Shadow intégral, while Build-15 and Build-16 define C and D as later dedicated builds with Build-14 already validated as a prerequisite. The codebase currently behaves in the more conservative staged way.",
       "action_taken": "Freeze the contradiction explicitly, avoid implementing Engine C/D inside a Build-11 fix wave, and treat the next step as a governance checkpoint rather than a silent code correction."
+    },
+    {
+      "audit_id": "AUDIT-012",
+      "date": "2026-04-03",
+      "scope": "Option B realignment of Build-11/12/13 canon, runtime gates, and focused tests",
+      "record_path": "docs/audit chatgpt buisness/2026-04-03_OPTION_B_BUILD11_13_CANON_REALIGNMENT_AUDIT.md",
+      "conclusion": "The current branch now aligns Build-11/12/13 around A/B + Build-14, keeps C for Build-15 and D for Build-16, and removes the false doctrinal blocker without claiming later builds are implemented.",
+      "action_taken": "Patch canonical docs, realign protocol/runtime surfaces, refresh focused Shadow/Micro-live/Live-Light tests, and keep Build-11 partial only for real runtime-proof reasons."
     }
   ],
   "known_critical_gaps": [
@@ -420,15 +482,15 @@
       "gap_id": "GAP-001",
       "priority": "P0",
       "scope": "Build-11 doctrine vs actual closure criteria",
-      "doc_expectation": "Shadow 30 days as full system truth phase with A/B/C/D and Build-14 SHADOW_ENABLED, then post-Shadow verdict.",
+      "doc_expectation": "Shadow 30 days as full system truth phase with A/B and Build-14 SHADOW_ENABLED, then post-Shadow verdict.",
       "code_or_runtime_reality": "Autonomous Shadow VPS service and live_websocket support exist, and the current branch now persists a durable runtime evidence bundle chain. Final operational proof and full doctrinal closure are still not yet established.",
       "status": "open"
     },
     {
       "gap_id": "GAP-002",
-      "priority": "P0",
+      "priority": "P1",
       "scope": "Moteurs C/D",
-      "doc_expectation": "C and D are SHADOW_ENABLED during the complete Shadow truth phase.",
+      "doc_expectation": "On the current branch, Engine C belongs to Build-15 and Engine D belongs to Build-16, rather than to the active Build-11 Light Shadow perimeter.",
       "code_or_runtime_reality": "engine_c and engine_d now import cleanly through spec_only facades, but the actual Engine C and Engine D trading logic is still not implemented and the module inventory still reflects a planned state.",
       "status": "open"
     },
@@ -486,7 +548,8 @@
       "scope": "Canonical contradiction between Build-11 and Build-15/16/17",
       "doc_expectation": "The build order, Build-11 Shadow doctrine, Build-15 / Build-16 engine onboarding, and Build-17 Complete rollout should tell one coherent story.",
       "code_or_runtime_reality": "Build-11 / master / build-plan still require A/B/C/D active in Shadow intégral, while Build-15 and Build-16 define C and D as later dedicated builds that start only after Build-14 is validated. The codebase currently follows the more conservative staged interpretation with engine_c and engine_d remaining planned spec_only facades.",
-      "status": "open_governance_checkpoint"
+      "status": "closed_on_current_branch",
+      "branch_resolution": "Option B was accepted and applied on the current branch: Build-11 now targets A/B + Build-14, while C and D remain later dedicated builds."
     }
   ],
   "work_batches": [
@@ -536,7 +599,7 @@
     {
       "batch_id": "B4",
       "title": "Decide doc patch vs code patch",
-      "status": "pending",
+      "status": "completed",
       "scope": [
         "Only active canonical docs",
         "Only scoped code surfaces"

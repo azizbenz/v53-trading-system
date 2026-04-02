@@ -115,25 +115,25 @@ La promotion suit un pipeline temporel hard :
 ### Règle 1 — Shadow intégral = phase de vérité système
 
 - Le Shadow 30 jours est la **phase de vérité système** où la solution est testée dans sa forme intégrale observée
-- Pendant ces 30 jours, **tous les composants sont activés à 100%** :
-  - Moteurs A, B, C et D actifs, scorés, classés, arbitrés et observés
+- Pendant ces 30 jours, **tous les composants du rollout Light sont activés à 100%** :
+  - Moteurs A et B actifs, scorés, classés, arbitrés et observés
   - Build-14 (Complete Enablers) activé à 100%, pleinement utilisé dans les décisions Shadow
   - Enrichissements microstructure, régime, covariance robuste, risk contribution, edge diversity actifs
   - Monitoring, DTR, coût, risk, portefeuille, toxicité complets
-- Le Shadow n’est plus une simple validation Light minimale ; il est la **phase où l’on observe la solution intégrale avant de décider quoi promouvoir**
+- Le Shadow n’est plus une simple validation Light minimale ; il est la **phase où l’on observe le rollout Light complet avant de décider quoi promouvoir**
 
 ### Règle 2 — Light Shadow obligatoire 30 jours
 
 - La version **Light** doit trader en mode **SHADOW** pendant un minimum de **30 jours calendaires consécutifs** avant toute activation en live
 - Pendant ces 30 jours : données réelles, pipeline complet, DTR complet, aucun ordre réel envoyé
-- **Build-14, moteurs C/D et tous les enrichissements sont activés à 100% en Shadow** pour observer leur comportement réel
+- **Build-14 et tous les enrichissements du rollout Light sont activés à 100% en Shadow** pour observer leur comportement réel
 - Si un incident interrompt le shadow pendant plus de 24h, le compteur reprend à zéro
 - Aucune activation Micro-live ni Live-Light n’est autorisée avant l’expiration de cette période
-- Les 30 jours doivent produire un rapport shadow exploitable (CE, coûts estimés, edge, drawdown, stale rate, comparaison inter-moteurs A/B/C/D, contribution Build-14)
+- Les 30 jours doivent produire un rapport shadow exploitable (CE, coûts estimés, edge, drawdown, stale rate, comparaison inter-moteurs A/B, contribution Build-14)
 
 ### Règle 3 — Activation Shadow ≠ promotion Live
 
-- L’activation intégrale en Shadow (Build-14 à 100%, C/D actifs) **ne signifie pas promotion automatique vers Live**
+- L’activation intégrale en Shadow (Build-14 à 100%, A/B actifs) **ne signifie pas promotion automatique vers Live**
 - La promotion reste strictement conditionnelle au **verdict post-Shadow**
 - Possibilité de rollback, downgrade ou désactivation sélective à l’issue des 30 jours
 - Chaque composant est jugé individuellement : un moteur peut être validé en Shadow mais non promu en Live
@@ -326,7 +326,7 @@ Ils decrivent deux envelopes d'activation reelle d'une meme architecture
 complete, prod-safe et gouvernee.
 
 `COMPLETE` désigne exclusivement l'enveloppe de rollout élargie.
-Le Shadow du profil `LIGHT` avec A/B/C/D et Build-14 activés à 100% en
+Le Shadow du profil `LIGHT` avec A/B et Build-14 activés à 100% en
 observation est nommé `Shadow intégral`.
 `Shadow intégral` n'est pas le profil `COMPLETE`.
 
@@ -334,10 +334,10 @@ observation est nommé `Shadow intégral`.
 - premier rollout reel prudent et gouverne
 - 6 paires maximum en production reelle
 - architecture complete disponible et documentee
-- moteurs A/B/C/D presents dans la solution de reference
+- moteurs A/B au coeur du rollout Light ; C/D reserves aux Build-15/16
 - A/B attendus au coeur du rollout initial live
-- **C/D et Build-14 activés à 100% pendant le Shadow 30 jours** : scorés, classés, arbitrés, observés et comparés à A/B
-- promotion live de C/D conditionnelle au verdict post-Shadow (non automatique)
+- **Build-14 activé à 100% pendant le Shadow 30 jours** : utilise dans les decisions du rollout Light et compare au coeur A/B
+- C/D restent reserves aux Build-15/16 et ne sont pas promus via Build-11
 - portfolio, risk, execution, UI et logs complets et auditables
 - pas de profil custom
 - pas de RL live
@@ -574,7 +574,7 @@ Invariants :
 - aucun moteur ne doit exister s’il ne produit ni alpha net ni diversification
 
 Profil :
-- LIGHT : A/B coeur attendu en live ; C/D activés à 100% en Shadow, promus seulement si validés
+- LIGHT : A/B coeur attendu en live ; Build-14 actif en Shadow ; C/D reserves aux Build-15/16
 - COMPLETE : A/B/C/D dans une enveloppe de rollout elargie
 
 ---

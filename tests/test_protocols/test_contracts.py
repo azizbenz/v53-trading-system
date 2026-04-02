@@ -512,28 +512,6 @@ def test_shadow_report_artifact_accepts_complete_build11_evidence():
                 marginal_edge=0.0003,
                 observations=30,
             ),
-            ShadowEngineReport(
-                engine_id="engine_c",
-                gross_frequency=6.0,
-                useful_frequency=2.4,
-                estimated_cost_bps=4.3,
-                edge_net=0.0011,
-                economic_pass_rate=0.66,
-                conflict_rate=0.03,
-                marginal_edge=0.0002,
-                observations=30,
-            ),
-            ShadowEngineReport(
-                engine_id="engine_d",
-                gross_frequency=5.0,
-                useful_frequency=2.1,
-                estimated_cost_bps=4.4,
-                edge_net=0.0010,
-                economic_pass_rate=0.65,
-                conflict_rate=0.02,
-                marginal_edge=0.0001,
-                observations=30,
-            ),
         ),
         build14_contribution=(
             ShadowBuild14Contribution(

@@ -55,7 +55,7 @@ def _summary() -> ShadowRunSummary:
         open_hypotheses=1,
         replay_candidate_count=1,
         review_export_ready=False,
-        active_engines=("engine_a", "engine_b", "engine_c", "engine_d"),
+        active_engines=("engine_a", "engine_b"),
         build14_status="warning",
         shadow_days_completed=30,
         shadow_required_days=30,

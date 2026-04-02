@@ -18,7 +18,7 @@ Build-13 a une mission unique :
 
 > **NON NÉGOCIABLE. Aucune dérogation.**
 
-- **HARD : Light a tradé en Shadow intégral 30 jours calendaires consécutifs minimum** (Build-11 validé, avec A/B/C/D et Build-14 activés à 100%)
+- **HARD : Light a tradé en Shadow intégral 30 jours calendaires consécutifs minimum** (Build-11 validé, avec A/B et Build-14 activés à 100%)
 - **HARD : Verdict post-Shadow rendu composant par composant** (chaque moteur/enabler : `SHADOW_VALIDATED` ou `DORMANT`)
 - **HARD : Micro-live stable minimum 7 jours** (Build-12 validé, avec uniquement les composants `SHADOW_VALIDATED`)
 - **HARD : Rapport shadow produit, exploitable et approuvé** (incluant comparaison inter-moteurs et contribution Build-14)
@@ -123,8 +123,9 @@ Les conditions suivantes doivent être satisfaites :
 
 ## Après Build-13
 Si Build-13 est validé, alors seulement :
-- Build-14 : Complete Enablers
-- puis extension gouvernée du rollout via Build-15/16/17
+- Build-15 : Moteur C
+- Build-16 : Moteur D
+- Build-17 : UI Complete + Live-Complete
 
 ## 3.1 Relation avec Build-14, onboarding et Build-9X
 

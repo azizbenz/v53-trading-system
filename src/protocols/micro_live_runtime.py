@@ -144,7 +144,7 @@ def build_micro_live_input_from_shadow(
         )
     if not shadow_summary.inter_engine_comparison_ready:
         raise MicroLiveInputError(
-            "Build-12 Micro-live requires inter-engine comparison evidence from Build-11"
+            "Build-12 Micro-live requires inter-engine A/B comparison evidence from Build-11"
         )
     if not shadow_summary.build14_contribution_ready:
         raise MicroLiveInputError(

@@ -30,7 +30,7 @@ from protocols.enums import (
 from protocols.errors import ShadowInputError
 
 
-_REQUIRED_SHADOW_ENGINES = frozenset({"engine_a", "engine_b", "engine_c", "engine_d"})
+_REQUIRED_SHADOW_ENGINES = frozenset({"engine_a", "engine_b"})
 _REQUIRED_BUILD14_COMPONENTS = frozenset(
     {
         "build14_microstructure",
@@ -494,7 +494,7 @@ def run_shadow_validation(
     if not validation.inter_engine_comparison_ready:
         structurally_blocked = True
         blocking_reasons.append(
-            "Build-11 Shadow requires an inter-engine A/B/C/D comparison in the report"
+            "Build-11 Shadow requires an inter-engine A/B comparison in the report"
         )
     if not validation.build14_contribution_ready:
         structurally_blocked = True
@@ -504,7 +504,7 @@ def run_shadow_validation(
     if missing_engines:
         structurally_blocked = True
         blocking_reasons.append(
-            "Build-11 Shadow requires A/B/C/D active in Shadow: "
+            "Build-11 Shadow requires A/B active in Shadow: "
             + ", ".join(missing_engines)
         )
     if normalized_build14_status == "planned":
@@ -515,7 +515,7 @@ def run_shadow_validation(
     if missing_components:
         structurally_blocked = True
         blocking_reasons.append(
-            "Build-11 Shadow requires component verdicts for all engines and Build-14 enablers: "
+            "Build-11 Shadow requires component verdicts for A/B and all Build-14 enablers: "
             + ", ".join(missing_components)
         )
 

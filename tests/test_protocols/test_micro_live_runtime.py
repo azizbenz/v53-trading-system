@@ -42,8 +42,6 @@ from interface_contracts import PromotionState
 def _shadow_component_assessments(
     *,
     dormant_component_ids: tuple[str, ...] = (
-        "engine_c",
-        "engine_d",
         "build14_microstructure",
         "build14_regime",
         "build14_covariance",
@@ -53,7 +51,7 @@ def _shadow_component_assessments(
 ) -> tuple[ShadowComponentAssessment, ...]:
     dormant = set(dormant_component_ids)
     assessments: list[ShadowComponentAssessment] = []
-    for component_id in ("engine_a", "engine_b", "engine_c", "engine_d"):
+    for component_id in ("engine_a", "engine_b"):
         assessments.append(
             ShadowComponentAssessment(
                 component_id=component_id,
@@ -247,7 +245,7 @@ def _shadow_summary(
         open_hypotheses=0,
         replay_candidate_count=0,
         review_export_ready=True,
-        active_engines=("engine_a", "engine_b", "engine_c", "engine_d"),
+        active_engines=("engine_a", "engine_b"),
         build14_status="warning",
         shadow_days_completed=shadow_days_completed,
         shadow_required_days=30,
@@ -287,8 +285,6 @@ def test_build_micro_live_input_from_shadow_filters_to_shadow_validated_light_en
             component_assessments=_shadow_component_assessments(
                 dormant_component_ids=(
                     "engine_b",
-                    "engine_c",
-                    "engine_d",
                     "build14_microstructure",
                     "build14_regime",
                     "build14_covariance",
@@ -379,8 +375,6 @@ def test_build_micro_live_input_from_shadow_rejects_requesting_dormant_or_unvali
                 component_assessments=_shadow_component_assessments(
                     dormant_component_ids=(
                         "engine_b",
-                        "engine_c",
-                        "engine_d",
                         "build14_microstructure",
                         "build14_regime",
                         "build14_covariance",

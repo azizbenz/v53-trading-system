@@ -113,7 +113,7 @@ def _summary() -> ShadowRunSummary:
             review_state=ReviewState.PENDING,
             manual_review_required=False,
         ),
-        active_engines=("engine_a", "engine_b", "engine_c", "engine_d"),
+        active_engines=("engine_a", "engine_b"),
         build14_status="healthy",
         shadow_days_completed=30,
         shadow_required_days=30,

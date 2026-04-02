@@ -37,7 +37,7 @@ def _component_assessments(
     dormant_component_ids: tuple[str, ...] = (),
 ) -> tuple[ShadowComponentAssessment, ...]:
     dormant = set(dormant_component_ids)
-    engine_ids = ("engine_a", "engine_b", "engine_c", "engine_d")
+    engine_ids = ("engine_a", "engine_b")
     build14_ids = (
         "build14_microstructure",
         "build14_regime",
@@ -95,7 +95,7 @@ def _payload(
     artifact_id: str = "artifact-1",
     lineage_version: str = "a.v1.0.r1",
     rejection_reasons: tuple[str, ...] = (),
-    active_engines: tuple[str, ...] = ("engine_a", "engine_b", "engine_c", "engine_d"),
+    active_engines: tuple[str, ...] = ("engine_a", "engine_b"),
     build14_status: str = "healthy",
 ) -> TechnicalDashboardPayload:
     return TechnicalDashboardPayload(
@@ -258,10 +258,8 @@ def test_build_shadow_input_from_payloads_maps_full_system_shadow_state():
     assert shadow_input.validation_set.active_engines == (
         "engine_a",
         "engine_b",
-        "engine_c",
-        "engine_d",
     )
-    assert len(shadow_input.validation_set.component_assessments) == 9
+    assert len(shadow_input.validation_set.component_assessments) == 7
 
 
 def test_build_shadow_input_from_payloads_rejects_complete_baseline():
@@ -356,7 +354,7 @@ def test_run_shadow_validation_accepts_candidate_with_full_system_shadow_evidenc
     assert summary.decision.verdict == ShadowVerdict.ACCEPTED
     assert summary.shadow_days_completed == 30
     assert summary.runtime_evidence_ready is True
-    assert summary.shadow_validated_component_count == 9
+    assert summary.shadow_validated_component_count == 7
     assert summary.dormant_component_count == 0
     assert summary.blocking_comparison_count == 0
     assert summary.divergent_comparison_count >= 1
@@ -390,13 +388,13 @@ def test_run_shadow_validation_accepts_dormant_components_once_verdicts_are_rend
             baseline_payload,
             candidate_payload,
             component_assessments=_component_assessments(
-                dormant_component_ids=("engine_d", "build14_edge_diversity")
+        dormant_component_ids=("engine_b", "build14_edge_diversity")
             ),
         )
     )
 
     assert summary.decision.verdict == ShadowVerdict.ACCEPTED
-    assert summary.shadow_validated_component_count == 7
+    assert summary.shadow_validated_component_count == 5
     assert summary.dormant_component_count == 2
 
 
@@ -636,7 +634,7 @@ def test_run_shadow_validation_blocks_if_report_is_missing_inter_engine_or_build
 
     assert summary.decision.verdict == ShadowVerdict.BLOCKED
     assert "Build-11 Shadow requires a complete shadow report before the verdict gate" in summary.decision.blocking_reasons
-    assert "Build-11 Shadow requires an inter-engine A/B/C/D comparison in the report" in summary.decision.blocking_reasons
+    assert "Build-11 Shadow requires an inter-engine A/B comparison in the report" in summary.decision.blocking_reasons
     assert "Build-11 Shadow requires Build-14 contribution evidence in the report" in summary.decision.blocking_reasons
 
 
@@ -661,13 +659,13 @@ def test_run_shadow_validation_blocks_missing_engine_activation():
         active_alert_count=2,
         queue_backlog=21,
         review_export_ready=True,
-        active_engines=("engine_a", "engine_b"),
+        active_engines=("engine_a",),
     )
 
     summary = run_shadow_validation(_build_shadow_input(baseline_payload, candidate_payload))
 
     assert summary.decision.verdict == ShadowVerdict.BLOCKED
-    assert "Build-11 Shadow requires A/B/C/D active in Shadow: engine_c, engine_d" in summary.decision.blocking_reasons
+    assert "Build-11 Shadow requires A/B active in Shadow: engine_b" in summary.decision.blocking_reasons
 
 
 def test_run_shadow_validation_blocks_missing_component_verdicts():
@@ -704,7 +702,7 @@ def test_run_shadow_validation_blocks_missing_component_verdicts():
     assert summary.decision.verdict == ShadowVerdict.BLOCKED
     assert any(
         reason.startswith(
-            "Build-11 Shadow requires component verdicts for all engines and Build-14 enablers"
+            "Build-11 Shadow requires component verdicts for A/B and all Build-14 enablers"
         )
         for reason in summary.decision.blocking_reasons
     )
@@ -739,7 +737,7 @@ def test_run_shadow_validation_blocks_contradictory_import_state_even_if_contrac
         open_hypotheses=0,
         replay_candidate_count=0,
         review_export_ready=False,
-        active_engines=("engine_a", "engine_b", "engine_c", "engine_d"),
+        active_engines=("engine_a", "engine_b"),
         build14_status="healthy",
         shadow_days_completed=30,
         shadow_required_days=30,

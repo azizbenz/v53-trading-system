@@ -68,7 +68,7 @@ class ShadowCounterState(BaseModel):
 
 _MAX_GAP_SECONDS = 24 * 3600  # 24h — HARD STATEMENT
 _STATE_FILENAME = "shadow_counter_{profile}.json"
-_REQUIRED_ENGINE_IDS = ("engine_a", "engine_b", "engine_c", "engine_d")
+_REQUIRED_ENGINE_IDS = ("engine_a", "engine_b")
 _REQUIRED_BUILD14_IDS = (
     "build14_microstructure",
     "build14_regime",
@@ -532,7 +532,7 @@ class ShadowDayCounter:
             ),
             ShadowReportSection(
                 section_id="engine_comparison_report",
-                title="rapport A vs B vs C vs D",
+                title="rapport A vs B",
                 ready=inter_engine_comparison_ready and build14_contribution_ready,
                 summary=(
                     f"engines={len(inter_engine_comparison)}/{len(_REQUIRED_ENGINE_IDS)} / "

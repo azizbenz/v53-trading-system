@@ -34,9 +34,7 @@ _ACCEPTED_IMPORT_STATUSES = frozenset({"accepted"})
 _ACCEPTED_ONBOARDING_REVIEW_STATES = frozenset(
     {ReviewState.PENDING, ReviewState.APPROVED}
 )
-_REQUIRED_SHADOW_ENGINE_IDS = frozenset(
-    {"engine_a", "engine_b", "engine_c", "engine_d"}
-)
+_REQUIRED_SHADOW_ENGINE_IDS = frozenset({"engine_a", "engine_b"})
 _REQUIRED_SHADOW_BUILD14_COMPONENT_IDS = frozenset(
     {
         "build14_microstructure",
@@ -458,7 +456,7 @@ class ShadowReportArtifact(BaseModel, frozen=True):
 
         if self.inter_engine_comparison_ready and set(engine_ids) != _REQUIRED_SHADOW_ENGINE_IDS:
             raise ValueError(
-                "Build-11 shadow report inter_engine_comparison_ready=True requires A/B/C/D evidence"
+                "Build-11 shadow report inter_engine_comparison_ready=True requires A/B evidence"
             )
         if (
             self.build14_contribution_ready

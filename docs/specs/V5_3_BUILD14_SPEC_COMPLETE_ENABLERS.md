@@ -17,7 +17,7 @@ Build-14 a une mission unique :
 > LIGHT et sans confondre sophistication de recherche et valeur de production.
 
 `COMPLETE` désigne ici exclusivement l'enveloppe de rollout élargie.
-Le Shadow du profil `LIGHT` avec Build-14, C/D et les enrichissements activés
+Le Shadow du profil `LIGHT` avec Build-14, A/B et les enrichissements activés
 à 100% en observation est appelé `Shadow intégral`.
 
 Les composants couverts ici sont :

@@ -71,22 +71,22 @@ Build-11 reste strictement dans la V5.3 unifiée :
 
 - `LIGHT` et `COMPLETE` restent les deux seuls profils de rollout
 - dans ce document, `Shadow intégral` désigne le Shadow du profil `LIGHT`
-  où A/B/C/D et Build-14 sont activés à 100% en observation
+  où A/B et Build-14 sont activés à 100% en observation
 - `Shadow intégral` n'est pas le profil `COMPLETE`
 
 Le Shadow existe pour tester **la solution intégrale observée** simultanément :
 
 - la qualité de la chaîne data
 - la cohérence scoring / hard-soft-rank
-- l’arbitrage portefeuille **A/B/C/D** (tous moteurs actifs)
+- l’arbitrage portefeuille **A/B** (coeur runtime Light)
 - les coûts attendus par moteur
 - la discipline du risk backbone
 - la qualité des DTR / CRA / break-even / edge tracker
 - la supervision UI / monitoring
 - **les enrichissements Build-14** (microstructure, régime, covariance, risk contribution, edge diversity) activés à 100%
-- **les interactions inter-moteurs** A/B/C/D : conflits, duplication, concentration, complémentarité
-- **la robustesse portefeuille** avec 4 moteurs et enrichissements complets
-- **le coût réel simulé prudent** avec activation intégrale
+- **les interactions inter-moteurs** A/B : conflits, duplication, concentration, complémentarité
+- **la robustesse portefeuille** avec le coeur A/B et les enrichissements Build-14
+- **le coût réel simulé prudent** avec activation Light + Build-14
 
 Le Shadow n’est plus une simple validation Light minimale. Il est la **phase de vérité système** où l’on observe la solution intégrale avant de décider quoi promouvoir.
 
@@ -153,13 +153,13 @@ Le système prend-il des décisions cohérentes et reproductibles ?
 Le système produit-il une fréquence utile plausible avec des coûts prudents ?
 
 ## 4.3 Vérité portefeuille
-Le système A/B/C/D + portefeuille complet + Build-14 arbitre-t-il proprement les opportunités ?
+Le système A/B + portefeuille Light + Build-14 arbitre-t-il proprement les opportunités ?
 
 ## 4.4 Vérité opérationnelle
-Le système reste-t-il observable, stable, non saturé et explicable en fonctionnement continu avec 4 moteurs et enrichissements complets ?
+Le système reste-t-il observable, stable, non saturé et explicable en fonctionnement continu avec le coeur Light A/B et les enrichissements Build-14 ?
 
 ## 4.5 Vérité inter-moteurs
-Les moteurs C/D apportent-ils une contribution réelle distincte de A/B ? Y a-t-il duplication, concentration excessive ou inflation de coût ?
+Les moteurs A/B apportent-ils une contribution réellement complémentaire sans duplication excessive ni inflation de coût ?
 
 ## 4.6 Vérité Build-14
 Les enrichissements Build-14 améliorent-ils réellement la lecture du risque, de la corrélation, de la microstructure et de la diversité d'edge ?
@@ -187,7 +187,7 @@ Build-11 ne peut pas commencer si une des conditions suivantes n’est pas satis
 - état canonique : `profil=LIGHT`, `runtime_mode=SHADOW`
 - nom de phase lisible : `Shadow intégral`
 - 6 paires maximum
-- **Shadow intégral actif** : A/B/C/D + Build-14
+- **Shadow intégral actif** : A/B + Build-14
 
 ## 6.2 Paires autorisées
 - BTC/USDT
@@ -200,10 +200,11 @@ Build-11 ne peut pas commencer si une des conditions suivantes n’est pas satis
 ## 6.3 Moteurs activés en Shadow
 - **A — activé à 100%** (`SHADOW_ENABLED`)
 - **B — activé à 100%** (`SHADOW_ENABLED`)
-- **C — activé à 100%** (`SHADOW_ENABLED`) : scoré, classé, arbitré, observé, comparé à A/B
-- **D — activé à 100%** (`SHADOW_ENABLED`) : scoré, classé, arbitré, observé, comparé à A/B/C
+- **C — hors scope Build-11** : réservé à Build-15
+- **D — hors scope Build-11** : réservé à Build-16
 
-L'activation de C/D en Shadow est un **essai structuré**. Leur promotion live reste conditionnelle au verdict post-Shadow.
+Build-11 n'active pas C/D dans le runtime Shadow du rollout Light. Leur
+introduction reste gouvernée par leurs builds dédiés.
 
 ## 6.4 Composants obligatoirement actifs
 - data backbone
@@ -211,7 +212,7 @@ L'activation de C/D en Shadow est un **essai structuré**. Leur promotion live r
 - execution backbone en mode shadow
 - risk backbone
 - scoring backbone
-- portfolio complet (arbitrage A/B/C/D)
+- portfolio Light (arbitrage A/B, enrichi par Build-14)
 - meta complet (DTR, CRA, edge tracker)
 - monitoring complet
 - UI Light verrouillée
