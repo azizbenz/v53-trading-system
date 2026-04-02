@@ -44,7 +44,8 @@ Short reading:
   branch across monitoring, UI, launcher/demo payloads, and projection
   contracts
 - but Build-11 is still not honestly closed:
-  - `engine_c` and `engine_d` still fail at package entry
+  - `engine_c` and `engine_d` now import cleanly, but they remain `spec_only`
+    facades without actual engine logic
   - real runtime proof for the Shadow VPS / `live_websocket` path is still not
     closed in this environment
 - Build-12 and Build-13 therefore remain blocked upstream
@@ -89,6 +90,10 @@ Confirmed surfaces:
 
 ## 2.3 Tests executed
 
+- `rtk pytest tests/test_manifest_registry/test_runtime_surface.py tests/test_manifest_registry/test_inventory.py tests/test_manifest_registry/test_profiles.py -q`
+  - result: `80 passed`
+- `rtk pytest tests/test_manifest_registry tests/test_smoke_bootstrap_recovery -q`
+  - result: `207 passed`
 - `rtk pytest tests/test_protocols tests/test_complete_enablers -q`
   - result: `162 passed`
 - `rtk pytest tests/test_complete_enablers tests/test_protocols tests/test_monitoring tests/test_ui -q`
@@ -99,9 +104,13 @@ Confirmed surfaces:
 ## 2.4 Critical code traces cross-checked
 
 - `src/engines/engine_c/__init__.py`
-  - still raises `ImportError`
+  - now exposes an importable `spec_only` package surface
+- `src/engine_c/__init__.py`
+  - now exposes the canonical top-level `engine_c` facade
 - `src/engines/engine_d/__init__.py`
-  - still raises `ImportError`
+  - now exposes an importable `spec_only` package surface
+- `src/engine_d/__init__.py`
+  - now exposes the canonical top-level `engine_d` facade
 - `src/protocols/contracts.py`
   - still encodes:
     - `shadow_required_days=30`
@@ -143,8 +152,8 @@ Critical reading:
 
 - the green tests mainly prove contract and gate coherence
 - they do not by themselves prove real production closure of Build-11
-- there is still a gap between the doctrinal expectation, actual operability,
-  and honest runtime proof
+- there is still a gap between the doctrinal expectation, actual engine
+  implementation, and honest runtime proof
 
 Decision:
 
@@ -228,7 +237,8 @@ Why:
   are also required
 - the protocol tests are green
 - but complete Shadow system closure is still not demonstrated
-- `engine_c` and `engine_d` remain non-operable at package entry
+- `engine_c` and `engine_d` no longer fail at package entry
+- but they still remain `spec_only` facades rather than implemented engines
 - the real Shadow VPS / `live_websocket` proof remains incomplete
 
 ## 4.2 Build-12 - Micro-live Light
@@ -282,7 +292,7 @@ The Build-11 to Build-14 picture is now quite clear:
   encoded
 - the main weakness is not hidden permissiveness in the gates
 - the main weakness is honest closure of the full chain:
-  - full activation really operable
+  - full activation really implemented and operable
   - enough real runtime proof
 
 In other words:
@@ -305,9 +315,9 @@ and Build-14 exposed-state lots are corrected on the current branch.
 
 Decide the honest status of `engine_c` and `engine_d`:
 
-- either they must become operable in the canonical Build-11 frame
+- either they must become implemented engines in the canonical Build-11 frame
 - or their doctrinal story must be rewritten to avoid a false Shadow-closure
-  narrative
+  narrative built on `spec_only` facades
 
 ## Action 3
 

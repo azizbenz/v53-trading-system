@@ -189,6 +189,25 @@
         "This covers the Build-14 package plus the protocol, monitoring, and UI surfaces after the exposed-state normalization wave.",
         "It supports declaring Build-14 aligned on the current branch while keeping Build-11, Build-12, and Build-13 blocked upstream."
       ]
+    },
+    {
+      "date": "2026-04-02",
+      "command": "rtk pytest tests/test_manifest_registry/test_runtime_surface.py tests/test_manifest_registry/test_inventory.py tests/test_manifest_registry/test_profiles.py -q",
+      "result": "80 passed",
+      "classification": "engine_cd_canonical_facade_surface_green",
+      "notes": [
+        "engine_c and engine_d now expose importable canonical facades instead of failing immediately at package entry.",
+        "These facades remain spec_only and do not by themselves prove Build-15 or Build-16 implementation."
+      ]
+    },
+    {
+      "date": "2026-04-02",
+      "command": "rtk pytest tests/test_manifest_registry tests/test_smoke_bootstrap_recovery -q",
+      "result": "207 passed",
+      "classification": "build1_bootstrap_and_manifest_green_after_engine_cd_facade_repair",
+      "notes": [
+        "The canonical manifest and bootstrap surfaces remain green after making engine_c and engine_d importable spec_only facades."
+      ]
     }
   ],
   "current_status_by_build": {
@@ -381,7 +400,7 @@
       "priority": "P0",
       "scope": "Moteurs C/D",
       "doc_expectation": "C and D are SHADOW_ENABLED during the complete Shadow truth phase.",
-      "code_or_runtime_reality": "engine_c and engine_d package entrypoints still raise ImportError and some module inventory statuses remain planned.",
+      "code_or_runtime_reality": "engine_c and engine_d now import cleanly through spec_only facades, but the actual Engine C and Engine D trading logic is still not implemented and the module inventory still reflects a planned state.",
       "status": "open"
     },
     {
