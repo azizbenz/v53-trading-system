@@ -747,5 +747,10 @@
   "next_recommended_action": {
     "step": "Pause Build-11 code expansion at the new governance checkpoint: decide whether the active canon keeps C/D inside Build-11 Shadow intégral or realigns them to Build-15 / Build-16. Until that choice is made, avoid implementing Engine C/D in a Build-11 wave and keep any new work limited to neutral evidence/runtime surfaces. Keep Build-4 tmp-path verification as a separate environment task.",
     "reason": "The branch now has stronger Build-11 runtime-evidence plumbing, but the next remaining blocker is no longer mainly technical. It is the newly frozen canonical contradiction between Build-11 and Build-15/16/17. Coding through that contradiction would create a high risk of double work and a false prod-safe closure."
+  },
+  "branch_overrides": {
+    "option_b_realignment_commit": "99cf170",
+    "effective_next_action": "Continue the build-by-build audit/correction pass from the new Option B baseline. Keep Build-11 focused on honest runtime proof and evidence closure, keep Build-12 / Build-13 blocked until Build-11 is truly closed, and keep Build-4 tmp-path verification as a separate environment task.",
+    "effective_reason": "The doctrinal contradiction between Build-11 and Build-15/16/17 is now resolved on the current branch. The next remaining blockers are operational proof and honest build closure, not canon ambiguity."
   }
 }
