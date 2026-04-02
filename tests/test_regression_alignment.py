@@ -697,7 +697,7 @@ from protocols.shadow_runtime import check_shadow_30j_gate
 from protocols.shadow_day_counter import ShadowDayCounter, ShadowProfile
 
 
-def _complete_shadow_metrics(day_index: int) -> dict[str, float]:
+def _complete_shadow_metrics(day_index: int) -> dict[str, float | str]:
     metrics = {
         "dtr_coverage": 1.0,
         "ce_net": 0.0012 + day_index * 0.000001,
@@ -708,10 +708,27 @@ def _complete_shadow_metrics(day_index: int) -> dict[str, float]:
         "economic_pass_rate": 0.67,
         "pair_health_ratio": 0.98,
         "backlog_avg": 2.0,
+        "capital_simulated_usdt": 10000.0,
+        "gross_exposure_shadow_pct": 18.0,
+        "loss_budget_shadow_pct": 4.0,
+        "capital_free_usdt": 8200.0,
+        "beta_btc_shadow": 0.31,
+        "dominant_cluster": "cluster_btc_beta",
+        "pnl_shadow": 12.0 + day_index * 0.1,
+        "dtr_loss_rate": 0.0,
+        "log_loss_rate": 0.0,
+        "event_latency_ms": 95.0,
+        "hard_block_rate": 0.03,
+        "phantom_trade_count": 0.0,
         "dtr_complete": 1.0,
         "decisions_reproducible": 1.0,
         "infra_stable": 1.0,
         "costs_plausible": 1.0,
+        "break_even_visible": 1.0,
+        "critical_alerts_visible": 1.0,
+        "operator_actions_logged": 1.0,
+        "ui_locked": 1.0,
+        "go_no_go_rendered": 1.0,
     }
     for engine_id, gross_frequency in (
         ("engine_a", 8.0),
@@ -739,7 +756,7 @@ def _complete_shadow_metrics(day_index: int) -> dict[str, float]:
 
 
 class TestShadow30jGate:
-    """HARD STATEMENT: check_shadow_30j_gate enforced."""
+    """HARD STATEMENT: check_shadow_30j_gate requires 30j plus a complete report."""
 
     def test_gate_fails_with_no_history(self, repo_tmp_path):
         passed, report = check_shadow_30j_gate(repo_tmp_path, profile="light")
@@ -759,6 +776,21 @@ class TestShadow30jGate:
         passed, report = check_shadow_30j_gate(repo_tmp_path, profile="light")
         assert passed is True
         assert report["is_complete"] is True
+        assert report["shadow_report_ready"] is True
+
+    def test_gate_fails_with_30_days_but_incomplete_report(self, repo_tmp_path):
+        c = ShadowDayCounter(state_dir=repo_tmp_path, profile=ShadowProfile.LIGHT)
+        base = 1700000000.0
+        for i in range(30):
+            c.record_shadow_day(
+                passed_all_gates=True,
+                metrics_summary={"dtr_coverage": 1.0},
+                now=base + i * 80000,
+            )
+        passed, report = check_shadow_30j_gate(repo_tmp_path, profile="light")
+        assert passed is False
+        assert report["is_complete"] is True
+        assert report["shadow_report_ready"] is False
 
 
 # ─────────────────────────────────────────────────────────
@@ -769,7 +801,7 @@ from protocols.live_light_runtime import run_live_light_gate
 
 
 class TestLiveLightShadowPrerequisite:
-    """HARD STATEMENT: live_light_runtime blocks if 30j not met."""
+    """HARD STATEMENT: live_light_runtime requires 30j plus report-ready Shadow."""
 
     def _make_minimal_input(self):
         """Build a minimal LiveLightInput that would pass all gates EXCEPT shadow."""
@@ -821,8 +853,8 @@ class TestLiveLightShadowPrerequisite:
         assert "HARD STATEMENT" in reasons
         assert "30 consecutive days" in reasons
 
-    def test_passes_when_shadow_30j_met(self, repo_tmp_path):
-        # Fill 30 days of shadow
+    def test_passes_when_shadow_30j_and_report_ready_met(self, repo_tmp_path):
+        # Fill 30 days of report-ready shadow
         c = ShadowDayCounter(state_dir=repo_tmp_path, profile=ShadowProfile.LIGHT)
         base = 1700000000.0
         for i in range(30):
@@ -834,7 +866,7 @@ class TestLiveLightShadowPrerequisite:
 
         live_input = self._make_minimal_input()
         result = run_live_light_gate(live_input, shadow_state_dir=repo_tmp_path)
-        # Should not have HARD STATEMENT blocker
+        assert result.decision.allowed_to_execute_small is True
         reasons = " ".join(result.decision.blocking_reasons)
         assert "HARD STATEMENT" not in reasons
 
