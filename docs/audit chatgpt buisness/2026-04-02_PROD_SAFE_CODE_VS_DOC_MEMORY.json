@@ -417,8 +417,8 @@
       "date": "2026-04-03",
       "scope": "Build-11 -> Build-14 critical audit",
       "record_path": "docs/audit chatgpt buisness/2026-04-02_BUILD11_TO_BUILD14_AUDIT.md",
-      "conclusion": "Build-11 remains still partial and Build-12 / Build-13 remain not ready. Build-14 is aligned on the current branch, and the Build-11 Shadow VPS chain now persists durable runtime evidence bundles across the daily runner and long-running service.",
-      "action_taken": "Keep downstream promotions blocked, count the runtime-evidence bundle chain as a meaningful closure improvement, and keep the next correction focus on honest Build-11 closure plus native live runtime proof."
+      "conclusion": "Build-11 remains still partial and Build-12 / Build-13 remain not ready. Build-14 is aligned on the current branch, and the local Build-11 replay-to-Shadow/VPS chain is now repaired and green again on the Option-B A/B + Build-14 perimeter.",
+      "action_taken": "Keep downstream promotions blocked, count the local chain repair and durable runtime-evidence bundle chain as closure improvements, and keep the next correction focus on honest Build-11 runtime proof plus native live runtime proof."
     },
     {
       "audit_id": "AUDIT-006",
@@ -475,6 +475,14 @@
       "record_path": "docs/audit chatgpt buisness/2026-04-03_OPTION_B_BUILD11_13_CANON_REALIGNMENT_AUDIT.md",
       "conclusion": "The current branch now aligns Build-11/12/13 around A/B + Build-14, keeps C for Build-15 and D for Build-16, and removes the false doctrinal blocker without claiming later builds are implemented.",
       "action_taken": "Patch canonical docs, realign protocol/runtime surfaces, refresh focused Shadow/Micro-live/Live-Light tests, and keep Build-11 partial only for real runtime-proof reasons."
+    },
+    {
+      "audit_id": "AUDIT-013",
+      "date": "2026-04-03",
+      "scope": "Build-11 Option B local Shadow chain repair",
+      "record_path": "docs/audit chatgpt buisness/2026-04-03_BUILD11_OPTION_B_LOCAL_SHADOW_CHAIN_FIX_AUDIT.md",
+      "conclusion": "The post-Option-B local regression in scripts/run_local_replay_shadow.py is repaired. The local replay runner, daily orchestrator, Shadow VPS launcher, and focused Build-11 local suites are green again on the A/B + Build-14 perimeter.",
+      "action_taken": "Keep Build-11 partial only for real runtime-proof reasons, not for a broken local A/B chain."
     }
   ],
   "known_critical_gaps": [
@@ -745,12 +753,12 @@
     }
   },
   "next_recommended_action": {
-    "step": "Pause Build-11 code expansion at the new governance checkpoint: decide whether the active canon keeps C/D inside Build-11 Shadow intégral or realigns them to Build-15 / Build-16. Until that choice is made, avoid implementing Engine C/D in a Build-11 wave and keep any new work limited to neutral evidence/runtime surfaces. Keep Build-4 tmp-path verification as a separate environment task.",
-    "reason": "The branch now has stronger Build-11 runtime-evidence plumbing, but the next remaining blocker is no longer mainly technical. It is the newly frozen canonical contradiction between Build-11 and Build-15/16/17. Coding through that contradiction would create a high risk of double work and a false prod-safe closure."
+    "step": "Continue the build-by-build audit/correction pass from the Option-B baseline. Keep Build-11 focused on honest runtime proof and target-environment evidence, keep Build-12 / Build-13 blocked until Build-11 is truly closed, and keep Build-4 tmp-path verification as a separate environment task.",
+    "reason": "The doctrinal contradiction between Build-11 and Build-15/16/17 is resolved on the current branch, and the local Build-11 replay-to-Shadow chain is repaired. The next blocker is now real runtime proof rather than canon ambiguity or a broken local chain."
   },
   "branch_overrides": {
     "option_b_realignment_commit": "99cf170",
-    "effective_next_action": "Continue the build-by-build audit/correction pass from the new Option B baseline. Keep Build-11 focused on honest runtime proof and evidence closure, keep Build-12 / Build-13 blocked until Build-11 is truly closed, and keep Build-4 tmp-path verification as a separate environment task.",
-    "effective_reason": "The doctrinal contradiction between Build-11 and Build-15/16/17 is now resolved on the current branch. The next remaining blockers are operational proof and honest build closure, not canon ambiguity."
+    "effective_next_action": "Continue the build-by-build audit/correction pass from the repaired Option B baseline. Keep Build-11 focused on honest runtime proof and target-environment evidence, keep Build-12 / Build-13 blocked until Build-11 is truly closed, and keep Build-4 tmp-path verification as a separate environment task.",
+    "effective_reason": "The doctrinal contradiction between Build-11 and Build-15/16/17 is resolved on the current branch, and the local Build-11 replay-to-Shadow chain is repaired. The remaining blockers are now honest runtime proof and build closure, not canon ambiguity or a broken local chain."
   }
 }

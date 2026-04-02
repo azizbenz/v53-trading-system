@@ -15,14 +15,17 @@ This document records the critical audit of the real-promotion zone:
 
 Method:
 
-- reread the active Build-11 to Build-14 canon
+- reread the active Build-11 to Build-14 canon on the current branch
 - map the relevant code and runtime-gate surfaces
-- execute the most probative test suites
+- execute the most probative local test suites
 - separate strictly:
   - `docs`
   - `code`
   - `tests`
   - `real runtime proof`
+
+This refresh supersedes the older pre-Option-B reading that treated `engine_c`
+and `engine_d` as mandatory Build-11 Shadow components.
 
 ---
 
@@ -37,21 +40,22 @@ Current lot verdict:
 
 Short reading:
 
-- the promotion gates remain coded in a strict way consistent with the main canon
-- the current protocol and Build-14 package test surfaces are green on the
-  current commit
-- the Build-14 exposed-state normalization wave is now applied on the current
-  branch across monitoring, UI, launcher/demo payloads, and projection
-  contracts
-- the Build-11 Shadow VPS chain now persists local replay evidence refs, shadow
-  runtime evidence refs, and a durable per-session runtime evidence bundle from
-  the daily runner up to the long-running VPS service
-- but Build-11 is still not honestly closed:
-  - `engine_c` and `engine_d` now import cleanly, but they remain `spec_only`
-    facades without actual engine logic
-  - real exchange-network proof for the native `live_websocket` path is still
-    not closed in this environment
-- Build-12 and Build-13 therefore remain blocked upstream
+- the strict promotion gates remain coded coherently on the current branch
+- `Option B` is now the active branch reading:
+  - Build-11 validates `A/B + Build-14`
+  - Build-12 and Build-13 stay inside the same Light perimeter
+  - Engine C stays reserved to Build-15
+  - Engine D stays reserved to Build-16
+- the local `LOCAL_REPLAY -> SHADOW -> daily orchestrator -> VPS service`
+  chain is now green again after repairing the post-Option-B drift in
+  `scripts/run_local_replay_shadow.py`
+- Build-14 exposed-state normalization remains aligned on the current branch
+- Build-11 is still not honestly closed, but now for the right reasons:
+  - no real 30-day production Shadow proof is recorded in this lot
+  - the native `live_websocket` path is tested locally but not yet proven on
+    the real target environment
+- Build-12 and Build-13 remain blocked upstream for honest readiness reasons,
+  not because their gates are missing
 
 ---
 
@@ -68,14 +72,15 @@ Documents reread or cross-checked:
 - `docs/specs/V5_3_BUILD13_SPEC_LIVE_LIGHT.md`
 - `docs/specs/V5_3_BUILD14_SPEC_COMPLETE_ENABLERS.md`
 - `docs/specs/V5_3_TABLE_MERGE_GATES_TESTS_GO_NO_GO.md`
+- `docs/audit chatgpt buisness/2026-04-03_OPTION_B_BUILD11_13_CANON_REALIGNMENT_AUDIT.md`
 
-Canonical points confirmed:
+Canonical points confirmed on the current branch:
 
-- Shadow Light requires `30 consecutive calendar days minimum`
-- Shadow is a full system truth phase with A/B/C/D and Build-14 active in
-  observation
+- `Shadow integral` now means `profile=LIGHT`, `runtime_mode=SHADOW`,
+  `engines=A/B`, `Build-14 active in observation`
+- Build-11 still requires `30 consecutive calendar days minimum`
 - an exploitable and approved Shadow report is required before promotion
-- post-Shadow component verdicts are required before Micro-live
+- Build-12 remains blocked until valid post-Shadow evidence exists
 - canonical Micro-live minimum remains `7 days`
 - Live-Light cannot open until both Shadow and Micro-live are truly validated
 
@@ -85,11 +90,13 @@ Confirmed surfaces:
 
 - `src/protocols`
 - `src/complete_enablers`
-- `src/engines/engine_c`
-- `src/engines/engine_d`
 - `src/monitoring`
 - `src/ui`
+- `scripts/run_local_replay_shadow.py`
+- `scripts/run_shadow_daily_orchestrator.py`
 - `scripts/run_shadow_vps_service.py`
+- `src/protocols/shadow_vps_service.py`
+- `src/protocols/shadow_live_websocket.py`
 
 ## 2.3 Tests executed
 
@@ -107,74 +114,90 @@ Confirmed surfaces:
   - result: `38 passed`
 - `rtk pytest tests/test_protocols/test_local_replay_shadow_runner.py tests/test_protocols/test_shadow_runtime.py tests/test_protocols/test_shadow_runtime_evidence.py tests/test_protocols/test_shadow_daily_orchestrator.py tests/test_protocols/test_shadow_daily_orchestrator_launcher.py tests/test_protocols/test_shadow_vps_service_launcher.py -q`
   - result: `31 passed`
+- `rtk pytest tests/test_protocols/test_local_replay_shadow_runner.py tests/test_protocols/test_shadow_runtime.py tests/test_protocols/test_shadow_runtime_evidence.py tests/test_protocols/test_shadow_report_builder.py tests/test_protocols/test_shadow_dashboard.py tests/test_protocols/test_shadow_daily_orchestrator.py tests/test_protocols/test_shadow_daily_orchestrator_launcher.py tests/test_protocols/test_shadow_vps_service_launcher.py tests/test_protocols/test_shadow_live_websocket.py -q`
+  - result: `36 passed`
 
 ## 2.4 Critical code traces cross-checked
 
-- `src/engines/engine_c/__init__.py`
-  - now exposes an importable `spec_only` package surface
-- `src/engine_c/__init__.py`
-  - now exposes the canonical top-level `engine_c` facade
-- `src/engines/engine_d/__init__.py`
-  - now exposes an importable `spec_only` package surface
-- `src/engine_d/__init__.py`
-  - now exposes the canonical top-level `engine_d` facade
 - `src/protocols/contracts.py`
-  - still encodes:
+  - encodes the current Option-B Build-11 perimeter:
+    - required Shadow engines = `engine_a`, `engine_b`
+    - required Build-14 enablers stay explicit
     - `shadow_required_days=30`
     - `shadow_report_ready`
     - `inter_engine_comparison_ready`
     - `build14_contribution_ready`
     - `micro_live_required_days=7`
 - `src/protocols/shadow_runtime.py`
-  - still blocks promotion if `30 days`, `shadow_report_ready`,
-    inter-engine comparison, or Build-14 contribution evidence are missing
+  - blocks promotion if `30 days`, `shadow_report_ready`, inter-engine
+    comparison, or Build-14 contribution evidence are missing
 - `src/protocols/micro_live_runtime.py`
   - still blocks Build-12 when upstream Shadow evidence is incomplete
 - `src/complete_enablers/contracts.py`
   - carries the `shadow_enabled` vocabulary
 - `src/monitoring/contracts.py`
-  - now validates coherent Build-14 projection states, including
-    `shadow_enabled`
+  - validates coherent Build-14 projection states, including `shadow_enabled`
 - `src/ui/technical_dashboard_view.py`
-  - now exposes the normalized `Build-14 Enablers` section and an explicit
-    `shadow_enabled` guardrail state
+  - exposes the normalized `Build-14 Enablers` section and operator controls
 - `scripts/run_local_replay_shadow.py`
-  - now emits a coherent demo Build-14 `shadow_enabled` projection
+  - now emits a Build-11 Shadow chain aligned on `A/B + Build-14`
 - `scripts/run_shadow_daily_orchestrator.py`
-  - now persists `local_replay_evidence_ref` and `shadow_runtime_evidence_ref`
-    in the per-day execution record and in `shadow_daily_orchestrator.last_run.json`
+  - persists `local_replay_evidence_ref` and `shadow_runtime_evidence_ref`
+    in daily execution records and `last_run`
 - `src/protocols/shadow_vps_service.py`
-  - now exposes `ShadowVpsRuntimeEvidenceBundle` and persists runtime-evidence
-    refs plus the last durable bundle path in service state
+  - exposes `ShadowVpsRuntimeEvidenceBundle` and persists runtime-evidence refs
 - `scripts/run_shadow_vps_service.py`
-  - now writes one durable `runtime_evidence/<session_date>.shadow_vps_runtime_evidence.json`
+  - writes one durable
+    `runtime_evidence/<session_date>.shadow_vps_runtime_evidence.json`
     bundle per completed day and logs `runtime_evidence_bundle_written`
 
 ---
 
 # 3. Findings
 
-## P0 - Build-11 is not doctrinally closed despite green tests
+## P1 - Build-11 remains partial because real runtime proof is still incomplete
 
 Converging evidence:
 
-- the canon requires a full Shadow truth phase with A/B/C/D and Build-14 active
-- the runtime gates encode that strict reading
-- but `engine_c` and `engine_d` still remain only `spec_only` facades
-- and the real exchange-network proof of the Shadow VPS / `live_websocket` path
-  is still not closed in this environment
+- the canon and the gates are now aligned on the Option-B Build-11 perimeter
+- the local Shadow runner, daily orchestrator, and long-running VPS service
+  are green again on the current branch
+- the current lot proves coherent local/runtime plumbing and typed evidence
+  persistence
+- but no real `30-day` production Shadow evidence is recorded in this lot
+- and no real target-environment proof is yet recorded for the native
+  `live_websocket` path
 
 Critical reading:
 
-- the green tests mainly prove contract and gate coherence
+- green tests now prove that the local Build-11 chain is coherent again
 - they do not by themselves prove real production closure of Build-11
-- there is still a gap between the doctrinal expectation, actual engine
-  implementation, and honest runtime proof
 
 Decision:
 
-- do not declare Build-11 `ALIGNED`
-- keep `STILL_PARTIAL`
+- keep Build-11 `STILL_PARTIAL`
+- count the remaining gap as `runtime proof / environment proof`, not as an
+  unresolved doctrinal C/D issue
+
+## Resolved correction wave - the local Build-11 Shadow chain regression is fixed on the current branch
+
+Converging evidence:
+
+- after the Option-B realignment, `scripts/run_local_replay_shadow.py` still
+  emitted `engine_c` and `engine_d` in:
+  - component assessments
+  - dashboard engine metrics
+  - `active_engines`
+- this broke the Shadow VPS chain with
+  `Build-11 Shadow engine assessment is out of scope`
+- the runner is now realigned to `engine_a`, `engine_b` only
+- the refreshed local chain suite is green: `36 passed`
+
+Decision:
+
+- the local Build-11 chain is now aligned on the current branch
+- this correction removes a real regression from the local proof chain
+- it does not upgrade Build-11 to `ALIGNED` by itself
 
 ## P1 - Build-12 and Build-13 are blocked upstream, not missing gates
 
@@ -183,62 +206,27 @@ Converging evidence:
 - Build-12 still blocks correctly on complete Shadow evidence
 - Build-13 still blocks correctly on complete Shadow plus stable Micro-live
 - regression alignment remains green on the strict Shadow rule
-- but Build-11 is still not honestly closed in this repository state
+- Build-11 is still not honestly closed in real runtime terms
 
 Critical reading:
 
-- do not confuse `correctly coded gates` with `system truly ready`
-- Build-12 and Build-13 are not red because their gate code is absent
-- they are `NOT READY` because upstream reality is not yet closed
+- do not confuse correctly coded gates with true system readiness
+- Build-12 and Build-13 are `NOT READY` because upstream reality is not yet
+  closed
 
-## P1 - Real runtime proof for `live_websocket` remains missing
+## Resolved correction wave - Build-14 exposed-state normalization remains coherent
 
 Converging evidence:
 
-- the native path exists in code
-- the relevant tests are green
-- the current branch now persists a durable runtime evidence bundle that links
-  pre-Shadow capture/export refs with local replay and shadow runtime evidence
-- but no real network execution proof is recorded in this lot
+- Build-14 projection contracts reject incoherent `shadow_enabled` payloads
+- the monitoring backend emits `candidate_effect=shadow_enabled` in Shadow
+- the technical dashboard exposes `Build-14 Enablers`
+- the broad refreshed suite over `complete_enablers + protocols + monitoring +
+  ui` remains green: `305 passed`
 
 Decision:
 
-- keep this as a runtime-evidence gap, not as a proven code bug
-- count the new bundle chain as a meaningful closure improvement, not as final
-  production proof
-
-## P1 - Latest manual safing work strengthens control surfaces without changing the build verdicts
-
-Converging evidence:
-
-- the current commit adds typed operator safing requests, dashboard projection,
-  launcher propagation, and local operator-control surfaces
-- these additions improve Build-12 and Build-13 governance support
-- but they do not change the canonical readiness rules or upstream closure state
-
-Critical reading:
-
-- this is a meaningful governance improvement
-- it is not evidence that Build-12 or Build-13 are now ready
-
-## Resolved correction wave - Build-14 exposed-state normalization is now coherent on the current branch
-
-Converging evidence:
-
-- Build-14 projection contracts now reject incoherent `shadow_enabled`
-  payloads
-- the monitoring backend emits `candidate_effect=shadow_enabled` when the
-  Build-14 module is active in Shadow
-- the technical dashboard now exposes `Build-14 Enablers` instead of framing
-  everything as `Limited Influence`
-- the local replay to Shadow demo runner now emits a coherent Build-14
-  `shadow_enabled` projection
-- the broad package and surface suite is green: `305 passed`
-
-Decision:
-
-- Build-14 can now be declared `ALIGNED` on the current branch
-- downstream Build-11/12/13 verdicts remain unchanged
+- Build-14 remains `ALIGNED` on the current branch
 
 ---
 
@@ -252,15 +240,11 @@ Verdict:
 
 Why:
 
-- the canon and the gates remain aligned on a strict reading
-- `30 days` alone are not enough; an exploitable report and component verdicts
-  are also required
-- the protocol tests are green
-- but complete Shadow system closure is still not demonstrated
-- `engine_c` and `engine_d` no longer fail at package entry
-- but they still remain `spec_only` facades rather than implemented engines
-- the Shadow VPS chain now emits durable runtime evidence bundles
-- but the real Shadow VPS / `live_websocket` proof remains incomplete
+- the current branch canon now correctly targets `A/B + Build-14`
+- the local replay-to-Shadow runtime chain is repaired and green
+- `30 days` alone are not enough; an exploitable report is still required
+- no real 30-day environment proof is recorded in this lot
+- the native `live_websocket` path still lacks real target-environment proof
 
 ## 4.2 Build-12 - Micro-live Light
 
@@ -298,31 +282,30 @@ Why:
 
 - the packages, contracts, and tests are real
 - Build-14 can express `shadow_enabled` in the core model
-- the monitoring, UI, and demo/projection surfaces are now normalized around
+- the monitoring, UI, and demo/projection surfaces remain normalized around
   coherent `shadow_enabled` exposure
-- the broad refreshed suite over `complete_enablers + protocols + monitoring +
-  ui` is green: `305 passed`
+- the broad refreshed suite is green: `305 passed`
 
 ---
 
 # 5. Cross-build reading
 
-The Build-11 to Build-14 picture is now quite clear:
+The Build-11 to Build-14 picture is now clear on the current branch:
 
-- the strict `Shadow -> Micro-live -> Live-Light` doctrine is mostly well
-  encoded
-- the main weakness is not hidden permissiveness in the gates
-- the main weakness is honest closure of the full chain:
-  - full activation really implemented and operable
-  - enough real runtime proof
+- the doctrinal C/D contradiction is removed by Option B
+- the local Build-11 chain is repaired and locally green again
+- the guardrails exist and are typed
+- Build-14 exposed-state coherence is restored
+- the remaining weakness is honest runtime closure:
+  - enough real Shadow time in the target environment
   - real network confirmation for the native live path
 
 In other words:
 
-- the guardrails exist
-- Build-14 exposed-state coherence is restored on the current branch
-- production truth is still not fully demonstrated yet because Build-11 is not
-  honestly closed
+- the gates exist
+- the local chain exists
+- production truth is still not fully demonstrated yet because Build-11 still
+  lacks real-environment proof
 
 ---
 
@@ -330,25 +313,28 @@ In other words:
 
 ## Action 1
 
-Keep Build-11 closure as the main rollout priority now that the Build-1 DAG
-and Build-14 exposed-state lots are corrected on the current branch.
+Keep Build-11 closure as the main rollout priority, but focus only on genuine
+runtime-proof work:
+
+- target-environment Shadow proof
+- real `live_websocket` smoke or explicit gap record
+- durable evidence capture and auditability
 
 ## Action 2
-
-Decide the honest status of `engine_c` and `engine_d`:
-
-- either they must become implemented engines in the canonical Build-11 frame
-- or their doctrinal story must be rewritten to avoid a false Shadow-closure
-  narrative built on `spec_only` facades
-
-## Action 3
 
 Keep Build-12 and Build-13 blocked until:
 
 - Build-11 is honestly closed
-- the useful runtime proof is actually produced
+- useful runtime proof is actually produced
 - the native `live_websocket` path is either truly smoked in the target
-  environment or explicitly kept as a still-open operational gap
+  environment or explicitly kept as an open operational gap
+
+## Action 3
+
+Do not re-open Engine C/D inside Build-11:
+
+- Engine C remains a Build-15 concern
+- Engine D remains a Build-16 concern
 
 ---
 
