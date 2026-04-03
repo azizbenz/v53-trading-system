@@ -50,6 +50,7 @@ def test_export_technical_dashboard_writes_availability_view():
         assert "Live Market Lab" in html
         assert "BTCUSDT" in html
         assert "ETHUSDT" in html
+        assert "1m" in html
         assert "15m" in html
         assert "1h" in html
         assert "4h" in html
@@ -102,6 +103,7 @@ def test_export_technical_dashboard_writes_demo_sidecars():
 
         assert "demo payload" in html.lower()
         assert "Live Market Lab" in html
+        assert "1m" in html
         assert "api.binance.com/api/v3/klines" in html
         assert "Build-11 Shadow" in html
         assert "Build-12 Micro-live" in html

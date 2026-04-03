@@ -74,6 +74,7 @@ def _render_market_lab() -> str:
         <label>
           <span>Timeframe</span>
           <select id="market-lab-timeframe">
+            <option value="1m">1m</option>
             <option value="15m">15m</option>
             <option value="1h">1h</option>
             <option value="4h">4h</option>
