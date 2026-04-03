@@ -36,7 +36,7 @@
     "branch_alignment": {
       "main_commit": "e28de12",
       "origin_main_commit": "e28de12",
-      "current_branch_commit": "6ced911",
+      "current_branch_commit": "c764a95",
       "branch_divergence_detected": true,
       "interpretation": "The dedicated Full Shadow migration branch is now the active work surface. Canon migration started docs-first there, and the branch now also carries real Engine C/D packages, the Build-11 A/B/C/D runtime reinjection wave, the bounded native live_websocket proof checkpoint, and a local runner that now executes A/B/C/D before rendering component evidence. The previous branch remains the last coherent Option-B rollback checkpoint."
     },
@@ -791,6 +791,14 @@
       "record_path": "docs/audit chatgpt buisness/2026-04-03_BUILD11_VPS_CAMPAIGN_SUMMARY_AUDIT.md",
       "conclusion": "The autonomous VPS Shadow service now writes a cumulative campaign summary artifact that exposes campaign status, acquisition mode, latest live-capture facts, and remaining-day progress from one file. This improves operability for repeated target-environment Shadow-day collection without claiming Build-11 closure.",
       "action_taken": "Freeze the campaign-summary lot, keep Build-11 partial, and continue next with repeated real Shadow-day collection rather than more local proof-chain fragmentation."
+    },
+    {
+      "audit_id": "AUDIT-026",
+      "date": "2026-04-03",
+      "scope": "Build-11 target-environment campaign day 1 real run",
+      "record_path": "docs/audit chatgpt buisness/2026-04-03_BUILD11_TARGET_ENV_CAMPAIGN_DAY1_REAL_RUN_AUDIT.md",
+      "conclusion": "A fresh target-environment native live_websocket campaign was executed on 2026-04-03 without session_date_override. The service captured live data, auto-exported governed replay inputs, completed one honest Shadow day, and persisted a coherent 1-day / 29-days-remaining operational evidence chain.",
+      "action_taken": "Freeze the exact command and resulting artifacts, keep Build-11 partial, and continue next only by rerunning the same campaign on the next real calendar day."
     }
   ],
   "known_critical_gaps": [
@@ -831,7 +839,7 @@
       "priority": "P1",
       "scope": "Runtime proof for native live_websocket",
       "doc_expectation": "Runtime-relevant features need real proof before final requalification.",
-      "code_or_runtime_reality": "The feature is coded and tested, writes a durable per-session runtime evidence bundle, and now has a bounded real-network smoke on 2026-04-03 outside the sandbox. That smoke proved capture -> auto-export -> governed Shadow-day execution, but it also exposed and led to the fix of a false 30/30 persisted summary. The branch now reports an honest 1 day / 29 remaining state; the full 30-day runtime proof is still pending.",
+      "code_or_runtime_reality": "The feature is coded and tested, writes a durable per-session runtime evidence bundle, and now has a real day-1 target-environment campaign under build/build11_live_websocket_campaign on 2026-04-03. That run proved capture -> auto-export -> governed Shadow-day execution and persisted an honest 1 day / 29 remaining state with no session_date_override. The full 30-day runtime proof is still pending and can only advance through repeated real calendar-day runs.",
       "status": "open"
     },
     {
@@ -945,7 +953,7 @@
     {
       "batch_id": "B6",
       "title": "Runtime evidence and requalification",
-      "status": "pending",
+      "status": "in_progress",
       "scope": [
         "Shadow service",
         "Native live_websocket smoke if environment allows",
@@ -1062,27 +1070,27 @@
     }
   },
   "next_recommended_action": {
-    "step": "Preserve the bounded Build-11 native live_websocket proof and continue next only with repeated real Shadow-day collection on the target environment, not with more local reinterpretation.",
-    "reason": "The migration branch now has a real one-day native live_websocket proof plus an honest promotion-state fix. The remaining frontier is repeated operational evidence toward the 30-day gate."
+    "step": "Rerun the same Build-11 Shadow VPS campaign on the next real calendar day, using the same build/build11_live_websocket_campaign directories and config, with no session_date_override.",
+    "reason": "The branch now has an honest 2026-04-03 day-1 target-environment checkpoint with 29 days remaining. The only prod-safe way to progress the 30-day gate is to accumulate repeated real calendar-day runs in the same evidence chain."
   },
   "branch_overrides": {
     "option_b_realignment_commit": "99cf170",
     "migration_branch": "codex/full-shadow-abcd-migration-20260403",
     "migration_branch_base_commit": "01b39e3",
-    "effective_next_action": "Use the migration branch as the frozen baseline and continue only with repeated target-environment Build-11 Shadow-day collection.",
-    "effective_reason": "The branch is now locally coherent, has a bounded real-network native live_websocket smoke, and no longer emits a false 30/30 promotion signal after one day. The remaining real uncertainty is repeated operational proof, not local semantics."
+    "effective_next_action": "Use the migration branch as the frozen baseline and rerun the same target-environment Build-11 Shadow VPS campaign on the next real calendar day.",
+    "effective_reason": "The branch is now locally coherent and also carries a real 2026-04-03 day-1 campaign checkpoint with an honest 1 day / 29 remaining state. The remaining real uncertainty is repeated operational proof, not local semantics."
   },
   "planned_migration": {
     "migration_id": "MIG-001",
     "selected_target": "full_shadow_30d_abcd_build14",
-    "status": "bounded_native_live_websocket_proof_frozen_pending_repeated_shadow_days",
+    "status": "target_environment_day1_real_campaign_frozen_pending_day2_and_repeated_shadow_days",
     "record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_MIGRATION_PLAN.md",
     "checkpoint_record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_LOT0_BRANCH_CHECKPOINT.md",
     "lot1_record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_LOT1_CANON_REPATCH_AUDIT.md",
     "lot2_4_record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_LOT2_4_ENGINE_CD_AND_BUILD11_REINJECTION_AUDIT.md",
     "active_branch": "codex/full-shadow-abcd-migration-20260403",
     "base_commit": "01b39e3",
-    "rule_until_applied": "The migration branch now has the canon repatch, Engine C/D implementation, Build-11 A/B/C/D reinjection, registry/profile/bootstrap coherence, a refreshed Build-11 to Build-17 status reading, and a bounded target-environment native live_websocket smoke. The doctrine is still not considered fully implemented until repeated real Shadow days complete the 30-day runtime-proof story.",
-    "recommended_start": "Repeated target-environment Build-11 Shadow-day collection"
+    "rule_until_applied": "The migration branch now has the canon repatch, Engine C/D implementation, Build-11 A/B/C/D reinjection, registry/profile/bootstrap coherence, a refreshed Build-11 to Build-17 status reading, and a real 2026-04-03 target-environment campaign day under the governed VPS collector. The doctrine is still not considered fully implemented until repeated real Shadow days complete the 30-day runtime-proof story.",
+    "recommended_start": "Rerun the same target-environment Build-11 Shadow VPS campaign on the next real calendar day"
   }
 }
