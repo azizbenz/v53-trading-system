@@ -21,6 +21,8 @@ from backtest_artifact_import import (  # noqa: E402
     summarize_import_request,
     validate_import_request,
 )
+from engine_a import EngineAInput, EngineARuntime, EngineARuntimeInput, EngineARuntimeStatus  # noqa: E402
+from engine_b import EngineBInput, EngineBRuntime, EngineBRuntimeInput, EngineBRuntimeStatus  # noqa: E402
 from engine_c import EngineCInput, EngineCRuntime, EngineCRuntimeInput, EngineCRuntimeStatus  # noqa: E402
 from engine_d import EngineDInput, EngineDRuntime, EngineDRuntimeInput, EngineDRuntimeStatus  # noqa: E402
 from interface_contracts import PairHealthLevel, ProfileId, RuntimeMode, StrategyClassification  # noqa: E402
@@ -148,6 +150,13 @@ def _shadow_penalty_registry() -> PenaltyRegistry:
             penalty_type=PenaltyType.SCORE,
         )
     )
+    registry.register(
+        PenaltyDefinition(
+            penalty_id="breakout_warning",
+            name="Breakout warning",
+            penalty_type=PenaltyType.SCORE,
+        )
+    )
     return registry
 
 
@@ -179,7 +188,91 @@ def _shadow_portfolio_state() -> PortfolioState:
     )
 
 
+def _expected_edge_bps(*, expected_cost: float, ce_expected: float, holding_hours: float) -> float:
+    return round((expected_cost + ce_expected * holding_hours) * 10_000, 3)
+
+
 def _run_engine_shadow_evaluations() -> tuple[ShadowEngineRuntimeEvidence, ...]:
+    engine_a_runtime = EngineARuntime(
+        scoring_runtime=_shadow_scoring_runtime(),
+        risk_runtime=_shadow_risk_runtime(),
+    )
+    engine_a_result = engine_a_runtime.evaluate(
+        EngineARuntimeInput(
+            engine_inputs=EngineAInput(
+                pair="BTCUSDT",
+                direction_score=0.8,
+                continuation_score=0.9,
+                structure_quality=0.85,
+                zone_proximity=0.7,
+                trend_stability=0.8,
+                regime="trending_up",
+                regime_favorability=0.9,
+                regime_confidence=0.8,
+                pair_health=0.9,
+                data_freshness=0.95,
+                flow_coherence=0.8,
+                flow_score=0.4,
+                cost_preference_score=0.5,
+                expected_gain=0.005,
+                expected_cost=0.001,
+                candidate_size=1_000.0,
+                holding_period=4.0,
+                entry_price=50_000.0,
+                atr=500.0,
+                scoring_version="engine_a.shadow.v1",
+            ),
+            timestamp_ms=1_700_000_000_000,
+            portfolio=_shadow_portfolio_state(),
+            projected_size=1_000.0,
+            projected_loss=50.0,
+            current_equity=10_000.0,
+            session_peak_equity=10_000.0,
+            pair_beta=0.8,
+            cluster_id="btc_majors",
+        ),
+        now=5.0,
+    )
+    engine_b_runtime = EngineBRuntime(
+        scoring_runtime=_shadow_scoring_runtime(),
+        risk_runtime=_shadow_risk_runtime(),
+    )
+    engine_b_result = engine_b_runtime.evaluate(
+        EngineBRuntimeInput(
+            engine_inputs=EngineBInput(
+                pair="ETHUSDT",
+                current_price=97.0,
+                local_mean=100.0,
+                local_std=1.5,
+                structure_is_range=0.7,
+                recent_expansion=0.1,
+                regime="range",
+                regime_trend_strength=0.1,
+                volume_anomaly=0.1,
+                structural_break=0.0,
+                continuation_momentum=0.1,
+                microstructure_breakout_confirmation=0.0,
+                regime_favorability=0.7,
+                pair_health=0.8,
+                data_freshness=0.9,
+                flow_coherence=0.8,
+                expected_gain=0.003,
+                expected_cost=0.001,
+                candidate_size=100.0,
+                holding_period=2.0,
+                scoring_version="engine_b.shadow.v1",
+            ),
+            timestamp_ms=1_700_000_030_000,
+            portfolio=_shadow_portfolio_state(),
+            projected_size=1_000.0,
+            projected_loss=50.0,
+            current_equity=10_000.0,
+            session_peak_equity=10_000.0,
+            pair_beta=0.7,
+            cluster_id="eth_majors",
+        ),
+        now=10.0,
+    )
     engine_c_runtime = EngineCRuntime(
         scoring_runtime=_shadow_scoring_runtime(),
         risk_runtime=_shadow_risk_runtime(),
@@ -274,6 +367,56 @@ def _run_engine_shadow_evaluations() -> tuple[ShadowEngineRuntimeEvidence, ...]:
         ),
         now=20.0,
     )
+    engine_a_evidence = ShadowEngineRuntimeEvidence(
+        component_id="engine_a",
+        pair=engine_a_result.engine_output.pair,
+        runtime_status=engine_a_result.status.value,
+        emitted_signal=engine_a_result.signal_candidate is not None,
+        verdict=(
+            ShadowComponentVerdict.SHADOW_VALIDATED
+            if engine_a_result.status == EngineARuntimeStatus.ACCEPTED
+            else ShadowComponentVerdict.DORMANT
+        ),
+        evidence_summary=(
+            f"runtime_status={engine_a_result.status.value} / pair={engine_a_result.engine_output.pair} / "
+            f"structure={engine_a_result.engine_output.structure_verdict.value} / "
+            f"context={engine_a_result.engine_output.context_verdict.value} / "
+            f"conviction={engine_a_result.engine_output.conviction.value}"
+        ),
+        expected_cost_bps=round(engine_a_result.engine_output.expected_cost * 10_000, 3),
+        expected_edge_bps=_expected_edge_bps(
+            expected_cost=engine_a_result.engine_output.expected_cost,
+            ce_expected=engine_a_result.engine_output.ce_expected,
+            holding_hours=engine_a_result.engine_output.holding_hours,
+        ),
+        ce_expected=engine_a_result.engine_output.ce_expected,
+        details=engine_a_result.model_dump(mode="json"),
+    )
+    engine_b_evidence = ShadowEngineRuntimeEvidence(
+        component_id="engine_b",
+        pair=engine_b_result.engine_output.pair,
+        runtime_status=engine_b_result.status.value,
+        emitted_signal=engine_b_result.signal_candidate is not None,
+        verdict=(
+            ShadowComponentVerdict.SHADOW_VALIDATED
+            if engine_b_result.status == EngineBRuntimeStatus.ACCEPTED
+            else ShadowComponentVerdict.DORMANT
+        ),
+        evidence_summary=(
+            f"runtime_status={engine_b_result.status.value} / pair={engine_b_result.engine_output.pair} / "
+            f"z_score={engine_b_result.engine_output.z_score:.3f} / "
+            f"breakout={engine_b_result.engine_output.breakout_verdict.value} / "
+            f"conviction={engine_b_result.engine_output.conviction.value}"
+        ),
+        expected_cost_bps=round(engine_b_result.engine_output.expected_cost * 10_000, 3),
+        expected_edge_bps=_expected_edge_bps(
+            expected_cost=engine_b_result.engine_output.expected_cost,
+            ce_expected=engine_b_result.engine_output.ce_expected,
+            holding_hours=engine_b_result.engine_output.expected_holding_hours,
+        ),
+        ce_expected=engine_b_result.engine_output.ce_expected,
+        details=engine_b_result.model_dump(mode="json"),
+    )
     engine_c_evidence = ShadowEngineRuntimeEvidence(
         component_id="engine_c",
         pair=engine_c_result.engine_output.pair,
@@ -291,10 +434,10 @@ def _run_engine_shadow_evaluations() -> tuple[ShadowEngineRuntimeEvidence, ...]:
             f"keff={engine_c_result.engine_output.keff_contribution:.2f}"
         ),
         expected_cost_bps=round(engine_c_result.engine_output.expected_cost * 10_000, 3),
-        expected_edge_bps=round(
-            (engine_c_result.engine_output.expected_cost + engine_c_result.engine_output.ce_expected * engine_c_result.engine_output.holding_hours)
-            * 10_000,
-            3,
+        expected_edge_bps=_expected_edge_bps(
+            expected_cost=engine_c_result.engine_output.expected_cost,
+            ce_expected=engine_c_result.engine_output.ce_expected,
+            holding_hours=engine_c_result.engine_output.holding_hours,
         ),
         ce_expected=engine_c_result.engine_output.ce_expected,
         details=engine_c_result.model_dump(mode="json"),
@@ -316,15 +459,15 @@ def _run_engine_shadow_evaluations() -> tuple[ShadowEngineRuntimeEvidence, ...]:
             f"duplication_with_a={engine_d_result.engine_output.duplication_overlap_with_engine_a:.2f}"
         ),
         expected_cost_bps=round(engine_d_result.engine_output.expected_cost * 10_000, 3),
-        expected_edge_bps=round(
-            (engine_d_result.engine_output.expected_cost + engine_d_result.engine_output.ce_expected * engine_d_result.engine_output.holding_hours)
-            * 10_000,
-            3,
+        expected_edge_bps=_expected_edge_bps(
+            expected_cost=engine_d_result.engine_output.expected_cost,
+            ce_expected=engine_d_result.engine_output.ce_expected,
+            holding_hours=engine_d_result.engine_output.holding_hours,
         ),
         ce_expected=engine_d_result.engine_output.ce_expected,
         details=engine_d_result.model_dump(mode="json"),
     )
-    return (engine_c_evidence, engine_d_evidence)
+    return (engine_a_evidence, engine_b_evidence, engine_c_evidence, engine_d_evidence)
 
 
 def _meta_metrics():
@@ -650,6 +793,8 @@ def _build_demo_payload(
     runtime_evidence_by_component = {
         evidence.component_id: evidence for evidence in engine_runtime_evidence
     }
+    engine_a_metrics = runtime_evidence_by_component.get("engine_a")
+    engine_b_metrics = runtime_evidence_by_component.get("engine_b")
     engine_c_metrics = runtime_evidence_by_component.get("engine_c")
     engine_d_metrics = runtime_evidence_by_component.get("engine_d")
     snapshot = collect_monitoring_snapshot(
@@ -679,17 +824,17 @@ def _build_demo_payload(
         engines=(
             collect_engine_metrics(
                 engine_id="engine_a",
-                emitted_signals=3,
-                net_edge_bps=8.0,
-                expected_cost_bps=2.0,
-                ce_expected=0.0006,
+                emitted_signals=1 if engine_a_metrics is not None and engine_a_metrics.emitted_signal else 3,
+                net_edge_bps=engine_a_metrics.expected_edge_bps if engine_a_metrics is not None else 8.0,
+                expected_cost_bps=engine_a_metrics.expected_cost_bps if engine_a_metrics is not None else 2.0,
+                ce_expected=engine_a_metrics.ce_expected if engine_a_metrics is not None else 0.0006,
             ),
             collect_engine_metrics(
                 engine_id="engine_b",
-                emitted_signals=2,
-                net_edge_bps=4.0,
-                expected_cost_bps=2.4,
-                ce_expected=0.0002,
+                emitted_signals=1 if engine_b_metrics is not None and engine_b_metrics.emitted_signal else 2,
+                net_edge_bps=engine_b_metrics.expected_edge_bps if engine_b_metrics is not None else 4.0,
+                expected_cost_bps=engine_b_metrics.expected_cost_bps if engine_b_metrics is not None else 2.4,
+                ce_expected=engine_b_metrics.ce_expected if engine_b_metrics is not None else 0.0002,
             ),
             collect_engine_metrics(
                 engine_id="engine_c",

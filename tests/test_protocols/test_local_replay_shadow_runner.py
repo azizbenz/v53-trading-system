@@ -273,17 +273,28 @@ def test_export_local_replay_shadow_run_writes_governed_chain_sidecars():
         assert local_replay_evidence["replay_useful_ready"] is True
         assert candidate_payload["replay_import"]["validation_status"] == "accepted"
         assert candidate_payload["system"]["build14_status"] == "healthy"
-        assert len(engine_shadow_evidence) == 2
-        assert engine_shadow_evidence[0]["component_id"] == "engine_c"
-        assert engine_shadow_evidence[0]["runtime_status"] == "accepted"
-        assert engine_shadow_evidence[1]["component_id"] == "engine_d"
-        assert engine_shadow_evidence[1]["runtime_status"] == "accepted"
+        assert len(engine_shadow_evidence) == 4
+        engine_runtime_evidence = {
+            entry["component_id"]: entry for entry in engine_shadow_evidence
+        }
+        assert tuple(engine_runtime_evidence) == (
+            "engine_a",
+            "engine_b",
+            "engine_c",
+            "engine_d",
+        )
+        assert engine_runtime_evidence["engine_a"]["runtime_status"] == "accepted"
+        assert engine_runtime_evidence["engine_b"]["runtime_status"] == "accepted"
+        assert engine_runtime_evidence["engine_c"]["runtime_status"] == "accepted"
+        assert engine_runtime_evidence["engine_d"]["runtime_status"] == "accepted"
         assert shadow_input["validation_set"]["runtime_data_source"] == "recorded_replay"
         assert shadow_input["validation_set"]["runtime_continuous_hours"] >= 24.0
         component_assessments = {
             entry["component_id"]: entry
             for entry in shadow_input["validation_set"]["component_assessments"]
         }
+        assert "structure=" in component_assessments["engine_a"]["evidence_summary"]
+        assert "z_score=" in component_assessments["engine_b"]["evidence_summary"]
         assert "breakout_type=" in component_assessments["engine_c"]["evidence_summary"]
         assert "origin=" in component_assessments["engine_d"]["evidence_summary"]
         assert shadow_runtime_evidence["event_loop_ready"] is True
