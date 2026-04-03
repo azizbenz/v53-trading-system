@@ -33,6 +33,8 @@ def _status_from_bundle(
     material_diagnostics = tuple(
         diagnostic for diagnostic in bundle.diagnostics if diagnostic.category != "no_issue"
     )
+    if bundle.merge_gate_report is not None and not bundle.merge_gate_report.all_passed:
+        return "critical"
     if (
         capacity_snapshot.review_blocked_due_to_incomplete_data
         or capacity_snapshot.export_failures_total > 0
@@ -58,6 +60,15 @@ def build_build9x_projection(
         diagnostics_summary = (
             f"{diagnostics_summary} / blocked: {', '.join(capacity_snapshot.blocking_reasons)}"
         )
+    if bundle.merge_gate_report is not None and not bundle.merge_gate_report.all_passed:
+        failed_gates = tuple(
+            gate.gate_name.value
+            for gate in bundle.merge_gate_report.gates
+            if not gate.passed
+        )
+        diagnostics_summary = (
+            f"{diagnostics_summary} / merge_gates_failed: {', '.join(failed_gates)}"
+        )
 
     return _build9x_projection_type()(
         status=_status_from_bundle(bundle, capacity_snapshot),
@@ -72,6 +83,7 @@ def build_build9x_projection(
         review_export_ready=(
             bool(bundle.review_export.export_ref)
             and not bundle.review_export.review_blocked_due_to_incomplete_data
+            and (bundle.merge_gate_report.all_passed if bundle.merge_gate_report is not None else True)
         ),
         review_export_ref=bundle.review_export.export_ref,
         learning_queue_depth=capacity_snapshot.queue_depth,

@@ -21,6 +21,7 @@ from backtest_artifact_import import (  # noqa: E402
     summarize_import_request,
     validate_import_request,
 )
+from complete_enablers import Build14ObservationInput, evaluate_build14_shadow_activation  # noqa: E402
 from engine_a import EngineAInput, EngineARuntime, EngineARuntimeInput, EngineARuntimeStatus  # noqa: E402
 from engine_b import EngineBInput, EngineBRuntime, EngineBRuntimeInput, EngineBRuntimeStatus  # noqa: E402
 from engine_c import EngineCInput, EngineCRuntime, EngineCRuntimeInput, EngineCRuntimeStatus  # noqa: E402
@@ -567,82 +568,78 @@ def _meta_metrics():
     )
 
 
-def _build14_projection() -> Build14Projection:
+def _build_build14_observation(snapshot) -> Build14ObservationInput:
+    return Build14ObservationInput(
+        correlation_id=snapshot.correlation_id,
+        dtr_coverage=snapshot.meta.dtr_coverage,
+        cra_sterilization_rate=snapshot.meta.cra_sterilization_rate,
+        cra_alert_count=snapshot.meta.cra_alert_count,
+        break_even_drift_alert=snapshot.meta.break_even_drift_alert,
+        edge_degraded_count=snapshot.meta.edge_degraded_count,
+        queue_backlog=snapshot.infra.queue_backlog,
+        stale_pair_count=len(snapshot.infra.stale_pairs),
+        dtr_loss_count=snapshot.infra.dtr_loss_count,
+        log_loss_count=snapshot.infra.log_loss_count,
+        ce_net=snapshot.portfolio.ce_net,
+        breakout_failure_rate=0.18,
+        volume_support_ratio=0.82,
+        vwa_absorption_ratio=0.79,
+        ghost_liquidity_ratio=0.12,
+        adverse_obi_pressure=0.24,
+        hurst_exponent=0.53,
+        competition_density=0.18,
+    )
+
+
+def _build14_reader_projections(report) -> tuple[Build14ReaderProjection, ...]:
+    return tuple(
+        Build14ReaderProjection(
+            reader_name=snapshot.reader_name,
+            signal_family=snapshot.signal_family.value,
+            observed_value=snapshot.observed_value,
+            status=snapshot.status.value,
+            detail=snapshot.detail,
+            evidence_refs=snapshot.evidence_refs,
+            structured_log_key=snapshot.structured_log_key,
+        )
+        for snapshot in report.snapshots
+    )
+
+
+def _build14_projection(snapshot) -> Build14Projection:
+    report = evaluate_build14_shadow_activation(_build_build14_observation(snapshot))
+    snapshots_by_reader = {entry.reader_name: entry for entry in report.snapshots}
+    market_toxicity = snapshots_by_reader.get("market_toxicity_snapshot")
+    execution_fragility = snapshots_by_reader.get("execution_fragility_score")
+    status = (
+        "critical"
+        if report.signal.severity.value == "critical"
+        else "warning"
+        if report.signal.severity.value == "elevated"
+        else "healthy"
+    )
     return Build14Projection(
-        status="healthy",
-        hard_state="shadow_enabled",
-        live_promotion_eligible=False,
-        influence_mode="shadow_enabled",
-        action="shadow_apply",
-        severity="nominal",
-        summary="Build-14 enablers are available in Shadow and remain governed.",
-        market_toxicity_value=0.18,
-        market_toxicity_status="nominal",
-        execution_fragility_value=0.12,
-        execution_fragility_status="nominal",
+        status=status,
+        hard_state=report.hard_state.value,
+        live_promotion_eligible=report.live_promotion_eligible,
+        influence_mode=report.signal.influence_mode.value,
+        action=report.signal.action.value,
+        severity=report.signal.severity.value,
+        summary=report.signal.summary,
+        market_toxicity_value=market_toxicity.observed_value if market_toxicity is not None else 0.0,
+        market_toxicity_status=market_toxicity.status.value if market_toxicity is not None else "nominal",
+        execution_fragility_value=(
+            execution_fragility.observed_value if execution_fragility is not None else 0.0
+        ),
+        execution_fragility_status=(
+            execution_fragility.status.value if execution_fragility is not None else "nominal"
+        ),
         confidence_penalty_weight=0.0,
         recommended_budget_factor=1.0,
-        requires_manual_review=False,
-        candidate_effect="shadow_enabled",
-        reason_codes=("build14_shadow_enabled",),
-        reader_projections=(
-            Build14ReaderProjection(
-                reader_name="market_toxicity_snapshot",
-                signal_family="microstructure",
-                observed_value=0.18,
-                status="nominal",
-                detail="toxicity remains inside governed Shadow tolerance",
-                structured_log_key="build14.market_toxicity_snapshot",
-            ),
-            Build14ReaderProjection(
-                reader_name="execution_fragility_score",
-                signal_family="microstructure",
-                observed_value=0.12,
-                status="nominal",
-                detail="execution fragility remains controlled during the governed run",
-                structured_log_key="build14.execution_fragility_score",
-            ),
-            Build14ReaderProjection(
-                reader_name="lob_deep_filter_vwa",
-                signal_family="microstructure",
-                observed_value=0.11,
-                status="nominal",
-                detail="deep-book absorption and VWA checks remain supportive",
-                structured_log_key="build14.lob_deep_filter_vwa",
-            ),
-            Build14ReaderProjection(
-                reader_name="order_book_imbalance",
-                signal_family="microstructure",
-                observed_value=0.14,
-                status="nominal",
-                detail="order-book imbalance stays below adverse pressure thresholds",
-                structured_log_key="build14.order_book_imbalance",
-            ),
-            Build14ReaderProjection(
-                reader_name="false_breakout_model",
-                signal_family="ai_edge",
-                observed_value=0.16,
-                status="nominal",
-                detail="false-breakout probability stays low in the governed Shadow sample",
-                structured_log_key="build14.false_breakout_model",
-            ),
-            Build14ReaderProjection(
-                reader_name="hurst_regime_classifier",
-                signal_family="regime",
-                observed_value=0.48,
-                status="nominal",
-                detail="regime persistence stays neutral and does not force a downgrade",
-                structured_log_key="build14.hurst_regime_classifier",
-            ),
-            Build14ReaderProjection(
-                reader_name="competition_monitor",
-                signal_family="risk",
-                observed_value=0.20,
-                status="nominal",
-                detail="competition density remains below crowding thresholds",
-                structured_log_key="build14.competition_monitor",
-            ),
-        ),
+        requires_manual_review=report.signal.requires_manual_review,
+        candidate_effect=report.signal.candidate_effect,
+        reason_codes=report.signal.reason_codes,
+        reader_projections=_build14_reader_projections(report),
     )
 
 
@@ -928,6 +925,7 @@ def _build_demo_payload(
     active_modules = tuple(
         module.module_name for module in get_modules_for_profile(ProfileId.LIGHT)
     )
+    build14_projection = _build14_projection(snapshot)
     return build_technical_dashboard_payload(
         snapshot,
         active_modules=active_modules,
@@ -946,7 +944,7 @@ def _build_demo_payload(
             review_export_ref="exports/local_replay_shadow_review.md",
         ),
         replay_projection=replay_projection,
-        build14_projection=_build14_projection(),
+        build14_projection=build14_projection,
     )
 
 

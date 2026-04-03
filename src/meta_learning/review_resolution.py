@@ -23,6 +23,7 @@ from meta_learning.enums import (
 )
 from meta_learning.learning_review_exporter import export_learning_review
 from meta_learning.lifecycle_registry import apply_candidate_path, apply_diagnostic_path, apply_hypothesis_path
+from meta_learning.merge_gates import evaluate_build9x_merge_gates
 from meta_learning.persistence_store import AppendOnlyMetaLearningStore
 from meta_learning.review_governance import append_human_review_decision, build_archive_eligibility
 
@@ -61,6 +62,36 @@ def _refresh_bundle(
             "archived": memory_archived,
         }
     )
+    preliminary_review_export = export_learning_review(
+        bundle.correlation_id,
+        bundle.breakdown_report,
+        bundle.checklist,
+        candidates,
+        hypotheses=hypotheses,
+        replay_bundles=bundle.replay_bundles,
+        capacity_snapshot=bundle.capacity_snapshot,
+        review_decisions=review_decisions,
+        archive_eligibility=archive_eligibility,
+        lifecycle_transitions=tuple(lifecycle_transitions),
+        export_ref=bundle.review_export.export_ref,
+    )
+    preliminary_bundle = MetaLearningReviewBundle(
+        correlation_id=bundle.correlation_id,
+        diagnostics=diagnostics,
+        mistake_classes=bundle.mistake_classes,
+        breakdown_report=bundle.breakdown_report,
+        checklist=bundle.checklist,
+        hypotheses=hypotheses,
+        candidates=candidates,
+        replay_bundles=bundle.replay_bundles,
+        memory_record=memory_record,
+        review_export=preliminary_review_export,
+        capacity_snapshot=bundle.capacity_snapshot,
+        review_decisions=review_decisions,
+        archive_eligibility=archive_eligibility,
+        lifecycle_transitions=tuple(lifecycle_transitions),
+    )
+    merge_gate_report = evaluate_build9x_merge_gates(preliminary_bundle)
     review_export = export_learning_review(
         bundle.correlation_id,
         bundle.breakdown_report,
@@ -72,6 +103,7 @@ def _refresh_bundle(
         review_decisions=review_decisions,
         archive_eligibility=archive_eligibility,
         lifecycle_transitions=tuple(lifecycle_transitions),
+        merge_gate_report=merge_gate_report,
         export_ref=bundle.review_export.export_ref,
     )
     return MetaLearningReviewBundle(
@@ -89,6 +121,7 @@ def _refresh_bundle(
         review_decisions=review_decisions,
         archive_eligibility=archive_eligibility,
         lifecycle_transitions=tuple(lifecycle_transitions),
+        merge_gate_report=merge_gate_report,
     )
 
 

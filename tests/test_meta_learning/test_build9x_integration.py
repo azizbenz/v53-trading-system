@@ -10,6 +10,7 @@ from meta import (
     build_edge_report,
 )
 from meta_learning import (
+    Build9XMergeGateName,
     DiagnosticResult,
     LearningMemoryRecord,
     LearningMemoryStore,
@@ -173,6 +174,7 @@ def test_build9x_full_review_flow_stays_governed():
     assert "## Review Decisions" in review_export.markdown_body
     assert "## Archive Eligibility" in review_export.markdown_body
     assert "## Lifecycle Transitions" in review_export.markdown_body
+    assert "## Merge Gates" in review_export.markdown_body
     assert "## Replay Bundles" in review_export.markdown_body
     assert all(candidate.auto_promotion_enabled is False for candidate in review_export.candidates)
     assert all(candidate.promotion_state.value == "replay_only" for candidate in review_export.candidates)
@@ -204,6 +206,11 @@ def test_run_meta_learning_review_returns_governed_bundle():
     assert bundle.review_export.replay_bundles == bundle.replay_bundles
     assert bundle.review_export.review_decisions == bundle.review_decisions
     assert bundle.review_export.archive_eligibility == bundle.archive_eligibility
+    assert bundle.merge_gate_report is not None
+    assert bundle.merge_gate_report.all_passed is True
+    assert bundle.merge_gate_report.gate(Build9XMergeGateName.NO_LIVE_MUTATION_PATH).passed is True
+    assert bundle.review_export.merge_gate_report == bundle.merge_gate_report
+    assert "## Merge Gates" in bundle.review_export.markdown_body
     assert all(hypothesis.governance_stage.value == "under_review" for hypothesis in bundle.hypotheses)
     assert all(candidate.governance_stage.value in {"tests_pending", "ready_for_replay"} for candidate in bundle.candidates)
     assert bundle.lifecycle_transitions
@@ -242,6 +249,9 @@ def test_run_meta_learning_review_blocks_handoff_when_capacity_is_incomplete():
     assert bundle.review_export.review_blocked_due_to_incomplete_data is True
     assert bundle.review_export.capture_mode.value == "capture_minimale"
     assert "## Capacity Guard" in bundle.review_export.markdown_body
+    assert bundle.merge_gate_report is not None
+    assert bundle.merge_gate_report.all_passed is True
+    assert "## Merge Gates" in bundle.review_export.markdown_body
     assert bundle.review_decisions[0].review_state.value == "needs_revision"
     assert bundle.review_decisions[0].final_verdict_recorded is False
     assert all(entry.eligible is False for entry in bundle.archive_eligibility)
@@ -290,6 +300,7 @@ def test_breakdown_report_fallback_and_empty_candidate_export():
     assert "## Review Decisions" in review_export.markdown_body
     assert "## Archive Eligibility" in review_export.markdown_body
     assert "## Lifecycle Transitions" in review_export.markdown_body
+    assert "## Merge Gates" in review_export.markdown_body
     assert "- none" in review_export.markdown_body
 
 

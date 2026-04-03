@@ -171,6 +171,10 @@ def test_evaluate_build9x_merge_gates_passes_for_governed_bundle(repo_tmp_path):
 
     report = evaluate_build9x_merge_gates(bundle, state_dir=repo_tmp_path)
 
+    assert bundle.merge_gate_report is not None
+    assert bundle.merge_gate_report.all_passed is True
+    assert bundle.review_export.merge_gate_report == bundle.merge_gate_report
+    assert "## Merge Gates" in bundle.review_export.markdown_body
     assert report.all_passed is True
     assert all(gate.passed for gate in report.gates)
     assert report.gate(Build9XMergeGateName.NO_LIVE_MUTATION_PATH).passed is True
@@ -254,6 +258,8 @@ def test_backpressure_and_resource_gates_pass_when_degraded_capture_is_governed(
 
     report = evaluate_build9x_merge_gates(bundle, state_dir=repo_tmp_path)
 
+    assert bundle.merge_gate_report is not None
+    assert bundle.merge_gate_report.all_passed is True
     assert report.all_passed is True
     assert report.gate(Build9XMergeGateName.LEARNING_BACKPRESSURE_HANDLED).passed is True
     assert report.gate(Build9XMergeGateName.RESOURCE_BUDGETS_RESPECTED).passed is True
@@ -329,6 +335,9 @@ def test_merge_gates_hold_through_governed_shadow_review_readiness(repo_tmp_path
 
     report = evaluate_build9x_merge_gates(shadow_ready_bundle, state_dir=repo_tmp_path)
 
+    assert shadow_ready_bundle.merge_gate_report is not None
+    assert shadow_ready_bundle.merge_gate_report.all_passed is True
+    assert shadow_ready_bundle.review_export.merge_gate_report == shadow_ready_bundle.merge_gate_report
     assert report.all_passed is True
     assert report.gate(Build9XMergeGateName.END_TO_END_ID_CORRELATION).passed is True
     assert report.gate(Build9XMergeGateName.STATISTICAL_GOVERNANCE_PRESENT).passed is True

@@ -26,6 +26,7 @@ from meta_learning.enums import (
     HypothesisStatus,
     LearningLifecycleState,
 )
+from meta_learning.merge_gate_contracts import Build9XMergeGateReport
 
 
 def _utc_now() -> datetime:
@@ -424,6 +425,7 @@ class LearningReviewExport(BaseModel, frozen=True):
     review_decisions: tuple[ReviewDecisionRecord, ...] = ()
     archive_eligibility: tuple[ArchiveEligibilityRecord, ...] = ()
     lifecycle_transitions: tuple[LifecycleTransitionRecord, ...] = ()
+    merge_gate_report: Build9XMergeGateReport | None = None
     capture_mode: LearningCaptureMode = LearningCaptureMode.FULL_CAPTURE
     review_blocked_due_to_incomplete_data: bool = False
     blocking_reasons: tuple[str, ...] = ()
@@ -470,6 +472,7 @@ class MetaLearningReviewBundle(BaseModel, frozen=True):
     review_decisions: tuple[ReviewDecisionRecord, ...] = ()
     archive_eligibility: tuple[ArchiveEligibilityRecord, ...] = ()
     lifecycle_transitions: tuple[LifecycleTransitionRecord, ...] = ()
+    merge_gate_report: Build9XMergeGateReport | None = None
 
     @model_validator(mode="after")
     def validate_bundle_coherence(self) -> "MetaLearningReviewBundle":
@@ -495,6 +498,8 @@ class MetaLearningReviewBundle(BaseModel, frozen=True):
             raise ValueError("Review export archive eligibility must match bundle archive eligibility")
         if self.review_export.lifecycle_transitions and self.review_export.lifecycle_transitions != self.lifecycle_transitions:
             raise ValueError("Review export lifecycle transitions must match bundle lifecycle transitions")
+        if self.review_export.merge_gate_report and self.review_export.merge_gate_report != self.merge_gate_report:
+            raise ValueError("Review export merge_gate_report must match bundle merge_gate_report")
         if self.capacity_snapshot is not None:
             if (
                 self.review_export.review_blocked_due_to_incomplete_data

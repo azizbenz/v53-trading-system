@@ -26,6 +26,7 @@ from meta_learning.enums import (
 from meta_learning.hypothesis_registry import build_learning_hypotheses
 from meta_learning.improvement_candidate_builder import build_improvement_candidates
 from meta_learning.learning_review_exporter import export_learning_review
+from meta_learning.merge_gates import evaluate_build9x_merge_gates
 from meta_learning.lifecycle_registry import (
     apply_candidate_path,
     apply_diagnostic_path,
@@ -306,7 +307,7 @@ def run_meta_learning_review(
         ),
         summary=breakdown_report.summary,
     )
-    review_export = export_learning_review(
+    preliminary_review_export = export_learning_review(
         trade_input.correlation_id,
         breakdown_report,
         checklist_for_export,
@@ -320,6 +321,37 @@ def run_meta_learning_review(
         export_ref=review_export_ref,
     )
 
+    preliminary_bundle = MetaLearningReviewBundle(
+        correlation_id=trade_input.correlation_id,
+        diagnostics=diagnostics,
+        mistake_classes=mistake_classes,
+        breakdown_report=breakdown_report,
+        checklist=checklist_for_export,
+        hypotheses=hypotheses,
+        candidates=candidates,
+        replay_bundles=replay_bundles,
+        memory_record=memory_record,
+        review_export=preliminary_review_export,
+        capacity_snapshot=resolved_capacity_snapshot,
+        review_decisions=review_decisions,
+        archive_eligibility=archive_eligibility,
+        lifecycle_transitions=lifecycle_transitions,
+    )
+    merge_gate_report = evaluate_build9x_merge_gates(preliminary_bundle)
+    review_export = export_learning_review(
+        trade_input.correlation_id,
+        breakdown_report,
+        checklist_for_export,
+        candidates,
+        hypotheses=hypotheses,
+        replay_bundles=replay_bundles,
+        capacity_snapshot=resolved_capacity_snapshot,
+        review_decisions=review_decisions,
+        archive_eligibility=archive_eligibility,
+        lifecycle_transitions=lifecycle_transitions,
+        merge_gate_report=merge_gate_report,
+        export_ref=review_export_ref,
+    )
     bundle = MetaLearningReviewBundle(
         correlation_id=trade_input.correlation_id,
         diagnostics=diagnostics,
@@ -335,6 +367,7 @@ def run_meta_learning_review(
         review_decisions=review_decisions,
         archive_eligibility=archive_eligibility,
         lifecycle_transitions=lifecycle_transitions,
+        merge_gate_report=merge_gate_report,
     )
     if state_dir is not None:
         AppendOnlyMetaLearningStore(state_dir).append_review_bundle(bundle)

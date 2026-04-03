@@ -54,6 +54,11 @@ from meta_learning.improvement_candidate_builder import build_improvement_candid
 from meta_learning.learning_memory_store import LearningMemoryStore
 from meta_learning.persistence_store import AppendOnlyMetaLearningStore
 from meta_learning.learning_review_exporter import export_learning_review
+from meta_learning.merge_gate_contracts import (
+    Build9XMergeGateName,
+    Build9XMergeGateReport,
+    Build9XMergeGateResult,
+)
 from meta_learning.review_queue import build_review_queue
 from meta_learning.lifecycle_registry import (
     apply_candidate_path,
@@ -72,12 +77,7 @@ from meta_learning.mistake_classifier import classify_mistakes
 from meta_learning.near_miss_analyzer import analyze_near_misses
 from meta_learning.post_trade_diagnostic_engine import build_post_trade_diagnostics
 from meta_learning.monitoring_projection import build_build9x_projection
-from meta_learning.merge_gates import (
-    Build9XMergeGateName,
-    Build9XMergeGateReport,
-    Build9XMergeGateResult,
-    evaluate_build9x_merge_gates,
-)
+from meta_learning.merge_gates import evaluate_build9x_merge_gates
 from meta_learning.replay_bundle_builder import (
     build_replay_export_bundles,
     enrich_candidates_with_replay_refs,

@@ -15,6 +15,7 @@ from meta_learning.contracts import (
     ReviewDecisionRecord,
 )
 from meta_learning.enums import LearningCaptureMode
+from meta_learning.merge_gate_contracts import Build9XMergeGateReport
 
 
 def export_learning_review(
@@ -29,6 +30,7 @@ def export_learning_review(
     review_decisions: tuple[ReviewDecisionRecord, ...] = (),
     archive_eligibility: tuple[ArchiveEligibilityRecord, ...] = (),
     lifecycle_transitions: tuple[LifecycleTransitionRecord, ...] = (),
+    merge_gate_report: Build9XMergeGateReport | None = None,
     export_ref: str = "",
 ) -> LearningReviewExport:
     """Render the governed review packet into a markdown export."""
@@ -122,6 +124,19 @@ def export_learning_review(
         )
         or ("- none",)
     )
+    merge_gate_lines = (
+        tuple(
+            (
+                f"- {gate.gate_name.value}: "
+                f"{'pass' if gate.passed else 'fail'} "
+                f"(log={gate.structured_log_key}, "
+                f"reasons={', '.join(gate.blocking_reasons) or 'none'})"
+            )
+            for gate in merge_gate_report.gates
+        )
+        if merge_gate_report is not None
+        else ("- not_evaluated",)
+    )
 
     lines = [
         f"# Build-9X Review - {correlation_id}",
@@ -156,6 +171,9 @@ def export_learning_review(
         "## Lifecycle Transitions",
         *transition_lines,
         "",
+        "## Merge Gates",
+        *merge_gate_lines,
+        "",
         "## Replay Bundles",
         *replay_bundle_lines,
     ]
@@ -170,6 +188,7 @@ def export_learning_review(
         review_decisions=review_decisions,
         archive_eligibility=archive_eligibility,
         lifecycle_transitions=lifecycle_transitions,
+        merge_gate_report=merge_gate_report,
         capture_mode=(
             capacity_snapshot.capture_mode
             if capacity_snapshot
