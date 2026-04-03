@@ -36,7 +36,7 @@
     "branch_alignment": {
       "main_commit": "e28de12",
       "origin_main_commit": "e28de12",
-      "current_branch_commit": "5956224",
+      "current_branch_commit": "6781cff",
       "branch_divergence_detected": true,
       "interpretation": "The dedicated Full Shadow migration branch is now the active work surface. Canon migration started docs-first there, and the branch now also carries real Engine C/D packages, the Build-11 A/B/C/D runtime reinjection wave, the bounded native live_websocket proof checkpoint, and a local runner that now executes A/B/C/D before rendering component evidence. The previous branch remains the last coherent Option-B rollback checkpoint."
     },
@@ -499,6 +499,16 @@
         "The full Build-9X suite remains green after introducing explicit merge gates.",
         "Build-14 now includes a distinct false_breakout_model reader and the runtime export surface stays green."
       ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_meta_learning tests/test_complete_enablers tests/test_manifest_registry/test_runtime_surface.py -q",
+      "result": "138 passed",
+      "classification": "build9x_build14_full_addendum_reader_wave_green",
+      "notes": [
+        "The full Build-9X suite remains green after the explicit merge-gate wave.",
+        "Build-14 now exposes distinct governed readers for false_breakout, LOB/VWA, OBI, Hurst, and competition monitor while the runtime export surface stays green."
+      ]
     }
   ],
   "current_status_by_build": {
@@ -612,9 +622,9 @@
     {
       "decision_id": "GOV-009",
       "topic": "Build-9X explicit governance gates and Build-14 addendum absorption strategy",
-      "current_canon": "The branch now has explicit Build-9X V2 merge gates plus an end-to-end lifecycle proof, and the Build-14 addendum has started to be absorbed with a distinct false_breakout_model reader. The addendum still remains only partially absorbed because LOB/VWA, OBI, Hurst, and competition monitor are not yet distinct coded bricks.",
+      "current_canon": "The branch now has explicit Build-9X V2 merge gates plus an end-to-end lifecycle proof, and the selected Build-14 addendum readers are all present as distinct governed snapshots: false_breakout_model, LOB/VWA, OBI, Hurst regime classifier, and competition monitor.",
       "proposed_change": "Formalize Build-9X V2 as explicit named merge gates plus one end-to-end lifecycle proof, then absorb the missing Build-14 addendum enrichments as Shadow-first governed readers. Allow only bounded post-Shadow live influence, never dynamic self-tuning live mutation.",
-      "status": "in_progress_on_current_branch",
+      "status": "implementation_wave_completed_on_current_branch",
       "rule_until_decided": "Harden governance first, then integrate Build-14 enrichments in Shadow, and only later allow limited live influence by explicit verdict. Do not let the new enrichments auto-penalize or auto-tune live behavior opportunistically."
     }
   ],
@@ -865,8 +875,16 @@
       "date": "2026-04-03",
       "scope": "Build-9X V2 and Build-14 addendum point-by-point matrix",
       "record_path": "docs/audit chatgpt buisness/2026-04-03_BUILD9X_BUILD14_POINT_BY_POINT_MATRIX.md",
-      "conclusion": "Build-9X Lots 0 to 2 are now materially present on the branch through explicit merge gates and a governed lifecycle proof. Build-14 addendum absorption has also started with a distinct false_breakout_model reader, while LOB/VWA, OBI, Hurst, and competition monitor remain open.",
-      "action_taken": "Use the matrix as the owner map for the next Build-14 addendum waves without reopening already aligned builds."
+      "conclusion": "Build-9X Lots 0 to 2 are now materially present on the branch through explicit merge gates and a governed lifecycle proof. The selected Build-14 addendum readers are also now all present as distinct governed snapshots on the branch.",
+      "action_taken": "Use the matrix as the active observation map for the Build-11 Shadow campaign and for later post-Shadow verdicting, without reopening already aligned builds."
+    },
+    {
+      "audit_id": "AUDIT-032",
+      "date": "2026-04-03",
+      "scope": "Build-14 remaining addendum reader absorption wave",
+      "record_path": "docs/audit chatgpt buisness/2026-04-03_BUILD9X_BUILD14_POINT_BY_POINT_MATRIX.md",
+      "conclusion": "LOB/VWA, OBI, Hurst regime classifier, and competition monitor are now all available as distinct governed Build-14 readers on the migration branch, alongside the already integrated false_breakout_model, market_toxicity_snapshot, and execution_fragility_score.",
+      "action_taken": "Move the next work from reader existence to Shadow observation, reporting, and later bounded influence verdicts."
     }
   ],
   "known_critical_gaps": [
