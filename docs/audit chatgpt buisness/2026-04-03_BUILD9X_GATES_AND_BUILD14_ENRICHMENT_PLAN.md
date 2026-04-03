@@ -18,7 +18,77 @@ Shadow campaign continues.
 
 ---
 
-# 1. Strategic verdict
+# 1. Closure-audit execution frame
+
+This plan inherits the closure-oriented register already frozen in:
+
+- `docs/audit chatgpt buisness/2026-04-03_BUILD1_TO_BUILD17_CLOSURE_AUDIT.md`
+
+The operative rule is:
+
+- do **not** reopen already aligned builds without a proved regression
+- do **not** redo a full audit from scratch
+- use a delta audit `Build-1 -> Build-17`
+- concentrate real closure work only on the builds still open
+
+## 1.1 Builds that stay closed unless regression appears
+
+- `1`
+- `2`
+- `3`
+- `5`
+- `6`
+- `7`
+- `8`
+- `9`
+- `9x`
+- `10`
+- `14`
+
+## 1.2 Builds that still require closure work
+
+- `Build-4`
+- `Build-11`
+- `Build-12`
+- `Build-13`
+- `Build-15`
+- `Build-16`
+- `Build-17`
+
+## 1.3 Closure method for open builds
+
+For each still-open build, keep one explicit register entry:
+
+- exact blocker
+- blocker class: `code`, `tests`, `runtime`, `ops`, or `governance`
+- whether closure is realistically possible now
+- minimum action to reach `ALIGNED`
+- upstream dependency if another build must close first
+
+## 1.4 Recommended closure order
+
+1. `Build-4`
+2. `Build-11`
+3. `Build-12`
+4. `Build-13`
+5. `Build-15`
+6. `Build-16`
+7. `Build-17`
+
+Practical reading:
+
+- `Build-4` is the fastest to clarify because it may still be only an
+  environment blocker
+- `Build-11` is the main real production gate
+- `Build-12/13` are auditable now but cannot close honestly before `Build-11`
+- `Build-15/16` may become the best short-term closure candidates once their
+  dedicated hardening/qualification waves are executed
+- `Build-17` should not be forced closed before a real `Live-Complete` runtime
+  exists
+
+---
+
+# 2. Strategic verdict
 
 This is a good strategy **if and only if** it follows one strict rule:
 
@@ -51,9 +121,9 @@ This same logic also applies to a later `Live-Complete` surface:
 
 ---
 
-# 2. What is still missing
+# 3. What is still missing
 
-## 2.1 Build-9X hardening missing today
+## 3.1 Build-9X hardening missing today
 
 The branch already has a substantial `meta_learning` package, contracts,
 persistence, review queue, monitoring projection, and tests.
@@ -79,7 +149,7 @@ The gates to formalize are:
 - `RESOURCE_BUDGETS_RESPECTED`
 - `STATISTICAL_GOVERNANCE_PRESENT`
 
-## 2.2 Build-14 addendum absorption still missing today
+## 3.2 Build-14 addendum absorption still missing today
 
 The branch already has a real guarded `Build-14` base:
 
@@ -98,7 +168,7 @@ But these enrichments do not yet appear as distinct absorbed bricks:
 
 ---
 
-# 3. Canonical absorption map
+# 4. Canonical absorption map
 
 These enrichments should **not** become new engines.
 
@@ -127,7 +197,7 @@ This keeps the architecture canonical:
 
 ---
 
-# 4. Recommended work batches
+# 5. Recommended work batches
 
 ## Lot 0 - Audit matrix before coding
 
@@ -144,6 +214,8 @@ Done criteria:
 
 - every selected requirement has one owner
 - nothing is coded "from memory"
+- closure implications are linked back to the `Build-1 -> Build-17` closure
+  register
 
 ## Lot 1 - Build-9X explicit merge gates
 
@@ -258,7 +330,7 @@ Rule:
 
 ---
 
-# 5. Impact on build closure
+# 6. Impact on build closure
 
 This plan should not reopen every build.
 
@@ -282,9 +354,15 @@ So the work order remains:
 4. evaluate them in Shadow
 5. only then consider bounded live influence
 
+And the closure reading stays:
+
+- already closed and left frozen: `1,2,3,5,6,7,8,9,9x,10,14`
+- best realistic closure candidates during this phase: `4,15,16`
+- structurally blocked meanwhile: `11,12,13,17`
+
 ---
 
-# 6. Recommended immediate next action
+# 7. Recommended immediate next action
 
 The best next coding wave is:
 
@@ -301,7 +379,7 @@ adding more market-facing complexity.
 
 ---
 
-# 7. Honest conclusion
+# 8. Honest conclusion
 
 Yes, this is a good strategy.
 

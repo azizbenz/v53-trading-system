@@ -831,6 +831,14 @@
       "record_path": "docs/audit chatgpt buisness/2026-04-03_BUILD9X_GATES_AND_BUILD14_ENRICHMENT_PLAN.md",
       "conclusion": "The safe strategy is to harden Build-9X as explicit governance gates first, then integrate the missing Build-14 addendum enrichments in Shadow-first mode, and only later allow bounded live influence by explicit verdict.",
       "action_taken": "Freeze the work order and use it to avoid mixing governance hardening, enrichment absorption, and live influence in one uncontrolled coding wave."
+    },
+    {
+      "audit_id": "AUDIT-030",
+      "date": "2026-04-03",
+      "scope": "Closure-audit integration into the Build-9X / Build-14 work plan",
+      "record_path": "docs/audit chatgpt buisness/2026-04-03_BUILD9X_GATES_AND_BUILD14_ENRICHMENT_PLAN.md",
+      "conclusion": "The Build-9X / Build-14 plan now explicitly inherits the Build-1 -> Build-17 closure register: aligned builds stay frozen, open builds keep exact blocker classification, and closure effort remains concentrated on 4,11,12,13,15,16,17.",
+      "action_taken": "Use the closure-oriented execution frame to prevent unnecessary re-audits and to keep the new governance/enrichment work aligned with the global build-closing strategy."
     }
   ],
   "known_critical_gaps": [
@@ -1064,12 +1072,14 @@
       "scope": [
         "Build-9X V2 explicit merge gates",
         "Build-9X end-to-end governed lifecycle proof",
-        "Build-14 missing addendum enrichments as Shadow-first readers"
+        "Build-14 missing addendum enrichments as Shadow-first readers",
+        "Alignment with the Build-1 -> Build-17 closure register"
       ],
       "done_criteria": [
         "Named Build-9X governance gates exist as explicit tests.",
         "One end-to-end lifecycle proof exists from input to replay/review/persistence/monitoring.",
-        "Missing Build-14 enrichments are absorbed into canonical families without creating new engines or live auto-mutation."
+        "Missing Build-14 enrichments are absorbed into canonical families without creating new engines or live auto-mutation.",
+        "The work does not reopen already aligned builds and stays traceable against the closure register."
       ]
     }
   ],
