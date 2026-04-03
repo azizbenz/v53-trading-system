@@ -36,9 +36,9 @@
     "branch_alignment": {
       "main_commit": "e28de12",
       "origin_main_commit": "e28de12",
-      "current_branch_commit": "9425681",
+      "current_branch_commit": "a631b1c",
       "branch_divergence_detected": true,
-      "interpretation": "The dedicated Full Shadow migration branch is now the active work surface. Canon migration started docs-first there, and the branch now also carries real Engine C/D packages plus the first Build-11 A/B/C/D runtime reinjection wave, while the previous branch remains the last coherent Option-B rollback checkpoint."
+      "interpretation": "The dedicated Full Shadow migration branch is now the active work surface. Canon migration started docs-first there, and the branch now also carries real Engine C/D packages, the Build-11 A/B/C/D runtime reinjection wave, the bounded native live_websocket proof checkpoint, and a local runner that executes C/D before rendering their component evidence. The previous branch remains the last coherent Option-B rollback checkpoint."
     },
     "notes": [
       "Do not reset hard.",
