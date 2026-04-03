@@ -50,22 +50,38 @@ class TestCanonicalRuntimeSurface:
         module = importlib.import_module("meta")
         assert {"MetaInputSource", "MetaRuntime", "MetaRuntimeConfig", "MetaRuntimeInput", "MetaRuntimeResult", "MetaRuntimeStatus"} <= set(module.__all__)
 
-    def test_engine_c_facade_exposes_spec_only_surface(self):
+    def test_engine_c_facade_exports_runner_api(self):
         module = importlib.import_module("engine_c")
         assert {
-            "ENGINE_C_BUILD_STAGE",
-            "ENGINE_C_IMPLEMENTATION_STATUS",
-            "ENGINE_C_NOT_IMPLEMENTED_REASON",
-            "EngineCNotImplementedError",
-            "raise_engine_c_not_implemented",
+            "EngineCInput",
+            "EngineCOutput",
+            "EngineCDecision",
+            "run_engine_c",
         } <= set(module.__all__)
 
-    def test_engine_d_facade_exposes_spec_only_surface(self):
+    def test_engine_c_facade_exports_runtime_api(self):
+        module = importlib.import_module("engine_c")
+        assert {
+            "EngineCRuntime",
+            "EngineCRuntimeInput",
+            "EngineCRuntimeResult",
+            "EngineCRuntimeStatus",
+        } <= set(module.__all__)
+
+    def test_engine_d_facade_exports_runner_api(self):
         module = importlib.import_module("engine_d")
         assert {
-            "ENGINE_D_BUILD_STAGE",
-            "ENGINE_D_IMPLEMENTATION_STATUS",
-            "ENGINE_D_NOT_IMPLEMENTED_REASON",
-            "EngineDNotImplementedError",
-            "raise_engine_d_not_implemented",
+            "EngineDInput",
+            "EngineDOutput",
+            "EngineDDecision",
+            "run_engine_d",
+        } <= set(module.__all__)
+
+    def test_engine_d_facade_exports_runtime_api(self):
+        module = importlib.import_module("engine_d")
+        assert {
+            "EngineDRuntime",
+            "EngineDRuntimeInput",
+            "EngineDRuntimeResult",
+            "EngineDRuntimeStatus",
         } <= set(module.__all__)

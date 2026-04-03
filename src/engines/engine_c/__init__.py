@@ -1,32 +1,37 @@
-"""Build-15 / engine_c package surface.
+"""Build-15 / engine_c.
 
-This package is intentionally importable even though the actual Engine C
-breakout-continuation logic is not implemented yet. The goal is to keep the
-canonical inventory and bootstrap surface truthful without pretending that the
-motor is production-ready.
+Shadow-capable breakout continuation engine.
 """
 
-ENGINE_C_BUILD_STAGE = 15
-ENGINE_C_IMPLEMENTATION_STATUS = "spec_only"
-ENGINE_C_NOT_IMPLEMENTED_REASON = (
-    "Build-15 Engine C breakout-continuation logic is not implemented yet."
+from .engine_c_runner import (
+    EngineCDecision,
+    EngineCInput,
+    EngineCInvalidation,
+    EngineCLogEntry,
+    EngineCOutput,
+    run_engine_c,
+)
+from .engine_c_runtime import (
+    EngineCRuntime,
+    EngineCRuntimeInput,
+    EngineCRuntimeResult,
+    EngineCRuntimeStatus,
 )
 
-
-class EngineCNotImplementedError(NotImplementedError):
-    """Raised when runtime code tries to use the planned Engine C package."""
-
-
-def raise_engine_c_not_implemented() -> None:
-    """Fail explicitly when a caller tries to execute the planned Engine C."""
-
-    raise EngineCNotImplementedError(ENGINE_C_NOT_IMPLEMENTED_REASON)
-
+ENGINE_C_BUILD_STAGE = 15
+ENGINE_C_IMPLEMENTATION_STATUS = "shadow_capable"
 
 __all__ = [
     "ENGINE_C_BUILD_STAGE",
     "ENGINE_C_IMPLEMENTATION_STATUS",
-    "ENGINE_C_NOT_IMPLEMENTED_REASON",
-    "EngineCNotImplementedError",
-    "raise_engine_c_not_implemented",
+    "EngineCDecision",
+    "EngineCInput",
+    "EngineCInvalidation",
+    "EngineCLogEntry",
+    "EngineCOutput",
+    "EngineCRuntime",
+    "EngineCRuntimeInput",
+    "EngineCRuntimeResult",
+    "EngineCRuntimeStatus",
+    "run_engine_c",
 ]
