@@ -18,7 +18,7 @@ Build-13 a une mission unique :
 
 > **NON NÉGOCIABLE. Aucune dérogation.**
 
-- **HARD : Light a tradé en Shadow intégral 30 jours calendaires consécutifs minimum** (Build-11 validé, avec A/B et Build-14 activés à 100%)
+- **HARD : Light a tradé en Shadow intégral 30 jours calendaires consécutifs minimum** (Build-11 validé, avec A/B/C/D et Build-14 activés à 100%)
 - **HARD : Verdict post-Shadow rendu composant par composant** (chaque moteur/enabler : `SHADOW_VALIDATED` ou `DORMANT`)
 - **HARD : Micro-live stable minimum 7 jours** (Build-12 validé, avec uniquement les composants `SHADOW_VALIDATED`)
 - **HARD : Rapport shadow produit, exploitable et approuvé** (incluant comparaison inter-moteurs et contribution Build-14)
@@ -74,7 +74,7 @@ Build-13 reste strictement dans la V5.3 unifiée :
 Le Live-Light existe pour tester simultanément, dans des conditions réelles de production :
 
 - la stabilité continue du rollout LIGHT sur la même architecture complète
-- la robustesse d’A et B
+- la robustesse des composants effectivement `SHADOW_VALIDATED` et autorisés en live
 - la cohérence du portefeuille minimal
 - la soutenabilité des coûts réels
 - la qualité de la réconciliation sur la durée
@@ -123,8 +123,7 @@ Les conditions suivantes doivent être satisfaites :
 
 ## Après Build-13
 Si Build-13 est validé, alors seulement :
-- Build-15 : Moteur C
-- Build-16 : Moteur D
+- consolidation / hardening Build-15 et Build-16 pour les moteurs C/D observés en Shadow mais pas encore promus
 - Build-17 : UI Complete + Live-Complete
 
 ## 3.1 Relation avec Build-14, onboarding et Build-9X
@@ -180,7 +179,7 @@ Build-13 ne peut pas commencer si une des conditions suivantes n’est pas satis
 - état canonique : `profil=LIGHT`, `runtime_mode=LIVE`
 - nom de phase lisible : `Live-Light`
 - 6 paires maximum
-- coeur runtime attendu : moteurs A et B
+- coeur runtime attendu : moteurs A et B, avec C/D seulement s’ils ont été `SHADOW_VALIDATED` et industrialisés
 
 ## 6.2 Paires autorisées
 Uniquement les paires validées par Shadow + Micro-live, typiquement :
@@ -194,9 +193,9 @@ Uniquement les paires validées par Shadow + Micro-live, typiquement :
 ## 6.3 Moteurs autorisés
 - A
 - B
-- C et D peuvent exister comme composants de référence, mais leur activation
-  réelle reste hors scope de Build-13 tant que leurs gates spécifiques ne sont
-  pas passés
+- C et D peuvent être promus seulement s’ils ont été observés en Shadow,
+  classés `SHADOW_VALIDATED` et passés par leurs gates spécifiques de mise en
+  service
 
 ## 6.4 Composants obligatoirement actifs
 - tous les backbones précédents

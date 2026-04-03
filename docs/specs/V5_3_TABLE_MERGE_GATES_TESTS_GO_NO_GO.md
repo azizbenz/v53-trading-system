@@ -320,7 +320,7 @@ Encadrer le chemin documentaire et futur d’introduction d’une nouvelle hypot
 Valider la **solution intégrale observée** sans risque capital. Le Shadow est la phase de vérité système.
 
 ## 6.2 Métriques minimales
-- fréquence brute et utile **par moteur** (A/B)
+- fréquence brute et utile **par moteur** (A/B/C/D)
 - coût attendu et simulé **par moteur**
 - DTR complets
 - pass-rate économique
@@ -337,11 +337,11 @@ Valider la **solution intégrale observée** sans risque capital. Le Shadow est 
 ### Shadow intégral (profil `LIGHT`) — Phase de vérité système
 - **30 jours calendaires consécutifs minimum** en mode SHADOW sur données réelles
 - Pipeline complet obligatoire : data → engine → scoring → portfolio → execution simulée
-- **A/B activés à 100%** : scorés, classés, arbitrés et observés
+- **A/B/C/D activés à 100%** : scorés, classés, arbitrés et observés
 - **Build-14 activé à 100%** : microstructure, régime, covariance, risk contribution, edge diversity
 - DTR complet produit pendant les 30 jours
 - Interruption > 24h = compteur reprend à zéro
-- Rapport shadow exploitable obligatoire incluant **comparaison inter-moteurs A/B et contribution Build-14**
+- Rapport shadow exploitable obligatoire incluant **comparaison inter-moteurs A/B/C/D et contribution Build-14**
 - **Aucune activation Micro-live ni Live-Light avant l’expiration**
 - **Activation intégrale en Shadow ≠ promotion Live** : verdict composant par composant obligatoire
 
@@ -645,7 +645,7 @@ W_q = \frac{\lambda}{\mu_s(\mu_s-\lambda)}
 | K_eff | optionnel | utile | utile | obligatoire |
 | Backlog/queues | stable | stable | stable | stable renforcé |
 | UI verrouillée | oui | oui | oui | oui |
-| Moteurs C/D | non | non | non | oui si validés |
+| Moteurs C/D | oui, observés seulement | oui si `SHADOW_VALIDATED` et industrialisés | oui si `SHADOW_VALIDATED` et industrialisés | oui si validés |
 
 ---
 

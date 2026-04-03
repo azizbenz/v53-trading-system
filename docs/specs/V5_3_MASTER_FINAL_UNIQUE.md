@@ -133,7 +133,7 @@ La promotion suit un pipeline temporel hard :
 
 ### Règle 3 — Activation Shadow ≠ promotion Live
 
-- L’activation intégrale en Shadow (Build-14 à 100%, A/B actifs) **ne signifie pas promotion automatique vers Live**
+- L’activation intégrale en Shadow (Build-14 à 100%, A/B/C/D actifs) **ne signifie pas promotion automatique vers Live**
 - La promotion reste strictement conditionnelle au **verdict post-Shadow**
 - Possibilité de rollback, downgrade ou désactivation sélective à l’issue des 30 jours
 - Chaque composant est jugé individuellement : un moteur peut être validé en Shadow mais non promu en Live
@@ -326,7 +326,7 @@ Ils decrivent deux envelopes d'activation reelle d'une meme architecture
 complete, prod-safe et gouvernee.
 
 `COMPLETE` désigne exclusivement l'enveloppe de rollout élargie.
-Le Shadow du profil `LIGHT` avec A/B et Build-14 activés à 100% en
+Le Shadow du profil `LIGHT` avec A/B/C/D et Build-14 activés à 100% en
 observation est nommé `Shadow intégral`.
 `Shadow intégral` n'est pas le profil `COMPLETE`.
 
@@ -334,10 +334,10 @@ observation est nommé `Shadow intégral`.
 - premier rollout reel prudent et gouverne
 - 6 paires maximum en production reelle
 - architecture complete disponible et documentee
-- moteurs A/B au coeur du rollout Light ; C/D reserves aux Build-15/16
+- moteurs A/B au coeur du rollout Light ; C/D observés pendant le Shadow 30 jours puis promouvables seulement sous verdict et hardening dédiés
 - A/B attendus au coeur du rollout initial live
 - **Build-14 activé à 100% pendant le Shadow 30 jours** : utilise dans les decisions du rollout Light et compare au coeur A/B
-- C/D restent reserves aux Build-15/16 et ne sont pas promus via Build-11
+- C/D peuvent être observés via Build-11, mais ne sont jamais promus via Build-11 sans verdict post-Shadow et gates dédiés
 - portfolio, risk, execution, UI et logs complets et auditables
 - pas de profil custom
 - pas de RL live
@@ -574,7 +574,7 @@ Invariants :
 - aucun moteur ne doit exister s’il ne produit ni alpha net ni diversification
 
 Profil :
-- LIGHT : A/B coeur attendu en live ; Build-14 actif en Shadow ; C/D reserves aux Build-15/16
+- LIGHT : A/B coeur attendu en live ; C/D observés en Shadow ; promotion aval uniquement si validés et industrialisés
 - COMPLETE : A/B/C/D dans une enveloppe de rollout elargie
 
 ---
@@ -1440,7 +1440,7 @@ Go :
 - fréquence utile > V5.2
 - edge net > 0 ou crédible
 - CE > V5.2
-- A/B stables
+- composants promus stables
 - budgets respectés
 - logs et DTR fiables
 

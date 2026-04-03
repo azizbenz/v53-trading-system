@@ -31,20 +31,21 @@
     ]
   },
   "repo_state": {
-    "branch": "codex/build-11-reaudit-20260402",
+    "branch": "codex/full-shadow-abcd-migration-20260403",
     "worktree_dirty": true,
     "branch_alignment": {
       "main_commit": "e28de12",
       "origin_main_commit": "e28de12",
-      "current_branch_commit": "09c77b0",
+      "current_branch_commit": "d92fb5b",
       "branch_divergence_detected": true,
-      "interpretation": "The current branch is ahead of main by 8 local commits. There is still no conflicting split to resolve, but local audit/correction work now needs preservation discipline before any cleanup."
+      "interpretation": "The dedicated Full Shadow migration branch is now the active work surface. Canon migration is intentionally staged there while the previous branch remains the last coherent Option-B rollback checkpoint."
     },
     "notes": [
       "Do not reset hard.",
       "Do not bulk delete untracked files.",
-      "Dirty worktree contains the active Build-11 runtime-evidence lot.",
-      "Preserve local commits and the current modified lot before any cleanup or push decision."
+      "Keep the previous branch readable as the last coherent Option-B rollback point.",
+      "On the migration branch, canon may advance before runtime by design, but each lot must be frozen explicitly before coding continues.",
+      "Preserve local commits and staged migration lots before any cleanup or push decision."
     ]
   },
   "validated_test_evidence": [
@@ -382,8 +383,8 @@
       "topic": "Target migration to Full Shadow 30j A/B/C/D",
       "current_canon": "The current branch still runs on the Option B baseline where Build-11 validates A/B + Build-14 only, and C/D remain later implementation scopes.",
       "proposed_change": "User-selected target doctrine: migrate toward a single Build-11 Full Shadow 30-day phase that observes A/B/C/D + Build-14, while keeping downstream Micro-live/Live promotions gated per component verdict rather than automatic.",
-      "status": "migration_started_on_dedicated_branch",
-      "rule_until_decided": "The dedicated migration branch now exists. Do not treat GOV-008 as fully applied until the canon repatch and C/D reinjection lots are actually executed there."
+      "status": "canon_repatched_on_migration_branch_pending_engine_implementation",
+      "rule_until_decided": "On the dedicated migration branch, the canon now targets Full Shadow A/B/C/D. Do not treat GOV-008 as fully implemented until Engine C, Engine D, and Build-11 C/D runtime reinjection lots are executed."
     }
   ],
   "targeted_audits": [
@@ -515,6 +516,14 @@
       "record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_LOT0_BRANCH_CHECKPOINT.md",
       "conclusion": "Lot 0 is now effectively started. The dedicated migration branch codex/full-shadow-abcd-migration-20260403 was created from commit 01b39e3, preserving the previous branch as the last coherent Option-B rollback point.",
       "action_taken": "Use the new branch for Lots 1 to 4, and keep the doctrine change staged rather than implicit."
+    },
+    {
+      "audit_id": "AUDIT-017",
+      "date": "2026-04-03",
+      "scope": "Full Shadow migration Lot 1 canonical repatch",
+      "record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_LOT1_CANON_REPATCH_AUDIT.md",
+      "conclusion": "The migration branch canon now explicitly restores Build-11 as Full Shadow A/B/C/D + Build-14, while preserving the rule that C/D observation in Shadow does not imply automatic Micro-live or Live promotion.",
+      "action_taken": "Freeze the doctrine change in canonical docs first, keep the branch marked as docs-ahead-of-runtime, and move next to Engine C implementation rather than premature Build-11 runtime reinjection."
     }
   ],
   "known_critical_gaps": [
@@ -522,15 +531,15 @@
       "gap_id": "GAP-001",
       "priority": "P0",
       "scope": "Build-11 doctrine vs actual closure criteria",
-      "doc_expectation": "Shadow 30 days as full system truth phase with A/B and Build-14 SHADOW_ENABLED, then post-Shadow verdict.",
-      "code_or_runtime_reality": "Autonomous Shadow VPS service and live_websocket support exist, and the current branch now persists a durable runtime evidence bundle chain. Final operational proof and full doctrinal closure are still not yet established.",
+      "doc_expectation": "On the migration branch, Shadow 30 days is now repatched as a full-system truth phase with A/B/C/D and Build-14 SHADOW_ENABLED, then post-Shadow verdict.",
+      "code_or_runtime_reality": "Autonomous Shadow VPS service and live_websocket support exist, but the runtime still does not honestly include Engine C and Engine D as real Build-11 Shadow participants. Final operational proof and doctrinal closure are not yet established.",
       "status": "open"
     },
     {
       "gap_id": "GAP-002",
       "priority": "P1",
       "scope": "Moteurs C/D",
-      "doc_expectation": "On the current branch, Engine C belongs to Build-15 and Engine D belongs to Build-16, rather than to the active Build-11 Light Shadow perimeter.",
+      "doc_expectation": "On the migration branch, Engine C and Engine D are part of the Build-11 Full Shadow observation perimeter, while their downstream promotion remains verdict- and gate-driven.",
       "code_or_runtime_reality": "engine_c and engine_d now import cleanly through spec_only facades, but the actual Engine C and Engine D trading logic is still not implemented and the module inventory still reflects a planned state.",
       "status": "open"
     },
@@ -785,25 +794,26 @@
     }
   },
   "next_recommended_action": {
-    "step": "Execute Lot 1 on the dedicated migration branch: repatch the canonical docs so Build-11 explicitly targets A/B/C/D + Build-14, while preserving the rule that Shadow observation does not imply automatic downstream promotion.",
-    "reason": "Lot 0 is now complete: the dedicated migration branch exists and the previous branch remains the rollback checkpoint. The safest next move is the canon repatch before any Engine C/D reinjection into Build-11 runtime surfaces."
+    "step": "Execute Lot 2 on the dedicated migration branch: implement Engine C as a real Shadow-capable engine before any Build-11 C/D runtime reinjection.",
+    "reason": "Lot 1 is now frozen in canon. The branch is intentionally docs-ahead-of-runtime, so the next honest move is to make Engine C real rather than pretending the Build-11 runtime already satisfies the new doctrine."
   },
   "branch_overrides": {
     "option_b_realignment_commit": "99cf170",
     "migration_branch": "codex/full-shadow-abcd-migration-20260403",
     "migration_branch_base_commit": "01b39e3",
-    "effective_next_action": "Use the new migration branch for Lot 1 canonical repatch, then proceed with Lot 2 Engine C implementation and Lot 3 Engine D implementation before any Build-11 reinjection.",
-    "effective_reason": "The dedicated Full Shadow migration branch now exists, so the rollback checkpoint is preserved. The lowest-risk next move is to patch the canon first and keep C/D reinjection blocked until the engines are real."
+    "effective_next_action": "Use the migration branch for Lot 2 Engine C implementation, then Lot 3 Engine D implementation, before any Build-11 C/D runtime reinjection.",
+    "effective_reason": "The canon repatch is now frozen. The lowest-risk next move is to make Engine C and Engine D real enough for honest Shadow participation before touching Build-11 runtime contracts."
   },
   "planned_migration": {
     "migration_id": "MIG-001",
     "selected_target": "full_shadow_30d_abcd_build14",
-    "status": "lot0_started_on_dedicated_branch",
+    "status": "lot1_canon_repatch_applied_on_migration_branch",
     "record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_MIGRATION_PLAN.md",
     "checkpoint_record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_LOT0_BRANCH_CHECKPOINT.md",
+    "lot1_record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_LOT1_CANON_REPATCH_AUDIT.md",
     "active_branch": "codex/full-shadow-abcd-migration-20260403",
     "base_commit": "01b39e3",
-    "rule_until_applied": "This branch is now the staged migration surface, but the Full Shadow doctrine is not considered applied until the canon repatch and Build-11 C/D reinjection lots are executed.",
-    "recommended_start": "Lot 1 - canonical repatch to Full Shadow"
+    "rule_until_applied": "The migration branch canon now targets Full Shadow A/B/C/D, but the doctrine is not considered implemented until Engine C, Engine D, and Build-11 C/D runtime reinjection lots are executed.",
+    "recommended_start": "Lot 2 - Engine C shadow-capable implementation"
   }
 }

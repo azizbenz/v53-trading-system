@@ -71,10 +71,10 @@ Le Micro-live Light existe pour tester simultanément :
 
 Le Micro-live n’active que les composants ayant reçu le verdict `SHADOW_VALIDATED` à l’issue des 30 jours de `Shadow intégral` du profil `LIGHT`.
 
-- L’activation intégrale en Shadow (Build-14 à 100%, coeur A/B actif) **ne signifie pas activation Micro-live automatique** de tous ces composants
+- L’activation intégrale en Shadow (A/B/C/D + Build-14 à 100%) **ne signifie pas activation Micro-live automatique** de tous ces composants
 - Seuls les composants dont la valeur a été démontrée pendant le Shadow passent en Micro-live
 - Les composants marqués `DORMANT` au verdict post-Shadow restent inactifs
-- C/D restent réservés à Build-15 / Build-16 et ne sont pas activés par Build-12
+- C/D peuvent être observés pendant Build-11, mais leur activation Micro-live reste conditionnée à leur verdict, à leur état d’implémentation réel et aux gates dédiés de mise en service
 - Il peut y avoir rollback ou filtrage avant Micro-live
 
 Sans cette phase, le passage direct en Live-Light serait prématuré.
@@ -191,9 +191,9 @@ Seulement les paires validées en `Shadow intégral`, en pratique :
 ## 6.3 Moteurs autorisés
 - A
 - B
-- C et D peuvent exister comme composants de référence, mais leur activation
-  réelle reste hors scope de Build-12 tant que leurs gates spécifiques ne sont
-  pas passés
+- C et D peuvent être activés seulement s’ils ont été observés en Shadow,
+  classés `SHADOW_VALIDATED` et passés par leurs gates spécifiques de mise en
+  service
 
 ## 6.4 Composants obligatoirement actifs
 - data backbone
@@ -668,7 +668,7 @@ Le micro-live doit avoir des règles d’arrêt immédiat explicites.
 ## 19.1 Étape 1 — Lancement micro-live
 - profil Light
 - tailles micro fixées ex ante
-- A/B actifs
+- composants `SHADOW_VALIDATED` actifs
 - caps risque complets
 - UI / monitoring actifs
 

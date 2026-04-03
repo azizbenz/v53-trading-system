@@ -71,22 +71,22 @@ Build-11 reste strictement dans la V5.3 unifiée :
 
 - `LIGHT` et `COMPLETE` restent les deux seuls profils de rollout
 - dans ce document, `Shadow intégral` désigne le Shadow du profil `LIGHT`
-  où A/B et Build-14 sont activés à 100% en observation
+  où A/B/C/D et Build-14 sont activés à 100% en observation
 - `Shadow intégral` n'est pas le profil `COMPLETE`
 
 Le Shadow existe pour tester **la solution intégrale observée** simultanément :
 
 - la qualité de la chaîne data
 - la cohérence scoring / hard-soft-rank
-- l’arbitrage portefeuille **A/B** (coeur runtime Light)
+- l’arbitrage portefeuille **A/B/C/D** observé dans l’enveloppe runtime Light
 - les coûts attendus par moteur
 - la discipline du risk backbone
 - la qualité des DTR / CRA / break-even / edge tracker
 - la supervision UI / monitoring
 - **les enrichissements Build-14** (microstructure, régime, covariance, risk contribution, edge diversity) activés à 100%
-- **les interactions inter-moteurs** A/B : conflits, duplication, concentration, complémentarité
-- **la robustesse portefeuille** avec le coeur A/B et les enrichissements Build-14
-- **le coût réel simulé prudent** avec activation Light + Build-14
+- **les interactions inter-moteurs** A/B/C/D : conflits, duplication, concentration, complémentarité
+- **la robustesse portefeuille** avec A/B/C/D et les enrichissements Build-14
+- **le coût réel simulé prudent** avec activation Light + Build-14 + observation C/D
 
 Le Shadow n’est plus une simple validation Light minimale. Il est la **phase de vérité système** où l’on observe la solution intégrale avant de décider quoi promouvoir.
 
@@ -153,13 +153,13 @@ Le système prend-il des décisions cohérentes et reproductibles ?
 Le système produit-il une fréquence utile plausible avec des coûts prudents ?
 
 ## 4.3 Vérité portefeuille
-Le système A/B + portefeuille Light + Build-14 arbitre-t-il proprement les opportunités ?
+Le système A/B/C/D + portefeuille Light + Build-14 arbitre-t-il proprement les opportunités ?
 
 ## 4.4 Vérité opérationnelle
-Le système reste-t-il observable, stable, non saturé et explicable en fonctionnement continu avec le coeur Light A/B et les enrichissements Build-14 ?
+Le système reste-t-il observable, stable, non saturé et explicable en fonctionnement continu avec le coeur Light A/B/C/D et les enrichissements Build-14 ?
 
 ## 4.5 Vérité inter-moteurs
-Les moteurs A/B apportent-ils une contribution réellement complémentaire sans duplication excessive ni inflation de coût ?
+Les moteurs A/B/C/D apportent-ils une contribution réellement complémentaire sans duplication excessive ni inflation de coût ?
 
 ## 4.6 Vérité Build-14
 Les enrichissements Build-14 améliorent-ils réellement la lecture du risque, de la corrélation, de la microstructure et de la diversité d'edge ?
@@ -177,7 +177,7 @@ Build-11 ne peut pas commencer si une des conditions suivantes n’est pas satis
 - coûts attendus non calculables
 - UI Light non verrouillée
 - risk backbone contournable
-- moteurs A/B encore conceptuellement instables
+- moteurs A/B/C/D encore conceptuellement instables
 
 ---
 
@@ -187,7 +187,7 @@ Build-11 ne peut pas commencer si une des conditions suivantes n’est pas satis
 - état canonique : `profil=LIGHT`, `runtime_mode=SHADOW`
 - nom de phase lisible : `Shadow intégral`
 - 6 paires maximum
-- **Shadow intégral actif** : A/B + Build-14
+- **Shadow intégral actif** : A/B/C/D + Build-14
 
 ## 6.2 Paires autorisées
 - BTC/USDT
@@ -200,11 +200,12 @@ Build-11 ne peut pas commencer si une des conditions suivantes n’est pas satis
 ## 6.3 Moteurs activés en Shadow
 - **A — activé à 100%** (`SHADOW_ENABLED`)
 - **B — activé à 100%** (`SHADOW_ENABLED`)
-- **C — hors scope Build-11** : réservé à Build-15
-- **D — hors scope Build-11** : réservé à Build-16
+- **C — activé à 100%** (`SHADOW_ENABLED`)
+- **D — activé à 100%** (`SHADOW_ENABLED`)
 
-Build-11 n'active pas C/D dans le runtime Shadow du rollout Light. Leur
-introduction reste gouvernée par leurs builds dédiés.
+L'activation de C/D en Shadow ne signifie jamais promotion Micro-live ou Live
+automatique. Chaque moteur reste soumis au verdict post-Shadow et à ses gates
+de mise en service dédiés.
 
 ## 6.4 Composants obligatoirement actifs
 - data backbone
@@ -212,7 +213,7 @@ introduction reste gouvernée par leurs builds dédiés.
 - execution backbone en mode shadow
 - risk backbone
 - scoring backbone
-- portfolio Light (arbitrage A/B, enrichi par Build-14)
+- portfolio Light (arbitrage A/B/C/D, enrichi par Build-14)
 - meta complet (DTR, CRA, edge tracker)
 - monitoring complet
 - UI Light verrouillée
@@ -308,7 +309,7 @@ Le Shadow doit être observé sur une durée suffisante pour voir :
 
 - plusieurs contextes de marché
 - plusieurs séquences de décision
-- au moins quelques cas de concurrence A/B
+- au moins quelques cas de concurrence A/B/C/D
 - plusieurs suspensions / reprises de paires éventuelles
 - quelques scénarios de coûts défavorables
 
@@ -362,7 +363,7 @@ On valide :
 - LossBudget shadow
 - beta BTC shadow
 - cluster pressure
-- arbitrage A/B
+- arbitrage A/B/C/D
 - absence de redondance grossière
 
 ## 9.5 Axe E — Gouvernance opérateur
@@ -389,12 +390,13 @@ On valide :
 ## 10.2 Moteurs
 - fréquence utile A
 - fréquence utile B
-- rendement net shadow A
-- rendement net shadow B
-- coût moyen / p90 A/B
-- CE A/B
-- drawdown shadow A/B
-- corrélation A/B
+- fréquence utile C
+- fréquence utile D
+- rendement net shadow A/B/C/D
+- coût moyen / p90 A/B/C/D
+- CE A/B/C/D
+- drawdown shadow A/B/C/D
+- corrélation A/B/C/D
 
 ## 10.3 Paires
 - pair health
@@ -537,7 +539,7 @@ Le passage vers Build-12 n’est autorisé que si :
 
 ## 13.4 Portefeuille
 - budgets réellement respectés
-- arbitrage A/B propre
+- arbitrage A/B/C/D propre
 - beta BTC maîtrisé
 - pas de cluster overload récurrent
 
@@ -600,7 +602,7 @@ Passage en micro-live interdit si au moins un des points suivants est vrai :
 ## 17.1 Étape 1 — Mise sous observation
 Le système tourne en Shadow avec :
 - profil Light
-- A/B actifs
+- A/B/C/D actifs
 - budgets complets
 - UI active
 - DTR / CRA / break-even / edge tracker actifs
@@ -611,7 +613,7 @@ On collecte :
 - incidents
 - refus
 - stérilisation
-- arbitrages A/B
+- arbitrages A/B/C/D
 - coûts shadow
 
 ## 17.3 Étape 3 — Post-mortem Shadow

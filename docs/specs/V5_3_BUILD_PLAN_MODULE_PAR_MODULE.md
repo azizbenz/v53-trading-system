@@ -38,7 +38,7 @@ Le plan s’appuie sur une seule V5.3 commune local + VPS :
 - deux profils métier uniquement : `LIGHT`, `COMPLETE`
 - quatre `runtime_mode` uniquement : `LOCAL_REPLAY`, `SHADOW`, `MICRO_LIVE`, `LIVE`
 - aucun `BACKTEST_PROFILE`
-- `Shadow intégral` désigne le Shadow du profil `LIGHT` avec A/B et
+- `Shadow intégral` désigne le Shadow du profil `LIGHT` avec A/B/C/D et
   Build-14 activés à 100% en observation ; ce n'est pas le profil `COMPLETE`
 - aucun fork local / VPS
 - pipeline officiel : `classification -> versioning -> shared core -> LOCAL_REPLAY -> export artifact -> import VPS -> candidature contrôlée`
@@ -516,16 +516,16 @@ Valider la logique sans capital réel.
 - Données réelles obligatoires (WebSocket ou replay réaliste)
 - Pipeline complet : data → engine → scoring → portfolio → execution simulée
 - **Build-14 et tous les enrichissements du rollout Light activés à 100% pendant le Shadow intégral**
-- Moteurs A/B actifs, scorés, classés, arbitrés et observés
+- Moteurs A/B/C/D actifs, scorés, classés, arbitrés et observés
 - Build-14 enablers pleinement utilisés dans les décisions Shadow
 - DTR complet produit pendant les 30 jours
 - Interruption > 24h = compteur reprend à zéro
-- Rapport shadow exploitable obligatoire (CE, coûts estimés, edge, drawdown, stale rate, **comparaison inter-moteurs A/B, contribution Build-14**)
+- Rapport shadow exploitable obligatoire (CE, coûts estimés, edge, drawdown, stale rate, **comparaison inter-moteurs A/B/C/D, contribution Build-14**)
 - **Aucune activation Micro-live ni Live-Light avant l'expiration de cette période**
 - **Activation intégrale en Shadow ≠ promotion Live** : chaque composant sera jugé individuellement au verdict post-Shadow
 
 ## KPI obligatoires
-- fréquence brute et utile par moteur (A/B)
+- fréquence brute et utile par moteur (A/B/C/D)
 - coût simulé prudent par moteur
 - DTR complets
 - pass-rate économique
@@ -612,8 +612,8 @@ Première production réelle disciplinée.
 - fréquence utile > V5.2
 - edge net > 0 ou crédible
 - CE > V5.2
-- A/B stables
-- verdict Build-14 disponible ; C/D restent hors scope du rollout Light jusqu'aux Build-15/16
+- composants promus stables
+- verdict Build-14 disponible ; C/D peuvent être observés en Shadow mais restent hors rollout live tant qu’ils n’ont pas reçu `SHADOW_VALIDATED` et passé leurs gates de mise en service
 - budgets risque respectés
 - beta BTC maîtrisé
 - logs + DTR fiables
