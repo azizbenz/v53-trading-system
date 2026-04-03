@@ -229,6 +229,7 @@ def test_export_local_replay_shadow_run_writes_governed_chain_sidecars():
         assert artifacts.local_replay_evidence_json_path.exists()
         assert artifacts.baseline_payload_json_path.exists()
         assert artifacts.candidate_payload_json_path.exists()
+        assert artifacts.engine_shadow_evidence_json_path.exists()
         assert artifacts.shadow_input_json_path.exists()
         assert artifacts.shadow_runtime_evidence_json_path.exists()
         assert artifacts.shadow_summary_json_path.exists()
@@ -244,6 +245,9 @@ def test_export_local_replay_shadow_run_writes_governed_chain_sidecars():
         )
         candidate_payload = json.loads(
             artifacts.candidate_payload_json_path.read_text(encoding="utf-8")
+        )
+        engine_shadow_evidence = json.loads(
+            artifacts.engine_shadow_evidence_json_path.read_text(encoding="utf-8")
         )
         shadow_input = json.loads(artifacts.shadow_input_json_path.read_text(encoding="utf-8"))
         shadow_runtime_evidence = json.loads(
@@ -269,8 +273,19 @@ def test_export_local_replay_shadow_run_writes_governed_chain_sidecars():
         assert local_replay_evidence["replay_useful_ready"] is True
         assert candidate_payload["replay_import"]["validation_status"] == "accepted"
         assert candidate_payload["system"]["build14_status"] == "healthy"
+        assert len(engine_shadow_evidence) == 2
+        assert engine_shadow_evidence[0]["component_id"] == "engine_c"
+        assert engine_shadow_evidence[0]["runtime_status"] == "accepted"
+        assert engine_shadow_evidence[1]["component_id"] == "engine_d"
+        assert engine_shadow_evidence[1]["runtime_status"] == "accepted"
         assert shadow_input["validation_set"]["runtime_data_source"] == "recorded_replay"
         assert shadow_input["validation_set"]["runtime_continuous_hours"] >= 24.0
+        component_assessments = {
+            entry["component_id"]: entry
+            for entry in shadow_input["validation_set"]["component_assessments"]
+        }
+        assert "breakout_type=" in component_assessments["engine_c"]["evidence_summary"]
+        assert "origin=" in component_assessments["engine_d"]["evidence_summary"]
         assert shadow_runtime_evidence["event_loop_ready"] is True
         assert shadow_runtime_evidence["config_loaded"] is True
         assert shadow_runtime_evidence["shadow_dtr_persisted"] is True

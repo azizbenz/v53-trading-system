@@ -375,6 +375,35 @@
         "This broader Build-11 validation wave confirms the false 30/30 signal is removed while the governed day counter, orchestrator chain, and regression gate semantics remain green.",
         "It is the focused green test surface accompanying the bounded target-environment native live_websocket smoke."
       ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_engines/test_engine_c tests/test_engines/test_engine_d tests/test_protocols/test_local_replay_shadow_runner.py -q",
+      "result": "31 passed",
+      "classification": "engine_cd_shadow_artifact_and_local_runner_green_surface",
+      "notes": [
+        "Engine C and Engine D now expose richer audit-ready artifacts and the local Build-11 runner now writes dedicated engine shadow evidence before asserting C/D component verdicts.",
+        "This closes the previous purely synthetic local component-summary gap for engine_c and engine_d."
+      ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_engines/test_engine_c tests/test_engines/test_engine_d tests/test_protocols/test_local_replay_shadow_runner.py tests/test_protocols/test_shadow_runtime.py tests/test_protocols/test_shadow_day_counter.py tests/test_regression_alignment.py -q",
+      "result": "116 passed",
+      "classification": "engine_cd_and_build11_shadow_integration_green_surface",
+      "notes": [
+        "This validates the enriched Engine C/D contracts together with the local Build-11 shadow runner and the upstream 30-day/report-ready gate semantics.",
+        "It is still a local code/test checkpoint, not a claim of target-environment operational closure."
+      ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_manifest_registry/test_runtime_surface.py -q",
+      "result": "21 passed",
+      "classification": "engine_cd_runtime_surface_green_after_contract_enrichment",
+      "notes": [
+        "Canonical runtime exports remain coherent after enriching Engine C and Engine D with structural breakout, origin-link, and non-duplication artifacts."
+      ]
     }
   ],
   "current_status_by_build": {
@@ -655,6 +684,14 @@
       "record_path": "docs/audit chatgpt buisness/2026-04-03_BUILD11_NATIVE_LIVE_WEBSOCKET_SMOKE_AND_FALSE_GREEN_FIX_AUDIT.md",
       "conclusion": "A bounded native live_websocket smoke now works against the real network path outside the sandbox, and the governed runner no longer persists a false 30/30 + report-ready promotion summary after only one Shadow day.",
       "action_taken": "Freeze the partial target-environment proof, keep Build-11 honestly partial, and move next only to repeated real Shadow-day collection rather than more local doctrinal reinterpretation."
+    },
+    {
+      "audit_id": "AUDIT-022",
+      "date": "2026-04-03",
+      "scope": "Engine C / Engine D Build-11 shadow integration",
+      "record_path": "docs/audit chatgpt buisness/2026-04-03_ENGINE_C_ENGINE_D_BUILD11_SHADOW_INTEGRATION_AUDIT.md",
+      "conclusion": "Engine C and Engine D now expose richer audit-ready artifacts, Engine D carries an origin-link contract, and the local Build-11 shadow runner now executes C/D runtime logic before asserting their component evidence. The lot is locally green but does not claim operational closure of Build-15/16 or target-environment Build-11 proof.",
+      "action_taken": "Freeze the local green lot, keep Build-11 honestly partial, and continue next with the target-environment Shadow-proof frontier rather than overstating C/D closure."
     }
   ],
   "known_critical_gaps": [
@@ -671,7 +708,7 @@
       "priority": "P1",
       "scope": "Moteurs C/D",
       "doc_expectation": "On the migration branch, Engine C and Engine D are part of the Build-11 Full Shadow observation perimeter, while their downstream promotion remains verdict- and gate-driven.",
-      "code_or_runtime_reality": "Engine C and Engine D are now implemented as real shadow-capable packages, visible in the active Full Shadow runtime surface, and covered by focused tests. What remains open is their dedicated hardening and operational closure, not package existence or profile visibility on the migration branch.",
+      "code_or_runtime_reality": "Engine C and Engine D are now implemented as real shadow-capable packages, visible in the active Full Shadow runtime surface, covered by focused tests, and locally executed by the Build-11 shadow runner before C/D component evidence is rendered. What remains open is their dedicated hardening and operational closure, not package existence or local shadow visibility on the migration branch.",
       "status": "open"
     },
     {

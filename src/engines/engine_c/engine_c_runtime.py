@@ -71,6 +71,40 @@ class EngineCRuntimeResult(BaseModel, frozen=True):
     log_entries: tuple[EngineCLogEntry, ...] = ()
 
 
+def _runtime_log_entry(
+    runtime_input: EngineCRuntimeInput,
+    engine_output: EngineCOutput,
+    **overrides: object,
+) -> EngineCLogEntry:
+    payload: dict[str, object] = {
+        "pair": engine_output.pair,
+        "regime": runtime_input.engine_inputs.regime,
+        "range_low": engine_output.range_low,
+        "range_high": engine_output.range_high,
+        "range_width_pct": engine_output.range_width_pct,
+        "breakout_type": engine_output.breakout_type,
+        "continuation_context": engine_output.continuation_context,
+        "distance_to_breakout_pct": engine_output.distance_to_breakout_pct,
+        "breakout_score": engine_output.breakout_score,
+        "continuation_score": engine_output.continuation_score,
+        "fake_breakout_risk": engine_output.fake_breakout_risk,
+        "expected_cost": engine_output.expected_cost,
+        "ce_expected": engine_output.ce_expected,
+        "ev_net": engine_output.ev_net,
+        "duplication_possible_with_engine_a": engine_output.duplication_possible_with_engine_a,
+        "duplication_overlap_with_engine_a": engine_output.duplication_overlap_with_engine_a,
+        "marginal_portfolio_gain": engine_output.marginal_portfolio_gain,
+        "covered_share_by_engine_a": engine_output.covered_share_by_engine_a,
+        "keff_contribution": engine_output.keff_contribution,
+        "conviction": engine_output.conviction.value,
+        "tier": engine_output.tier_suggestion.value,
+        "holding_hours": engine_output.holding_hours,
+        "scoring_version": engine_output.scoring_version,
+    }
+    payload.update(overrides)
+    return EngineCLogEntry(**payload)
+
+
 class EngineCRuntime:
     def __init__(self, *, scoring_runtime: ScoringRuntime, risk_runtime: RiskRuntime) -> None:
         self._scoring_runtime = scoring_runtime
@@ -109,44 +143,26 @@ class EngineCRuntime:
         )
         penalty_reasons = tuple(item.penalty_id for item in scoring_audit.score_penalty_result.penalties)
         logs.append(
-            EngineCLogEntry(
+            _runtime_log_entry(
+                runtime_input,
+                engine_output,
                 event="engine_c_scoring_completed",
-                pair=engine_output.pair,
-                regime=runtime_input.engine_inputs.regime,
                 raw_score=scoring_audit.raw_score_result.raw_score,
                 penalized_score=penalized_score,
-                breakout_score=engine_output.breakout_score,
-                continuation_score=engine_output.continuation_score,
-                fake_breakout_risk=engine_output.fake_breakout_risk,
-                expected_cost=engine_output.expected_cost,
-                ce_expected=engine_output.ce_expected,
-                ev_net=engine_output.ev_net,
-                conviction=engine_output.conviction.value,
-                tier=engine_output.tier_suggestion.value,
                 reasons=penalty_reasons,
-                scoring_version=engine_output.scoring_version,
             )
         )
 
         if scoring_audit.hard_block_decision.is_blocked:
             reasons = tuple(reason.human_reason for reason in scoring_audit.hard_block_decision.reasons)
             logs.append(
-                EngineCLogEntry(
+                _runtime_log_entry(
+                    runtime_input,
+                    engine_output,
                     event="engine_c_hard_blocked",
-                    pair=engine_output.pair,
-                    regime=runtime_input.engine_inputs.regime,
                     raw_score=scoring_audit.raw_score_result.raw_score,
                     penalized_score=penalized_score,
-                    breakout_score=engine_output.breakout_score,
-                    continuation_score=engine_output.continuation_score,
-                    fake_breakout_risk=engine_output.fake_breakout_risk,
-                    expected_cost=engine_output.expected_cost,
-                    ce_expected=engine_output.ce_expected,
-                    ev_net=engine_output.ev_net,
-                    conviction=engine_output.conviction.value,
-                    tier=engine_output.tier_suggestion.value,
                     reasons=reasons,
-                    scoring_version=engine_output.scoring_version,
                 )
             )
             return EngineCRuntimeResult(
@@ -163,22 +179,13 @@ class EngineCRuntime:
             raise ValueError("Engine C scoring audit is missing its selection entry")
         if selection_entry.outcome == SelectionOutcome.REJECTED_RANKING:
             logs.append(
-                EngineCLogEntry(
+                _runtime_log_entry(
+                    runtime_input,
+                    engine_output,
                     event="engine_c_rejected_by_ranking",
-                    pair=engine_output.pair,
-                    regime=runtime_input.engine_inputs.regime,
                     raw_score=scoring_audit.raw_score_result.raw_score,
                     penalized_score=penalized_score,
-                    breakout_score=engine_output.breakout_score,
-                    continuation_score=engine_output.continuation_score,
-                    fake_breakout_risk=engine_output.fake_breakout_risk,
-                    expected_cost=engine_output.expected_cost,
-                    ce_expected=engine_output.ce_expected,
-                    ev_net=engine_output.ev_net,
-                    conviction=engine_output.conviction.value,
-                    tier=engine_output.tier_suggestion.value,
                     reasons=(selection_entry.rejection_reason,),
-                    scoring_version=engine_output.scoring_version,
                 )
             )
             return EngineCRuntimeResult(
@@ -194,22 +201,13 @@ class EngineCRuntime:
             if scoring_audit.portfolio_result is not None and scoring_audit.portfolio_result.reason:
                 portfolio_reason = scoring_audit.portfolio_result.reason
             logs.append(
-                EngineCLogEntry(
+                _runtime_log_entry(
+                    runtime_input,
+                    engine_output,
                     event="engine_c_rejected_by_portfolio",
-                    pair=engine_output.pair,
-                    regime=runtime_input.engine_inputs.regime,
                     raw_score=scoring_audit.raw_score_result.raw_score,
                     penalized_score=penalized_score,
-                    breakout_score=engine_output.breakout_score,
-                    continuation_score=engine_output.continuation_score,
-                    fake_breakout_risk=engine_output.fake_breakout_risk,
-                    expected_cost=engine_output.expected_cost,
-                    ce_expected=engine_output.ce_expected,
-                    ev_net=engine_output.ev_net,
-                    conviction=engine_output.conviction.value,
-                    tier=engine_output.tier_suggestion.value,
                     reasons=(portfolio_reason,),
-                    scoring_version=engine_output.scoring_version,
                 )
             )
             return EngineCRuntimeResult(
@@ -242,22 +240,13 @@ class EngineCRuntime:
         if risk_evaluation.action != RiskRuntimeAction.ACCEPT:
             reasons = risk_evaluation.reasons or ("risk runtime rejected candidate",)
             logs.append(
-                EngineCLogEntry(
+                _runtime_log_entry(
+                    runtime_input,
+                    engine_output,
                     event="engine_c_risk_rejected",
-                    pair=engine_output.pair,
-                    regime=runtime_input.engine_inputs.regime,
                     raw_score=scoring_audit.raw_score_result.raw_score,
                     penalized_score=penalized_score,
-                    breakout_score=engine_output.breakout_score,
-                    continuation_score=engine_output.continuation_score,
-                    fake_breakout_risk=engine_output.fake_breakout_risk,
-                    expected_cost=engine_output.expected_cost,
-                    ce_expected=engine_output.ce_expected,
-                    ev_net=engine_output.ev_net,
-                    conviction=engine_output.conviction.value,
-                    tier=engine_output.tier_suggestion.value,
                     reasons=reasons,
-                    scoring_version=engine_output.scoring_version,
                 )
             )
             status = {
@@ -276,21 +265,12 @@ class EngineCRuntime:
             )
 
         logs.append(
-            EngineCLogEntry(
+            _runtime_log_entry(
+                runtime_input,
+                engine_output,
                 event="engine_c_accepted",
-                pair=engine_output.pair,
-                regime=runtime_input.engine_inputs.regime,
                 raw_score=scoring_audit.raw_score_result.raw_score,
                 penalized_score=penalized_score,
-                breakout_score=engine_output.breakout_score,
-                continuation_score=engine_output.continuation_score,
-                fake_breakout_risk=engine_output.fake_breakout_risk,
-                expected_cost=engine_output.expected_cost,
-                ce_expected=engine_output.ce_expected,
-                ev_net=engine_output.ev_net,
-                conviction=engine_output.conviction.value,
-                tier=engine_output.tier_suggestion.value,
-                scoring_version=engine_output.scoring_version,
             )
         )
         return EngineCRuntimeResult(
@@ -342,7 +322,7 @@ def _build_signal_candidate(inputs: EngineCInput, engine_output: EngineCOutput, 
         stop_loss=engine_output.invalidation.stop_price if engine_output.invalidation is not None else None,
         take_profit=engine_output.invalidation.target_price if engine_output.invalidation is not None else None,
         max_hold_ms=max_hold_ms,
-        reason=f"engine_c:{engine_output.conviction.value}:breakout",
+        reason=f"engine_c:{engine_output.conviction.value}:{engine_output.breakout_type or 'breakout'}",
     )
 
 

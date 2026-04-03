@@ -19,6 +19,9 @@ from scoring_backbone.scoring_runtime import ScoringCandidateInput, ScoringRunti
 def _good_engine_inputs(**overrides) -> EngineDInput:
     defaults = dict(
         pair="BTCUSDT",
+        origin_context_id="ctx-btc-01",
+        origin_trade_id="trade-btc-01",
+        link_type="prior_trade",
         prior_trade_quality=0.85,
         reformation_quality=0.77,
         pullback_quality=0.73,
@@ -26,6 +29,7 @@ def _good_engine_inputs(**overrides) -> EngineDInput:
         concentration_headroom=0.78,
         marginal_edge=0.72,
         reentry_lateness=0.18,
+        structure_reformed_detected=True,
         regime="trending_up",
         regime_favorability=0.78,
         pair_health=0.90,
@@ -38,6 +42,9 @@ def _good_engine_inputs(**overrides) -> EngineDInput:
         entry_price=104.0,
         reentry_anchor_price=101.5,
         atr=1.8,
+        duplication_overlap_with_engine_a=0.24,
+        marginal_portfolio_gain=6.0,
+        covered_share_by_engine_a=0.18,
         scoring_version="engine_d.v1",
     )
     defaults.update(overrides)
@@ -103,10 +110,14 @@ def test_runtime_emits_signal_and_accepts_through_risk():
     assert result.signal_candidate.signal_type == SignalType.ENTRY
     assert result.signal_candidate.side == Side.BUY
     assert result.signal_candidate.regime == RegimeId.TRENDING_UP
+    assert result.signal_candidate.reason == "engine_d:high:prior_trade:trade-btc-01"
     assert result.signal_candidate.stop_loss is not None
     assert result.signal_candidate.take_profit is not None
     assert result.risk_evaluation is not None
     assert result.risk_evaluation.accepted is True
+    accepted_log = next(entry for entry in result.log_entries if entry.event == "engine_d_accepted")
+    assert accepted_log.origin_context_id == "ctx-btc-01"
+    assert accepted_log.duplication_overlap_with_engine_a == 0.24
 
 
 def test_runtime_hard_blocked_logs_reasons():

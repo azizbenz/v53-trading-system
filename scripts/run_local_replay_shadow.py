@@ -21,6 +21,8 @@ from backtest_artifact_import import (  # noqa: E402
     summarize_import_request,
     validate_import_request,
 )
+from engine_c import EngineCInput, EngineCRuntime, EngineCRuntimeInput, EngineCRuntimeStatus  # noqa: E402
+from engine_d import EngineDInput, EngineDRuntime, EngineDRuntimeInput, EngineDRuntimeStatus  # noqa: E402
 from interface_contracts import PairHealthLevel, ProfileId, RuntimeMode, StrategyClassification  # noqa: E402
 from local_replay_runtime import (  # noqa: E402
     LocalReplayEvidenceRecorder,
@@ -57,6 +59,7 @@ from monitoring import (  # noqa: E402
     collect_pair_metrics,
     collect_portfolio_metrics,
 )
+from risk_backbone.risk_runtime import RiskLimits, RiskRuntime  # noqa: E402
 from protocols import (  # noqa: E402
     ShadowComponentAssessment,
     ShadowComponentKind,
@@ -71,6 +74,13 @@ from protocols import (  # noqa: E402
     build_shadow_input_from_payloads,
     run_shadow_validation,
 )
+from scoring_backbone.penalty_aggregator.penalty_registry import (  # noqa: E402
+    PenaltyDefinition,
+    PenaltyRegistry,
+    PenaltyType,
+)
+from scoring_backbone.ranking_router.portfolio_compatibility_checker import PortfolioState  # noqa: E402
+from scoring_backbone.scoring_runtime import ScoringRuntime  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -83,6 +93,7 @@ class LocalReplayShadowArtifacts:
     local_replay_evidence_json_path: Path
     baseline_payload_json_path: Path
     candidate_payload_json_path: Path
+    engine_shadow_evidence_json_path: Path
     shadow_input_json_path: Path
     shadow_runtime_evidence_json_path: Path
     shadow_summary_json_path: Path
@@ -105,6 +116,20 @@ class ReplayExportPayloadRefs:
     payload_refs: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class ShadowEngineRuntimeEvidence:
+    component_id: str
+    pair: str
+    runtime_status: str
+    emitted_signal: bool
+    verdict: ShadowComponentVerdict
+    evidence_summary: str
+    expected_cost_bps: float
+    expected_edge_bps: float
+    ce_expected: float
+    details: dict[str, object]
+
+
 def _configure_stdio() -> None:
     stdout = getattr(sys, "stdout", None)
     if stdout is not None and hasattr(stdout, "reconfigure"):
@@ -112,6 +137,194 @@ def _configure_stdio() -> None:
     stderr = getattr(sys, "stderr", None)
     if stderr is not None and hasattr(stderr, "reconfigure"):
         stderr.reconfigure(encoding="utf-8", errors="replace")
+
+
+def _shadow_penalty_registry() -> PenaltyRegistry:
+    registry = PenaltyRegistry()
+    registry.register(
+        PenaltyDefinition(
+            penalty_id="shadow_context_soft",
+            name="Shadow context soft",
+            penalty_type=PenaltyType.SCORE,
+        )
+    )
+    return registry
+
+
+def _shadow_scoring_runtime() -> ScoringRuntime:
+    return ScoringRuntime(_shadow_penalty_registry())
+
+
+def _shadow_risk_runtime() -> RiskRuntime:
+    return RiskRuntime(
+        RiskLimits(
+            gross_cap=10_000.0,
+            position_cap=4_000.0,
+            loss_cap=1_000.0,
+            beta_cap=10_000.0,
+            cluster_cap=10_000.0,
+        )
+    )
+
+
+def _shadow_portfolio_state() -> PortfolioState:
+    return PortfolioState(
+        remaining_gross_capacity=10_000.0,
+        remaining_loss_capacity=1_000.0,
+        remaining_beta_capacity=10_000.0,
+        remaining_cluster_capacity={
+            "btc_majors": 10_000.0,
+            "eth_majors": 10_000.0,
+        },
+    )
+
+
+def _run_engine_shadow_evaluations() -> tuple[ShadowEngineRuntimeEvidence, ...]:
+    engine_c_runtime = EngineCRuntime(
+        scoring_runtime=_shadow_scoring_runtime(),
+        risk_runtime=_shadow_risk_runtime(),
+    )
+    engine_c_result = engine_c_runtime.evaluate(
+        EngineCRuntimeInput(
+            engine_inputs=EngineCInput(
+                pair="BTCUSDT",
+                breakout_strength=0.88,
+                range_quality=0.79,
+                compression_quality=0.76,
+                volume_confirmation=0.82,
+                followthrough_room=0.78,
+                extension_pct=0.23,
+                retrace_risk=0.16,
+                rejection_wick_ratio=0.11,
+                regime="breakout",
+                regime_favorability=0.81,
+                pair_health=0.93,
+                data_freshness=0.96,
+                flow_coherence=0.84,
+                expected_gain=0.0115,
+                expected_cost=0.0023,
+                candidate_size=1_000.0,
+                holding_period=3.0,
+                entry_price=105.0,
+                breakout_level=101.0,
+                range_low=97.5,
+                range_high=101.0,
+                atr=2.0,
+                engine_a_overlap_ratio=0.28,
+                marginal_portfolio_gain=9.2,
+                covered_share_by_engine_a=0.22,
+                keff_contribution=0.31,
+                scoring_version="engine_c.v1",
+            ),
+            timestamp_ms=1_700_000_000_000,
+            portfolio=_shadow_portfolio_state(),
+            projected_size=1_000.0,
+            projected_loss=50.0,
+            current_equity=10_000.0,
+            session_peak_equity=10_000.0,
+            pair_beta=0.8,
+            cluster_id="btc_majors",
+        ),
+        now=10.0,
+    )
+    engine_d_runtime = EngineDRuntime(
+        scoring_runtime=_shadow_scoring_runtime(),
+        risk_runtime=_shadow_risk_runtime(),
+    )
+    engine_d_result = engine_d_runtime.evaluate(
+        EngineDRuntimeInput(
+            engine_inputs=EngineDInput(
+                pair="ETHUSDT",
+                origin_context_id="ctx-eth-breakout-01",
+                origin_trade_id="trade-eth-01",
+                link_type="prior_trade",
+                prior_trade_quality=0.86,
+                reformation_quality=0.79,
+                pullback_quality=0.75,
+                continuation_room=0.71,
+                concentration_headroom=0.81,
+                marginal_edge=0.74,
+                reentry_lateness=0.17,
+                structure_reformed_detected=True,
+                regime="trending_up",
+                regime_favorability=0.79,
+                pair_health=0.91,
+                data_freshness=0.95,
+                flow_coherence=0.82,
+                expected_gain=0.0095,
+                expected_cost=0.0020,
+                candidate_size=800.0,
+                holding_period=2.0,
+                entry_price=104.0,
+                reentry_anchor_price=101.5,
+                atr=1.8,
+                duplication_overlap_with_engine_a=0.24,
+                marginal_portfolio_gain=6.0,
+                covered_share_by_engine_a=0.18,
+                scoring_version="engine_d.v1",
+            ),
+            timestamp_ms=1_700_000_060_000,
+            portfolio=_shadow_portfolio_state(),
+            projected_size=800.0,
+            projected_loss=40.0,
+            current_equity=10_000.0,
+            session_peak_equity=10_000.0,
+            pair_beta=0.7,
+            cluster_id="eth_majors",
+        ),
+        now=20.0,
+    )
+    engine_c_evidence = ShadowEngineRuntimeEvidence(
+        component_id="engine_c",
+        pair=engine_c_result.engine_output.pair,
+        runtime_status=engine_c_result.status.value,
+        emitted_signal=engine_c_result.signal_candidate is not None,
+        verdict=(
+            ShadowComponentVerdict.SHADOW_VALIDATED
+            if engine_c_result.status == EngineCRuntimeStatus.ACCEPTED
+            else ShadowComponentVerdict.DORMANT
+        ),
+        evidence_summary=(
+            f"runtime_status={engine_c_result.status.value} / pair={engine_c_result.engine_output.pair} / "
+            f"breakout_type={engine_c_result.engine_output.breakout_type} / "
+            f"duplication_with_a={engine_c_result.engine_output.duplication_overlap_with_engine_a:.2f} / "
+            f"keff={engine_c_result.engine_output.keff_contribution:.2f}"
+        ),
+        expected_cost_bps=round(engine_c_result.engine_output.expected_cost * 10_000, 3),
+        expected_edge_bps=round(
+            (engine_c_result.engine_output.expected_cost + engine_c_result.engine_output.ce_expected * engine_c_result.engine_output.holding_hours)
+            * 10_000,
+            3,
+        ),
+        ce_expected=engine_c_result.engine_output.ce_expected,
+        details=engine_c_result.model_dump(mode="json"),
+    )
+    engine_d_evidence = ShadowEngineRuntimeEvidence(
+        component_id="engine_d",
+        pair=engine_d_result.engine_output.pair,
+        runtime_status=engine_d_result.status.value,
+        emitted_signal=engine_d_result.signal_candidate is not None,
+        verdict=(
+            ShadowComponentVerdict.SHADOW_VALIDATED
+            if engine_d_result.status == EngineDRuntimeStatus.ACCEPTED
+            else ShadowComponentVerdict.DORMANT
+        ),
+        evidence_summary=(
+            f"runtime_status={engine_d_result.status.value} / pair={engine_d_result.engine_output.pair} / "
+            f"origin={engine_d_result.engine_output.origin_trade_id or engine_d_result.engine_output.origin_context_id} / "
+            f"link_type={engine_d_result.engine_output.link_type} / "
+            f"duplication_with_a={engine_d_result.engine_output.duplication_overlap_with_engine_a:.2f}"
+        ),
+        expected_cost_bps=round(engine_d_result.engine_output.expected_cost * 10_000, 3),
+        expected_edge_bps=round(
+            (engine_d_result.engine_output.expected_cost + engine_d_result.engine_output.ce_expected * engine_d_result.engine_output.holding_hours)
+            * 10_000,
+            3,
+        ),
+        ce_expected=engine_d_result.engine_output.ce_expected,
+        details=engine_d_result.model_dump(mode="json"),
+    )
+    return (engine_c_evidence, engine_d_evidence)
 
 
 def _meta_metrics():
@@ -231,7 +444,9 @@ def _build14_projection() -> Build14Projection:
     )
 
 
-def _build_component_assessments() -> tuple[ShadowComponentAssessment, ...]:
+def _build_component_assessments(
+    engine_runtime_evidence: tuple[ShadowEngineRuntimeEvidence, ...],
+) -> tuple[ShadowComponentAssessment, ...]:
     engine_ids = ("engine_a", "engine_b", "engine_c", "engine_d")
     build14_ids = (
         "build14_microstructure",
@@ -240,14 +455,26 @@ def _build_component_assessments() -> tuple[ShadowComponentAssessment, ...]:
         "build14_risk_contribution",
         "build14_edge_diversity",
     )
+    runtime_evidence_by_component = {
+        evidence.component_id: evidence for evidence in engine_runtime_evidence
+    }
     assessments: list[ShadowComponentAssessment] = []
     for component_id in engine_ids:
+        evidence = runtime_evidence_by_component.get(component_id)
         assessments.append(
             ShadowComponentAssessment(
                 component_id=component_id,
                 component_kind=ShadowComponentKind.ENGINE,
-                verdict=ShadowComponentVerdict.SHADOW_VALIDATED,
-                evidence_summary=f"{component_id} stayed reproducible in the governed demo run.",
+                verdict=(
+                    evidence.verdict
+                    if evidence is not None
+                    else ShadowComponentVerdict.SHADOW_VALIDATED
+                ),
+                evidence_summary=(
+                    evidence.evidence_summary
+                    if evidence is not None
+                    else f"{component_id} stayed reproducible in the governed demo run."
+                ),
             )
         )
     for component_id in build14_ids:
@@ -418,7 +645,13 @@ def _build_demo_payload(
     active_alert_count: int,
     queue_backlog: int,
     replay_projection: ReplayImportProjection,
+    engine_runtime_evidence: tuple[ShadowEngineRuntimeEvidence, ...] = (),
 ) -> object:
+    runtime_evidence_by_component = {
+        evidence.component_id: evidence for evidence in engine_runtime_evidence
+    }
+    engine_c_metrics = runtime_evidence_by_component.get("engine_c")
+    engine_d_metrics = runtime_evidence_by_component.get("engine_d")
     snapshot = collect_monitoring_snapshot(
         correlation_id=correlation_id,
         profile=ProfileId.LIGHT,
@@ -460,17 +693,17 @@ def _build_demo_payload(
             ),
             collect_engine_metrics(
                 engine_id="engine_c",
-                emitted_signals=2,
-                net_edge_bps=6.5,
-                expected_cost_bps=2.3,
-                ce_expected=0.00035,
+                emitted_signals=1 if engine_c_metrics is not None and engine_c_metrics.emitted_signal else 0,
+                net_edge_bps=engine_c_metrics.expected_edge_bps if engine_c_metrics is not None else 6.5,
+                expected_cost_bps=engine_c_metrics.expected_cost_bps if engine_c_metrics is not None else 2.3,
+                ce_expected=engine_c_metrics.ce_expected if engine_c_metrics is not None else 0.00035,
             ),
             collect_engine_metrics(
                 engine_id="engine_d",
-                emitted_signals=1,
-                net_edge_bps=5.2,
-                expected_cost_bps=2.1,
-                ce_expected=0.00028,
+                emitted_signals=1 if engine_d_metrics is not None and engine_d_metrics.emitted_signal else 0,
+                net_edge_bps=engine_d_metrics.expected_edge_bps if engine_d_metrics is not None else 5.2,
+                expected_cost_bps=engine_d_metrics.expected_cost_bps if engine_d_metrics is not None else 2.1,
+                ce_expected=engine_d_metrics.ce_expected if engine_d_metrics is not None else 0.00028,
             ),
         ),
         pairs=(
@@ -728,6 +961,29 @@ def export_local_replay_shadow_run(
     )
 
     replay_projection = _build_replay_projection(import_summary)
+    engine_runtime_evidence = _run_engine_shadow_evaluations()
+    engine_shadow_evidence_json_path = output_dir / "local_replay_shadow.engine_shadow_evidence.json"
+    engine_shadow_evidence_json_path.write_text(
+        json.dumps(
+            [
+                {
+                    "component_id": evidence.component_id,
+                    "pair": evidence.pair,
+                    "runtime_status": evidence.runtime_status,
+                    "emitted_signal": evidence.emitted_signal,
+                    "verdict": evidence.verdict.value,
+                    "evidence_summary": evidence.evidence_summary,
+                    "expected_cost_bps": evidence.expected_cost_bps,
+                    "expected_edge_bps": evidence.expected_edge_bps,
+                    "ce_expected": evidence.ce_expected,
+                    "details": evidence.details,
+                }
+                for evidence in engine_runtime_evidence
+            ],
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     baseline_payload = _build_demo_payload(
         correlation_id="corr-local-replay-shadow-demo:baseline",
         ce_net=0.0012,
@@ -745,6 +1001,7 @@ def export_local_replay_shadow_run(
         active_alert_count=1,
         queue_backlog=10,
         replay_projection=replay_projection,
+        engine_runtime_evidence=engine_runtime_evidence,
     )
     baseline_payload_json_path = output_dir / "local_replay_shadow.baseline_payload.json"
     candidate_payload_json_path = output_dir / "local_replay_shadow.candidate_payload.json"
@@ -782,7 +1039,7 @@ def export_local_replay_shadow_run(
         candidate_payload,
         truth_ref="shadow_truth:local_replay_shadow_demo",
         validation_ref=f"shadow_validation:{import_summary.artifact_id}",
-        component_assessments=_build_component_assessments(),
+        component_assessments=_build_component_assessments(engine_runtime_evidence),
         shadow_days_completed=30,
         shadow_report_ready=True,
         inter_engine_comparison_ready=True,
@@ -879,7 +1136,7 @@ def export_local_replay_shadow_run(
         candidate_payload,
         truth_ref="shadow_truth:local_replay_shadow_demo",
         validation_ref=f"shadow_validation:{import_summary.artifact_id}",
-        component_assessments=_build_component_assessments(),
+        component_assessments=_build_component_assessments(engine_runtime_evidence),
         shadow_days_completed=shadow_report["consecutive_days"],
         shadow_report_ready=shadow_report["shadow_report_ready"],
         inter_engine_comparison_ready=shadow_report["inter_engine_comparison_ready"],
@@ -934,6 +1191,7 @@ def export_local_replay_shadow_run(
         local_replay_evidence_json_path=local_replay_evidence_json_path,
         baseline_payload_json_path=baseline_payload_json_path,
         candidate_payload_json_path=candidate_payload_json_path,
+        engine_shadow_evidence_json_path=engine_shadow_evidence_json_path,
         shadow_input_json_path=shadow_input_json_path,
         shadow_runtime_evidence_json_path=shadow_runtime_evidence_json_path,
         shadow_summary_json_path=shadow_summary_json_path,

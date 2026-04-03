@@ -38,7 +38,13 @@ def _good_engine_inputs(**overrides) -> EngineCInput:
         holding_period=3.0,
         entry_price=105.0,
         breakout_level=101.0,
+        range_low=97.5,
+        range_high=101.0,
         atr=2.0,
+        engine_a_overlap_ratio=0.28,
+        marginal_portfolio_gain=9.2,
+        covered_share_by_engine_a=0.22,
+        keff_contribution=0.31,
         scoring_version="engine_c.v1",
     )
     defaults.update(overrides)
@@ -104,10 +110,14 @@ def test_runtime_emits_signal_and_accepts_through_risk():
     assert result.signal_candidate.signal_type == SignalType.ENTRY
     assert result.signal_candidate.side == Side.BUY
     assert result.signal_candidate.regime == RegimeId.BREAKOUT
+    assert result.signal_candidate.reason == "engine_c:medium:range_expansion"
     assert result.signal_candidate.stop_loss is not None
     assert result.signal_candidate.take_profit is not None
     assert result.risk_evaluation is not None
     assert result.risk_evaluation.accepted is True
+    accepted_log = next(entry for entry in result.log_entries if entry.event == "engine_c_accepted")
+    assert accepted_log.breakout_type == "range_expansion"
+    assert accepted_log.duplication_overlap_with_engine_a == 0.28
 
 
 def test_runtime_hard_blocked_logs_reasons():

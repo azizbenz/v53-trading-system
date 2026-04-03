@@ -47,6 +47,12 @@ class EngineCLogEntry(BaseModel, frozen=True):
     event: str
     pair: str
     regime: str = ""
+    range_low: float = 0.0
+    range_high: float = 0.0
+    range_width_pct: float = 0.0
+    breakout_type: str = ""
+    continuation_context: str = ""
+    distance_to_breakout_pct: float = 0.0
     raw_score: float = 0.0
     penalized_score: float = 0.0
     breakout_score: float = 0.0
@@ -55,6 +61,11 @@ class EngineCLogEntry(BaseModel, frozen=True):
     expected_cost: float = 0.0
     ce_expected: float = 0.0
     ev_net: float = 0.0
+    duplication_possible_with_engine_a: bool = False
+    duplication_overlap_with_engine_a: float = 0.0
+    marginal_portfolio_gain: float = 0.0
+    covered_share_by_engine_a: float = 0.0
+    keff_contribution: float = 0.0
     conviction: str = ""
     tier: str = ""
     holding_hours: float = 0.0
@@ -71,12 +82,23 @@ class EngineCOutput(BaseModel, frozen=True):
     block_scores: dict[str, float] = Field(default_factory=dict)
     conviction: ConvictionLevelC = ConvictionLevelC.NONE
     tier_suggestion: TierSuggestionC = TierSuggestionC.NO_TRADE
+    range_low: float = 0.0
+    range_high: float = 0.0
+    range_width_pct: float = 0.0
+    breakout_type: str = ""
+    continuation_context: str = ""
+    distance_to_breakout_pct: float = 0.0
     breakout_score: float = 0.0
     continuation_score: float = 0.0
     fake_breakout_risk: float = 0.0
     expected_cost: float = 0.0
     ce_expected: float = 0.0
     ev_net: float = 0.0
+    duplication_possible_with_engine_a: bool = False
+    duplication_overlap_with_engine_a: float = 0.0
+    marginal_portfolio_gain: float = 0.0
+    covered_share_by_engine_a: float = 0.0
+    keff_contribution: float = 0.0
     invalidation: EngineCInvalidation | None = None
     holding_hours: float = 0.0
     scoring_version: str = ""
@@ -107,13 +129,91 @@ class EngineCInput(BaseModel, frozen=True):
     delta_safe: float = 0.0005
     entry_price: float = 0.0
     breakout_level: float = 0.0
+    range_low: float = 0.0
+    range_high: float = 0.0
     atr: float = 0.0
+    engine_a_overlap_ratio: float = 0.0
+    marginal_portfolio_gain: float = 0.0
+    covered_share_by_engine_a: float = 0.0
+    keff_contribution: float = 0.0
     scoring_version: str = ""
+
+
+def _resolve_engine_c_structure(inputs: EngineCInput) -> dict[str, float | str | bool]:
+    resolved_range_high = inputs.range_high if inputs.range_high > 0.0 else max(inputs.breakout_level, inputs.entry_price)
+    if resolved_range_high <= 0.0:
+        resolved_range_high = max(inputs.entry_price, 1.0)
+    fallback_width = max(inputs.atr * 1.5, resolved_range_high * max(0.002, inputs.range_quality * 0.01))
+    resolved_range_low = inputs.range_low if 0.0 < inputs.range_low < resolved_range_high else resolved_range_high - fallback_width
+    resolved_range_low = max(0.0, resolved_range_low)
+    range_width_pct = (resolved_range_high - resolved_range_low) / max(resolved_range_high, 1e-6)
+    distance_to_breakout_pct = max(0.0, (inputs.entry_price - inputs.breakout_level) / max(inputs.breakout_level, 1e-6))
+    if inputs.volume_confirmation >= 0.80 and inputs.compression_quality >= 0.75:
+        breakout_type = "compression_release"
+    elif inputs.range_quality >= 0.75:
+        breakout_type = "range_expansion"
+    else:
+        breakout_type = "structured_breakout"
+    if inputs.extension_pct <= 0.25:
+        continuation_context = "fresh_breakout"
+    elif inputs.extension_pct <= 0.55:
+        continuation_context = "controlled_extension"
+    else:
+        continuation_context = "late_extension"
+    duplication_overlap_with_engine_a = _clamp(inputs.engine_a_overlap_ratio)
+    covered_share_by_engine_a = _clamp(
+        inputs.covered_share_by_engine_a
+        if inputs.covered_share_by_engine_a > 0.0
+        else duplication_overlap_with_engine_a
+    )
+    duplication_possible_with_engine_a = (
+        duplication_overlap_with_engine_a >= 0.65 or covered_share_by_engine_a >= 0.60
+    )
+    marginal_portfolio_gain = (
+        inputs.marginal_portfolio_gain
+        if inputs.marginal_portfolio_gain > 0.0
+        else max(0.0, inputs.candidate_size * (inputs.expected_gain - inputs.expected_cost))
+    )
+    keff_contribution = _clamp(
+        inputs.keff_contribution
+        if inputs.keff_contribution > 0.0
+        else max(0.0, 1.0 - duplication_overlap_with_engine_a) * 0.5
+    )
+    return {
+        "range_low": resolved_range_low,
+        "range_high": resolved_range_high,
+        "range_width_pct": range_width_pct,
+        "breakout_type": breakout_type,
+        "continuation_context": continuation_context,
+        "distance_to_breakout_pct": distance_to_breakout_pct,
+        "duplication_possible_with_engine_a": duplication_possible_with_engine_a,
+        "duplication_overlap_with_engine_a": duplication_overlap_with_engine_a,
+        "marginal_portfolio_gain": marginal_portfolio_gain,
+        "covered_share_by_engine_a": covered_share_by_engine_a,
+        "keff_contribution": keff_contribution,
+    }
+
+
+def _engine_c_log_context(structure: dict[str, float | str | bool]) -> dict[str, float | str | bool]:
+    return {
+        "range_low": structure["range_low"],
+        "range_high": structure["range_high"],
+        "range_width_pct": structure["range_width_pct"],
+        "breakout_type": structure["breakout_type"],
+        "continuation_context": structure["continuation_context"],
+        "distance_to_breakout_pct": structure["distance_to_breakout_pct"],
+        "duplication_possible_with_engine_a": structure["duplication_possible_with_engine_a"],
+        "duplication_overlap_with_engine_a": structure["duplication_overlap_with_engine_a"],
+        "marginal_portfolio_gain": structure["marginal_portfolio_gain"],
+        "covered_share_by_engine_a": structure["covered_share_by_engine_a"],
+        "keff_contribution": structure["keff_contribution"],
+    }
 
 
 def run_engine_c(inputs: EngineCInput) -> EngineCOutput:
     logs: list[EngineCLogEntry] = []
     no_trade_reasons: list[NoTradeReasonC] = []
+    structure = _resolve_engine_c_structure(inputs)
 
     if inputs.breakout_strength <= 0:
         no_trade_reasons.append(NoTradeReasonC.NON_LONG_BREAKOUT)
@@ -122,12 +222,24 @@ def run_engine_c(inputs: EngineCInput) -> EngineCOutput:
                 event="engine_c_no_trade",
                 pair=inputs.pair,
                 regime=inputs.regime,
+                **_engine_c_log_context(structure),
                 reasons=(f"breakout_strength={inputs.breakout_strength:.3f} <= 0",),
             )
         )
         return EngineCOutput(
             pair=inputs.pair,
             decision=EngineCDecision.NO_TRADE,
+            range_low=structure["range_low"],
+            range_high=structure["range_high"],
+            range_width_pct=structure["range_width_pct"],
+            breakout_type=structure["breakout_type"],
+            continuation_context=structure["continuation_context"],
+            distance_to_breakout_pct=structure["distance_to_breakout_pct"],
+            duplication_possible_with_engine_a=structure["duplication_possible_with_engine_a"],
+            duplication_overlap_with_engine_a=structure["duplication_overlap_with_engine_a"],
+            marginal_portfolio_gain=structure["marginal_portfolio_gain"],
+            covered_share_by_engine_a=structure["covered_share_by_engine_a"],
+            keff_contribution=structure["keff_contribution"],
             no_trade_reasons=tuple(no_trade_reasons),
             scoring_version=inputs.scoring_version,
             log_entries=tuple(logs),
@@ -144,6 +256,7 @@ def run_engine_c(inputs: EngineCInput) -> EngineCOutput:
             event="engine_c_breakout_evaluated",
             pair=inputs.pair,
             regime=inputs.regime,
+            **_engine_c_log_context(structure),
             breakout_score=breakout_score,
             raw_score=breakout_score,
         )
@@ -155,6 +268,7 @@ def run_engine_c(inputs: EngineCInput) -> EngineCOutput:
                 event="engine_c_no_trade",
                 pair=inputs.pair,
                 regime=inputs.regime,
+                **_engine_c_log_context(structure),
                 breakout_score=breakout_score,
                 reasons=("breakout structure insufficient",),
             )
@@ -162,7 +276,18 @@ def run_engine_c(inputs: EngineCInput) -> EngineCOutput:
         return EngineCOutput(
             pair=inputs.pair,
             decision=EngineCDecision.NO_TRADE,
+            range_low=structure["range_low"],
+            range_high=structure["range_high"],
+            range_width_pct=structure["range_width_pct"],
+            breakout_type=structure["breakout_type"],
+            continuation_context=structure["continuation_context"],
+            distance_to_breakout_pct=structure["distance_to_breakout_pct"],
             breakout_score=breakout_score,
+            duplication_possible_with_engine_a=structure["duplication_possible_with_engine_a"],
+            duplication_overlap_with_engine_a=structure["duplication_overlap_with_engine_a"],
+            marginal_portfolio_gain=structure["marginal_portfolio_gain"],
+            covered_share_by_engine_a=structure["covered_share_by_engine_a"],
+            keff_contribution=structure["keff_contribution"],
             no_trade_reasons=tuple(no_trade_reasons),
             scoring_version=inputs.scoring_version,
             log_entries=tuple(logs),
@@ -184,6 +309,7 @@ def run_engine_c(inputs: EngineCInput) -> EngineCOutput:
             event="engine_c_continuation_checked",
             pair=inputs.pair,
             regime=inputs.regime,
+            **_engine_c_log_context(structure),
             breakout_score=breakout_score,
             continuation_score=continuation_score,
             raw_score=continuation_score,
@@ -196,6 +322,7 @@ def run_engine_c(inputs: EngineCInput) -> EngineCOutput:
                 event="engine_c_no_trade",
                 pair=inputs.pair,
                 regime=inputs.regime,
+                **_engine_c_log_context(structure),
                 breakout_score=breakout_score,
                 continuation_score=continuation_score,
                 reasons=("continuation already too mature or too weak",),
@@ -204,8 +331,19 @@ def run_engine_c(inputs: EngineCInput) -> EngineCOutput:
         return EngineCOutput(
             pair=inputs.pair,
             decision=EngineCDecision.NO_TRADE,
+            range_low=structure["range_low"],
+            range_high=structure["range_high"],
+            range_width_pct=structure["range_width_pct"],
+            breakout_type=structure["breakout_type"],
+            continuation_context=structure["continuation_context"],
+            distance_to_breakout_pct=structure["distance_to_breakout_pct"],
             breakout_score=breakout_score,
             continuation_score=continuation_score,
+            duplication_possible_with_engine_a=structure["duplication_possible_with_engine_a"],
+            duplication_overlap_with_engine_a=structure["duplication_overlap_with_engine_a"],
+            marginal_portfolio_gain=structure["marginal_portfolio_gain"],
+            covered_share_by_engine_a=structure["covered_share_by_engine_a"],
+            keff_contribution=structure["keff_contribution"],
             no_trade_reasons=tuple(no_trade_reasons),
             scoring_version=inputs.scoring_version,
             log_entries=tuple(logs),
@@ -222,6 +360,7 @@ def run_engine_c(inputs: EngineCInput) -> EngineCOutput:
             event="engine_c_fake_breakout_checked",
             pair=inputs.pair,
             regime=inputs.regime,
+            **_engine_c_log_context(structure),
             breakout_score=breakout_score,
             continuation_score=continuation_score,
             fake_breakout_risk=fake_breakout_risk,
@@ -236,6 +375,7 @@ def run_engine_c(inputs: EngineCInput) -> EngineCOutput:
                 event="engine_c_no_trade",
                 pair=inputs.pair,
                 regime=inputs.regime,
+                **_engine_c_log_context(structure),
                 breakout_score=breakout_score,
                 continuation_score=continuation_score,
                 fake_breakout_risk=fake_breakout_risk,
@@ -245,9 +385,20 @@ def run_engine_c(inputs: EngineCInput) -> EngineCOutput:
         return EngineCOutput(
             pair=inputs.pair,
             decision=EngineCDecision.NO_TRADE,
+            range_low=structure["range_low"],
+            range_high=structure["range_high"],
+            range_width_pct=structure["range_width_pct"],
+            breakout_type=structure["breakout_type"],
+            continuation_context=structure["continuation_context"],
+            distance_to_breakout_pct=structure["distance_to_breakout_pct"],
             breakout_score=breakout_score,
             continuation_score=continuation_score,
             fake_breakout_risk=fake_breakout_risk,
+            duplication_possible_with_engine_a=structure["duplication_possible_with_engine_a"],
+            duplication_overlap_with_engine_a=structure["duplication_overlap_with_engine_a"],
+            marginal_portfolio_gain=structure["marginal_portfolio_gain"],
+            covered_share_by_engine_a=structure["covered_share_by_engine_a"],
+            keff_contribution=structure["keff_contribution"],
             no_trade_reasons=tuple(no_trade_reasons),
             scoring_version=inputs.scoring_version,
             log_entries=tuple(logs),
@@ -262,6 +413,7 @@ def run_engine_c(inputs: EngineCInput) -> EngineCOutput:
             event="engine_c_cost_checked",
             pair=inputs.pair,
             regime=inputs.regime,
+            **_engine_c_log_context(structure),
             expected_cost=inputs.expected_cost,
             ce_expected=ce_expected,
             ev_net=ev_net,
@@ -274,6 +426,7 @@ def run_engine_c(inputs: EngineCInput) -> EngineCOutput:
                 event="engine_c_no_trade",
                 pair=inputs.pair,
                 regime=inputs.regime,
+                **_engine_c_log_context(structure),
                 expected_cost=inputs.expected_cost,
                 ce_expected=ce_expected,
                 ev_net=ev_net,
@@ -283,12 +436,23 @@ def run_engine_c(inputs: EngineCInput) -> EngineCOutput:
         return EngineCOutput(
             pair=inputs.pair,
             decision=EngineCDecision.NO_TRADE,
+            range_low=structure["range_low"],
+            range_high=structure["range_high"],
+            range_width_pct=structure["range_width_pct"],
+            breakout_type=structure["breakout_type"],
+            continuation_context=structure["continuation_context"],
+            distance_to_breakout_pct=structure["distance_to_breakout_pct"],
             breakout_score=breakout_score,
             continuation_score=continuation_score,
             fake_breakout_risk=fake_breakout_risk,
             expected_cost=inputs.expected_cost,
             ce_expected=ce_expected,
             ev_net=ev_net,
+            duplication_possible_with_engine_a=structure["duplication_possible_with_engine_a"],
+            duplication_overlap_with_engine_a=structure["duplication_overlap_with_engine_a"],
+            marginal_portfolio_gain=structure["marginal_portfolio_gain"],
+            covered_share_by_engine_a=structure["covered_share_by_engine_a"],
+            keff_contribution=structure["keff_contribution"],
             no_trade_reasons=tuple(no_trade_reasons),
             scoring_version=inputs.scoring_version,
             log_entries=tuple(logs),
@@ -331,6 +495,7 @@ def run_engine_c(inputs: EngineCInput) -> EngineCOutput:
             event="engine_c_emit",
             pair=inputs.pair,
             regime=inputs.regime,
+            **_engine_c_log_context(structure),
             raw_score=raw_score,
             penalized_score=conviction_score,
             breakout_score=breakout_score,
@@ -353,12 +518,23 @@ def run_engine_c(inputs: EngineCInput) -> EngineCOutput:
         block_scores=block_scores,
         conviction=conviction,
         tier_suggestion=tier,
+        range_low=structure["range_low"],
+        range_high=structure["range_high"],
+        range_width_pct=structure["range_width_pct"],
+        breakout_type=structure["breakout_type"],
+        continuation_context=structure["continuation_context"],
+        distance_to_breakout_pct=structure["distance_to_breakout_pct"],
         breakout_score=breakout_score,
         continuation_score=continuation_score,
         fake_breakout_risk=fake_breakout_risk,
         expected_cost=inputs.expected_cost,
         ce_expected=ce_expected,
         ev_net=ev_net,
+        duplication_possible_with_engine_a=structure["duplication_possible_with_engine_a"],
+        duplication_overlap_with_engine_a=structure["duplication_overlap_with_engine_a"],
+        marginal_portfolio_gain=structure["marginal_portfolio_gain"],
+        covered_share_by_engine_a=structure["covered_share_by_engine_a"],
+        keff_contribution=structure["keff_contribution"],
         invalidation=invalidation,
         holding_hours=inputs.holding_period,
         scoring_version=inputs.scoring_version,

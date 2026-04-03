@@ -71,6 +71,39 @@ class EngineDRuntimeResult(BaseModel, frozen=True):
     log_entries: tuple[EngineDLogEntry, ...] = ()
 
 
+def _runtime_log_entry(
+    runtime_input: EngineDRuntimeInput,
+    engine_output: EngineDOutput,
+    **overrides: object,
+) -> EngineDLogEntry:
+    payload: dict[str, object] = {
+        "pair": engine_output.pair,
+        "regime": runtime_input.engine_inputs.regime,
+        "origin_context_id": engine_output.origin_context_id,
+        "origin_trade_id": engine_output.origin_trade_id,
+        "link_type": engine_output.link_type,
+        "structure_reformed_detected": engine_output.structure_reformed_detected,
+        "history_score": engine_output.history_score,
+        "reformation_score": engine_output.reformation_score,
+        "marginal_value_score": engine_output.marginal_value_score,
+        "concentration_risk": engine_output.concentration_risk,
+        "marginal_concentration": engine_output.marginal_concentration,
+        "expected_cost": engine_output.expected_cost,
+        "ce_expected": engine_output.ce_expected,
+        "ev_net": engine_output.ev_net,
+        "duplication_possible_with_engine_a": engine_output.duplication_possible_with_engine_a,
+        "duplication_overlap_with_engine_a": engine_output.duplication_overlap_with_engine_a,
+        "marginal_portfolio_gain": engine_output.marginal_portfolio_gain,
+        "covered_share_by_engine_a": engine_output.covered_share_by_engine_a,
+        "conviction": engine_output.conviction.value,
+        "tier": engine_output.tier_suggestion.value,
+        "holding_hours": engine_output.holding_hours,
+        "scoring_version": engine_output.scoring_version,
+    }
+    payload.update(overrides)
+    return EngineDLogEntry(**payload)
+
+
 class EngineDRuntime:
     def __init__(self, *, scoring_runtime: ScoringRuntime, risk_runtime: RiskRuntime) -> None:
         self._scoring_runtime = scoring_runtime
@@ -109,46 +142,26 @@ class EngineDRuntime:
         )
         penalty_reasons = tuple(item.penalty_id for item in scoring_audit.score_penalty_result.penalties)
         logs.append(
-            EngineDLogEntry(
+            _runtime_log_entry(
+                runtime_input,
+                engine_output,
                 event="engine_d_scoring_completed",
-                pair=engine_output.pair,
-                regime=runtime_input.engine_inputs.regime,
                 raw_score=scoring_audit.raw_score_result.raw_score,
                 penalized_score=penalized_score,
-                history_score=engine_output.history_score,
-                reformation_score=engine_output.reformation_score,
-                marginal_value_score=engine_output.marginal_value_score,
-                concentration_risk=engine_output.concentration_risk,
-                expected_cost=engine_output.expected_cost,
-                ce_expected=engine_output.ce_expected,
-                ev_net=engine_output.ev_net,
-                conviction=engine_output.conviction.value,
-                tier=engine_output.tier_suggestion.value,
                 reasons=penalty_reasons,
-                scoring_version=engine_output.scoring_version,
             )
         )
 
         if scoring_audit.hard_block_decision.is_blocked:
             reasons = tuple(reason.human_reason for reason in scoring_audit.hard_block_decision.reasons)
             logs.append(
-                EngineDLogEntry(
+                _runtime_log_entry(
+                    runtime_input,
+                    engine_output,
                     event="engine_d_hard_blocked",
-                    pair=engine_output.pair,
-                    regime=runtime_input.engine_inputs.regime,
                     raw_score=scoring_audit.raw_score_result.raw_score,
                     penalized_score=penalized_score,
-                    history_score=engine_output.history_score,
-                    reformation_score=engine_output.reformation_score,
-                    marginal_value_score=engine_output.marginal_value_score,
-                    concentration_risk=engine_output.concentration_risk,
-                    expected_cost=engine_output.expected_cost,
-                    ce_expected=engine_output.ce_expected,
-                    ev_net=engine_output.ev_net,
-                    conviction=engine_output.conviction.value,
-                    tier=engine_output.tier_suggestion.value,
                     reasons=reasons,
-                    scoring_version=engine_output.scoring_version,
                 )
             )
             return EngineDRuntimeResult(
@@ -165,23 +178,13 @@ class EngineDRuntime:
             raise ValueError("Engine D scoring audit is missing its selection entry")
         if selection_entry.outcome == SelectionOutcome.REJECTED_RANKING:
             logs.append(
-                EngineDLogEntry(
+                _runtime_log_entry(
+                    runtime_input,
+                    engine_output,
                     event="engine_d_rejected_by_ranking",
-                    pair=engine_output.pair,
-                    regime=runtime_input.engine_inputs.regime,
                     raw_score=scoring_audit.raw_score_result.raw_score,
                     penalized_score=penalized_score,
-                    history_score=engine_output.history_score,
-                    reformation_score=engine_output.reformation_score,
-                    marginal_value_score=engine_output.marginal_value_score,
-                    concentration_risk=engine_output.concentration_risk,
-                    expected_cost=engine_output.expected_cost,
-                    ce_expected=engine_output.ce_expected,
-                    ev_net=engine_output.ev_net,
-                    conviction=engine_output.conviction.value,
-                    tier=engine_output.tier_suggestion.value,
                     reasons=(selection_entry.rejection_reason,),
-                    scoring_version=engine_output.scoring_version,
                 )
             )
             return EngineDRuntimeResult(
@@ -197,23 +200,13 @@ class EngineDRuntime:
             if scoring_audit.portfolio_result is not None and scoring_audit.portfolio_result.reason:
                 portfolio_reason = scoring_audit.portfolio_result.reason
             logs.append(
-                EngineDLogEntry(
+                _runtime_log_entry(
+                    runtime_input,
+                    engine_output,
                     event="engine_d_rejected_by_portfolio",
-                    pair=engine_output.pair,
-                    regime=runtime_input.engine_inputs.regime,
                     raw_score=scoring_audit.raw_score_result.raw_score,
                     penalized_score=penalized_score,
-                    history_score=engine_output.history_score,
-                    reformation_score=engine_output.reformation_score,
-                    marginal_value_score=engine_output.marginal_value_score,
-                    concentration_risk=engine_output.concentration_risk,
-                    expected_cost=engine_output.expected_cost,
-                    ce_expected=engine_output.ce_expected,
-                    ev_net=engine_output.ev_net,
-                    conviction=engine_output.conviction.value,
-                    tier=engine_output.tier_suggestion.value,
                     reasons=(portfolio_reason,),
-                    scoring_version=engine_output.scoring_version,
                 )
             )
             return EngineDRuntimeResult(
@@ -246,23 +239,13 @@ class EngineDRuntime:
         if risk_evaluation.action != RiskRuntimeAction.ACCEPT:
             reasons = risk_evaluation.reasons or ("risk runtime rejected candidate",)
             logs.append(
-                EngineDLogEntry(
+                _runtime_log_entry(
+                    runtime_input,
+                    engine_output,
                     event="engine_d_risk_rejected",
-                    pair=engine_output.pair,
-                    regime=runtime_input.engine_inputs.regime,
                     raw_score=scoring_audit.raw_score_result.raw_score,
                     penalized_score=penalized_score,
-                    history_score=engine_output.history_score,
-                    reformation_score=engine_output.reformation_score,
-                    marginal_value_score=engine_output.marginal_value_score,
-                    concentration_risk=engine_output.concentration_risk,
-                    expected_cost=engine_output.expected_cost,
-                    ce_expected=engine_output.ce_expected,
-                    ev_net=engine_output.ev_net,
-                    conviction=engine_output.conviction.value,
-                    tier=engine_output.tier_suggestion.value,
                     reasons=reasons,
-                    scoring_version=engine_output.scoring_version,
                 )
             )
             status = {
@@ -281,22 +264,12 @@ class EngineDRuntime:
             )
 
         logs.append(
-            EngineDLogEntry(
+            _runtime_log_entry(
+                runtime_input,
+                engine_output,
                 event="engine_d_accepted",
-                pair=engine_output.pair,
-                regime=runtime_input.engine_inputs.regime,
                 raw_score=scoring_audit.raw_score_result.raw_score,
                 penalized_score=penalized_score,
-                history_score=engine_output.history_score,
-                reformation_score=engine_output.reformation_score,
-                marginal_value_score=engine_output.marginal_value_score,
-                concentration_risk=engine_output.concentration_risk,
-                expected_cost=engine_output.expected_cost,
-                ce_expected=engine_output.ce_expected,
-                ev_net=engine_output.ev_net,
-                conviction=engine_output.conviction.value,
-                tier=engine_output.tier_suggestion.value,
-                scoring_version=engine_output.scoring_version,
             )
         )
         return EngineDRuntimeResult(
@@ -348,7 +321,10 @@ def _build_signal_candidate(inputs: EngineDInput, engine_output: EngineDOutput, 
         stop_loss=engine_output.invalidation.stop_price if engine_output.invalidation is not None else None,
         take_profit=engine_output.invalidation.target_price if engine_output.invalidation is not None else None,
         max_hold_ms=max_hold_ms,
-        reason=f"engine_d:{engine_output.conviction.value}:reentry",
+        reason=(
+            f"engine_d:{engine_output.conviction.value}:{engine_output.link_type}:"
+            f"{engine_output.origin_trade_id or engine_output.origin_context_id}"
+        ),
     )
 
 

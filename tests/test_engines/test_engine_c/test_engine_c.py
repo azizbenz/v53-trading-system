@@ -27,7 +27,13 @@ def _good_inputs(**overrides) -> EngineCInput:
         holding_period=3.0,
         entry_price=105.0,
         breakout_level=101.0,
+        range_low=97.5,
+        range_high=101.0,
         atr=2.0,
+        engine_a_overlap_ratio=0.28,
+        marginal_portfolio_gain=9.2,
+        covered_share_by_engine_a=0.22,
+        keff_contribution=0.31,
         scoring_version="engine_c.v1",
     )
     defaults.update(overrides)
@@ -37,11 +43,22 @@ def _good_inputs(**overrides) -> EngineCInput:
 def test_emit_on_structured_breakout():
     result = run_engine_c(_good_inputs())
     assert result.decision == EngineCDecision.EMIT
+    assert result.breakout_type == "range_expansion"
+    assert result.continuation_context == "fresh_breakout"
+    assert result.range_low == 97.5
+    assert result.range_high == 101.0
+    assert result.duplication_possible_with_engine_a is False
+    assert result.duplication_overlap_with_engine_a == pytest.approx(0.28)
+    assert result.covered_share_by_engine_a == pytest.approx(0.22)
+    assert result.keff_contribution == pytest.approx(0.31)
     assert result.breakout_score > 0.7
     assert result.continuation_score > 0.6
     assert result.invalidation is not None
     assert result.invalidation.stop_price < 105.0
     assert result.invalidation.target_price > 105.0
+    emit_log = next(entry for entry in result.log_entries if entry.event == "engine_c_emit")
+    assert emit_log.breakout_type == "range_expansion"
+    assert emit_log.range_width_pct > 0.0
 
 
 def test_rejects_non_long_breakout():

@@ -47,15 +47,24 @@ class EngineDLogEntry(BaseModel, frozen=True):
     event: str
     pair: str
     regime: str = ""
+    origin_context_id: str = ""
+    origin_trade_id: str = ""
+    link_type: str = ""
+    structure_reformed_detected: bool = False
     raw_score: float = 0.0
     penalized_score: float = 0.0
     history_score: float = 0.0
     reformation_score: float = 0.0
     marginal_value_score: float = 0.0
     concentration_risk: float = 0.0
+    marginal_concentration: float = 0.0
     expected_cost: float = 0.0
     ce_expected: float = 0.0
     ev_net: float = 0.0
+    duplication_possible_with_engine_a: bool = False
+    duplication_overlap_with_engine_a: float = 0.0
+    marginal_portfolio_gain: float = 0.0
+    covered_share_by_engine_a: float = 0.0
     conviction: str = ""
     tier: str = ""
     holding_hours: float = 0.0
@@ -72,13 +81,22 @@ class EngineDOutput(BaseModel, frozen=True):
     block_scores: dict[str, float] = Field(default_factory=dict)
     conviction: ConvictionLevelD = ConvictionLevelD.NONE
     tier_suggestion: TierSuggestionD = TierSuggestionD.NO_TRADE
+    origin_context_id: str = ""
+    origin_trade_id: str = ""
+    link_type: str = ""
+    structure_reformed_detected: bool = False
     history_score: float = 0.0
     reformation_score: float = 0.0
     marginal_value_score: float = 0.0
     concentration_risk: float = 0.0
+    marginal_concentration: float = 0.0
     expected_cost: float = 0.0
     ce_expected: float = 0.0
     ev_net: float = 0.0
+    duplication_possible_with_engine_a: bool = False
+    duplication_overlap_with_engine_a: float = 0.0
+    marginal_portfolio_gain: float = 0.0
+    covered_share_by_engine_a: float = 0.0
     invalidation: EngineDInvalidation | None = None
     holding_hours: float = 0.0
     scoring_version: str = ""
@@ -88,6 +106,9 @@ class EngineDOutput(BaseModel, frozen=True):
 
 class EngineDInput(BaseModel, frozen=True):
     pair: str
+    origin_context_id: str = ""
+    origin_trade_id: str = ""
+    link_type: str = "prior_trade"
     prior_trade_quality: float
     reformation_quality: float
     pullback_quality: float
@@ -95,6 +116,7 @@ class EngineDInput(BaseModel, frozen=True):
     concentration_headroom: float
     marginal_edge: float
     reentry_lateness: float
+    structure_reformed_detected: bool = True
     regime: str = ""
     regime_favorability: float = 0.5
     pair_health: float = 0.5
@@ -109,12 +131,60 @@ class EngineDInput(BaseModel, frozen=True):
     entry_price: float = 0.0
     reentry_anchor_price: float = 0.0
     atr: float = 0.0
+    duplication_overlap_with_engine_a: float = 0.0
+    marginal_portfolio_gain: float = 0.0
+    covered_share_by_engine_a: float = 0.0
     scoring_version: str = ""
+
+
+def _resolve_engine_d_context(inputs: EngineDInput) -> dict[str, float | str | bool]:
+    link_type = inputs.link_type.strip() or ("prior_trade" if inputs.origin_trade_id else "prior_context")
+    duplication_overlap_with_engine_a = _clamp(inputs.duplication_overlap_with_engine_a)
+    covered_share_by_engine_a = _clamp(
+        inputs.covered_share_by_engine_a
+        if inputs.covered_share_by_engine_a > 0.0
+        else duplication_overlap_with_engine_a
+    )
+    duplication_possible_with_engine_a = (
+        duplication_overlap_with_engine_a >= 0.65 or covered_share_by_engine_a >= 0.55
+    )
+    marginal_portfolio_gain = (
+        inputs.marginal_portfolio_gain
+        if inputs.marginal_portfolio_gain > 0.0
+        else max(0.0, inputs.candidate_size * (inputs.expected_gain - inputs.expected_cost))
+    )
+    concentration_risk = _clamp(0.60 * (1.0 - inputs.concentration_headroom) + 0.40 * inputs.reentry_lateness)
+    return {
+        "origin_context_id": inputs.origin_context_id or f"{inputs.pair}:prior_context",
+        "origin_trade_id": inputs.origin_trade_id,
+        "link_type": link_type,
+        "structure_reformed_detected": inputs.structure_reformed_detected,
+        "duplication_possible_with_engine_a": duplication_possible_with_engine_a,
+        "duplication_overlap_with_engine_a": duplication_overlap_with_engine_a,
+        "marginal_portfolio_gain": marginal_portfolio_gain,
+        "covered_share_by_engine_a": covered_share_by_engine_a,
+        "marginal_concentration": concentration_risk,
+    }
+
+
+def _engine_d_log_context(context: dict[str, float | str | bool]) -> dict[str, float | str | bool]:
+    return {
+        "origin_context_id": context["origin_context_id"],
+        "origin_trade_id": context["origin_trade_id"],
+        "link_type": context["link_type"],
+        "structure_reformed_detected": context["structure_reformed_detected"],
+        "duplication_possible_with_engine_a": context["duplication_possible_with_engine_a"],
+        "duplication_overlap_with_engine_a": context["duplication_overlap_with_engine_a"],
+        "marginal_portfolio_gain": context["marginal_portfolio_gain"],
+        "covered_share_by_engine_a": context["covered_share_by_engine_a"],
+        "marginal_concentration": context["marginal_concentration"],
+    }
 
 
 def run_engine_d(inputs: EngineDInput) -> EngineDOutput:
     logs: list[EngineDLogEntry] = []
     no_trade_reasons: list[NoTradeReasonD] = []
+    context = _resolve_engine_d_context(inputs)
 
     history_score = _clamp(
         0.55 * inputs.prior_trade_quality + 0.25 * inputs.pair_health + 0.20 * inputs.data_freshness
@@ -124,6 +194,7 @@ def run_engine_d(inputs: EngineDInput) -> EngineDOutput:
             event="engine_d_history_checked",
             pair=inputs.pair,
             regime=inputs.regime,
+            **_engine_d_log_context(context),
             history_score=history_score,
             raw_score=history_score,
         )
@@ -135,6 +206,7 @@ def run_engine_d(inputs: EngineDInput) -> EngineDOutput:
                 event="engine_d_no_trade",
                 pair=inputs.pair,
                 regime=inputs.regime,
+                **_engine_d_log_context(context),
                 history_score=history_score,
                 reasons=("prior context too weak for re-entry",),
             )
@@ -142,7 +214,16 @@ def run_engine_d(inputs: EngineDInput) -> EngineDOutput:
         return EngineDOutput(
             pair=inputs.pair,
             decision=EngineDDecision.NO_TRADE,
+            origin_context_id=context["origin_context_id"],
+            origin_trade_id=context["origin_trade_id"],
+            link_type=context["link_type"],
+            structure_reformed_detected=context["structure_reformed_detected"],
             history_score=history_score,
+            marginal_concentration=context["marginal_concentration"],
+            duplication_possible_with_engine_a=context["duplication_possible_with_engine_a"],
+            duplication_overlap_with_engine_a=context["duplication_overlap_with_engine_a"],
+            marginal_portfolio_gain=context["marginal_portfolio_gain"],
+            covered_share_by_engine_a=context["covered_share_by_engine_a"],
             no_trade_reasons=tuple(no_trade_reasons),
             scoring_version=inputs.scoring_version,
             log_entries=tuple(logs),
@@ -162,6 +243,7 @@ def run_engine_d(inputs: EngineDInput) -> EngineDOutput:
             event="engine_d_reformation_checked",
             pair=inputs.pair,
             regime=inputs.regime,
+            **_engine_d_log_context(context),
             history_score=history_score,
             reformation_score=reformation_score,
             raw_score=reformation_score,
@@ -174,6 +256,7 @@ def run_engine_d(inputs: EngineDInput) -> EngineDOutput:
                 event="engine_d_no_trade",
                 pair=inputs.pair,
                 regime=inputs.regime,
+                **_engine_d_log_context(context),
                 history_score=history_score,
                 reformation_score=reformation_score,
                 reasons=("reformation too weak for second chance entry",),
@@ -182,8 +265,17 @@ def run_engine_d(inputs: EngineDInput) -> EngineDOutput:
         return EngineDOutput(
             pair=inputs.pair,
             decision=EngineDDecision.NO_TRADE,
+            origin_context_id=context["origin_context_id"],
+            origin_trade_id=context["origin_trade_id"],
+            link_type=context["link_type"],
+            structure_reformed_detected=context["structure_reformed_detected"],
             history_score=history_score,
             reformation_score=reformation_score,
+            marginal_concentration=context["marginal_concentration"],
+            duplication_possible_with_engine_a=context["duplication_possible_with_engine_a"],
+            duplication_overlap_with_engine_a=context["duplication_overlap_with_engine_a"],
+            marginal_portfolio_gain=context["marginal_portfolio_gain"],
+            covered_share_by_engine_a=context["covered_share_by_engine_a"],
             no_trade_reasons=tuple(no_trade_reasons),
             scoring_version=inputs.scoring_version,
             log_entries=tuple(logs),
@@ -195,13 +287,14 @@ def run_engine_d(inputs: EngineDInput) -> EngineDOutput:
         + 0.20 * inputs.concentration_headroom
         + 0.15 * (1.0 - inputs.reentry_lateness)
     )
-    concentration_risk = _clamp(0.60 * (1.0 - inputs.concentration_headroom) + 0.40 * inputs.reentry_lateness)
+    concentration_risk = context["marginal_concentration"]
     penalized_score = max(0.0, marginal_value_score - max(0.0, concentration_risk - 0.30))
     logs.append(
         EngineDLogEntry(
             event="engine_d_marginal_value_checked",
             pair=inputs.pair,
             regime=inputs.regime,
+            **_engine_d_log_context(context),
             history_score=history_score,
             reformation_score=reformation_score,
             marginal_value_score=marginal_value_score,
@@ -217,6 +310,7 @@ def run_engine_d(inputs: EngineDInput) -> EngineDOutput:
                 event="engine_d_no_trade",
                 pair=inputs.pair,
                 regime=inputs.regime,
+                **_engine_d_log_context(context),
                 marginal_value_score=marginal_value_score,
                 concentration_risk=concentration_risk,
                 reasons=("re-entry adds insufficient marginal value",),
@@ -225,10 +319,19 @@ def run_engine_d(inputs: EngineDInput) -> EngineDOutput:
         return EngineDOutput(
             pair=inputs.pair,
             decision=EngineDDecision.NO_TRADE,
+            origin_context_id=context["origin_context_id"],
+            origin_trade_id=context["origin_trade_id"],
+            link_type=context["link_type"],
+            structure_reformed_detected=context["structure_reformed_detected"],
             history_score=history_score,
             reformation_score=reformation_score,
             marginal_value_score=marginal_value_score,
             concentration_risk=concentration_risk,
+            marginal_concentration=context["marginal_concentration"],
+            duplication_possible_with_engine_a=context["duplication_possible_with_engine_a"],
+            duplication_overlap_with_engine_a=context["duplication_overlap_with_engine_a"],
+            marginal_portfolio_gain=context["marginal_portfolio_gain"],
+            covered_share_by_engine_a=context["covered_share_by_engine_a"],
             no_trade_reasons=tuple(no_trade_reasons),
             scoring_version=inputs.scoring_version,
             log_entries=tuple(logs),
@@ -240,6 +343,7 @@ def run_engine_d(inputs: EngineDInput) -> EngineDOutput:
                 event="engine_d_no_trade",
                 pair=inputs.pair,
                 regime=inputs.regime,
+                **_engine_d_log_context(context),
                 marginal_value_score=marginal_value_score,
                 concentration_risk=concentration_risk,
                 reasons=("concentration or lateness risk too high",),
@@ -248,10 +352,19 @@ def run_engine_d(inputs: EngineDInput) -> EngineDOutput:
         return EngineDOutput(
             pair=inputs.pair,
             decision=EngineDDecision.NO_TRADE,
+            origin_context_id=context["origin_context_id"],
+            origin_trade_id=context["origin_trade_id"],
+            link_type=context["link_type"],
+            structure_reformed_detected=context["structure_reformed_detected"],
             history_score=history_score,
             reformation_score=reformation_score,
             marginal_value_score=marginal_value_score,
             concentration_risk=concentration_risk,
+            marginal_concentration=context["marginal_concentration"],
+            duplication_possible_with_engine_a=context["duplication_possible_with_engine_a"],
+            duplication_overlap_with_engine_a=context["duplication_overlap_with_engine_a"],
+            marginal_portfolio_gain=context["marginal_portfolio_gain"],
+            covered_share_by_engine_a=context["covered_share_by_engine_a"],
             no_trade_reasons=tuple(no_trade_reasons),
             scoring_version=inputs.scoring_version,
             log_entries=tuple(logs),
@@ -266,6 +379,7 @@ def run_engine_d(inputs: EngineDInput) -> EngineDOutput:
             event="engine_d_cost_checked",
             pair=inputs.pair,
             regime=inputs.regime,
+            **_engine_d_log_context(context),
             expected_cost=inputs.expected_cost,
             ce_expected=ce_expected,
             ev_net=ev_net,
@@ -278,6 +392,7 @@ def run_engine_d(inputs: EngineDInput) -> EngineDOutput:
                 event="engine_d_no_trade",
                 pair=inputs.pair,
                 regime=inputs.regime,
+                **_engine_d_log_context(context),
                 expected_cost=inputs.expected_cost,
                 ce_expected=ce_expected,
                 ev_net=ev_net,
@@ -287,13 +402,22 @@ def run_engine_d(inputs: EngineDInput) -> EngineDOutput:
         return EngineDOutput(
             pair=inputs.pair,
             decision=EngineDDecision.NO_TRADE,
+            origin_context_id=context["origin_context_id"],
+            origin_trade_id=context["origin_trade_id"],
+            link_type=context["link_type"],
+            structure_reformed_detected=context["structure_reformed_detected"],
             history_score=history_score,
             reformation_score=reformation_score,
             marginal_value_score=marginal_value_score,
             concentration_risk=concentration_risk,
+            marginal_concentration=context["marginal_concentration"],
             expected_cost=inputs.expected_cost,
             ce_expected=ce_expected,
             ev_net=ev_net,
+            duplication_possible_with_engine_a=context["duplication_possible_with_engine_a"],
+            duplication_overlap_with_engine_a=context["duplication_overlap_with_engine_a"],
+            marginal_portfolio_gain=context["marginal_portfolio_gain"],
+            covered_share_by_engine_a=context["covered_share_by_engine_a"],
             no_trade_reasons=tuple(no_trade_reasons),
             scoring_version=inputs.scoring_version,
             log_entries=tuple(logs),
@@ -336,6 +460,7 @@ def run_engine_d(inputs: EngineDInput) -> EngineDOutput:
             event="engine_d_emit",
             pair=inputs.pair,
             regime=inputs.regime,
+            **_engine_d_log_context(context),
             raw_score=raw_score,
             penalized_score=conviction_score,
             history_score=history_score,
@@ -359,13 +484,22 @@ def run_engine_d(inputs: EngineDInput) -> EngineDOutput:
         block_scores=block_scores,
         conviction=conviction,
         tier_suggestion=tier,
+        origin_context_id=context["origin_context_id"],
+        origin_trade_id=context["origin_trade_id"],
+        link_type=context["link_type"],
+        structure_reformed_detected=context["structure_reformed_detected"],
         history_score=history_score,
         reformation_score=reformation_score,
         marginal_value_score=marginal_value_score,
         concentration_risk=concentration_risk,
+        marginal_concentration=context["marginal_concentration"],
         expected_cost=inputs.expected_cost,
         ce_expected=ce_expected,
         ev_net=ev_net,
+        duplication_possible_with_engine_a=context["duplication_possible_with_engine_a"],
+        duplication_overlap_with_engine_a=context["duplication_overlap_with_engine_a"],
+        marginal_portfolio_gain=context["marginal_portfolio_gain"],
+        covered_share_by_engine_a=context["covered_share_by_engine_a"],
         invalidation=invalidation,
         holding_hours=inputs.holding_period,
         scoring_version=inputs.scoring_version,
