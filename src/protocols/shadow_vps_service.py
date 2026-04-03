@@ -50,6 +50,7 @@ class ShadowVpsServiceState(BaseModel):
     last_shadow_session_summary_ref: str = ""
     last_shadow_session_registry_ref: str = ""
     last_orchestrator_state_ref: str = ""
+    last_campaign_summary_ref: str = ""
     last_error: str = ""
 
 
@@ -164,6 +165,38 @@ class ShadowVpsRuntimeEvidenceBundle(BaseModel, frozen=True):
         return self
 
 
+class ShadowVpsCampaignSummary(BaseModel, frozen=True):
+    """Current cumulative Build-11 VPS campaign status for operator review."""
+
+    service_status: ShadowVpsServiceStatus
+    loop_count: int = Field(default=0, ge=0)
+    success_count: int = Field(default=0, ge=0)
+    idle_count: int = Field(default=0, ge=0)
+    failure_count: int = Field(default=0, ge=0)
+    resumed: bool = False
+    last_selected_session_date: str = ""
+    last_completed_session_date: str = ""
+    acquisition_mode: str = ""
+    accepted: bool = False
+    consecutive_days: int = Field(default=0, ge=0)
+    remaining_days: int = Field(default=0, ge=0)
+    promotion_gate_passed: bool = False
+    runtime_data_source: str = "unknown"
+    runtime_evidence_summary: str = "No real runtime evidence recorded"
+    live_capture_summary_ref: str = ""
+    live_capture_emitted_message_count: int = Field(default=0, ge=0)
+    live_capture_accepted_message_count: int = Field(default=0, ge=0)
+    live_capture_ignored_message_count: int = Field(default=0, ge=0)
+    live_capture_rejected_message_count: int = Field(default=0, ge=0)
+    live_capture_pair_scope: tuple[str, ...] = ()
+    live_capture_event_types: tuple[str, ...] = ()
+    runtime_evidence_bundle_ref: str = ""
+    shadow_report_ref: str = ""
+    shadow_session_summary_ref: str = ""
+    shadow_session_registry_ref: str = ""
+    orchestrator_state_ref: str = ""
+
+
 class ShadowVpsServiceEvent(BaseModel, frozen=True):
     """Single structured event emitted by the autonomous VPS Shadow service."""
 
@@ -241,6 +274,7 @@ __all__ = [
     "ShadowLiveWebSocketConfig",
     "ShadowLiveWebSocketCaptureResult",
     "ShadowVpsRuntimeEvidenceBundle",
+    "ShadowVpsCampaignSummary",
     "ShadowVpsServiceEvent",
     "ShadowVpsServiceStore",
 ]

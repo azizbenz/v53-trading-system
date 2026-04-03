@@ -86,6 +86,7 @@ from protocols.shadow_daily_orchestrator import (
     ShadowDailyPlanSlot,
 )
 from protocols.shadow_vps_service import (
+    ShadowVpsCampaignSummary,
     ShadowLiveWebSocketCaptureResult,
     ShadowLiveWebSocketConfig,
     ShadowVpsRawInputConfig,
@@ -196,6 +197,7 @@ __all__ = [
     "ShadowLiveWebSocketConfig",
     "ShadowLiveWebSocketCaptureResult",
     "ShadowVpsRuntimeEvidenceBundle",
+    "ShadowVpsCampaignSummary",
     "ShadowVpsServiceEvent",
     "ShadowVpsServiceStore",
     "InjectedWebSocketFrame",

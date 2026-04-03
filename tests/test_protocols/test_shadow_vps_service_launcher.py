@@ -56,6 +56,14 @@ def _read_runtime_evidence_bundle(service_dir: Path, session_date: str) -> dict:
     )
 
 
+def _read_campaign_summary(service_dir: Path) -> dict:
+    return json.loads(
+        (service_dir / "shadow_vps_service.campaign_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+
 def _write_daily_export(export_dir: Path, session_date: str, run_suffix: str) -> None:
     execute_local_replay_export(
         export_dir,
@@ -361,12 +369,16 @@ def test_shadow_vps_service_processes_multiple_days_and_persists_logs():
             )
         )
         runtime_bundle = _read_runtime_evidence_bundle(service_dir, "2026-04-02")
+        campaign_summary = _read_campaign_summary(service_dir)
 
         assert state["service_status"] == "stopped"
         assert state["loop_count"] == 2
         assert state["success_count"] == 2
         assert state["failure_count"] == 0
         assert state["last_completed_session_date"] == "2026-04-02"
+        assert state["last_campaign_summary_ref"].endswith(
+            "shadow_vps_service.campaign_summary.json"
+        )
         assert state["last_local_replay_evidence_ref"].endswith(
             "local_replay_shadow.local_replay_evidence.json"
         )
@@ -381,6 +393,12 @@ def test_shadow_vps_service_processes_multiple_days_and_persists_logs():
         assert runtime_bundle["runtime_data_source"] == "recorded_replay"
         assert runtime_bundle["accepted"] is False
         assert runtime_bundle["consecutive_days"] == 2
+        assert campaign_summary["service_status"] == "stopped"
+        assert campaign_summary["success_count"] == 2
+        assert campaign_summary["acquisition_mode"] == "dated_export"
+        assert campaign_summary["consecutive_days"] == 2
+        assert campaign_summary["remaining_days"] == 28
+        assert campaign_summary["promotion_gate_passed"] is False
 
         event_types = [event["event_type"] for event in events]
         assert event_types[0] == "service_started"
@@ -765,6 +783,7 @@ def test_shadow_vps_service_captures_native_live_websocket_then_runs_shadow(monk
             )
         )
         runtime_bundle = _read_runtime_evidence_bundle(service_dir, "2026-04-02")
+        campaign_summary = _read_campaign_summary(service_dir)
 
         assert state["success_count"] == 1
         assert state["last_completed_session_date"] == "2026-04-02"
@@ -801,6 +820,15 @@ def test_shadow_vps_service_captures_native_live_websocket_then_runs_shadow(monk
         assert runtime_bundle["runtime_data_source"] == "recorded_replay"
         assert runtime_bundle["accepted"] is False
         assert runtime_bundle["consecutive_days"] == 1
+        assert campaign_summary["service_status"] == "stopped"
+        assert campaign_summary["acquisition_mode"] == "native_live_websocket_auto_export"
+        assert campaign_summary["live_capture_summary_ref"].endswith(
+            "live_captures\\2026-04-02\\live_websocket_capture_summary.json"
+        )
+        assert campaign_summary["live_capture_accepted_message_count"] == 2
+        assert campaign_summary["live_capture_event_types"] == ["snapshot", "trade"]
+        assert campaign_summary["consecutive_days"] == 1
+        assert campaign_summary["remaining_days"] == 29
         live_capture_event = next(
             event for event in events if event["event_type"] == "live_capture_completed"
         )

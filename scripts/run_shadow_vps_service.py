@@ -18,6 +18,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from protocols import (  # noqa: E402
+    ShadowVpsCampaignSummary,
     ShadowLiveWebSocketConfig,
     ShadowLiveWebSocketCaptureResult,
     ShadowDailyOrchestrator,
@@ -78,6 +79,22 @@ def _read_optional_json(path_ref: str) -> dict:
         return json.loads(Path(path_ref).read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError):
         return {}
+
+
+def _read_runtime_evidence_bundle(
+    bundle_path_ref: str,
+) -> ShadowVpsRuntimeEvidenceBundle | None:
+    if not bundle_path_ref:
+        return None
+    bundle_path = Path(bundle_path_ref)
+    if not bundle_path.is_file():
+        return None
+    try:
+        return ShadowVpsRuntimeEvidenceBundle.model_validate_json(
+            bundle_path.read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError, TypeError):
+        return None
 
 
 def _read_live_capture_result(
@@ -511,6 +528,66 @@ def _write_runtime_evidence_bundle(
     return bundle_path
 
 
+def _write_campaign_summary(
+    *,
+    service_dir: Path,
+    state,
+    bundle: ShadowVpsRuntimeEvidenceBundle | None,
+) -> Path:
+    summary_path = service_dir / "shadow_vps_service.campaign_summary.json"
+    summary = ShadowVpsCampaignSummary(
+        service_status=state.service_status,
+        loop_count=state.loop_count,
+        success_count=state.success_count,
+        idle_count=state.idle_count,
+        failure_count=state.failure_count,
+        resumed=state.resumed,
+        last_selected_session_date=state.last_selected_session_date,
+        last_completed_session_date=state.last_completed_session_date,
+        acquisition_mode=bundle.acquisition_mode if bundle is not None else "",
+        accepted=bundle.accepted if bundle is not None else False,
+        consecutive_days=bundle.consecutive_days if bundle is not None else 0,
+        remaining_days=bundle.remaining_days if bundle is not None else 0,
+        promotion_gate_passed=(
+            bundle.accepted and bundle.remaining_days == 0 if bundle is not None else False
+        ),
+        runtime_data_source=bundle.runtime_data_source if bundle is not None else "unknown",
+        runtime_evidence_summary=(
+            bundle.runtime_evidence_summary
+            if bundle is not None
+            else "No real runtime evidence recorded"
+        ),
+        live_capture_summary_ref=(
+            bundle.live_capture_summary_ref if bundle is not None else ""
+        ),
+        live_capture_emitted_message_count=(
+            bundle.live_capture_emitted_message_count if bundle is not None else 0
+        ),
+        live_capture_accepted_message_count=(
+            bundle.live_capture_accepted_message_count if bundle is not None else 0
+        ),
+        live_capture_ignored_message_count=(
+            bundle.live_capture_ignored_message_count if bundle is not None else 0
+        ),
+        live_capture_rejected_message_count=(
+            bundle.live_capture_rejected_message_count if bundle is not None else 0
+        ),
+        live_capture_pair_scope=(
+            bundle.live_capture_pair_scope if bundle is not None else ()
+        ),
+        live_capture_event_types=(
+            bundle.live_capture_event_types if bundle is not None else ()
+        ),
+        runtime_evidence_bundle_ref=state.last_runtime_evidence_bundle_ref,
+        shadow_report_ref=state.last_shadow_report_ref,
+        shadow_session_summary_ref=state.last_shadow_session_summary_ref,
+        shadow_session_registry_ref=state.last_shadow_session_registry_ref,
+        orchestrator_state_ref=state.last_orchestrator_state_ref,
+    )
+    summary_path.write_text(summary.model_dump_json(indent=2), encoding="utf-8")
+    return summary_path
+
+
 def run_shadow_vps_service(
     service_dir: Path,
     *,
@@ -789,6 +866,13 @@ def run_shadow_vps_service(
                 "shadow_session_registry_ref"
             ]
             state.last_error = ""
+            bundle = _read_runtime_evidence_bundle(str(runtime_evidence_bundle_path))
+            campaign_summary_path = _write_campaign_summary(
+                service_dir=service_dir,
+                state=state,
+                bundle=bundle,
+            )
+            state.last_campaign_summary_ref = str(campaign_summary_path.resolve())
             store.persist()
             store.append_event(
                 ShadowVpsServiceEvent(
@@ -831,6 +915,14 @@ def run_shadow_vps_service(
     if state.service_status != ShadowVpsServiceStatus.DEGRADED:
         state.service_status = ShadowVpsServiceStatus.STOPPED
     state.last_heartbeat_at = time.time()
+    final_bundle = _read_runtime_evidence_bundle(state.last_runtime_evidence_bundle_ref)
+    if state.last_runtime_evidence_bundle_ref:
+        campaign_summary_path = _write_campaign_summary(
+            service_dir=service_dir,
+            state=state,
+            bundle=final_bundle,
+        )
+        state.last_campaign_summary_ref = str(campaign_summary_path.resolve())
     store.persist()
     store.append_event(
         ShadowVpsServiceEvent(
@@ -844,6 +936,8 @@ def run_shadow_vps_service(
     print(f"Shadow VPS service events JSONL: {store.events_path}")
     print(f"Shadow daily orchestrator state JSON: {resolved_orchestrator_output_dir / 'shadow_daily_orchestrator.state.json'}")
     print(f"Shadow session summary JSON: {resolved_shadow_output_dir / 'local_replay_shadow.shadow_session_summary.json'}")
+    if state.last_campaign_summary_ref:
+        print(f"Shadow VPS campaign summary JSON: {state.last_campaign_summary_ref}")
     if state.last_runtime_evidence_bundle_ref:
         print(f"Shadow runtime evidence bundle JSON: {state.last_runtime_evidence_bundle_ref}")
     return 0
