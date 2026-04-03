@@ -799,6 +799,14 @@
       "record_path": "docs/audit chatgpt buisness/2026-04-03_BUILD11_TARGET_ENV_CAMPAIGN_DAY1_REAL_RUN_AUDIT.md",
       "conclusion": "A fresh target-environment native live_websocket campaign was executed on 2026-04-03 without session_date_override. The service captured live data, auto-exported governed replay inputs, completed one honest Shadow day, and persisted a coherent 1-day / 29-days-remaining operational evidence chain.",
       "action_taken": "Freeze the exact command and resulting artifacts, keep Build-11 partial, and continue next only by rerunning the same campaign on the next real calendar day."
+    },
+    {
+      "audit_id": "AUDIT-027",
+      "date": "2026-04-03",
+      "scope": "Build-11 target-environment same-day rerun idempotency",
+      "record_path": "docs/audit chatgpt buisness/2026-04-03_BUILD11_TARGET_ENV_SAME_DAY_RERUN_IDEMPOTENCY_AUDIT.md",
+      "conclusion": "A same-day rerun of the real target-environment campaign on 2026-04-03 resumed cleanly, recorded an idle pass, and did not fabricate a second Shadow day. The campaign correctly remained at 1 consecutive day with 29 remaining.",
+      "action_taken": "Freeze the idempotency proof and keep the next real progression step fixed on the next calendar day only."
     }
   ],
   "known_critical_gaps": [
@@ -839,7 +847,7 @@
       "priority": "P1",
       "scope": "Runtime proof for native live_websocket",
       "doc_expectation": "Runtime-relevant features need real proof before final requalification.",
-      "code_or_runtime_reality": "The feature is coded and tested, writes a durable per-session runtime evidence bundle, and now has a real day-1 target-environment campaign under build/build11_live_websocket_campaign on 2026-04-03. That run proved capture -> auto-export -> governed Shadow-day execution and persisted an honest 1 day / 29 remaining state with no session_date_override. The full 30-day runtime proof is still pending and can only advance through repeated real calendar-day runs.",
+      "code_or_runtime_reality": "The feature is coded and tested, writes a durable per-session runtime evidence bundle, and now has a real day-1 target-environment campaign under build/build11_live_websocket_campaign on 2026-04-03. That run proved capture -> auto-export -> governed Shadow-day execution and persisted an honest 1 day / 29 remaining state with no session_date_override. A same-day rerun was also proven idempotent: it resumed cleanly, stayed idle, and did not fabricate day 2. The full 30-day runtime proof is still pending and can only advance through repeated real calendar-day runs.",
       "status": "open"
     },
     {
