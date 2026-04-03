@@ -93,6 +93,7 @@ def _render_market_lab() -> str:
       <div class="market-lab-status">
         <div id="market-lab-connection">Disconnected</div>
         <div id="market-lab-summary">No market data loaded yet.</div>
+        <div id="market-lab-liquidity">No liquidity data loaded yet.</div>
       </div>
       <svg id="market-lab-chart" viewBox="0 0 960 360" role="img" aria-label="Live market chart"></svg>
     </section>
@@ -109,8 +110,9 @@ def _render_market_lab_script() -> str:
       const reloadButton = document.getElementById("market-lab-reload");
       const connectionEl = document.getElementById("market-lab-connection");
       const summaryEl = document.getElementById("market-lab-summary");
+      const liquidityEl = document.getElementById("market-lab-liquidity");
       const chartEl = document.getElementById("market-lab-chart");
-      if (!pairSelect || !timeframeSelect || !viewSelect || !reloadButton || !connectionEl || !summaryEl || !chartEl) {
+      if (!pairSelect || !timeframeSelect || !viewSelect || !reloadButton || !connectionEl || !summaryEl || !liquidityEl || !chartEl) {
         return;
       }
 
@@ -120,6 +122,8 @@ def _render_market_lab_script() -> str:
         pair: pairSelect.value,
         timeframe: timeframeSelect.value,
         view: viewSelect.value,
+        lastBookTicker: null,
+        lastDepth: null,
       };
 
       const MAX_CANDLES = 96;
@@ -137,6 +141,10 @@ def _render_market_lab_script() -> str:
 
       function setSummary(text) {
         summaryEl.textContent = text;
+      }
+
+      function setLiquidity(text) {
+        liquidityEl.textContent = text;
       }
 
       function escapeHtml(value) {
@@ -218,6 +226,35 @@ def _render_market_lab_script() -> str:
         setSummary(
           `${state.pair} ${state.timeframe} / ${candles.length} candles / last close ${last.close.toFixed(2)} / range ${minPrice.toFixed(2)}-${maxPrice.toFixed(2)} / trend ${direction}`
         );
+        drawLiquidity();
+      }
+
+      function drawLiquidity() {
+        const book = state.lastBookTicker;
+        const depth = state.lastDepth;
+        if (!book && !depth) {
+          setLiquidity("No book_ticker/depth telemetry loaded yet.");
+          return;
+        }
+
+        const bestBid = book ? book.bid : depth ? depth.bestBid : null;
+        const bestAsk = book ? book.ask : depth ? depth.bestAsk : null;
+        const spreadBps = (
+          bestBid !== null && bestAsk !== null && bestBid > 0 && bestAsk > 0
+        )
+          ? ((bestAsk - bestBid) / ((bestAsk + bestBid) / 2)) * 10000
+          : null;
+        const bidQty = book ? book.bidQty : depth ? depth.bidQty : null;
+        const askQty = book ? book.askQty : depth ? depth.askQty : null;
+        const imbalance = (
+          bidQty !== null && askQty !== null && bidQty + askQty > 0
+        )
+          ? bidQty / (bidQty + askQty)
+          : null;
+        const depthUpdate = depth ? ` / depth_u=${depth.lastUpdateId}` : "";
+        setLiquidity(
+          `bid=${bestBid !== null ? bestBid.toFixed(4) : "n/a"} / ask=${bestAsk !== null ? bestAsk.toFixed(4) : "n/a"} / spread_bps=${spreadBps !== null ? spreadBps.toFixed(2) : "n/a"} / bid_qty=${bidQty !== null ? bidQty.toFixed(4) : "n/a"} / ask_qty=${askQty !== null ? askQty.toFixed(4) : "n/a"} / imbalance=${imbalance !== null ? imbalance.toFixed(2) : "n/a"}${depthUpdate}`
+        );
       }
 
       function normalizeHistoryRow(row) {
@@ -249,6 +286,42 @@ def _render_market_lab_script() -> str:
           volume: Number(k.v),
           closeTime: Number(k.T),
           isClosed: Boolean(k.x),
+        };
+      }
+
+      function normalizeBookTickerPayload(payload) {
+        if (!payload) {
+          return null;
+        }
+        if (payload.e !== "bookTicker" && !(payload.stream || "").endsWith("@bookTicker")) {
+          return null;
+        }
+        return {
+          bid: Number(payload.b),
+          ask: Number(payload.a),
+          bidQty: Number(payload.B),
+          askQty: Number(payload.A),
+          updateId: payload.u ?? null,
+        };
+      }
+
+      function normalizeDepthPayload(payload) {
+        if (!payload) {
+          return null;
+        }
+        if (payload.e !== "depthUpdate" && !(payload.stream || "").endsWith("@depth")) {
+          return null;
+        }
+        const bids = Array.isArray(payload.b) ? payload.b : [];
+        const asks = Array.isArray(payload.a) ? payload.a : [];
+        const topBid = Array.isArray(bids[0]) ? bids[0] : [0, 0];
+        const topAsk = Array.isArray(asks[0]) ? asks[0] : [0, 0];
+        return {
+          bestBid: Number(topBid[0] || 0),
+          bestAsk: Number(topAsk[0] || 0),
+          bidQty: Number(topBid[1] || 0),
+          askQty: Number(topAsk[1] || 0),
+          lastUpdateId: payload.u ?? null,
         };
       }
 
@@ -284,37 +357,63 @@ def _render_market_lab_script() -> str:
           state.socket.close();
           state.socket = null;
         }
-        const stream = `${state.pair.toLowerCase()}@kline_${state.timeframe}`;
-        const endpoint = `wss://stream.binance.com:9443/ws/${stream}`;
+        state.lastBookTicker = null;
+        state.lastDepth = null;
+        drawLiquidity();
+        const symbol = state.pair.toLowerCase();
+        const streams = [
+          `${symbol}@kline_${state.timeframe}`,
+          `${symbol}@bookTicker`,
+          `${symbol}@depth`,
+        ];
+        const streamLabel = streams.join(" / ");
+        const endpoint = `wss://stream.binance.com:9443/stream?streams=${streams.join("/")}`;
         const socket = new WebSocket(endpoint);
         state.socket = socket;
-        setConnection(`Connecting: ${stream}`, "warning");
+        setConnection(`Connecting: ${streamLabel}`, "warning");
 
         socket.addEventListener("open", () => {
-          setConnection(`Connected: ${stream}`, "healthy");
+          setConnection(`Connected: ${streamLabel}`, "healthy");
         });
 
         socket.addEventListener("message", event => {
           try {
-            const payload = JSON.parse(event.data);
-            const candle = normalizeSocketPayload(payload);
-            if (!candle) {
+            const envelope = JSON.parse(event.data);
+            const stream = envelope && typeof envelope === "object" && envelope.data ? String(envelope.stream || "") : "";
+            const payload = envelope && typeof envelope === "object" && envelope.data ? envelope.data : envelope;
+            if (stream.endsWith("@bookTicker")) {
+              const book = normalizeBookTickerPayload({ ...payload, stream });
+              if (book) {
+                state.lastBookTicker = book;
+                drawLiquidity();
+              }
               return;
             }
-            upsertCandle(candle);
-            drawChart();
+            if (stream.endsWith("@depth")) {
+              const depth = normalizeDepthPayload({ ...payload, stream });
+              if (depth) {
+                state.lastDepth = depth;
+                drawLiquidity();
+              }
+              return;
+            }
+            const candle = normalizeSocketPayload(payload);
+            if (candle) {
+              upsertCandle(candle);
+              drawChart();
+            }
           } catch (error) {
             setConnection(`Stream parse error: ${String(error)}`, "critical");
           }
         });
 
         socket.addEventListener("error", () => {
-          setConnection(`WebSocket error on ${stream}`, "critical");
+          setConnection(`WebSocket error on ${streamLabel}`, "critical");
         });
 
         socket.addEventListener("close", () => {
           if (state.socket === socket) {
-            setConnection(`Disconnected: ${stream}`, "warning");
+            setConnection(`Disconnected: ${streamLabel}`, "warning");
           }
         });
       }
@@ -325,6 +424,7 @@ def _render_market_lab_script() -> str:
         state.view = viewSelect.value;
         setConnection("Loading public Binance history...", "warning");
         setSummary("Refreshing local chart...");
+        setLiquidity("Refreshing book_ticker/depth telemetry...");
         chartEl.innerHTML = "";
         try {
           await loadHistory();

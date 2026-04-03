@@ -57,7 +57,10 @@ def test_export_technical_dashboard_writes_availability_view():
         assert "1d" in html
         assert "Candles" in html
         assert "Line" in html
-        assert "stream.binance.com:9443/ws/" in html
+        assert "bookTicker" in html
+        assert "@depth" in html
+        assert "No liquidity data loaded yet." in html
+        assert "stream.binance.com:9443/stream?streams=" in html
         assert "Build-11 Shadow" in html
         assert "Build-12 Micro-live" in html
         assert "Build-13 Live-Light" in html
@@ -105,6 +108,8 @@ def test_export_technical_dashboard_writes_demo_sidecars():
         assert "Live Market Lab" in html
         assert "1m" in html
         assert "api.binance.com/api/v3/klines" in html
+        assert "bookTicker" in html
+        assert "@depth" in html
         assert "Build-11 Shadow" in html
         assert "Build-12 Micro-live" in html
         assert "Build-13 Live-Light" in html

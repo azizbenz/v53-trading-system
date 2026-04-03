@@ -74,6 +74,7 @@ class BinanceSpotLiveWebSocketAdapter(WebSocketGatewayAdapter):
         self._socket_factory = socket_factory or _default_socket_factory
         self._clock = clock
         self._clients: dict[str, NativeWebSocketClient] = {}
+        self._pending_subscriptions: dict[str, list[str]] = {}
         self._request_id = 0
 
     def connect(self, endpoint: str) -> None:
@@ -83,9 +84,11 @@ class BinanceSpotLiveWebSocketAdapter(WebSocketGatewayAdapter):
             self._config.recv_timeout_s,
         )
         self._clients[endpoint] = client
+        self._pending_subscriptions[endpoint] = []
 
     def disconnect(self, endpoint: str) -> None:
         client = self._clients.pop(endpoint, None)
+        self._pending_subscriptions.pop(endpoint, None)
         if client is None:
             return
         try:
@@ -94,24 +97,18 @@ class BinanceSpotLiveWebSocketAdapter(WebSocketGatewayAdapter):
             return
 
     def subscribe(self, endpoint: str, pair: str, stream_type: str) -> None:
-        client = self._clients.get(endpoint)
-        if client is None:
+        if endpoint not in self._clients:
             return
-        self._request_id += 1
-        client.send(
-            json.dumps(
-                {
-                    "method": "SUBSCRIBE",
-                    "params": [self._subscription_param(pair, stream_type)],
-                    "id": self._request_id,
-                }
-            )
-        )
+        pending = self._pending_subscriptions.setdefault(endpoint, [])
+        subscription = self._subscription_param(pair, stream_type)
+        if subscription not in pending:
+            pending.append(subscription)
 
     def recv(self, endpoint: str) -> AdapterMessage | None:
         client = self._clients.get(endpoint)
         if client is None:
             return None
+        self._flush_pending_subscriptions(endpoint)
         try:
             raw_payload = client.recv()
         except Exception as exc:
@@ -130,6 +127,23 @@ class BinanceSpotLiveWebSocketAdapter(WebSocketGatewayAdapter):
         if "result" in payload and "id" in payload:
             return None
         return self._parse_message(payload)
+
+    def _flush_pending_subscriptions(self, endpoint: str) -> None:
+        client = self._clients.get(endpoint)
+        pending = self._pending_subscriptions.get(endpoint, [])
+        if client is None or not pending:
+            return
+        self._request_id += 1
+        client.send(
+            json.dumps(
+                {
+                    "method": "SUBSCRIBE",
+                    "params": pending,
+                    "id": self._request_id,
+                }
+            )
+        )
+        self._pending_subscriptions[endpoint] = []
 
     def _subscription_param(self, pair: str, stream_type: str) -> str:
         symbol = pair.lower()

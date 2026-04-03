@@ -568,6 +568,25 @@
         "The broader monitoring/protocol/UI surface remains green after replacing Build-14 demo constants with a governed shared derivation helper.",
         "Build-11 shadow reporting now carries optional reader-level Build-14 evidence while preserving the canonical family-level readiness semantics."
       ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_protocols/test_shadow_live_websocket.py tests/test_ui/test_technical_dashboard_launcher.py tests/test_ui/test_technical_dashboard.py -q",
+      "result": "20 passed",
+      "classification": "market_lab_liquidity_batching_and_html_green_surface",
+      "notes": [
+        "The native Binance adapter now batches multi-stream subscriptions into one SUBSCRIBE control message, removing the zero-ingest failure mode seen on the public liquidity smoke.",
+        "The local HTML Market Lab now exposes 1m/15m/1h/4h/1d selection plus book_ticker/depth liquidity telemetry."
+      ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_manifest_registry/test_runtime_surface.py -q",
+      "result": "21 passed",
+      "classification": "market_lab_liquidity_runtime_surface_green",
+      "notes": [
+        "The public runtime/export surface remains coherent after the Market Lab liquidity and batching wave."
+      ]
     }
   ],
   "current_status_by_build": {
@@ -984,6 +1003,14 @@
       "record_path": "docs/audit chatgpt buisness/2026-04-04_BUILD11_TARGET_ENV_CAMPAIGN_DAY2_BLOCKED_WEBSOCKET_CONNECT_AUDIT.md",
       "conclusion": "The real day-2 Build-11 campaign attempt on 2026-04-04 did not advance the counter: the machine date was correct and the 2026-04-04 capture directory was opened, but native live_websocket connectivity failed twice before a new governed capture/export could be completed. The campaign therefore remains honestly at 1 day / 29 remaining.",
       "action_taken": "Do not claim 2/30. Keep the next prod-safe action as a same-day or next-available retry of the identical 2026-04-04 command only after websocket gateway connectivity is restored."
+    },
+    {
+      "audit_id": "AUDIT-038",
+      "date": "2026-04-03",
+      "scope": "Market Lab liquidity telemetry and public Binance module-chain smoke",
+      "record_path": "docs/audit chatgpt buisness/2026-04-03_MARKET_LAB_LIQUIDITY_STREAM_AND_MODULE_CHAIN_AUDIT.md",
+      "conclusion": "The local HTML Market Lab now exposes book_ticker/depth liquidity telemetry and the native Binance adapter no longer fails on 2-pair x 3-stream public smokes because subscriptions are batched into one control message. A real module-chain smoke completed through live capture, auto export, and governed Shadow-day execution. On that bounded run, the observed accepted subset was depth-only, so the chain is proven unlocked while full multi-stream coverage on a single runtime window remains unproven.",
+      "action_taken": "Freeze the batching fix and the successful public-smoke result without overstating coverage. Keep the main runtime priority on the real Build-11 day-by-day target-environment campaign."
     }
   ],
   "known_critical_gaps": [

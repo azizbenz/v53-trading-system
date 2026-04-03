@@ -99,7 +99,10 @@ def test_binance_live_adapter_subscribes_and_parses_trade_and_ticker():
     trade_message = adapter.recv(config.endpoint)
     ticker_message = adapter.recv(config.endpoint)
 
-    assert len(socket.sent) == 2
+    assert len(socket.sent) == 1
+    subscribe_request = json.loads(socket.sent[0])
+    assert subscribe_request["method"] == "SUBSCRIBE"
+    assert subscribe_request["params"] == ["btcusdt@trade", "btcusdt@ticker"]
     assert trade_message is not None
     assert trade_message.stream_type == "trade"
     assert trade_message.pair == "BTCUSDT"
@@ -196,6 +199,39 @@ def test_capture_live_websocket_snapshot_batch_materializes_snapshot_batch():
         assert batch.event_types == ("snapshot", "trade")
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_binance_live_adapter_batches_multi_pair_multi_stream_subscriptions():
+    socket = _FakeSocket([json.dumps({"result": None, "id": 1})])
+    config = ShadowLiveWebSocketConfig(
+        endpoint="wss://stream.binance.com:9443/ws",
+        pairs=("BTCUSDT", "ETHUSDT"),
+        stream_types=("kline_1m", "book_ticker", "depth"),
+    )
+    adapter = BinanceSpotLiveWebSocketAdapter(
+        config,
+        socket_factory=lambda endpoint, connect_timeout_s, recv_timeout_s: socket,
+        clock=lambda: 1_700_000_000.0,
+    )
+
+    adapter.connect(config.endpoint)
+    for pair in config.pairs:
+        for stream_type in config.stream_types:
+            adapter.subscribe(config.endpoint, pair, stream_type)
+
+    assert adapter.recv(config.endpoint) is None
+
+    assert len(socket.sent) == 1
+    subscribe_request = json.loads(socket.sent[0])
+    assert subscribe_request["method"] == "SUBSCRIBE"
+    assert subscribe_request["params"] == [
+        "btcusdt@kline_1m",
+        "btcusdt@bookTicker",
+        "btcusdt@depth",
+        "ethusdt@kline_1m",
+        "ethusdt@bookTicker",
+        "ethusdt@depth",
+    ]
 
 
 def test_capture_live_websocket_snapshot_batch_captures_private_user_data_sidecar(
