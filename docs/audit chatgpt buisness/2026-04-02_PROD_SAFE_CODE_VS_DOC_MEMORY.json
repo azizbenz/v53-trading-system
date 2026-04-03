@@ -36,7 +36,7 @@
     "branch_alignment": {
       "main_commit": "e28de12",
       "origin_main_commit": "e28de12",
-      "current_branch_commit": "185f7ad",
+      "current_branch_commit": "7f6d1fb",
       "branch_divergence_detected": true,
       "interpretation": "The dedicated Full Shadow migration branch is now the active work surface. Canon migration started docs-first there, and the branch now also carries real Engine C/D packages plus the first Build-11 A/B/C/D runtime reinjection wave, while the previous branch remains the last coherent Option-B rollback checkpoint."
     },
@@ -325,6 +325,36 @@
         "This is the consolidated green proof set for the Engine C/D implementation lot plus the first Build-11 A/B/C/D runtime reinjection wave on the migration branch.",
         "It is a code/test closure checkpoint, not yet a claim of final operational Build-11 closure."
       ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_manifest_registry tests/test_protocols/test_local_replay_shadow_runner.py -q",
+      "result": "145 passed",
+      "classification": "full_shadow_manifest_profile_realignment_green_surface",
+      "notes": [
+        "Manifest/profile helpers now expose the Full Shadow runtime surface coherently with the local Shadow runner.",
+        "This lot closes the staged-registry drift that remained after the Engine C/D and Build-11 reinjection wave."
+      ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_manifest_registry tests/test_protocols/test_local_replay_shadow_runner.py tests/test_smoke_bootstrap_recovery -q",
+      "result": "216 passed",
+      "classification": "full_shadow_manifest_bootstrap_green_surface",
+      "notes": [
+        "The Build-11 bootstrap/readiness preflight is now coherent with the active Full Shadow module surface.",
+        "This proves the registry/profile story and the preflight stack tell the same story on the migration branch."
+      ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_engines/test_engine_c tests/test_engines/test_engine_d tests/test_manifest_registry tests/test_protocols/test_contracts.py tests/test_protocols/test_shadow_day_counter.py tests/test_protocols/test_shadow_runtime.py tests/test_protocols/test_micro_live_runtime.py tests/test_protocols/test_live_light_runtime.py tests/test_protocols/test_shadow_runtime_evidence.py tests/test_protocols/test_shadow_report_builder.py tests/test_protocols/test_shadow_dashboard.py tests/test_protocols/test_local_replay_shadow_runner.py tests/test_smoke_bootstrap_recovery tests/test_monitoring/test_monitoring_backend.py tests/test_monitoring/test_monitoring_runtime.py tests/test_ui/test_technical_dashboard.py tests/test_ui/test_technical_dashboard_launcher.py tests/test_regression_alignment.py -q",
+      "result": "440 passed",
+      "classification": "full_shadow_consolidated_green_surface_after_registry_realignment",
+      "notes": [
+        "This is the consolidated green proof set after the manifest/profile/bootstrap coherence wave.",
+        "It is the strongest current local evidence set on the migration branch short of target-environment runtime proof."
+      ]
     }
   ],
   "current_status_by_build": {
@@ -581,6 +611,14 @@
       "record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_LOT2_4_ENGINE_CD_AND_BUILD11_REINJECTION_AUDIT.md",
       "conclusion": "Engine C and Engine D are now real runtime packages on the migration branch, and the first honest Build-11 A/B/C/D runtime reinjection wave is green on focused and consolidated test surfaces.",
       "action_taken": "Freeze the code/test lot, then move next to manifest/profile and late-build narrative realignment rather than overstating operational closure."
+    },
+    {
+      "audit_id": "AUDIT-019",
+      "date": "2026-04-03",
+      "scope": "Full Shadow migration Lot 5 - manifest/profile/bootstrap and late-build narrative realignment",
+      "record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_LOT5_MANIFEST_PROFILE_AND_LATE_BUILD_REALIGNMENT_AUDIT.md",
+      "conclusion": "The registry/profile/bootstrap story is now coherent with the Full Shadow A/B/C/D runtime reality on the migration branch, and the strongest remaining ambiguity is pushed back to operational proof rather than local configuration drift.",
+      "action_taken": "Freeze the coherence wave, then move next to the refreshed Build-11 to Build-17 audit and target-environment runtime proof."
     }
   ],
   "known_critical_gaps": [
@@ -852,27 +890,27 @@
     }
   },
   "next_recommended_action": {
-    "step": "Audit and realign module_inventory, profile_registry, and the remaining Build-15/16/17 narrative surfaces against the new Full Shadow A/B/C/D migration reality.",
-    "reason": "Engine C, Engine D, and the first Build-11 A/B/C/D reinjection wave are now frozen in code/tests. The next honest move is to remove the remaining staged-story drift before making stronger rollout claims."
+    "step": "Refresh the build-by-build audit for Build-11 to Build-17 on the migration branch, then focus on target-environment Build-11 runtime proof.",
+    "reason": "The local code/test and registry/profile coherence waves are now frozen. The next honest frontier is status requalification and operational proof, not more local reinterpretation."
   },
   "branch_overrides": {
     "option_b_realignment_commit": "99cf170",
     "migration_branch": "codex/full-shadow-abcd-migration-20260403",
     "migration_branch_base_commit": "01b39e3",
-    "effective_next_action": "Use the migration branch for the post-reinjection audit wave: registry/profile realignment, late-build narrative cleanup, then refreshed Build-11 to Build-17 audit.",
-    "effective_reason": "The branch is no longer only docs-ahead-of-runtime. Engine C/D and the first Build-11 A/B/C/D runtime reinjection are now green, so the next risk is coherence drift across manifests, profiles, and late-build storytelling."
+    "effective_next_action": "Use the migration branch for the refreshed Build-11 to Build-17 audit and then for the remaining target-environment runtime-proof wave.",
+    "effective_reason": "The branch is now locally coherent across canon, engines, protocols, registry/profile, bootstrap, and the focused operator surfaces. The next real uncertainty is operational proof."
   },
   "planned_migration": {
     "migration_id": "MIG-001",
     "selected_target": "full_shadow_30d_abcd_build14",
-    "status": "lot2_lot3_and_partial_lot4_code_wave_green_on_migration_branch",
+    "status": "lot5_registry_profile_bootstrap_realignment_green_on_migration_branch",
     "record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_MIGRATION_PLAN.md",
     "checkpoint_record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_LOT0_BRANCH_CHECKPOINT.md",
     "lot1_record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_LOT1_CANON_REPATCH_AUDIT.md",
     "lot2_4_record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_LOT2_4_ENGINE_CD_AND_BUILD11_REINJECTION_AUDIT.md",
     "active_branch": "codex/full-shadow-abcd-migration-20260403",
     "base_commit": "01b39e3",
-    "rule_until_applied": "The migration branch now has the canon repatch plus the first Engine C/D and Build-11 A/B/C/D code/test wave, but the doctrine is not considered fully implemented until manifest/profile surfaces and late-build coherence are refreshed and Build-11 runtime proof is completed on the target environment.",
-    "recommended_start": "Post-reinjection coherence audit: manifest/profile registry plus Build-15/16/17 realignment"
+    "rule_until_applied": "The migration branch now has the canon repatch, Engine C/D implementation, Build-11 A/B/C/D reinjection, and registry/profile/bootstrap coherence. The doctrine is still not considered fully implemented until Build-11 runtime proof is completed on the target environment and the refreshed Build-11 to Build-17 audit is frozen.",
+    "recommended_start": "Refresh Build-11 to Build-17 audit on the migration branch"
   }
 }

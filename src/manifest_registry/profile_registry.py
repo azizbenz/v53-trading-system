@@ -4,8 +4,11 @@
 Rules:
 - COMMON modules are active in both profiles when their manifest status is ACTIVE.
 - LIGHT modules are active in Light and Complete when their manifest status is ACTIVE.
-- COMPLETE modules are active only in Complete when their manifest status is ACTIVE.
-- Engines C/D remain absent from runtime profiles until their module status becomes ACTIVE.
+- COMPLETE modules are active only in Complete when their manifest status is ACTIVE,
+  except for the governed Full Shadow participants explicitly exposed under LIGHT.
+- On the Full Shadow migration branch, complete_enablers and engines C/D are
+  runtime-visible in LIGHT because Build-11 observes A/B/C/D + Build-14 under
+  profile=LIGHT, runtime_mode=SHADOW.
 - Auxiliary governed modules (for monitoring, meta-learning, replay/import scaffolds)
   may be visible in both profiles without implying that their dedicated runtime_mode
   is fully operated yet.
@@ -41,6 +44,10 @@ _ENGINE_MODULE_MAP: dict[EngineId, str] = {
     EngineId.D: "engine_d",
 }
 
+_FULL_SHADOW_LIGHT_VISIBLE_COMPLETE_MODULES = frozenset(
+    {"complete_enablers", "engine_c", "engine_d"}
+)
+
 
 def get_modules_for_profile(profile: ProfileId) -> tuple[ModuleEntry, ...]:
     """Return runtime-active modules for a given profile.
@@ -54,6 +61,7 @@ def get_modules_for_profile(profile: ProfileId) -> tuple[ModuleEntry, ...]:
         return tuple(
             m for m in active_modules
             if m.profile_scope in (ProfileScope.COMMON, ProfileScope.LIGHT)
+            or m.module_name in _FULL_SHADOW_LIGHT_VISIBLE_COMPLETE_MODULES
         )
 
     return tuple(active_modules)

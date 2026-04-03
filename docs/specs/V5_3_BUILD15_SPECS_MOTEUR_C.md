@@ -10,6 +10,20 @@
 
 Ce document couvre **Build-15** du plan officiel V5.3.
 
+## Migration note - Full Shadow branch
+
+On the dedicated migration branch `codex/full-shadow-abcd-migration-20260403`,
+Engine C is no longer treated as absent from the initial Build-11 Shadow phase.
+The active migration reading is:
+
+- Build-11 Shadow observes `A/B/C/D + Build-14`
+- Build-15 remains the dedicated implementation, hardening, and industrialization
+  wave for Engine C
+- downstream Micro-live/Live promotion remains governed per component verdict
+
+If older wording in this spec still sounds like Engine C starts only after
+Build-11, read that wording as superseded by this migration note.
+
 Build-15 a une mission unique :
 
 > spécifier et valider le **Moteur C — Breakout Continuation**, c’est-à-dire le moteur chargé d’exploiter les sorties de range et les expansions confirmées qui méritent une logique de continuation distincte du moteur A.
