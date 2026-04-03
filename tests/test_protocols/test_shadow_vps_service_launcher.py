@@ -275,16 +275,25 @@ def _write_websocket_stream_input(websocket_input_dir: Path, session_date: str) 
     )
 
 
-def _write_live_websocket_config(config_path: Path, session_date: str) -> None:
+def _write_live_websocket_config(
+    config_path: Path,
+    session_date: str,
+    *,
+    pairs: tuple[str, ...] = ("BTCUSDT",),
+    user_data_stream_enabled: bool = False,
+) -> None:
     config_path.write_text(
         json.dumps(
             {
                 "endpoint": "wss://stream.binance.com:9443/ws",
-                "pairs": ["BTCUSDT"],
+                "pairs": list(pairs),
                 "stream_types": ["trade", "ticker"],
                 "capture_frame_limit": 2,
                 "idle_poll_limit": 3,
                 "capture_timeout_s": 5.0,
+                "user_data_stream_enabled": user_data_stream_enabled,
+                "user_data_api_key_env_var": "BINANCE_API_KEY",
+                "user_data_api_secret_env_var": "BINANCE_API_SECRET",
                 "session_date_override": session_date,
                 "route_hints_by_pair": {
                     "BTCUSDT": {
@@ -302,6 +311,22 @@ def _write_live_websocket_config(config_path: Path, session_date: str) -> None:
                         "final_size": 1.0,
                         "gross_return_bps": 21.0,
                         "feature_values": {"spread_bps": 3.0},
+                    },
+                    "ETHUSDT": {
+                        "route_id": f"eth-live-{session_date}",
+                        "engine_id": "engine_b",
+                        "raw_score": 0.81,
+                        "penalized_score": 0.79,
+                        "final_score": 0.76,
+                        "expected_edge_bps": 7.0,
+                        "target_decision_state": "rejected_ranking",
+                        "production_decision_state": "rejected_ranking",
+                        "production_final_score": 0.76,
+                        "production_expected_cost": 0.00094,
+                        "ranking_position": 3,
+                        "gross_return_bps": -4.0,
+                        "primary_reason": "rank_cutoff",
+                        "feature_values": {"spread_bps": 5.0},
                     }
                 },
                 "config": {
@@ -843,5 +868,174 @@ def test_shadow_vps_service_captures_native_live_websocket_then_runs_shadow(monk
             event["event_type"] == "runtime_evidence_bundle_written" for event in events
         )
         assert any(event["event_type"] == "shadow_day_completed" for event in events)
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_shadow_vps_service_persists_user_data_stream_metadata(monkeypatch):
+    service = _load_service_module()
+    output_dir = _scratch_dir("live_websocket_user_data")
+
+    try:
+        service_dir = output_dir / "service"
+        orchestrator_dir = output_dir / "orchestrator"
+        shadow_output_dir = output_dir / "shadow_session"
+        live_captures_root = output_dir / "live_captures"
+        auto_exports_root = output_dir / "auto_exports"
+        live_config_path = output_dir / "live_websocket_config.json"
+        _write_live_websocket_config(
+            live_config_path,
+            "2026-04-02",
+            pairs=("BTCUSDT", "ETHUSDT"),
+            user_data_stream_enabled=True,
+        )
+        monkeypatch.setenv("BINANCE_API_KEY", "test-api-key")
+        monkeypatch.setenv("BINANCE_API_SECRET", "test-api-secret")
+
+        class _FakeMarketSocket:
+            def __init__(self) -> None:
+                self.payloads = [
+                    json.dumps({"result": None, "id": 1}),
+                    json.dumps(
+                        {
+                            "stream": "btcusdt@trade",
+                            "data": {
+                                "e": "trade",
+                                "s": "BTCUSDT",
+                                "t": 101,
+                                "p": "43250.1",
+                                "q": "0.250",
+                                "m": False,
+                            },
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "stream": "ethusdt@ticker",
+                            "data": {
+                                "e": "24hrTicker",
+                                "s": "ETHUSDT",
+                                "c": "2280.0",
+                                "b": "2279.8",
+                                "a": "2280.2",
+                                "v": "98000.0",
+                                "h": "2350.0",
+                                "l": "2200.0",
+                            },
+                        }
+                    ),
+                ]
+
+            def settimeout(self, timeout: float) -> None:
+                return None
+
+            def send(self, payload: str) -> None:
+                return None
+
+            def recv(self) -> str | bytes | None:
+                if not self.payloads:
+                    raise TimeoutError("done")
+                return self.payloads.pop(0)
+
+            def close(self) -> None:
+                return None
+
+        class _FakeUserSocket:
+            def __init__(self) -> None:
+                self.payloads = [
+                    json.dumps(
+                        {
+                            "id": "shadow-user-data-subscribe",
+                            "status": 200,
+                            "result": {"subscriptionId": 11},
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "subscriptionId": 11,
+                            "event": {
+                                "e": "executionReport",
+                                "s": "BTCUSDT",
+                            },
+                        }
+                    ),
+                ]
+
+            def settimeout(self, timeout: float) -> None:
+                return None
+
+            def send(self, payload: str) -> None:
+                return None
+
+            def recv(self) -> str | bytes | None:
+                if not self.payloads:
+                    raise TimeoutError("done")
+                return self.payloads.pop(0)
+
+            def close(self) -> None:
+                return None
+
+        def _fake_live_capture(config: ShadowLiveWebSocketConfig, *, output_dir: Path):
+            return capture_live_websocket_snapshot_batch(
+                config,
+                output_dir=output_dir,
+                adapter_factory=lambda cfg: BinanceSpotLiveWebSocketAdapter(
+                    cfg,
+                    socket_factory=lambda endpoint, connect_timeout_s, recv_timeout_s: _FakeMarketSocket(),
+                    clock=lambda: 1_700_000_000.0,
+                ),
+                user_data_socket_factory=lambda endpoint, connect_timeout_s, recv_timeout_s: _FakeUserSocket(),
+                clock=lambda: 1_700_000_000.0,
+            )
+
+        monkeypatch.setattr(service, "capture_live_websocket_snapshot_batch", _fake_live_capture)
+
+        exit_code = service.main(
+            [
+                "--service-dir",
+                str(service_dir),
+                "--orchestrator-output-dir",
+                str(orchestrator_dir),
+                "--shadow-output-dir",
+                str(shadow_output_dir),
+                "--live-websocket-config",
+                str(live_config_path),
+                "--live-captures-root",
+                str(live_captures_root),
+                "--auto-exports-root",
+                str(auto_exports_root),
+                "--max-cycles",
+                "1",
+                "--poll-interval-s",
+                "0",
+            ]
+        )
+
+        assert exit_code == 0
+
+        state = json.loads(
+            (service_dir / "shadow_vps_service.state.json").read_text(encoding="utf-8")
+        )
+        runtime_bundle = _read_runtime_evidence_bundle(service_dir, "2026-04-02")
+        campaign_summary = _read_campaign_summary(service_dir)
+
+        assert state["last_live_user_data_summary_ref"].endswith(
+            "live_captures\\2026-04-02\\live_user_data_capture_summary.json"
+        )
+        assert runtime_bundle["live_capture_pair_scope"] == ["BTCUSDT", "ETHUSDT"]
+        assert runtime_bundle["live_user_data_summary_ref"].endswith(
+            "live_captures\\2026-04-02\\live_user_data_capture_summary.json"
+        )
+        assert runtime_bundle["live_user_data_authenticated"] is True
+        assert runtime_bundle["live_user_data_subscription_id"] == 11
+        assert runtime_bundle["live_user_data_event_count"] == 1
+        assert runtime_bundle["live_user_data_event_types"] == ["executionReport"]
+        assert campaign_summary["live_user_data_summary_ref"].endswith(
+            "live_captures\\2026-04-02\\live_user_data_capture_summary.json"
+        )
+        assert campaign_summary["live_user_data_authenticated"] is True
+        assert campaign_summary["live_user_data_subscription_id"] == 11
+        assert campaign_summary["live_user_data_event_count"] == 1
+        assert campaign_summary["live_user_data_event_types"] == ["executionReport"]
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)

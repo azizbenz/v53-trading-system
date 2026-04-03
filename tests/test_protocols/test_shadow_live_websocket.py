@@ -196,3 +196,140 @@ def test_capture_live_websocket_snapshot_batch_materializes_snapshot_batch():
         assert batch.event_types == ("snapshot", "trade")
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_capture_live_websocket_snapshot_batch_captures_private_user_data_sidecar(
+    monkeypatch,
+):
+    output_dir = _scratch_dir("capture_user_data")
+    try:
+        market_socket = _FakeSocket(
+            [
+                json.dumps({"result": None, "id": 1}),
+                json.dumps(
+                    {
+                        "stream": "btcusdt@trade",
+                        "data": {
+                            "e": "trade",
+                            "s": "BTCUSDT",
+                            "t": 101,
+                            "p": "43250.1",
+                            "q": "0.250",
+                            "m": False,
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "stream": "ethusdt@ticker",
+                        "data": {
+                            "e": "24hrTicker",
+                            "s": "ETHUSDT",
+                            "c": "2280.0",
+                            "b": "2279.8",
+                            "a": "2280.2",
+                            "v": "98000.0",
+                            "h": "2350.0",
+                            "l": "2200.0",
+                        },
+                    }
+                ),
+            ]
+        )
+        user_data_socket = _FakeSocket(
+            [
+                json.dumps(
+                    {
+                        "id": "shadow-user-data-subscribe",
+                        "status": 200,
+                        "result": {"subscriptionId": 7},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "subscriptionId": 7,
+                        "event": {
+                            "e": "executionReport",
+                            "s": "BTCUSDT",
+                        },
+                    }
+                ),
+            ]
+        )
+        monkeypatch.setenv("BINANCE_API_KEY", "test-api-key")
+        monkeypatch.setenv("BINANCE_API_SECRET", "test-api-secret")
+        config = ShadowLiveWebSocketConfig(
+            endpoint="wss://stream.binance.com:9443/ws",
+            pairs=("BTCUSDT", "ETHUSDT"),
+            stream_types=("trade", "ticker"),
+            capture_frame_limit=2,
+            idle_poll_limit=3,
+            capture_timeout_s=5.0,
+            user_data_stream_enabled=True,
+            user_data_event_limit=2,
+            user_data_idle_poll_limit=2,
+            user_data_capture_timeout_s=5.0,
+            session_date_override="2026-04-03",
+            route_hints_by_pair={
+                "BTCUSDT": {
+                    "route_id": "btc-live-1",
+                    "engine_id": "engine_a",
+                    "raw_score": 0.91,
+                    "penalized_score": 0.88,
+                    "final_score": 0.86,
+                    "expected_edge_bps": 17.0,
+                    "target_decision_state": "executed",
+                    "production_decision_state": "executed",
+                    "production_final_score": 0.86,
+                    "production_expected_cost": 0.00086,
+                    "candidate_size": 1.0,
+                    "final_size": 1.0,
+                    "gross_return_bps": 21.0,
+                    "feature_values": {"spread_bps": 3.0},
+                },
+                "ETHUSDT": {
+                    "route_id": "eth-live-1",
+                    "engine_id": "engine_b",
+                    "raw_score": 0.81,
+                    "penalized_score": 0.79,
+                    "final_score": 0.76,
+                    "expected_edge_bps": 7.0,
+                    "target_decision_state": "rejected_ranking",
+                    "production_decision_state": "rejected_ranking",
+                    "production_final_score": 0.76,
+                    "production_expected_cost": 0.00094,
+                    "ranking_position": 3,
+                    "gross_return_bps": -4.0,
+                    "feature_values": {"spread_bps": 5.0},
+                },
+            },
+        )
+
+        result = capture_live_websocket_snapshot_batch(
+            config,
+            output_dir=output_dir,
+            adapter_factory=lambda cfg: BinanceSpotLiveWebSocketAdapter(
+                cfg,
+                socket_factory=lambda endpoint, connect_timeout_s, recv_timeout_s: market_socket,
+                clock=lambda: 1_700_000_000.0,
+            ),
+            user_data_socket_factory=lambda endpoint, connect_timeout_s, recv_timeout_s: user_data_socket,
+            clock=lambda: 1_700_000_000.0,
+        )
+
+        batch = load_historical_snapshot_batch(Path(result.snapshot_batch_path_ref))
+
+        assert batch.pair_scope == ("BTCUSDT", "ETHUSDT")
+        assert result.user_data_authenticated is True
+        assert result.user_data_subscription_id == 7
+        assert result.user_data_event_count == 1
+        assert result.user_data_event_types == ("executionReport",)
+        assert Path(result.user_data_summary_path_ref).is_file()
+        assert Path(result.user_data_events_path_ref).is_file()
+        assert len(user_data_socket.sent) == 1
+        subscribe_request = json.loads(user_data_socket.sent[0])
+        assert subscribe_request["method"] == "userDataStream.subscribe.signature"
+        assert subscribe_request["params"]["apiKey"] == "test-api-key"
+        assert "signature" in subscribe_request["params"]
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)

@@ -106,22 +106,45 @@ def _read_live_capture_result(
     snapshot_batch_path = live_capture_dir / "live_websocket_snapshot_batch.json"
     if not summary_path.is_file() or not snapshot_batch_path.is_file():
         return None
-    payload = _read_optional_json(str(summary_path))
     try:
-        return ShadowLiveWebSocketCaptureResult(
-            session_date=live_capture_dir.name,
-            live_capture_dir_ref=str(live_capture_dir.resolve()),
-            snapshot_batch_path_ref=str(snapshot_batch_path.resolve()),
-            summary_path_ref=str(summary_path.resolve()),
-            emitted_message_count=int(payload.get("emitted_message_count", 0)),
-            accepted_message_count=int(payload.get("accepted_message_count", 0)),
-            ignored_message_count=int(payload.get("ignored_message_count", 0)),
-            rejected_message_count=int(payload.get("rejected_message_count", 0)),
-            pair_scope=tuple(str(value) for value in payload.get("pair_scope", ())),
-            event_types=tuple(str(value) for value in payload.get("event_types", ())),
+        return ShadowLiveWebSocketCaptureResult.model_validate_json(
+            summary_path.read_text(encoding="utf-8")
         )
     except (TypeError, ValueError):
-        return None
+        payload = _read_optional_json(str(summary_path))
+        try:
+            return ShadowLiveWebSocketCaptureResult(
+                session_date=live_capture_dir.name,
+                live_capture_dir_ref=str(live_capture_dir.resolve()),
+                snapshot_batch_path_ref=str(snapshot_batch_path.resolve()),
+                summary_path_ref=str(summary_path.resolve()),
+                emitted_message_count=int(payload.get("emitted_message_count", 0)),
+                accepted_message_count=int(payload.get("accepted_message_count", 0)),
+                ignored_message_count=int(payload.get("ignored_message_count", 0)),
+                rejected_message_count=int(payload.get("rejected_message_count", 0)),
+                pair_scope=tuple(str(value) for value in payload.get("pair_scope", ())),
+                event_types=tuple(str(value) for value in payload.get("event_types", ())),
+                user_data_summary_path_ref=str(
+                    payload.get("user_data_summary_path_ref", "")
+                ),
+                user_data_events_path_ref=str(
+                    payload.get("user_data_events_path_ref", "")
+                ),
+                user_data_authenticated=bool(
+                    payload.get("user_data_authenticated", False)
+                ),
+                user_data_subscription_id=(
+                    int(payload["user_data_subscription_id"])
+                    if payload.get("user_data_subscription_id") is not None
+                    else None
+                ),
+                user_data_event_count=int(payload.get("user_data_event_count", 0)),
+                user_data_event_types=tuple(
+                    str(value) for value in payload.get("user_data_event_types", ())
+                ),
+            )
+        except (TypeError, ValueError):
+            return None
 
 
 def _read_raw_input_config(config_path: Path | None) -> ShadowVpsRawInputConfig:
@@ -503,6 +526,32 @@ def _write_runtime_evidence_bundle(
         live_capture_event_types=(
             live_capture_result.event_types if live_capture_result is not None else ()
         ),
+        live_user_data_summary_ref=(
+            live_capture_result.user_data_summary_path_ref
+            if live_capture_result is not None
+            else ""
+        ),
+        live_user_data_events_ref=(
+            live_capture_result.user_data_events_path_ref
+            if live_capture_result is not None
+            else ""
+        ),
+        live_user_data_authenticated=(
+            live_capture_result.user_data_authenticated
+            if live_capture_result is not None
+            else False
+        ),
+        live_user_data_subscription_id=(
+            live_capture_result.user_data_subscription_id
+            if live_capture_result is not None
+            else None
+        ),
+        live_user_data_event_count=(
+            live_capture_result.user_data_event_count if live_capture_result is not None else 0
+        ),
+        live_user_data_event_types=(
+            live_capture_result.user_data_event_types if live_capture_result is not None else ()
+        ),
         auto_snapshot_dir_ref=str(auto_snapshot_dir.resolve()) if auto_snapshot_dir is not None else "",
         auto_export_dir_ref=str(auto_export_dir.resolve()) if auto_export_dir is not None else "",
         export_dir_ref=str(last_run.get("export_dir_ref", "")),
@@ -577,6 +626,21 @@ def _write_campaign_summary(
         ),
         live_capture_event_types=(
             bundle.live_capture_event_types if bundle is not None else ()
+        ),
+        live_user_data_summary_ref=(
+            bundle.live_user_data_summary_ref if bundle is not None else ""
+        ),
+        live_user_data_authenticated=(
+            bundle.live_user_data_authenticated if bundle is not None else False
+        ),
+        live_user_data_subscription_id=(
+            bundle.live_user_data_subscription_id if bundle is not None else None
+        ),
+        live_user_data_event_count=(
+            bundle.live_user_data_event_count if bundle is not None else 0
+        ),
+        live_user_data_event_types=(
+            bundle.live_user_data_event_types if bundle is not None else ()
         ),
         runtime_evidence_bundle_ref=state.last_runtime_evidence_bundle_ref,
         shadow_report_ref=state.last_shadow_report_ref,
@@ -727,6 +791,11 @@ def run_shadow_vps_service(
             )
             state.last_live_capture_summary_ref = (
                 live_capture_result.summary_path_ref
+                if live_capture_result is not None
+                else ""
+            )
+            state.last_live_user_data_summary_ref = (
+                live_capture_result.user_data_summary_path_ref
                 if live_capture_result is not None
                 else ""
             )

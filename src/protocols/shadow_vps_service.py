@@ -40,6 +40,7 @@ class ShadowVpsServiceState(BaseModel):
     last_live_capture_dir_ref: str = ""
     last_live_capture_snapshot_batch_ref: str = ""
     last_live_capture_summary_ref: str = ""
+    last_live_user_data_summary_ref: str = ""
     last_auto_snapshot_dir_ref: str = ""
     last_auto_export_dir_ref: str = ""
     last_export_dir_ref: str = ""
@@ -107,9 +108,36 @@ class ShadowLiveWebSocketConfig(BaseModel, frozen=True):
     capture_timeout_s: float = Field(default=15.0, gt=0.0)
     capture_frame_limit: int = Field(default=50, ge=1)
     idle_poll_limit: int = Field(default=20, ge=1)
+    user_data_stream_enabled: bool = False
+    user_data_endpoint: str = Field(
+        default="wss://ws-api.binance.com:443/ws-api/v3",
+        min_length=1,
+    )
+    user_data_api_key_env_var: str = Field(default="BINANCE_API_KEY", min_length=1)
+    user_data_api_secret_env_var: str = Field(
+        default="BINANCE_API_SECRET",
+        min_length=1,
+    )
+    user_data_recv_window_ms: int = Field(default=5000, ge=1, le=60000)
+    user_data_capture_timeout_s: float = Field(default=10.0, gt=0.0)
+    user_data_idle_poll_limit: int = Field(default=20, ge=1)
+    user_data_event_limit: int = Field(default=20, ge=1)
     session_date_override: str = ""
     route_hints_by_pair: dict[str, dict[str, object]] = Field(default_factory=dict)
     config: ShadowVpsRawInputConfig = Field(default_factory=ShadowVpsRawInputConfig)
+
+
+class ShadowLiveUserDataCaptureSummary(BaseModel, frozen=True):
+    """Audit-ready summary of an authenticated Binance user-data websocket capture."""
+
+    session_date: str = Field(..., min_length=10)
+    endpoint: str = Field(..., min_length=1)
+    summary_path_ref: str = Field(..., min_length=1)
+    events_path_ref: str = Field(..., min_length=1)
+    authenticated: bool = False
+    subscription_id: int | None = Field(default=None, ge=0)
+    emitted_event_count: int = Field(default=0, ge=0)
+    event_types: tuple[str, ...] = ()
 
 
 class ShadowLiveWebSocketCaptureResult(BaseModel, frozen=True):
@@ -125,6 +153,12 @@ class ShadowLiveWebSocketCaptureResult(BaseModel, frozen=True):
     rejected_message_count: int = Field(default=0, ge=0)
     pair_scope: tuple[str, ...] = ()
     event_types: tuple[str, ...] = ()
+    user_data_summary_path_ref: str = ""
+    user_data_events_path_ref: str = ""
+    user_data_authenticated: bool = False
+    user_data_subscription_id: int | None = Field(default=None, ge=0)
+    user_data_event_count: int = Field(default=0, ge=0)
+    user_data_event_types: tuple[str, ...] = ()
 
 
 class ShadowVpsRuntimeEvidenceBundle(BaseModel, frozen=True):
@@ -143,6 +177,12 @@ class ShadowVpsRuntimeEvidenceBundle(BaseModel, frozen=True):
     live_capture_rejected_message_count: int = Field(default=0, ge=0)
     live_capture_pair_scope: tuple[str, ...] = ()
     live_capture_event_types: tuple[str, ...] = ()
+    live_user_data_summary_ref: str = ""
+    live_user_data_events_ref: str = ""
+    live_user_data_authenticated: bool = False
+    live_user_data_subscription_id: int | None = Field(default=None, ge=0)
+    live_user_data_event_count: int = Field(default=0, ge=0)
+    live_user_data_event_types: tuple[str, ...] = ()
     auto_snapshot_dir_ref: str = ""
     auto_export_dir_ref: str = ""
     export_dir_ref: str = ""
@@ -190,6 +230,11 @@ class ShadowVpsCampaignSummary(BaseModel, frozen=True):
     live_capture_rejected_message_count: int = Field(default=0, ge=0)
     live_capture_pair_scope: tuple[str, ...] = ()
     live_capture_event_types: tuple[str, ...] = ()
+    live_user_data_summary_ref: str = ""
+    live_user_data_authenticated: bool = False
+    live_user_data_subscription_id: int | None = Field(default=None, ge=0)
+    live_user_data_event_count: int = Field(default=0, ge=0)
+    live_user_data_event_types: tuple[str, ...] = ()
     runtime_evidence_bundle_ref: str = ""
     shadow_report_ref: str = ""
     shadow_session_summary_ref: str = ""
@@ -272,6 +317,7 @@ __all__ = [
     "ShadowVpsRawInputSlot",
     "ShadowVpsWebsocketInputSlot",
     "ShadowLiveWebSocketConfig",
+    "ShadowLiveUserDataCaptureSummary",
     "ShadowLiveWebSocketCaptureResult",
     "ShadowVpsRuntimeEvidenceBundle",
     "ShadowVpsCampaignSummary",

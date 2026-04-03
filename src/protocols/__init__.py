@@ -88,6 +88,7 @@ from protocols.shadow_daily_orchestrator import (
 )
 from protocols.shadow_vps_service import (
     ShadowVpsCampaignSummary,
+    ShadowLiveUserDataCaptureSummary,
     ShadowLiveWebSocketCaptureResult,
     ShadowLiveWebSocketConfig,
     ShadowVpsRawInputConfig,
@@ -109,6 +110,7 @@ from protocols.shadow_websocket_ingest import (
 )
 from protocols.shadow_live_websocket import (
     BinanceSpotLiveWebSocketAdapter,
+    capture_live_user_data_stream,
     capture_live_websocket_snapshot_batch,
 )
 from protocols.shadow_session_registry import (
@@ -197,6 +199,7 @@ __all__ = [
     "ShadowVpsRawInputSlot",
     "ShadowVpsWebsocketInputSlot",
     "ShadowLiveWebSocketConfig",
+    "ShadowLiveUserDataCaptureSummary",
     "ShadowLiveWebSocketCaptureResult",
     "ShadowVpsRuntimeEvidenceBundle",
     "ShadowVpsCampaignSummary",
@@ -209,6 +212,7 @@ __all__ = [
     "build_snapshot_batch_from_observed_websocket_messages",
     "build_snapshot_batch_from_injected_websocket_stream",
     "BinanceSpotLiveWebSocketAdapter",
+    "capture_live_user_data_stream",
     "capture_live_websocket_snapshot_batch",
     "ShadowSessionEntry",
     "ShadowSessionRegistryState",

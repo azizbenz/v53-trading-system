@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
+import os
 import time
 from datetime import date
 from pathlib import Path
@@ -11,6 +14,7 @@ from typing import Any, Callable, Protocol
 from data_backbone.websocket_gateway.connection_manager import ConnectionState
 from data_backbone.websocket_gateway.runtime_gateway import AdapterMessage, WebSocketGatewayAdapter, WebSocketGatewayRuntime
 from protocols.shadow_vps_service import (
+    ShadowLiveUserDataCaptureSummary,
     ShadowLiveWebSocketCaptureResult,
     ShadowLiveWebSocketConfig,
 )
@@ -18,6 +22,7 @@ from protocols.shadow_websocket_ingest import (
     ObservedWebSocketMessage,
     build_snapshot_batch_from_observed_websocket_messages,
 )
+from interface_contracts.atomic_io import atomic_write_json
 
 
 class NativeWebSocketClient(Protocol):
@@ -259,6 +264,152 @@ class BinanceSpotLiveWebSocketAdapter(WebSocketGatewayAdapter):
         return None
 
 
+def _binance_signed_params_payload(params: dict[str, object]) -> str:
+    sorted_items = sorted(
+        (key, value)
+        for key, value in params.items()
+        if value is not None and key != "signature"
+    )
+    return "&".join(f"{key}={value}" for key, value in sorted_items)
+
+
+def _resolve_required_env(env_var_name: str) -> str:
+    value = os.getenv(env_var_name, "").strip()
+    if value:
+        return value
+    raise RuntimeError(
+        f"Missing required environment variable for Binance user data stream: {env_var_name}"
+    )
+
+
+def _detect_user_data_event_type(payload: dict[str, Any]) -> str:
+    event_payload = payload.get("event")
+    if isinstance(event_payload, dict):
+        event_type = str(event_payload.get("e", "")).strip()
+        if event_type:
+            return event_type
+    event_type = str(payload.get("e", "")).strip()
+    if event_type:
+        return event_type
+    status = payload.get("status")
+    if status is not None:
+        return "control_response"
+    return "unknown"
+
+
+def capture_live_user_data_stream(
+    config: ShadowLiveWebSocketConfig,
+    *,
+    output_dir: Path,
+    socket_factory: SocketFactory | None = None,
+    clock: Callable[[], float] = time.time,
+) -> ShadowLiveUserDataCaptureSummary:
+    """Capture a bounded authenticated Binance user-data websocket sidecar."""
+
+    api_key = _resolve_required_env(config.user_data_api_key_env_var)
+    api_secret = _resolve_required_env(config.user_data_api_secret_env_var)
+    client = (socket_factory or _default_socket_factory)(
+        config.user_data_endpoint,
+        config.connect_timeout_s,
+        config.recv_timeout_s,
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    session_date = _session_date(config)
+    summary_path = output_dir / "live_user_data_capture_summary.json"
+    events_path = output_dir / "live_user_data_events.jsonl"
+    request_id = "shadow-user-data-subscribe"
+    timestamp_ms = int(round(clock() * 1000.0))
+    subscribe_params: dict[str, object] = {
+        "apiKey": api_key,
+        "recvWindow": config.user_data_recv_window_ms,
+        "timestamp": timestamp_ms,
+    }
+    signature_payload = _binance_signed_params_payload(subscribe_params)
+    subscribe_params["signature"] = hmac.new(
+        api_secret.encode("utf-8"),
+        signature_payload.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    subscribe_request = {
+        "id": request_id,
+        "method": "userDataStream.subscribe.signature",
+        "params": subscribe_params,
+    }
+    client.send(json.dumps(subscribe_request))
+
+    subscription_id: int | None = None
+    observed_events: list[dict[str, Any]] = []
+    event_types: set[str] = set()
+    idle_polls = 0
+    started_at = clock()
+    try:
+        while (
+            idle_polls < config.user_data_idle_poll_limit
+            and (clock() - started_at) <= config.user_data_capture_timeout_s
+            and len(observed_events) < config.user_data_event_limit
+        ):
+            try:
+                raw_payload = client.recv()
+            except Exception as exc:
+                if exc.__class__.__name__ in {"WebSocketTimeoutException", "TimeoutError"}:
+                    idle_polls += 1
+                    continue
+                raise
+            if raw_payload in (None, "", b""):
+                idle_polls += 1
+                continue
+            idle_polls = 0
+            text_payload = (
+                raw_payload.decode("utf-8", errors="replace")
+                if isinstance(raw_payload, bytes)
+                else raw_payload
+            )
+            payload = json.loads(text_payload)
+            if not isinstance(payload, dict):
+                continue
+            if payload.get("id") == request_id:
+                status = int(payload.get("status", 0))
+                if status != 200:
+                    error_payload = payload.get("error", {})
+                    if isinstance(error_payload, dict):
+                        message = str(error_payload.get("msg", "user-data subscription failed"))
+                    else:
+                        message = "user-data subscription failed"
+                    raise RuntimeError(message)
+                result = payload.get("result", {})
+                if isinstance(result, dict) and result.get("subscriptionId") is not None:
+                    subscription_id = int(result["subscriptionId"])
+                continue
+            event_type = _detect_user_data_event_type(payload)
+            event_types.add(event_type)
+            observed_events.append(payload)
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+    if subscription_id is None:
+        raise RuntimeError("Binance user data stream subscription did not succeed")
+
+    events_path.write_text(
+        "\n".join(json.dumps(item, ensure_ascii=True) for item in observed_events),
+        encoding="utf-8",
+    )
+    summary = ShadowLiveUserDataCaptureSummary(
+        session_date=session_date,
+        endpoint=config.user_data_endpoint,
+        summary_path_ref=str(summary_path.resolve()),
+        events_path_ref=str(events_path.resolve()),
+        authenticated=True,
+        subscription_id=subscription_id,
+        emitted_event_count=len(observed_events),
+        event_types=tuple(sorted(event_types)),
+    )
+    atomic_write_json(summary_path, summary.model_dump(mode="json"))
+    return summary
+
+
 def _session_date(config: ShadowLiveWebSocketConfig) -> str:
     if config.session_date_override:
         return config.session_date_override
@@ -284,6 +435,7 @@ def capture_live_websocket_snapshot_batch(
     *,
     output_dir: Path,
     adapter_factory: Callable[[ShadowLiveWebSocketConfig], WebSocketGatewayAdapter] | None = None,
+    user_data_socket_factory: SocketFactory | None = None,
     clock: Callable[[], float] = time.time,
 ) -> ShadowLiveWebSocketCaptureResult:
     """Capture a bounded native live websocket window and materialize a snapshot batch."""
@@ -348,7 +500,15 @@ def capture_live_websocket_snapshot_batch(
         summary_path=summary_path,
         source="shadow_vps_live_websocket",
     )
-    return ShadowLiveWebSocketCaptureResult(
+    user_data_summary: ShadowLiveUserDataCaptureSummary | None = None
+    if config.user_data_stream_enabled:
+        user_data_summary = capture_live_user_data_stream(
+            config,
+            output_dir=output_dir,
+            socket_factory=user_data_socket_factory,
+            clock=clock,
+        )
+    result = ShadowLiveWebSocketCaptureResult(
         session_date=session_date,
         live_capture_dir_ref=str(output_dir.resolve()),
         snapshot_batch_path_ref=str(snapshot_batch_path.resolve()),
@@ -359,12 +519,33 @@ def capture_live_websocket_snapshot_batch(
         rejected_message_count=build_result.rejected_message_count,
         pair_scope=build_result.pair_scope,
         event_types=build_result.event_types,
+        user_data_summary_path_ref=(
+            user_data_summary.summary_path_ref if user_data_summary is not None else ""
+        ),
+        user_data_events_path_ref=(
+            user_data_summary.events_path_ref if user_data_summary is not None else ""
+        ),
+        user_data_authenticated=(
+            user_data_summary.authenticated if user_data_summary is not None else False
+        ),
+        user_data_subscription_id=(
+            user_data_summary.subscription_id if user_data_summary is not None else None
+        ),
+        user_data_event_count=(
+            user_data_summary.emitted_event_count if user_data_summary is not None else 0
+        ),
+        user_data_event_types=(
+            user_data_summary.event_types if user_data_summary is not None else ()
+        ),
     )
+    atomic_write_json(summary_path, result.model_dump(mode="json"))
+    return result
 
 
 __all__ = [
     "NativeWebSocketClient",
     "SocketFactory",
     "BinanceSpotLiveWebSocketAdapter",
+    "capture_live_user_data_stream",
     "capture_live_websocket_snapshot_batch",
 ]
