@@ -376,6 +376,14 @@
       "proposed_change": "Apply Option B: Build-11 validates A/B + Build-14 only in the active Light Shadow rollout, while Engine C stays reserved to Build-15 and Engine D stays reserved to Build-16.",
       "status": "accepted_and_applied_on_current_branch",
       "rule_until_decided": "Read Build-11 / Build-12 / Build-13 on the current branch as A/B + Build-14 only. Do not pull C/D implementation into Build-11 closure."
+    },
+    {
+      "decision_id": "GOV-008",
+      "topic": "Target migration to Full Shadow 30j A/B/C/D",
+      "current_canon": "The current branch still runs on the Option B baseline where Build-11 validates A/B + Build-14 only, and C/D remain later implementation scopes.",
+      "proposed_change": "User-selected target doctrine: migrate toward a single Build-11 Full Shadow 30-day phase that observes A/B/C/D + Build-14, while keeping downstream Micro-live/Live promotions gated per component verdict rather than automatic.",
+      "status": "selected_for_migration_plan_not_yet_applied",
+      "rule_until_decided": "Do not treat GOV-008 as applied on the current branch yet. Execute it only through the staged migration plan on a dedicated migration branch."
     }
   ],
   "targeted_audits": [
@@ -491,6 +499,14 @@
       "record_path": "docs/audit chatgpt buisness/2026-04-03_BUILD15_TO_BUILD17_CODE_VS_MD_AUDIT.md",
       "conclusion": "Build-15 and Build-16 remain spec-only package surfaces, while Build-17 is partially implemented through a local UI/demo launcher only. The branch must not treat C/D as already coded or Build-17 as a real Live-Complete runtime.",
       "action_taken": "Patch the Build-15/16 specs to remove the Shadow timing contradiction with Option B, and keep future Engine C/D work as a dedicated later implementation lot."
+    },
+    {
+      "audit_id": "AUDIT-015",
+      "date": "2026-04-03",
+      "scope": "Full Shadow 30j A/B/C/D migration plan",
+      "record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_MIGRATION_PLAN.md",
+      "conclusion": "If the product goal is to test the whole solution in one Shadow 30-day window, then C/D must be real Build-11 Shadow participants. The safe path is a staged migration: governance freeze, canonical repatch, Engine C implementation, Engine D implementation, then Build-11 reinjection and proof.",
+      "action_taken": "Freeze the migration as a planned doctrine, keep the current branch readable as the last coherent Option-B checkpoint, and start with Lot 0 on a dedicated migration branch before reopening Build-11."
     }
   ],
   "known_critical_gaps": [
@@ -761,12 +777,20 @@
     }
   },
   "next_recommended_action": {
-    "step": "Continue the build-by-build audit/correction pass from the Option-B baseline. Keep Build-11 focused on honest runtime proof and target-environment evidence, keep Build-12 / Build-13 blocked until Build-11 is truly closed, and keep Build-4 write-path verification as a separate environment task outside the current sandbox frame.",
-    "reason": "The doctrinal contradiction between Build-11 and Build-15/16/17 is resolved on the current branch, the local Build-11 replay-to-Shadow chain is repaired, and the remaining Build-4 blocker now looks like an environment/sandbox write issue rather than a proven product regression."
+    "step": "Start Lot 0 of the Full Shadow migration on a dedicated migration branch: freeze the governance target, preserve the current branch as the last coherent Option-B checkpoint, and prepare the canonical repatch before any C/D reinjection into Build-11.",
+    "reason": "The selected target doctrine is now Full Shadow 30j A/B/C/D, but it is not yet applied on the current branch. The safest next move is to begin the staged migration without destroying the current Option-B rollback point."
   },
   "branch_overrides": {
     "option_b_realignment_commit": "99cf170",
-    "effective_next_action": "Continue the build-by-build audit/correction pass from the repaired Option B baseline. Keep Build-11 focused on honest runtime proof and target-environment evidence, keep Build-12 / Build-13 blocked until Build-11 is truly closed, keep Build-15 / Build-16 out of the current rollout wave because they remain spec-only, keep Build-17 labeled UI/demo only until a real Live-Complete protocol exists, and keep Build-4 as a separate environment/sandbox write-path verification task.",
-    "effective_reason": "The doctrinal contradiction between Build-11 and Build-15/16/17 is resolved on the current branch, the local Build-11 replay-to-Shadow chain is repaired, the late-build audit cleanly separates spec-only Engine C/D work from the partial Build-17 UI/demo surface, and the Build-4 blocker now looks environmental rather than product-level. The remaining blockers are runtime proof and future dedicated implementation waves, not canon ambiguity."
+    "effective_next_action": "Use the current branch as the preserved Option-B checkpoint, but start the selected Full Shadow 30j A/B/C/D migration on a dedicated new branch. Begin with Lot 0, then Lot 1 canonical repatch, then Lots 2 and 3 for Engine C and Engine D implementation before any Build-11 reinjection.",
+    "effective_reason": "The user-selected target doctrine now differs from the currently applied Option-B branch state. The lowest-risk execution path is a staged migration that preserves the current branch as a rollback point while moving Full Shadow work onto a dedicated branch."
+  },
+  "planned_migration": {
+    "migration_id": "MIG-001",
+    "selected_target": "full_shadow_30d_abcd_build14",
+    "status": "planned_not_applied",
+    "record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_MIGRATION_PLAN.md",
+    "rule_until_applied": "The current branch still follows the Option-B baseline until the staged migration starts on a dedicated branch and reaches the canon/code reinjection lots.",
+    "recommended_start": "Lot 0 - governance freeze and dedicated migration branch creation"
   }
 }
