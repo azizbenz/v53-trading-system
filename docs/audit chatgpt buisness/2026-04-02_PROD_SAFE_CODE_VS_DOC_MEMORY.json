@@ -36,9 +36,9 @@
     "branch_alignment": {
       "main_commit": "e28de12",
       "origin_main_commit": "e28de12",
-      "current_branch_commit": "bf84ab3",
+      "current_branch_commit": "1098f40",
       "branch_divergence_detected": true,
-      "interpretation": "The dedicated Full Shadow migration branch is now the active work surface. Canon migration started docs-first there, and the branch now also carries real Engine C/D packages, the Build-11 A/B/C/D runtime reinjection wave, explicit Build-9X merge gates wired into the governed review/export path, the bounded native live_websocket proof checkpoint, a shared governed Build-14 observation derivation helper, and local/reporting surfaces that now expose reader-level Build-14 evidence instead of relying on hidden demo constants. On 2026-04-04, the real day-2 campaign attempt was retried twice but remained blocked by native websocket connectivity; the previous branch remains the last coherent Option-B rollback checkpoint."
+      "interpretation": "The dedicated Full Shadow migration branch is now the active work surface. Canon migration started docs-first there, and the branch now also carries real Engine C/D packages, the Build-11 A/B/C/D runtime reinjection wave, explicit Build-9X merge gates wired into the governed review/export path, the bounded native live_websocket proof checkpoint, a shared governed Build-14 observation derivation helper, local/reporting surfaces that now expose reader-level Build-14 evidence instead of relying on hidden demo constants, and a local Market Lab wave that adds HTML liquidity telemetry plus batched public Binance subscriptions so 2-pair x 3-stream public smokes no longer fail at zero ingest. On 2026-04-04, the real day-2 campaign attempt was retried twice but remained blocked by native websocket connectivity; the previous branch remains the last coherent Option-B rollback checkpoint."
     },
     "notes": [
       "Do not reset hard.",
