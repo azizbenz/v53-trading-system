@@ -36,7 +36,7 @@
     "branch_alignment": {
       "main_commit": "e28de12",
       "origin_main_commit": "e28de12",
-      "current_branch_commit": "c764a95",
+      "current_branch_commit": "f11ece8",
       "branch_divergence_detected": true,
       "interpretation": "The dedicated Full Shadow migration branch is now the active work surface. Canon migration started docs-first there, and the branch now also carries real Engine C/D packages, the Build-11 A/B/C/D runtime reinjection wave, the bounded native live_websocket proof checkpoint, and a local runner that now executes A/B/C/D before rendering component evidence. The previous branch remains the last coherent Option-B rollback checkpoint."
     },
@@ -1070,14 +1070,14 @@
     }
   },
   "next_recommended_action": {
-    "step": "Rerun the same Build-11 Shadow VPS campaign on the next real calendar day, using the same build/build11_live_websocket_campaign directories and config, with no session_date_override.",
+    "step": "Rerun the same Build-11 Shadow VPS campaign on 2026-04-04, using the same build/build11_live_websocket_campaign directories and config, with no session_date_override.",
     "reason": "The branch now has an honest 2026-04-03 day-1 target-environment checkpoint with 29 days remaining. The only prod-safe way to progress the 30-day gate is to accumulate repeated real calendar-day runs in the same evidence chain."
   },
   "branch_overrides": {
     "option_b_realignment_commit": "99cf170",
     "migration_branch": "codex/full-shadow-abcd-migration-20260403",
     "migration_branch_base_commit": "01b39e3",
-    "effective_next_action": "Use the migration branch as the frozen baseline and rerun the same target-environment Build-11 Shadow VPS campaign on the next real calendar day.",
+    "effective_next_action": "Use the migration branch as the frozen baseline and rerun the same target-environment Build-11 Shadow VPS campaign on 2026-04-04.",
     "effective_reason": "The branch is now locally coherent and also carries a real 2026-04-03 day-1 campaign checkpoint with an honest 1 day / 29 remaining state. The remaining real uncertainty is repeated operational proof, not local semantics."
   },
   "planned_migration": {
@@ -1091,6 +1091,6 @@
     "active_branch": "codex/full-shadow-abcd-migration-20260403",
     "base_commit": "01b39e3",
     "rule_until_applied": "The migration branch now has the canon repatch, Engine C/D implementation, Build-11 A/B/C/D reinjection, registry/profile/bootstrap coherence, a refreshed Build-11 to Build-17 status reading, and a real 2026-04-03 target-environment campaign day under the governed VPS collector. The doctrine is still not considered fully implemented until repeated real Shadow days complete the 30-day runtime-proof story.",
-    "recommended_start": "Rerun the same target-environment Build-11 Shadow VPS campaign on the next real calendar day"
+    "recommended_start": "Rerun the same target-environment Build-11 Shadow VPS campaign on 2026-04-04"
   }
 }
