@@ -72,6 +72,12 @@ from meta_learning.mistake_classifier import classify_mistakes
 from meta_learning.near_miss_analyzer import analyze_near_misses
 from meta_learning.post_trade_diagnostic_engine import build_post_trade_diagnostics
 from meta_learning.monitoring_projection import build_build9x_projection
+from meta_learning.merge_gates import (
+    Build9XMergeGateName,
+    Build9XMergeGateReport,
+    Build9XMergeGateResult,
+    evaluate_build9x_merge_gates,
+)
 from meta_learning.replay_bundle_builder import (
     build_replay_export_bundles,
     enrich_candidates_with_replay_refs,
@@ -134,6 +140,10 @@ __all__ = [
     "build_improvement_candidates",
     "evaluate_learning_capacity",
     "build_build9x_projection",
+    "Build9XMergeGateName",
+    "Build9XMergeGateResult",
+    "Build9XMergeGateReport",
+    "evaluate_build9x_merge_gates",
     "build_system_review_decisions",
     "append_human_review_decision",
     "build_archive_eligibility",

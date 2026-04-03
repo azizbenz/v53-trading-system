@@ -22,6 +22,7 @@ from complete_enablers.enums import (
 )
 from complete_enablers.errors import Build14GuardrailError
 from complete_enablers.execution_fragility_score import build_execution_fragility_score
+from complete_enablers.false_breakout_model import build_false_breakout_snapshot
 from complete_enablers.limited_influence import (
     evaluate_build14_limited_influence,
     evaluate_build14_shadow_activation,
@@ -42,6 +43,7 @@ __all__ = [
     "Build14GuardrailError",
     "build_market_toxicity_snapshot",
     "build_execution_fragility_score",
+    "build_false_breakout_snapshot",
     "evaluate_build14_shadow_activation",
     "evaluate_build14_limited_influence",
 ]

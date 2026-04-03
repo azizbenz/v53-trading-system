@@ -1,7 +1,7 @@
 # V5.3 - BUILD9X GATES AND BUILD14 ENRICHMENT PLAN
 ## Date: 2026-04-03
 ## Branch: codex/full-shadow-abcd-migration-20260403
-## Status: PLANNED
+## Status: IN_PROGRESS
 
 ---
 
@@ -15,6 +15,14 @@ Freeze a prod-safe plan for two linked fronts:
 
 This plan is designed to avoid double work while the real `Build-11` 30-day
 Shadow campaign continues.
+
+Checkpoint on the current branch:
+
+- `Lot 0` is now materialized in a point-by-point matrix
+- `Lot 1` is now coded and tested through explicit `Build-9X` merge gates
+- `Lot 2` is now covered by an explicit end-to-end governed lifecycle proof
+- `Lot 3` has started with a first absorbed addendum brick:
+  `false_breakout_model`
 
 ---
 
@@ -217,6 +225,11 @@ Done criteria:
 - closure implications are linked back to the `Build-1 -> Build-17` closure
   register
 
+Current status:
+
+- completed on the current branch via
+  `docs/audit chatgpt buisness/2026-04-03_BUILD9X_BUILD14_POINT_BY_POINT_MATRIX.md`
+
 ## Lot 1 - Build-9X explicit merge gates
 
 Goal:
@@ -237,6 +250,12 @@ Expected output:
 - explicit test file(s) with one gate name per assertion group
 - one aggregate gate report or fixture grouping these checks
 
+Current status:
+
+- completed on the current branch via `src/meta_learning/merge_gates.py`
+- exported from `meta_learning`
+- covered by `tests/test_meta_learning/test_merge_gates.py`
+
 ## Lot 2 - Build-9X end-to-end governed lifecycle proof
 
 Goal:
@@ -253,6 +272,11 @@ Done criteria:
 - full ID correlation
 - no live mutation path
 - persistence and retention fields preserved
+
+Current status:
+
+- completed on the current branch via the lifecycle test in
+  `tests/test_meta_learning/test_merge_gates.py`
 
 ## Lot 3 - Build-14 enrichment contracts and Shadow readers
 
@@ -280,6 +304,16 @@ Done criteria:
 - each enrichment has a typed contract or snapshot
 - each enrichment is attached to an existing canonical Build-14 family
 - none can trade autonomously
+
+Current status:
+
+- started on the current branch
+- `false_breakout_model` is now absorbed as a distinct reader
+- remaining priority order is now:
+  1. `LOB deep filter / VWA`
+  2. `OBI`
+  3. `Hurst regime classifier`
+  4. `competition monitor`
 
 ## Lot 4 - Shadow observation wave
 
@@ -366,13 +400,10 @@ And the closure reading stays:
 
 The best next coding wave is:
 
-1. `Lot 0` - audit matrix `Build-9X V2` and `Build-14 addendum`
-2. `Lot 1` - explicit `Build-9X` merge gates
-3. `Lot 2` - end-to-end lifecycle proof
-
-Only after these three lots:
-
-4. start integrating the missing `Build-14` enrichments one by one
+1. continue `Lot 3` with `LOB deep filter / VWA`
+2. then add `OBI`
+3. then add `Hurst regime classifier`
+4. then add `competition monitor`
 
 This is the lowest-risk path because it gives a strong governed frame before
 adding more market-facing complexity.

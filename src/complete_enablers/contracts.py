@@ -70,6 +70,8 @@ class Build14ObservationInput(BaseModel, frozen=True):
     dtr_loss_count: int = Field(default=0, ge=0)
     log_loss_count: int = Field(default=0, ge=0)
     ce_net: float = 0.0
+    breakout_failure_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    volume_support_ratio: float = Field(default=1.0, ge=0.0, le=1.0)
 
 
 class Build14EnablerSnapshot(Build14EnablerContract):

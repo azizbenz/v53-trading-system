@@ -15,6 +15,7 @@ from complete_enablers.enums import (
     Build14SignalFamily,
 )
 from complete_enablers.execution_fragility_score import build_execution_fragility_score
+from complete_enablers.false_breakout_model import build_false_breakout_snapshot
 from complete_enablers.market_toxicity_snapshot import build_market_toxicity_snapshot
 
 
@@ -35,6 +36,7 @@ def _build_snapshots(
     return (
         build_market_toxicity_snapshot(observation),
         build_execution_fragility_score(observation),
+        build_false_breakout_snapshot(observation),
     )
 
 

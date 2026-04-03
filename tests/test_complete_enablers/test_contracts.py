@@ -17,6 +17,7 @@ from complete_enablers import (
     Build14ObservationInput,
     Build14SignalFamily,
     build_execution_fragility_score,
+    build_false_breakout_snapshot,
     build_market_toxicity_snapshot,
     evaluate_build14_limited_influence,
     evaluate_build14_shadow_activation,
@@ -35,6 +36,7 @@ def test_complete_enablers_exports_expected_symbols():
         "Build14SignalFamily",
         "build_market_toxicity_snapshot",
         "build_execution_fragility_score",
+        "build_false_breakout_snapshot",
         "evaluate_build14_shadow_activation",
         "evaluate_build14_limited_influence",
     }.issubset(set(complete_enablers.__all__))
@@ -122,6 +124,32 @@ def test_execution_fragility_score_uses_existing_build9_and_build10_facts_only()
     assert "edge_degraded" in snapshot.detail
 
 
+def test_false_breakout_snapshot_is_traceable_and_shadow_enabled():
+    snapshot = build_false_breakout_snapshot(
+        Build14ObservationInput(
+            correlation_id="corr-14fb",
+            dtr_coverage=0.88,
+            cra_sterilization_rate=0.25,
+            cra_alert_count=1,
+            break_even_drift_alert=True,
+            edge_degraded_count=1,
+            queue_backlog=15,
+            stale_pair_count=0,
+            dtr_loss_count=0,
+            log_loss_count=0,
+            ce_net=0.0001,
+            breakout_failure_rate=0.80,
+            volume_support_ratio=0.20,
+        )
+    )
+
+    assert snapshot.signal_family == Build14SignalFamily.MICROSTRUCTURE
+    assert snapshot.hard_state == Build14HardState.SHADOW_ENABLED
+    assert snapshot.status in {Build14Severity.ELEVATED, Build14Severity.CRITICAL}
+    assert snapshot.structured_log_key == "build14.shadow_enabled.false_breakout_model"
+    assert "breakout_failure_rate=0.80" in snapshot.detail
+
+
 def test_build14_limited_influence_stays_read_only_when_signals_are_nominal():
     report = evaluate_build14_limited_influence(
         Build14ObservationInput(
@@ -168,6 +196,7 @@ def test_build14_shadow_activation_is_fully_active_in_shadow_but_not_live_promot
     assert report.signal.action == Build14InfluenceAction.SHADOW_APPLY
     assert report.signal.candidate_effect == "shadow_enabled"
     assert report.signal.requires_manual_review is False
+    assert any(snapshot.reader_name == "false_breakout_model" for snapshot in report.snapshots)
 
 
 def test_build14_limited_influence_can_downgrade_confidence_without_becoming_autonomous():
@@ -192,6 +221,30 @@ def test_build14_limited_influence_can_downgrade_confidence_without_becoming_aut
     assert 0.0 < report.signal.confidence_penalty_weight <= 0.25
     assert 0.0 < report.signal.recommended_budget_factor < 1.0
     assert report.signal.can_trade_autonomously is False
+
+
+def test_build14_limited_influence_uses_false_breakout_reader_when_breakout_support_collapses():
+    report = evaluate_build14_limited_influence(
+        Build14ObservationInput(
+            correlation_id="corr-14fb-live",
+            dtr_coverage=0.86,
+            cra_sterilization_rate=0.18,
+            cra_alert_count=1,
+            break_even_drift_alert=True,
+            edge_degraded_count=1,
+            queue_backlog=12,
+            stale_pair_count=0,
+            dtr_loss_count=0,
+            log_loss_count=0,
+            ce_net=0.0002,
+            breakout_failure_rate=0.90,
+            volume_support_ratio=0.10,
+        )
+    )
+
+    assert any(snapshot.reader_name == "false_breakout_model" for snapshot in report.snapshots)
+    assert any(reason_code.startswith("false_breakout_model_") for reason_code in report.signal.reason_codes)
+    assert report.signal.influence_mode == Build14InfluenceMode.LIMITED_INFLUENCE
 
 
 def test_build14_limited_influence_can_escalate_to_review_only_for_critical_reader():
