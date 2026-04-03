@@ -877,6 +877,44 @@ def _availability_sections() -> tuple[DashboardSection, ...]:
             ),
         ),
         DashboardSection(
+            title="Pairs",
+            cards=(
+                DashboardCard(
+                    key="pairs_empty",
+                    label="Public Market Bridge",
+                    value="waiting",
+                    status="planned",
+                    detail="No public Binance pair telemetry loaded yet.",
+                ),
+            ),
+        ),
+        DashboardSection(
+            title="Data & Infra",
+            cards=(
+                DashboardCard(
+                    key="infra_queue",
+                    label="Queue",
+                    value="not available",
+                    status="planned",
+                    detail="No public Binance live bridge data loaded yet.",
+                ),
+                DashboardCard(
+                    key="infra_recovery",
+                    label="Recovery",
+                    value="not available",
+                    status="planned",
+                    detail="No public Binance live bridge data loaded yet.",
+                ),
+                DashboardCard(
+                    key="infra_losses",
+                    label="Losses / Kill",
+                    value="not available",
+                    status="planned",
+                    detail="No public Binance live bridge data loaded yet.",
+                ),
+            ),
+        ),
+        DashboardSection(
             title="Build-9 Meta",
             cards=(
                 DashboardCard(key="dtr_summary", label="DTR Summary", value="not available", status="planned", detail="No monitoring snapshot loaded."),

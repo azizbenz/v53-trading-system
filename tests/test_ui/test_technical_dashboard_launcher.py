@@ -57,6 +57,11 @@ def test_export_technical_dashboard_writes_availability_view():
         assert "1d" in html
         assert "Candles" in html
         assert "Line" in html
+        assert "LIVE_PAIRS = [\"BTCUSDT\", \"ETHUSDT\"]" in html
+        assert "data-section-key='pairs'" in html
+        assert "data-section-key='data-infra'" in html
+        assert "data-section-key='alerts'" in html
+        assert "data-card-key='pairs_empty'" in html
         assert "bookTicker" in html
         assert "@depth" in html
         assert "No liquidity data loaded yet." in html
@@ -107,6 +112,8 @@ def test_export_technical_dashboard_writes_demo_sidecars():
         assert "demo payload" in html.lower()
         assert "Live Market Lab" in html
         assert "1m" in html
+        assert "LIVE_PAIRS = [\"BTCUSDT\", \"ETHUSDT\"]" in html
+        assert "data-card-key='pair_ethusdt'" in html
         assert "api.binance.com/api/v3/klines" in html
         assert "bookTicker" in html
         assert "@depth" in html

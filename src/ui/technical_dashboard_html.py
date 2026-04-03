@@ -7,6 +7,20 @@ from html import escape
 from ui.contracts import DashboardCard, DashboardSection
 
 
+def _slugify(value: str) -> str:
+    slug: list[str] = []
+    last_was_dash = False
+    for character in value.lower():
+        if character.isalnum():
+            slug.append(character)
+            last_was_dash = False
+            continue
+        if not last_was_dash:
+            slug.append("-")
+            last_was_dash = True
+    return "".join(slug).strip("-")
+
+
 def _status_class(status: str) -> str:
     return {
         "healthy": "status-healthy",
@@ -17,12 +31,12 @@ def _status_class(status: str) -> str:
 
 
 def _render_card(card: DashboardCard) -> str:
-    detail = f"<p class='card-detail'>{escape(card.detail)}</p>" if card.detail else ""
+    detail = f"<p class='card-detail' data-card-detail>{escape(card.detail)}</p>" if card.detail else ""
     return (
-        f"<article class='card {_status_class(card.status)}'>"
-        f"<header><span class='card-label'>{escape(card.label)}</span>"
-        f"<span class='card-status'>{escape(card.status)}</span></header>"
-        f"<p class='card-value'>{escape(card.value)}</p>"
+        f"<article class='card {_status_class(card.status)}' data-card-key='{escape(card.key)}'>"
+        f"<header><span class='card-label' data-card-label>{escape(card.label)}</span>"
+        f"<span class='card-status' data-card-status>{escape(card.status)}</span></header>"
+        f"<p class='card-value' data-card-value>{escape(card.value)}</p>"
         f"{detail}"
         f"</article>"
     )
@@ -31,7 +45,7 @@ def _render_card(card: DashboardCard) -> str:
 def _render_section(section: DashboardSection) -> str:
     cards = "".join(_render_card(card) for card in section.cards)
     return (
-        f"<section class='section'>"
+        f"<section class='section' data-section-key='{_slugify(section.title)}'>"
         f"<h2>{escape(section.title)}</h2>"
         f"<div class='card-grid'>{cards}</div>"
         f"</section>"
@@ -133,6 +147,40 @@ def _render_market_lab_script() -> str:
       const PAD_RIGHT = 20;
       const PAD_TOP = 20;
       const PAD_BOTTOM = 34;
+      const LIVE_PAIRS = ["BTCUSDT", "ETHUSDT"];
+      const FRESHNESS_WARNING_MS = 9500;
+      const STATUS_CLASS_MAP = {
+        healthy: "status-healthy",
+        warning: "status-warning",
+        critical: "status-critical",
+        planned: "status-planned",
+        info: "status-info",
+      };
+      const bridge = {
+        socket: null,
+        reconnectCount: 0,
+        staleSpikeCount: 0,
+        lastStalePairs: [],
+        pairs: Object.fromEntries(
+          LIVE_PAIRS.map(pair => [
+            pair,
+            {
+              lastUpdateMs: 0,
+              bestBid: null,
+              bestAsk: null,
+              bidQty: null,
+              askQty: null,
+              lastUpdateId: null,
+              spreadSamples: [],
+              sources: new Set(),
+            },
+          ])
+        ),
+      };
+
+      function statusClass(status) {
+        return STATUS_CLASS_MAP[status] || STATUS_CLASS_MAP.info;
+      }
 
       function setConnection(text, tone = "info") {
         connectionEl.textContent = text;
@@ -152,6 +200,230 @@ def _render_market_lab_script() -> str:
           .replaceAll("&", "&amp;")
           .replaceAll("<", "&lt;")
           .replaceAll(">", "&gt;");
+      }
+
+      function cardNodes(key) {
+        const article = document.querySelector(`[data-card-key="${key}"]`);
+        if (!article) {
+          return null;
+        }
+        return {
+          article,
+          label: article.querySelector("[data-card-label]"),
+          status: article.querySelector("[data-card-status]"),
+          value: article.querySelector("[data-card-value]"),
+          detail: article.querySelector("[data-card-detail]"),
+        };
+      }
+
+      function ensureSectionGrid(sectionKey) {
+        return document.querySelector(`[data-section-key="${sectionKey}"] .card-grid`);
+      }
+
+      function ensureCard(sectionKey, key, label) {
+        let nodes = cardNodes(key);
+        if (nodes) {
+          return nodes;
+        }
+        const grid = ensureSectionGrid(sectionKey);
+        if (!grid) {
+          return null;
+        }
+        const existingEmpty = grid.querySelector('[data-card-key="pairs_empty"]');
+        if (existingEmpty && sectionKey === "pairs") {
+          existingEmpty.remove();
+        }
+        const article = document.createElement("article");
+        article.className = `card ${statusClass("planned")}`;
+        article.dataset.cardKey = key;
+        article.innerHTML = `
+          <header>
+            <span class="card-label" data-card-label>${escapeHtml(label)}</span>
+            <span class="card-status" data-card-status>planned</span>
+          </header>
+          <p class="card-value" data-card-value>not available</p>
+          <p class="card-detail" data-card-detail>Waiting for public market telemetry.</p>
+        `;
+        grid.appendChild(article);
+        return cardNodes(key);
+      }
+
+      function setCard(key, payload) {
+        const nodes = cardNodes(key);
+        if (!nodes) {
+          return;
+        }
+        const status = payload.status || "info";
+        nodes.article.className = `card ${statusClass(status)}`;
+        if (nodes.label && payload.label) {
+          nodes.label.textContent = payload.label;
+        }
+        if (nodes.status) {
+          nodes.status.textContent = status;
+        }
+        if (nodes.value && payload.value) {
+          nodes.value.textContent = payload.value;
+        }
+        if (payload.detail !== undefined) {
+          if (nodes.detail) {
+            nodes.detail.textContent = payload.detail;
+          } else if (payload.detail) {
+            const detail = document.createElement("p");
+            detail.className = "card-detail";
+            detail.dataset.cardDetail = "";
+            detail.textContent = payload.detail;
+            nodes.article.appendChild(detail);
+          }
+        }
+      }
+
+      function computeSpreadBps(bestBid, bestAsk) {
+        if (bestBid === null || bestAsk === null || bestBid <= 0 || bestAsk <= 0) {
+          return null;
+        }
+        return ((bestAsk - bestBid) / ((bestAsk + bestBid) / 2)) * 10000;
+      }
+
+      function computeImbalance(bidQty, askQty) {
+        if (bidQty === null || askQty === null || bidQty + askQty <= 0) {
+          return null;
+        }
+        return bidQty / (bidQty + askQty);
+      }
+
+      function computeP90(values) {
+        if (!values.length) {
+          return null;
+        }
+        const ordered = [...values].sort((left, right) => left - right);
+        const index = Math.min(ordered.length - 1, Math.max(0, Math.ceil(ordered.length * 0.9) - 1));
+        return ordered[index];
+      }
+
+      function pairBridgeState(pair) {
+        if (!bridge.pairs[pair]) {
+          bridge.pairs[pair] = {
+            lastUpdateMs: 0,
+            bestBid: null,
+            bestAsk: null,
+            bidQty: null,
+            askQty: null,
+            lastUpdateId: null,
+            spreadSamples: [],
+            sources: new Set(),
+          };
+        }
+        return bridge.pairs[pair];
+      }
+
+      function recordBookTicker(pair, payload) {
+        const current = pairBridgeState(pair);
+        current.lastUpdateMs = Date.now();
+        current.bestBid = payload.bid;
+        current.bestAsk = payload.ask;
+        current.bidQty = payload.bidQty;
+        current.askQty = payload.askQty;
+        current.lastUpdateId = payload.updateId;
+        current.sources.add("book_ticker");
+        const spreadBps = computeSpreadBps(current.bestBid, current.bestAsk);
+        if (spreadBps !== null) {
+          current.spreadSamples.push(spreadBps);
+          if (current.spreadSamples.length > 120) {
+            current.spreadSamples = current.spreadSamples.slice(-120);
+          }
+        }
+      }
+
+      function recordDepth(pair, payload) {
+        const current = pairBridgeState(pair);
+        current.lastUpdateMs = Date.now();
+        current.bestBid = payload.bestBid;
+        current.bestAsk = payload.bestAsk;
+        current.bidQty = payload.bidQty;
+        current.askQty = payload.askQty;
+        current.lastUpdateId = payload.lastUpdateId;
+        current.sources.add("depth");
+        const spreadBps = computeSpreadBps(current.bestBid, current.bestAsk);
+        if (spreadBps !== null) {
+          current.spreadSamples.push(spreadBps);
+          if (current.spreadSamples.length > 120) {
+            current.spreadSamples = current.spreadSamples.slice(-120);
+          }
+        }
+      }
+
+      function renderLiveBridgeCards() {
+        const now = Date.now();
+        const stalePairs = [];
+        LIVE_PAIRS.forEach(pair => {
+          const current = pairBridgeState(pair);
+          const card = ensureCard("pairs", `pair_${pair.toLowerCase()}`, pair);
+          if (!card) {
+            return;
+          }
+          const freshnessMs = current.lastUpdateMs ? Math.max(0, now - current.lastUpdateMs) : null;
+          const stale = freshnessMs === null || freshnessMs > FRESHNESS_WARNING_MS;
+          if (stale) {
+            stalePairs.push(pair);
+          }
+          const spreadBps = computeSpreadBps(current.bestBid, current.bestAsk);
+          const p90Spread = computeP90(current.spreadSamples);
+          const imbalance = computeImbalance(current.bidQty, current.askQty);
+          setCard(`pair_${pair.toLowerCase()}`, {
+            status: current.lastUpdateMs ? (stale ? "warning" : "healthy") : "planned",
+            value: current.lastUpdateMs
+              ? `${stale ? "stale" : "healthy"} / fresh=${freshnessMs}ms`
+              : "waiting / fresh=n/a",
+            detail: current.lastUpdateMs
+              ? `spread=${spreadBps !== null ? spreadBps.toFixed(2) : "n/a"} / p90=${p90Spread !== null ? p90Spread.toFixed(2) : "n/a"} / bid=${current.bestBid !== null ? current.bestBid.toFixed(4) : "n/a"} / ask=${current.bestAsk !== null ? current.bestAsk.toFixed(4) : "n/a"} / imbalance=${imbalance !== null ? imbalance.toFixed(2) : "n/a"} / backlog=n/a / source=${Array.from(current.sources).sort().join("+") || "n/a"}`
+              : "Waiting for public book_ticker/depth telemetry.",
+          });
+        });
+
+        const staleChanged = bridge.lastStalePairs.join(",") !== stalePairs.join(",");
+        if (staleChanged && bridge.lastStalePairs.length && stalePairs.length) {
+          bridge.staleSpikeCount += 1;
+        }
+        bridge.lastStalePairs = stalePairs;
+
+        ensureCard("data-infra", "infra_queue", "Queue");
+        ensureCard("data-infra", "infra_recovery", "Recovery");
+        ensureCard("data-infra", "infra_losses", "Losses / Kill");
+        ensureCard("alerts", "active_alerts", "Active Alerts");
+        ensureCard("alerts", "backlog_stale", "Backlog / Stale");
+        ensureCard("alerts", "infra_guardrails", "Infra Guardrails");
+        setCard("infra_queue", {
+          status: "info",
+          value: "backlog=n/a / hwm=n/a / drop=0.0%",
+          detail: "Public Binance live bridge does not expose internal runtime queue backlog.",
+        });
+        setCard("infra_recovery", {
+          status: stalePairs.length || bridge.reconnectCount ? "warning" : "healthy",
+          value: `reconnect=${bridge.reconnectCount} / retry=0 / stale_spikes=${bridge.staleSpikeCount}`,
+          detail: stalePairs.length ? stalePairs.join(", ") : "No stale pair",
+        });
+        setCard("infra_losses", {
+          status: "info",
+          value: "dtr=n/a / log=n/a / kill=off",
+          detail: "Public market bridge only; loss and kill-switch surfaces still require governed backend runtime.",
+        });
+        setCard("active_alerts", {
+          status: stalePairs.length ? "warning" : "healthy",
+          value: String(stalePairs.length),
+          detail: stalePairs.length
+            ? `Public stale pair alerts: ${stalePairs.join(", ")}`
+            : "No public stale-pair alert",
+        });
+        setCard("backlog_stale", {
+          status: stalePairs.length ? "warning" : "healthy",
+          value: `backlog=n/a / stale=${stalePairs.length}`,
+          detail: stalePairs.length ? stalePairs.join(", ") : "No stale pair",
+        });
+        setCard("infra_guardrails", {
+          status: stalePairs.length || bridge.reconnectCount ? "warning" : "info",
+          value: `hwm=n/a / drop=0.0% / spikes=${bridge.staleSpikeCount}`,
+          detail: `public_market_bridge / reconnect=${bridge.reconnectCount} / tracked_pairs=${LIVE_PAIRS.join(", ")}`,
+        });
       }
 
       function yForPrice(price, minPrice, maxPrice) {
@@ -325,6 +597,14 @@ def _render_market_lab_script() -> str:
         };
       }
 
+      function pairFromStream(stream) {
+        if (!stream) {
+          return "";
+        }
+        const [symbol] = String(stream).split("@");
+        return symbol ? symbol.toUpperCase() : "";
+      }
+
       function upsertCandle(candle) {
         const existingIndex = state.candles.findIndex(item => item.openTime === candle.openTime);
         if (existingIndex >= 0) {
@@ -385,6 +665,8 @@ def _render_market_lab_script() -> str:
               const book = normalizeBookTickerPayload({ ...payload, stream });
               if (book) {
                 state.lastBookTicker = book;
+                recordBookTicker(pairFromStream(stream) || state.pair, book);
+                renderLiveBridgeCards();
                 drawLiquidity();
               }
               return;
@@ -393,6 +675,8 @@ def _render_market_lab_script() -> str:
               const depth = normalizeDepthPayload({ ...payload, stream });
               if (depth) {
                 state.lastDepth = depth;
+                recordDepth(pairFromStream(stream) || state.pair, depth);
+                renderLiveBridgeCards();
                 drawLiquidity();
               }
               return;
@@ -414,6 +698,62 @@ def _render_market_lab_script() -> str:
         socket.addEventListener("close", () => {
           if (state.socket === socket) {
             setConnection(`Disconnected: ${streamLabel}`, "warning");
+          }
+        });
+      }
+
+      function connectLiveBridge() {
+        if (bridge.socket) {
+          bridge.socket.close();
+          bridge.socket = null;
+        }
+        const streams = LIVE_PAIRS.flatMap(pair => {
+          const symbol = pair.toLowerCase();
+          return [`${symbol}@bookTicker`, `${symbol}@depth`];
+        });
+        const socket = new WebSocket(
+          `wss://stream.binance.com:9443/stream?streams=${streams.join("/")}`
+        );
+        bridge.socket = socket;
+
+        socket.addEventListener("message", event => {
+          try {
+            const envelope = JSON.parse(event.data);
+            const stream = envelope && typeof envelope === "object" && envelope.data ? String(envelope.stream || "") : "";
+            const payload = envelope && typeof envelope === "object" && envelope.data ? envelope.data : envelope;
+            const pair = pairFromStream(stream);
+            if (!pair || !LIVE_PAIRS.includes(pair)) {
+              return;
+            }
+            if (stream.endsWith("@bookTicker")) {
+              const book = normalizeBookTickerPayload({ ...payload, stream });
+              if (book) {
+                recordBookTicker(pair, book);
+                renderLiveBridgeCards();
+              }
+              return;
+            }
+            if (stream.endsWith("@depth")) {
+              const depth = normalizeDepthPayload({ ...payload, stream });
+              if (depth) {
+                recordDepth(pair, depth);
+                renderLiveBridgeCards();
+              }
+            }
+          } catch (_error) {
+            renderLiveBridgeCards();
+          }
+        });
+
+        socket.addEventListener("error", () => {
+          bridge.reconnectCount += 1;
+          renderLiveBridgeCards();
+        });
+
+        socket.addEventListener("close", () => {
+          if (bridge.socket === socket) {
+            bridge.reconnectCount += 1;
+            renderLiveBridgeCards();
           }
         });
       }
@@ -450,6 +790,11 @@ def _render_market_lab_script() -> str:
         drawChart();
       });
 
+      renderLiveBridgeCards();
+      connectLiveBridge();
+      window.setInterval(() => {
+        renderLiveBridgeCards();
+      }, 1000);
       reloadMarketLab();
     })();
   </script>
