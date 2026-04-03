@@ -275,8 +275,10 @@ def test_export_local_replay_shadow_run_writes_governed_chain_sidecars():
         assert shadow_runtime_evidence["config_loaded"] is True
         assert shadow_runtime_evidence["shadow_dtr_persisted"] is True
         assert shadow_runtime_evidence["continuous_hours"] >= 24.0
-        assert shadow_summary["decision"]["accepted"] is True
-        assert shadow_summary["decision"]["verdict"] == "accepted"
+        assert shadow_summary["decision"]["accepted"] is False
+        assert shadow_summary["decision"]["verdict"] == "blocked"
+        assert shadow_summary["shadow_days_completed"] == 1
+        assert shadow_summary["shadow_report_ready"] is False
         assert shadow_summary["runtime_evidence_ready"] is True
         assert shadow_day_record["passed_all_gates"] is True
         assert shadow_day_record["metrics_summary"]["dominant_cluster"] == "unclustered"
@@ -379,7 +381,9 @@ def test_export_local_replay_shadow_run_accepts_chunked_aggregate_export_directo
         assert import_summary["feature_bridge_ref"] == str((export_dir / "feature_bridge.json").resolve())
         assert import_summary["replay_dtr_ref"] == str((export_dir / "replay_dtr.jsonl").resolve())
         assert run_manifest["record_count"] == 3
-        assert shadow_summary["decision"]["accepted"] is True
+        assert shadow_summary["decision"]["accepted"] is False
+        assert shadow_summary["shadow_days_completed"] == 1
+        assert shadow_summary["shadow_report_ready"] is False
         assert shadow_summary["runtime_evidence_ready"] is True
         assert shadow_report["go_no_go_report_ready"] is True
     finally:

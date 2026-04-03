@@ -36,7 +36,7 @@
     "branch_alignment": {
       "main_commit": "e28de12",
       "origin_main_commit": "e28de12",
-      "current_branch_commit": "be5f2a7",
+      "current_branch_commit": "9425681",
       "branch_divergence_detected": true,
       "interpretation": "The dedicated Full Shadow migration branch is now the active work surface. Canon migration started docs-first there, and the branch now also carries real Engine C/D packages plus the first Build-11 A/B/C/D runtime reinjection wave, while the previous branch remains the last coherent Option-B rollback checkpoint."
     },
@@ -355,6 +355,26 @@
         "This is the consolidated green proof set after the manifest/profile/bootstrap coherence wave.",
         "It is the strongest current local evidence set on the migration branch short of target-environment runtime proof."
       ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_protocols/test_local_replay_shadow_runner.py tests/test_protocols/test_shadow_daily_orchestrator_launcher.py tests/test_protocols/test_shadow_vps_service_launcher.py -q",
+      "result": "13 passed",
+      "classification": "build11_false_green_fix_focused_green_surface",
+      "notes": [
+        "This validates the fix that separates provisional day-counting acceptance from the final persisted promotion summary in the governed local replay Shadow runner.",
+        "It also refreshes the daily orchestrator and VPS service launchers against the new honest 1-day-not-ready semantics."
+      ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_protocols/test_local_replay_shadow_runner.py tests/test_protocols/test_shadow_daily_orchestrator.py tests/test_protocols/test_shadow_daily_orchestrator_launcher.py tests/test_protocols/test_shadow_vps_service_launcher.py tests/test_protocols/test_shadow_runtime.py tests/test_protocols/test_shadow_day_counter.py tests/test_regression_alignment.py -q",
+      "result": "100 passed",
+      "classification": "build11_runtime_smoke_honesty_refresh_green_surface",
+      "notes": [
+        "This broader Build-11 validation wave confirms the false 30/30 signal is removed while the governed day counter, orchestrator chain, and regression gate semantics remain green.",
+        "It is the focused green test surface accompanying the bounded target-environment native live_websocket smoke."
+      ]
     }
   ],
   "current_status_by_build": {
@@ -627,6 +647,14 @@
       "record_path": "docs/audit chatgpt buisness/2026-04-03_BUILD11_TO_BUILD17_MIGRATION_BRANCH_REFRESH_AUDIT.md",
       "conclusion": "Build-11 is locally much stronger on the migration branch but remains honestly partial without target-environment runtime proof. Build-12 and Build-13 stay not ready, Build-14 is aligned, Build-15 and Build-16 are implemented but not yet operationally closed, and Build-17 remains a partial UI/demo surface.",
       "action_taken": "Freeze the refreshed branch reading and move next to the target-environment Build-11 runtime-proof frontier rather than more local reinterpretation."
+    },
+    {
+      "audit_id": "AUDIT-021",
+      "date": "2026-04-03",
+      "scope": "Build-11 native live_websocket smoke and false-green fix",
+      "record_path": "docs/audit chatgpt buisness/2026-04-03_BUILD11_NATIVE_LIVE_WEBSOCKET_SMOKE_AND_FALSE_GREEN_FIX_AUDIT.md",
+      "conclusion": "A bounded native live_websocket smoke now works against the real network path outside the sandbox, and the governed runner no longer persists a false 30/30 + report-ready promotion summary after only one Shadow day.",
+      "action_taken": "Freeze the partial target-environment proof, keep Build-11 honestly partial, and move next only to repeated real Shadow-day collection rather than more local doctrinal reinterpretation."
     }
   ],
   "known_critical_gaps": [
@@ -643,7 +671,7 @@
       "priority": "P1",
       "scope": "Moteurs C/D",
       "doc_expectation": "On the migration branch, Engine C and Engine D are part of the Build-11 Full Shadow observation perimeter, while their downstream promotion remains verdict- and gate-driven.",
-      "code_or_runtime_reality": "Engine C and Engine D are now implemented as real shadow-capable packages and covered by focused tests, but module inventory/profile registry surfaces still reflect the older planned state and need realignment.",
+      "code_or_runtime_reality": "Engine C and Engine D are now implemented as real shadow-capable packages, visible in the active Full Shadow runtime surface, and covered by focused tests. What remains open is their dedicated hardening and operational closure, not package existence or profile visibility on the migration branch.",
       "status": "open"
     },
     {
@@ -667,7 +695,7 @@
       "priority": "P1",
       "scope": "Runtime proof for native live_websocket",
       "doc_expectation": "Runtime-relevant features need real proof before final requalification.",
-      "code_or_runtime_reality": "The feature is coded and tested, and the current branch now writes a durable per-session runtime evidence bundle linking capture/export refs with local replay and shadow runtime evidence. Exchange-network proof is still pending in this environment.",
+      "code_or_runtime_reality": "The feature is coded and tested, writes a durable per-session runtime evidence bundle, and now has a bounded real-network smoke on 2026-04-03 outside the sandbox. That smoke proved capture -> auto-export -> governed Shadow-day execution, but it also exposed and led to the fix of a false 30/30 persisted summary. The branch now reports an honest 1 day / 29 remaining state; the full 30-day runtime proof is still pending.",
       "status": "open"
     },
     {
@@ -699,10 +727,10 @@
       "priority": "P0",
       "scope": "Canonical contradiction between Build-11 and Build-15/16/17",
       "doc_expectation": "The build order, Build-11 Shadow doctrine, Build-15 / Build-16 engine onboarding, and Build-17 Complete rollout should tell one coherent story.",
-      "code_or_runtime_reality": "Build-11 / master / build-plan still require A/B/C/D active in Shadow intégral, while Build-15 and Build-16 define C and D as later dedicated builds that start only after Build-14 is validated. The codebase currently follows the more conservative staged interpretation with engine_c and engine_d remaining planned spec_only facades.",
+      "code_or_runtime_reality": "The migration branch now explicitly follows the Full Shadow A/B/C/D doctrine, with Engine C and Engine D implemented and visible in the active runtime surface. The remaining work is to keep the late-build wording and closure criteria coherent with that branch reality, especially for Build-15 / Build-16 hardening and Build-17 scope.",
       "status": "open",
       "branch_resolution": "Option B remains the last rollback checkpoint on the previous branch. The migration branch has moved beyond it and now requires explicit late-build realignment rather than staged deferral.",
-      "migration_branch_reality": "Engine C and Engine D are now real runtime packages on the migration branch and the first Build-11 A/B/C/D reinjection wave is green, but Build-15 / Build-16 / Build-17 wording and manifest/profile surfaces still need coherent refresh."
+      "migration_branch_reality": "Engine C and Engine D are real runtime packages on the migration branch, Build-11 A/B/C/D reinjection is locally green, registry/profile/bootstrap are coherent, and a bounded target-environment native live_websocket smoke now exists. The remaining late-build work is narrative and operational closure, not spec_only facade replacement."
     }
   ],
   "work_batches": [
@@ -898,27 +926,27 @@
     }
   },
   "next_recommended_action": {
-    "step": "Focus next on target-environment Build-11 runtime proof, using the refreshed Build-11 to Build-17 migration-branch audit as the frozen local baseline.",
-    "reason": "The local code/test, registry/profile, bootstrap, and refreshed build-status waves are now frozen. The next honest frontier is operational proof, not additional local reinterpretation."
+    "step": "Preserve the bounded Build-11 native live_websocket proof and continue next only with repeated real Shadow-day collection on the target environment, not with more local reinterpretation.",
+    "reason": "The migration branch now has a real one-day native live_websocket proof plus an honest promotion-state fix. The remaining frontier is repeated operational evidence toward the 30-day gate."
   },
   "branch_overrides": {
     "option_b_realignment_commit": "99cf170",
     "migration_branch": "codex/full-shadow-abcd-migration-20260403",
     "migration_branch_base_commit": "01b39e3",
-    "effective_next_action": "Use the migration branch as the frozen local baseline and move next to the target-environment Build-11 runtime-proof wave.",
-    "effective_reason": "The branch is now locally coherent across canon, engines, protocols, registry/profile, bootstrap, focused operator surfaces, and the refreshed Build-11 to Build-17 status reading. The next real uncertainty is operational proof."
+    "effective_next_action": "Use the migration branch as the frozen baseline and continue only with repeated target-environment Build-11 Shadow-day collection.",
+    "effective_reason": "The branch is now locally coherent, has a bounded real-network native live_websocket smoke, and no longer emits a false 30/30 promotion signal after one day. The remaining real uncertainty is repeated operational proof, not local semantics."
   },
   "planned_migration": {
     "migration_id": "MIG-001",
     "selected_target": "full_shadow_30d_abcd_build14",
-    "status": "build11_to_build17_refresh_frozen_pending_target_environment_runtime_proof",
+    "status": "bounded_native_live_websocket_proof_frozen_pending_repeated_shadow_days",
     "record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_MIGRATION_PLAN.md",
     "checkpoint_record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_LOT0_BRANCH_CHECKPOINT.md",
     "lot1_record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_LOT1_CANON_REPATCH_AUDIT.md",
     "lot2_4_record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_LOT2_4_ENGINE_CD_AND_BUILD11_REINJECTION_AUDIT.md",
     "active_branch": "codex/full-shadow-abcd-migration-20260403",
     "base_commit": "01b39e3",
-    "rule_until_applied": "The migration branch now has the canon repatch, Engine C/D implementation, Build-11 A/B/C/D reinjection, registry/profile/bootstrap coherence, and a refreshed Build-11 to Build-17 status reading. The doctrine is still not considered fully implemented until Build-11 runtime proof is completed on the target environment.",
-    "recommended_start": "Target-environment Build-11 runtime proof"
+    "rule_until_applied": "The migration branch now has the canon repatch, Engine C/D implementation, Build-11 A/B/C/D reinjection, registry/profile/bootstrap coherence, a refreshed Build-11 to Build-17 status reading, and a bounded target-environment native live_websocket smoke. The doctrine is still not considered fully implemented until repeated real Shadow days complete the 30-day runtime-proof story.",
+    "recommended_start": "Repeated target-environment Build-11 Shadow-day collection"
   }
 }

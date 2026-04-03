@@ -777,7 +777,7 @@ def export_local_replay_shadow_run(
         encoding="utf-8",
     )
 
-    shadow_input = build_shadow_input_from_payloads(
+    provisional_shadow_input = build_shadow_input_from_payloads(
         baseline_payload,
         candidate_payload,
         truth_ref="shadow_truth:local_replay_shadow_demo",
@@ -789,19 +789,9 @@ def export_local_replay_shadow_run(
         build14_contribution_ready=True,
         runtime_evidence=shadow_runtime_evidence,
     )
-    shadow_input_json_path = output_dir / "local_replay_shadow.shadow_input.json"
-    shadow_input_json_path.write_text(
-        shadow_input.model_dump_json(indent=2),
-        encoding="utf-8",
-    )
-    shadow_summary = run_shadow_validation(
-        shadow_input,
+    provisional_shadow_summary = run_shadow_validation(
+        provisional_shadow_input,
         run_id="local-replay-shadow-demo-run",
-    )
-    shadow_summary_json_path = output_dir / "local_replay_shadow.shadow_summary.json"
-    shadow_summary_json_path.write_text(
-        shadow_summary.model_dump_json(indent=2),
-        encoding="utf-8",
     )
     shadow_counter = ShadowDayCounter(state_dir=output_dir, profile=ShadowProfile.LIGHT)
     shadow_registry = ShadowSessionRegistry(state_dir=output_dir)
@@ -836,7 +826,7 @@ def export_local_replay_shadow_run(
         )
         shadow_day_metrics = build_shadow_daily_metrics_summary(
             day_payload,
-            shadow_summary,
+            provisional_shadow_summary,
             capital_simulated_usdt=10_000.0,
             replay_metrics_payload=replay_metrics_payload,
             hard_block_rate=0.0,
@@ -846,7 +836,7 @@ def export_local_replay_shadow_run(
             go_no_go_rendered=True,
         )
         shadow_day_record = shadow_counter.record_shadow_day(
-            passed_all_gates=shadow_summary.decision.accepted,
+            passed_all_gates=provisional_shadow_summary.decision.accepted,
             metrics_summary=shadow_day_metrics,
             now=day_payload.timestamp_ms / 1000.0,
         )
@@ -864,7 +854,7 @@ def export_local_replay_shadow_run(
                 session_date=current_session_date.isoformat(),
                 counter_day_number=shadow_day_record.day_number,
                 correlation_id=day_payload.correlation_id,
-                run_id=shadow_summary.run_id,
+                run_id=provisional_shadow_summary.run_id,
                 artifact_id=import_summary.artifact_id,
                 lineage_version=import_summary.lineage_version,
                 day_record_ref=str(day_record_path),
@@ -882,6 +872,32 @@ def export_local_replay_shadow_run(
     shadow_report_json_path = output_dir / "local_replay_shadow.shadow_report.json"
     shadow_report_json_path.write_text(
         json.dumps(shadow_report, indent=2),
+        encoding="utf-8",
+    )
+    shadow_input = build_shadow_input_from_payloads(
+        baseline_payload,
+        candidate_payload,
+        truth_ref="shadow_truth:local_replay_shadow_demo",
+        validation_ref=f"shadow_validation:{import_summary.artifact_id}",
+        component_assessments=_build_component_assessments(),
+        shadow_days_completed=shadow_report["consecutive_days"],
+        shadow_report_ready=shadow_report["shadow_report_ready"],
+        inter_engine_comparison_ready=shadow_report["inter_engine_comparison_ready"],
+        build14_contribution_ready=shadow_report["build14_contribution_ready"],
+        runtime_evidence=shadow_runtime_evidence,
+    )
+    shadow_summary = run_shadow_validation(
+        shadow_input,
+        run_id="local-replay-shadow-demo-run",
+    )
+    shadow_input_json_path = output_dir / "local_replay_shadow.shadow_input.json"
+    shadow_input_json_path.write_text(
+        shadow_input.model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    shadow_summary_json_path = output_dir / "local_replay_shadow.shadow_summary.json"
+    shadow_summary_json_path.write_text(
+        shadow_summary.model_dump_json(indent=2),
         encoding="utf-8",
     )
     shadow_session_summary_json_path = (

@@ -379,7 +379,7 @@ def test_shadow_vps_service_processes_multiple_days_and_persists_logs():
         assert shadow_session_summary["consecutive_days"] == 2
         assert runtime_bundle["acquisition_mode"] == "dated_export"
         assert runtime_bundle["runtime_data_source"] == "recorded_replay"
-        assert runtime_bundle["accepted"] is True
+        assert runtime_bundle["accepted"] is False
         assert runtime_bundle["consecutive_days"] == 2
 
         event_types = [event["event_type"] for event in events]
@@ -781,6 +781,8 @@ def test_shadow_vps_service_captures_native_live_websocket_then_runs_shadow(monk
         assert runtime_bundle["live_capture_dir_ref"].endswith("live_captures\\2026-04-02")
         assert runtime_bundle["auto_export_dir_ref"].endswith("auto_exports\\2026-04-02")
         assert runtime_bundle["runtime_data_source"] == "recorded_replay"
+        assert runtime_bundle["accepted"] is False
+        assert runtime_bundle["consecutive_days"] == 1
         assert any(event["event_type"] == "live_capture_completed" for event in events)
         assert any(
             event["event_type"] == "runtime_evidence_bundle_written" for event in events
