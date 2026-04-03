@@ -36,9 +36,9 @@
     "branch_alignment": {
       "main_commit": "e28de12",
       "origin_main_commit": "e28de12",
-      "current_branch_commit": "011a80d",
+      "current_branch_commit": "dd1aa69",
       "branch_divergence_detected": true,
-      "interpretation": "The dedicated Full Shadow migration branch is now the active work surface. Canon migration started docs-first there, and the branch now also carries real Engine C/D packages, the Build-11 A/B/C/D runtime reinjection wave, the bounded native live_websocket proof checkpoint, and a local runner that now executes A/B/C/D before rendering component evidence. The previous branch remains the last coherent Option-B rollback checkpoint."
+      "interpretation": "The dedicated Full Shadow migration branch is now the active work surface. Canon migration started docs-first there, and the branch now also carries real Engine C/D packages, the Build-11 A/B/C/D runtime reinjection wave, explicit Build-9X merge gates wired into the governed review/export path, the bounded native live_websocket proof checkpoint, and a local runner that now executes A/B/C/D while deriving Build-14 reader projections from the governed shadow evaluator. The previous branch remains the last coherent Option-B rollback checkpoint."
     },
     "notes": [
       "Do not reset hard.",
@@ -528,6 +528,26 @@
       "notes": [
         "The public runtime/export surface remains coherent after adding the new monitoring-level Build14ReaderProjection contract."
       ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_meta_learning/test_build9x_integration.py tests/test_meta_learning/test_merge_gates.py tests/test_protocols/test_local_replay_shadow_runner.py -q",
+      "result": "20 passed",
+      "classification": "build9x_review_gate_enforcement_and_build14_shadow_runner_green",
+      "notes": [
+        "The governed Build-9X bundle now carries an explicit merge_gate_report and the exported review packet renders a dedicated Merge Gates section.",
+        "The local Build-11 shadow runner now emits evaluator-derived Build-14 reader projections instead of fabricating them directly."
+      ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_meta_learning tests/test_monitoring/test_monitoring_backend.py tests/test_monitoring/test_observability.py tests/test_protocols/test_local_replay_shadow_runner.py -q",
+      "result": "126 passed",
+      "classification": "build9x_gate_projection_and_build14_shadow_runner_broad_green_surface",
+      "notes": [
+        "The broader meta-learning suite remains green after wiring merge gates into the governed review/export path.",
+        "Monitoring and observability remain green while the local Build-11 runner now projects Build-14 reader states from the governed evaluator."
+      ]
     }
   ],
   "current_status_by_build": {
@@ -912,6 +932,22 @@
       "record_path": "docs/audit chatgpt buisness/2026-04-03_BUILD14_READER_OBSERVABILITY_WAVE_AUDIT.md",
       "conclusion": "The selected Build-14 readers are now visible and traceable end-to-end through monitoring payloads, the technical dashboard, the observability export, and the local Shadow/demo launchers.",
       "action_taken": "Treat reader existence plus local observability as complete, and move the next useful work to real Build-11 Shadow observation and later verdicting."
+    },
+    {
+      "audit_id": "AUDIT-034",
+      "date": "2026-04-03",
+      "scope": "Execution audit of the last Build-9X / Build-14 plan",
+      "record_path": "docs/audit chatgpt buisness/2026-04-03_LAST_PLAN_EXECUTION_AUDIT.md",
+      "conclusion": "The last plan was materially advanced but not fully closed: explicit Build-9X gates and Build-14 readers existed, but the two leading P1 gaps were still the lack of runtime review-path enforcement for merge gates and the synthetic Build-14 reader projection path in the local Build-11 runner.",
+      "action_taken": "Freeze that audit as the baseline for a focused P1 remediation wave rather than reopening the whole plan."
+    },
+    {
+      "audit_id": "AUDIT-035",
+      "date": "2026-04-03",
+      "scope": "P1 remediation for the last Build-9X / Build-14 execution audit",
+      "record_path": "docs/audit chatgpt buisness/2026-04-03_LAST_PLAN_P1_REMEDIATION_AUDIT.md",
+      "conclusion": "The two P1 findings are now closed on the current branch: Build-9X merge gates are carried by the governed review/export path and the local Build-11 runner now derives Build-14 reader projections from the governed shadow evaluator. Remaining work is secondary P2 reporting/demo cleanup plus the real Build-11 calendar-day campaign.",
+      "action_taken": "Keep the next prod-safe action fixed on the real Build-11 target-environment day-2 run instead of extending local refactors."
     }
   ],
   "known_critical_gaps": [
@@ -936,7 +972,7 @@
       "priority": "P1",
       "scope": "Build-14 representation across monitoring/UI/live-light surfaces",
       "doc_expectation": "Build-14 is SHADOW_ENABLED in Shadow, fully active there, then SHADOW_VALIDATED or DORMANT by verdict.",
-      "code_or_runtime_reality": "The Build-14 monitoring/UI/demo exposure was normalized on the current branch. Projection contracts now enforce coherent shadow_enabled states, the technical dashboard exposes Build-14 as enablers, and the selected reader set is now visible as explicit per-reader projections and observability metrics.",
+      "code_or_runtime_reality": "The Build-14 monitoring/UI/demo exposure was normalized on the current branch. Projection contracts now enforce coherent shadow_enabled states, the technical dashboard exposes Build-14 as enablers, the selected reader set is visible as explicit per-reader projections and observability metrics, and the local Build-11 runner now derives those reader projections from evaluate_build14_shadow_activation rather than fabricating them directly.",
       "status": "closed_on_current_branch"
     },
     {
