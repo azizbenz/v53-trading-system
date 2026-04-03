@@ -382,8 +382,8 @@
       "topic": "Target migration to Full Shadow 30j A/B/C/D",
       "current_canon": "The current branch still runs on the Option B baseline where Build-11 validates A/B + Build-14 only, and C/D remain later implementation scopes.",
       "proposed_change": "User-selected target doctrine: migrate toward a single Build-11 Full Shadow 30-day phase that observes A/B/C/D + Build-14, while keeping downstream Micro-live/Live promotions gated per component verdict rather than automatic.",
-      "status": "selected_for_migration_plan_not_yet_applied",
-      "rule_until_decided": "Do not treat GOV-008 as applied on the current branch yet. Execute it only through the staged migration plan on a dedicated migration branch."
+      "status": "migration_started_on_dedicated_branch",
+      "rule_until_decided": "The dedicated migration branch now exists. Do not treat GOV-008 as fully applied until the canon repatch and C/D reinjection lots are actually executed there."
     }
   ],
   "targeted_audits": [
@@ -507,6 +507,14 @@
       "record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_MIGRATION_PLAN.md",
       "conclusion": "If the product goal is to test the whole solution in one Shadow 30-day window, then C/D must be real Build-11 Shadow participants. The safe path is a staged migration: governance freeze, canonical repatch, Engine C implementation, Engine D implementation, then Build-11 reinjection and proof.",
       "action_taken": "Freeze the migration as a planned doctrine, keep the current branch readable as the last coherent Option-B checkpoint, and start with Lot 0 on a dedicated migration branch before reopening Build-11."
+    },
+    {
+      "audit_id": "AUDIT-016",
+      "date": "2026-04-03",
+      "scope": "Full Shadow migration Lot 0 branch checkpoint",
+      "record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_LOT0_BRANCH_CHECKPOINT.md",
+      "conclusion": "Lot 0 is now effectively started. The dedicated migration branch codex/full-shadow-abcd-migration-20260403 was created from commit 01b39e3, preserving the previous branch as the last coherent Option-B rollback point.",
+      "action_taken": "Use the new branch for Lots 1 to 4, and keep the doctrine change staged rather than implicit."
     }
   ],
   "known_critical_gaps": [
@@ -777,20 +785,25 @@
     }
   },
   "next_recommended_action": {
-    "step": "Start Lot 0 of the Full Shadow migration on a dedicated migration branch: freeze the governance target, preserve the current branch as the last coherent Option-B checkpoint, and prepare the canonical repatch before any C/D reinjection into Build-11.",
-    "reason": "The selected target doctrine is now Full Shadow 30j A/B/C/D, but it is not yet applied on the current branch. The safest next move is to begin the staged migration without destroying the current Option-B rollback point."
+    "step": "Execute Lot 1 on the dedicated migration branch: repatch the canonical docs so Build-11 explicitly targets A/B/C/D + Build-14, while preserving the rule that Shadow observation does not imply automatic downstream promotion.",
+    "reason": "Lot 0 is now complete: the dedicated migration branch exists and the previous branch remains the rollback checkpoint. The safest next move is the canon repatch before any Engine C/D reinjection into Build-11 runtime surfaces."
   },
   "branch_overrides": {
     "option_b_realignment_commit": "99cf170",
-    "effective_next_action": "Use the current branch as the preserved Option-B checkpoint, but start the selected Full Shadow 30j A/B/C/D migration on a dedicated new branch. Begin with Lot 0, then Lot 1 canonical repatch, then Lots 2 and 3 for Engine C and Engine D implementation before any Build-11 reinjection.",
-    "effective_reason": "The user-selected target doctrine now differs from the currently applied Option-B branch state. The lowest-risk execution path is a staged migration that preserves the current branch as a rollback point while moving Full Shadow work onto a dedicated branch."
+    "migration_branch": "codex/full-shadow-abcd-migration-20260403",
+    "migration_branch_base_commit": "01b39e3",
+    "effective_next_action": "Use the new migration branch for Lot 1 canonical repatch, then proceed with Lot 2 Engine C implementation and Lot 3 Engine D implementation before any Build-11 reinjection.",
+    "effective_reason": "The dedicated Full Shadow migration branch now exists, so the rollback checkpoint is preserved. The lowest-risk next move is to patch the canon first and keep C/D reinjection blocked until the engines are real."
   },
   "planned_migration": {
     "migration_id": "MIG-001",
     "selected_target": "full_shadow_30d_abcd_build14",
-    "status": "planned_not_applied",
+    "status": "lot0_started_on_dedicated_branch",
     "record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_MIGRATION_PLAN.md",
-    "rule_until_applied": "The current branch still follows the Option-B baseline until the staged migration starts on a dedicated branch and reaches the canon/code reinjection lots.",
-    "recommended_start": "Lot 0 - governance freeze and dedicated migration branch creation"
+    "checkpoint_record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_LOT0_BRANCH_CHECKPOINT.md",
+    "active_branch": "codex/full-shadow-abcd-migration-20260403",
+    "base_commit": "01b39e3",
+    "rule_until_applied": "This branch is now the staged migration surface, but the Full Shadow doctrine is not considered applied until the canon repatch and Build-11 C/D reinjection lots are executed.",
+    "recommended_start": "Lot 1 - canonical repatch to Full Shadow"
   }
 }
