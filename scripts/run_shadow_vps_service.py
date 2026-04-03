@@ -19,6 +19,7 @@ if str(SRC_ROOT) not in sys.path:
 
 from protocols import (  # noqa: E402
     ShadowLiveWebSocketConfig,
+    ShadowLiveWebSocketCaptureResult,
     ShadowDailyOrchestrator,
     ShadowVpsServiceEvent,
     ShadowVpsRawInputConfig,
@@ -77,6 +78,33 @@ def _read_optional_json(path_ref: str) -> dict:
         return json.loads(Path(path_ref).read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError):
         return {}
+
+
+def _read_live_capture_result(
+    live_capture_dir: Path | None,
+) -> ShadowLiveWebSocketCaptureResult | None:
+    if live_capture_dir is None:
+        return None
+    summary_path = live_capture_dir / "live_websocket_capture_summary.json"
+    snapshot_batch_path = live_capture_dir / "live_websocket_snapshot_batch.json"
+    if not summary_path.is_file() or not snapshot_batch_path.is_file():
+        return None
+    payload = _read_optional_json(str(summary_path))
+    try:
+        return ShadowLiveWebSocketCaptureResult(
+            session_date=live_capture_dir.name,
+            live_capture_dir_ref=str(live_capture_dir.resolve()),
+            snapshot_batch_path_ref=str(snapshot_batch_path.resolve()),
+            summary_path_ref=str(summary_path.resolve()),
+            emitted_message_count=int(payload.get("emitted_message_count", 0)),
+            accepted_message_count=int(payload.get("accepted_message_count", 0)),
+            ignored_message_count=int(payload.get("ignored_message_count", 0)),
+            rejected_message_count=int(payload.get("rejected_message_count", 0)),
+            pair_scope=tuple(str(value) for value in payload.get("pair_scope", ())),
+            event_types=tuple(str(value) for value in payload.get("event_types", ())),
+        )
+    except (TypeError, ValueError):
+        return None
 
 
 def _read_raw_input_config(config_path: Path | None) -> ShadowVpsRawInputConfig:
@@ -406,7 +434,7 @@ def _write_runtime_evidence_bundle(
     session_date: str,
     raw_slot: ShadowVpsRawInputSlot | None,
     websocket_slot: ShadowVpsWebsocketInputSlot | None,
-    live_capture_dir: Path | None,
+    live_capture_result: ShadowLiveWebSocketCaptureResult | None,
     auto_snapshot_dir: Path | None,
     auto_export_dir: Path | None,
     last_run: dict,
@@ -422,14 +450,42 @@ def _write_runtime_evidence_bundle(
         acquisition_mode=_resolve_acquisition_mode(
             raw_slot=raw_slot,
             websocket_slot=websocket_slot,
-            live_capture_dir=live_capture_dir,
+            live_capture_dir=Path(live_capture_result.live_capture_dir_ref)
+            if live_capture_result is not None
+            else None,
             export_dir_ref=str(last_run.get("export_dir_ref", "")),
         ),
         raw_input_dir_ref=raw_slot.raw_input_dir_ref if raw_slot is not None else "",
         websocket_input_dir_ref=(
             websocket_slot.websocket_input_dir_ref if websocket_slot is not None else ""
         ),
-        live_capture_dir_ref=str(live_capture_dir.resolve()) if live_capture_dir is not None else "",
+        live_capture_dir_ref=(
+            live_capture_result.live_capture_dir_ref if live_capture_result is not None else ""
+        ),
+        live_capture_snapshot_batch_ref=(
+            live_capture_result.snapshot_batch_path_ref if live_capture_result is not None else ""
+        ),
+        live_capture_summary_ref=(
+            live_capture_result.summary_path_ref if live_capture_result is not None else ""
+        ),
+        live_capture_emitted_message_count=(
+            live_capture_result.emitted_message_count if live_capture_result is not None else 0
+        ),
+        live_capture_accepted_message_count=(
+            live_capture_result.accepted_message_count if live_capture_result is not None else 0
+        ),
+        live_capture_ignored_message_count=(
+            live_capture_result.ignored_message_count if live_capture_result is not None else 0
+        ),
+        live_capture_rejected_message_count=(
+            live_capture_result.rejected_message_count if live_capture_result is not None else 0
+        ),
+        live_capture_pair_scope=(
+            live_capture_result.pair_scope if live_capture_result is not None else ()
+        ),
+        live_capture_event_types=(
+            live_capture_result.event_types if live_capture_result is not None else ()
+        ),
         auto_snapshot_dir_ref=str(auto_snapshot_dir.resolve()) if auto_snapshot_dir is not None else "",
         auto_export_dir_ref=str(auto_export_dir.resolve()) if auto_export_dir is not None else "",
         export_dir_ref=str(last_run.get("export_dir_ref", "")),
@@ -581,8 +637,21 @@ def run_shadow_vps_service(
             state.last_websocket_input_dir_ref = (
                 websocket_slot.websocket_input_dir_ref if websocket_slot is not None else ""
             )
+            live_capture_result = _read_live_capture_result(live_capture_dir)
             state.last_live_capture_dir_ref = (
-                str(live_capture_dir.resolve()) if live_capture_dir is not None else ""
+                live_capture_result.live_capture_dir_ref
+                if live_capture_result is not None
+                else ""
+            )
+            state.last_live_capture_snapshot_batch_ref = (
+                live_capture_result.snapshot_batch_path_ref
+                if live_capture_result is not None
+                else ""
+            )
+            state.last_live_capture_summary_ref = (
+                live_capture_result.summary_path_ref
+                if live_capture_result is not None
+                else ""
             )
             state.last_auto_snapshot_dir_ref = (
                 str(auto_snapshot_dir.resolve()) if auto_snapshot_dir is not None else ""
@@ -623,6 +692,41 @@ def run_shadow_vps_service(
                         message="Native live_websocket capture completed.",
                         session_date=next_slot.session_date,
                         export_dir_ref=str(live_capture_dir.resolve()),
+                        live_capture_summary_ref=(
+                            live_capture_result.summary_path_ref
+                            if live_capture_result is not None
+                            else ""
+                        ),
+                        emitted_message_count=(
+                            live_capture_result.emitted_message_count
+                            if live_capture_result is not None
+                            else None
+                        ),
+                        accepted_message_count=(
+                            live_capture_result.accepted_message_count
+                            if live_capture_result is not None
+                            else None
+                        ),
+                        ignored_message_count=(
+                            live_capture_result.ignored_message_count
+                            if live_capture_result is not None
+                            else None
+                        ),
+                        rejected_message_count=(
+                            live_capture_result.rejected_message_count
+                            if live_capture_result is not None
+                            else None
+                        ),
+                        pair_scope=(
+                            live_capture_result.pair_scope
+                            if live_capture_result is not None
+                            else ()
+                        ),
+                        event_types=(
+                            live_capture_result.event_types
+                            if live_capture_result is not None
+                            else ()
+                        ),
                     )
                 )
             if live_capture_dir is not None and auto_export_dir is not None:
@@ -653,7 +757,7 @@ def run_shadow_vps_service(
                 session_date=last_run["session_date"],
                 raw_slot=raw_slot,
                 websocket_slot=websocket_slot,
-                live_capture_dir=live_capture_dir,
+                live_capture_result=live_capture_result,
                 auto_snapshot_dir=auto_snapshot_dir,
                 auto_export_dir=auto_export_dir,
                 last_run=last_run,

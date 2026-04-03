@@ -38,6 +38,8 @@ class ShadowVpsServiceState(BaseModel):
     last_raw_input_dir_ref: str = ""
     last_websocket_input_dir_ref: str = ""
     last_live_capture_dir_ref: str = ""
+    last_live_capture_snapshot_batch_ref: str = ""
+    last_live_capture_summary_ref: str = ""
     last_auto_snapshot_dir_ref: str = ""
     last_auto_export_dir_ref: str = ""
     last_export_dir_ref: str = ""
@@ -132,6 +134,14 @@ class ShadowVpsRuntimeEvidenceBundle(BaseModel, frozen=True):
     raw_input_dir_ref: str = ""
     websocket_input_dir_ref: str = ""
     live_capture_dir_ref: str = ""
+    live_capture_snapshot_batch_ref: str = ""
+    live_capture_summary_ref: str = ""
+    live_capture_emitted_message_count: int = Field(default=0, ge=0)
+    live_capture_accepted_message_count: int = Field(default=0, ge=0)
+    live_capture_ignored_message_count: int = Field(default=0, ge=0)
+    live_capture_rejected_message_count: int = Field(default=0, ge=0)
+    live_capture_pair_scope: tuple[str, ...] = ()
+    live_capture_event_types: tuple[str, ...] = ()
     auto_snapshot_dir_ref: str = ""
     auto_export_dir_ref: str = ""
     export_dir_ref: str = ""
@@ -165,6 +175,13 @@ class ShadowVpsServiceEvent(BaseModel, frozen=True):
     accepted: bool | None = None
     consecutive_days: int | None = Field(default=None, ge=0)
     remaining_days: int | None = Field(default=None, ge=0)
+    live_capture_summary_ref: str = ""
+    emitted_message_count: int | None = Field(default=None, ge=0)
+    accepted_message_count: int | None = Field(default=None, ge=0)
+    ignored_message_count: int | None = Field(default=None, ge=0)
+    rejected_message_count: int | None = Field(default=None, ge=0)
+    pair_scope: tuple[str, ...] = ()
+    event_types: tuple[str, ...] = ()
     error: str = ""
 
 

@@ -769,6 +769,12 @@ def test_shadow_vps_service_captures_native_live_websocket_then_runs_shadow(monk
         assert state["success_count"] == 1
         assert state["last_completed_session_date"] == "2026-04-02"
         assert state["last_live_capture_dir_ref"].endswith("live_captures\\2026-04-02")
+        assert state["last_live_capture_snapshot_batch_ref"].endswith(
+            "live_captures\\2026-04-02\\live_websocket_snapshot_batch.json"
+        )
+        assert state["last_live_capture_summary_ref"].endswith(
+            "live_captures\\2026-04-02\\live_websocket_capture_summary.json"
+        )
         assert state["last_auto_export_dir_ref"].endswith("auto_exports\\2026-04-02")
         assert state["last_shadow_runtime_evidence_ref"].endswith(
             "local_replay_shadow.shadow_runtime_evidence.json"
@@ -779,11 +785,32 @@ def test_shadow_vps_service_captures_native_live_websocket_then_runs_shadow(monk
         assert auto_manifest["strategy_id"] == "strategy-shadow-vps-live"
         assert runtime_bundle["acquisition_mode"] == "native_live_websocket_auto_export"
         assert runtime_bundle["live_capture_dir_ref"].endswith("live_captures\\2026-04-02")
+        assert runtime_bundle["live_capture_snapshot_batch_ref"].endswith(
+            "live_captures\\2026-04-02\\live_websocket_snapshot_batch.json"
+        )
+        assert runtime_bundle["live_capture_summary_ref"].endswith(
+            "live_captures\\2026-04-02\\live_websocket_capture_summary.json"
+        )
+        assert runtime_bundle["live_capture_emitted_message_count"] == 2
+        assert runtime_bundle["live_capture_accepted_message_count"] == 2
+        assert runtime_bundle["live_capture_ignored_message_count"] == 0
+        assert runtime_bundle["live_capture_rejected_message_count"] == 0
+        assert runtime_bundle["live_capture_pair_scope"] == ["BTCUSDT"]
+        assert runtime_bundle["live_capture_event_types"] == ["snapshot", "trade"]
         assert runtime_bundle["auto_export_dir_ref"].endswith("auto_exports\\2026-04-02")
         assert runtime_bundle["runtime_data_source"] == "recorded_replay"
         assert runtime_bundle["accepted"] is False
         assert runtime_bundle["consecutive_days"] == 1
-        assert any(event["event_type"] == "live_capture_completed" for event in events)
+        live_capture_event = next(
+            event for event in events if event["event_type"] == "live_capture_completed"
+        )
+        assert live_capture_event["live_capture_summary_ref"].endswith(
+            "live_captures\\2026-04-02\\live_websocket_capture_summary.json"
+        )
+        assert live_capture_event["emitted_message_count"] == 2
+        assert live_capture_event["accepted_message_count"] == 2
+        assert live_capture_event["pair_scope"] == ["BTCUSDT"]
+        assert live_capture_event["event_types"] == ["snapshot", "trade"]
         assert any(
             event["event_type"] == "runtime_evidence_bundle_written" for event in events
         )
