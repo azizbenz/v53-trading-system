@@ -47,6 +47,16 @@ def test_export_technical_dashboard_writes_availability_view():
         html = artifacts.html_path.read_text(encoding="utf-8")
         assert "availability_only" in html
         assert "No monitoring snapshot loaded" in html
+        assert "Live Market Lab" in html
+        assert "BTCUSDT" in html
+        assert "ETHUSDT" in html
+        assert "15m" in html
+        assert "1h" in html
+        assert "4h" in html
+        assert "1d" in html
+        assert "Candles" in html
+        assert "Line" in html
+        assert "stream.binance.com:9443/ws/" in html
         assert "Build-11 Shadow" in html
         assert "Build-12 Micro-live" in html
         assert "Build-13 Live-Light" in html
@@ -91,6 +101,8 @@ def test_export_technical_dashboard_writes_demo_sidecars():
         )
 
         assert "demo payload" in html.lower()
+        assert "Live Market Lab" in html
+        assert "api.binance.com/api/v3/klines" in html
         assert "Build-11 Shadow" in html
         assert "Build-12 Micro-live" in html
         assert "Build-13 Live-Light" in html
