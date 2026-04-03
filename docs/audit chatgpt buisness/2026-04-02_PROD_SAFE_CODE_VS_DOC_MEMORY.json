@@ -36,7 +36,7 @@
     "branch_alignment": {
       "main_commit": "e28de12",
       "origin_main_commit": "e28de12",
-      "current_branch_commit": "6781cff",
+      "current_branch_commit": "011a80d",
       "branch_divergence_detected": true,
       "interpretation": "The dedicated Full Shadow migration branch is now the active work surface. Canon migration started docs-first there, and the branch now also carries real Engine C/D packages, the Build-11 A/B/C/D runtime reinjection wave, the bounded native live_websocket proof checkpoint, and a local runner that now executes A/B/C/D before rendering component evidence. The previous branch remains the last coherent Option-B rollback checkpoint."
     },
@@ -509,6 +509,25 @@
         "The full Build-9X suite remains green after the explicit merge-gate wave.",
         "Build-14 now exposes distinct governed readers for false_breakout, LOB/VWA, OBI, Hurst, and competition monitor while the runtime export surface stays green."
       ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_monitoring/test_monitoring_backend.py tests/test_monitoring/test_observability.py tests/test_ui/test_technical_dashboard.py tests/test_ui/test_technical_dashboard_launcher.py tests/test_protocols/test_local_replay_shadow_runner.py -q",
+      "result": "45 passed",
+      "classification": "build14_reader_observability_green_surface",
+      "notes": [
+        "The full selected Build-14 reader set is now visible in the technical dashboard payload, the dashboard view, the observability export, and the local Shadow/demo launcher surfaces.",
+        "This closes the local observability gap without changing rollout doctrine or live-promotion semantics."
+      ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_manifest_registry/test_runtime_surface.py -q",
+      "result": "21 passed",
+      "classification": "build14_reader_observability_runtime_surface_green",
+      "notes": [
+        "The public runtime/export surface remains coherent after adding the new monitoring-level Build14ReaderProjection contract."
+      ]
     }
   ],
   "current_status_by_build": {
@@ -622,7 +641,7 @@
     {
       "decision_id": "GOV-009",
       "topic": "Build-9X explicit governance gates and Build-14 addendum absorption strategy",
-      "current_canon": "The branch now has explicit Build-9X V2 merge gates plus an end-to-end lifecycle proof, and the selected Build-14 addendum readers are all present as distinct governed snapshots: false_breakout_model, LOB/VWA, OBI, Hurst regime classifier, and competition monitor.",
+      "current_canon": "The branch now has explicit Build-9X V2 merge gates plus an end-to-end lifecycle proof, and the selected Build-14 addendum readers are all present as distinct governed snapshots. Their reader-level projection is now also visible across monitoring, the technical dashboard, observability export, and the local Shadow/demo launchers.",
       "proposed_change": "Formalize Build-9X V2 as explicit named merge gates plus one end-to-end lifecycle proof, then absorb the missing Build-14 addendum enrichments as Shadow-first governed readers. Allow only bounded post-Shadow live influence, never dynamic self-tuning live mutation.",
       "status": "implementation_wave_completed_on_current_branch",
       "rule_until_decided": "Harden governance first, then integrate Build-14 enrichments in Shadow, and only later allow limited live influence by explicit verdict. Do not let the new enrichments auto-penalize or auto-tune live behavior opportunistically."
@@ -885,6 +904,14 @@
       "record_path": "docs/audit chatgpt buisness/2026-04-03_BUILD9X_BUILD14_POINT_BY_POINT_MATRIX.md",
       "conclusion": "LOB/VWA, OBI, Hurst regime classifier, and competition monitor are now all available as distinct governed Build-14 readers on the migration branch, alongside the already integrated false_breakout_model, market_toxicity_snapshot, and execution_fragility_score.",
       "action_taken": "Move the next work from reader existence to Shadow observation, reporting, and later bounded influence verdicts."
+    },
+    {
+      "audit_id": "AUDIT-033",
+      "date": "2026-04-03",
+      "scope": "Build-14 reader observability wave",
+      "record_path": "docs/audit chatgpt buisness/2026-04-03_BUILD14_READER_OBSERVABILITY_WAVE_AUDIT.md",
+      "conclusion": "The selected Build-14 readers are now visible and traceable end-to-end through monitoring payloads, the technical dashboard, the observability export, and the local Shadow/demo launchers.",
+      "action_taken": "Treat reader existence plus local observability as complete, and move the next useful work to real Build-11 Shadow observation and later verdicting."
     }
   ],
   "known_critical_gaps": [
@@ -909,7 +936,7 @@
       "priority": "P1",
       "scope": "Build-14 representation across monitoring/UI/live-light surfaces",
       "doc_expectation": "Build-14 is SHADOW_ENABLED in Shadow, fully active there, then SHADOW_VALIDATED or DORMANT by verdict.",
-      "code_or_runtime_reality": "The Build-14 monitoring/UI/demo exposure was normalized on the current branch. Projection contracts now enforce coherent shadow_enabled states and the technical dashboard exposes Build-14 as enablers instead of framing it only as limited influence.",
+      "code_or_runtime_reality": "The Build-14 monitoring/UI/demo exposure was normalized on the current branch. Projection contracts now enforce coherent shadow_enabled states, the technical dashboard exposes Build-14 as enablers, and the selected reader set is now visible as explicit per-reader projections and observability metrics.",
       "status": "closed_on_current_branch"
     },
     {
@@ -1114,7 +1141,7 @@
     {
       "batch_id": "B11",
       "title": "Build-9X explicit gates and Build-14 addendum absorption",
-      "status": "pending",
+      "status": "completed",
       "scope": [
         "Build-9X V2 explicit merge gates",
         "Build-9X end-to-end governed lifecycle proof",
