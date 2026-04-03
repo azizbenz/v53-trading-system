@@ -36,7 +36,7 @@
     "branch_alignment": {
       "main_commit": "e28de12",
       "origin_main_commit": "e28de12",
-      "current_branch_commit": "7031d8a",
+      "current_branch_commit": "6ced911",
       "branch_divergence_detected": true,
       "interpretation": "The dedicated Full Shadow migration branch is now the active work surface. Canon migration started docs-first there, and the branch now also carries real Engine C/D packages, the Build-11 A/B/C/D runtime reinjection wave, the bounded native live_websocket proof checkpoint, and a local runner that now executes A/B/C/D before rendering component evidence. The previous branch remains the last coherent Option-B rollback checkpoint."
     },
@@ -461,6 +461,24 @@
       "notes": [
         "The broader Build-11 protocol surface remains green after wiring live capture summary refs and counts into the VPS state, events, and durable runtime evidence bundle."
       ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_protocols/test_shadow_vps_service_launcher.py -q",
+      "result": "5 passed",
+      "classification": "build11_vps_campaign_summary_green_surface",
+      "notes": [
+        "The autonomous VPS Shadow service now writes a cumulative campaign summary that stays coherent with multi-day dated-export runs and native live-websocket runs."
+      ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_protocols/test_shadow_daily_orchestrator_launcher.py tests/test_protocols/test_shadow_vps_service_launcher.py tests/test_protocols/test_shadow_live_websocket.py -q",
+      "result": "8 passed",
+      "classification": "build11_vps_campaign_summary_launcher_refresh_green_surface",
+      "notes": [
+        "The launcher-level Build-11 VPS surface remains green after adding the cumulative campaign summary artifact."
+      ]
     }
   ],
   "current_status_by_build": {
@@ -765,6 +783,14 @@
       "record_path": "docs/audit chatgpt buisness/2026-04-03_BUILD11_VPS_LIVE_CAPTURE_EVIDENCE_ENRICHMENT_AUDIT.md",
       "conclusion": "The autonomous VPS Shadow service now persists native live capture summary refs, message counts, pair scope, and event types in both its durable runtime evidence bundle and structured service events. This improves the honesty and auditability of the target-environment proof chain without claiming Build-11 closure.",
       "action_taken": "Freeze the proof-chain enrichment lot, keep Build-11 partial, and continue next with repeated real Shadow-day collection instead of more local semantic refactors."
+    },
+    {
+      "audit_id": "AUDIT-025",
+      "date": "2026-04-03",
+      "scope": "Build-11 VPS cumulative campaign summary",
+      "record_path": "docs/audit chatgpt buisness/2026-04-03_BUILD11_VPS_CAMPAIGN_SUMMARY_AUDIT.md",
+      "conclusion": "The autonomous VPS Shadow service now writes a cumulative campaign summary artifact that exposes campaign status, acquisition mode, latest live-capture facts, and remaining-day progress from one file. This improves operability for repeated target-environment Shadow-day collection without claiming Build-11 closure.",
+      "action_taken": "Freeze the campaign-summary lot, keep Build-11 partial, and continue next with repeated real Shadow-day collection rather than more local proof-chain fragmentation."
     }
   ],
   "known_critical_gaps": [
