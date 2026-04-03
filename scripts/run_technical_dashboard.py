@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import json
 import sys
 from pathlib import Path
 
@@ -17,6 +18,7 @@ if str(SRC_ROOT) not in sys.path:
 
 from backtest_artifact_import import (  # noqa: E402
     ArtifactImportRequest,
+    ArtifactImportSummary,
     StrategyLineageRecord,
     StrategyOnboardingRequest,
     summarize_import_request,
@@ -59,6 +61,9 @@ from monitoring import (  # noqa: E402
     LiveLightProjection,
     MicroLiveProjection,
     ReplayImportProjection,
+    ShadowProjection,
+    SystemProjection,
+    TechnicalDashboardPayload,
     build_observability_export,
     build_technical_dashboard_payload,
     collect_engine_metrics,
@@ -73,14 +78,15 @@ from protocols import (  # noqa: E402
     ShadowComponentAssessment,
     ShadowComponentKind,
     ShadowComponentVerdict,
+    ShadowRunSummary,
     ShadowRuntimeEvidenceRecorder,
     ShadowRuntimeEvidenceRecorderConfig,
     build_live_light_input_from_micro_live,
     build_live_light_projection,
     build_micro_live_input_from_shadow,
     build_micro_live_projection,
-    build_shadow_input_from_payloads,
     build_shadow_projection,
+    build_shadow_input_from_payloads,
     run_live_light_gate,
     run_micro_live_gate,
     run_shadow_validation,
@@ -120,6 +126,248 @@ def _status_for_build14(value: str) -> str:
     if value == "elevated":
         return "warning"
     return "info"
+
+
+def _load_json_file(path: Path):
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _resolve_artifact_path(root: Path, ref: str, fallback_relative: str) -> Path | None:
+    if ref:
+        path = Path(ref)
+        if not path.is_absolute():
+            path = REPO_ROOT / path
+        if path.exists():
+            return path
+    fallback = root / fallback_relative
+    if fallback.exists():
+        return fallback
+    return None
+
+
+def _status_from_validation(validation_status: str, accepted: bool) -> str:
+    normalized = validation_status.strip().casefold()
+    if accepted or normalized == "accepted":
+        return "healthy"
+    if normalized in {"not_run", "pending"}:
+        return "planned"
+    return "warning"
+
+
+def _build_replay_import_projection(summary: ArtifactImportSummary) -> ReplayImportProjection:
+    return ReplayImportProjection(
+        status=_status_from_validation(summary.validation_status, summary.accepted),
+        artifact_id=summary.artifact_id,
+        artifact_kind=summary.artifact_kind.value,
+        lineage_version=summary.lineage_version,
+        lifecycle_state=summary.review_state.value,
+        validation_status=summary.validation_status,
+        review_state=summary.review_state.value,
+        rejection_reasons=summary.rejection_reasons,
+    )
+
+
+def _build_live_artifact_micro_live_projection(
+    *,
+    shadow_summary: ShadowRunSummary,
+    replay_projection: ReplayImportProjection,
+    pair_scope: tuple[str, ...],
+) -> MicroLiveProjection:
+    blocking_reasons: list[str] = []
+    if shadow_summary.shadow_days_completed < shadow_summary.shadow_required_days:
+        blocking_reasons.append(
+            "Build-11 Shadow requires 30 consecutive days before Micro-live"
+        )
+    if not shadow_summary.shadow_report_ready:
+        blocking_reasons.append(
+            "Build-11 Shadow requires shadow_report_ready=True before Micro-live"
+        )
+    if not shadow_summary.inter_engine_comparison_ready:
+        blocking_reasons.append(
+            "Build-11 Shadow requires inter-engine A/B/C/D comparison evidence before Micro-live"
+        )
+    if not shadow_summary.build14_contribution_ready:
+        blocking_reasons.append(
+            "Build-11 Shadow requires Build-14 contribution evidence before Micro-live"
+        )
+    blocking_reasons.extend(
+        f"shadow gate: {reason}" for reason in shadow_summary.decision.blocking_reasons
+    )
+    return MicroLiveProjection(
+        status="critical" if blocking_reasons else "planned",
+        run_state="not_run",
+        verdict="blocked" if blocking_reasons else "not_run",
+        shadow_run_id=shadow_summary.run_id,
+        shadow_verdict=shadow_summary.decision.verdict.value,
+        allowed_to_probe=False,
+        requested_total_notional_usdt=0.0,
+        approved_total_notional_usdt=0.0,
+        approved_pair_notional_usdt=0.0,
+        order_probe_limit=0,
+        planned_pairs=pair_scope,
+        planned_engines=(),
+        import_artifact_id=replay_projection.artifact_id,
+        import_lineage_version=replay_projection.lineage_version,
+        observability_ready=False,
+        halt_ready=False,
+        onboarding_ready=False,
+        blocking_reasons=tuple(blocking_reasons),
+    )
+
+
+def _build_live_artifact_live_light_projection(
+    *,
+    shadow_summary: ShadowRunSummary,
+    micro_live_projection: MicroLiveProjection,
+    replay_projection: ReplayImportProjection,
+    build14_projection: Build14Projection,
+    pair_scope: tuple[str, ...],
+) -> LiveLightProjection:
+    blocking_reasons = [
+        "Build-12 Micro-live has not been executed yet",
+        *(
+            f"micro-live gate: {reason}"
+            for reason in micro_live_projection.blocking_reasons
+        ),
+    ]
+    return LiveLightProjection(
+        status="critical",
+        run_state="not_run",
+        verdict="blocked",
+        micro_live_run_id=shadow_summary.run_id,
+        micro_live_verdict=micro_live_projection.verdict,
+        allowed_to_execute_small=False,
+        requested_total_notional_usdt=0.0,
+        approved_total_notional_usdt=0.0,
+        approved_pair_notional_usdt=0.0,
+        execution_order_limit=0,
+        planned_pairs=pair_scope,
+        planned_engines=(),
+        import_artifact_id=replay_projection.artifact_id,
+        import_lineage_version=replay_projection.lineage_version,
+        observability_ready=False,
+        halt_ready=False,
+        execution_ready=False,
+        broker_ready=False,
+        exchange_ready=False,
+        blocking_reasons=tuple(blocking_reasons),
+        build14_influence_mode=build14_projection.influence_mode,
+        build14_action=build14_projection.action,
+        build14_severity=build14_projection.severity,
+        build14_summary=build14_projection.summary,
+        build14_reason_codes=build14_projection.reason_codes,
+        build14_confidence_penalty_weight=build14_projection.confidence_penalty_weight,
+        build14_recommended_budget_factor=build14_projection.recommended_budget_factor,
+    )
+
+
+def _build_live_artifact_system_projection(
+    payload: TechnicalDashboardPayload,
+    *,
+    replay_projection: ReplayImportProjection,
+    shadow_projection: ShadowProjection,
+    micro_live_projection: MicroLiveProjection,
+    live_light_projection: LiveLightProjection,
+) -> SystemProjection:
+    status_candidates = {
+        payload.system.headline_status,
+        payload.build9x.status,
+        shadow_projection.status,
+        micro_live_projection.status,
+        live_light_projection.status,
+        payload.build14.status,
+        replay_projection.status,
+    }
+    headline_status = (
+        "critical"
+        if "critical" in status_candidates
+        else "warning"
+        if "warning" in status_candidates
+        else "healthy"
+    )
+    return payload.system.model_copy(
+        update={
+            "headline_status": headline_status,
+            "build9x_status": payload.build9x.status,
+            "shadow_status": shadow_projection.status,
+            "micro_live_status": micro_live_projection.status,
+            "live_light_status": live_light_projection.status,
+            "build14_status": payload.build14.status,
+            "replay_import_status": replay_projection.status,
+            "governed_extensions_detail": (
+                "Local runtime artifacts loaded from the latest Build-11 campaign. "
+                "Build-9X, Shadow, replay/import, and Build-14 are backed by recorded local artifacts; "
+                "Micro-live and Live-Light remain governed and blocked until Shadow reaches 30/30 with a complete report."
+            ),
+        }
+    )
+
+
+def _load_local_runtime_payload(
+    root: Path,
+) -> tuple[TechnicalDashboardPayload, str] | None:
+    campaign_summary_path = root / "service" / "shadow_vps_service.campaign_summary.json"
+    if not campaign_summary_path.exists():
+        return None
+
+    campaign_summary = _load_json_file(campaign_summary_path)
+    candidate_payload_path = root / "shadow_session" / "local_replay_shadow.candidate_payload.json"
+    import_summary_path = root / "shadow_session" / "local_replay_shadow.import_summary.json"
+    shadow_summary_path = root / "shadow_session" / "local_replay_shadow.shadow_summary.json"
+    if (
+        not candidate_payload_path.exists()
+        or not import_summary_path.exists()
+        or not shadow_summary_path.exists()
+    ):
+        return None
+
+    payload = TechnicalDashboardPayload.model_validate_json(
+        candidate_payload_path.read_text(encoding="utf-8")
+    )
+    import_summary = ArtifactImportSummary.model_validate_json(
+        import_summary_path.read_text(encoding="utf-8")
+    )
+    shadow_summary = ShadowRunSummary.model_validate_json(
+        shadow_summary_path.read_text(encoding="utf-8")
+    )
+    shadow_projection = build_shadow_projection(shadow_summary)
+    replay_projection = _build_replay_import_projection(import_summary)
+    pair_scope = tuple(campaign_summary.get("live_capture_pair_scope", ()))
+    micro_live_projection = _build_live_artifact_micro_live_projection(
+        shadow_summary=shadow_summary,
+        replay_projection=replay_projection,
+        pair_scope=pair_scope,
+    )
+    live_light_projection = _build_live_artifact_live_light_projection(
+        shadow_summary=shadow_summary,
+        micro_live_projection=micro_live_projection,
+        replay_projection=replay_projection,
+        build14_projection=payload.build14,
+        pair_scope=pair_scope,
+    )
+    patched_payload = payload.model_copy(
+        update={
+            "system": _build_live_artifact_system_projection(
+                payload,
+                replay_projection=replay_projection,
+                shadow_projection=shadow_projection,
+                micro_live_projection=micro_live_projection,
+                live_light_projection=live_light_projection,
+            ),
+            "shadow": shadow_projection,
+            "micro_live": micro_live_projection,
+            "live_light": live_light_projection,
+            "replay_import": replay_projection,
+        }
+    )
+    source_note = (
+        "This page is rendered from the latest local Build-11 campaign artifacts. "
+        f"last_completed_session_date={campaign_summary.get('last_completed_session_date', 'n/a')} / "
+        f"consecutive_days={campaign_summary.get('consecutive_days', 0)} / "
+        f"remaining_days={campaign_summary.get('remaining_days', 30)} / "
+        f"service_status={campaign_summary.get('service_status', 'unknown')}."
+    )
+    return patched_payload, source_note
 
 
 def _build_demo_snapshot():
@@ -1141,6 +1389,8 @@ def export_technical_dashboard(
     *,
     demo: bool = False,
     monitoring_runtime=None,
+    prefer_local_runtime_artifacts: bool = True,
+    local_runtime_root: Path | None = None,
 ) -> DashboardArtifacts:
     """Export the local technical supervision interface to a static HTML file."""
 
@@ -1265,18 +1515,48 @@ def export_technical_dashboard(
         view_json_path.write_text(view.model_dump_json(indent=2), encoding="utf-8")
         observability_text_path.write_text(observability.text_payload, encoding="utf-8")
     else:
-        html = render_technical_dashboard_html(
-            title="V5.3 Technical Supervision Dashboard",
-            generated_at=_now_label(),
-            source_mode="availability_only",
-            source_note=(
-                "No live runtime snapshot is currently wired into this launcher. "
-                "The page shows real local capability and marks unavailable runtime values explicitly."
-            ),
-            sections=_availability_sections(),
-            future_panels=future_panels,
-            footer_notes=footer_notes,
+        runtime_root = local_runtime_root or (REPO_ROOT / "build" / "build11_live_websocket_campaign")
+        live_payload_bundle = (
+            _load_local_runtime_payload(runtime_root)
+            if prefer_local_runtime_artifacts
+            else None
         )
+        if live_payload_bundle is not None:
+            payload, source_note = live_payload_bundle
+            view = build_technical_dashboard_view(payload)
+            observability = build_observability_export(payload)
+            sections = view.sections + (_build_readiness_section(),)
+            html = render_technical_dashboard_html(
+                title="V5.3 Technical Supervision Dashboard",
+                generated_at=_now_label(),
+                source_mode="local_runtime_artifacts",
+                source_note=source_note,
+                sections=sections,
+                future_panels=view.future_panels,
+                footer_notes=footer_notes,
+                observability_text=observability.text_payload,
+                raw_payload_json=payload.model_dump_json(indent=2),
+                raw_view_json=view.model_dump_json(indent=2),
+            )
+            payload_json_path = output_dir / "technical_dashboard.payload.json"
+            view_json_path = output_dir / "technical_dashboard.view.json"
+            observability_text_path = output_dir / "technical_dashboard.metrics.txt"
+            payload_json_path.write_text(payload.model_dump_json(indent=2), encoding="utf-8")
+            view_json_path.write_text(view.model_dump_json(indent=2), encoding="utf-8")
+            observability_text_path.write_text(observability.text_payload, encoding="utf-8")
+        else:
+            html = render_technical_dashboard_html(
+                title="V5.3 Technical Supervision Dashboard",
+                generated_at=_now_label(),
+                source_mode="availability_only",
+                source_note=(
+                    "No live runtime snapshot is currently wired into this launcher. "
+                    "The page shows real local capability and marks unavailable runtime values explicitly."
+                ),
+                sections=_availability_sections(),
+                future_panels=future_panels,
+                footer_notes=footer_notes,
+            )
 
     html_path.write_text(html, encoding="utf-8")
     return DashboardArtifacts(
@@ -1307,9 +1587,25 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Render a governed demo payload built from the existing builders.",
     )
+    parser.add_argument(
+        "--availability-only",
+        action="store_true",
+        help="Disable local runtime artifact loading and render capability-only availability mode.",
+    )
+    parser.add_argument(
+        "--local-runtime-root",
+        type=Path,
+        default=REPO_ROOT / "build" / "build11_live_websocket_campaign",
+        help="Root directory for local runtime artifacts used to hydrate the dashboard outside demo mode.",
+    )
     args = parser.parse_args(argv)
 
-    artifacts = export_technical_dashboard(args.output_dir, demo=args.demo)
+    artifacts = export_technical_dashboard(
+        args.output_dir,
+        demo=args.demo,
+        prefer_local_runtime_artifacts=not args.availability_only,
+        local_runtime_root=args.local_runtime_root,
+    )
     print(f"Technical dashboard HTML: {artifacts.html_path}")
     if artifacts.payload_json_path is not None:
         print(f"Technical payload JSON: {artifacts.payload_json_path}")

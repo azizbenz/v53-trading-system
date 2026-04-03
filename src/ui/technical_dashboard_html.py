@@ -44,8 +44,9 @@ def _render_card(card: DashboardCard) -> str:
 
 def _render_section(section: DashboardSection) -> str:
     cards = "".join(_render_card(card) for card in section.cards)
+    section_key = _slugify(section.title)
     return (
-        f"<section class='section' data-section-key='{_slugify(section.title)}'>"
+        f"<section class='section' id='section-{section_key}' data-section-key='{section_key}'>"
         f"<h2>{escape(section.title)}</h2>"
         f"<div class='card-grid'>{cards}</div>"
         f"</section>"
@@ -62,11 +63,80 @@ def _render_list(title: str, values: tuple[str, ...]) -> str:
 def _render_code_block(title: str, body: str) -> str:
     if not body:
         return ""
+    block_key = _slugify(title)
     return (
-        "<details class='details-block'>"
+        f"<details class='details-block' id='detail-{block_key}'>"
         f"<summary>{escape(title)}</summary>"
         f"<pre>{escape(body)}</pre>"
         "</details>"
+    )
+
+
+def _render_panel_navigation(future_panels: tuple[str, ...]) -> str:
+    if not future_panels:
+        return ""
+    specs = {
+        "technical_supervision": (
+            "Technical Supervision",
+            "Live sections: System, Portfolio, Pairs, Engines, Risk, Execution, Data & Infra, Alerts.",
+            "#section-system",
+        ),
+        "build9x_diagnostics": (
+            "Build-9X Diagnostics",
+            "Governed diagnostics, hypotheses, replay candidates, capacity and backpressure.",
+            "#section-build-9x",
+        ),
+        "shadow_supervision": (
+            "Build-11 Shadow",
+            "Shadow 30-day gate, divergences, component verdicts and blocking reasons.",
+            "#section-build-11-shadow",
+        ),
+        "micro_live_supervision": (
+            "Build-12 Micro-live",
+            "Probe gating, budget, guardrails and operator safing surface.",
+            "#section-build-12-micro-live",
+        ),
+        "live_light_supervision": (
+            "Build-13 Live-Light",
+            "Execution gating, readiness, Build-14 influence and operator safing surface.",
+            "#section-build-13-live-light",
+        ),
+        "build14_supervision": (
+            "Build-14 Enablers",
+            "Reader-level Build-14 evidence and governed influence mode.",
+            "#section-build-14-enablers",
+        ),
+        "artifact_import": (
+            "Replay & Import",
+            "Artifact manifest, lineage and import validation state.",
+            "#section-replay-import",
+        ),
+        "observability_export": (
+            "Observability Export",
+            "Metrics and export detail rendered from the active dashboard payload.",
+            "#detail-observability-export",
+        ),
+    }
+    cards: list[str] = []
+    for panel in future_panels:
+        label, detail, target = specs.get(
+            panel,
+            (panel, "Panel declared in payload but not mapped to a dashboard anchor yet.", "#"),
+        )
+        cards.append(
+            "<article class='panel-nav-card'>"
+            f"<header><span class='panel-nav-label'>{escape(panel)}</span></header>"
+            f"<p class='panel-nav-value'>{escape(label)}</p>"
+            f"<p class='panel-nav-detail'>{escape(detail)}</p>"
+            f"<a class='panel-nav-link' href='{escape(target)}'>Open panel</a>"
+            "</article>"
+        )
+    return (
+        "<section class='section panel-nav' id='section-future-panels'>"
+        "<h2>Future Panels</h2>"
+        "<div class='panel-nav-grid'>"
+        + "".join(cards)
+        + "</div></section>"
     )
 
 
@@ -817,7 +887,7 @@ def render_technical_dashboard_html(
     """Render a local static HTML page for the technical dashboard."""
 
     rendered_sections = "".join(_render_section(section) for section in sections)
-    future_section = _render_list("Future Panels", future_panels)
+    panel_navigation = _render_panel_navigation(future_panels)
     footer_section = _render_list("Notes", footer_notes)
     observability_block = _render_code_block("Observability Export", observability_text)
     payload_block = _render_code_block("Raw Technical Payload", raw_payload_json)
@@ -985,6 +1055,46 @@ def render_technical_dashboard_html(
       font-size: 13px;
       line-height: 1.5;
     }}
+    .panel-nav-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 14px;
+    }}
+    .panel-nav-card {{
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      padding: 14px;
+      display: grid;
+      gap: 8px;
+      background: #f8fbfd;
+    }}
+    .panel-nav-card header {{
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }}
+    .panel-nav-value {{
+      margin: 0;
+      font-size: 18px;
+      font-weight: 700;
+    }}
+    .panel-nav-detail {{
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }}
+    .panel-nav-link {{
+      color: #1e5db3;
+      font-size: 13px;
+      font-weight: 700;
+      text-decoration: none;
+    }}
+    .panel-nav-link:hover {{
+      text-decoration: underline;
+    }}
     .market-lab-note {{
       margin: 0 0 16px;
       color: var(--muted);
@@ -1053,8 +1163,8 @@ def render_technical_dashboard_html(
       <p class="hero-note">{escape(source_note)}</p>
     </section>
     {market_lab}
+    {panel_navigation}
     {rendered_sections}
-    {future_section}
     {observability_block}
     {payload_block}
     {view_block}

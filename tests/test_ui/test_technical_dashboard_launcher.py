@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+import pytest
 import shutil
 import sys
 from uuid import uuid4
@@ -41,7 +42,10 @@ def test_export_technical_dashboard_writes_availability_view():
     output_dir = _scratch_dir("availability")
 
     try:
-        artifacts = launcher.export_technical_dashboard(output_dir)
+        artifacts = launcher.export_technical_dashboard(
+            output_dir,
+            prefer_local_runtime_artifacts=False,
+        )
 
         assert artifacts.html_path.exists()
         html = artifacts.html_path.read_text(encoding="utf-8")
@@ -158,6 +162,49 @@ def test_launcher_main_accepts_demo_output_dir():
 
         assert exit_code == 0
         assert (output_dir / "technical_dashboard.html").exists()
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_export_technical_dashboard_prefers_local_runtime_artifacts_when_available():
+    launcher = _load_launcher_module()
+    repo_root = Path(__file__).resolve().parents[2]
+    artifact_root = repo_root / "build" / "build11_live_websocket_campaign"
+    candidate_payload = artifact_root / "shadow_session" / "local_replay_shadow.candidate_payload.json"
+    shadow_summary = artifact_root / "shadow_session" / "local_replay_shadow.shadow_summary.json"
+    campaign_summary = artifact_root / "service" / "shadow_vps_service.campaign_summary.json"
+    if not (candidate_payload.exists() and shadow_summary.exists() and campaign_summary.exists()):
+        pytest.skip("local runtime artifact campaign not present in workspace")
+
+    output_dir = _scratch_dir("live_artifacts")
+    try:
+        artifacts = launcher.export_technical_dashboard(
+            output_dir,
+            local_runtime_root=artifact_root,
+        )
+
+        assert artifacts.payload_json_path is not None and artifacts.payload_json_path.exists()
+        assert artifacts.view_json_path is not None and artifacts.view_json_path.exists()
+        assert artifacts.observability_text_path is not None and artifacts.observability_text_path.exists()
+
+        html = artifacts.html_path.read_text(encoding="utf-8")
+        payload = json.loads(artifacts.payload_json_path.read_text(encoding="utf-8"))
+
+        assert "local_runtime_artifacts" in html
+        assert "engine_a" in html
+        assert "engine_b" in html
+        assert "engine_c" in html
+        assert "engine_d" in html
+        assert "Build-11 Shadow" in html
+        assert "Build-12 Micro-live" in html
+        assert "Build-13 Live-Light" in html
+        assert "Build-14 Enablers" in html
+        assert "technical_supervision" in html
+        assert "observability_export" in html
+        assert payload["shadow"]["shadow_days_completed"] == 1
+        assert payload["shadow"]["shadow_required_days"] == 30
+        assert payload["micro_live"]["verdict"] == "blocked"
+        assert payload["live_light"]["verdict"] == "blocked"
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)
 
