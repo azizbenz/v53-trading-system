@@ -31,7 +31,7 @@ def _payload() -> TechnicalDashboardPayload:
         system=SystemProjection(
             headline_status="healthy",
             active_modules=("monitoring", "protocols"),
-            active_engines=("engine_a", "engine_b"),
+            active_engines=("engine_a", "engine_b", "engine_c", "engine_d"),
             shadow_status="healthy",
             build14_status="healthy",
             replay_import_status="healthy",
@@ -113,7 +113,7 @@ def _summary() -> ShadowRunSummary:
             review_state=ReviewState.PENDING,
             manual_review_required=False,
         ),
-        active_engines=("engine_a", "engine_b"),
+        active_engines=("engine_a", "engine_b", "engine_c", "engine_d"),
         build14_status="healthy",
         shadow_days_completed=30,
         shadow_required_days=30,

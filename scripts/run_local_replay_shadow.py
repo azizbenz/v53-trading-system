@@ -232,7 +232,7 @@ def _build14_projection() -> Build14Projection:
 
 
 def _build_component_assessments() -> tuple[ShadowComponentAssessment, ...]:
-    engine_ids = ("engine_a", "engine_b")
+    engine_ids = ("engine_a", "engine_b", "engine_c", "engine_d")
     build14_ids = (
         "build14_microstructure",
         "build14_regime",
@@ -458,6 +458,20 @@ def _build_demo_payload(
                 expected_cost_bps=2.4,
                 ce_expected=0.0002,
             ),
+            collect_engine_metrics(
+                engine_id="engine_c",
+                emitted_signals=2,
+                net_edge_bps=6.5,
+                expected_cost_bps=2.3,
+                ce_expected=0.00035,
+            ),
+            collect_engine_metrics(
+                engine_id="engine_d",
+                emitted_signals=1,
+                net_edge_bps=5.2,
+                expected_cost_bps=2.1,
+                ce_expected=0.00028,
+            ),
         ),
         pairs=(
             collect_pair_metrics(
@@ -480,7 +494,7 @@ def _build_demo_payload(
     return build_technical_dashboard_payload(
         snapshot,
         active_modules=active_modules,
-        active_engines=("engine_a", "engine_b"),
+        active_engines=("engine_a", "engine_b", "engine_c", "engine_d"),
         build9x_projection=Build9XProjection(
             status="info",
             diagnostics_count=0,

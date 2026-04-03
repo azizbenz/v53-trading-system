@@ -36,9 +36,9 @@
     "branch_alignment": {
       "main_commit": "e28de12",
       "origin_main_commit": "e28de12",
-      "current_branch_commit": "d92fb5b",
+      "current_branch_commit": "185f7ad",
       "branch_divergence_detected": true,
-      "interpretation": "The dedicated Full Shadow migration branch is now the active work surface. Canon migration is intentionally staged there while the previous branch remains the last coherent Option-B rollback checkpoint."
+      "interpretation": "The dedicated Full Shadow migration branch is now the active work surface. Canon migration started docs-first there, and the branch now also carries real Engine C/D packages plus the first Build-11 A/B/C/D runtime reinjection wave, while the previous branch remains the last coherent Option-B rollback checkpoint."
     },
     "notes": [
       "Do not reset hard.",
@@ -276,6 +276,55 @@
       "notes": [
         "The targeted regression suite remains aligned after removing the false Build-11 C/D prerequisite."
       ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_engines/test_engine_c tests/test_engines/test_engine_d tests/test_manifest_registry/test_runtime_surface.py -q",
+      "result": "45 passed",
+      "classification": "full_shadow_engine_cd_packages_green_surface",
+      "notes": [
+        "Engine C and Engine D are now real runtime packages on the migration branch rather than spec_only facades.",
+        "This validates package/runtime entry points and the canonical runtime surface expectations for both engines."
+      ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_protocols/test_contracts.py tests/test_protocols/test_shadow_day_counter.py tests/test_protocols/test_shadow_runtime.py tests/test_protocols/test_micro_live_runtime.py tests/test_protocols/test_live_light_runtime.py tests/test_protocols/test_shadow_runtime_evidence.py tests/test_protocols/test_shadow_report_builder.py tests/test_protocols/test_local_replay_shadow_runner.py -q",
+      "result": "114 passed",
+      "classification": "full_shadow_build11_reinjection_green_surface",
+      "notes": [
+        "The Build-11 Shadow protocol perimeter is now widened to A/B/C/D + Build-14 on the migration branch.",
+        "This also validates the widened Shadow report/day-counter perimeter, the local runner, and the governed downstream gate contracts."
+      ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_protocols/test_shadow_dashboard.py tests/test_monitoring/test_monitoring_backend.py tests/test_monitoring/test_monitoring_runtime.py tests/test_ui/test_technical_dashboard.py tests/test_ui/test_technical_dashboard_launcher.py -q",
+      "result": "40 passed",
+      "classification": "full_shadow_projection_monitoring_ui_green_surface",
+      "notes": [
+        "The local monitoring and technical dashboard surfaces remain green after widening the Shadow perimeter to A/B/C/D.",
+        "This confirms the reinjection did not silently break the current operator-facing Build-11 projection surfaces."
+      ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_regression_alignment.py -q",
+      "result": "53 passed",
+      "classification": "full_shadow_regression_alignment_green_surface",
+      "notes": [
+        "The regression suite now reflects the A/B/C/D Full Shadow perimeter together with the already enforced 30-day-plus-report-ready gate semantics."
+      ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_engines/test_engine_c tests/test_engines/test_engine_d tests/test_manifest_registry/test_runtime_surface.py tests/test_protocols/test_contracts.py tests/test_protocols/test_shadow_day_counter.py tests/test_protocols/test_shadow_runtime.py tests/test_protocols/test_micro_live_runtime.py tests/test_protocols/test_live_light_runtime.py tests/test_protocols/test_shadow_runtime_evidence.py tests/test_protocols/test_shadow_report_builder.py tests/test_protocols/test_shadow_dashboard.py tests/test_protocols/test_local_replay_shadow_runner.py tests/test_monitoring/test_monitoring_backend.py tests/test_monitoring/test_monitoring_runtime.py tests/test_ui/test_technical_dashboard.py tests/test_ui/test_technical_dashboard_launcher.py tests/test_regression_alignment.py -q",
+      "result": "252 passed",
+      "classification": "full_shadow_engine_cd_and_build11_reinjection_consolidated_green_surface",
+      "notes": [
+        "This is the consolidated green proof set for the Engine C/D implementation lot plus the first Build-11 A/B/C/D runtime reinjection wave on the migration branch.",
+        "It is a code/test closure checkpoint, not yet a claim of final operational Build-11 closure."
+      ]
     }
   ],
   "current_status_by_build": {
@@ -294,8 +343,8 @@
     "build_12": "NOT_READY",
     "build_13": "NOT_READY",
     "build_14": "ALIGNED",
-    "build_15": "NOT_READY",
-    "build_16": "NOT_READY",
+    "build_15": "STILL_PARTIAL",
+    "build_16": "STILL_PARTIAL",
     "build_17": "PARTIAL_SURFACE_ONLY"
   },
   "hard_constraints": {
@@ -383,8 +432,8 @@
       "topic": "Target migration to Full Shadow 30j A/B/C/D",
       "current_canon": "The current branch still runs on the Option B baseline where Build-11 validates A/B + Build-14 only, and C/D remain later implementation scopes.",
       "proposed_change": "User-selected target doctrine: migrate toward a single Build-11 Full Shadow 30-day phase that observes A/B/C/D + Build-14, while keeping downstream Micro-live/Live promotions gated per component verdict rather than automatic.",
-      "status": "canon_repatched_on_migration_branch_pending_engine_implementation",
-      "rule_until_decided": "On the dedicated migration branch, the canon now targets Full Shadow A/B/C/D. Do not treat GOV-008 as fully implemented until Engine C, Engine D, and Build-11 C/D runtime reinjection lots are executed."
+      "status": "engine_cd_and_partial_build11_reinjection_applied_on_migration_branch",
+      "rule_until_decided": "On the dedicated migration branch, the canon and the first runtime/code wave now target Full Shadow A/B/C/D. Do not treat GOV-008 as fully implemented until manifest/profile surfaces are realigned and Build-11 runtime proof is refreshed on the target environment."
     }
   ],
   "targeted_audits": [
@@ -524,6 +573,14 @@
       "record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_LOT1_CANON_REPATCH_AUDIT.md",
       "conclusion": "The migration branch canon now explicitly restores Build-11 as Full Shadow A/B/C/D + Build-14, while preserving the rule that C/D observation in Shadow does not imply automatic Micro-live or Live promotion.",
       "action_taken": "Freeze the doctrine change in canonical docs first, keep the branch marked as docs-ahead-of-runtime, and move next to Engine C implementation rather than premature Build-11 runtime reinjection."
+    },
+    {
+      "audit_id": "AUDIT-018",
+      "date": "2026-04-03",
+      "scope": "Full Shadow migration Lots 2 to 4 - Engine C/D implementation and Build-11 runtime reinjection",
+      "record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_LOT2_4_ENGINE_CD_AND_BUILD11_REINJECTION_AUDIT.md",
+      "conclusion": "Engine C and Engine D are now real runtime packages on the migration branch, and the first honest Build-11 A/B/C/D runtime reinjection wave is green on focused and consolidated test surfaces.",
+      "action_taken": "Freeze the code/test lot, then move next to manifest/profile and late-build narrative realignment rather than overstating operational closure."
     }
   ],
   "known_critical_gaps": [
@@ -532,7 +589,7 @@
       "priority": "P0",
       "scope": "Build-11 doctrine vs actual closure criteria",
       "doc_expectation": "On the migration branch, Shadow 30 days is now repatched as a full-system truth phase with A/B/C/D and Build-14 SHADOW_ENABLED, then post-Shadow verdict.",
-      "code_or_runtime_reality": "Autonomous Shadow VPS service and live_websocket support exist, but the runtime still does not honestly include Engine C and Engine D as real Build-11 Shadow participants. Final operational proof and doctrinal closure are not yet established.",
+      "code_or_runtime_reality": "Autonomous Shadow VPS service and live_websocket support exist, and the migration branch now honestly includes Engine C and Engine D in the Build-11 code/test perimeter. Final operational proof and doctrinal closure are still not established on the target environment.",
       "status": "open"
     },
     {
@@ -540,7 +597,7 @@
       "priority": "P1",
       "scope": "Moteurs C/D",
       "doc_expectation": "On the migration branch, Engine C and Engine D are part of the Build-11 Full Shadow observation perimeter, while their downstream promotion remains verdict- and gate-driven.",
-      "code_or_runtime_reality": "engine_c and engine_d now import cleanly through spec_only facades, but the actual Engine C and Engine D trading logic is still not implemented and the module inventory still reflects a planned state.",
+      "code_or_runtime_reality": "Engine C and Engine D are now implemented as real shadow-capable packages and covered by focused tests, but module inventory/profile registry surfaces still reflect the older planned state and need realignment.",
       "status": "open"
     },
     {
@@ -597,8 +654,9 @@
       "scope": "Canonical contradiction between Build-11 and Build-15/16/17",
       "doc_expectation": "The build order, Build-11 Shadow doctrine, Build-15 / Build-16 engine onboarding, and Build-17 Complete rollout should tell one coherent story.",
       "code_or_runtime_reality": "Build-11 / master / build-plan still require A/B/C/D active in Shadow intégral, while Build-15 and Build-16 define C and D as later dedicated builds that start only after Build-14 is validated. The codebase currently follows the more conservative staged interpretation with engine_c and engine_d remaining planned spec_only facades.",
-      "status": "closed_on_current_branch",
-      "branch_resolution": "Option B was accepted and applied on the current branch: Build-11 now targets A/B + Build-14, while C and D remain later dedicated builds."
+      "status": "open",
+      "branch_resolution": "Option B remains the last rollback checkpoint on the previous branch. The migration branch has moved beyond it and now requires explicit late-build realignment rather than staged deferral.",
+      "migration_branch_reality": "Engine C and Engine D are now real runtime packages on the migration branch and the first Build-11 A/B/C/D reinjection wave is green, but Build-15 / Build-16 / Build-17 wording and manifest/profile surfaces still need coherent refresh."
     }
   ],
   "work_batches": [
@@ -794,26 +852,27 @@
     }
   },
   "next_recommended_action": {
-    "step": "Execute Lot 2 on the dedicated migration branch: implement Engine C as a real Shadow-capable engine before any Build-11 C/D runtime reinjection.",
-    "reason": "Lot 1 is now frozen in canon. The branch is intentionally docs-ahead-of-runtime, so the next honest move is to make Engine C real rather than pretending the Build-11 runtime already satisfies the new doctrine."
+    "step": "Audit and realign module_inventory, profile_registry, and the remaining Build-15/16/17 narrative surfaces against the new Full Shadow A/B/C/D migration reality.",
+    "reason": "Engine C, Engine D, and the first Build-11 A/B/C/D reinjection wave are now frozen in code/tests. The next honest move is to remove the remaining staged-story drift before making stronger rollout claims."
   },
   "branch_overrides": {
     "option_b_realignment_commit": "99cf170",
     "migration_branch": "codex/full-shadow-abcd-migration-20260403",
     "migration_branch_base_commit": "01b39e3",
-    "effective_next_action": "Use the migration branch for Lot 2 Engine C implementation, then Lot 3 Engine D implementation, before any Build-11 C/D runtime reinjection.",
-    "effective_reason": "The canon repatch is now frozen. The lowest-risk next move is to make Engine C and Engine D real enough for honest Shadow participation before touching Build-11 runtime contracts."
+    "effective_next_action": "Use the migration branch for the post-reinjection audit wave: registry/profile realignment, late-build narrative cleanup, then refreshed Build-11 to Build-17 audit.",
+    "effective_reason": "The branch is no longer only docs-ahead-of-runtime. Engine C/D and the first Build-11 A/B/C/D runtime reinjection are now green, so the next risk is coherence drift across manifests, profiles, and late-build storytelling."
   },
   "planned_migration": {
     "migration_id": "MIG-001",
     "selected_target": "full_shadow_30d_abcd_build14",
-    "status": "lot1_canon_repatch_applied_on_migration_branch",
+    "status": "lot2_lot3_and_partial_lot4_code_wave_green_on_migration_branch",
     "record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_MIGRATION_PLAN.md",
     "checkpoint_record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_LOT0_BRANCH_CHECKPOINT.md",
     "lot1_record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_LOT1_CANON_REPATCH_AUDIT.md",
+    "lot2_4_record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_LOT2_4_ENGINE_CD_AND_BUILD11_REINJECTION_AUDIT.md",
     "active_branch": "codex/full-shadow-abcd-migration-20260403",
     "base_commit": "01b39e3",
-    "rule_until_applied": "The migration branch canon now targets Full Shadow A/B/C/D, but the doctrine is not considered implemented until Engine C, Engine D, and Build-11 C/D runtime reinjection lots are executed.",
-    "recommended_start": "Lot 2 - Engine C shadow-capable implementation"
+    "rule_until_applied": "The migration branch now has the canon repatch plus the first Engine C/D and Build-11 A/B/C/D code/test wave, but the doctrine is not considered fully implemented until manifest/profile surfaces and late-build coherence are refreshed and Build-11 runtime proof is completed on the target environment.",
+    "recommended_start": "Post-reinjection coherence audit: manifest/profile registry plus Build-15/16/17 realignment"
   }
 }

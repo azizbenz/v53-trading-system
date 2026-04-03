@@ -51,7 +51,7 @@ def _shadow_component_assessments(
 ) -> tuple[ShadowComponentAssessment, ...]:
     dormant = set(dormant_component_ids)
     assessments: list[ShadowComponentAssessment] = []
-    for component_id in ("engine_a", "engine_b"):
+    for component_id in ("engine_a", "engine_b", "engine_c", "engine_d"):
         assessments.append(
             ShadowComponentAssessment(
                 component_id=component_id,
@@ -108,7 +108,7 @@ def _shadow_payload(
         system=SystemProjection(
             headline_status="healthy",
             active_modules=("protocols", "monitoring", "ui"),
-            active_engines=("engine_a", "engine_b"),
+            active_engines=("engine_a", "engine_b", "engine_c", "engine_d"),
             stale_engines=(),
             build9x_status="info",
             shadow_status="healthy",
@@ -245,7 +245,7 @@ def _shadow_summary(
         open_hypotheses=0,
         replay_candidate_count=0,
         review_export_ready=True,
-        active_engines=("engine_a", "engine_b"),
+        active_engines=("engine_a", "engine_b", "engine_c", "engine_d"),
         build14_status="warning",
         shadow_days_completed=shadow_days_completed,
         shadow_required_days=30,
@@ -275,8 +275,18 @@ def test_build_micro_live_input_from_shadow_maps_governed_inputs():
     assert micro_input.shadow_import_artifact_id == "artifact-1"
     assert micro_input.shadow_import_lineage_version == "a.v1.0.r1"
     assert micro_input.import_validation_status == "accepted"
-    assert micro_input.active_engines == ("engine_a", "engine_b")
-    assert micro_input.shadow_validated_engines == ("engine_a", "engine_b")
+    assert micro_input.active_engines == (
+        "engine_a",
+        "engine_b",
+        "engine_c",
+        "engine_d",
+    )
+    assert micro_input.shadow_validated_engines == (
+        "engine_a",
+        "engine_b",
+        "engine_c",
+        "engine_d",
+    )
 
 
 def test_build_micro_live_input_from_shadow_filters_to_shadow_validated_light_engines():
@@ -285,6 +295,8 @@ def test_build_micro_live_input_from_shadow_filters_to_shadow_validated_light_en
             component_assessments=_shadow_component_assessments(
                 dormant_component_ids=(
                     "engine_b",
+                    "engine_c",
+                    "engine_d",
                     "build14_microstructure",
                     "build14_regime",
                     "build14_covariance",
@@ -306,6 +318,8 @@ def test_build_micro_live_input_from_shadow_filters_to_shadow_validated_light_en
 
     assert micro_input.active_engines == ("engine_a",)
     assert "engine_b" in micro_input.shadow_dormant_components
+    assert "engine_c" in micro_input.shadow_dormant_components
+    assert "engine_d" in micro_input.shadow_dormant_components
 
 
 def test_build_micro_live_input_from_shadow_rejects_non_shadow_source_payload():
@@ -374,10 +388,12 @@ def test_build_micro_live_input_from_shadow_rejects_requesting_dormant_or_unvali
             _shadow_summary(
                 component_assessments=_shadow_component_assessments(
                     dormant_component_ids=(
-                        "engine_b",
-                        "build14_microstructure",
-                        "build14_regime",
-                        "build14_covariance",
+                    "engine_b",
+                    "engine_c",
+                    "engine_d",
+                    "build14_microstructure",
+                    "build14_regime",
+                    "build14_covariance",
                         "build14_risk_contribution",
                         "build14_edge_diversity",
                     )
@@ -490,7 +506,12 @@ def test_run_micro_live_gate_allows_probe_when_shadow_and_governance_are_ready()
     assert summary.decision.verdict == MicroLiveVerdict.ALLOWED_TO_PROBE
     assert summary.decision.allowed_to_probe is True
     assert summary.execution_plan.approved_total_notional_usdt == 20.0
-    assert summary.shadow_validated_engines == ("engine_a", "engine_b")
+    assert summary.shadow_validated_engines == (
+        "engine_a",
+        "engine_b",
+        "engine_c",
+        "engine_d",
+    )
 
 
 def test_run_micro_live_gate_blocks_when_observability_or_onboarding_is_missing():

@@ -95,7 +95,6 @@ def _resolve_shadow_component_verdicts(
         assessment.component_id
         for assessment in shadow_summary.component_assessments
         if assessment.component_kind == ShadowComponentKind.ENGINE
-        and assessment.component_id in {"engine_a", "engine_b"}
         and assessment.verdict == ShadowComponentVerdict.SHADOW_VALIDATED
     )
     dormant_components = tuple(
@@ -106,7 +105,7 @@ def _resolve_shadow_component_verdicts(
 
     if not validated_light_engines:
         raise MicroLiveInputError(
-            "Build-12 Micro-live requires at least one SHADOW_VALIDATED Light engine from Build-11"
+            "Build-12 Micro-live requires at least one SHADOW_VALIDATED governed engine from Build-11"
         )
 
     return validated_light_engines, dormant_components
@@ -144,7 +143,7 @@ def build_micro_live_input_from_shadow(
         )
     if not shadow_summary.inter_engine_comparison_ready:
         raise MicroLiveInputError(
-            "Build-12 Micro-live requires inter-engine A/B comparison evidence from Build-11"
+            "Build-12 Micro-live requires inter-engine A/B/C/D comparison evidence from Build-11"
         )
     if not shadow_summary.build14_contribution_ready:
         raise MicroLiveInputError(

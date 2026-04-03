@@ -34,7 +34,9 @@ _ACCEPTED_IMPORT_STATUSES = frozenset({"accepted"})
 _ACCEPTED_ONBOARDING_REVIEW_STATES = frozenset(
     {ReviewState.PENDING, ReviewState.APPROVED}
 )
-_REQUIRED_SHADOW_ENGINE_IDS = frozenset({"engine_a", "engine_b"})
+_REQUIRED_SHADOW_ENGINE_IDS = frozenset(
+    {"engine_a", "engine_b", "engine_c", "engine_d"}
+)
 _REQUIRED_SHADOW_BUILD14_COMPONENT_IDS = frozenset(
     {
         "build14_microstructure",
@@ -44,8 +46,8 @@ _REQUIRED_SHADOW_BUILD14_COMPONENT_IDS = frozenset(
         "build14_edge_diversity",
     }
 )
-_MICRO_LIVE_ALLOWED_ENGINES = frozenset({"engine_a", "engine_b"})
-_LIVE_LIGHT_ALLOWED_ENGINES = frozenset({"engine_a", "engine_b"})
+_MICRO_LIVE_ALLOWED_ENGINES = _REQUIRED_SHADOW_ENGINE_IDS
+_LIVE_LIGHT_ALLOWED_ENGINES = _REQUIRED_SHADOW_ENGINE_IDS
 
 
 class ShadowTruthSet(BaseModel, frozen=True):
@@ -456,7 +458,7 @@ class ShadowReportArtifact(BaseModel, frozen=True):
 
         if self.inter_engine_comparison_ready and set(engine_ids) != _REQUIRED_SHADOW_ENGINE_IDS:
             raise ValueError(
-                "Build-11 shadow report inter_engine_comparison_ready=True requires A/B evidence"
+                "Build-11 shadow report inter_engine_comparison_ready=True requires A/B/C/D evidence"
             )
         if (
             self.build14_contribution_ready
@@ -659,11 +661,11 @@ class MicroLiveInput(BaseModel, frozen=True):
                 )
 
         if not self.active_engines:
-            raise ValueError("Build-12 Micro-live requires at least one Light engine")
+            raise ValueError("Build-12 Micro-live requires at least one governed engine")
         unknown_engines = set(self.active_engines) - _MICRO_LIVE_ALLOWED_ENGINES
         if unknown_engines:
             raise ValueError(
-                "Build-12 Micro-live allows only engine_a and engine_b"
+                "Build-12 Micro-live allows only governed engines from the Full Shadow perimeter"
             )
         if not self.shadow_validated_engines:
             raise ValueError(
@@ -674,7 +676,7 @@ class MicroLiveInput(BaseModel, frozen=True):
         )
         if unknown_shadow_validated:
             raise ValueError(
-                "Build-12 Micro-live shadow_validated_engines must stay within engine_a/engine_b"
+                "Build-12 Micro-live shadow_validated_engines must stay within the governed engine perimeter"
             )
         if not set(self.active_engines).issubset(set(self.shadow_validated_engines)):
             raise ValueError(
@@ -920,11 +922,11 @@ class LiveLightInput(BaseModel, frozen=True):
                 )
 
         if not self.active_engines:
-            raise ValueError("Build-13 Live-Light requires at least one Light engine")
+            raise ValueError("Build-13 Live-Light requires at least one governed engine")
         unknown_engines = set(self.active_engines) - _LIVE_LIGHT_ALLOWED_ENGINES
         if unknown_engines:
             raise ValueError(
-                "Build-13 Live-Light allows only engine_a and engine_b"
+                "Build-13 Live-Light allows only governed engines from the Full Shadow perimeter"
             )
 
         if not self.live_pairs:
