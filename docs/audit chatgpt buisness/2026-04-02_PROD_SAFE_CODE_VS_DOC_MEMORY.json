@@ -36,7 +36,7 @@
     "branch_alignment": {
       "main_commit": "e28de12",
       "origin_main_commit": "e28de12",
-      "current_branch_commit": "bc0deb4",
+      "current_branch_commit": "5956224",
       "branch_divergence_detected": true,
       "interpretation": "The dedicated Full Shadow migration branch is now the active work surface. Canon migration started docs-first there, and the branch now also carries real Engine C/D packages, the Build-11 A/B/C/D runtime reinjection wave, the bounded native live_websocket proof checkpoint, and a local runner that now executes A/B/C/D before rendering component evidence. The previous branch remains the last coherent Option-B rollback checkpoint."
     },
@@ -479,6 +479,26 @@
       "notes": [
         "The launcher-level Build-11 VPS surface remains green after adding the cumulative campaign summary artifact."
       ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_meta_learning/test_merge_gates.py -q",
+      "result": "7 passed",
+      "classification": "build9x_explicit_merge_gates_green_surface",
+      "notes": [
+        "The named Build-9X V2 merge gates are now explicit, typed, and asserted as pass/fail results.",
+        "This same wave adds an explicit governed lifecycle proof through replay approval and ready_for_shadow_review."
+      ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_meta_learning tests/test_complete_enablers tests/test_manifest_registry/test_runtime_surface.py -q",
+      "result": "132 passed",
+      "classification": "build9x_build14_false_breakout_and_runtime_surface_green",
+      "notes": [
+        "The full Build-9X suite remains green after introducing explicit merge gates.",
+        "Build-14 now includes a distinct false_breakout_model reader and the runtime export surface stays green."
+      ]
     }
   ],
   "current_status_by_build": {
@@ -592,9 +612,9 @@
     {
       "decision_id": "GOV-009",
       "topic": "Build-9X explicit governance gates and Build-14 addendum absorption strategy",
-      "current_canon": "The branch already has a substantial Build-9X meta-learning package and a guarded Build-14 base, but not all V2 merge gates are explicit in code and not all Build-14 addendum enrichments appear as distinct absorbed bricks.",
+      "current_canon": "The branch now has explicit Build-9X V2 merge gates plus an end-to-end lifecycle proof, and the Build-14 addendum has started to be absorbed with a distinct false_breakout_model reader. The addendum still remains only partially absorbed because LOB/VWA, OBI, Hurst, and competition monitor are not yet distinct coded bricks.",
       "proposed_change": "Formalize Build-9X V2 as explicit named merge gates plus one end-to-end lifecycle proof, then absorb the missing Build-14 addendum enrichments as Shadow-first governed readers. Allow only bounded post-Shadow live influence, never dynamic self-tuning live mutation.",
-      "status": "accepted_for_planning_on_current_branch",
+      "status": "in_progress_on_current_branch",
       "rule_until_decided": "Harden governance first, then integrate Build-14 enrichments in Shadow, and only later allow limited live influence by explicit verdict. Do not let the new enrichments auto-penalize or auto-tune live behavior opportunistically."
     }
   ],
@@ -839,6 +859,14 @@
       "record_path": "docs/audit chatgpt buisness/2026-04-03_BUILD9X_GATES_AND_BUILD14_ENRICHMENT_PLAN.md",
       "conclusion": "The Build-9X / Build-14 plan now explicitly inherits the Build-1 -> Build-17 closure register: aligned builds stay frozen, open builds keep exact blocker classification, and closure effort remains concentrated on 4,11,12,13,15,16,17.",
       "action_taken": "Use the closure-oriented execution frame to prevent unnecessary re-audits and to keep the new governance/enrichment work aligned with the global build-closing strategy."
+    },
+    {
+      "audit_id": "AUDIT-031",
+      "date": "2026-04-03",
+      "scope": "Build-9X V2 and Build-14 addendum point-by-point matrix",
+      "record_path": "docs/audit chatgpt buisness/2026-04-03_BUILD9X_BUILD14_POINT_BY_POINT_MATRIX.md",
+      "conclusion": "Build-9X Lots 0 to 2 are now materially present on the branch through explicit merge gates and a governed lifecycle proof. Build-14 addendum absorption has also started with a distinct false_breakout_model reader, while LOB/VWA, OBI, Hurst, and competition monitor remain open.",
+      "action_taken": "Use the matrix as the owner map for the next Build-14 addendum waves without reopening already aligned builds."
     }
   ],
   "known_critical_gaps": [
