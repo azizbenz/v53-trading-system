@@ -36,9 +36,9 @@
     "branch_alignment": {
       "main_commit": "e28de12",
       "origin_main_commit": "e28de12",
-      "current_branch_commit": "a631b1c",
+      "current_branch_commit": "ad703b2",
       "branch_divergence_detected": true,
-      "interpretation": "The dedicated Full Shadow migration branch is now the active work surface. Canon migration started docs-first there, and the branch now also carries real Engine C/D packages, the Build-11 A/B/C/D runtime reinjection wave, the bounded native live_websocket proof checkpoint, and a local runner that executes C/D before rendering their component evidence. The previous branch remains the last coherent Option-B rollback checkpoint."
+      "interpretation": "The dedicated Full Shadow migration branch is now the active work surface. Canon migration started docs-first there, and the branch now also carries real Engine C/D packages, the Build-11 A/B/C/D runtime reinjection wave, the bounded native live_websocket proof checkpoint, and a local runner that now executes A/B/C/D before rendering component evidence. The previous branch remains the last coherent Option-B rollback checkpoint."
     },
     "notes": [
       "Do not reset hard.",
@@ -404,6 +404,35 @@
       "notes": [
         "Canonical runtime exports remain coherent after enriching Engine C and Engine D with structural breakout, origin-link, and non-duplication artifacts."
       ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_engines/test_engine_a tests/test_engines/test_engine_b tests/test_protocols/test_local_replay_shadow_runner.py -q",
+      "result": "132 passed",
+      "classification": "engine_ab_shadow_local_runner_green_surface",
+      "notes": [
+        "Engine A and Engine B are now executed inside the local Build-11 shadow runner instead of receiving synthetic component verdicts.",
+        "The dedicated engine_shadow_evidence sidecar now covers all four canonical engines A/B/C/D."
+      ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_engines/test_engine_a tests/test_engines/test_engine_b tests/test_protocols/test_local_replay_shadow_runner.py tests/test_protocols/test_shadow_runtime.py tests/test_protocols/test_shadow_day_counter.py tests/test_regression_alignment.py -q",
+      "result": "217 passed",
+      "classification": "engine_ab_and_build11_shadow_integration_green_surface",
+      "notes": [
+        "The local Build-11 shadow runner now executes all four canonical engines and remains green with the upstream shadow runtime, day-counter, and regression gates.",
+        "This is a local code/test closure checkpoint, not a claim of target-environment operational closure."
+      ]
+    },
+    {
+      "date": "2026-04-03",
+      "command": "rtk pytest tests/test_manifest_registry/test_runtime_surface.py -q",
+      "result": "21 passed",
+      "classification": "runtime_surface_green_after_engine_ab_shadow_integration",
+      "notes": [
+        "Canonical runtime exports remain coherent after wiring Engine A and Engine B into the Build-11 local shadow runner."
+      ]
     }
   ],
   "current_status_by_build": {
@@ -692,6 +721,14 @@
       "record_path": "docs/audit chatgpt buisness/2026-04-03_ENGINE_C_ENGINE_D_BUILD11_SHADOW_INTEGRATION_AUDIT.md",
       "conclusion": "Engine C and Engine D now expose richer audit-ready artifacts, Engine D carries an origin-link contract, and the local Build-11 shadow runner now executes C/D runtime logic before asserting their component evidence. The lot is locally green but does not claim operational closure of Build-15/16 or target-environment Build-11 proof.",
       "action_taken": "Freeze the local green lot, keep Build-11 honestly partial, and continue next with the target-environment Shadow-proof frontier rather than overstating C/D closure."
+    },
+    {
+      "audit_id": "AUDIT-023",
+      "date": "2026-04-03",
+      "scope": "Engine A / Engine B Build-11 shadow integration",
+      "record_path": "docs/audit chatgpt buisness/2026-04-03_ENGINE_A_ENGINE_B_BUILD11_SHADOW_INTEGRATION_AUDIT.md",
+      "conclusion": "Engine A and Engine B are now executed through their real runtimes inside the local Build-11 shadow runner, candidate payload engine metrics are evidence-backed instead of synthetic, and the engine shadow sidecar now covers A/B/C/D together. The lot is locally green but still does not claim target-environment operational closure of Build-11.",
+      "action_taken": "Freeze the local green lot, keep Build-11 honestly partial, and continue next with repeated target-environment Shadow-day collection rather than more local approximation."
     }
   ],
   "known_critical_gaps": [
@@ -700,7 +737,7 @@
       "priority": "P0",
       "scope": "Build-11 doctrine vs actual closure criteria",
       "doc_expectation": "On the migration branch, Shadow 30 days is now repatched as a full-system truth phase with A/B/C/D and Build-14 SHADOW_ENABLED, then post-Shadow verdict.",
-      "code_or_runtime_reality": "Autonomous Shadow VPS service and live_websocket support exist, and the migration branch now honestly includes Engine C and Engine D in the Build-11 code/test perimeter. Final operational proof and doctrinal closure are still not established on the target environment.",
+      "code_or_runtime_reality": "Autonomous Shadow VPS service and live_websocket support exist, and the migration branch now honestly executes Engine A/B/C/D in the local Build-11 code/test perimeter. Final operational proof and doctrinal closure are still not established on the target environment.",
       "status": "open"
     },
     {
