@@ -170,6 +170,7 @@ def _default_build14_projection(*, active_modules: tuple[str, ...]) -> Build14Pr
         requires_manual_review=False,
         candidate_effect="shadow_enabled" if module_active else "observe_only",
         reason_codes=(),
+        reader_projections=(),
     )
 
 

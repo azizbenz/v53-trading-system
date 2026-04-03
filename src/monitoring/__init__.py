@@ -4,6 +4,7 @@ from monitoring.alert_manager import AlertLifecycleTracker, build_monitoring_ale
 from monitoring.contracts import (
     AlertHistoryEntry,
     AlertProjection,
+    Build14ReaderProjection,
     Build14Projection,
     Build9MetaProjection,
     Build9XProjection,
@@ -53,6 +54,7 @@ __all__ = [
     "SystemProjection",
     "Build9MetaProjection",
     "Build9XProjection",
+    "Build14ReaderProjection",
     "Build14Projection",
     "MicroLiveProjection",
     "LiveLightProjection",

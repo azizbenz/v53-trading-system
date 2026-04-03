@@ -13,6 +13,7 @@ from meta_minimal.dtr_core.decision_state_encoder import DecisionState
 from meta_minimal.dtr_core.dtr_record_builder import build_dtr
 from meta_minimal.edge_tracker_prudent_minimal.edge_status_classifier import EdgeClassification, EdgeStatus
 from monitoring import (
+    Build14ReaderProjection,
     Build14Projection,
     Build9XProjection,
     LiveLightProjection,
@@ -326,6 +327,24 @@ def test_observability_export_tracks_modules_engines_and_governed_flags():
             requires_manual_review=True,
             candidate_effect="review_only",
             reason_codes=("market_toxicity_snapshot_critical", "execution_fragility_score_critical"),
+            reader_projections=(
+                Build14ReaderProjection(
+                    reader_name="market_toxicity_snapshot",
+                    signal_family="microstructure",
+                    observed_value=0.82,
+                    status="critical",
+                    detail="toxicity spike detected",
+                    structured_log_key="build14.market_toxicity_snapshot",
+                ),
+                Build14ReaderProjection(
+                    reader_name="competition_monitor",
+                    signal_family="risk",
+                    observed_value=0.31,
+                    status="elevated",
+                    detail="competition density elevated",
+                    structured_log_key="build14.competition_monitor",
+                ),
+            ),
         ),
         replay_projection=ReplayImportProjection(
             status="warning",
@@ -403,6 +422,20 @@ def test_observability_export_tracks_modules_engines_and_governed_flags():
     assert any(sample.name == "v53_build14_action" and sample.labels["action"] == "review_only" for sample in export.samples)
     assert any(sample.name == "v53_build14_requires_manual_review" and sample.value == 1.0 for sample in export.samples)
     assert any(sample.name == "v53_build14_reason_code_count" and sample.value == 2.0 for sample in export.samples)
+    assert any(
+        sample.name == "v53_build14_reader_value"
+        and sample.labels["reader"] == "market_toxicity_snapshot"
+        and sample.labels["status"] == "critical"
+        and sample.value == 0.82
+        for sample in export.samples
+    )
+    assert any(
+        sample.name == "v53_build14_reader_status"
+        and sample.labels["reader"] == "competition_monitor"
+        and sample.labels["family"] == "risk"
+        and sample.labels["status"] == "elevated"
+        for sample in export.samples
+    )
     assert any(sample.name == "v53_replay_validation_accepted" and sample.value == 0.0 for sample in export.samples)
     assert any(sample.name == "v53_alert_operator_event_count" and sample.value == 4.0 for sample in export.samples)
     assert any(

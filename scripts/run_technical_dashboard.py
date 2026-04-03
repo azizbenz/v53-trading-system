@@ -54,6 +54,7 @@ from meta_minimal.edge_tracker_prudent_minimal.edge_status_classifier import (  
     EdgeStatus,
 )
 from monitoring import (  # noqa: E402
+    Build14ReaderProjection,
     Build14Projection,
     Build9XProjection,
     LiveLightProjection,
@@ -676,6 +677,28 @@ def _build_build14_observation(payload) -> Build14ObservationInput:
         dtr_loss_count=payload.alerts.dtr_loss_count,
         log_loss_count=payload.alerts.log_loss_count,
         ce_net=payload.portfolio.ce_net,
+        breakout_failure_rate=0.18,
+        volume_support_ratio=0.82,
+        vwa_absorption_ratio=0.79,
+        ghost_liquidity_ratio=0.12,
+        adverse_obi_pressure=0.24,
+        hurst_exponent=0.53,
+        competition_density=0.18,
+    )
+
+
+def _build14_reader_projections(report) -> tuple[Build14ReaderProjection, ...]:
+    return tuple(
+        Build14ReaderProjection(
+            reader_name=snapshot.reader_name,
+            signal_family=snapshot.signal_family.value,
+            observed_value=snapshot.observed_value,
+            status=snapshot.status.value,
+            detail=snapshot.detail,
+            evidence_refs=snapshot.evidence_refs,
+            structured_log_key=snapshot.structured_log_key,
+        )
+        for snapshot in report.snapshots
     )
 
 
@@ -707,6 +730,7 @@ def _build_build14_report_and_projection(payload) -> tuple[object, Build14Projec
         requires_manual_review=report.signal.requires_manual_review,
         candidate_effect=report.signal.candidate_effect,
         reason_codes=report.signal.reason_codes,
+        reader_projections=_build14_reader_projections(report),
     )
 
 
@@ -1055,9 +1079,13 @@ def _availability_sections() -> tuple[DashboardSection, ...]:
                 DashboardCard(
                     key="build14_availability",
                     label="Readers",
-                    value="2 available",
+                    value="7 available",
                     status="info",
-                    detail="market_toxicity_snapshot, execution_fragility_score",
+                    detail=(
+                        "market_toxicity_snapshot, execution_fragility_score, "
+                        "lob_deep_filter_vwa, order_book_imbalance, false_breakout_model, "
+                        "hurst_regime_classifier, competition_monitor"
+                    ),
                 ),
                 DashboardCard(
                     key="build14_state",

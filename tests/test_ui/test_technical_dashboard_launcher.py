@@ -51,6 +51,7 @@ def test_export_technical_dashboard_writes_availability_view():
         assert "Build-12 Micro-live" in html
         assert "Build-13 Live-Light" in html
         assert "Build-14 Enablers" in html
+        assert "7 available" in html
         assert "Governance &amp; Readiness" in html
         assert artifacts.payload_json_path is None
         assert artifacts.view_json_path is None
@@ -101,11 +102,14 @@ def test_export_technical_dashboard_writes_demo_sidecars():
         assert '"micro_live"' in payload_json
         assert '"live_light"' in payload_json
         assert '"build14"' in payload_json
+        assert '"reader_projections"' in payload_json
         assert "v53_system_headline_status" in observability_text
         assert "v53_shadow_run_state" in observability_text
         assert "v53_micro_live_run_state" in observability_text
         assert "v53_live_light_run_state" in observability_text
         assert "v53_build14_status" in observability_text
+        assert "v53_build14_reader_value" in observability_text
+        assert 'reader="market_toxicity_snapshot"' in observability_text
         assert '"validation_status": "accepted"' in payload_json
         assert '"run_state": "completed"' in payload_json
         assert local_replay_evidence["data_source"] == "recorded_replay"

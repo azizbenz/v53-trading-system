@@ -334,6 +334,14 @@ Decision states per enrichment:
 - `DORMANT`
 - `RESEARCH_LOCAL`
 
+Current status:
+
+- the reader-observability sub-wave is now materialized on the current branch
+- monitoring, technical dashboard, observability export, and local launcher
+  surfaces now expose the full selected Build-14 reader set explicitly
+- what remains is no longer local visibility, but real Shadow-time observation
+  and later verdicting
+
 ## Lot 5 - Post-Shadow promotion policy
 
 Goal:
@@ -405,6 +413,11 @@ structural:
 3. expose and compare their evidence cleanly in reports / monitoring where
    needed
 4. only later decide bounded post-Shadow influence per reader
+
+Checkpoint:
+
+- local visibility/reporting for the selected Build-14 readers is now in place
+- the next useful progress is operational: repeated real `Build-11` Shadow days
 
 This is the lowest-risk path because it gives a strong governed frame before
 adding more market-facing complexity.

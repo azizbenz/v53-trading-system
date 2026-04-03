@@ -22,6 +22,7 @@ from meta_minimal.edge_tracker_prudent_minimal.edge_status_classifier import (
     EdgeStatus,
 )
 from monitoring import (
+    Build14ReaderProjection,
     Build14Projection,
     Build9XProjection,
     LiveLightProjection,
@@ -272,6 +273,7 @@ def test_technical_dashboard_view_exposes_system_meta_build9x_and_replay_section
     assert next(card for card in micro.cards if card.key == "micro_live_run_state").value == "not_run"
     assert next(card for card in live.cards if card.key == "live_light_run_state").value == "not_run"
     assert next(card for card in build14.cards if card.key == "build14_mode").value == "read_only / observe"
+    assert next(card for card in build14.cards if card.key == "build14_readers").value.startswith("count=0 /")
     assert next(card for card in pairs.cards if card.key == "pair_btcusdt").value == "stale / fresh=9000ms"
     assert next(card for card in engines.cards if card.key == "engine_engine_a").value == "signals=2 / edge=12.0"
     assert next(card for card in risk.cards if card.key == "risk_exposure").value == "gross=35.0% / loss=8.0%"
@@ -600,6 +602,24 @@ def test_technical_dashboard_view_projects_build14_limited_influence_when_availa
             requires_manual_review=False,
             candidate_effect="confidence_downgrade",
             reason_codes=("market_toxicity_snapshot_elevated",),
+            reader_projections=(
+                Build14ReaderProjection(
+                    reader_name="market_toxicity_snapshot",
+                    signal_family="microstructure",
+                    observed_value=0.46,
+                    status="elevated",
+                    detail="toxicity drift detected",
+                    structured_log_key="build14.market_toxicity_snapshot",
+                ),
+                Build14ReaderProjection(
+                    reader_name="competition_monitor",
+                    signal_family="risk",
+                    observed_value=0.18,
+                    status="nominal",
+                    detail="competition remains within tolerance",
+                    structured_log_key="build14.competition_monitor",
+                ),
+            ),
         ),
         live_light_projection=LiveLightProjection(
             status="warning",
@@ -644,3 +664,10 @@ def test_technical_dashboard_view_projects_build14_limited_influence_when_availa
     )
     assert next(card for card in build14.cards if card.key == "build14_candidate_effect").value == "confidence_downgrade"
     assert next(card for card in build14.cards if card.key == "build14_guardrails").detail == "market_toxicity_snapshot_elevated"
+    assert next(card for card in build14.cards if card.key == "build14_readers").value.startswith("count=2 /")
+    assert next(card for card in build14.cards if card.key == "build14_reader_market_toxicity_snapshot").value == (
+        "elevated (0.46)"
+    )
+    assert "family=microstructure" in next(
+        card for card in build14.cards if card.key == "build14_reader_market_toxicity_snapshot"
+    ).detail

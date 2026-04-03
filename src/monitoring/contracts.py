@@ -20,6 +20,7 @@ from interface_contracts import (
 
 HeadlineStatus = Literal["healthy", "warning", "critical"]
 ProjectionStatus = Literal["healthy", "warning", "critical", "info", "planned"]
+Build14ReaderSeverity = Literal["nominal", "elevated", "critical"]
 MetricKind = Literal["counter", "gauge", "state"]
 AlertHistoryState = Literal["open", "resolved"]
 
@@ -409,6 +410,18 @@ class LiveLightProjection(BaseModel, frozen=True):
     build14_recommended_budget_factor: float = Field(default=1.0, ge=0.0, le=1.0)
 
 
+class Build14ReaderProjection(BaseModel, frozen=True):
+    """Normalized per-reader Build-14 summary exposed to monitoring and UI."""
+
+    reader_name: str = Field(..., min_length=1)
+    signal_family: str = Field(..., min_length=1)
+    observed_value: float = Field(default=0.0, ge=0.0)
+    status: Build14ReaderSeverity = "nominal"
+    detail: str = Field(..., min_length=1)
+    evidence_refs: tuple[str, ...] = ()
+    structured_log_key: str = Field(default="", min_length=0)
+
+
 class Build14Projection(BaseModel, frozen=True):
     """Normalized Build-14 enabler status consumed by Build-10."""
 
@@ -428,6 +441,7 @@ class Build14Projection(BaseModel, frozen=True):
     requires_manual_review: bool = False
     candidate_effect: str = "observe_only"
     reason_codes: tuple[str, ...] = ()
+    reader_projections: tuple[Build14ReaderProjection, ...] = ()
 
     @model_validator(mode="after")
     def validate_projection(self) -> "Build14Projection":
@@ -560,6 +574,7 @@ __all__ = [
     "ShadowProjection",
     "MicroLiveProjection",
     "LiveLightProjection",
+    "Build14ReaderProjection",
     "Build14Projection",
     "ReplayImportProjection",
     "AlertProjection",

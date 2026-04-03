@@ -26,6 +26,7 @@ from meta_minimal.edge_tracker_prudent_minimal.edge_status_classifier import (
     EdgeStatus,
 )
 from monitoring import (
+    Build14ReaderProjection,
     Build14Projection,
     Build9XProjection,
     LiveLightProjection,
@@ -143,6 +144,7 @@ def test_monitoring_exports_expected_symbols():
         "build_monitoring_alerts",
         "build_health_dashboard_payload",
         "Build9XProjection",
+        "Build14ReaderProjection",
         "Build14Projection",
         "ShadowProjection",
         "LiveLightProjection",
@@ -632,6 +634,7 @@ def test_technical_dashboard_payload_defaults_build14_to_shadow_enabled_when_mod
     assert payload.build14.influence_mode == "shadow_enabled"
     assert payload.build14.action == "shadow_apply"
     assert payload.build14.candidate_effect == "shadow_enabled"
+    assert payload.build14.reader_projections == ()
 
 
 def test_technical_dashboard_payload_accepts_shadow_projection_summary():
@@ -827,6 +830,24 @@ def test_technical_dashboard_payload_accepts_build14_projection_summary():
             requires_manual_review=False,
             candidate_effect="confidence_downgrade",
             reason_codes=("market_toxicity_snapshot_elevated",),
+            reader_projections=(
+                Build14ReaderProjection(
+                    reader_name="market_toxicity_snapshot",
+                    signal_family="microstructure",
+                    observed_value=0.46,
+                    status="elevated",
+                    detail="toxicity drift detected",
+                    structured_log_key="build14.market_toxicity_snapshot",
+                ),
+                Build14ReaderProjection(
+                    reader_name="false_breakout_model",
+                    signal_family="ai_edge",
+                    observed_value=0.22,
+                    status="nominal",
+                    detail="false breakout risk remains inside tolerance",
+                    structured_log_key="build14.false_breakout_model",
+                ),
+            ),
         ),
     )
 
@@ -836,3 +857,7 @@ def test_technical_dashboard_payload_accepts_build14_projection_summary():
     assert payload.build14.action == "downgrade_confidence"
     assert payload.build14.recommended_budget_factor == 0.85
     assert payload.build14.reason_codes == ("market_toxicity_snapshot_elevated",)
+    assert tuple(reader.reader_name for reader in payload.build14.reader_projections) == (
+        "market_toxicity_snapshot",
+        "false_breakout_model",
+    )

@@ -273,6 +273,18 @@ def test_export_local_replay_shadow_run_writes_governed_chain_sidecars():
         assert local_replay_evidence["replay_useful_ready"] is True
         assert candidate_payload["replay_import"]["validation_status"] == "accepted"
         assert candidate_payload["system"]["build14_status"] == "healthy"
+        assert len(candidate_payload["build14"]["reader_projections"]) == 7
+        assert {
+            reader["reader_name"] for reader in candidate_payload["build14"]["reader_projections"]
+        } == {
+            "market_toxicity_snapshot",
+            "execution_fragility_score",
+            "lob_deep_filter_vwa",
+            "order_book_imbalance",
+            "false_breakout_model",
+            "hurst_regime_classifier",
+            "competition_monitor",
+        }
         assert len(engine_shadow_evidence) == 4
         engine_runtime_evidence = {
             entry["component_id"]: entry for entry in engine_shadow_evidence

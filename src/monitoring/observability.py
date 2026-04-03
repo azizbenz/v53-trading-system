@@ -775,6 +775,35 @@ def build_observability_export(payload: TechnicalDashboardPayload) -> Observabil
         ),
     ]
 
+    for reader in payload.build14.reader_projections:
+        samples.append(
+            _sample(
+                "v53_build14_reader_value",
+                kind="gauge",
+                value=reader.observed_value,
+                unit="score",
+                labels={
+                    **base_labels,
+                    "reader": reader.reader_name,
+                    "family": reader.signal_family,
+                    "status": reader.status,
+                },
+            )
+        )
+        samples.append(
+            _sample(
+                "v53_build14_reader_status",
+                kind="state",
+                value=1.0,
+                labels={
+                    **base_labels,
+                    "reader": reader.reader_name,
+                    "family": reader.signal_family,
+                    "status": reader.status,
+                },
+            )
+        )
+
     for metric_name in payload.alerts.persisted_metric_names:
         samples.append(
             _sample(

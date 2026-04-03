@@ -45,6 +45,47 @@ def _operator_safing_value(payload: TechnicalDashboardPayload) -> str:
     return f"{action} -> {target}" if target else action
 
 
+def _build14_reader_status(value: str) -> str:
+    if value == "critical":
+        return "critical"
+    if value == "elevated":
+        return "warning"
+    return "info"
+
+
+def _build14_readers_summary(payload: TechnicalDashboardPayload) -> str:
+    if not payload.build14.reader_projections:
+        return "No Build-14 reader projection materialized"
+    parts = []
+    for reader in payload.build14.reader_projections:
+        parts.append(f"{reader.reader_name}={reader.status} ({reader.observed_value:.2f})")
+    return " / ".join(parts)
+
+
+def _build14_reader_cards(payload: TechnicalDashboardPayload) -> tuple[DashboardCard, ...]:
+    if not payload.build14.reader_projections:
+        return ()
+    cards: list[DashboardCard] = []
+    for reader in payload.build14.reader_projections:
+        cards.append(
+            DashboardCard(
+                key=f"build14_reader_{reader.reader_name}",
+                label=reader.reader_name,
+                value=f"{reader.status} ({reader.observed_value:.2f})",
+                status=_build14_reader_status(reader.status),
+                detail=(
+                    f"family={reader.signal_family} / {reader.detail}"
+                    + (
+                        f" / log={reader.structured_log_key}"
+                        if reader.structured_log_key
+                        else ""
+                    )
+                ),
+            )
+        )
+    return tuple(cards)
+
+
 def _operator_controls_section(payload: TechnicalDashboardPayload) -> DashboardSection:
     allowed_actions = build_light_allowed_actions(payload.runtime_mode)
     safing_actions = tuple(
@@ -876,6 +917,7 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LightD
                     key="build14_readers",
                     label="Readers",
                     value=(
+                        f"count={len(payload.build14.reader_projections)} / "
                         f"toxicity={payload.build14.market_toxicity_status} ({payload.build14.market_toxicity_value:.2f}) / "
                         f"fragility={payload.build14.execution_fragility_status} ({payload.build14.execution_fragility_value:.2f})"
                     ),
@@ -886,7 +928,11 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LightD
                         if payload.build14.severity == "elevated"
                         else payload.build14.status
                     ),
-                    detail=payload.build14.summary,
+                    detail=(
+                        f"{payload.build14.summary} / {_build14_readers_summary(payload)}"
+                        if payload.build14.reader_projections
+                        else payload.build14.summary
+                    ),
                 ),
                 DashboardCard(
                     key="build14_candidate_effect",
@@ -919,7 +965,8 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LightD
                     ),
                     detail=_join(payload.build14.reason_codes, empty="No Build-14 reason code"),
                 ),
-            ),
+            )
+            + _build14_reader_cards(payload),
         ),
         _operator_controls_section(payload),
         DashboardSection(

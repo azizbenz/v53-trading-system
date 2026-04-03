@@ -50,6 +50,7 @@ from meta_minimal.edge_tracker_prudent_minimal.edge_status_classifier import (  
     EdgeStatus,
 )
 from monitoring import (  # noqa: E402
+    Build14ReaderProjection,
     Build14Projection,
     Build9XProjection,
     ReplayImportProjection,
@@ -584,6 +585,64 @@ def _build14_projection() -> Build14Projection:
         requires_manual_review=False,
         candidate_effect="shadow_enabled",
         reason_codes=("build14_shadow_enabled",),
+        reader_projections=(
+            Build14ReaderProjection(
+                reader_name="market_toxicity_snapshot",
+                signal_family="microstructure",
+                observed_value=0.18,
+                status="nominal",
+                detail="toxicity remains inside governed Shadow tolerance",
+                structured_log_key="build14.market_toxicity_snapshot",
+            ),
+            Build14ReaderProjection(
+                reader_name="execution_fragility_score",
+                signal_family="microstructure",
+                observed_value=0.12,
+                status="nominal",
+                detail="execution fragility remains controlled during the governed run",
+                structured_log_key="build14.execution_fragility_score",
+            ),
+            Build14ReaderProjection(
+                reader_name="lob_deep_filter_vwa",
+                signal_family="microstructure",
+                observed_value=0.11,
+                status="nominal",
+                detail="deep-book absorption and VWA checks remain supportive",
+                structured_log_key="build14.lob_deep_filter_vwa",
+            ),
+            Build14ReaderProjection(
+                reader_name="order_book_imbalance",
+                signal_family="microstructure",
+                observed_value=0.14,
+                status="nominal",
+                detail="order-book imbalance stays below adverse pressure thresholds",
+                structured_log_key="build14.order_book_imbalance",
+            ),
+            Build14ReaderProjection(
+                reader_name="false_breakout_model",
+                signal_family="ai_edge",
+                observed_value=0.16,
+                status="nominal",
+                detail="false-breakout probability stays low in the governed Shadow sample",
+                structured_log_key="build14.false_breakout_model",
+            ),
+            Build14ReaderProjection(
+                reader_name="hurst_regime_classifier",
+                signal_family="regime",
+                observed_value=0.48,
+                status="nominal",
+                detail="regime persistence stays neutral and does not force a downgrade",
+                structured_log_key="build14.hurst_regime_classifier",
+            ),
+            Build14ReaderProjection(
+                reader_name="competition_monitor",
+                signal_family="risk",
+                observed_value=0.20,
+                status="nominal",
+                detail="competition density remains below crowding thresholds",
+                structured_log_key="build14.competition_monitor",
+            ),
+        ),
     )
 
 
