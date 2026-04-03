@@ -588,6 +588,14 @@
       "proposed_change": "User-selected target doctrine: migrate toward a single Build-11 Full Shadow 30-day phase that observes A/B/C/D + Build-14, while keeping downstream Micro-live/Live promotions gated per component verdict rather than automatic.",
       "status": "engine_cd_and_partial_build11_reinjection_applied_on_migration_branch",
       "rule_until_decided": "On the dedicated migration branch, the canon and the first runtime/code wave now target Full Shadow A/B/C/D. Do not treat GOV-008 as fully implemented until manifest/profile surfaces are realigned and Build-11 runtime proof is refreshed on the target environment."
+    },
+    {
+      "decision_id": "GOV-009",
+      "topic": "Build-9X explicit governance gates and Build-14 addendum absorption strategy",
+      "current_canon": "The branch already has a substantial Build-9X meta-learning package and a guarded Build-14 base, but not all V2 merge gates are explicit in code and not all Build-14 addendum enrichments appear as distinct absorbed bricks.",
+      "proposed_change": "Formalize Build-9X V2 as explicit named merge gates plus one end-to-end lifecycle proof, then absorb the missing Build-14 addendum enrichments as Shadow-first governed readers. Allow only bounded post-Shadow live influence, never dynamic self-tuning live mutation.",
+      "status": "accepted_for_planning_on_current_branch",
+      "rule_until_decided": "Harden governance first, then integrate Build-14 enrichments in Shadow, and only later allow limited live influence by explicit verdict. Do not let the new enrichments auto-penalize or auto-tune live behavior opportunistically."
     }
   ],
   "targeted_audits": [
@@ -815,6 +823,14 @@
       "record_path": "docs/audit chatgpt buisness/2026-04-03_BUILD1_TO_BUILD17_CLOSURE_AUDIT.md",
       "conclusion": "The branch now has a clean closure reading: 1,2,3,5,6,7,8,9,9x,10,14 stay aligned; 4,15,16 are the best realistic closure candidates; 11,12,13,17 remain structurally blocked for honest closure.",
       "action_taken": "Use the closure register to avoid reopening aligned builds and to sequence the next closure work around Build-4, Build-15, and Build-16 while the real Build-11 campaign continues."
+    },
+    {
+      "audit_id": "AUDIT-029",
+      "date": "2026-04-03",
+      "scope": "Build-9X governance gates and Build-14 enrichment integration plan",
+      "record_path": "docs/audit chatgpt buisness/2026-04-03_BUILD9X_GATES_AND_BUILD14_ENRICHMENT_PLAN.md",
+      "conclusion": "The safe strategy is to harden Build-9X as explicit governance gates first, then integrate the missing Build-14 addendum enrichments in Shadow-first mode, and only later allow bounded live influence by explicit verdict.",
+      "action_taken": "Freeze the work order and use it to avoid mixing governance hardening, enrichment absorption, and live influence in one uncontrolled coding wave."
     }
   ],
   "known_critical_gaps": [
@@ -1039,6 +1055,21 @@
       "done_criteria": [
         "Target doctrine transitions are written without replacing the active canon.",
         "The next critical phase has a fixed execution order before more coding."
+      ]
+    },
+    {
+      "batch_id": "B11",
+      "title": "Build-9X explicit gates and Build-14 addendum absorption",
+      "status": "pending",
+      "scope": [
+        "Build-9X V2 explicit merge gates",
+        "Build-9X end-to-end governed lifecycle proof",
+        "Build-14 missing addendum enrichments as Shadow-first readers"
+      ],
+      "done_criteria": [
+        "Named Build-9X governance gates exist as explicit tests.",
+        "One end-to-end lifecycle proof exists from input to replay/review/persistence/monitoring.",
+        "Missing Build-14 enrichments are absorbed into canonical families without creating new engines or live auto-mutation."
       ]
     }
   ],
