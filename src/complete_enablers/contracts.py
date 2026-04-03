@@ -72,6 +72,11 @@ class Build14ObservationInput(BaseModel, frozen=True):
     ce_net: float = 0.0
     breakout_failure_rate: float = Field(default=0.0, ge=0.0, le=1.0)
     volume_support_ratio: float = Field(default=1.0, ge=0.0, le=1.0)
+    vwa_absorption_ratio: float = Field(default=1.0, ge=0.0, le=1.0)
+    ghost_liquidity_ratio: float = Field(default=0.0, ge=0.0, le=1.0)
+    adverse_obi_pressure: float = Field(default=0.0, ge=0.0, le=1.0)
+    hurst_exponent: float = Field(default=0.5, ge=0.0, le=1.0)
+    competition_density: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
 class Build14EnablerSnapshot(Build14EnablerContract):

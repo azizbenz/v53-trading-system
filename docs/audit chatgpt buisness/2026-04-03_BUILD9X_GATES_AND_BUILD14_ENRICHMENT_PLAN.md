@@ -21,8 +21,9 @@ Checkpoint on the current branch:
 - `Lot 0` is now materialized in a point-by-point matrix
 - `Lot 1` is now coded and tested through explicit `Build-9X` merge gates
 - `Lot 2` is now covered by an explicit end-to-end governed lifecycle proof
-- `Lot 3` has started with a first absorbed addendum brick:
-  `false_breakout_model`
+- `Lot 3` is now materially complete on the branch for the selected addendum
+  readers:
+  `false_breakout_model`, `LOB/VWA`, `OBI`, `Hurst`, `competition monitor`
 
 ---
 
@@ -307,13 +308,11 @@ Done criteria:
 
 Current status:
 
-- started on the current branch
-- `false_breakout_model` is now absorbed as a distinct reader
-- remaining priority order is now:
-  1. `LOB deep filter / VWA`
-  2. `OBI`
-  3. `Hurst regime classifier`
-  4. `competition monitor`
+- materially complete on the current branch for the selected addendum readers
+- all selected missing bricks now exist as distinct governed readers attached to
+  canonical Build-14 families
+- what remains is no longer reader existence, but Shadow observation and later
+  verdicting
 
 ## Lot 4 - Shadow observation wave
 
@@ -398,12 +397,14 @@ And the closure reading stays:
 
 # 7. Recommended immediate next action
 
-The best next coding wave is:
+The best next wave is now operational and evaluative rather than purely
+structural:
 
-1. continue `Lot 3` with `LOB deep filter / VWA`
-2. then add `OBI`
-3. then add `Hurst regime classifier`
-4. then add `competition monitor`
+1. keep the real `Build-11` campaign running day by day
+2. observe the full Build-14 reader set in `SHADOW_ENABLED`
+3. expose and compare their evidence cleanly in reports / monitoring where
+   needed
+4. only later decide bounded post-Shadow influence per reader
 
 This is the lowest-risk path because it gives a strong governed frame before
 adding more market-facing complexity.

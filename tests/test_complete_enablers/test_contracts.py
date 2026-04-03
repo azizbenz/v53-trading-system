@@ -16,9 +16,13 @@ from complete_enablers import (
     Build14InfluenceMode,
     Build14ObservationInput,
     Build14SignalFamily,
+    build_competition_monitor_snapshot,
     build_execution_fragility_score,
     build_false_breakout_snapshot,
+    build_hurst_regime_snapshot,
+    build_lob_deep_filter_vwa_snapshot,
     build_market_toxicity_snapshot,
+    build_order_book_imbalance_snapshot,
     evaluate_build14_limited_influence,
     evaluate_build14_shadow_activation,
 )
@@ -34,9 +38,13 @@ def test_complete_enablers_exports_expected_symbols():
         "Build14InfluenceSignal",
         "Build14Severity",
         "Build14SignalFamily",
+        "build_competition_monitor_snapshot",
         "build_market_toxicity_snapshot",
         "build_execution_fragility_score",
         "build_false_breakout_snapshot",
+        "build_hurst_regime_snapshot",
+        "build_lob_deep_filter_vwa_snapshot",
+        "build_order_book_imbalance_snapshot",
         "evaluate_build14_shadow_activation",
         "evaluate_build14_limited_influence",
     }.issubset(set(complete_enablers.__all__))
@@ -150,6 +158,107 @@ def test_false_breakout_snapshot_is_traceable_and_shadow_enabled():
     assert "breakout_failure_rate=0.80" in snapshot.detail
 
 
+def test_lob_deep_filter_vwa_snapshot_is_traceable_and_shadow_enabled():
+    snapshot = build_lob_deep_filter_vwa_snapshot(
+        Build14ObservationInput(
+            correlation_id="corr-14lob",
+            dtr_coverage=0.92,
+            cra_sterilization_rate=0.12,
+            cra_alert_count=0,
+            break_even_drift_alert=False,
+            edge_degraded_count=0,
+            queue_backlog=18,
+            stale_pair_count=1,
+            dtr_loss_count=0,
+            log_loss_count=0,
+            ce_net=0.0003,
+            vwa_absorption_ratio=0.25,
+            ghost_liquidity_ratio=0.80,
+        )
+    )
+
+    assert snapshot.signal_family == Build14SignalFamily.MICROSTRUCTURE
+    assert snapshot.hard_state == Build14HardState.SHADOW_ENABLED
+    assert snapshot.status in {Build14Severity.ELEVATED, Build14Severity.CRITICAL}
+    assert snapshot.structured_log_key == "build14.shadow_enabled.lob_deep_filter_vwa"
+    assert "vwa_absorption_ratio=0.25" in snapshot.detail
+
+
+def test_order_book_imbalance_snapshot_is_traceable_and_shadow_enabled():
+    snapshot = build_order_book_imbalance_snapshot(
+        Build14ObservationInput(
+            correlation_id="corr-14obi",
+            dtr_coverage=0.91,
+            cra_sterilization_rate=0.18,
+            cra_alert_count=1,
+            break_even_drift_alert=False,
+            edge_degraded_count=1,
+            queue_backlog=10,
+            stale_pair_count=1,
+            dtr_loss_count=0,
+            log_loss_count=0,
+            ce_net=-0.0001,
+            adverse_obi_pressure=0.85,
+        )
+    )
+
+    assert snapshot.signal_family == Build14SignalFamily.MICROSTRUCTURE
+    assert snapshot.hard_state == Build14HardState.SHADOW_ENABLED
+    assert snapshot.status in {Build14Severity.ELEVATED, Build14Severity.CRITICAL}
+    assert snapshot.structured_log_key == "build14.shadow_enabled.order_book_imbalance"
+    assert "adverse_obi_pressure=0.85" in snapshot.detail
+
+
+def test_hurst_regime_snapshot_is_traceable_and_shadow_enabled():
+    snapshot = build_hurst_regime_snapshot(
+        Build14ObservationInput(
+            correlation_id="corr-14hurst",
+            dtr_coverage=0.91,
+            cra_sterilization_rate=0.10,
+            cra_alert_count=0,
+            break_even_drift_alert=True,
+            edge_degraded_count=1,
+            queue_backlog=8,
+            stale_pair_count=0,
+            dtr_loss_count=0,
+            log_loss_count=0,
+            ce_net=0.0002,
+            hurst_exponent=0.88,
+        )
+    )
+
+    assert snapshot.signal_family == Build14SignalFamily.REGIME
+    assert snapshot.hard_state == Build14HardState.SHADOW_ENABLED
+    assert snapshot.status in {Build14Severity.ELEVATED, Build14Severity.CRITICAL}
+    assert snapshot.structured_log_key == "build14.shadow_enabled.hurst_regime_classifier"
+    assert "hurst_exponent=0.88" in snapshot.detail
+
+
+def test_competition_monitor_snapshot_is_traceable_and_shadow_enabled():
+    snapshot = build_competition_monitor_snapshot(
+        Build14ObservationInput(
+            correlation_id="corr-14comp",
+            dtr_coverage=0.93,
+            cra_sterilization_rate=0.08,
+            cra_alert_count=0,
+            break_even_drift_alert=False,
+            edge_degraded_count=0,
+            queue_backlog=5,
+            stale_pair_count=1,
+            dtr_loss_count=0,
+            log_loss_count=0,
+            ce_net=-0.0001,
+            competition_density=0.90,
+        )
+    )
+
+    assert snapshot.signal_family == Build14SignalFamily.RISK
+    assert snapshot.hard_state == Build14HardState.SHADOW_ENABLED
+    assert snapshot.status in {Build14Severity.ELEVATED, Build14Severity.CRITICAL}
+    assert snapshot.structured_log_key == "build14.shadow_enabled.competition_monitor"
+    assert "competition_density=0.90" in snapshot.detail
+
+
 def test_build14_limited_influence_stays_read_only_when_signals_are_nominal():
     report = evaluate_build14_limited_influence(
         Build14ObservationInput(
@@ -196,7 +305,14 @@ def test_build14_shadow_activation_is_fully_active_in_shadow_but_not_live_promot
     assert report.signal.action == Build14InfluenceAction.SHADOW_APPLY
     assert report.signal.candidate_effect == "shadow_enabled"
     assert report.signal.requires_manual_review is False
-    assert any(snapshot.reader_name == "false_breakout_model" for snapshot in report.snapshots)
+    reader_names = {snapshot.reader_name for snapshot in report.snapshots}
+    assert {
+        "competition_monitor",
+        "false_breakout_model",
+        "hurst_regime_classifier",
+        "lob_deep_filter_vwa",
+        "order_book_imbalance",
+    } <= reader_names
 
 
 def test_build14_limited_influence_can_downgrade_confidence_without_becoming_autonomous():
@@ -244,6 +360,59 @@ def test_build14_limited_influence_uses_false_breakout_reader_when_breakout_supp
 
     assert any(snapshot.reader_name == "false_breakout_model" for snapshot in report.snapshots)
     assert any(reason_code.startswith("false_breakout_model_") for reason_code in report.signal.reason_codes)
+    assert report.signal.influence_mode == Build14InfluenceMode.LIMITED_INFLUENCE
+
+
+def test_build14_limited_influence_uses_lob_and_obi_reason_codes_when_microstructure_deteriorates():
+    report = evaluate_build14_limited_influence(
+        Build14ObservationInput(
+            correlation_id="corr-14lob-obi",
+            dtr_coverage=0.90,
+            cra_sterilization_rate=0.15,
+            cra_alert_count=1,
+            break_even_drift_alert=False,
+            edge_degraded_count=0,
+            queue_backlog=22,
+            stale_pair_count=1,
+            dtr_loss_count=0,
+            log_loss_count=0,
+            ce_net=0.0002,
+            vwa_absorption_ratio=0.20,
+            ghost_liquidity_ratio=0.90,
+            adverse_obi_pressure=0.80,
+        )
+    )
+
+    assert any(snapshot.reader_name == "lob_deep_filter_vwa" for snapshot in report.snapshots)
+    assert any(snapshot.reader_name == "order_book_imbalance" for snapshot in report.snapshots)
+    assert any(reason_code.startswith("lob_deep_filter_vwa_") for reason_code in report.signal.reason_codes)
+    assert any(reason_code.startswith("order_book_imbalance_") for reason_code in report.signal.reason_codes)
+    assert report.signal.influence_mode == Build14InfluenceMode.LIMITED_INFLUENCE
+
+
+def test_build14_limited_influence_uses_hurst_and_competition_reason_codes_when_regime_and_crowding_deteriorate():
+    report = evaluate_build14_limited_influence(
+        Build14ObservationInput(
+            correlation_id="corr-14hurst-comp",
+            dtr_coverage=0.92,
+            cra_sterilization_rate=0.10,
+            cra_alert_count=0,
+            break_even_drift_alert=True,
+            edge_degraded_count=1,
+            queue_backlog=6,
+            stale_pair_count=1,
+            dtr_loss_count=0,
+            log_loss_count=0,
+            ce_net=-0.0002,
+            hurst_exponent=0.92,
+            competition_density=0.88,
+        )
+    )
+
+    assert any(snapshot.reader_name == "hurst_regime_classifier" for snapshot in report.snapshots)
+    assert any(snapshot.reader_name == "competition_monitor" for snapshot in report.snapshots)
+    assert any(reason_code.startswith("hurst_regime_classifier_") for reason_code in report.signal.reason_codes)
+    assert any(reason_code.startswith("competition_monitor_") for reason_code in report.signal.reason_codes)
     assert report.signal.influence_mode == Build14InfluenceMode.LIMITED_INFLUENCE
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from complete_enablers.competition_monitor import build_competition_monitor_snapshot
 from complete_enablers.contracts import (
     Build14InfluenceReport,
     Build14InfluenceSignal,
@@ -16,7 +17,10 @@ from complete_enablers.enums import (
 )
 from complete_enablers.execution_fragility_score import build_execution_fragility_score
 from complete_enablers.false_breakout_model import build_false_breakout_snapshot
+from complete_enablers.hurst_regime_classifier import build_hurst_regime_snapshot
+from complete_enablers.lob_deep_filter_vwa import build_lob_deep_filter_vwa_snapshot
 from complete_enablers.market_toxicity_snapshot import build_market_toxicity_snapshot
+from complete_enablers.order_book_imbalance import build_order_book_imbalance_snapshot
 
 
 _SEVERITY_RANK = {
@@ -36,7 +40,11 @@ def _build_snapshots(
     return (
         build_market_toxicity_snapshot(observation),
         build_execution_fragility_score(observation),
+        build_lob_deep_filter_vwa_snapshot(observation),
+        build_order_book_imbalance_snapshot(observation),
         build_false_breakout_snapshot(observation),
+        build_hurst_regime_snapshot(observation),
+        build_competition_monitor_snapshot(observation),
     )
 
 

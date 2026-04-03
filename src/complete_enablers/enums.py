@@ -37,6 +37,7 @@ class Build14SignalFamily(StrEnum):
     AI_EDGE = "ai_edge"
     MICROSTRUCTURE = "microstructure"
     REGIME = "regime"
+    RISK = "risk"
 
 
 class Build14HardState(StrEnum):

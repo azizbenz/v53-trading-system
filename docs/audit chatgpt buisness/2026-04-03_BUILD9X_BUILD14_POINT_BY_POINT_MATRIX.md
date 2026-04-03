@@ -65,10 +65,10 @@ This does **not** reopen `Build-9X`; it strengthens the already aligned base.
 | `market_toxicity_snapshot` / toxicity de flux | Yes | Yes | Yes | `ABSORBED` | Already present before this wave |
 | `execution_fragility_score` | Yes | Yes | Yes | `ABSORBED` | Already present before this wave |
 | `false_breakout_model` | Yes | Yes | Yes | `ABSORBED` | Added on this branch as a distinct Build-14 reader in the microstructure family |
-| `LOB deep filter / VWA` | No | No | No | `MISSING_DISTINCT_BRICK` | Still to be absorbed into `microstructure_enriched_layer` |
-| `OBI` | No | No | No | `MISSING_DISTINCT_BRICK` | Still to be absorbed into `microstructure_enriched_layer` |
-| `Hurst regime classifier` | No | No | No | `MISSING_DISTINCT_BRICK` | Still to be absorbed into `regime_enriched_layer` |
-| `competition monitor` | No | No | No | `MISSING_DISTINCT_BRICK` | Still to be absorbed into `risk_contribution_monitor` |
+| `LOB deep filter / VWA` | Yes | Yes | Yes | `ABSORBED` | Now present as a distinct Build-14 microstructure reader |
+| `OBI` | Yes | Yes | Yes | `ABSORBED` | Now present as a distinct Build-14 microstructure reader |
+| `Hurst regime classifier` | Yes | Yes | Yes | `ABSORBED` | Now present as a distinct Build-14 regime reader |
+| `competition monitor` | Yes | Yes | Yes | `ABSORBED` | Now present as a distinct Build-14 risk reader |
 | Shadow-first guarded activation | Yes | Yes | Yes | `ALIGNED` | `evaluate_build14_shadow_activation` remains the Shadow truth surface |
 | Post-Shadow bounded influence only | Yes | Yes | Yes | `ALIGNED` | `evaluate_build14_limited_influence` remains bounded, non-autonomous, and verdict-driven |
 
@@ -76,13 +76,23 @@ This does **not** reopen `Build-9X`; it strengthens the already aligned base.
 
 `Build-14` stays `ALIGNED` as a governed base on the current branch.
 
-But the addendum is still only **partially absorbed**.
+After this wave, the distinct addendum bricks are now all present as governed,
+Shadow-first readers:
 
-After this wave, the distinct addendum bricks are:
+- `market_toxicity_snapshot`
+- `execution_fragility_score`
+- `false_breakout_model`
+- `LOB/VWA`
+- `OBI`
+- `Hurst regime classifier`
+- `competition monitor`
 
-- already absorbed: `market_toxicity_snapshot`, `execution_fragility_score`,
-  `false_breakout_model`
-- still missing: `LOB/VWA`, `OBI`, `Hurst`, `competition monitor`
+This does **not** mean post-Shadow live influence is automatically approved for
+all of them.
+
+It means the branch now has a distinct coded/tested reader for each selected
+addendum brick, which is exactly the prerequisite needed for honest Shadow
+observation and later verdicts.
 
 ---
 
@@ -109,10 +119,10 @@ Practical effect of this wave:
 The next safest coding lot is:
 
 1. keep the real `Build-11` campaign running day by day
-2. continue `Build-14` addendum absorption with the microstructure pair:
-   `LOB deep filter / VWA` then `OBI`
-3. only after that, add `Hurst`
-4. then add `competition monitor`
+2. keep these readers in `SHADOW_ENABLED` observation and compare their effect
+   in the real `Build-11` campaign
+3. decide later which readers remain `READ_ONLY`, which become
+   `LIMITED_INFLUENCE`, and which should stay `DORMANT`
 
 This keeps the work:
 
