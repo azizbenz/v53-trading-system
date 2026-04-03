@@ -807,6 +807,14 @@
       "record_path": "docs/audit chatgpt buisness/2026-04-03_BUILD11_TARGET_ENV_SAME_DAY_RERUN_IDEMPOTENCY_AUDIT.md",
       "conclusion": "A same-day rerun of the real target-environment campaign on 2026-04-03 resumed cleanly, recorded an idle pass, and did not fabricate a second Shadow day. The campaign correctly remained at 1 consecutive day with 29 remaining.",
       "action_taken": "Freeze the idempotency proof and keep the next real progression step fixed on the next calendar day only."
+    },
+    {
+      "audit_id": "AUDIT-028",
+      "date": "2026-04-03",
+      "scope": "Build-1 to Build-17 closure register",
+      "record_path": "docs/audit chatgpt buisness/2026-04-03_BUILD1_TO_BUILD17_CLOSURE_AUDIT.md",
+      "conclusion": "The branch now has a clean closure reading: 1,2,3,5,6,7,8,9,9x,10,14 stay aligned; 4,15,16 are the best realistic closure candidates; 11,12,13,17 remain structurally blocked for honest closure.",
+      "action_taken": "Use the closure register to avoid reopening aligned builds and to sequence the next closure work around Build-4, Build-15, and Build-16 while the real Build-11 campaign continues."
     }
   ],
   "known_critical_gaps": [
