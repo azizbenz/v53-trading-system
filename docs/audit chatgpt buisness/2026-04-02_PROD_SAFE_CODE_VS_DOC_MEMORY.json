@@ -36,9 +36,9 @@
     "branch_alignment": {
       "main_commit": "e28de12",
       "origin_main_commit": "e28de12",
-      "current_branch_commit": "fcdf8df",
+      "current_branch_commit": "bf84ab3",
       "branch_divergence_detected": true,
-      "interpretation": "The dedicated Full Shadow migration branch is now the active work surface. Canon migration started docs-first there, and the branch now also carries real Engine C/D packages, the Build-11 A/B/C/D runtime reinjection wave, explicit Build-9X merge gates wired into the governed review/export path, the bounded native live_websocket proof checkpoint, a shared governed Build-14 observation derivation helper, and local/reporting surfaces that now expose reader-level Build-14 evidence instead of relying on hidden demo constants. The previous branch remains the last coherent Option-B rollback checkpoint."
+      "interpretation": "The dedicated Full Shadow migration branch is now the active work surface. Canon migration started docs-first there, and the branch now also carries real Engine C/D packages, the Build-11 A/B/C/D runtime reinjection wave, explicit Build-9X merge gates wired into the governed review/export path, the bounded native live_websocket proof checkpoint, a shared governed Build-14 observation derivation helper, and local/reporting surfaces that now expose reader-level Build-14 evidence instead of relying on hidden demo constants. On 2026-04-04, the real day-2 campaign attempt was retried twice but remained blocked by native websocket connectivity; the previous branch remains the last coherent Option-B rollback checkpoint."
     },
     "notes": [
       "Do not reset hard.",
@@ -976,6 +976,14 @@
       "record_path": "docs/audit chatgpt buisness/2026-04-03_LAST_PLAN_P2_REMEDIATION_AUDIT.md",
       "conclusion": "The remaining P2 gaps are now closed on the current branch: Build-11 shadow reports carry optional Build-14 reader-level evidence, and the local dashboard/demo path now derives Build-14 addendum inputs from a shared governed observation helper instead of fixed constants.",
       "action_taken": "Freeze the local Build-9X / Build-14 plan as closed and keep the next prod-safe action fixed on the real Build-11 target-environment day-2 run."
+    },
+    {
+      "audit_id": "AUDIT-037",
+      "date": "2026-04-04",
+      "scope": "Build-11 target-environment day-2 runtime blocker",
+      "record_path": "docs/audit chatgpt buisness/2026-04-04_BUILD11_TARGET_ENV_CAMPAIGN_DAY2_BLOCKED_WEBSOCKET_CONNECT_AUDIT.md",
+      "conclusion": "The real day-2 Build-11 campaign attempt on 2026-04-04 did not advance the counter: the machine date was correct and the 2026-04-04 capture directory was opened, but native live_websocket connectivity failed twice before a new governed capture/export could be completed. The campaign therefore remains honestly at 1 day / 29 remaining.",
+      "action_taken": "Do not claim 2/30. Keep the next prod-safe action as a same-day or next-available retry of the identical 2026-04-04 command only after websocket gateway connectivity is restored."
     }
   ],
   "known_critical_gaps": [
@@ -984,7 +992,7 @@
       "priority": "P0",
       "scope": "Build-11 doctrine vs actual closure criteria",
       "doc_expectation": "On the migration branch, Shadow 30 days is now repatched as a full-system truth phase with A/B/C/D and Build-14 SHADOW_ENABLED, then post-Shadow verdict.",
-      "code_or_runtime_reality": "Autonomous Shadow VPS service and live_websocket support exist, and the migration branch now honestly executes Engine A/B/C/D in the local Build-11 code/test perimeter. Final operational proof and doctrinal closure are still not established on the target environment.",
+      "code_or_runtime_reality": "Autonomous Shadow VPS service and live_websocket support exist, and the migration branch now honestly executes Engine A/B/C/D in the local Build-11 code/test perimeter. Final operational proof and doctrinal closure are still not established on the target environment; the 2026-04-04 day-2 attempt remained blocked by repeated native websocket gateway connect failures, so the real campaign is still at 1 day / 29 remaining.",
       "status": "open"
     },
     {
@@ -1264,27 +1272,27 @@
     }
   },
   "next_recommended_action": {
-    "step": "Rerun the same Build-11 Shadow VPS campaign on 2026-04-04, using the same build/build11_live_websocket_campaign directories and config, with no session_date_override.",
-    "reason": "The branch now has an honest 2026-04-03 day-1 target-environment checkpoint with 29 days remaining. The only prod-safe way to progress the 30-day gate is to accumulate repeated real calendar-day runs in the same evidence chain."
+    "step": "Retry the same Build-11 Shadow VPS campaign for the 2026-04-04 session, using the same build/build11_live_websocket_campaign directories and config, with no session_date_override, but only once native websocket gateway connectivity is restored.",
+    "reason": "The branch still has an honest 2026-04-03 day-1 checkpoint and the 2026-04-04 day-2 attempt opened the correct daily capture path but failed twice before completing a native live_websocket capture. The only prod-safe next move is to retry the real 2026-04-04 session until a genuine capture/export completes; do not skip to 2026-04-05 and do not claim 2/30 early."
   },
   "branch_overrides": {
     "option_b_realignment_commit": "99cf170",
     "migration_branch": "codex/full-shadow-abcd-migration-20260403",
     "migration_branch_base_commit": "01b39e3",
-    "effective_next_action": "Use the migration branch as the frozen baseline and rerun the same target-environment Build-11 Shadow VPS campaign on 2026-04-04.",
-    "effective_reason": "The branch is now locally coherent and also carries a real 2026-04-03 day-1 campaign checkpoint with an honest 1 day / 29 remaining state. The remaining real uncertainty is repeated operational proof, not local semantics."
+    "effective_next_action": "Use the migration branch as the frozen baseline and retry the same target-environment Build-11 Shadow VPS campaign for the 2026-04-04 session once websocket gateway connectivity is restored.",
+    "effective_reason": "The branch is locally coherent and still carries a real 2026-04-03 day-1 campaign checkpoint with an honest 1 day / 29 remaining state. The 2026-04-04 session did not complete because the native websocket adapter failed to connect twice, so the remaining uncertainty is operational connectivity, not local semantics."
   },
   "planned_migration": {
     "migration_id": "MIG-001",
     "selected_target": "full_shadow_30d_abcd_build14",
-    "status": "target_environment_day1_real_campaign_frozen_pending_day2_and_repeated_shadow_days",
+    "status": "target_environment_day2_attempt_frozen_as_runtime_blocker_pending_successful_2026_04_04_capture",
     "record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_MIGRATION_PLAN.md",
     "checkpoint_record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_LOT0_BRANCH_CHECKPOINT.md",
     "lot1_record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_LOT1_CANON_REPATCH_AUDIT.md",
     "lot2_4_record_path": "docs/audit chatgpt buisness/2026-04-03_FULL_SHADOW_ABCD_LOT2_4_ENGINE_CD_AND_BUILD11_REINJECTION_AUDIT.md",
     "active_branch": "codex/full-shadow-abcd-migration-20260403",
     "base_commit": "01b39e3",
-    "rule_until_applied": "The migration branch now has the canon repatch, Engine C/D implementation, Build-11 A/B/C/D reinjection, registry/profile/bootstrap coherence, a refreshed Build-11 to Build-17 status reading, and a real 2026-04-03 target-environment campaign day under the governed VPS collector. The doctrine is still not considered fully implemented until repeated real Shadow days complete the 30-day runtime-proof story.",
-    "recommended_start": "Rerun the same target-environment Build-11 Shadow VPS campaign on 2026-04-04"
+    "rule_until_applied": "The migration branch now has the canon repatch, Engine C/D implementation, Build-11 A/B/C/D reinjection, registry/profile/bootstrap coherence, a refreshed Build-11 to Build-17 status reading, a real 2026-04-03 target-environment campaign day under the governed VPS collector, and a frozen 2026-04-04 day-2 blocker audit showing repeated websocket gateway connect failures. The doctrine is still not considered fully implemented until repeated real Shadow days complete the 30-day runtime-proof story.",
+    "recommended_start": "Retry the same target-environment Build-11 Shadow VPS campaign for the 2026-04-04 session once native websocket connectivity is restored"
   }
 }
