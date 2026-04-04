@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 from interface_contracts.atomic_io import atomic_write_json
 from protocols.contracts import (
     ShadowBuild14Contribution,
+    ShadowBuild14ReaderContribution,
     ShadowEngineReport,
     ShadowReportArtifact,
     ShadowReportSection,
@@ -75,6 +76,15 @@ _REQUIRED_BUILD14_IDS = (
     "build14_covariance",
     "build14_risk_contribution",
     "build14_edge_diversity",
+)
+_OPTIONAL_BUILD14_READER_IDS = (
+    "market_toxicity_snapshot",
+    "execution_fragility_score",
+    "lob_deep_filter_vwa",
+    "order_book_imbalance",
+    "false_breakout_model",
+    "hurst_regime_classifier",
+    "competition_monitor",
 )
 _REQUIRED_GLOBAL_METRICS = (
     "dtr_coverage",
@@ -149,7 +159,7 @@ class ShadowDayCounter:
     def record_shadow_day(
         self,
         passed_all_gates: bool,
-        metrics_summary: dict[str, float] | None = None,
+        metrics_summary: dict[str, float | str] | None = None,
         now: float | None = None,
     ) -> ShadowDayRecord:
         """Record a completed shadow trading day.
@@ -354,6 +364,49 @@ class ShadowDayCounter:
             observations=observations,
         )
 
+    @classmethod
+    def _build_build14_reader_contribution(
+        cls,
+        records: list[ShadowDayRecord],
+        reader_name: str,
+    ) -> ShadowBuild14ReaderContribution | None:
+        metric_prefix = f"build14_reader.{reader_name}"
+        average_observed_value = cls._metric_average(
+            records, f"{metric_prefix}.observed_value"
+        )
+        average_severity_score = cls._metric_average(
+            records, f"{metric_prefix}.severity_score"
+        )
+        latest_status = cls._text_metric_latest(records, f"{metric_prefix}.status")
+        signal_family = cls._text_metric_latest(
+            records, f"{metric_prefix}.signal_family"
+        )
+        latest_detail = cls._text_metric_latest(records, f"{metric_prefix}.detail")
+        structured_log_key = cls._text_metric_latest(
+            records, f"{metric_prefix}.structured_log_key"
+        )
+        observations = len(
+            cls._metric_values(records, f"{metric_prefix}.observed_value")
+        )
+        if (
+            average_observed_value is None
+            or average_severity_score is None
+            or not latest_status
+            or not signal_family
+            or observations == 0
+        ):
+            return None
+        return ShadowBuild14ReaderContribution(
+            reader_name=reader_name,
+            signal_family=signal_family,
+            average_observed_value=average_observed_value,
+            average_severity_score=average_severity_score,
+            latest_status=latest_status,
+            latest_detail=latest_detail,
+            structured_log_key=structured_log_key,
+            observations=observations,
+        )
+
     def generate_report(self) -> dict:
         """Generate a shadow validation report for promotion gate.
 
@@ -411,6 +464,16 @@ class ShadowDayCounter:
             if (
                 contribution := self._build_build14_contribution(
                     successful_records, component_id
+                )
+            )
+            is not None
+        )
+        build14_reader_contribution = tuple(
+            contribution
+            for reader_name in _OPTIONAL_BUILD14_READER_IDS
+            if (
+                contribution := self._build_build14_reader_contribution(
+                    successful_records, reader_name
                 )
             )
             is not None
@@ -536,7 +599,8 @@ class ShadowDayCounter:
                 ready=inter_engine_comparison_ready and build14_contribution_ready,
                 summary=(
                     f"engines={len(inter_engine_comparison)}/{len(_REQUIRED_ENGINE_IDS)} / "
-                    f"build14={len(build14_contribution)}/{len(_REQUIRED_BUILD14_IDS)}"
+                    f"build14={len(build14_contribution)}/{len(_REQUIRED_BUILD14_IDS)} / "
+                    f"readers={len(build14_reader_contribution)}/{len(_OPTIONAL_BUILD14_READER_IDS)}"
                 ),
             ),
             ShadowReportSection(
@@ -630,6 +694,7 @@ class ShadowDayCounter:
             go_no_go_report_ready=go_no_go_report_ready,
             inter_engine_comparison=inter_engine_comparison,
             build14_contribution=build14_contribution,
+            build14_reader_contribution=build14_reader_contribution,
             rendered_sections=rendered_sections,
             missing_sections=tuple(missing_sections),
         )

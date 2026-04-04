@@ -1,6 +1,10 @@
 """Real Build-10 monitoring backend for the Light runtime."""
 
 from monitoring.alert_manager import AlertLifecycleTracker, build_monitoring_alerts
+from monitoring.build14_observation import (
+    derive_build14_observation_from_payload,
+    derive_build14_observation_from_snapshot,
+)
 from monitoring.contracts import (
     AlertHistoryEntry,
     AlertProjection,
@@ -78,6 +82,8 @@ __all__ = [
     "build_health_dashboard_payload",
     "build_technical_dashboard_payload",
     "build_observability_export",
+    "derive_build14_observation_from_snapshot",
+    "derive_build14_observation_from_payload",
     "AlertLifecycleTracker",
 ]
 

@@ -46,6 +46,17 @@ _REQUIRED_SHADOW_BUILD14_COMPONENT_IDS = frozenset(
         "build14_edge_diversity",
     }
 )
+_KNOWN_SHADOW_BUILD14_READER_IDS = frozenset(
+    {
+        "market_toxicity_snapshot",
+        "execution_fragility_score",
+        "lob_deep_filter_vwa",
+        "order_book_imbalance",
+        "false_breakout_model",
+        "hurst_regime_classifier",
+        "competition_monitor",
+    }
+)
 _MICRO_LIVE_ALLOWED_ENGINES = _REQUIRED_SHADOW_ENGINE_IDS
 _LIVE_LIGHT_ALLOWED_ENGINES = _REQUIRED_SHADOW_ENGINE_IDS
 
@@ -348,6 +359,27 @@ class ShadowBuild14Contribution(BaseModel, frozen=True):
         if self.component_id not in _REQUIRED_SHADOW_BUILD14_COMPONENT_IDS:
             raise ValueError(
                 "Build-11 shadow report Build-14 contribution is out of canonical scope"
+        )
+        return self
+
+
+class ShadowBuild14ReaderContribution(BaseModel, frozen=True):
+    """Optional reader-level Build-14 evidence rendered by the Build-11 shadow report."""
+
+    reader_name: str = Field(..., min_length=1)
+    signal_family: str = Field(..., min_length=1)
+    average_observed_value: float = Field(..., ge=0.0)
+    average_severity_score: float = Field(..., ge=0.0, le=1.0)
+    latest_status: Literal["nominal", "elevated", "critical"]
+    latest_detail: str = ""
+    structured_log_key: str = ""
+    observations: int = Field(..., ge=1)
+
+    @model_validator(mode="after")
+    def validate_reader_scope(self) -> "ShadowBuild14ReaderContribution":
+        if self.reader_name not in _KNOWN_SHADOW_BUILD14_READER_IDS:
+            raise ValueError(
+                "Build-11 shadow report Build-14 reader contribution is out of canonical scope"
             )
         return self
 
@@ -424,6 +456,7 @@ class ShadowReportArtifact(BaseModel, frozen=True):
     go_no_go_report_ready: bool = False
     inter_engine_comparison: tuple[ShadowEngineReport, ...] = ()
     build14_contribution: tuple[ShadowBuild14Contribution, ...] = ()
+    build14_reader_contribution: tuple[ShadowBuild14ReaderContribution, ...] = ()
     rendered_sections: tuple[ShadowReportSection, ...] = ()
     missing_sections: tuple[str, ...] = ()
 
@@ -449,6 +482,13 @@ class ShadowReportArtifact(BaseModel, frozen=True):
         if len(build14_ids) != len(set(build14_ids)):
             raise ValueError(
                 "Build-11 shadow report build14_contribution must stay unique per component"
+            )
+        build14_reader_ids = tuple(
+            entry.reader_name for entry in self.build14_reader_contribution
+        )
+        if len(build14_reader_ids) != len(set(build14_reader_ids)):
+            raise ValueError(
+                "Build-11 shadow report build14_reader_contribution must stay unique per reader"
             )
         section_ids = tuple(section.section_id for section in self.rendered_sections)
         if len(section_ids) != len(set(section_ids)):
@@ -1067,6 +1107,7 @@ __all__ = [
     "ShadowRunSummary",
     "ShadowEngineReport",
     "ShadowBuild14Contribution",
+    "ShadowBuild14ReaderContribution",
     "ShadowReportSection",
     "ShadowReportArtifact",
     "MicroLiveInput",

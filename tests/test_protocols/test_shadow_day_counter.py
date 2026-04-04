@@ -74,6 +74,24 @@ def _complete_shadow_metrics(day_index: int) -> dict[str, float]:
     ):
         metrics[f"{component_id}.contribution_score"] = contribution_score
         metrics[f"{component_id}.interaction_score"] = 0.08
+    for reader_name, signal_family, observed_value, severity_score, status in (
+        ("market_toxicity_snapshot", "microstructure", 0.46, 0.5, "elevated"),
+        ("execution_fragility_score", "ai_edge", 0.42, 0.5, "elevated"),
+        ("lob_deep_filter_vwa", "microstructure", 0.28, 0.0, "nominal"),
+        ("order_book_imbalance", "microstructure", 0.19, 0.0, "nominal"),
+        ("false_breakout_model", "microstructure", 0.31, 0.0, "nominal"),
+        ("hurst_regime_classifier", "regime", 0.47, 0.5, "elevated"),
+        ("competition_monitor", "risk", 0.18, 0.0, "nominal"),
+    ):
+        metric_prefix = f"build14_reader.{reader_name}"
+        metrics[f"{metric_prefix}.observed_value"] = observed_value
+        metrics[f"{metric_prefix}.severity_score"] = severity_score
+        metrics[f"{metric_prefix}.status"] = status
+        metrics[f"{metric_prefix}.signal_family"] = signal_family
+        metrics[f"{metric_prefix}.detail"] = f"{reader_name} detail"
+        metrics[f"{metric_prefix}.structured_log_key"] = (
+            f"build14.shadow_enabled.{reader_name}"
+        )
     return metrics
 
 
@@ -245,6 +263,8 @@ class TestReport:
         assert len(report["rendered_sections"]) == 7
         assert len(report["inter_engine_comparison"]) == 4
         assert len(report["build14_contribution"]) == 5
+        assert len(report["build14_reader_contribution"]) == 7
+        assert report["build14_reader_contribution"][0]["reader_name"] == "market_toxicity_snapshot"
 
 
 class TestMetricsSummary:

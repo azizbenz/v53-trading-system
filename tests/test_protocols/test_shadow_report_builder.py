@@ -5,6 +5,8 @@ from __future__ import annotations
 from interface_contracts import ProfileId, PromotionState, ReviewState, RuntimeMode
 from monitoring import (
     AlertProjection,
+    Build14Projection,
+    Build14ReaderProjection,
     Build9MetaProjection,
     Build9XProjection,
     OperatorRuntimeProjection,
@@ -143,3 +145,58 @@ def test_build_shadow_daily_metrics_summary_prefers_replay_metrics_payload():
     assert metrics["hard_block_rate"] == 0.25
     assert metrics["phantom_trade_count"] == 3.0
     assert metrics["dtr_complete"] == 0.0
+
+
+def test_build_shadow_daily_metrics_summary_projects_build14_reader_metrics():
+    payload = _payload().model_copy(
+        update={
+            "build14": Build14Projection(
+                status="warning",
+                hard_state="shadow_enabled",
+                influence_mode="shadow_enabled",
+                action="shadow_apply",
+                severity="elevated",
+                summary="Build-14 readers remain shadow-only but visible",
+                market_toxicity_value=0.46,
+                market_toxicity_status="elevated",
+                execution_fragility_value=0.42,
+                execution_fragility_status="elevated",
+                confidence_penalty_weight=0.0,
+                recommended_budget_factor=1.0,
+                requires_manual_review=False,
+                candidate_effect="shadow_enabled",
+                reader_projections=(
+                    Build14ReaderProjection(
+                        reader_name="market_toxicity_snapshot",
+                        signal_family="microstructure",
+                        observed_value=0.46,
+                        status="elevated",
+                        detail="backlog=4, stale_pairs=0, losses=0, cra=8.00%",
+                        structured_log_key="build14.shadow_enabled.market_toxicity",
+                    ),
+                    Build14ReaderProjection(
+                        reader_name="competition_monitor",
+                        signal_family="risk",
+                        observed_value=0.18,
+                        status="nominal",
+                        detail="competition_density=0.18 / stale_pair_count=0 / ce_net=0.0010",
+                        structured_log_key="build14.shadow_enabled.competition_monitor",
+                    ),
+                ),
+            )
+        }
+    )
+
+    metrics = build_shadow_daily_metrics_summary(
+        payload,
+        _summary(),
+        capital_simulated_usdt=10_000.0,
+    )
+
+    assert metrics["build14_reader.market_toxicity_snapshot.observed_value"] == 0.46
+    assert metrics["build14_reader.market_toxicity_snapshot.severity_score"] == 0.5
+    assert (
+        metrics["build14_reader.market_toxicity_snapshot.structured_log_key"]
+        == "build14.shadow_enabled.market_toxicity"
+    )
+    assert metrics["build14_reader.competition_monitor.signal_family"] == "risk"

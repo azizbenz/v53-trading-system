@@ -14,6 +14,13 @@ def _average(values: tuple[float, ...]) -> float:
     return sum(values) / len(values) if values else 0.0
 
 
+_BUILD14_READER_STATUS_SCORES = {
+    "nominal": 0.0,
+    "elevated": 0.5,
+    "critical": 1.0,
+}
+
+
 def build_shadow_daily_metrics_summary(
     payload: TechnicalDashboardPayload,
     shadow_summary: ShadowRunSummary,
@@ -169,6 +176,17 @@ def build_shadow_daily_metrics_summary(
         )
         metrics[f"{assessment.component_id}.contribution_score"] = contribution_score
         metrics[f"{assessment.component_id}.interaction_score"] = contribution_score
+    for reader in payload.build14.reader_projections:
+        metric_prefix = f"build14_reader.{reader.reader_name}"
+        metrics[f"{metric_prefix}.observed_value"] = reader.observed_value
+        metrics[f"{metric_prefix}.severity_score"] = _BUILD14_READER_STATUS_SCORES.get(
+            reader.status, 0.0
+        )
+        metrics[f"{metric_prefix}.status"] = reader.status
+        metrics[f"{metric_prefix}.signal_family"] = reader.signal_family
+        metrics[f"{metric_prefix}.detail"] = reader.detail
+        if reader.structured_log_key:
+            metrics[f"{metric_prefix}.structured_log_key"] = reader.structured_log_key
     return metrics
 
 

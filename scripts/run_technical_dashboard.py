@@ -24,7 +24,6 @@ from backtest_artifact_import import (  # noqa: E402
     validate_strategy_onboarding_request,
 )
 from complete_enablers import (  # noqa: E402
-    Build14ObservationInput,
     evaluate_build14_limited_influence,
 )
 from interface_contracts import PairHealthLevel, ProfileId, RuntimeMode, StrategyClassification  # noqa: E402
@@ -68,6 +67,7 @@ from monitoring import (  # noqa: E402
     collect_monitoring_snapshot,
     collect_pair_metrics,
     collect_portfolio_metrics,
+    derive_build14_observation_from_payload,
 )
 from protocols import (  # noqa: E402
     ShadowComponentAssessment,
@@ -664,29 +664,6 @@ def _build_demo_live_light_projection(
     return summary, build_live_light_projection(summary)
 
 
-def _build_build14_observation(payload) -> Build14ObservationInput:
-    return Build14ObservationInput(
-        correlation_id=payload.correlation_id,
-        dtr_coverage=payload.build9_meta.dtr_coverage,
-        cra_sterilization_rate=payload.build9_meta.cra_sterilization_rate,
-        cra_alert_count=payload.build9_meta.cra_alert_count,
-        break_even_drift_alert=payload.build9_meta.break_even_state == "drift_alert",
-        edge_degraded_count=payload.build9_meta.edge_degraded_count,
-        queue_backlog=payload.alerts.queue_backlog,
-        stale_pair_count=payload.alerts.stale_pair_count,
-        dtr_loss_count=payload.alerts.dtr_loss_count,
-        log_loss_count=payload.alerts.log_loss_count,
-        ce_net=payload.portfolio.ce_net,
-        breakout_failure_rate=0.18,
-        volume_support_ratio=0.82,
-        vwa_absorption_ratio=0.79,
-        ghost_liquidity_ratio=0.12,
-        adverse_obi_pressure=0.24,
-        hurst_exponent=0.53,
-        competition_density=0.18,
-    )
-
-
 def _build14_reader_projections(report) -> tuple[Build14ReaderProjection, ...]:
     return tuple(
         Build14ReaderProjection(
@@ -703,7 +680,9 @@ def _build14_reader_projections(report) -> tuple[Build14ReaderProjection, ...]:
 
 
 def _build_build14_report_and_projection(payload) -> tuple[object, Build14Projection]:
-    report = evaluate_build14_limited_influence(_build_build14_observation(payload))
+    report = evaluate_build14_limited_influence(
+        derive_build14_observation_from_payload(payload)
+    )
     snapshots_by_reader = {snapshot.reader_name: snapshot for snapshot in report.snapshots}
     market_toxicity = snapshots_by_reader.get("market_toxicity_snapshot")
     execution_fragility = snapshots_by_reader.get("execution_fragility_score")

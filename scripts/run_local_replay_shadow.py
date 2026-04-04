@@ -21,7 +21,7 @@ from backtest_artifact_import import (  # noqa: E402
     summarize_import_request,
     validate_import_request,
 )
-from complete_enablers import Build14ObservationInput, evaluate_build14_shadow_activation  # noqa: E402
+from complete_enablers import evaluate_build14_shadow_activation  # noqa: E402
 from engine_a import EngineAInput, EngineARuntime, EngineARuntimeInput, EngineARuntimeStatus  # noqa: E402
 from engine_b import EngineBInput, EngineBRuntime, EngineBRuntimeInput, EngineBRuntimeStatus  # noqa: E402
 from engine_c import EngineCInput, EngineCRuntime, EngineCRuntimeInput, EngineCRuntimeStatus  # noqa: E402
@@ -62,6 +62,7 @@ from monitoring import (  # noqa: E402
     collect_monitoring_snapshot,
     collect_pair_metrics,
     collect_portfolio_metrics,
+    derive_build14_observation_from_snapshot,
 )
 from risk_backbone.risk_runtime import RiskLimits, RiskRuntime  # noqa: E402
 from protocols import (  # noqa: E402
@@ -568,29 +569,6 @@ def _meta_metrics():
     )
 
 
-def _build_build14_observation(snapshot) -> Build14ObservationInput:
-    return Build14ObservationInput(
-        correlation_id=snapshot.correlation_id,
-        dtr_coverage=snapshot.meta.dtr_coverage,
-        cra_sterilization_rate=snapshot.meta.cra_sterilization_rate,
-        cra_alert_count=snapshot.meta.cra_alert_count,
-        break_even_drift_alert=snapshot.meta.break_even_drift_alert,
-        edge_degraded_count=snapshot.meta.edge_degraded_count,
-        queue_backlog=snapshot.infra.queue_backlog,
-        stale_pair_count=len(snapshot.infra.stale_pairs),
-        dtr_loss_count=snapshot.infra.dtr_loss_count,
-        log_loss_count=snapshot.infra.log_loss_count,
-        ce_net=snapshot.portfolio.ce_net,
-        breakout_failure_rate=0.18,
-        volume_support_ratio=0.82,
-        vwa_absorption_ratio=0.79,
-        ghost_liquidity_ratio=0.12,
-        adverse_obi_pressure=0.24,
-        hurst_exponent=0.53,
-        competition_density=0.18,
-    )
-
-
 def _build14_reader_projections(report) -> tuple[Build14ReaderProjection, ...]:
     return tuple(
         Build14ReaderProjection(
@@ -607,7 +585,9 @@ def _build14_reader_projections(report) -> tuple[Build14ReaderProjection, ...]:
 
 
 def _build14_projection(snapshot) -> Build14Projection:
-    report = evaluate_build14_shadow_activation(_build_build14_observation(snapshot))
+    report = evaluate_build14_shadow_activation(
+        derive_build14_observation_from_snapshot(snapshot)
+    )
     snapshots_by_reader = {entry.reader_name: entry for entry in report.snapshots}
     market_toxicity = snapshots_by_reader.get("market_toxicity_snapshot")
     execution_fragility = snapshots_by_reader.get("execution_fragility_score")
