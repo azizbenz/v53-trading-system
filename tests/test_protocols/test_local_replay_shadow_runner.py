@@ -61,19 +61,20 @@ def _real_exports_dir() -> Path:
                 strategy_version="a.v2.0",
                 strategy_classification=StrategyClassification.A_VARIANT,
                 lineage_version="a.v2.0.r3",
-                profile_scope=ProfileId.LIGHT,
+                profile_scope=ProfileId.COMPLETE,
                 engine_scope=("engine_a", "engine_b"),
                 tested_pairs=("BTCUSDT", "ETHUSDT"),
                 dataset_manifest_id="dataset-export-20260401",
                 timeframe_scope="2026-03-01/2026-03-31",
-                feature_set_version="feature.v2",
+                feature_set_version="2.0.0",
+                transform_set_version="2.0.0",
                 formula_set_version="formula.v2",
                 scoring_version="score.v2",
                 regime_version="regime.v2",
                 risk_policy_version="risk.v2",
                 cost_model_version="cost.v2",
                 performance_mode="research_fast_mode",
-                artifact_schema_version="artifact.v2",
+                artifact_schema_version="2.0.0",
                 artifact_hash="artifact-hash-local-export-1",
                 clock_id="clock-local-export-1",
                 start_timestamp_ms=1_700_000_000_000,
@@ -272,6 +273,7 @@ def test_export_local_replay_shadow_run_writes_governed_chain_sidecars():
         assert local_replay_evidence["data_source"] == "recorded_replay"
         assert local_replay_evidence["replay_useful_ready"] is True
         assert candidate_payload["replay_import"]["validation_status"] == "accepted"
+        assert candidate_payload["replay_import"]["signature_check_status"] == "not_provided"
         assert candidate_payload["system"]["build14_status"] == "warning"
         assert len(candidate_payload["build14"]["reader_projections"]) == 7
         reader_projections = {
@@ -311,6 +313,17 @@ def test_export_local_replay_shadow_run_writes_governed_chain_sidecars():
         assert engine_runtime_evidence["engine_b"]["runtime_status"] == "accepted"
         assert engine_runtime_evidence["engine_c"]["runtime_status"] == "accepted"
         assert engine_runtime_evidence["engine_d"]["runtime_status"] == "accepted"
+        assert "features=" in engine_runtime_evidence["engine_a"]["scoring_summary"]
+        assert engine_runtime_evidence["engine_a"]["risk_summary"] == "risk=accept / no blocker triggered"
+        assert "SELECTION_SELECTED" in engine_runtime_evidence["engine_a"]["scoring_reason_codes"]
+        assert engine_runtime_evidence["engine_a"]["risk_reason_codes"] == []
+        engine_metrics = {
+            entry["engine_id"]: entry for entry in candidate_payload["engines"]
+        }
+        assert "features=" in engine_metrics["engine_a"]["scoring_summary"]
+        assert engine_metrics["engine_a"]["risk_summary"] == "risk=accept / no blocker triggered"
+        assert "SELECTION_SELECTED" in engine_metrics["engine_a"]["scoring_reason_codes"]
+        assert "PORTFOLIO_COMPATIBLE" in engine_metrics["engine_a"]["scoring_reason_codes"]
         assert shadow_input["validation_set"]["runtime_data_source"] == "recorded_replay"
         assert shadow_input["validation_set"]["runtime_continuous_hours"] >= 24.0
         component_assessments = {
@@ -506,7 +519,7 @@ def test_export_local_replay_shadow_run_rejects_duplicate_session_date_before_co
                 session_date="2026-04-01",
             )
 
-        counter = ShadowDayCounter(output_dir, ShadowProfile.LIGHT)
+        counter = ShadowDayCounter(output_dir, ShadowProfile.COMPLETE)
         registry = ShadowSessionRegistry(output_dir)
         assert counter.get_status().consecutive_days == 1
         assert len(registry.get_entries()) == 1

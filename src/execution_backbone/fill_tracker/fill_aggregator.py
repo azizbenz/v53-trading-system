@@ -9,6 +9,14 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from interface_contracts import (
+    decimal_to_canonical_str,
+    decimal_to_float64,
+    divide_exact_or_zero,
+    multiply_exact,
+    sum_exact,
+)
+
 
 class FillEvent(BaseModel, frozen=True):
     """A single fill event from the exchange."""
@@ -31,8 +39,13 @@ class AggregatedFill(BaseModel, frozen=True):
     pair: str
     side: str
     total_filled_qty: float
+    total_filled_qty_exact: str
     average_price: float
+    average_price_exact: str
+    total_notional: float
+    total_notional_exact: str
     total_fees: float
+    total_fees_exact: str
     fill_count: int
     first_fill_time: float
     last_fill_time: float
@@ -73,19 +86,25 @@ class FillAggregator:
         if not fills:
             return None
 
-        total_qty = sum(f.quantity for f in fills)
-        if total_qty > 0:
-            avg_price = sum(f.price * f.quantity for f in fills) / total_qty
-        else:
-            avg_price = 0.0
+        total_qty_exact = sum_exact(f.quantity for f in fills)
+        total_notional_exact = sum_exact(
+            multiply_exact(f.price, f.quantity) for f in fills
+        )
+        avg_price_exact = divide_exact_or_zero(total_notional_exact, total_qty_exact)
+        total_fees_exact = sum_exact(f.fee for f in fills)
 
         return AggregatedFill(
             order_id=order_id,
             pair=fills[0].pair,
             side=fills[0].side,
-            total_filled_qty=total_qty,
-            average_price=avg_price,
-            total_fees=sum(f.fee for f in fills),
+            total_filled_qty=decimal_to_float64(total_qty_exact),
+            total_filled_qty_exact=decimal_to_canonical_str(total_qty_exact),
+            average_price=decimal_to_float64(avg_price_exact),
+            average_price_exact=decimal_to_canonical_str(avg_price_exact),
+            total_notional=decimal_to_float64(total_notional_exact),
+            total_notional_exact=decimal_to_canonical_str(total_notional_exact),
+            total_fees=decimal_to_float64(total_fees_exact),
+            total_fees_exact=decimal_to_canonical_str(total_fees_exact),
             fill_count=len(fills),
             first_fill_time=fills[0].timestamp,
             last_fill_time=fills[-1].timestamp,

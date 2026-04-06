@@ -65,6 +65,7 @@ def test_export_technical_dashboard_writes_availability_view():
         assert "data-section-key='pairs'" in html
         assert "data-section-key='data-infra'" in html
         assert "data-section-key='alerts'" in html
+        assert "Account / User Data" in html
         assert "data-card-key='pairs_empty'" in html
         assert "bookTicker" in html
         assert "@depth" in html
@@ -72,7 +73,7 @@ def test_export_technical_dashboard_writes_availability_view():
         assert "stream.binance.com:9443/stream?streams=" in html
         assert "Build-11 Shadow" in html
         assert "Build-12 Micro-live" in html
-        assert "Build-13 Live-Light" in html
+        assert "Build-13 Live" in html
         assert "Build-14 Enablers" in html
         assert "7 available" in html
         assert "Governance &amp; Readiness" in html
@@ -105,6 +106,7 @@ def test_export_technical_dashboard_writes_demo_sidecars():
 
         html = artifacts.html_path.read_text(encoding="utf-8")
         payload_json = artifacts.payload_json_path.read_text(encoding="utf-8")
+        payload = json.loads(payload_json)
         observability_text = artifacts.observability_text_path.read_text(encoding="utf-8")
         local_replay_evidence = json.loads(
             artifacts.local_replay_evidence_json_path.read_text(encoding="utf-8")
@@ -123,11 +125,16 @@ def test_export_technical_dashboard_writes_demo_sidecars():
         assert "@depth" in html
         assert "Build-11 Shadow" in html
         assert "Build-12 Micro-live" in html
-        assert "Build-13 Live-Light" in html
+        assert "Build-13 Live" in html
+        assert "Engine Judgement" in html
+        assert "promotable" in html
+        assert "dormant" in html
         assert "Strategy Onboarding" in html
+        assert "Account / User Data" in html
         assert "Build-14 Enablers" in html
         assert "Observability Export" in html
         assert '"correlation_id": "corr-tech-demo"' in payload_json
+        assert '"engine_judgment"' in payload_json
         assert '"shadow"' in payload_json
         assert '"micro_live"' in payload_json
         assert '"live_light"' in payload_json
@@ -141,7 +148,12 @@ def test_export_technical_dashboard_writes_demo_sidecars():
         assert "v53_build14_reader_value" in observability_text
         assert 'reader="market_toxicity_snapshot"' in observability_text
         assert '"validation_status": "accepted"' in payload_json
+        assert '"signature_check_status": "not_provided"' in payload_json
         assert '"run_state": "completed"' in payload_json
+        assert payload["engine_judgment"]["source_shadow_days_completed"] == 30
+        assert payload["engine_judgment"]["source_shadow_required_days"] == 30
+        assert payload["engine_judgment"]["cards"][0]["judgment_verdict"] == "promotable"
+        assert payload["engine_judgment"]["cards"][2]["judgment_verdict"] == "dormant"
         assert local_replay_evidence["data_source"] == "recorded_replay"
         assert local_replay_evidence["replay_useful_ready"] is True
         assert shadow_runtime_evidence["data_source"] == "recorded_replay"
@@ -149,6 +161,43 @@ def test_export_technical_dashboard_writes_demo_sidecars():
         assert shadow_runtime_evidence["config_loaded"] is True
         assert shadow_runtime_evidence["shadow_dtr_persisted"] is True
         assert shadow_runtime_evidence["continuous_hours"] >= 24.0
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_load_artifact_import_summary_backfills_legacy_source_profile():
+    launcher = _load_launcher_module()
+    output_dir = _scratch_dir("legacy_import_summary")
+
+    try:
+        summary_path = output_dir / "legacy.import_summary.json"
+        summary_path.write_text(
+            json.dumps(
+                {
+                    "artifact_id": "artifact-legacy-1",
+                    "correlation_id": "corr-legacy-1",
+                    "artifact_kind": "review_packet",
+                    "strategy_classification": "a_variant",
+                    "lineage_version": "a.v1.0.r1",
+                    "exported_from": "local",
+                    "payload_ref_count": 5,
+                    "accepted": True,
+                    "validation_status": "accepted",
+                    "normalized_promotion_state": "shadow_candidate",
+                    "review_state": "pending",
+                    "rejection_reasons": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        summary = launcher._load_artifact_import_summary(
+            summary_path,
+            fallback_source_profile=ProfileId.COMPLETE,
+        )
+
+        assert summary.source_profile == ProfileId.COMPLETE
+        assert summary.exported_from == "local"
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)
 
@@ -195,16 +244,49 @@ def test_export_technical_dashboard_prefers_local_runtime_artifacts_when_availab
         assert "engine_b" in html
         assert "engine_c" in html
         assert "engine_d" in html
+        assert "Engine Judgement" in html
+        assert "shadow-only" in html
         assert "Build-11 Shadow" in html
         assert "Build-12 Micro-live" in html
-        assert "Build-13 Live-Light" in html
+        assert "Build-13 Live" in html
         assert "Build-14 Enablers" in html
+        assert "Account / User Data" in html
         assert "technical_supervision" in html
         assert "observability_export" in html
+        assert payload["profile"] == "complete"
         assert payload["shadow"]["shadow_days_completed"] == 1
         assert payload["shadow"]["shadow_required_days"] == 30
+        assert payload["engine_judgment"]["source_shadow_days_completed"] == 1
+        assert payload["engine_judgment"]["cards"][0]["judgment_verdict"] == "shadow-only"
         assert payload["micro_live"]["verdict"] == "blocked"
         assert payload["live_light"]["verdict"] == "blocked"
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_export_technical_dashboard_projects_authenticated_user_data_when_runtime_root_has_it():
+    launcher = _load_launcher_module()
+    repo_root = Path(__file__).resolve().parents[2]
+    runtime_root = repo_root / "build" / "binance_user_data_smoke_fresh"
+    campaign_summary = runtime_root / "service" / "shadow_vps_service.campaign_summary.json"
+    if not campaign_summary.exists():
+        pytest.skip("binance_user_data_smoke_fresh runtime artifacts not present in workspace")
+
+    output_dir = _scratch_dir("user_data_runtime")
+    try:
+        artifacts = launcher.export_technical_dashboard(
+            output_dir,
+            local_runtime_root=runtime_root,
+        )
+
+        assert artifacts.payload_json_path is not None and artifacts.payload_json_path.exists()
+        html = artifacts.html_path.read_text(encoding="utf-8")
+        payload = json.loads(artifacts.payload_json_path.read_text(encoding="utf-8"))
+
+        assert "Account / User Data" in html
+        assert payload["account_user_data"]["authenticated"] is True
+        assert payload["account_user_data"]["subscription_id"] == 0
+        assert payload["account_user_data"]["pair_scope"] == ["BTCUSDT", "ETHUSDT"]
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)
 

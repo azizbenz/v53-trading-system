@@ -33,6 +33,7 @@ def calculate_raw_score(
     Features without a weight are ignored.
     Weights without a feature contribute 0.
     """
+    normalized_scoring_version = _require_scoring_version(scoring_version, context="calculate_raw_score")
     contributions: dict[str, float] = {}
     features_used: list[str] = []
 
@@ -50,5 +51,14 @@ def calculate_raw_score(
         raw_score=raw_score,
         weighted_contributions=contributions,
         features_used=tuple(sorted(features_used)),
-        scoring_version=scoring_version,
+        scoring_version=normalized_scoring_version,
     )
+
+
+def _require_scoring_version(scoring_version: str, *, context: str) -> str:
+    """Reject blank score versions on the governed scoring rail."""
+
+    normalized = scoring_version.strip()
+    if not normalized:
+        raise ValueError(f"{context} requires non-empty scoring_version")
+    return normalized

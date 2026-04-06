@@ -1,4 +1,4 @@
-"""Tests for the stateful locked Light UI runtime."""
+"""Tests for the stateful compatibility operator UI runtime."""
 
 from __future__ import annotations
 
@@ -146,10 +146,10 @@ def test_light_ui_runtime_projects_rejections_into_monitoring_log_tail():
 
     assert outcome.accepted is False
     assert projection.rejection_event_count == 1
-    assert projection.latest_rejection_reason == "risk cap changes are forbidden in the locked Light UI"
+    assert projection.latest_rejection_reason == "risk cap changes are forbidden in the compatibility operator UI"
     assert projection.recent_event_log[-1].event_type == "operator_action_rejected"
     assert projection.recent_event_log[-1].rejection_reason == (
-        "risk cap changes are forbidden in the locked Light UI"
+        "risk cap changes are forbidden in the compatibility operator UI"
     )
 
 

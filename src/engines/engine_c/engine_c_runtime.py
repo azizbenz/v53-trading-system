@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from enum import StrEnum
+import math
 
 from pydantic import BaseModel, Field
 
 from interface_contracts import EngineId, RegimeId, Side, SignalCandidate, SignalType
+from risk_backbone.emergency_kill_switch.circuit_breaker import EmergencyCircuitBreaker
 from risk_backbone.risk_runtime import RiskCandidate, RiskEvaluation, RiskRuntime, RiskRuntimeAction
 from scoring_backbone.hard_block_gate.blocker_evaluator import BlockerCondition
 from scoring_backbone.penalty_aggregator.score_penalty_builder import ScorePenaltyItem
@@ -20,7 +22,7 @@ from scoring_backbone.scoring_runtime import (
     ScoringRuntime,
 )
 
-from .engine_c_runner import EngineCInput, EngineCLogEntry, EngineCOutput, run_engine_c
+from .engine_c_runner import EngineCDecision, EngineCInput, EngineCLogEntry, EngineCOutput, run_engine_c
 
 
 _ENGINE_C_FEATURE_WEIGHTS: dict[str, float] = {
@@ -33,6 +35,7 @@ _ENGINE_C_FEATURE_WEIGHTS: dict[str, float] = {
 
 class EngineCRuntimeStatus(StrEnum):
     NO_TRADE = "no_trade"
+    CIRCUIT_BREAKER_BLOCKED = "circuit_breaker_blocked"
     HARD_BLOCKED = "hard_blocked"
     REJECTED_RANKING = "rejected_ranking"
     REJECTED_PORTFOLIO = "rejected_portfolio"
@@ -106,11 +109,27 @@ def _runtime_log_entry(
 
 
 class EngineCRuntime:
-    def __init__(self, *, scoring_runtime: ScoringRuntime, risk_runtime: RiskRuntime) -> None:
+    def __init__(
+        self,
+        *,
+        scoring_runtime: ScoringRuntime,
+        risk_runtime: RiskRuntime,
+        circuit_breaker: EmergencyCircuitBreaker | None = None,
+    ) -> None:
         self._scoring_runtime = scoring_runtime
         self._risk_runtime = risk_runtime
+        self._circuit_breaker = circuit_breaker
 
-    def evaluate(self, runtime_input: EngineCRuntimeInput, *, now: float = 0.0) -> EngineCRuntimeResult:
+    def evaluate(
+        self,
+        runtime_input: EngineCRuntimeInput,
+        *,
+        now: float | None = None,
+    ) -> EngineCRuntimeResult:
+        timestamp = _resolve_runtime_now(runtime_input.timestamp_ms, now, context="EngineCRuntime.evaluate")
+        _require_scoring_version(runtime_input.engine_inputs.scoring_version, context="EngineCRuntime.evaluate")
+        if self._circuit_breaker is not None and not self._circuit_breaker.is_trading_allowed():
+            return _build_circuit_breaker_blocked_result(runtime_input, self._circuit_breaker)
         engine_output = run_engine_c(runtime_input.engine_inputs)
         logs = list(engine_output.log_entries)
 
@@ -130,7 +149,7 @@ class EngineCRuntime:
             candidates=(_build_scoring_candidate(runtime_input, engine_output), *runtime_input.peer_candidates),
             portfolio=runtime_input.portfolio,
             max_selections=runtime_input.max_selections,
-            now=now,
+            now=timestamp,
         )
         scoring_audit = next(
             audit
@@ -235,7 +254,7 @@ class EngineCRuntime:
                 planned_loss=planned_loss,
                 pair_beta=runtime_input.pair_beta,
             ),
-            now=now,
+            now=timestamp,
         )
         if risk_evaluation.action != RiskRuntimeAction.ACCEPT:
             reasons = risk_evaluation.reasons or ("risk runtime rejected candidate",)
@@ -284,6 +303,31 @@ class EngineCRuntime:
         )
 
 
+def _build_circuit_breaker_blocked_result(
+    runtime_input: EngineCRuntimeInput,
+    circuit_breaker: EmergencyCircuitBreaker,
+) -> EngineCRuntimeResult:
+    reason = circuit_breaker.current_reason.value
+    log_entry = EngineCLogEntry(
+        event="engine_c_circuit_breaker_blocked",
+        pair=runtime_input.engine_inputs.pair,
+        regime=runtime_input.engine_inputs.regime,
+        reasons=(f"emergency circuit breaker tripped: {reason}",),
+        scoring_version=runtime_input.engine_inputs.scoring_version,
+    )
+    engine_output = EngineCOutput(
+        pair=runtime_input.engine_inputs.pair,
+        decision=EngineCDecision.NO_TRADE,
+        scoring_version=runtime_input.engine_inputs.scoring_version,
+        log_entries=(log_entry,),
+    )
+    return EngineCRuntimeResult(
+        status=EngineCRuntimeStatus.CIRCUIT_BREAKER_BLOCKED,
+        engine_output=engine_output,
+        log_entries=(log_entry,),
+    )
+
+
 def _build_scoring_candidate(runtime_input: EngineCRuntimeInput, engine_output: EngineCOutput) -> ScoringCandidateInput:
     return ScoringCandidateInput(
         engine_id="engine_c",
@@ -291,7 +335,7 @@ def _build_scoring_candidate(runtime_input: EngineCRuntimeInput, engine_output: 
         raw_features={key: engine_output.block_scores.get(key, 0.0) for key in _ENGINE_C_FEATURE_WEIGHTS},
         allowed_features=frozenset(_ENGINE_C_FEATURE_WEIGHTS),
         weights=dict(_ENGINE_C_FEATURE_WEIGHTS),
-        scoring_version=engine_output.scoring_version or runtime_input.engine_inputs.scoring_version or "engine_c.v1",
+        scoring_version=engine_output.scoring_version or runtime_input.engine_inputs.scoring_version,
         score_penalties=runtime_input.score_penalties,
         size_penalties=runtime_input.size_penalties,
         blocker_conditions=runtime_input.blocker_conditions,
@@ -304,6 +348,29 @@ def _build_scoring_candidate(runtime_input: EngineCRuntimeInput, engine_output: 
         corr_penalty=runtime_input.corr_penalty,
         risk_penalty=runtime_input.risk_penalty,
     )
+
+
+def _resolve_runtime_now(timestamp_ms: int, now: float | None, *, context: str) -> float:
+    """Resolve an audit timestamp from the explicit arg or the governed input."""
+
+    if now is None:
+        if timestamp_ms <= 0:
+            raise ValueError(f"{context} requires timestamp_ms > 0 when now is omitted")
+        return timestamp_ms / 1000.0
+    if not math.isfinite(now):
+        raise ValueError(f"{context} requires finite now")
+    if now <= 0.0:
+        raise ValueError(f"{context} requires now > 0")
+    return now
+
+
+def _require_scoring_version(scoring_version: str, *, context: str) -> str:
+    """Reject empty audit versions on the open engine runtime rail."""
+
+    normalized = scoring_version.strip()
+    if not normalized:
+        raise ValueError(f"{context} requires non-empty scoring_version")
+    return normalized
 
 
 def _build_signal_candidate(inputs: EngineCInput, engine_output: EngineCOutput, timestamp_ms: int) -> SignalCandidate:

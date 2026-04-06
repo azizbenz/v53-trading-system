@@ -805,11 +805,11 @@ class TestLiveLightShadowPrerequisite:
 
     def _make_minimal_input(self):
         """Build a minimal LiveLightInput that would pass all gates EXCEPT shadow."""
-        from protocols.contracts import LiveLightInput
+        from protocols.contracts import LiveLightInput, ShadowPortfolioJudgment
         from protocols.enums import MicroLiveRunState, MicroLiveVerdict
         return LiveLightInput(
             correlation_id="test_corr_001",
-            profile="light",
+            profile="complete",
             runtime_mode="live",
             micro_live_run_id="mlr_001",
             shadow_run_id="sr_001",
@@ -820,14 +820,48 @@ class TestLiveLightShadowPrerequisite:
             shadow_required_days=30,
             component_verdicts_rendered=True,
             shadow_report_ready=True,
+            shadow_portfolio_judgment=ShadowPortfolioJudgment(
+                judgment_verdict="promotable",
+                rationale="regression helper default",
+            ),
             micro_live_stable_days=7,
             micro_live_required_days=7,
             micro_live_import_artifact_id="art_001",
             micro_live_import_lineage_version="v1.0",
             import_artifact_id="art_001",
+            import_exported_from="local",
             import_lineage_version="v1.0",
             import_validation_status="accepted",
+            import_source_profile="complete",
+            import_review_state="pending",
             import_rejection_reasons=(),
+            import_dataset_ref="dataset-1",
+            import_clock_ref="clock-1",
+            import_activation_stage="shadow_ready",
+            import_health_state="active",
+            import_compatibility_status="not_evaluated",
+            import_compatibility_reasons=(),
+            import_signature_check_status="not_provided",
+            import_signature_check_reasons=(),
+            import_conflict_resolution_mode="no_trade_then_strictest",
+            import_conflict_hard_veto_action="no_trade",
+            import_conflict_score_aggregation_mode="bounded_sum_with_global_cap",
+            import_conflict_size_reduce_mode="min_factor_wins",
+            import_conflict_rank_adjust_mode="bounded_sum",
+            import_conflict_additive_soft_boosts_allowed=True,
+            import_conflict_additive_soft_reduces_allowed=True,
+            import_registry_atomicity_mode="atomic_snapshot_swap",
+            import_registry_concurrency_model="single_writer_multi_reader",
+            import_registry_publish_requires_atomic_replace=True,
+            import_registry_publish_requires_fsync=True,
+            import_registry_rollback_to_last_known_good=True,
+            import_payload_ref_count=5,
+            import_payload_bundle_present=True,
+            import_review_export_ref="exports/review.md",
+            import_feature_bridge_ref="exports/feature_bridge.json",
+            import_parity_diagnostics_ref="exports/parity.json",
+            import_replay_metrics_ref="exports/replay_metrics.json",
+            import_replay_dtr_ref="exports/replay_dtr.json",
             onboarding_accepted=True,
             onboarding_review_state="pending",
             onboarding_reasons=(),
@@ -838,7 +872,9 @@ class TestLiveLightShadowPrerequisite:
             broker_ready=True,
             exchange_ready=True,
             active_engines=("engine_a",),
+            micro_live_planned_engines=("engine_a",),
             live_pairs=("BTCUSDT",),
+            micro_live_planned_pairs=("BTCUSDT",),
             requested_total_notional_usdt=100.0,
             requested_pair_notional_usdt=50.0,
             max_total_notional_usdt=200.0,
@@ -853,16 +889,18 @@ class TestLiveLightShadowPrerequisite:
         assert "HARD STATEMENT" in reasons
         assert "30 consecutive days" in reasons
 
-    def test_passes_when_shadow_30j_and_report_ready_met(self, repo_tmp_path):
-        # Fill 30 days of report-ready shadow
-        c = ShadowDayCounter(state_dir=repo_tmp_path, profile=ShadowProfile.LIGHT)
-        base = 1700000000.0
-        for i in range(30):
-            c.record_shadow_day(
-                passed_all_gates=True,
-                metrics_summary=_complete_shadow_metrics(i),
-                now=base + i * 80000,
-            )
+    def test_passes_when_shadow_30j_and_report_ready_met(
+        self,
+        repo_tmp_path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        monkeypatch.setattr(
+            "protocols.shadow_runtime.check_shadow_30j_gate",
+            lambda state_dir, profile: (
+                True,
+                {"consecutive_days": 30, "shadow_report_ready": True},
+            ),
+        )
 
         live_input = self._make_minimal_input()
         result = run_live_light_gate(live_input, shadow_state_dir=repo_tmp_path)

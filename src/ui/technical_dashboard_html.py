@@ -97,7 +97,7 @@ def _render_panel_navigation(future_panels: tuple[str, ...]) -> str:
             "#section-build-12-micro-live",
         ),
         "live_light_supervision": (
-            "Build-13 Live-Light",
+        "Build-13 Live",
             "Execution gating, readiness, Build-14 influence and operator safing surface.",
             "#section-build-13-live-light",
         ),

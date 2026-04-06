@@ -303,6 +303,44 @@ class TestConvictionBuilderB:
         expected = 0.35 * 0.8 + 0.25 * 0.6 + 0.20 * 0.4 + 0.20 * 0.2
         assert result.raw_score == pytest.approx(expected)
 
+    def test_market_physics_inputs_shift_b_score(self):
+        base = build_conviction_b(ConvictionInputB(
+            pair="BTCUSDT",
+            excess_score=0.7,
+            structure_score=0.6,
+            context_score=0.5,
+            cost_preference_score=0.5,
+        ))
+        enriched = build_conviction_b(ConvictionInputB(
+            pair="BTCUSDT",
+            excess_score=0.7,
+            structure_score=0.6,
+            context_score=0.5,
+            cost_preference_score=0.5,
+            sweep_score=1.0,
+            absorption_score=1.0,
+            poc_reversion_score=1.0,
+        ))
+        penalized = build_conviction_b(ConvictionInputB(
+            pair="BTCUSDT",
+            excess_score=0.7,
+            structure_score=0.6,
+            context_score=0.5,
+            cost_preference_score=0.5,
+            false_breakout_score=1.0,
+            execution_fragility=1.0,
+            market_toxicity=1.0,
+            spread_regime_penalty=1.0,
+        ))
+        assert enriched.raw_score > base.raw_score
+        assert penalized.raw_score < base.raw_score
+        assert enriched.block_scores["sweep_score"] == pytest.approx(1.0)
+        assert penalized.block_scores["false_breakout_score"] == pytest.approx(1.0)
+        assert "fragility_score" in penalized.block_scores
+        assert "toxicity_score" in penalized.block_scores
+        assert "execution_survivability_score" in penalized.block_scores
+        assert "micro_friction_score" in penalized.block_scores
+
 
 # ── invalidation_mapper_b ──
 
@@ -555,3 +593,26 @@ class TestEngineBRunner:
         assert warning.breakout_verdict == BreakoutVerdict.WARNING
         assert blocked.decision == EngineBDecision.NO_TRADE
         assert blocked.breakout_verdict == BreakoutVerdict.BLOCKED
+
+    def test_market_physics_inputs_shift_runtime_conviction_path(self):
+        base_output = run_engine_b(_emit_inputs())
+        enriched_output = run_engine_b(_emit_inputs(
+            sweep_score=1.0,
+            absorption_score=1.0,
+            poc_reversion_score=1.0,
+        ))
+        penalized_output = run_engine_b(_emit_inputs(
+            false_breakout_score=1.0,
+            execution_fragility=1.0,
+            market_toxicity=1.0,
+            spread_regime_penalty=1.0,
+        ))
+
+        assert enriched_output.decision == EngineBDecision.EMIT
+        assert penalized_output.decision == EngineBDecision.EMIT
+        assert enriched_output.raw_score > base_output.raw_score
+        assert penalized_output.raw_score < base_output.raw_score
+        assert enriched_output.block_scores["sweep_score"] == pytest.approx(1.0)
+        assert penalized_output.block_scores["market_toxicity"] == pytest.approx(1.0)
+        assert "execution_survivability_score" in penalized_output.block_scores
+        assert penalized_output.block_scores["micro_friction_score"] > 0.0

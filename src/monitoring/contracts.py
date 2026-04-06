@@ -23,6 +23,7 @@ ProjectionStatus = Literal["healthy", "warning", "critical", "info", "planned"]
 Build14ReaderSeverity = Literal["nominal", "elevated", "critical"]
 MetricKind = Literal["counter", "gauge", "state"]
 AlertHistoryState = Literal["open", "resolved"]
+EngineJudgmentVerdict = Literal["promotable", "shadow-only", "rewrite-required", "dormant"]
 
 
 class PortfolioMetrics(BaseModel, frozen=True):
@@ -39,6 +40,25 @@ class PortfolioMetrics(BaseModel, frozen=True):
     breaches: tuple[str, ...] = ()
 
 
+class EnginePhysicsMetrics(BaseModel, frozen=True):
+    """Optional market-physics metrics surfaced for engine supervision."""
+
+    physics_pressure_state: str = ""
+    delta_confirmation: float | None = Field(default=None, ge=0.0, le=1.0)
+    execution_fragility: float | None = Field(default=None, ge=0.0, le=1.0)
+    market_toxicity: float | None = Field(default=None, ge=0.0, le=1.0)
+    spread_regime_penalty: float | None = Field(default=None, ge=0.0, le=1.0)
+    competition_support: float | None = Field(default=None, ge=0.0, le=1.0)
+    sweep_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    absorption_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    poc_reversion_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    false_breakout_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    fragility_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    toxicity_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    execution_survivability_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    micro_friction_score: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
 class EngineMetrics(BaseModel, frozen=True):
     """Per-engine summary projected to monitoring."""
 
@@ -52,6 +72,22 @@ class EngineMetrics(BaseModel, frozen=True):
     drawdown_pct: float = Field(default=0.0, ge=0.0, le=100.0)
     suspension_reason: str = ""
     stale: bool = False
+    scoring_summary: str = ""
+    risk_summary: str = ""
+    scoring_reason_codes: tuple[str, ...] = ()
+    risk_reason_codes: tuple[str, ...] = ()
+    scoring_penalized_score: float = 0.0
+    scoring_ranking_score: float | None = None
+    scoring_final_size_multiplier: float = Field(default=1.0, ge=0.0)
+    selection_outcome_code: str = ""
+    portfolio_verdict_code: str = ""
+    phantom_trade: bool = False
+    phantom_reason_code: str = ""
+    hard_blocked: bool = False
+    risk_decision_severity: str = ""
+    drawdown_state_code: str = ""
+    blocked_guard_count: int = Field(default=0, ge=0)
+    physics: EnginePhysicsMetrics = Field(default_factory=EnginePhysicsMetrics)
 
 
 class PairMetrics(BaseModel, frozen=True):
@@ -289,6 +325,12 @@ class Build9XProjection(BaseModel, frozen=True):
     replay_candidate_count: int = Field(..., ge=0)
     memory_record_count: int = Field(..., ge=0)
     latest_memory_summary: str = "No memory records"
+    enrichment_hypothesis_count: int = Field(default=0, ge=0)
+    latest_enrichment_target: str = ""
+    latest_enrichment_signal_family: str = ""
+    expected_replay_evidence_count: int = Field(default=0, ge=0)
+    expected_shadow_evidence_count: int = Field(default=0, ge=0)
+    enrichment_summary: str = "No enrichment hypothesis mapped"
     review_export_ready: bool = False
     review_export_ref: str = ""
     learning_queue_depth: int = Field(default=0, ge=0)
@@ -308,16 +350,100 @@ class Build9XProjection(BaseModel, frozen=True):
     learning_capacity_summary: str = "queue=0 / backlog=normal / mode=full_capture"
 
 
+class EngineJudgmentCard(BaseModel, frozen=True):
+    """Per-engine supervised judgment rendered for the current Shadow campaign."""
+
+    engine_id: str = Field(..., min_length=1)
+    component_verdict: str = Field(..., min_length=1)
+    judgment_verdict: EngineJudgmentVerdict
+    status: ProjectionStatus = "planned"
+    useful_frequency: float = Field(default=0.0, ge=0.0)
+    ce_expected: float = 0.0
+    estimated_cost_bps: float = Field(default=0.0, ge=0.0)
+    edge_net: float = 0.0
+    economic_pass_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    conflict_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    marginal_edge: float = 0.0
+    redundancy_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    portfolio_contribution: float = 0.0
+    observations: int = Field(default=0, ge=0)
+    rationale: str = Field(default="", min_length=0)
+    evidence_summary: str = Field(default="", min_length=0)
+
+
+class EngineJudgmentProjection(BaseModel, frozen=True):
+    """Normalized engine-by-engine judgment surface for dashboard supervision."""
+
+    status: ProjectionStatus = "planned"
+    source_report_id: str = ""
+    source_shadow_run_id: str = ""
+    source_shadow_days_completed: int = Field(default=0, ge=0)
+    source_shadow_required_days: int = Field(default=30, ge=1)
+    portfolio_judgment_verdict: str = ""
+    portfolio_physics_pressure: str = ""
+    portfolio_redundancy_pressure: str = ""
+    portfolio_cluster_pressure: str = ""
+    portfolio_beta_pressure: str = ""
+    portfolio_gross_capacity_pressure: str = ""
+    portfolio_loss_capacity_pressure: str = ""
+    portfolio_rejected_engine_count: int = Field(default=0, ge=0)
+    ranking_rejected_engine_count: int = Field(default=0, ge=0)
+    elevated_physics_engine_count: int = Field(default=0, ge=0)
+    critical_physics_engine_count: int = Field(default=0, ge=0)
+    phantom_trade_count: int = Field(default=0, ge=0)
+    portfolio_rationale: str = ""
+    cards: tuple[EngineJudgmentCard, ...] = ()
+
+
 class ReplayImportProjection(BaseModel, frozen=True):
     """Normalized LOCAL_REPLAY / import projection consumed by Build-10."""
 
     status: ProjectionStatus
     artifact_id: str = "none"
     artifact_kind: str = "No replay bundle exported"
+    exported_from: str = ""
+    source_profile: str = ""
     lineage_version: str = "n/a"
+    dataset_ref: str = ""
+    clock_ref: str = ""
+    activation_stage: str = ""
+    health_state: str = ""
     lifecycle_state: str = "Awaiting LOCAL_REPLAY artifact"
     validation_status: str = "not_run"
     review_state: str = "No import review executed"
+    compatibility_status: str = "not_evaluated"
+    compatibility_reasons: tuple[str, ...] = ()
+    feature_lineage_required: bool = False
+    feature_lineage_present: bool = False
+    feature_lineage_status: str = "not_required"
+    feature_lineage_reasons: tuple[str, ...] = ()
+    transform_whitelist_required: bool = False
+    transform_whitelist_present: bool = False
+    transform_whitelist_status: str = "not_required"
+    transform_whitelist_reasons: tuple[str, ...] = ()
+    signature_check_status: str = "not_provided"
+    signature_key_id: str = ""
+    trusted_key_status: str = ""
+    signature_check_reasons: tuple[str, ...] = ()
+    conflict_resolution_mode: str = ""
+    conflict_hard_veto_action: str = ""
+    conflict_score_aggregation_mode: str = ""
+    conflict_size_reduce_mode: str = ""
+    conflict_rank_adjust_mode: str = ""
+    conflict_additive_soft_boosts_allowed: bool = False
+    conflict_additive_soft_reduces_allowed: bool = False
+    registry_atomicity_mode: str = ""
+    registry_concurrency_model: str = ""
+    registry_publish_requires_atomic_replace: bool = False
+    registry_publish_requires_fsync: bool = False
+    registry_rollback_to_last_known_good: bool = False
+    payload_ref_count: int = Field(default=0, ge=0)
+    payload_bundle_present: bool = False
+    review_export_ref: str = ""
+    feature_bridge_ref: str = ""
+    parity_diagnostics_ref: str = ""
+    replay_metrics_ref: str = ""
+    replay_dtr_ref: str = ""
     rejection_reasons: tuple[str, ...] = ()
 
 
@@ -478,6 +604,40 @@ class Build14Projection(BaseModel, frozen=True):
         return self
 
 
+class AccountUserDataProjection(BaseModel, frozen=True):
+    """Normalized authenticated Binance account-stream summary for the dashboard."""
+
+    status: ProjectionStatus = "planned"
+    authenticated: bool = False
+    session_date: str = ""
+    acquisition_mode: str = ""
+    endpoint: str = ""
+    summary_ref: str = ""
+    events_ref: str = ""
+    subscription_id: int | None = Field(default=None, ge=0)
+    event_count: int = Field(default=0, ge=0)
+    event_types: tuple[str, ...] = ()
+    pair_scope: tuple[str, ...] = ()
+    detail: str = "No authenticated Binance user-data stream captured"
+
+
+class ExecutionNoTradeBridgeProjection(BaseModel, frozen=True):
+    """Governed monitoring projection of the bounded compiled no-trade bridge."""
+
+    status: ProjectionStatus = "planned"
+    configured: bool = False
+    selection_status: str = "not_configured"
+    current_snapshot_id: str = ""
+    previous_snapshot_id: str = ""
+    last_known_good_snapshot_id: str = ""
+    binding_present: bool = False
+    loaded: bool = False
+    compiled_plan_ref: str = ""
+    artifact_count: int = Field(default=0, ge=0)
+    error_type: str = ""
+    detail: str = "Compiled execution no-trade bridge not configured"
+
+
 class AlertProjection(BaseModel, frozen=True):
     """Normalized alert and operability projection."""
 
@@ -517,10 +677,13 @@ class TechnicalDashboardPayload(TimestampedModel):
     infra: InfraMetrics = InfraMetrics()
     build9_meta: Build9MetaProjection
     build9x: Build9XProjection
+    engine_judgment: EngineJudgmentProjection = EngineJudgmentProjection()
     shadow: ShadowProjection = ShadowProjection()
     micro_live: MicroLiveProjection = MicroLiveProjection()
     live_light: LiveLightProjection = LiveLightProjection()
     build14: Build14Projection = Build14Projection()
+    account_user_data: AccountUserDataProjection = AccountUserDataProjection()
+    execution_no_trade_bridge: ExecutionNoTradeBridgeProjection = ExecutionNoTradeBridgeProjection()
     replay_import: ReplayImportProjection
     alerts: AlertProjection
     future_panels: tuple[str, ...] = (
@@ -558,6 +721,7 @@ class ObservabilityExport(TimestampedModel):
 __all__ = [
     "PortfolioMetrics",
     "EngineMetrics",
+    "EnginePhysicsMetrics",
     "PairMetrics",
     "InfraMetrics",
     "MetaMetrics",
@@ -571,11 +735,16 @@ __all__ = [
     "SystemProjection",
     "Build9MetaProjection",
     "Build9XProjection",
+    "EngineJudgmentVerdict",
+    "EngineJudgmentCard",
+    "EngineJudgmentProjection",
     "ShadowProjection",
     "MicroLiveProjection",
     "LiveLightProjection",
     "Build14ReaderProjection",
     "Build14Projection",
+    "AccountUserDataProjection",
+    "ExecutionNoTradeBridgeProjection",
     "ReplayImportProjection",
     "AlertProjection",
     "TechnicalDashboardPayload",

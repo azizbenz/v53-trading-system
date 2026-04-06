@@ -142,10 +142,15 @@ class LearningHypothesis(BaseModel, frozen=True):
     rationale: str = Field(..., min_length=1)
     diagnostic_ids: tuple[str, ...] = ()
     target_module: str = ""
+    target_component: str = ""
+    signal_family: str = ""
     target_parameter_family: str = ""
     expected_effect: str = ""
     risk_of_regression: str = ""
     required_replay_scope: str = ""
+    expected_replay_evidence: tuple[str, ...] = ()
+    expected_shadow_evidence: tuple[str, ...] = ()
+    monitoring_hooks: tuple[str, ...] = ()
     segmentation_used: tuple[str, ...] = ()
     comparison_metrics: tuple[str, ...] = ()
     rejection_criteria: tuple[str, ...] = ()
@@ -174,10 +179,14 @@ class LearningHypothesis(BaseModel, frozen=True):
                 or not self.risk_of_regression
                 or not self.comparison_metrics
                 or not self.rejection_criteria
+                or not self.target_component
+                or not self.signal_family
+                or not self.expected_replay_evidence
+                or not self.expected_shadow_evidence
             )
         ):
             raise ValueError(
-                "REPLAY_APPROVED hypotheses require rationale, sample_size, segmentation, regression risk, comparison metrics, and rejection criteria"
+                "REPLAY_APPROVED hypotheses require rationale, sample_size, segmentation, regression risk, comparison metrics, rejection criteria, target_component, signal_family, expected_replay_evidence, and expected_shadow_evidence"
             )
         if (
             self.shadow_candidate_allowed
@@ -317,6 +326,10 @@ class ReplayComparisonProtocol(BaseModel, frozen=True):
     protocol_id: str = Field(..., min_length=1)
     candidate_id: str = Field(..., min_length=1)
     evaluation_scope: str = Field(..., min_length=1)
+    target_components: tuple[str, ...] = ()
+    signal_families: tuple[str, ...] = ()
+    expected_replay_evidence: tuple[str, ...] = ()
+    expected_shadow_evidence: tuple[str, ...] = ()
     comparison_metrics: tuple[str, ...] = ()
     rejection_criteria: tuple[str, ...] = ()
 

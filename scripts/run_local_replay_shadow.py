@@ -18,6 +18,8 @@ if str(SRC_ROOT) not in sys.path:
 
 from backtest_artifact_import import (  # noqa: E402
     ArtifactImportRequest,
+    ArtifactPayloadRefBundle,
+    build_replay_import_projection,
     summarize_import_request,
     validate_import_request,
 )
@@ -26,7 +28,21 @@ from engine_a import EngineAInput, EngineARuntime, EngineARuntimeInput, EngineAR
 from engine_b import EngineBInput, EngineBRuntime, EngineBRuntimeInput, EngineBRuntimeStatus  # noqa: E402
 from engine_c import EngineCInput, EngineCRuntime, EngineCRuntimeInput, EngineCRuntimeStatus  # noqa: E402
 from engine_d import EngineDInput, EngineDRuntime, EngineDRuntimeInput, EngineDRuntimeStatus  # noqa: E402
-from interface_contracts import PairHealthLevel, ProfileId, RuntimeMode, StrategyClassification  # noqa: E402
+from interface_contracts import (  # noqa: E402
+    ArtifactActivationStage,
+    CANONICAL_FEATURE_SET_VERSION,
+    CANONICAL_PHYSICS_FEATURE_DICTIONARY,
+    CANONICAL_TRANSFORM_SET_VERSION,
+    FeatureLineageLock,
+    FeatureLineageRecord,
+    PairHealthLevel,
+    ProfileId,
+    RuntimeMode,
+    StrategyClassification,
+    TransformWhitelistId,
+    TransformWhitelistLock,
+    canonical_transform_ids,
+)
 from local_replay_runtime import (  # noqa: E402
     LocalReplayEvidenceRecorder,
     LocalReplayEvidenceRecorderConfig,
@@ -110,18 +126,6 @@ class LocalReplayShadowArtifacts:
 
 
 @dataclass(frozen=True)
-class ReplayExportPayloadRefs:
-    """Resolved payload refs used by the governed local replay export/import chain."""
-
-    review_export_ref: str
-    feature_bridge_ref: str
-    parity_diagnostics_ref: str
-    replay_metrics_ref: str
-    replay_dtr_ref: str
-    payload_refs: tuple[str, ...]
-
-
-@dataclass(frozen=True)
 class ShadowEngineRuntimeEvidence:
     component_id: str
     pair: str
@@ -132,6 +136,10 @@ class ShadowEngineRuntimeEvidence:
     expected_cost_bps: float
     expected_edge_bps: float
     ce_expected: float
+    scoring_summary: str
+    risk_summary: str
+    scoring_reason_codes: tuple[str, ...]
+    risk_reason_codes: tuple[str, ...]
     details: dict[str, object]
 
 
@@ -193,6 +201,56 @@ def _shadow_portfolio_state() -> PortfolioState:
 
 def _expected_edge_bps(*, expected_cost: float, ce_expected: float, holding_hours: float) -> float:
     return round((expected_cost + ce_expected * holding_hours) * 10_000, 3)
+
+
+def _scoring_reason_codes(engine_result: object) -> tuple[str, ...]:
+    scoring_audit = getattr(engine_result, "scoring_audit", None)
+    if scoring_audit is None:
+        return ()
+    explainability = getattr(scoring_audit, "explainability", None)
+    if explainability is None:
+        return ()
+    codes = list(getattr(explainability, "hard_block_codes", ()))
+    codes.extend(
+        f"PEN_{penalty_id.upper()}"
+        for penalty_id in getattr(explainability, "dominant_score_penalty_ids", ())
+    )
+    codes.extend(
+        f"SIZE_{penalty_id.upper()}"
+        for penalty_id in getattr(explainability, "dominant_size_penalty_ids", ())
+    )
+    portfolio_verdict = getattr(explainability, "portfolio_verdict_code", "")
+    if portfolio_verdict:
+        codes.append(f"PORTFOLIO_{portfolio_verdict.upper()}")
+    selection_outcome = getattr(explainability, "selection_outcome_code", "")
+    if selection_outcome:
+        codes.append(f"SELECTION_{selection_outcome.upper()}")
+    return tuple(dict.fromkeys(codes))
+
+
+def _risk_reason_codes(engine_result: object) -> tuple[str, ...]:
+    risk_evaluation = getattr(engine_result, "risk_evaluation", None)
+    if risk_evaluation is None:
+        return ()
+    reason_details = getattr(risk_evaluation, "reason_details", ())
+    return tuple(dict.fromkeys(detail.code for detail in reason_details))
+
+
+def _scoring_summary(engine_result: object) -> str:
+    scoring_audit = getattr(engine_result, "scoring_audit", None)
+    if scoring_audit is None:
+        return ""
+    explainability = getattr(scoring_audit, "explainability", None)
+    if explainability is None:
+        return ""
+    return getattr(explainability, "summary", "")
+
+
+def _risk_summary(engine_result: object) -> str:
+    risk_evaluation = getattr(engine_result, "risk_evaluation", None)
+    if risk_evaluation is None:
+        return ""
+    return getattr(risk_evaluation, "explain_summary", "")
 
 
 def _run_engine_shadow_evaluations() -> tuple[ShadowEngineRuntimeEvidence, ...]:
@@ -393,6 +451,10 @@ def _run_engine_shadow_evaluations() -> tuple[ShadowEngineRuntimeEvidence, ...]:
             holding_hours=engine_a_result.engine_output.holding_hours,
         ),
         ce_expected=engine_a_result.engine_output.ce_expected,
+        scoring_summary=_scoring_summary(engine_a_result),
+        risk_summary=_risk_summary(engine_a_result),
+        scoring_reason_codes=_scoring_reason_codes(engine_a_result),
+        risk_reason_codes=_risk_reason_codes(engine_a_result),
         details=engine_a_result.model_dump(mode="json"),
     )
     engine_b_evidence = ShadowEngineRuntimeEvidence(
@@ -418,6 +480,10 @@ def _run_engine_shadow_evaluations() -> tuple[ShadowEngineRuntimeEvidence, ...]:
             holding_hours=engine_b_result.engine_output.expected_holding_hours,
         ),
         ce_expected=engine_b_result.engine_output.ce_expected,
+        scoring_summary=_scoring_summary(engine_b_result),
+        risk_summary=_risk_summary(engine_b_result),
+        scoring_reason_codes=_scoring_reason_codes(engine_b_result),
+        risk_reason_codes=_risk_reason_codes(engine_b_result),
         details=engine_b_result.model_dump(mode="json"),
     )
     engine_c_evidence = ShadowEngineRuntimeEvidence(
@@ -443,6 +509,10 @@ def _run_engine_shadow_evaluations() -> tuple[ShadowEngineRuntimeEvidence, ...]:
             holding_hours=engine_c_result.engine_output.holding_hours,
         ),
         ce_expected=engine_c_result.engine_output.ce_expected,
+        scoring_summary=_scoring_summary(engine_c_result),
+        risk_summary=_risk_summary(engine_c_result),
+        scoring_reason_codes=_scoring_reason_codes(engine_c_result),
+        risk_reason_codes=_risk_reason_codes(engine_c_result),
         details=engine_c_result.model_dump(mode="json"),
     )
     engine_d_evidence = ShadowEngineRuntimeEvidence(
@@ -468,6 +538,10 @@ def _run_engine_shadow_evaluations() -> tuple[ShadowEngineRuntimeEvidence, ...]:
             holding_hours=engine_d_result.engine_output.holding_hours,
         ),
         ce_expected=engine_d_result.engine_output.ce_expected,
+        scoring_summary=_scoring_summary(engine_d_result),
+        risk_summary=_risk_summary(engine_d_result),
+        scoring_reason_codes=_scoring_reason_codes(engine_d_result),
+        risk_reason_codes=_risk_reason_codes(engine_d_result),
         details=engine_d_result.model_dump(mode="json"),
     )
     return (engine_a_evidence, engine_b_evidence, engine_c_evidence, engine_d_evidence)
@@ -668,25 +742,18 @@ def _build_component_assessments(
     return tuple(assessments)
 
 
-def _demo_payload_refs(correlation_id: str) -> ReplayExportPayloadRefs:
+def _demo_payload_refs(correlation_id: str) -> ArtifactPayloadRefBundle:
     review_export_ref = "exports/local_replay_shadow_review.md"
     feature_bridge_ref = f"feature_bridge:{correlation_id}"
     parity_diagnostics_ref = f"parity_diagnostics:{correlation_id}"
     replay_metrics_ref = f"replay_metrics:{correlation_id}"
     replay_dtr_ref = f"replay_dtr:{correlation_id}"
-    return ReplayExportPayloadRefs(
+    return ArtifactPayloadRefBundle(
         review_export_ref=review_export_ref,
         feature_bridge_ref=feature_bridge_ref,
         parity_diagnostics_ref=parity_diagnostics_ref,
         replay_metrics_ref=replay_metrics_ref,
         replay_dtr_ref=replay_dtr_ref,
-        payload_refs=(
-            review_export_ref,
-            feature_bridge_ref,
-            parity_diagnostics_ref,
-            replay_metrics_ref,
-            replay_dtr_ref,
-        ),
     )
 
 
@@ -719,7 +786,7 @@ def _discover_export_file(
     return candidates[0].resolve()
 
 
-def _payload_refs_from_export_dir(export_dir: Path) -> ReplayExportPayloadRefs:
+def _payload_refs_from_export_dir(export_dir: Path) -> ArtifactPayloadRefBundle:
     review_export = _discover_export_file(
         export_dir,
         label="review_export",
@@ -755,23 +822,12 @@ def _payload_refs_from_export_dir(export_dir: Path) -> ReplayExportPayloadRefs:
         suffixes=(".json", ".jsonl", ".csv", ".parquet"),
         canonical_names=("replay_dtr.jsonl", "replay_dtr.json"),
     )
-    payload_refs = tuple(
-        str(path)
-        for path in (
-            review_export,
-            feature_bridge,
-            parity_diagnostics,
-            replay_metrics,
-            replay_dtr,
-        )
-    )
-    return ReplayExportPayloadRefs(
+    return ArtifactPayloadRefBundle(
         review_export_ref=str(review_export),
         feature_bridge_ref=str(feature_bridge),
         parity_diagnostics_ref=str(parity_diagnostics),
         replay_metrics_ref=str(replay_metrics),
         replay_dtr_ref=str(replay_dtr),
-        payload_refs=payload_refs,
     )
 
 
@@ -803,15 +859,62 @@ def _load_json_payload_from_ref(ref: str) -> dict | None:
 
 
 def _build_replay_projection(import_summary) -> ReplayImportProjection:
-    return ReplayImportProjection(
-        status="healthy" if import_summary.accepted else "warning",
-        artifact_id=import_summary.artifact_id,
-        artifact_kind=import_summary.artifact_kind.value,
-        lineage_version=import_summary.lineage_version,
-        lifecycle_state="validated" if import_summary.accepted else "draft",
-        validation_status=import_summary.validation_status,
-        review_state=import_summary.review_state.value,
-        rejection_reasons=import_summary.rejection_reasons,
+    return build_replay_import_projection(import_summary)
+
+
+def _build_local_replay_feature_locks(
+    feature_bridge_ref: str,
+) -> tuple[
+    FeatureLineageLock,
+    TransformWhitelistLock,
+    tuple[str, ...],
+    tuple[TransformWhitelistId, ...],
+]:
+    feature_bridge_payload = _load_json_payload_from_ref(feature_bridge_ref) or {}
+    raw_feature_keys = tuple(
+        str(item)
+        for item in (
+            feature_bridge_payload.get("recognized_feature_keys")
+            or feature_bridge_payload.get("feature_keys")
+            or ()
+        )
+    )
+    feature_ids = tuple(
+        feature_id
+        for feature_id in raw_feature_keys
+        if feature_id in CANONICAL_PHYSICS_FEATURE_DICTIONARY
+    )
+
+    records = []
+    transform_ids: list[TransformWhitelistId] = []
+    for feature_id in feature_ids:
+        entry = CANONICAL_PHYSICS_FEATURE_DICTIONARY[feature_id]
+        records.append(
+            FeatureLineageRecord(
+                feature_id=feature_id,
+                family=entry.family,
+                source_inputs=("historical_prices",),
+                transform_ids=entry.default_transform_ids,
+                equation_id=entry.equation_id,
+                feature_set_version=CANONICAL_FEATURE_SET_VERSION,
+                transform_set_version=CANONICAL_TRANSFORM_SET_VERSION,
+            )
+        )
+        transform_ids.extend(entry.default_transform_ids)
+
+    unique_transform_ids = tuple(dict.fromkeys(transform_ids)) or canonical_transform_ids()
+    return (
+        FeatureLineageLock(
+            feature_set_version=CANONICAL_FEATURE_SET_VERSION,
+            transform_set_version=CANONICAL_TRANSFORM_SET_VERSION,
+            records=tuple(records),
+        ),
+        TransformWhitelistLock(
+            transform_set_version=CANONICAL_TRANSFORM_SET_VERSION,
+            allowed_transform_ids=unique_transform_ids,
+        ),
+        feature_ids,
+        unique_transform_ids,
     )
 
 
@@ -835,7 +938,7 @@ def _build_demo_payload(
     engine_d_metrics = runtime_evidence_by_component.get("engine_d")
     snapshot = collect_monitoring_snapshot(
         correlation_id=correlation_id,
-        profile=ProfileId.LIGHT,
+        profile=ProfileId.COMPLETE,
         runtime_mode=RuntimeMode.SHADOW,
         timestamp_ms=1_700_000_000_000,
         portfolio=collect_portfolio_metrics(
@@ -864,6 +967,10 @@ def _build_demo_payload(
                 net_edge_bps=engine_a_metrics.expected_edge_bps if engine_a_metrics is not None else 8.0,
                 expected_cost_bps=engine_a_metrics.expected_cost_bps if engine_a_metrics is not None else 2.0,
                 ce_expected=engine_a_metrics.ce_expected if engine_a_metrics is not None else 0.0006,
+                scoring_summary=engine_a_metrics.scoring_summary if engine_a_metrics is not None else "",
+                risk_summary=engine_a_metrics.risk_summary if engine_a_metrics is not None else "",
+                scoring_reason_codes=engine_a_metrics.scoring_reason_codes if engine_a_metrics is not None else (),
+                risk_reason_codes=engine_a_metrics.risk_reason_codes if engine_a_metrics is not None else (),
             ),
             collect_engine_metrics(
                 engine_id="engine_b",
@@ -871,6 +978,10 @@ def _build_demo_payload(
                 net_edge_bps=engine_b_metrics.expected_edge_bps if engine_b_metrics is not None else 4.0,
                 expected_cost_bps=engine_b_metrics.expected_cost_bps if engine_b_metrics is not None else 2.4,
                 ce_expected=engine_b_metrics.ce_expected if engine_b_metrics is not None else 0.0002,
+                scoring_summary=engine_b_metrics.scoring_summary if engine_b_metrics is not None else "",
+                risk_summary=engine_b_metrics.risk_summary if engine_b_metrics is not None else "",
+                scoring_reason_codes=engine_b_metrics.scoring_reason_codes if engine_b_metrics is not None else (),
+                risk_reason_codes=engine_b_metrics.risk_reason_codes if engine_b_metrics is not None else (),
             ),
             collect_engine_metrics(
                 engine_id="engine_c",
@@ -878,6 +989,10 @@ def _build_demo_payload(
                 net_edge_bps=engine_c_metrics.expected_edge_bps if engine_c_metrics is not None else 6.5,
                 expected_cost_bps=engine_c_metrics.expected_cost_bps if engine_c_metrics is not None else 2.3,
                 ce_expected=engine_c_metrics.ce_expected if engine_c_metrics is not None else 0.00035,
+                scoring_summary=engine_c_metrics.scoring_summary if engine_c_metrics is not None else "",
+                risk_summary=engine_c_metrics.risk_summary if engine_c_metrics is not None else "",
+                scoring_reason_codes=engine_c_metrics.scoring_reason_codes if engine_c_metrics is not None else (),
+                risk_reason_codes=engine_c_metrics.risk_reason_codes if engine_c_metrics is not None else (),
             ),
             collect_engine_metrics(
                 engine_id="engine_d",
@@ -885,6 +1000,10 @@ def _build_demo_payload(
                 net_edge_bps=engine_d_metrics.expected_edge_bps if engine_d_metrics is not None else 5.2,
                 expected_cost_bps=engine_d_metrics.expected_cost_bps if engine_d_metrics is not None else 2.1,
                 ce_expected=engine_d_metrics.ce_expected if engine_d_metrics is not None else 0.00028,
+                scoring_summary=engine_d_metrics.scoring_summary if engine_d_metrics is not None else "",
+                risk_summary=engine_d_metrics.risk_summary if engine_d_metrics is not None else "",
+                scoring_reason_codes=engine_d_metrics.scoring_reason_codes if engine_d_metrics is not None else (),
+                risk_reason_codes=engine_d_metrics.risk_reason_codes if engine_d_metrics is not None else (),
             ),
         ),
         pairs=(
@@ -903,7 +1022,7 @@ def _build_demo_payload(
         ),
     )
     active_modules = tuple(
-        module.module_name for module in get_modules_for_profile(ProfileId.LIGHT)
+        module.module_name for module in get_modules_for_profile(ProfileId.COMPLETE)
     )
     build14_projection = _build14_projection(snapshot)
     return build_technical_dashboard_payload(
@@ -1019,7 +1138,7 @@ def export_local_replay_shadow_run(
 
     replay_request = LocalReplayRequest(
         correlation_id=correlation_id,
-        profile=run_manifest.profile_scope if run_manifest is not None else ProfileId.LIGHT,
+        profile=ProfileId.COMPLETE,
         runtime_mode=RuntimeMode.LOCAL_REPLAY,
         strategy_classification=(
             run_manifest.strategy_classification
@@ -1107,6 +1226,19 @@ def export_local_replay_shadow_run(
             )
         ),
     )
+    replay_plan = replay_plan.model_copy(
+        update={
+            "bundle": replay_plan.bundle.model_copy(
+                update={
+                    "manifest": replay_plan.bundle.manifest.model_copy(
+                        update={
+                            "activation_stage": ArtifactActivationStage.SHADOW_READY,
+                        }
+                    )
+                }
+            )
+        }
+    )
     replay_plan_json_path = output_dir / "local_replay_shadow.replay_plan.json"
     replay_plan_json_path.write_text(
         replay_plan.model_dump_json(indent=2),
@@ -1129,10 +1261,24 @@ def export_local_replay_shadow_run(
         encoding="utf-8",
     )
 
+    (
+        feature_lineage_lock,
+        transform_whitelist_lock,
+        expected_feature_ids,
+        expected_transform_ids,
+    ) = _build_local_replay_feature_locks(payload_refs.feature_bridge_ref)
+
     import_request = ArtifactImportRequest(
         manifest=replay_plan.bundle.manifest,
         artifact_kind=replay_plan.bundle.artifact_kind,
+        payload_bundle=payload_refs,
         payload_refs=replay_plan.bundle.payload_refs,
+        feature_lineage_lock=feature_lineage_lock,
+        feature_lineage_required=True,
+        expected_feature_ids=expected_feature_ids,
+        transform_whitelist_lock=transform_whitelist_lock,
+        transform_whitelist_required=True,
+        expected_transform_ids=expected_transform_ids,
     )
     import_decision = validate_import_request(import_request)
     import_summary = summarize_import_request(import_request, import_decision)
@@ -1158,6 +1304,10 @@ def export_local_replay_shadow_run(
                     "expected_cost_bps": evidence.expected_cost_bps,
                     "expected_edge_bps": evidence.expected_edge_bps,
                     "ce_expected": evidence.ce_expected,
+                    "scoring_summary": evidence.scoring_summary,
+                    "risk_summary": evidence.risk_summary,
+                    "scoring_reason_codes": evidence.scoring_reason_codes,
+                    "risk_reason_codes": evidence.risk_reason_codes,
                     "details": evidence.details,
                 }
                 for evidence in engine_runtime_evidence
@@ -1205,7 +1355,7 @@ def export_local_replay_shadow_run(
         ),
     )
     shadow_recorder.mark_runtime_source("recorded_replay")
-    shadow_recorder.mark_config_loaded("config:light.shadow.official")
+    shadow_recorder.mark_config_loaded("config:complete.shadow.official")
     shadow_recorder.mark_shadow_dtr_persisted("shadow_dtr:corr-local-replay-shadow-demo")
     shadow_recorder.record_event_loop_tick(1_700_000_000_000)
     shadow_recorder.record_event_loop_tick(1_700_086_400_000)
@@ -1232,7 +1382,7 @@ def export_local_replay_shadow_run(
         provisional_shadow_input,
         run_id="local-replay-shadow-demo-run",
     )
-    shadow_counter = ShadowDayCounter(state_dir=output_dir, profile=ShadowProfile.LIGHT)
+    shadow_counter = ShadowDayCounter(state_dir=output_dir, profile=ShadowProfile.COMPLETE)
     shadow_registry = ShadowSessionRegistry(state_dir=output_dir)
     status_before_run = shadow_counter.get_status()
     starting_consecutive_days = status_before_run.consecutive_days

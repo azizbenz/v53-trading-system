@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -42,6 +43,7 @@ from protocols import (
     MicroLiveVerdict,
     OperatorSafingAction,
     OperatorSafingRequest,
+    ShadowPortfolioJudgment,
     ShadowVerdict,
     build_live_light_input_from_micro_live,
     run_live_light_gate,
@@ -53,8 +55,39 @@ def _micro_live_payload(
     *,
     correlation_id: str = "corr-live",
     runtime_mode: RuntimeMode = RuntimeMode.MICRO_LIVE,
-    profile: ProfileId = ProfileId.LIGHT,
+    profile: ProfileId = ProfileId.COMPLETE,
     validation_status: str = "accepted",
+    exported_from: str = "local",
+    source_profile: str = "complete",
+    dataset_ref: str = "dataset-1",
+    clock_ref: str = "clock-1",
+    review_state: str | None = None,
+    activation_stage: str = "shadow_ready",
+    health_state: str = "active",
+    compatibility_status: str = "not_evaluated",
+    compatibility_reasons: tuple[str, ...] = (),
+    feature_lineage_required: bool = True,
+    feature_lineage_present: bool = True,
+    feature_lineage_status: str = "ok",
+    feature_lineage_reasons: tuple[str, ...] = (),
+    transform_whitelist_required: bool = True,
+    transform_whitelist_present: bool = True,
+    transform_whitelist_status: str = "ok",
+    transform_whitelist_reasons: tuple[str, ...] = (),
+    signature_check_status: str = "not_provided",
+    signature_check_reasons: tuple[str, ...] = (),
+    conflict_resolution_mode: str = "no_trade_then_strictest",
+    conflict_hard_veto_action: str = "no_trade",
+    conflict_score_aggregation_mode: str = "bounded_sum_with_global_cap",
+    conflict_size_reduce_mode: str = "min_factor_wins",
+    conflict_rank_adjust_mode: str = "bounded_sum",
+    conflict_additive_soft_boosts_allowed: bool = True,
+    conflict_additive_soft_reduces_allowed: bool = True,
+    registry_atomicity_mode: str = "atomic_snapshot_swap",
+    registry_concurrency_model: str = "single_writer_multi_reader",
+    registry_publish_requires_atomic_replace: bool = True,
+    registry_publish_requires_fsync: bool = True,
+    registry_rollback_to_last_known_good: bool = True,
     artifact_id: str = "artifact-1",
     lineage_version: str = "a.v1.0.r1",
     replay_artifact_id: str | None = None,
@@ -166,10 +199,48 @@ def _micro_live_payload(
             status="healthy" if validation_status == "accepted" else "warning",
             artifact_id=replay_artifact_id or artifact_id,
             artifact_kind="review_packet",
+            exported_from=exported_from,
+            source_profile=source_profile,
             lineage_version=replay_lineage_version or lineage_version,
+            dataset_ref=dataset_ref,
+            clock_ref=clock_ref,
+            activation_stage=activation_stage,
+            health_state=health_state,
             lifecycle_state="exported",
             validation_status=validation_status,
-            review_state="pending" if validation_status == "accepted" else "needs_revision",
+            review_state=review_state
+            or ("pending" if validation_status == "accepted" else "needs_revision"),
+            compatibility_status=compatibility_status,
+            compatibility_reasons=compatibility_reasons,
+            feature_lineage_required=feature_lineage_required,
+            feature_lineage_present=feature_lineage_present,
+            feature_lineage_status=feature_lineage_status,
+            feature_lineage_reasons=feature_lineage_reasons,
+            transform_whitelist_required=transform_whitelist_required,
+            transform_whitelist_present=transform_whitelist_present,
+            transform_whitelist_status=transform_whitelist_status,
+            transform_whitelist_reasons=transform_whitelist_reasons,
+            signature_check_status=signature_check_status,
+            signature_check_reasons=signature_check_reasons,
+            conflict_resolution_mode=conflict_resolution_mode,
+            conflict_hard_veto_action=conflict_hard_veto_action,
+            conflict_score_aggregation_mode=conflict_score_aggregation_mode,
+            conflict_size_reduce_mode=conflict_size_reduce_mode,
+            conflict_rank_adjust_mode=conflict_rank_adjust_mode,
+            conflict_additive_soft_boosts_allowed=conflict_additive_soft_boosts_allowed,
+            conflict_additive_soft_reduces_allowed=conflict_additive_soft_reduces_allowed,
+            registry_atomicity_mode=registry_atomicity_mode,
+            registry_concurrency_model=registry_concurrency_model,
+            registry_publish_requires_atomic_replace=registry_publish_requires_atomic_replace,
+            registry_publish_requires_fsync=registry_publish_requires_fsync,
+            registry_rollback_to_last_known_good=registry_rollback_to_last_known_good,
+            payload_ref_count=5,
+            payload_bundle_present=True,
+            review_export_ref="exports/review.md",
+            feature_bridge_ref="exports/feature_bridge.json",
+            parity_diagnostics_ref="exports/parity.json",
+            replay_metrics_ref="exports/replay_metrics.json",
+            replay_dtr_ref="exports/replay_dtr.json",
             rejection_reasons=replay_rejection_reasons,
         ),
         alerts=AlertProjection(
@@ -193,7 +264,13 @@ def _micro_live_summary(
     *,
     verdict: MicroLiveVerdict = MicroLiveVerdict.ALLOWED_TO_PROBE,
     run_state: MicroLiveRunState = MicroLiveRunState.READY_TO_PROBE,
+    promotable_engines: tuple[str, ...] = ("engine_a", "engine_b", "engine_c", "engine_d"),
+    shadow_only_engines: tuple[str, ...] = (),
+    rewrite_required_engines: tuple[str, ...] = (),
+    shadow_portfolio_judgment: ShadowPortfolioJudgment | None = None,
+    planned_engines: tuple[str, ...] | None = None,
 ) -> MicroLiveRunSummary:
+    resolved_planned_engines = planned_engines or promotable_engines
     return MicroLiveRunSummary(
         run_id="micro-run-1",
         correlation_id="corr-live",
@@ -218,7 +295,7 @@ def _micro_live_summary(
             plan_id="micro-plan-1",
             import_artifact_id="artifact-1",
             import_lineage_version="a.v1.0.r1",
-            planned_engines=("engine_a", "engine_b", "engine_c", "engine_d"),
+            planned_engines=resolved_planned_engines,
             planned_pairs=("BTCUSDT", "ETHUSDT"),
             requested_total_notional_usdt=40.0,
             approved_total_notional_usdt=40.0 if verdict == MicroLiveVerdict.ALLOWED_TO_PROBE else 0.0,
@@ -232,6 +309,12 @@ def _micro_live_summary(
         observability_ready=True,
         halt_ready=True,
         onboarding_ready=True,
+        shadow_validated_engines=("engine_a", "engine_b", "engine_c", "engine_d"),
+        shadow_promotable_engines=promotable_engines,
+        shadow_shadow_only_engines=shadow_only_engines,
+        shadow_rewrite_required_engines=rewrite_required_engines,
+        shadow_portfolio_judgment=shadow_portfolio_judgment
+        or ShadowPortfolioJudgment(judgment_verdict="promotable", rationale="test helper default"),
     )
 
 
@@ -257,6 +340,62 @@ def test_build_live_light_input_from_micro_live_maps_governed_inputs():
     assert live_input.micro_live_run_id == "micro-run-1"
     assert live_input.micro_live_import_artifact_id == "artifact-1"
     assert live_input.import_validation_status == "accepted"
+    assert live_input.import_exported_from == "local"
+    assert live_input.import_source_profile == "complete"
+    assert live_input.import_dataset_ref == "dataset-1"
+    assert live_input.import_clock_ref == "clock-1"
+    assert live_input.import_feature_lineage_required is True
+    assert live_input.import_feature_lineage_present is True
+    assert live_input.import_feature_lineage_status == "ok"
+    assert live_input.import_transform_whitelist_required is True
+    assert live_input.import_transform_whitelist_present is True
+    assert live_input.import_transform_whitelist_status == "ok"
+    assert live_input.shadow_promotable_engines == (
+        "engine_a",
+        "engine_b",
+        "engine_c",
+        "engine_d",
+    )
+
+
+def test_run_live_light_gate_blocks_when_shadow_portfolio_judgment_is_not_promotable():
+    live_input = build_live_light_input_from_micro_live(
+        _micro_live_summary(
+            shadow_portfolio_judgment=ShadowPortfolioJudgment(
+                judgment_verdict="shadow-only",
+                physics_pressure="elevated",
+                cluster_pressure="elevated",
+                elevated_physics_engine_count=1,
+                critical_physics_engine_count=1,
+                rationale="portfolio concentration remained elevated in Shadow",
+            )
+        ),
+        _micro_live_payload(),
+        live_pairs=("BTCUSDT", "ETHUSDT"),
+        requested_total_notional_usdt=80.0,
+        requested_pair_notional_usdt=40.0,
+        max_total_notional_usdt=100.0,
+        max_pair_notional_usdt=50.0,
+        micro_live_stable_days=7,
+        observability_ready=True,
+        halt_ready=True,
+        execution_ready=True,
+        broker_ready=True,
+        exchange_ready=True,
+        onboarding_accepted=True,
+    )
+
+    summary = run_live_light_gate(live_input)
+
+    assert summary.decision.allowed_to_execute_small is False
+    assert summary.decision.verdict == LiveLightVerdict.BLOCKED
+    assert any(
+        "shadow portfolio judgment=shadow-only" in reason
+        for reason in summary.decision.blocking_reasons
+    )
+    assert "shadow portfolio physics_pressure=elevated" in summary.decision.blocking_reasons
+    assert "shadow portfolio elevated_physics_engines=1" in summary.decision.blocking_reasons
+    assert "shadow portfolio critical_physics_engines=1" in summary.decision.blocking_reasons
 
 
 def test_build_live_light_input_from_micro_live_rejects_non_micro_live_source_payload():
@@ -351,6 +490,167 @@ def test_build_live_light_input_from_micro_live_rejects_non_empty_import_rejecti
         )
 
 
+def test_build_live_light_input_from_micro_live_rejects_non_governed_import_review_state():
+    with pytest.raises(
+        LiveLightInputError,
+        match="replay import_review_state to stay pending or approved",
+    ):
+        build_live_light_input_from_micro_live(
+            _micro_live_summary(),
+            _micro_live_payload(review_state="needs_revision"),
+            live_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=80.0,
+            requested_pair_notional_usdt=40.0,
+            max_total_notional_usdt=100.0,
+            max_pair_notional_usdt=50.0,
+            micro_live_stable_days=7,
+            observability_ready=True,
+            halt_ready=True,
+            execution_ready=True,
+            broker_ready=True,
+            exchange_ready=True,
+            onboarding_accepted=True,
+        )
+
+
+def test_build_live_light_input_from_micro_live_rejects_non_complete_import_source_profile():
+    with pytest.raises(
+        LiveLightInputError,
+        match="replay import_source_profile=complete",
+    ):
+        build_live_light_input_from_micro_live(
+            _micro_live_summary(),
+            _micro_live_payload(source_profile="light"),
+            live_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=80.0,
+            requested_pair_notional_usdt=40.0,
+            max_total_notional_usdt=100.0,
+            max_pair_notional_usdt=50.0,
+            micro_live_stable_days=7,
+            observability_ready=True,
+            halt_ready=True,
+            execution_ready=True,
+            broker_ready=True,
+            exchange_ready=True,
+            onboarding_accepted=True,
+        )
+
+
+def test_build_live_light_input_from_micro_live_rejects_non_local_import_origin():
+    with pytest.raises(
+        LiveLightInputError,
+        match="replay import_exported_from=local",
+    ):
+        build_live_light_input_from_micro_live(
+            _micro_live_summary(),
+            _micro_live_payload(exported_from="vps"),
+            live_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=80.0,
+            requested_pair_notional_usdt=40.0,
+            max_total_notional_usdt=100.0,
+            max_pair_notional_usdt=50.0,
+            micro_live_stable_days=7,
+            observability_ready=True,
+            halt_ready=True,
+            execution_ready=True,
+            broker_ready=True,
+            exchange_ready=True,
+            onboarding_accepted=True,
+        )
+
+
+def test_build_live_light_input_from_micro_live_rejects_non_shadow_ready_import_state():
+    with pytest.raises(
+        LiveLightInputError,
+        match="replay import_activation_stage=shadow_ready",
+    ):
+        build_live_light_input_from_micro_live(
+            _micro_live_summary(),
+            _micro_live_payload(activation_stage="replay_only"),
+            live_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=80.0,
+            requested_pair_notional_usdt=40.0,
+            max_total_notional_usdt=100.0,
+            max_pair_notional_usdt=50.0,
+            micro_live_stable_days=7,
+            observability_ready=True,
+            halt_ready=True,
+            execution_ready=True,
+            broker_ready=True,
+            exchange_ready=True,
+            onboarding_accepted=True,
+        )
+
+    with pytest.raises(
+        LiveLightInputError,
+        match="replay import_health_state=active",
+    ):
+        build_live_light_input_from_micro_live(
+            _micro_live_summary(),
+            _micro_live_payload(health_state="review_required"),
+            live_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=80.0,
+            requested_pair_notional_usdt=40.0,
+            max_total_notional_usdt=100.0,
+            max_pair_notional_usdt=50.0,
+            micro_live_stable_days=7,
+            observability_ready=True,
+            halt_ready=True,
+            execution_ready=True,
+            broker_ready=True,
+            exchange_ready=True,
+            onboarding_accepted=True,
+        )
+
+    with pytest.raises(
+        LiveLightInputError,
+        match="replay import_feature_lineage_status=ok",
+    ):
+        build_live_light_input_from_micro_live(
+            _micro_live_summary(),
+            _micro_live_payload(
+                feature_lineage_status="invalid",
+                feature_lineage_reasons=("feature lineage missing",),
+            ),
+            live_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=80.0,
+            requested_pair_notional_usdt=40.0,
+            max_total_notional_usdt=100.0,
+            max_pair_notional_usdt=50.0,
+            micro_live_stable_days=7,
+            observability_ready=True,
+            halt_ready=True,
+            execution_ready=True,
+            broker_ready=True,
+            exchange_ready=True,
+            onboarding_accepted=True,
+        )
+
+    with pytest.raises(
+        LiveLightInputError,
+        match="replay import_transform_whitelist_status=ok",
+    ):
+        build_live_light_input_from_micro_live(
+            _micro_live_summary(),
+            _micro_live_payload(
+                transform_whitelist_status="invalid",
+                transform_whitelist_reasons=("transform whitelist missing",),
+            ),
+            live_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=80.0,
+            requested_pair_notional_usdt=40.0,
+            max_total_notional_usdt=100.0,
+            max_pair_notional_usdt=50.0,
+            micro_live_stable_days=7,
+            observability_ready=True,
+            halt_ready=True,
+            execution_ready=True,
+            broker_ready=True,
+            exchange_ready=True,
+            onboarding_accepted=True,
+        )
+
+
 def test_build_live_light_input_from_micro_live_rejects_live_pairs_outside_micro_live_surface():
     with pytest.raises(
         LiveLightInputError,
@@ -404,6 +704,35 @@ def test_build_live_light_input_from_micro_live_rejects_incomplete_shadow_from_p
             broker_ready=True,
             exchange_ready=True,
             onboarding_accepted=True,
+        )
+
+
+def test_build_live_light_input_from_micro_live_rejects_non_promotable_engine_from_shadow_judgment():
+    with pytest.raises(
+        ValidationError,
+        match="active_engines must be PROMOTABLE in Shadow judgment",
+    ):
+        build_live_light_input_from_micro_live(
+            _micro_live_summary(
+                promotable_engines=("engine_a",),
+                shadow_only_engines=("engine_b",),
+                rewrite_required_engines=("engine_c",),
+                planned_engines=("engine_a", "engine_b"),
+            ),
+            _micro_live_payload(),
+            live_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=80.0,
+            requested_pair_notional_usdt=40.0,
+            max_total_notional_usdt=100.0,
+            max_pair_notional_usdt=50.0,
+            micro_live_stable_days=7,
+            observability_ready=True,
+            halt_ready=True,
+            execution_ready=True,
+            broker_ready=True,
+            exchange_ready=True,
+            onboarding_accepted=True,
+            active_engines=("engine_b",),
         )
 
 
@@ -780,6 +1109,45 @@ def test_run_live_light_gate_keeps_hard_blockers_stronger_than_dry_run():
     assert "operator halt guard must be ready before Live-Light execution" in summary.decision.blocking_reasons
 
 
+def test_run_live_light_gate_uses_complete_profile_for_shadow_counter_check(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured: dict[str, str] = {}
+
+    def _fake_check_shadow_30j_gate(state_dir, profile):
+        captured["profile"] = profile
+        return True, {"consecutive_days": 30, "shadow_report_ready": True}
+
+    monkeypatch.setattr(
+        "protocols.shadow_runtime.check_shadow_30j_gate",
+        _fake_check_shadow_30j_gate,
+    )
+
+    summary = run_live_light_gate(
+        build_live_light_input_from_micro_live(
+            _micro_live_summary(),
+            _micro_live_payload(),
+            live_pairs=("BTCUSDT",),
+            requested_total_notional_usdt=80.0,
+            requested_pair_notional_usdt=40.0,
+            max_total_notional_usdt=100.0,
+            max_pair_notional_usdt=50.0,
+            micro_live_stable_days=7,
+            observability_ready=True,
+            halt_ready=True,
+            execution_ready=True,
+            broker_ready=True,
+            exchange_ready=True,
+            onboarding_accepted=True,
+            build14_live_eligible=True,
+        ),
+        shadow_state_dir=Path("build"),
+    )
+
+    assert summary.decision.verdict == LiveLightVerdict.ALLOWED_TO_EXECUTE_SMALL
+    assert captured["profile"] == "complete"
+
+
 def test_run_live_light_gate_blocks_model_constructed_import_provenance_mismatch():
     live_input = build_live_light_input_from_micro_live(
         _micro_live_summary(),
@@ -842,6 +1210,445 @@ def test_run_live_light_gate_blocks_model_constructed_onboarding_contradiction()
     assert summary.decision.verdict == LiveLightVerdict.BLOCKED
     assert summary.decision.allowed_to_execute_small is False
     assert "accepted onboarding must keep a pending or approved review_state" in summary.decision.blocking_reasons
+
+
+def test_run_live_light_gate_blocks_model_constructed_rejected_import_policy():
+    live_input = build_live_light_input_from_micro_live(
+        _micro_live_summary(),
+        _micro_live_payload(),
+        live_pairs=("BTCUSDT",),
+        requested_total_notional_usdt=80.0,
+        requested_pair_notional_usdt=40.0,
+        max_total_notional_usdt=100.0,
+        max_pair_notional_usdt=50.0,
+        micro_live_stable_days=7,
+        observability_ready=True,
+        halt_ready=True,
+        execution_ready=True,
+        broker_ready=True,
+        exchange_ready=True,
+        onboarding_accepted=True,
+        build14_live_eligible=True,
+    )
+
+    contradictory_input = LiveLightInput.model_construct(
+        **{
+            **live_input.model_dump(),
+            "import_compatibility_status": "rejected",
+            "import_compatibility_reasons": ("schema mismatch",),
+            "import_feature_lineage_required": False,
+            "import_feature_lineage_present": False,
+            "import_feature_lineage_status": "invalid",
+            "import_feature_lineage_reasons": ("feature lineage missing",),
+            "import_transform_whitelist_required": False,
+            "import_transform_whitelist_present": False,
+            "import_transform_whitelist_status": "invalid",
+            "import_transform_whitelist_reasons": ("transform whitelist missing",),
+            "import_signature_check_status": "key_revoked",
+            "import_signature_check_reasons": ("revoked signing key",),
+            "import_conflict_resolution_mode": "first_artifact_wins",
+            "import_registry_atomicity_mode": "in_place_mutation",
+            "import_registry_publish_requires_atomic_replace": False,
+            "import_payload_ref_count": 0,
+            "import_payload_bundle_present": False,
+            "import_review_export_ref": "",
+        }
+    )
+    summary = run_live_light_gate(contradictory_input)
+
+    assert summary.decision.verdict == LiveLightVerdict.BLOCKED
+    assert summary.decision.allowed_to_execute_small is False
+    assert (
+        "Build-13 Live-Light requires a non-rejected import_compatibility_status"
+        in summary.decision.blocking_reasons
+    )
+    assert "import compatibility gate: schema mismatch" in summary.decision.blocking_reasons
+    assert (
+        "Build-13 Live-Light requires a non-rejected import_signature_check_status"
+        in summary.decision.blocking_reasons
+    )
+    assert "import signature gate: revoked signing key" in summary.decision.blocking_reasons
+    assert (
+        "Build-13 Live-Light requires import_feature_lineage_required=True"
+        in summary.decision.blocking_reasons
+    )
+    assert (
+        "Build-13 Live-Light requires import_feature_lineage_status=ok"
+        in summary.decision.blocking_reasons
+    )
+    assert (
+        "import feature lineage gate: feature lineage missing"
+        in summary.decision.blocking_reasons
+    )
+    assert (
+        "Build-13 Live-Light requires import_transform_whitelist_required=True"
+        in summary.decision.blocking_reasons
+    )
+    assert (
+        "Build-13 Live-Light requires import_transform_whitelist_status=ok"
+        in summary.decision.blocking_reasons
+    )
+    assert (
+        "import transform whitelist gate: transform whitelist missing"
+        in summary.decision.blocking_reasons
+    )
+    assert (
+        "Build-13 Live-Light requires canonical import_conflict_resolution_mode"
+        in summary.decision.blocking_reasons
+    )
+    assert (
+        "Build-13 Live-Light requires canonical import_registry_atomicity_mode"
+        in summary.decision.blocking_reasons
+    )
+    assert (
+        "Build-13 Live-Light requires import_registry_publish_requires_atomic_replace=True"
+        in summary.decision.blocking_reasons
+    )
+    assert (
+        "Build-13 Live-Light requires import_payload_ref_count>=5"
+        in summary.decision.blocking_reasons
+    )
+    assert (
+        "Build-13 Live-Light requires import_payload_bundle_present=True"
+        in summary.decision.blocking_reasons
+    )
+    assert (
+        "Build-13 Live-Light requires import_review_export_ref"
+        in summary.decision.blocking_reasons
+    )
+
+
+def test_run_live_light_gate_blocks_model_constructed_non_complete_import_source_profile():
+    live_input = build_live_light_input_from_micro_live(
+        _micro_live_summary(),
+        _micro_live_payload(),
+        live_pairs=("BTCUSDT",),
+        requested_total_notional_usdt=80.0,
+        requested_pair_notional_usdt=40.0,
+        max_total_notional_usdt=100.0,
+        max_pair_notional_usdt=50.0,
+        micro_live_stable_days=7,
+        observability_ready=True,
+        halt_ready=True,
+        execution_ready=True,
+        broker_ready=True,
+        exchange_ready=True,
+        onboarding_accepted=True,
+        build14_live_eligible=True,
+    )
+
+    contradictory_input = LiveLightInput.model_construct(
+        **{
+            **live_input.model_dump(),
+            "import_source_profile": "light",
+        }
+    )
+    summary = run_live_light_gate(contradictory_input)
+
+    assert summary.decision.verdict == LiveLightVerdict.BLOCKED
+    assert summary.decision.allowed_to_execute_small is False
+    assert (
+        "Build-13 Live-Light requires import_source_profile=complete"
+        in summary.decision.blocking_reasons
+    )
+
+
+def test_run_live_light_gate_blocks_model_constructed_non_local_import_origin():
+    live_input = build_live_light_input_from_micro_live(
+        _micro_live_summary(),
+        _micro_live_payload(),
+        live_pairs=("BTCUSDT",),
+        requested_total_notional_usdt=80.0,
+        requested_pair_notional_usdt=40.0,
+        max_total_notional_usdt=100.0,
+        max_pair_notional_usdt=50.0,
+        micro_live_stable_days=7,
+        observability_ready=True,
+        halt_ready=True,
+        execution_ready=True,
+        broker_ready=True,
+        exchange_ready=True,
+        onboarding_accepted=True,
+        build14_live_eligible=True,
+    )
+
+    contradictory_input = LiveLightInput.model_construct(
+        **{
+            **live_input.model_dump(),
+            "import_exported_from": "vps",
+        }
+    )
+    summary = run_live_light_gate(contradictory_input)
+
+    assert summary.decision.verdict == LiveLightVerdict.BLOCKED
+    assert summary.decision.allowed_to_execute_small is False
+    assert (
+        "Build-13 Live-Light requires import_exported_from=local"
+        in summary.decision.blocking_reasons
+    )
+
+
+def test_run_live_light_gate_blocks_model_constructed_micro_live_surface_mismatch():
+    live_input = build_live_light_input_from_micro_live(
+        _micro_live_summary(),
+        _micro_live_payload(),
+        live_pairs=("BTCUSDT",),
+        requested_total_notional_usdt=80.0,
+        requested_pair_notional_usdt=40.0,
+        max_total_notional_usdt=100.0,
+        max_pair_notional_usdt=50.0,
+        micro_live_stable_days=7,
+        observability_ready=True,
+        halt_ready=True,
+        execution_ready=True,
+        broker_ready=True,
+        exchange_ready=True,
+        onboarding_accepted=True,
+        build14_live_eligible=True,
+    )
+
+    contradictory_input = LiveLightInput.model_construct(
+        **{
+            **live_input.model_dump(),
+            "micro_live_planned_engines": ("engine_a",),
+            "micro_live_planned_pairs": ("ETHUSDT",),
+        }
+    )
+    summary = run_live_light_gate(contradictory_input)
+
+    assert summary.decision.verdict == LiveLightVerdict.BLOCKED
+    assert summary.decision.allowed_to_execute_small is False
+    assert (
+        "Build-13 Live-Light active_engines must stay within the governed Micro-live planned_engines"
+        in summary.decision.blocking_reasons
+    )
+    assert (
+        "Build-13 Live-Light live_pairs must stay within the governed Micro-live planned_pairs"
+        in summary.decision.blocking_reasons
+    )
+
+
+def test_run_live_light_gate_blocks_model_constructed_live_surface_budget_mismatch():
+    live_input = build_live_light_input_from_micro_live(
+        _micro_live_summary(),
+        _micro_live_payload(),
+        live_pairs=("BTCUSDT",),
+        requested_total_notional_usdt=80.0,
+        requested_pair_notional_usdt=40.0,
+        max_total_notional_usdt=100.0,
+        max_pair_notional_usdt=50.0,
+        micro_live_stable_days=7,
+        observability_ready=True,
+        halt_ready=True,
+        execution_ready=True,
+        broker_ready=True,
+        exchange_ready=True,
+        onboarding_accepted=True,
+        build14_live_eligible=True,
+    )
+
+    contradictory_input = LiveLightInput.model_construct(
+        **{
+            **live_input.model_dump(),
+            "live_pairs": ("DOGEUSDT",),
+            "requested_total_notional_usdt": 140.0,
+            "requested_pair_notional_usdt": 60.0,
+            "max_total_notional_usdt": 100.0,
+            "max_pair_notional_usdt": 50.0,
+            "execution_order_limit": 0,
+        }
+    )
+    summary = run_live_light_gate(contradictory_input)
+
+    assert summary.decision.verdict == LiveLightVerdict.BLOCKED
+    assert summary.decision.allowed_to_execute_small is False
+    assert (
+        "Build-13 Live-Light live_pairs must stay within the Complete pair scope"
+        in summary.decision.blocking_reasons
+    )
+    assert (
+        "Live-Light requested_total_notional_usdt exceeds max cap"
+        in summary.decision.blocking_reasons
+    )
+    assert (
+        "Live-Light requested_pair_notional_usdt exceeds max pair cap"
+        in summary.decision.blocking_reasons
+    )
+    assert (
+        "Build-13 Live-Light requires execution_order_limit within [1, 20]"
+        in summary.decision.blocking_reasons
+    )
+
+
+def test_run_live_light_gate_blocks_model_constructed_rollout_temporal_mismatch():
+    live_input = build_live_light_input_from_micro_live(
+        _micro_live_summary(),
+        _micro_live_payload(),
+        live_pairs=("BTCUSDT",),
+        requested_total_notional_usdt=80.0,
+        requested_pair_notional_usdt=40.0,
+        max_total_notional_usdt=100.0,
+        max_pair_notional_usdt=50.0,
+        micro_live_stable_days=7,
+        observability_ready=True,
+        halt_ready=True,
+        execution_ready=True,
+        broker_ready=True,
+        exchange_ready=True,
+        onboarding_accepted=True,
+        build14_live_eligible=True,
+    )
+
+    contradictory_input = LiveLightInput.model_construct(
+        **{
+            **live_input.model_dump(),
+            "shadow_days_completed": 29,
+            "component_verdicts_rendered": False,
+            "shadow_report_ready": False,
+            "micro_live_stable_days": 6,
+        }
+    )
+    summary = run_live_light_gate(contradictory_input)
+
+    assert summary.decision.verdict == LiveLightVerdict.BLOCKED
+    assert summary.decision.allowed_to_execute_small is False
+    assert (
+        "Build-13 Live-Light requires a completed 30-day Shadow"
+        in summary.decision.blocking_reasons
+    )
+    assert (
+        "Build-13 Live-Light requires rendered component verdicts from Shadow"
+        in summary.decision.blocking_reasons
+    )
+    assert (
+        "Build-13 Live-Light requires shadow_report_ready=True"
+        in summary.decision.blocking_reasons
+    )
+    assert (
+        "Build-13 Live-Light requires 7 stable Micro-live days"
+        in summary.decision.blocking_reasons
+    )
+
+
+def test_run_live_light_gate_blocks_model_constructed_governance_envelope_mismatch():
+    live_input = build_live_light_input_from_micro_live(
+        _micro_live_summary(),
+        _micro_live_payload(),
+        live_pairs=("BTCUSDT",),
+        requested_total_notional_usdt=80.0,
+        requested_pair_notional_usdt=40.0,
+        max_total_notional_usdt=100.0,
+        max_pair_notional_usdt=50.0,
+        micro_live_stable_days=7,
+        observability_ready=True,
+        halt_ready=True,
+        execution_ready=True,
+        broker_ready=True,
+        exchange_ready=True,
+        onboarding_accepted=True,
+        build14_live_eligible=True,
+    )
+
+    contradictory_input = LiveLightInput.model_construct(
+        **{
+            **live_input.model_dump(),
+            "correlation_id": " ",
+            "profile": ProfileId.LIGHT,
+            "runtime_mode": RuntimeMode.MICRO_LIVE,
+            "micro_live_run_id": " ",
+            "shadow_run_id": " ",
+            "backtest_profile": "legacy",
+            "creates_profile_fork": True,
+            "automatic_complete_promotion_requested": True,
+            "shadow_required_days": 29,
+            "micro_live_required_days": 6,
+            "micro_live_import_artifact_id": "none",
+            "micro_live_import_lineage_version": "n/a",
+            "import_artifact_id": "none",
+            "import_lineage_version": "n/a",
+            "operator_safing_request": OperatorSafingRequest(
+                timestamp_ms=1_700_000_000_000,
+                request_id="safing-bad-live",
+                action=OperatorSafingAction.DOWNGRADE_TO_SHADOW,
+                source_runtime_mode=RuntimeMode.LIVE,
+                target_runtime_mode=RuntimeMode.SHADOW,
+                reason="mismatched source",
+            ),
+        }
+    )
+    summary = run_live_light_gate(contradictory_input)
+
+    assert summary.decision.verdict == LiveLightVerdict.BLOCKED
+    assert summary.decision.allowed_to_execute_small is False
+    assert "Build-13 Live-Light requires a concrete correlation_id" in summary.decision.blocking_reasons
+    assert "Build-13 Live-Light opens in COMPLETE profile only" in summary.decision.blocking_reasons
+    assert "Build-13 Live-Light requires runtime_mode=LIVE" in summary.decision.blocking_reasons
+    assert "Build-13 Live-Light requires a concrete micro_live_run_id" in summary.decision.blocking_reasons
+    assert "Build-13 Live-Light requires a concrete shadow_run_id" in summary.decision.blocking_reasons
+    assert "BACKTEST_PROFILE is forbidden in the unified V5.3" in summary.decision.blocking_reasons
+    assert "Local/VPS profile forks are forbidden" in summary.decision.blocking_reasons
+    assert (
+        "Build-13 Live-Light must not request automatic promotion to Complete"
+        in summary.decision.blocking_reasons
+    )
+    assert "Build-13 Live-Light requires shadow_required_days=30" in summary.decision.blocking_reasons
+    assert "Build-13 Live-Light requires micro_live_required_days=7" in summary.decision.blocking_reasons
+    assert (
+        "Build-13 Live-Light requires a concrete micro_live_import_artifact_id"
+        in summary.decision.blocking_reasons
+    )
+    assert (
+        "Build-13 Live-Light requires a concrete micro_live_import_lineage_version"
+        in summary.decision.blocking_reasons
+    )
+    assert "Build-13 Live-Light requires a concrete import_artifact_id" in summary.decision.blocking_reasons
+    assert "Build-13 Live-Light requires a concrete lineage_version" in summary.decision.blocking_reasons
+    assert (
+        "Build-13 Live-Light operator_safing_request must match source_runtime_mode=LIVE"
+        in summary.decision.blocking_reasons
+    )
+
+
+def test_run_live_light_gate_blocks_model_constructed_shadow_only_engine_scope():
+    live_input = build_live_light_input_from_micro_live(
+        _micro_live_summary(),
+        _micro_live_payload(),
+        live_pairs=("BTCUSDT",),
+        requested_total_notional_usdt=80.0,
+        requested_pair_notional_usdt=40.0,
+        max_total_notional_usdt=100.0,
+        max_pair_notional_usdt=50.0,
+        micro_live_stable_days=7,
+        observability_ready=True,
+        halt_ready=True,
+        execution_ready=True,
+        broker_ready=True,
+        exchange_ready=True,
+        onboarding_accepted=True,
+        build14_live_eligible=True,
+    )
+
+    contradictory_input = LiveLightInput.model_construct(
+        **{
+            **live_input.model_dump(),
+            "active_engines": ("engine_b",),
+            "shadow_promotable_engines": ("engine_a",),
+            "shadow_shadow_only_engines": ("engine_b",),
+            "shadow_rewrite_required_engines": ("engine_c",),
+        }
+    )
+    summary = run_live_light_gate(contradictory_input)
+
+    assert summary.decision.verdict == LiveLightVerdict.BLOCKED
+    assert summary.decision.allowed_to_execute_small is False
+    assert (
+        "Build-13 Live-Light active_engines must be PROMOTABLE in Shadow judgment"
+        in summary.decision.blocking_reasons
+    )
+    assert (
+        "Build-13 Live-Light must not activate engines marked SHADOW_ONLY in Shadow judgment"
+        in summary.decision.blocking_reasons
+    )
 
 
 def test_run_live_light_gate_blocks_typed_build14_signal_with_foreign_correlation_id():

@@ -152,6 +152,10 @@ def test_replay_approved_hypothesis_accepts_complete_governance_payload():
         correlation_id="corr-3",
         title="Replay candidate",
         rationale="Evidence is sufficient for governed replay",
+        target_component="meta_minimal.cra_monitor",
+        signal_family="economics",
+        expected_replay_evidence=("ce_net_delta", "sterilization_rate_delta"),
+        expected_shadow_evidence=("shadow_sterilization_rate",),
         sample_size=2,
         segmentation_used=("engine_scope", "pair_scope"),
         risk_of_regression="medium",
@@ -162,6 +166,24 @@ def test_replay_approved_hypothesis_accepts_complete_governance_payload():
     )
 
     assert hypothesis.governance_stage == HypothesisGovernanceStage.REPLAY_APPROVED
+    assert hypothesis.target_component == "meta_minimal.cra_monitor"
+
+
+def test_replay_approved_hypothesis_requires_enrichment_mapping_fields():
+    with pytest.raises(ValidationError, match="target_component"):
+        LearningHypothesis(
+            hypothesis_id="hyp-3b",
+            correlation_id="corr-3b",
+            title="Replay candidate",
+            rationale="Evidence is sufficient for governed replay",
+            sample_size=2,
+            segmentation_used=("engine_scope", "pair_scope"),
+            risk_of_regression="medium",
+            comparison_metrics=("ce_net", "dtr_coverage"),
+            rejection_criteria=("economic regression",),
+            evidence_strength=EvidenceStrength.WEAK_PATTERN,
+            governance_stage=HypothesisGovernanceStage.REPLAY_APPROVED,
+        )
 
 
 def test_ready_for_replay_candidate_requires_replay_refs():

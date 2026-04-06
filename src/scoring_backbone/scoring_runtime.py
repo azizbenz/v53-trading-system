@@ -6,7 +6,15 @@ blocking and ranking selection.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+import math
+
+from pydantic import BaseModel, Field, field_validator
+from data_backbone.market_physics_math import (
+    execution_survivability_score_v1,
+    fragility_score_v1,
+    micro_friction_score_v1,
+    toxicity_score_v1,
+)
 
 from .hard_block_gate.blocker_decision_builder import HardBlockDecision, build_decision
 from .hard_block_gate.blocker_evaluator import BlockerCondition, evaluate_blockers
@@ -45,6 +53,61 @@ class ScoringCandidateInput(BaseModel, frozen=True):
     cluster_id: str = ""
     corr_penalty: float = 0.0
     risk_penalty: float = 0.0
+    execution_fragility: float = 0.0
+    market_toxicity: float = 0.0
+    spread_regime_penalty: float = 0.0
+    participation_penalty: float = 0.0
+
+    @field_validator("scoring_version")
+    @classmethod
+    def _validate_scoring_version(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("scoring_version must be non-empty")
+        return normalized
+
+
+class ScoringExplainability(BaseModel, frozen=True):
+    """Structured Build-5 explanation emitted with each candidate audit."""
+
+    dominant_feature_keys: tuple[str, ...] = ()
+    dominant_score_penalty_ids: tuple[str, ...] = ()
+    dominant_size_penalty_ids: tuple[str, ...] = ()
+    hard_block_codes: tuple[str, ...] = ()
+    portfolio_verdict_code: str = ""
+    selection_outcome_code: str = ""
+    physics_pressure_state: str = "nominal"
+    summary: str = "score=unexplained"
+
+
+class ScoringEconomicsProjection(BaseModel, frozen=True):
+    """Stable Build-5 economics/projection surface for monitoring and replay audits."""
+
+    expected_cost: float = 0.0
+    expected_ce: float = 0.0
+    corr_penalty: float = 0.0
+    risk_penalty: float = 0.0
+    penalized_score: float = 0.0
+    ranking_score: float | None = None
+    final_size_multiplier: float = 1.0
+    phantom_trade: bool = False
+    phantom_reason_code: str = ""
+    hard_blocked: bool = False
+    portfolio_verdict_code: str = ""
+    selection_outcome_code: str = ""
+    physics_pressure_state: str = "nominal"
+    fragility_score: float = 0.0
+    toxicity_score: float = 0.0
+    execution_survivability_score: float = 1.0
+    micro_friction_score: float = 0.0
+
+
+class ScoringPhysicsProjection(BaseModel, frozen=True):
+    fragility_score: float = 0.0
+    toxicity_score: float = 0.0
+    execution_survivability_score: float = 1.0
+    micro_friction_score: float = 0.0
+    pressure_state: str = "nominal"
 
 
 class ScoringCandidateAudit(BaseModel, frozen=True):
@@ -60,6 +123,8 @@ class ScoringCandidateAudit(BaseModel, frozen=True):
     portfolio_result: CompatibilityResult | None = None
     selection_entry: SelectionEntry | None = None
     is_phantom: bool = False
+    explainability: ScoringExplainability = Field(default_factory=ScoringExplainability)
+    economics: ScoringEconomicsProjection = Field(default_factory=ScoringEconomicsProjection)
 
 
 class ScoringRoundResult(BaseModel, frozen=True):
@@ -100,15 +165,21 @@ class ScoringRuntime:
         *,
         portfolio: PortfolioState,
         max_selections: int,
-        now: float = 0.0,
+        now: float | None = None,
     ) -> ScoringRoundResult:
         """Run a complete Build-5 scoring round."""
+        timestamp = _require_runtime_timestamp(now, context="ScoringRuntime.run_round")
+        candidate_index = _build_candidate_index(candidates)
         audits_by_key: dict[tuple[str, str], ScoringCandidateAudit] = {}
+        physics_projection_by_key: dict[tuple[str, str], ScoringPhysicsProjection] = {}
         ranking_candidates: list[RankingCandidate] = []
         blocked_keys: set[tuple[str, str]] = set()
         portfolio_results: dict[tuple[str, str], CompatibilityResult] = {}
 
         for candidate in candidates:
+            key = (candidate.engine_id, candidate.pair)
+            physics_projection = _build_physics_projection(candidate)
+            physics_projection_by_key[key] = physics_projection
             feature_selection = select_features(
                 engine_id=candidate.engine_id,
                 raw_features=candidate.raw_features,
@@ -154,7 +225,7 @@ class ScoringRuntime:
                     size_multiplier=penalty_cap_result.capped_size_multiplier,
                     is_phantom=penalty_cap_result.verdict == PenaltyCapVerdict.PHANTOM_RISK,
                     is_capped=penalty_cap_result.verdict == PenaltyCapVerdict.CAPPED,
-                    timestamp=now,
+                    timestamp=timestamp,
                 ),
             )
 
@@ -166,7 +237,6 @@ class ScoringRuntime:
             )
             encoded = encode_reasons(triggered)
             hard_block_decision = build_decision(candidate.pair, candidate.engine_id, encoded)
-            key = (candidate.engine_id, candidate.pair)
 
             if hard_block_decision.is_blocked:
                 blocked_keys.add(key)
@@ -197,16 +267,32 @@ class ScoringRuntime:
                 penalty_cap_result=penalty_cap_result,
                 hard_block_decision=hard_block_decision,
                 is_phantom=penalty_cap_result.verdict == PenaltyCapVerdict.PHANTOM_RISK,
+                explainability=_build_explainability(
+                    candidate=candidate,
+                    raw_score_result=raw_score_result,
+                    score_penalty_result=score_penalty_result,
+                    size_penalty_result=size_penalty_result,
+                    hard_block_decision=hard_block_decision,
+                    physics_projection=physics_projection,
+                ),
+                economics=_build_economics_projection(
+                    candidate=candidate,
+                    raw_score_result=raw_score_result,
+                    penalty_cap_result=penalty_cap_result,
+                    hard_block_decision=hard_block_decision,
+                    physics_projection=physics_projection,
+                ),
             )
 
         candidate_pool = build_candidate_pool(tuple(ranking_candidates), blocked_keys=frozenset(blocked_keys))
 
         portfolio_rejected_keys: set[tuple[str, str]] = set()
         for pool_candidate in candidate_pool.candidates:
-            source = next(
-                candidate
-                for candidate in candidates
-                if candidate.engine_id == pool_candidate.engine_id and candidate.pair == pool_candidate.pair
+            key = (pool_candidate.engine_id, pool_candidate.pair)
+            source = _get_candidate(
+                candidate_index,
+                key,
+                context="ScoringRuntime.run_round candidate pool",
             )
             compatibility = check_portfolio_compatibility(
                 engine_id=pool_candidate.engine_id,
@@ -219,29 +305,28 @@ class ScoringRuntime:
             )
             portfolio_results[(pool_candidate.engine_id, pool_candidate.pair)] = compatibility
             if compatibility.verdict != "compatible":
-                portfolio_rejected_keys.add((pool_candidate.engine_id, pool_candidate.pair))
+                portfolio_rejected_keys.add(key)
 
-        ranked = compute_ranking_scores(
-            tuple(
+        ranking_inputs: list[dict[str, float | str]] = []
+        for pool_candidate in candidate_pool.candidates:
+            source = _get_candidate(
+                candidate_index,
+                (pool_candidate.engine_id, pool_candidate.pair),
+                context="ScoringRuntime.run_round ranking inputs",
+            )
+            ranking_inputs.append(
                 {
                     "engine_id": pool_candidate.engine_id,
                     "pair": pool_candidate.pair,
                     "penalized_score": pool_candidate.penalized_score,
                     "expected_ce": pool_candidate.expected_ce,
                     "expected_cost": pool_candidate.expected_cost,
-                    "corr_penalty": next(
-                        candidate.corr_penalty
-                        for candidate in candidates
-                        if candidate.engine_id == pool_candidate.engine_id and candidate.pair == pool_candidate.pair
-                    ),
-                    "risk_penalty": next(
-                        candidate.risk_penalty
-                        for candidate in candidates
-                        if candidate.engine_id == pool_candidate.engine_id and candidate.pair == pool_candidate.pair
-                    ),
+                    "corr_penalty": source.corr_penalty,
+                    "risk_penalty": source.risk_penalty,
                 }
-                for pool_candidate in candidate_pool.candidates
-            ),
+            )
+        ranked = compute_ranking_scores(
+            tuple(ranking_inputs),
             self._ranking_weights,
         )
         selection_result = resolve_selection(
@@ -264,18 +349,43 @@ class ScoringRuntime:
                 rejected_by_ranking=selection_result.rejected_by_ranking,
                 rejected_by_portfolio=selection_result.rejected_by_portfolio,
                 version=self._ranking_weights.version,
-                timestamp=now,
+                timestamp=timestamp,
             ),
         )
 
         selection_by_key = {(entry.engine_id, entry.pair): entry for entry in selection_result.entries}
         audits = []
         for key, audit in audits_by_key.items():
+            source = _get_candidate(candidate_index, key, context="ScoringRuntime.run_round audit reconciliation")
+            physics_projection = _get_physics_projection(
+                physics_projection_by_key,
+                key,
+                context="ScoringRuntime.run_round audit reconciliation",
+            )
             audits.append(
                 audit.model_copy(
                     update={
                         "portfolio_result": portfolio_results.get(key),
                         "selection_entry": selection_by_key.get(key),
+                        "explainability": _build_explainability(
+                            candidate=source,
+                            raw_score_result=audit.raw_score_result,
+                            score_penalty_result=audit.score_penalty_result,
+                            size_penalty_result=audit.size_penalty_result,
+                            hard_block_decision=audit.hard_block_decision,
+                            portfolio_result=portfolio_results.get(key),
+                            selection_entry=selection_by_key.get(key),
+                            physics_projection=physics_projection,
+                        ),
+                        "economics": _build_economics_projection(
+                            candidate=source,
+                            raw_score_result=audit.raw_score_result,
+                            penalty_cap_result=audit.penalty_cap_result,
+                            hard_block_decision=audit.hard_block_decision,
+                            portfolio_result=portfolio_results.get(key),
+                            selection_entry=selection_by_key.get(key),
+                            physics_projection=physics_projection,
+                        ),
                     },
                 ),
             )
@@ -290,3 +400,230 @@ class ScoringRuntime:
             blocker_stats=self._blocker_reporter.get_stats(),
             ranking_stats=self._ranking_reporter.get_stats(),
         )
+
+
+def _require_runtime_timestamp(now: float | None, *, context: str) -> float:
+    """Reject implicit epoch timestamps on the open scoring rail."""
+
+    if now is None:
+        raise ValueError(f"{context} requires explicit now")
+    if not math.isfinite(now):
+        raise ValueError(f"{context} requires finite now")
+    if now <= 0.0:
+        raise ValueError(f"{context} requires now > 0")
+    return now
+
+
+def _build_candidate_index(
+    candidates: tuple[ScoringCandidateInput, ...],
+) -> dict[tuple[str, str], ScoringCandidateInput]:
+    """Build a stable candidate index for the scoring round."""
+
+    index: dict[tuple[str, str], ScoringCandidateInput] = {}
+    for candidate in candidates:
+        key = (candidate.engine_id, candidate.pair)
+        if key in index:
+            raise ValueError(
+                "ScoringRuntime.run_round received duplicate candidate key "
+                f"{candidate.engine_id}:{candidate.pair}"
+            )
+        index[key] = candidate
+    return index
+
+
+def _get_candidate(
+    candidate_index: dict[tuple[str, str], ScoringCandidateInput],
+    key: tuple[str, str],
+    *,
+    context: str,
+) -> ScoringCandidateInput:
+    """Resolve a governed candidate with explicit failure semantics."""
+
+    candidate = candidate_index.get(key)
+    if candidate is None:
+        engine_id, pair = key
+        raise ValueError(f"{context} references unknown candidate {engine_id}:{pair}")
+    return candidate
+
+
+def _get_physics_projection(
+    physics_projection_by_key: dict[tuple[str, str], ScoringPhysicsProjection],
+    key: tuple[str, str],
+    *,
+    context: str,
+) -> ScoringPhysicsProjection:
+    """Resolve cached physics projections with explicit failure semantics."""
+
+    projection = physics_projection_by_key.get(key)
+    if projection is None:
+        engine_id, pair = key
+        raise ValueError(f"{context} is missing physics projection for {engine_id}:{pair}")
+    return projection
+
+
+def _build_explainability(
+    *,
+    candidate: ScoringCandidateInput,
+    raw_score_result: RawScoreResult,
+    score_penalty_result: ScorePenaltyResult,
+    size_penalty_result: SizePenaltyResult,
+    hard_block_decision: HardBlockDecision,
+    portfolio_result: CompatibilityResult | None = None,
+    selection_entry: SelectionEntry | None = None,
+    physics_projection: ScoringPhysicsProjection | None = None,
+) -> ScoringExplainability:
+    dominant_feature_keys = tuple(
+        feature
+        for feature, _ in sorted(
+            raw_score_result.weighted_contributions.items(),
+            key=lambda item: abs(item[1]),
+            reverse=True,
+        )[:3]
+    )
+    dominant_score_penalty_ids = tuple(
+        item.penalty_id
+        for item in sorted(
+            score_penalty_result.penalties,
+            key=lambda penalty: penalty.value,
+            reverse=True,
+        )[:3]
+    )
+    dominant_size_penalty_ids = tuple(
+        item.penalty_id
+        for item in sorted(
+            size_penalty_result.penalties,
+            key=lambda penalty: penalty.multiplier,
+        )[:3]
+    )
+    hard_block_codes = tuple(reason.code for reason in hard_block_decision.reasons)
+    portfolio_verdict_code = portfolio_result.verdict.value if portfolio_result is not None else ""
+    selection_outcome_code = selection_entry.outcome.value if selection_entry is not None else ""
+
+    summary_parts = [
+        f"features={','.join(dominant_feature_keys) if dominant_feature_keys else 'n/a'}",
+        f"score_penalties={','.join(dominant_score_penalty_ids) if dominant_score_penalty_ids else 'none'}",
+        f"size_penalties={','.join(dominant_size_penalty_ids) if dominant_size_penalty_ids else 'none'}",
+        f"cost={candidate.expected_cost:.4f}",
+        f"ce={candidate.expected_ce:.4f}",
+    ]
+    if hard_block_codes:
+        summary_parts.append(f"hard_block={hard_block_codes[0]}")
+    if portfolio_verdict_code:
+        summary_parts.append(f"portfolio={portfolio_verdict_code}")
+    if selection_outcome_code:
+        summary_parts.append(f"selection={selection_outcome_code}")
+    physics_pressure_state = (
+        "nominal"
+        if physics_projection is None
+        else physics_projection.pressure_state
+    )
+    if physics_pressure_state != "nominal":
+        summary_parts.append(f"physics={physics_pressure_state}")
+    phantom_reason_code = (
+        "PHANTOM_RISK"
+        if score_penalty_result.total_penalty > 0.0
+        and size_penalty_result.total_multiplier <= 0.1
+        and not hard_block_codes
+        else ""
+    )
+    if phantom_reason_code:
+        summary_parts.append(f"phantom={phantom_reason_code}")
+
+    return ScoringExplainability(
+        dominant_feature_keys=dominant_feature_keys,
+        dominant_score_penalty_ids=dominant_score_penalty_ids,
+        dominant_size_penalty_ids=dominant_size_penalty_ids,
+        hard_block_codes=hard_block_codes,
+        portfolio_verdict_code=portfolio_verdict_code,
+        selection_outcome_code=selection_outcome_code,
+        physics_pressure_state=physics_pressure_state,
+        summary=" / ".join(summary_parts),
+    )
+
+
+def _build_economics_projection(
+    *,
+    candidate: ScoringCandidateInput,
+    raw_score_result: RawScoreResult,
+    penalty_cap_result: PenaltyCapResult,
+    hard_block_decision: HardBlockDecision,
+    portfolio_result: CompatibilityResult | None = None,
+    selection_entry: SelectionEntry | None = None,
+    physics_projection: ScoringPhysicsProjection | None = None,
+) -> ScoringEconomicsProjection:
+    phantom_reason_code = (
+        "PHANTOM_RISK"
+        if penalty_cap_result.verdict == PenaltyCapVerdict.PHANTOM_RISK
+        else ""
+    )
+    return ScoringEconomicsProjection(
+        expected_cost=candidate.expected_cost,
+        expected_ce=candidate.expected_ce,
+        corr_penalty=candidate.corr_penalty,
+        risk_penalty=candidate.risk_penalty,
+        penalized_score=raw_score_result.raw_score - penalty_cap_result.capped_score_penalty,
+        ranking_score=selection_entry.ranking_score if selection_entry is not None else None,
+        final_size_multiplier=penalty_cap_result.capped_size_multiplier,
+        phantom_trade=penalty_cap_result.verdict == PenaltyCapVerdict.PHANTOM_RISK,
+        phantom_reason_code=phantom_reason_code,
+        hard_blocked=hard_block_decision.is_blocked,
+        portfolio_verdict_code=portfolio_result.verdict.value if portfolio_result is not None else "",
+        selection_outcome_code=selection_entry.outcome.value if selection_entry is not None else "",
+        physics_pressure_state=(
+            "nominal"
+            if physics_projection is None
+            else physics_projection.pressure_state
+        ),
+        fragility_score=0.0 if physics_projection is None else physics_projection.fragility_score,
+        toxicity_score=0.0 if physics_projection is None else physics_projection.toxicity_score,
+        execution_survivability_score=(
+            1.0
+            if physics_projection is None
+            else physics_projection.execution_survivability_score
+        ),
+        micro_friction_score=(
+            0.0
+            if physics_projection is None
+            else physics_projection.micro_friction_score
+        ),
+    )
+
+
+def _build_physics_projection(candidate: ScoringCandidateInput) -> ScoringPhysicsProjection:
+    fragility = fragility_score_v1(
+        candidate.execution_fragility,
+        spread_regime_penalty=candidate.spread_regime_penalty,
+    )
+    toxicity = toxicity_score_v1(
+        candidate.market_toxicity,
+        fragility_score=fragility,
+        spread_regime_penalty=candidate.spread_regime_penalty,
+    )
+    execution_survivability = execution_survivability_score_v1(
+        fragility_score=fragility,
+        toxicity_score=toxicity,
+        spread_regime_penalty=candidate.spread_regime_penalty,
+        participation_penalty=candidate.participation_penalty,
+    )
+    micro_friction = micro_friction_score_v1(
+        spread_regime_penalty=candidate.spread_regime_penalty,
+        fragility_score=fragility,
+        toxicity_score=toxicity,
+        participation_penalty=candidate.participation_penalty,
+    )
+    pressure_state = "nominal"
+    if execution_survivability <= 0.20 or micro_friction >= 0.80:
+        pressure_state = "severe"
+    elif (
+        execution_survivability <= 0.40
+        or micro_friction >= 0.60
+        or toxicity >= 0.70
+    ):
+        pressure_state = "elevated"
+    return ScoringPhysicsProjection(
+        fragility_score=fragility,
+        toxicity_score=toxicity,
+        execution_survivability_score=execution_survivability,
+        micro_friction_score=micro_friction,
+        pressure_state=pressure_state,
+    )

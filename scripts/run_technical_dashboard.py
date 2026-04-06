@@ -19,8 +19,10 @@ if str(SRC_ROOT) not in sys.path:
 from backtest_artifact_import import (  # noqa: E402
     ArtifactImportRequest,
     ArtifactImportSummary,
+    ArtifactPayloadRefBundle,
     StrategyLineageRecord,
     StrategyOnboardingRequest,
+    build_replay_import_projection,
     summarize_import_request,
     validate_import_request,
     validate_strategy_onboarding_request,
@@ -28,7 +30,21 @@ from backtest_artifact_import import (  # noqa: E402
 from complete_enablers import (  # noqa: E402
     evaluate_build14_limited_influence,
 )
-from interface_contracts import PairHealthLevel, ProfileId, RuntimeMode, StrategyClassification  # noqa: E402
+from interface_contracts import (  # noqa: E402
+    ArtifactActivationStage,
+    CANONICAL_FEATURE_SET_VERSION,
+    CANONICAL_PHYSICS_FEATURE_DICTIONARY,
+    CANONICAL_TRANSFORM_SET_VERSION,
+    FeatureLineageLock,
+    FeatureLineageRecord,
+    PairHealthLevel,
+    ProfileId,
+    RuntimeMode,
+    StrategyClassification,
+    TransformWhitelistId,
+    TransformWhitelistLock,
+    canonical_transform_ids,
+)
 from local_replay_runtime import (  # noqa: E402
     LocalReplayEvidenceRecorder,
     LocalReplayEvidenceRecorderConfig,
@@ -55,9 +71,12 @@ from meta_minimal.edge_tracker_prudent_minimal.edge_status_classifier import (  
     EdgeStatus,
 )
 from monitoring import (  # noqa: E402
+    AccountUserDataProjection,
     Build14ReaderProjection,
     Build14Projection,
     Build9XProjection,
+    EngineJudgmentCard,
+    EngineJudgmentProjection,
     LiveLightProjection,
     MicroLiveProjection,
     ReplayImportProjection,
@@ -75,9 +94,13 @@ from monitoring import (  # noqa: E402
     derive_build14_observation_from_payload,
 )
 from protocols import (  # noqa: E402
+    ShadowBuild14Contribution,
     ShadowComponentAssessment,
     ShadowComponentKind,
+    ShadowReportArtifact,
+    ShadowEngineReport,
     ShadowComponentVerdict,
+    ShadowReportSection,
     ShadowRunSummary,
     ShadowRuntimeEvidenceRecorder,
     ShadowRuntimeEvidenceRecorderConfig,
@@ -132,6 +155,77 @@ def _load_json_file(path: Path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _build_local_replay_feature_locks(
+    feature_bridge_ref: str,
+) -> tuple[
+    FeatureLineageLock,
+    TransformWhitelistLock,
+    tuple[str, ...],
+    tuple[TransformWhitelistId, ...],
+]:
+    feature_bridge_path = Path(feature_bridge_ref)
+    feature_bridge_payload = (
+        _load_json_file(feature_bridge_path) if feature_bridge_path.is_file() else {}
+    )
+    raw_feature_keys = tuple(
+        str(item)
+        for item in (
+            feature_bridge_payload.get("recognized_feature_keys")
+            or feature_bridge_payload.get("feature_keys")
+            or ()
+        )
+    )
+    feature_ids = tuple(
+        feature_id
+        for feature_id in raw_feature_keys
+        if feature_id in CANONICAL_PHYSICS_FEATURE_DICTIONARY
+    )
+
+    records = []
+    transform_ids: list[TransformWhitelistId] = []
+    for feature_id in feature_ids:
+        entry = CANONICAL_PHYSICS_FEATURE_DICTIONARY[feature_id]
+        records.append(
+            FeatureLineageRecord(
+                feature_id=feature_id,
+                family=entry.family,
+                source_inputs=("historical_prices",),
+                transform_ids=entry.default_transform_ids,
+                equation_id=entry.equation_id,
+                feature_set_version=CANONICAL_FEATURE_SET_VERSION,
+                transform_set_version=CANONICAL_TRANSFORM_SET_VERSION,
+            )
+        )
+        transform_ids.extend(entry.default_transform_ids)
+
+    unique_transform_ids = tuple(dict.fromkeys(transform_ids)) or canonical_transform_ids()
+    return (
+        FeatureLineageLock(
+            feature_set_version=CANONICAL_FEATURE_SET_VERSION,
+            transform_set_version=CANONICAL_TRANSFORM_SET_VERSION,
+            records=tuple(records),
+        ),
+        TransformWhitelistLock(
+            transform_set_version=CANONICAL_TRANSFORM_SET_VERSION,
+            allowed_transform_ids=unique_transform_ids,
+        ),
+        feature_ids,
+        unique_transform_ids,
+    )
+
+
+def _load_artifact_import_summary(
+    path: Path,
+    *,
+    fallback_source_profile: ProfileId,
+) -> ArtifactImportSummary:
+    data = _load_json_file(path)
+    if "source_profile" not in data:
+        data = dict(data)
+        data["source_profile"] = fallback_source_profile.value
+    return ArtifactImportSummary.model_validate(data)
+
+
 def _resolve_artifact_path(root: Path, ref: str, fallback_relative: str) -> Path | None:
     if ref:
         path = Path(ref)
@@ -145,25 +239,108 @@ def _resolve_artifact_path(root: Path, ref: str, fallback_relative: str) -> Path
     return None
 
 
-def _status_from_validation(validation_status: str, accepted: bool) -> str:
-    normalized = validation_status.strip().casefold()
-    if accepted or normalized == "accepted":
+def _status_for_engine_judgment_verdict(verdict: str) -> str:
+    if verdict == "promotable":
         return "healthy"
-    if normalized in {"not_run", "pending"}:
-        return "planned"
-    return "warning"
+    if verdict == "shadow-only":
+        return "warning"
+    if verdict == "rewrite-required":
+        return "critical"
+    return "planned"
 
 
-def _build_replay_import_projection(summary: ArtifactImportSummary) -> ReplayImportProjection:
-    return ReplayImportProjection(
-        status=_status_from_validation(summary.validation_status, summary.accepted),
-        artifact_id=summary.artifact_id,
-        artifact_kind=summary.artifact_kind.value,
-        lineage_version=summary.lineage_version,
-        lifecycle_state=summary.review_state.value,
-        validation_status=summary.validation_status,
-        review_state=summary.review_state.value,
-        rejection_reasons=summary.rejection_reasons,
+def _build_engine_judgment_projection(
+    *,
+    payload: TechnicalDashboardPayload,
+    shadow_summary: ShadowRunSummary,
+    shadow_report: ShadowReportArtifact | None,
+) -> EngineJudgmentProjection:
+    if shadow_report is None:
+        return EngineJudgmentProjection(
+            status="planned",
+            source_shadow_run_id=shadow_summary.run_id,
+            source_shadow_days_completed=shadow_summary.shadow_days_completed,
+            source_shadow_required_days=shadow_summary.shadow_required_days,
+            cards=(),
+        )
+
+    assessments = {
+        assessment.component_id: assessment
+        for assessment in shadow_summary.component_assessments
+        if assessment.component_kind == ShadowComponentKind.ENGINE
+    }
+    payload_engines = {
+        engine.engine_id: engine
+        for engine in payload.engines
+    }
+    cards: list[EngineJudgmentCard] = []
+    for engine_report in shadow_report.inter_engine_comparison:
+        assessment = assessments.get(engine_report.engine_id)
+        payload_engine = payload_engines.get(engine_report.engine_id)
+        component_verdict = assessment.verdict.value if assessment is not None else "unknown"
+        if assessment is not None and assessment.verdict == ShadowComponentVerdict.DORMANT:
+            judgment_verdict = "dormant"
+            rationale = "component marked dormant by the Shadow component verdicts"
+        elif (
+            engine_report.economic_pass_rate <= 0.5
+            or engine_report.marginal_edge <= 0.0
+            or engine_report.conflict_rate >= 0.5
+            or (payload_engine is not None and payload_engine.ce_expected <= 0.0)
+        ):
+            judgment_verdict = "rewrite-required"
+            rationale = (
+                "economic pass-rate, CE, marginal edge, or conflict-rate stayed below the supervised threshold"
+            )
+        elif (
+            shadow_summary.shadow_days_completed < shadow_summary.shadow_required_days
+            or not shadow_summary.shadow_report_ready
+            or not shadow_report.is_complete
+        ):
+            judgment_verdict = "shadow-only"
+            rationale = (
+                f"Shadow gate incomplete: {shadow_summary.shadow_days_completed}/"
+                f"{shadow_summary.shadow_required_days} day(s), report_complete={shadow_report.is_complete}"
+            )
+        else:
+            judgment_verdict = "promotable"
+            rationale = "Shadow gate complete with positive supervised engine metrics"
+        cards.append(
+            EngineJudgmentCard(
+                engine_id=engine_report.engine_id,
+                component_verdict=component_verdict,
+                judgment_verdict=judgment_verdict,
+                status=_status_for_engine_judgment_verdict(judgment_verdict),
+                useful_frequency=engine_report.useful_frequency,
+                ce_expected=payload_engine.ce_expected if payload_engine is not None else 0.0,
+                estimated_cost_bps=engine_report.estimated_cost_bps,
+                edge_net=engine_report.edge_net,
+                economic_pass_rate=engine_report.economic_pass_rate,
+                conflict_rate=engine_report.conflict_rate,
+                marginal_edge=engine_report.marginal_edge,
+                redundancy_score=engine_report.conflict_rate,
+                portfolio_contribution=engine_report.marginal_edge,
+                observations=engine_report.observations,
+                rationale=rationale,
+                evidence_summary=assessment.evidence_summary if assessment is not None else "",
+            )
+        )
+
+    projection_status = (
+        "critical"
+        if any(card.judgment_verdict == "rewrite-required" for card in cards)
+        else "warning"
+        if any(card.judgment_verdict == "shadow-only" for card in cards)
+        else "planned"
+        if all(card.judgment_verdict == "dormant" for card in cards)
+        else "healthy"
+    )
+    return EngineJudgmentProjection(
+        status=projection_status,
+        source_report_id=shadow_report.report_id,
+        source_shadow_run_id=shadow_summary.run_id,
+        source_shadow_days_completed=shadow_summary.shadow_days_completed,
+        source_shadow_required_days=shadow_summary.shadow_required_days,
+        cards=tuple(cards),
     )
 
 
@@ -303,6 +480,67 @@ def _build_live_artifact_system_projection(
     )
 
 
+def _build_live_artifact_account_user_data_projection(
+    campaign_summary: dict,
+) -> AccountUserDataProjection:
+    summary_ref = str(campaign_summary.get("live_user_data_summary_ref", ""))
+    summary_payload = {}
+    if summary_ref:
+        try:
+            summary_payload = _load_json_file(Path(summary_ref))
+        except (OSError, ValueError, TypeError):
+            summary_payload = {}
+    authenticated = bool(campaign_summary.get("live_user_data_authenticated", False))
+    event_count = int(campaign_summary.get("live_user_data_event_count", 0))
+    event_types = tuple(str(value) for value in campaign_summary.get("live_user_data_event_types", ()))
+    pair_scope = tuple(str(value) for value in campaign_summary.get("live_capture_pair_scope", ()))
+    subscription_raw = campaign_summary.get("live_user_data_subscription_id")
+    subscription_id = int(subscription_raw) if subscription_raw is not None else None
+    events_ref = str(summary_payload.get("events_path_ref", ""))
+    endpoint = str(summary_payload.get("endpoint", ""))
+    session_date = str(
+        summary_payload.get(
+            "session_date",
+            campaign_summary.get("last_completed_session_date", ""),
+        )
+    )
+    acquisition_mode = str(campaign_summary.get("acquisition_mode", ""))
+    if authenticated:
+        status = "healthy"
+        detail = (
+            "Authenticated Binance user-data stream captured; "
+            "no account event was emitted during the bounded capture window."
+            if event_count == 0
+            else f"Authenticated Binance user-data stream captured with {event_count} account event(s)."
+        )
+    elif summary_ref:
+        status = "warning"
+        detail = "User-data artifact exists but authentication was not confirmed."
+    elif campaign_summary.get("live_capture_summary_ref"):
+        status = "warning"
+        detail = (
+            "Public Binance market stream was captured, but the authenticated user-data stream "
+            "did not materialize in this campaign."
+        )
+    else:
+        status = "planned"
+        detail = "No live Binance user-data artifact is available."
+    return AccountUserDataProjection(
+        status=status,
+        authenticated=authenticated,
+        session_date=session_date,
+        acquisition_mode=acquisition_mode,
+        endpoint=endpoint,
+        summary_ref=summary_ref,
+        events_ref=events_ref,
+        subscription_id=subscription_id,
+        event_count=event_count,
+        event_types=event_types,
+        pair_scope=pair_scope,
+        detail=detail,
+    )
+
+
 def _load_local_runtime_payload(
     root: Path,
 ) -> tuple[TechnicalDashboardPayload, str] | None:
@@ -314,6 +552,11 @@ def _load_local_runtime_payload(
     candidate_payload_path = root / "shadow_session" / "local_replay_shadow.candidate_payload.json"
     import_summary_path = root / "shadow_session" / "local_replay_shadow.import_summary.json"
     shadow_summary_path = root / "shadow_session" / "local_replay_shadow.shadow_summary.json"
+    shadow_report_path = _resolve_artifact_path(
+        root,
+        str(campaign_summary.get("shadow_report_ref", "")),
+        "shadow_session/local_replay_shadow.shadow_report.json",
+    )
     if (
         not candidate_payload_path.exists()
         or not import_summary_path.exists()
@@ -324,15 +567,30 @@ def _load_local_runtime_payload(
     payload = TechnicalDashboardPayload.model_validate_json(
         candidate_payload_path.read_text(encoding="utf-8")
     )
-    import_summary = ArtifactImportSummary.model_validate_json(
-        import_summary_path.read_text(encoding="utf-8")
+    payload = payload.model_copy(update={"profile": ProfileId.COMPLETE})
+    import_summary = _load_artifact_import_summary(
+        import_summary_path,
+        fallback_source_profile=payload.profile,
     )
     shadow_summary = ShadowRunSummary.model_validate_json(
         shadow_summary_path.read_text(encoding="utf-8")
     )
+    shadow_report = (
+        ShadowReportArtifact.model_validate_json(shadow_report_path.read_text(encoding="utf-8"))
+        if shadow_report_path is not None and shadow_report_path.exists()
+        else None
+    )
     shadow_projection = build_shadow_projection(shadow_summary)
-    replay_projection = _build_replay_import_projection(import_summary)
+    engine_judgment_projection = _build_engine_judgment_projection(
+        payload=payload,
+        shadow_summary=shadow_summary,
+        shadow_report=shadow_report,
+    )
+    replay_projection = build_replay_import_projection(import_summary)
     pair_scope = tuple(campaign_summary.get("live_capture_pair_scope", ()))
+    account_user_data_projection = _build_live_artifact_account_user_data_projection(
+        campaign_summary
+    )
     micro_live_projection = _build_live_artifact_micro_live_projection(
         shadow_summary=shadow_summary,
         replay_projection=replay_projection,
@@ -354,18 +612,22 @@ def _load_local_runtime_payload(
                 micro_live_projection=micro_live_projection,
                 live_light_projection=live_light_projection,
             ),
+            "engine_judgment": engine_judgment_projection,
             "shadow": shadow_projection,
             "micro_live": micro_live_projection,
             "live_light": live_light_projection,
+            "account_user_data": account_user_data_projection,
             "replay_import": replay_projection,
         }
     )
     source_note = (
         "This page is rendered from the latest local Build-11 campaign artifacts. "
+        "Historical artifact inputs are normalized to the current COMPLETE runtime target for supervision. "
         f"last_completed_session_date={campaign_summary.get('last_completed_session_date', 'n/a')} / "
         f"consecutive_days={campaign_summary.get('consecutive_days', 0)} / "
         f"remaining_days={campaign_summary.get('remaining_days', 30)} / "
-        f"service_status={campaign_summary.get('service_status', 'unknown')}."
+        f"service_status={campaign_summary.get('service_status', 'unknown')} / "
+        f"user_data_authenticated={campaign_summary.get('live_user_data_authenticated', False)}."
     )
     return patched_payload, source_note
 
@@ -460,7 +722,7 @@ def _build_demo_snapshot():
     )
     snapshot = collect_monitoring_snapshot(
         correlation_id="corr-tech-demo",
-        profile=ProfileId.LIGHT,
+        profile=ProfileId.COMPLETE,
         runtime_mode=RuntimeMode.SHADOW,
         timestamp_ms=1_700_000_000_000,
         portfolio=collect_portfolio_metrics(
@@ -523,7 +785,7 @@ def _build_demo_build9x_projection(dtr_records, dtr_summary, cra_report, break_e
         dtr_ids=tuple(record.dtr_id for record in dtr_records),
         pair="BTCUSDT",
         engine_id="engine_a",
-        profile=ProfileId.LIGHT,
+        profile=ProfileId.COMPLETE,
         source_runtime_mode=RuntimeMode.SHADOW,
         strategy_classification=StrategyClassification.A_VARIANT,
         source_version="build10_technical_dashboard_demo",
@@ -581,7 +843,7 @@ def _build_demo_build9x_projection(dtr_records, dtr_summary, cra_report, break_e
 def _build_demo_replay_projection(bundle):
     replay_request = LocalReplayRequest(
         correlation_id=bundle.correlation_id,
-        profile=ProfileId.LIGHT,
+        profile=ProfileId.COMPLETE,
         runtime_mode=RuntimeMode.LOCAL_REPLAY,
         strategy_classification=StrategyClassification.A_VARIANT,
         lineage_version="a.v1.0.r1",
@@ -603,22 +865,23 @@ def _build_demo_replay_projection(bundle):
     parity_diagnostics_ref = f"parity_diagnostics:{bundle.correlation_id}"
     replay_metrics_ref = f"replay_metrics:{bundle.correlation_id}"
     replay_dtr_ref = f"replay_dtr:{bundle.correlation_id}"
-    payload_refs = (
-        review_export_ref,
-        feature_bridge_ref,
-        parity_diagnostics_ref,
-        replay_metrics_ref,
-        replay_dtr_ref,
-    ) + tuple(
-        f"diagnostic:{diagnostic.diagnostic_id}" for diagnostic in bundle.diagnostics
-    ) + tuple(
-        f"candidate:{candidate.candidate_id}" for candidate in bundle.candidates
+    payload_bundle = ArtifactPayloadRefBundle(
+        review_export_ref=review_export_ref,
+        feature_bridge_ref=feature_bridge_ref,
+        parity_diagnostics_ref=parity_diagnostics_ref,
+        replay_metrics_ref=replay_metrics_ref,
+        replay_dtr_ref=replay_dtr_ref,
+        supplementary_refs=tuple(
+            f"diagnostic:{diagnostic.diagnostic_id}" for diagnostic in bundle.diagnostics
+        ) + tuple(
+            f"candidate:{candidate.candidate_id}" for candidate in bundle.candidates
+        ),
     )
     replay_plan = LocalReplayOrchestrator.prepare_bundle(
         replay_request,
         artifact_id="artifact-demo-1",
         strategy_version="a.v1.0",
-        payload_refs=payload_refs,
+        payload_refs=payload_bundle.payload_refs,
         dataset_ref=dataset_ref,
         clock_ref=clock_ref,
         diagnostic_ids=tuple(diagnostic.diagnostic_id for diagnostic in bundle.diagnostics),
@@ -630,10 +893,26 @@ def _build_demo_replay_projection(bundle):
         replay_dtr_ref=replay_dtr_ref,
         notes="Demo replay plan generated for the local dashboard launcher",
     )
+    governed_manifest = replay_plan.bundle.manifest.model_copy(
+        update={"activation_stage": ArtifactActivationStage.SHADOW_READY}
+    )
+    (
+        feature_lineage_lock,
+        transform_whitelist_lock,
+        expected_feature_ids,
+        expected_transform_ids,
+    ) = _build_local_replay_feature_locks(feature_bridge_ref)
     import_request = ArtifactImportRequest(
-        manifest=replay_plan.bundle.manifest,
+        manifest=governed_manifest,
         artifact_kind=replay_plan.bundle.artifact_kind,
+        payload_bundle=payload_bundle,
         payload_refs=replay_plan.bundle.payload_refs,
+        feature_lineage_lock=feature_lineage_lock,
+        feature_lineage_required=True,
+        expected_feature_ids=expected_feature_ids,
+        transform_whitelist_lock=transform_whitelist_lock,
+        transform_whitelist_required=True,
+        expected_transform_ids=expected_transform_ids,
     )
     import_decision = validate_import_request(import_request)
     import_summary = summarize_import_request(import_request, import_decision)
@@ -656,16 +935,7 @@ def _build_demo_replay_projection(bundle):
         import_request=import_request,
     )
     onboarding_decision = validate_strategy_onboarding_request(onboarding_request)
-    projection = ReplayImportProjection(
-        status="healthy" if import_summary.accepted else "warning",
-        artifact_id=import_summary.artifact_id,
-        artifact_kind=import_summary.artifact_kind.value,
-        lineage_version=import_summary.lineage_version,
-        lifecycle_state=replay_plan.bundle.lifecycle_state.value,
-        validation_status=import_summary.validation_status,
-        review_state=import_summary.review_state.value,
-        rejection_reasons=import_summary.rejection_reasons,
-    )
+    projection = build_replay_import_projection(import_summary)
     return replay_plan, import_summary, onboarding_decision, projection
 
 
@@ -708,13 +978,13 @@ def _build_demo_shadow_projection(
             component_id="engine_c",
             component_kind=ShadowComponentKind.ENGINE,
             verdict=ShadowComponentVerdict.DORMANT,
-            evidence_summary="Engine C remains dormant in the Light demo surface.",
+            evidence_summary="Engine C remains dormant in the governed COMPLETE demo surface.",
         ),
         ShadowComponentAssessment(
             component_id="engine_d",
             component_kind=ShadowComponentKind.ENGINE,
             verdict=ShadowComponentVerdict.DORMANT,
-            evidence_summary="Engine D remains dormant in the Light demo surface.",
+            evidence_summary="Engine D remains dormant in the governed COMPLETE demo surface.",
         ),
         ShadowComponentAssessment(
             component_id="build14_microstructure",
@@ -810,6 +1080,204 @@ def _build_demo_shadow_projection(
     )
     summary = run_shadow_validation(shadow_input, run_id="shadow-demo-run")
     return summary, build_shadow_projection(summary), evidence_path
+
+
+def _build_demo_shadow_report_artifact(
+    *,
+    payload: TechnicalDashboardPayload,
+    shadow_summary: ShadowRunSummary,
+) -> ShadowReportArtifact:
+    payload_engines = {engine.engine_id: engine for engine in payload.engines}
+    engine_defaults = {
+        "engine_a": dict(
+            gross_frequency=0.24,
+            useful_frequency=0.18,
+            estimated_cost_bps=4.0,
+            edge_net=8.8,
+            economic_pass_rate=0.86,
+            conflict_rate=0.18,
+            marginal_edge=0.0040,
+            observations=18,
+        ),
+        "engine_b": dict(
+            gross_frequency=0.17,
+            useful_frequency=0.11,
+            estimated_cost_bps=3.2,
+            edge_net=3.6,
+            economic_pass_rate=0.69,
+            conflict_rate=0.22,
+            marginal_edge=0.0017,
+            observations=12,
+        ),
+        "engine_c": dict(
+            gross_frequency=0.00,
+            useful_frequency=0.00,
+            estimated_cost_bps=0.0,
+            edge_net=0.0,
+            economic_pass_rate=0.0,
+            conflict_rate=0.0,
+            marginal_edge=0.0,
+            observations=1,
+        ),
+        "engine_d": dict(
+            gross_frequency=0.00,
+            useful_frequency=0.00,
+            estimated_cost_bps=0.0,
+            edge_net=0.0,
+            economic_pass_rate=0.0,
+            conflict_rate=0.0,
+            marginal_edge=0.0,
+            observations=1,
+        ),
+    }
+    inter_engine_comparison = tuple(
+        ShadowEngineReport(
+            engine_id=engine_id,
+            gross_frequency=values["gross_frequency"],
+            useful_frequency=values["useful_frequency"],
+            estimated_cost_bps=values["estimated_cost_bps"],
+            edge_net=values["edge_net"],
+            economic_pass_rate=values["economic_pass_rate"],
+            conflict_rate=values["conflict_rate"],
+            marginal_edge=values["marginal_edge"],
+            observations=values["observations"],
+        )
+        for engine_id, values in engine_defaults.items()
+    )
+    build14_contribution = (
+        ShadowBuild14Contribution(
+            component_id="build14_microstructure",
+            contribution_score=0.58,
+            interaction_score=0.17,
+            observations=14,
+        ),
+        ShadowBuild14Contribution(
+            component_id="build14_regime",
+            contribution_score=0.42,
+            interaction_score=0.12,
+            observations=14,
+        ),
+        ShadowBuild14Contribution(
+            component_id="build14_covariance",
+            contribution_score=0.33,
+            interaction_score=0.09,
+            observations=14,
+        ),
+        ShadowBuild14Contribution(
+            component_id="build14_risk_contribution",
+            contribution_score=0.31,
+            interaction_score=0.10,
+            observations=14,
+        ),
+        ShadowBuild14Contribution(
+            component_id="build14_edge_diversity",
+            contribution_score=0.29,
+            interaction_score=0.08,
+            observations=14,
+        ),
+    )
+    rendered_sections = (
+        ShadowReportSection(
+            section_id="data_infra_report",
+            title="rapport stabilite data / infra",
+            ready=True,
+            summary="stale=0.00 / pair_health=1.00 / dtr_loss=0.00 / log_loss=0.00",
+        ),
+        ShadowReportSection(
+            section_id="decisions_dtr_report",
+            title="rapport decisions & dtr",
+            ready=True,
+            summary="dtr=1.00 / hard_block=0.00 / phantom=0",
+        ),
+        ShadowReportSection(
+            section_id="costs_break_even_report",
+            title="rapport couts & break-even",
+            ready=True,
+            summary="cost_bps=3.60 / edge=6.20 / economic_pass=0.78",
+        ),
+        ShadowReportSection(
+            section_id="engine_comparison_report",
+            title="rapport A vs B vs C vs D",
+            ready=True,
+            summary="engines=4/4 / build14=5/5 / readers=0/7",
+        ),
+        ShadowReportSection(
+            section_id="portfolio_report",
+            title="rapport portefeuille shadow",
+            ready=True,
+            summary=(
+                f"ce={payload.portfolio.ce_net:.4f} / pnl=92.00 / beta=0.22 / "
+                f"cluster={payload.portfolio.dominant_cluster or 'trend_flow'}"
+            ),
+        ),
+        ShadowReportSection(
+            section_id="ui_alerting_report",
+            title="rapport ui / alerting",
+            ready=True,
+            summary="critical_alerts=yes / operator_log=yes / ui_locked=yes",
+        ),
+        ShadowReportSection(
+            section_id="go_no_go_report",
+            title="verdict go / no-go micro-live",
+            ready=True,
+            summary="go/no-go rendered",
+        ),
+    )
+    return ShadowReportArtifact(
+        report_id="shadow_report:complete:demo",
+        profile=payload.profile.value,
+        report_generated_at=payload.timestamp_ms / 1000.0,
+        consecutive_days=shadow_summary.shadow_days_completed,
+        required_days=shadow_summary.shadow_required_days,
+        remaining_days=shadow_summary.remaining_shadow_days,
+        is_complete=True,
+        started_at=(payload.timestamp_ms / 1000.0) - (30 * 24 * 60 * 60),
+        last_shadow_timestamp=payload.timestamp_ms / 1000.0,
+        total_resets=0,
+        daily_records_count=30,
+        dtr_coverage=1.0,
+        dtr_complete=True,
+        ce_net=payload.portfolio.ce_net,
+        estimated_cost_bps=3.6,
+        edge_net=6.2,
+        drawdown_pct=1.8,
+        stale_rate=0.0,
+        economic_pass_rate=0.78,
+        pair_health_ratio=1.0,
+        backlog_avg=18.0,
+        capital_simulated_usdt=payload.portfolio.capital_deployed_usdt,
+        gross_exposure_shadow_pct=payload.portfolio.gross_capacity_used_pct,
+        loss_budget_shadow_pct=payload.portfolio.loss_capacity_used_pct,
+        capital_free_usdt=max(0.0, 10_000.0 - payload.portfolio.capital_deployed_usdt),
+        beta_btc_shadow=0.22,
+        dominant_cluster=payload.portfolio.dominant_cluster or "trend_flow",
+        pnl_shadow=92.0,
+        dtr_loss_rate=0.0,
+        log_loss_rate=0.0,
+        event_latency_ms=42.0,
+        hard_block_rate=0.0,
+        phantom_trade_count=sum(1 for engine in payload.engines if engine.phantom_trade),
+        decisions_reproducible=True,
+        infra_stable=True,
+        costs_plausible=True,
+        break_even_visible=True,
+        critical_alerts_visible=True,
+        operator_actions_logged=True,
+        ui_locked=True,
+        shadow_report_ready=True,
+        data_infra_report_ready=True,
+        decisions_dtr_report_ready=True,
+        costs_break_even_report_ready=True,
+        inter_engine_comparison_ready=True,
+        build14_contribution_ready=True,
+        portfolio_report_ready=True,
+        ui_alerting_report_ready=True,
+        go_no_go_report_ready=True,
+        inter_engine_comparison=inter_engine_comparison,
+        build14_contribution=build14_contribution,
+        rendered_sections=rendered_sections,
+        missing_sections=(),
+    )
 
 
 def _build_demo_micro_live_projection(
@@ -1006,7 +1474,7 @@ def _build_readiness_section() -> DashboardSection:
                 label="Protocol Guardrails",
                 value="shadow_micro_live_live_light_governed",
                 status="info",
-                detail="Build-11 Shadow, Build-12 Micro-live, and Build-13 Live-Light are opened in governed mode. Complete remains closed.",
+                detail="Build-11 Shadow, Build-12 Micro-live, and Build-13 Live are opened in governed mode on the COMPLETE target.",
             ),
         ),
     )
@@ -1163,6 +1631,39 @@ def _availability_sections() -> tuple[DashboardSection, ...]:
             ),
         ),
         DashboardSection(
+            title="Account / User Data",
+            cards=(
+                DashboardCard(
+                    key="account_user_data_auth",
+                    label="Authentication",
+                    value="not available",
+                    status="planned",
+                    detail="No authenticated Binance user-data artifact loaded yet.",
+                ),
+                DashboardCard(
+                    key="account_user_data_subscription",
+                    label="Subscription",
+                    value="not available",
+                    status="planned",
+                    detail="Requires an authenticated Binance user-data websocket capture.",
+                ),
+                DashboardCard(
+                    key="account_user_data_scope",
+                    label="Scope",
+                    value="not available",
+                    status="planned",
+                    detail="Requires authenticated account-stream plus recorded pair scope.",
+                ),
+                DashboardCard(
+                    key="account_user_data_artifacts",
+                    label="Artifacts",
+                    value="not available",
+                    status="planned",
+                    detail="No live_user_data_capture_summary.json loaded.",
+                ),
+            ),
+        ),
+        DashboardSection(
             title="Build-9 Meta",
             cards=(
                 DashboardCard(key="dtr_summary", label="DTR Summary", value="not available", status="planned", detail="No monitoring snapshot loaded."),
@@ -1275,14 +1776,14 @@ def _availability_sections() -> tuple[DashboardSection, ...]:
             ),
         ),
         DashboardSection(
-            title="Build-13 Live-Light",
+            title="Build-13 Live",
             cards=(
                 DashboardCard(
                     key="live_light_run_state",
                     label="Run State",
                     value="not_run",
                     status="info",
-                    detail="The launcher can project Live-Light, but no governed Live-Light run has been materialized in availability mode.",
+                    detail="The launcher can project governed Live, but no governed Live run has been materialized in availability mode.",
                 ),
                 DashboardCard(
                     key="live_light_verdict",
@@ -1377,7 +1878,7 @@ def _availability_sections() -> tuple[DashboardSection, ...]:
                     label="Launcher Mode",
                     value="availability_only",
                     status="info",
-                    detail="Use --demo to render a full governed sample, including Build-11 Shadow, Build-12 Micro-live, Build-13 Live-Light, and Build-14 limited influence, without claiming a production runtime snapshot.",
+                    detail="Use --demo to render a full governed sample, including Build-11 Shadow, Build-12 Micro-live, Build-13 Live, and Build-14 limited influence, without claiming a production runtime snapshot.",
                 ),
             ),
         ),
@@ -1415,7 +1916,7 @@ def export_technical_dashboard(
     )
     footer_notes = (
         "One V5.3 only. No BACKTEST_PROFILE. No local/VPS fork.",
-        "Build-11 Shadow, Build-12 Micro-live, and Build-13 Live-Light are governed. Complete remains closed.",
+        "Build-11 Shadow, Build-12 Micro-live, and Build-13 Live are governed on the COMPLETE target.",
     )
 
     if demo:
@@ -1432,9 +1933,9 @@ def export_technical_dashboard(
             replay_plan,
             output_dir,
         )
-        active_modules = tuple(module.module_name for module in get_modules_for_profile(ProfileId.LIGHT))
+        active_modules = tuple(module.module_name for module in get_modules_for_profile(ProfileId.COMPLETE))
         active_engines = tuple(
-            engine.value for engine in sorted(get_engines_for_profile(ProfileId.LIGHT), key=lambda item: item.value)
+            engine.value for engine in sorted(get_engines_for_profile(ProfileId.COMPLETE), key=lambda item: item.value)
         )
         payload = build_technical_dashboard_payload(
             snapshot,
@@ -1486,6 +1987,16 @@ def export_technical_dashboard(
             build14_projection=build14_projection,
             replay_projection=replay_projection,
         )
+        shadow_report = _build_demo_shadow_report_artifact(
+            payload=payload,
+            shadow_summary=shadow_summary,
+        )
+        engine_judgment_projection = _build_engine_judgment_projection(
+            payload=payload,
+            shadow_summary=shadow_summary,
+            shadow_report=shadow_report,
+        )
+        payload = payload.model_copy(update={"engine_judgment": engine_judgment_projection})
         view = build_technical_dashboard_view(payload)
         observability = build_observability_export(payload)
         sections = view.sections + (
@@ -1498,7 +2009,7 @@ def export_technical_dashboard(
             source_mode="demo_payload",
             source_note=(
                 "This page is rendered from a governed local demo payload built with the real "
-                "Build-10, Build-9X, Build-11 Shadow, Build-12 Micro-live, Build-13 Live-Light, replay/import, onboarding, and Build-14 limited influence. "
+                "Build-10, Build-9X, Build-11 Shadow, Build-12 Micro-live, Build-13 Live, replay/import, onboarding, and Build-14 limited influence. "
                 "It is not a live runtime snapshot."
             ),
             sections=sections,

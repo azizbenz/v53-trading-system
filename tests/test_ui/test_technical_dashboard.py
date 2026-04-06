@@ -22,9 +22,13 @@ from meta_minimal.edge_tracker_prudent_minimal.edge_status_classifier import (
     EdgeStatus,
 )
 from monitoring import (
+    AccountUserDataProjection,
     Build14ReaderProjection,
     Build14Projection,
     Build9XProjection,
+    EngineJudgmentCard,
+    EngineJudgmentProjection,
+    ExecutionNoTradeBridgeProjection,
     LiveLightProjection,
     MicroLiveProjection,
     OperatorRuntimeProjection,
@@ -142,6 +146,25 @@ def _snapshot(**overrides):
                 net_edge_bps=12.0,
                 expected_cost_bps=4.0,
                 ce_expected=0.0007,
+                scoring_penalized_score=1.2,
+                scoring_ranking_score=0.8,
+                scoring_final_size_multiplier=1.0,
+                scoring_summary="features=momentum,flow / score_penalties=spread / size_penalties=none / selection=selected",
+                risk_summary="risk=accept / no blocker triggered",
+                scoring_reason_codes=("PEN_SPREAD", "SELECTION_SELECTED"),
+                selection_outcome_code="selected",
+                portfolio_verdict_code="compatible",
+                risk_decision_severity="nominal",
+                drawdown_state_code="accepted",
+                physics_pressure_state="nominal",
+                delta_confirmation=0.9,
+                market_toxicity=0.2,
+                spread_regime_penalty=0.1,
+                competition_support=0.8,
+                fragility_score=0.08,
+                toxicity_score=0.14,
+                execution_survivability_score=0.94,
+                micro_friction_score=0.09,
             ),
             collect_engine_metrics(
                 engine_id="engine_b",
@@ -149,7 +172,32 @@ def _snapshot(**overrides):
                 net_edge_bps=4.0,
                 expected_cost_bps=3.0,
                 ce_expected=0.0002,
+                scoring_penalized_score=0.3,
+                scoring_ranking_score=0.1,
+                scoring_final_size_multiplier=0.1,
+                scoring_summary="features=flow / score_penalties=stale / size_penalties=size_stale / selection=rejected_ranking",
+                risk_summary="risk=reduce_exposure / dominant=RISK_DRAWDOWN_REDUCE / category=drawdown_state / total=1",
+                scoring_reason_codes=("PEN_STALE", "SIZE_SIZE_STALE", "SELECTION_REJECTED_RANKING"),
+                risk_reason_codes=("RISK_DRAWDOWN_REDUCE",),
+                selection_outcome_code="rejected_ranking",
+                phantom_trade=True,
+                phantom_reason_code="PHANTOM_RISK",
+                risk_decision_severity="warning",
+                drawdown_state_code="reduce_exposure",
+                blocked_guard_count=1,
                 stale=True,
+                sweep_score=0.9,
+                absorption_score=0.8,
+                poc_reversion_score=0.7,
+                false_breakout_score=0.4,
+                execution_fragility=0.6,
+                market_toxicity=0.7,
+                spread_regime_penalty=0.5,
+                physics_pressure_state="elevated",
+                fragility_score=0.52,
+                toxicity_score=0.63,
+                execution_survivability_score=0.41,
+                micro_friction_score=0.47,
             ),
         ),
         pairs=(
@@ -176,6 +224,12 @@ def _build9x_projection() -> Build9XProjection:
         replay_candidate_count=1,
         memory_record_count=1,
         latest_memory_summary="Stored governed review state",
+        enrichment_hypothesis_count=1,
+        latest_enrichment_target="meta_minimal.cra_monitor",
+        latest_enrichment_signal_family="economics",
+        expected_replay_evidence_count=2,
+        expected_shadow_evidence_count=1,
+        enrichment_summary="sterilization -> meta_minimal.cra_monitor",
         review_export_ready=True,
         review_export_ref="exports/review.md",
         learning_queue_depth=1200,
@@ -205,6 +259,22 @@ def _accepted_replay_projection() -> ReplayImportProjection:
         lifecycle_state="exported",
         validation_status="accepted",
         review_state="pending",
+        compatibility_status="supported",
+        signature_check_status="trust_eligible",
+        signature_key_id="lab_ed25519_2026_q2_k1",
+        trusted_key_status="active",
+        conflict_resolution_mode="no_trade_then_strictest",
+        conflict_hard_veto_action="no_trade",
+        conflict_score_aggregation_mode="bounded_sum_with_global_cap",
+        conflict_size_reduce_mode="min_factor_wins",
+        conflict_rank_adjust_mode="bounded_sum",
+        conflict_additive_soft_boosts_allowed=True,
+        conflict_additive_soft_reduces_allowed=True,
+        registry_atomicity_mode="atomic_snapshot_swap",
+        registry_concurrency_model="single_writer_multi_reader",
+        registry_publish_requires_atomic_replace=True,
+        registry_publish_requires_fsync=True,
+        registry_rollback_to_last_known_good=True,
         rejection_reasons=(),
     )
 
@@ -235,14 +305,16 @@ def test_technical_dashboard_view_exposes_system_meta_build9x_and_replay_section
         "Portfolio",
         "Pairs",
         "Engines",
+        "Engine Judgement",
         "Risk",
         "Execution",
         "Data & Infra",
+        "Account / User Data",
         "Build-9 Meta",
         "Build-9X",
         "Build-11 Shadow",
         "Build-12 Micro-live",
-        "Build-13 Live-Light",
+        "Build-13 Live",
         "Build-14 Enablers",
         "Operator Controls",
         "Replay & Import",
@@ -256,32 +328,98 @@ def test_technical_dashboard_view_exposes_system_meta_build9x_and_replay_section
     build9x = next(section for section in view.sections if section.title == "Build-9X")
     assert next(card for card in build9x.cards if card.key == "diagnostics_recent").value == "2"
     assert next(card for card in build9x.cards if card.key == "hypotheses_open").value == "1"
+    assert next(card for card in build9x.cards if card.key == "enrichment_mapping").value == (
+        "mapped=1 / replay=2 / shadow=1"
+    )
+    assert next(card for card in build9x.cards if card.key == "enrichment_mapping").detail == (
+        "sterilization -> meta_minimal.cra_monitor / family=economics"
+    )
     assert next(card for card in build9x.cards if card.key == "capacity_backpressure").detail == (
         "backlog=alert / oldest=350ms / unprocessed=0"
     )
     assert next(card for card in build9x.cards if card.key == "worker_budget").value == "cpu=8.5% / rss=180.0MB"
+    replay = next(section for section in view.sections if section.title == "Replay & Import")
     shadow = next(section for section in view.sections if section.title == "Build-11 Shadow")
     micro = next(section for section in view.sections if section.title == "Build-12 Micro-live")
-    live = next(section for section in view.sections if section.title == "Build-13 Live-Light")
+    live = next(section for section in view.sections if section.title == "Build-13 Live")
     build14 = next(section for section in view.sections if section.title == "Build-14 Enablers")
+    engine_judgment = next(section for section in view.sections if section.title == "Engine Judgement")
     pairs = next(section for section in view.sections if section.title == "Pairs")
     engines = next(section for section in view.sections if section.title == "Engines")
     risk = next(section for section in view.sections if section.title == "Risk")
     execution = next(section for section in view.sections if section.title == "Execution")
     infra = next(section for section in view.sections if section.title == "Data & Infra")
+    account = next(section for section in view.sections if section.title == "Account / User Data")
     assert next(card for card in shadow.cards if card.key == "shadow_run_state").value == "not_run"
     assert next(card for card in micro.cards if card.key == "micro_live_run_state").value == "not_run"
     assert next(card for card in live.cards if card.key == "live_light_run_state").value == "not_run"
+    assert next(card for card in replay.cards if card.key == "conflict_policy").value == "no_trade_then_strictest"
+    assert "veto=no_trade" in next(
+        card for card in replay.cards if card.key == "conflict_policy"
+    ).detail
+    assert next(card for card in replay.cards if card.key == "registry_policy").value == "atomic_snapshot_swap"
+    assert "concurrency=single_writer_multi_reader" in next(
+        card for card in replay.cards if card.key == "registry_policy"
+    ).detail
     assert next(card for card in build14.cards if card.key == "build14_mode").value == "read_only / observe"
     assert next(card for card in build14.cards if card.key == "build14_readers").value.startswith("count=0 /")
+    assert next(card for card in engine_judgment.cards if card.key == "engine_judgment_empty").status == "planned"
     assert next(card for card in pairs.cards if card.key == "pair_btcusdt").value == "stale / fresh=9000ms"
     assert next(card for card in engines.cards if card.key == "engine_engine_a").value == "signals=2 / edge=12.0"
+    assert "scoring=features=momentum,flow" in next(
+        card for card in engines.cards if card.key == "engine_engine_a"
+    ).detail
+    assert "penalized=1.20" in next(
+        card for card in engines.cards if card.key == "engine_engine_a"
+    ).detail
+    assert "selection=selected" in next(
+        card for card in engines.cards if card.key == "engine_engine_a"
+    ).detail
+    assert "score_codes=PEN_SPREAD,SELECTION_SELECTED" in next(
+        card for card in engines.cards if card.key == "engine_engine_a"
+    ).detail
+    assert "physics=delta=0.90, toxicity=0.20, spread_penalty=0.10, competition=0.80" in next(
+        card for card in engines.cards if card.key == "engine_engine_a"
+    ).detail
+    assert "fragility_score=0.08" in next(
+        card for card in engines.cards if card.key == "engine_engine_a"
+    ).detail
+    assert "survivability=0.94" in next(
+        card for card in engines.cards if card.key == "engine_engine_a"
+    ).detail
+    assert "phantom=PHANTOM_RISK" in next(
+        card for card in engines.cards if card.key == "engine_engine_b"
+    ).detail
+    assert "blocked_guards=1" in next(
+        card for card in engines.cards if card.key == "engine_engine_b"
+    ).detail
+    assert "drawdown=reduce_exposure" in next(
+        card for card in engines.cards if card.key == "engine_engine_b"
+    ).detail
+    assert (
+        "fragility=0.60, toxicity=0.70, spread_penalty=0.50, sweep=0.90, "
+        "absorption=0.80, poc=0.70, false_breakout=0.40"
+    ) in next(
+        card for card in engines.cards if card.key == "engine_engine_b"
+    ).detail
+    assert "state=elevated" in next(
+        card for card in engines.cards if card.key == "engine_engine_b"
+    ).detail
+    assert "micro_friction=0.47" in next(
+        card for card in engines.cards if card.key == "engine_engine_b"
+    ).detail
     assert next(card for card in risk.cards if card.key == "risk_exposure").value == "gross=35.0% / loss=8.0%"
     assert next(card for card in execution.cards if card.key == "execution_fills").value == "partial=0 / latency_p95=0ms"
     assert next(card for card in infra.cards if card.key == "infra_queue").value == "backlog=75 / hwm=75 / drop=0.0%"
+    assert next(card for card in account.cards if card.key == "account_user_data_auth").value == "not_configured"
+    assert next(card for card in account.cards if card.key == "account_user_data_artifacts").value == "missing"
     replay = next(section for section in view.sections if section.title == "Replay & Import")
     assert next(card for card in replay.cards if card.key == "artifact_manifest").value == "artifact-1"
     assert next(card for card in replay.cards if card.key == "validation_status").value == "accepted"
+    assert next(card for card in replay.cards if card.key == "compatibility_policy").value == "supported"
+    assert next(card for card in replay.cards if card.key == "compatibility_policy").status == "healthy"
+    assert next(card for card in replay.cards if card.key == "signature_policy").value == "trust_eligible"
+    assert next(card for card in replay.cards if card.key == "signature_policy").status == "healthy"
 
 
 def test_technical_dashboard_view_handles_empty_governed_state_cleanly():
@@ -293,21 +431,321 @@ def test_technical_dashboard_view_handles_empty_governed_state_cleanly():
 
     view = build_technical_dashboard_view(payload)
     build9x = next(section for section in view.sections if section.title == "Build-9X")
+    engine_judgment = next(section for section in view.sections if section.title == "Engine Judgement")
     shadow = next(section for section in view.sections if section.title == "Build-11 Shadow")
     micro = next(section for section in view.sections if section.title == "Build-12 Micro-live")
-    live = next(section for section in view.sections if section.title == "Build-13 Live-Light")
+    live = next(section for section in view.sections if section.title == "Build-13 Live")
     build14 = next(section for section in view.sections if section.title == "Build-14 Enablers")
+    account = next(section for section in view.sections if section.title == "Account / User Data")
     replay = next(section for section in view.sections if section.title == "Replay & Import")
     assert next(card for card in build9x.cards if card.key == "diagnostics_recent").value == "0"
+    assert next(card for card in build9x.cards if card.key == "enrichment_mapping").status == "planned"
     assert next(card for card in build9x.cards if card.key == "memory_review").status == "planned"
     assert next(card for card in build9x.cards if card.key == "capacity_backpressure").status == "planned"
     assert next(card for card in build9x.cards if card.key == "worker_budget").status == "planned"
+    assert next(card for card in engine_judgment.cards if card.key == "engine_judgment_empty").status == "planned"
     assert next(card for card in shadow.cards if card.key == "shadow_run_state").status == "planned"
     assert next(card for card in micro.cards if card.key == "micro_live_run_state").status == "planned"
     assert next(card for card in live.cards if card.key == "live_light_run_state").status == "planned"
     assert next(card for card in build14.cards if card.key == "build14_mode").status == "planned"
+    assert next(card for card in account.cards if card.key == "account_user_data_auth").status == "planned"
     assert next(card for card in replay.cards if card.key == "artifact_manifest").value == "none"
     assert next(card for card in replay.cards if card.key == "validation_status").value == "not_run"
+    assert next(card for card in replay.cards if card.key == "compatibility_policy").status == "planned"
+    assert next(card for card in replay.cards if card.key == "signature_policy").status == "planned"
+
+
+def test_technical_dashboard_view_escalates_headline_from_build9x():
+    snapshot = _snapshot().model_copy(
+        update={
+            "alerts": (),
+            "backlog_warning": False,
+            "stale_warning": False,
+            "loss_warning": False,
+        }
+    )
+    snapshot = snapshot.model_copy(
+        update={
+            "meta": snapshot.meta.model_copy(
+                update={
+                    "break_even_drift_alert": False,
+                    "edge_degraded_count": 0,
+                }
+            )
+        }
+    )
+
+    payload = build_technical_dashboard_payload(
+        snapshot,
+        active_modules=("meta_learning", "monitoring", "ui"),
+        active_engines=("engine_a", "engine_b"),
+        build9x_projection=Build9XProjection(
+            status="warning",
+            diagnostics_count=1,
+            diagnostics_summary="One governed issue detected",
+            open_hypotheses=1,
+            total_hypotheses=1,
+            near_miss_count=0,
+            replay_candidate_count=0,
+            memory_record_count=0,
+            latest_memory_summary="No memory records",
+        ),
+    )
+
+    view = build_technical_dashboard_view(payload)
+    system = next(section for section in view.sections if section.title == "System")
+    operator = next(section for section in view.sections if section.title == "Operator Controls")
+
+    assert next(card for card in system.cards if card.key == "headline_status").status == "warning"
+    assert next(card for card in operator.cards if card.key == "operator_safing_controls").status == "warning"
+    assert next(card for card in operator.cards if card.key == "operator_kill_path").status == "warning"
+
+
+def test_technical_dashboard_view_escalates_headline_from_build9_meta():
+    snapshot = _snapshot().model_copy(
+        update={
+            "alerts": (),
+            "backlog_warning": False,
+            "stale_warning": False,
+            "loss_warning": False,
+        }
+    )
+    snapshot = snapshot.model_copy(
+        update={
+            "meta": snapshot.meta.model_copy(
+                update={
+                    "dtr_coverage": 0.50,
+                    "cra_sterilization_rate": 0.25,
+                    "cra_alert_count": 1,
+                    "break_even_drift_alert": False,
+                    "break_even_drift_scopes": (),
+                    "edge_degraded_count": 0,
+                }
+            )
+        }
+    )
+
+    payload = build_technical_dashboard_payload(
+        snapshot,
+        active_modules=("meta", "monitoring", "ui"),
+        active_engines=("engine_a", "engine_b"),
+    )
+
+    view = build_technical_dashboard_view(payload)
+    system = next(section for section in view.sections if section.title == "System")
+    operator = next(section for section in view.sections if section.title == "Operator Controls")
+
+    assert next(card for card in system.cards if card.key == "headline_status").status == "warning"
+    assert next(card for card in operator.cards if card.key == "operator_safing_controls").status == "warning"
+    assert next(card for card in operator.cards if card.key == "operator_kill_path").status == "warning"
+
+
+def test_technical_dashboard_view_projects_authenticated_account_user_data_when_available():
+    payload = build_technical_dashboard_payload(
+        _snapshot(),
+        active_modules=("protocols", "monitoring", "ui"),
+        active_engines=("engine_a", "engine_b"),
+        account_user_data_projection=AccountUserDataProjection(
+            status="healthy",
+            authenticated=True,
+            session_date="2026-04-03",
+            acquisition_mode="native_live_websocket_auto_export",
+            endpoint="wss://ws-api.binance.com:443/ws-api/v3",
+            summary_ref="build/live_user_data_capture_summary.json",
+            events_ref="build/live_user_data_events.jsonl",
+            subscription_id=0,
+            event_count=0,
+            event_types=(),
+            pair_scope=("BTCUSDT", "ETHUSDT"),
+            detail="Authenticated Binance user-data stream captured; no account event was emitted during the bounded capture window.",
+        ),
+    )
+
+    view = build_technical_dashboard_view(payload)
+    account = next(section for section in view.sections if section.title == "Account / User Data")
+
+    assert next(card for card in account.cards if card.key == "account_user_data_auth").value == "authenticated"
+    assert next(card for card in account.cards if card.key == "account_user_data_auth").status == "healthy"
+    assert next(card for card in account.cards if card.key == "account_user_data_subscription").value == "id=0 / events=0"
+    assert next(card for card in account.cards if card.key == "account_user_data_scope").detail == "BTCUSDT, ETHUSDT"
+    assert next(card for card in account.cards if card.key == "account_user_data_artifacts").detail.startswith(
+        "Authenticated Binance user-data stream captured"
+    )
+
+
+def test_technical_dashboard_view_escalates_headline_from_account_user_data():
+    snapshot = _snapshot(runtime_mode=RuntimeMode.LIVE).model_copy(
+        update={
+            "alerts": (),
+            "backlog_warning": False,
+            "stale_warning": False,
+            "loss_warning": False,
+        }
+    )
+    snapshot = snapshot.model_copy(
+        update={
+            "meta": snapshot.meta.model_copy(
+                update={
+                    "break_even_drift_alert": False,
+                    "edge_degraded_count": 0,
+                }
+            )
+        }
+    )
+
+    payload = build_technical_dashboard_payload(
+        snapshot,
+        active_modules=("monitoring", "ui"),
+        active_engines=("engine_a", "engine_b"),
+        account_user_data_projection=AccountUserDataProjection(
+            status="warning",
+            authenticated=False,
+            detail="User-data artifact exists but authentication was not confirmed.",
+        ),
+    )
+
+    view = build_technical_dashboard_view(payload)
+    system = next(section for section in view.sections if section.title == "System")
+    operator = next(section for section in view.sections if section.title == "Operator Controls")
+
+    assert next(card for card in system.cards if card.key == "headline_status").status == "warning"
+    assert next(card for card in operator.cards if card.key == "operator_safing_controls").status == "warning"
+    assert next(card for card in operator.cards if card.key == "operator_kill_path").status == "warning"
+
+
+def test_technical_dashboard_view_projects_engine_judgment_when_available():
+    payload = build_technical_dashboard_payload(
+        _snapshot(),
+        active_modules=("protocols", "monitoring", "ui"),
+        active_engines=("engine_a", "engine_b", "engine_c", "engine_d"),
+        engine_judgment_projection=EngineJudgmentProjection(
+            status="warning",
+            source_report_id="shadow_report:light:1",
+            source_shadow_run_id="shadow-run-1",
+            source_shadow_days_completed=1,
+            source_shadow_required_days=30,
+            portfolio_judgment_verdict="shadow-only",
+            portfolio_physics_pressure="elevated",
+            portfolio_cluster_pressure="critical",
+            portfolio_loss_capacity_pressure="elevated",
+            portfolio_rejected_engine_count=1,
+            ranking_rejected_engine_count=1,
+            elevated_physics_engine_count=1,
+            critical_physics_engine_count=1,
+            phantom_trade_count=2,
+            portfolio_rationale="portfolio concentration remained elevated in Shadow",
+            cards=(
+                EngineJudgmentCard(
+                    engine_id="engine_a",
+                    component_verdict="shadow_validated",
+                    judgment_verdict="shadow-only",
+                    status="warning",
+                    useful_frequency=1.0,
+                    ce_expected=0.0007,
+                    estimated_cost_bps=10.0,
+                    edge_net=0.005,
+                    economic_pass_rate=1.0,
+                    conflict_rate=0.0,
+                    marginal_edge=0.004,
+                    redundancy_score=0.0,
+                    portfolio_contribution=0.004,
+                    observations=1,
+                    rationale="Shadow gate incomplete: 1/30 day(s), report_complete=False",
+                    evidence_summary="runtime_status=accepted / pair=BTCUSDT / conviction=high",
+                ),
+                EngineJudgmentCard(
+                    engine_id="engine_c",
+                    component_verdict="dormant",
+                    judgment_verdict="dormant",
+                    status="planned",
+                    useful_frequency=0.0,
+                    ce_expected=0.0,
+                    estimated_cost_bps=0.0,
+                    edge_net=0.0,
+                    economic_pass_rate=0.0,
+                    conflict_rate=0.0,
+                    marginal_edge=0.0,
+                    redundancy_score=0.0,
+                    portfolio_contribution=0.0,
+                    observations=0,
+                    rationale="component marked dormant by the Shadow component verdicts",
+                    evidence_summary="Engine C remains dormant in this surface",
+                ),
+            ),
+        ),
+    )
+
+    view = build_technical_dashboard_view(payload)
+    engine_judgment = next(section for section in view.sections if section.title == "Engine Judgement")
+
+    assert next(card for card in engine_judgment.cards if card.key == "engine_judgment_summary").value == (
+        "promotable=0 / shadow-only=1 / rewrite=0 / dormant=1"
+    )
+    assert next(card for card in engine_judgment.cards if card.key == "engine_judgment_source").value == "1/30 day(s)"
+    assert next(card for card in engine_judgment.cards if card.key == "engine_judgment_portfolio").value == "shadow-only"
+    assert "physics=elevated" in next(
+        card for card in engine_judgment.cards if card.key == "engine_judgment_portfolio"
+    ).detail
+    assert "cluster=critical" in next(
+        card for card in engine_judgment.cards if card.key == "engine_judgment_portfolio"
+    ).detail
+    assert "rationale=portfolio concentration remained elevated in Shadow" in next(
+        card for card in engine_judgment.cards if card.key == "engine_judgment_portfolio"
+    ).detail
+    assert next(card for card in engine_judgment.cards if card.key == "engine_judgment_engine_a").value == "shadow-only"
+    assert next(card for card in engine_judgment.cards if card.key == "engine_judgment_engine_a").status == "warning"
+    assert "shadow_component=shadow_validated" in next(
+        card for card in engine_judgment.cards if card.key == "engine_judgment_engine_a"
+    ).detail
+    assert "ce=0.0007" in next(
+        card for card in engine_judgment.cards if card.key == "engine_judgment_engine_a"
+    ).detail
+    assert "portfolio_contribution=0.0040" in next(
+        card for card in engine_judgment.cards if card.key == "engine_judgment_engine_a"
+    ).detail
+    assert "rationale=Shadow gate incomplete: 1/30 day(s), report_complete=False" in next(
+        card for card in engine_judgment.cards if card.key == "engine_judgment_engine_a"
+    ).detail
+    assert next(card for card in engine_judgment.cards if card.key == "engine_judgment_engine_c").value == "dormant"
+
+
+def test_technical_dashboard_view_escalates_headline_from_engine_judgment():
+    snapshot = _snapshot().model_copy(
+        update={
+            "alerts": (),
+            "backlog_warning": False,
+            "stale_warning": False,
+            "loss_warning": False,
+        }
+    )
+    snapshot = snapshot.model_copy(
+        update={
+            "meta": snapshot.meta.model_copy(
+                update={
+                    "break_even_drift_alert": False,
+                    "edge_degraded_count": 0,
+                }
+            )
+        }
+    )
+
+    payload = build_technical_dashboard_payload(
+        snapshot,
+        active_modules=("protocols", "monitoring", "ui"),
+        active_engines=("engine_a", "engine_b"),
+        engine_judgment_projection=EngineJudgmentProjection(
+            status="critical",
+            portfolio_judgment_verdict="rewrite-required",
+        ),
+    )
+
+    view = build_technical_dashboard_view(payload)
+    system = next(section for section in view.sections if section.title == "System")
+    alerts = next(section for section in view.sections if section.title == "Alerts")
+
+    assert next(card for card in system.cards if card.key == "headline_status").status == "critical"
+    assert next(card for card in system.cards if card.key == "headline_status").value == "critical"
+    assert next(card for card in alerts.cards if card.key == "active_alerts").status == "critical"
 
 
 def test_technical_dashboard_view_projects_shadow_enabled_build14_when_module_active():
@@ -374,6 +812,23 @@ def test_technical_dashboard_view_surfaces_rejected_import_and_future_panels():
             lifecycle_state="exported",
             validation_status="needs_revision",
             review_state="needs_revision",
+            compatibility_status="rejected",
+            compatibility_reasons=("ARTIFACT_SCHEMA_MINOR_UNSUPPORTED", "FEATURE_SET_UNKNOWN"),
+            signature_check_status="key_id_unknown",
+            signature_key_id="lab_unknown",
+            signature_check_reasons=("KEY_ID_UNKNOWN",),
+            conflict_resolution_mode="no_trade_then_strictest",
+            conflict_hard_veto_action="no_trade",
+            conflict_score_aggregation_mode="bounded_sum_with_global_cap",
+            conflict_size_reduce_mode="min_factor_wins",
+            conflict_rank_adjust_mode="bounded_sum",
+            conflict_additive_soft_boosts_allowed=True,
+            conflict_additive_soft_reduces_allowed=True,
+            registry_atomicity_mode="atomic_snapshot_swap",
+            registry_concurrency_model="single_writer_multi_reader",
+            registry_publish_requires_atomic_replace=True,
+            registry_publish_requires_fsync=True,
+            registry_rollback_to_last_known_good=True,
             rejection_reasons=("import target must start at SHADOW",),
         ),
     )
@@ -382,9 +837,25 @@ def test_technical_dashboard_view_surfaces_rejected_import_and_future_panels():
     replay = next(section for section in view.sections if section.title == "Replay & Import")
     validation = next(card for card in replay.cards if card.key == "validation_status")
     reasons = next(card for card in replay.cards if card.key == "validation_reasons")
+    compatibility = next(card for card in replay.cards if card.key == "compatibility_policy")
+    signature = next(card for card in replay.cards if card.key == "signature_policy")
+    conflict = next(card for card in replay.cards if card.key == "conflict_policy")
+    registry = next(card for card in replay.cards if card.key == "registry_policy")
     assert validation.status == "warning"
     assert validation.value == "needs_revision"
     assert reasons.detail == "import target must start at SHADOW"
+    assert compatibility.status == "warning"
+    assert compatibility.value == "rejected"
+    assert "ARTIFACT_SCHEMA_MINOR_UNSUPPORTED" in compatibility.detail
+    assert signature.status == "warning"
+    assert signature.value == "key_id_unknown"
+    assert "key=lab_unknown" in signature.detail
+    assert conflict.status == "healthy"
+    assert conflict.value == "no_trade_then_strictest"
+    assert "score=bounded_sum_with_global_cap" in conflict.detail
+    assert registry.status == "healthy"
+    assert registry.value == "atomic_snapshot_swap"
+    assert "atomic_replace=yes" in registry.detail
     assert set(view.future_panels) == {
         "technical_supervision",
         "build9x_diagnostics",
@@ -408,6 +879,85 @@ def test_technical_dashboard_view_marks_missing_modules_and_engines_as_planned()
     assert modules.detail == "No active modules declared"
     assert engines.status == "planned"
     assert engines.detail == "No active engines declared"
+
+
+def test_technical_dashboard_view_projects_execution_no_trade_bridge_card():
+    payload = build_technical_dashboard_payload(
+        _snapshot(),
+        active_modules=("protocols", "monitoring", "ui"),
+        active_engines=("engine_a", "engine_b"),
+    ).model_copy(
+        update={
+            "execution_no_trade_bridge": build_technical_dashboard_payload(
+                _snapshot(),
+                active_modules=("protocols", "monitoring", "ui"),
+                active_engines=("engine_a", "engine_b"),
+            ).execution_no_trade_bridge.model_copy(
+                update={
+                    "status": "warning",
+                    "configured": True,
+                    "selection_status": "binding_only",
+                    "current_snapshot_id": "snap-2",
+                    "last_known_good_snapshot_id": "snap-1",
+                    "binding_present": True,
+                    "loaded": False,
+                    "compiled_plan_ref": "compiled/snap-2/execution_no_trade.json",
+                    "error_type": "ValueError",
+                }
+            )
+        }
+    )
+
+    view = build_technical_dashboard_view(payload)
+    execution = next(section for section in view.sections if section.title == "Execution")
+    bridge = next(card for card in execution.cards if card.key == "execution_no_trade_bridge")
+
+    assert bridge.status == "warning"
+    assert bridge.value == "sel=binding_only / loaded=no"
+    assert "cfg=yes" in bridge.detail
+    assert "snapshot=snap-2" in bridge.detail
+    assert "lkg=snap-1" in bridge.detail
+    assert "err=ValueError" in bridge.detail
+
+
+def test_technical_dashboard_view_escalates_headline_from_execution_no_trade_bridge():
+    snapshot = _snapshot().model_copy(
+        update={
+            "alerts": (),
+            "backlog_warning": False,
+            "stale_warning": False,
+            "loss_warning": False,
+        }
+    )
+    snapshot = snapshot.model_copy(
+        update={
+            "meta": snapshot.meta.model_copy(
+                update={
+                    "break_even_drift_alert": False,
+                    "edge_degraded_count": 0,
+                }
+            )
+        }
+    )
+
+    payload = build_technical_dashboard_payload(
+        snapshot,
+        active_modules=("protocols", "monitoring", "ui"),
+        active_engines=("engine_a", "engine_b"),
+        execution_no_trade_bridge_projection=ExecutionNoTradeBridgeProjection(
+            status="warning",
+            configured=True,
+            selection_status="binding_only",
+        ),
+    )
+
+    view = build_technical_dashboard_view(payload)
+    system = next(section for section in view.sections if section.title == "System")
+    operator = next(section for section in view.sections if section.title == "Operator Controls")
+
+    assert next(card for card in system.cards if card.key == "headline_status").status == "warning"
+    assert next(card for card in operator.cards if card.key == "operator_safing_controls").status == "warning"
+    assert next(card for card in operator.cards if card.key == "operator_kill_path").status == "warning"
 
 
 def test_technical_dashboard_view_projects_shadow_summary_when_available():
@@ -528,7 +1078,7 @@ def test_technical_dashboard_view_projects_live_light_summary_when_available():
 
     view = build_technical_dashboard_view(payload)
     system = next(section for section in view.sections if section.title == "System")
-    live = next(section for section in view.sections if section.title == "Build-13 Live-Light")
+    live = next(section for section in view.sections if section.title == "Build-13 Live")
 
     governed = next(card for card in system.cards if card.key == "governed_extensions")
     assert "live=healthy" in governed.value
@@ -570,7 +1120,7 @@ def test_technical_dashboard_view_exposes_operator_controls_for_current_runtime(
         "acknowledge_critical_alert"
     )
     assert next(card for card in operator.cards if card.key == "operator_safing_controls").detail == (
-        "set_halted, downgrade_to_micro_live, downgrade_to_shadow"
+        "set_halted, downgrade_to_micro_live, downgrade_to_shadow / supervision=critical"
     )
     assert next(card for card in operator.cards if card.key == "operator_latest_safing").value == (
         "downgrade_to_micro_live -> micro_live"
@@ -580,6 +1130,175 @@ def test_technical_dashboard_view_exposes_operator_controls_for_current_runtime(
     )
     assert next(card for card in operator.cards if card.key == "operator_kill_path").value == "active"
     assert next(card for card in operator.cards if card.key == "operator_kill_path").status == "critical"
+
+
+def test_technical_dashboard_view_escalates_operator_controls_from_supervision_status():
+    snapshot = _snapshot().model_copy(
+        update={
+            "alerts": (),
+            "backlog_warning": False,
+            "stale_warning": False,
+            "loss_warning": False,
+        }
+    )
+    snapshot = snapshot.model_copy(
+        update={
+            "meta": snapshot.meta.model_copy(
+                update={
+                    "break_even_drift_alert": False,
+                    "edge_degraded_count": 0,
+                }
+            )
+        }
+    )
+
+    payload = build_technical_dashboard_payload(
+        snapshot,
+        active_modules=("protocols", "monitoring", "ui"),
+        active_engines=("engine_a", "engine_b"),
+        engine_judgment_projection=EngineJudgmentProjection(
+            status="warning",
+            portfolio_judgment_verdict="shadow-only",
+        ),
+    )
+
+    view = build_technical_dashboard_view(payload)
+    operator = next(section for section in view.sections if section.title == "Operator Controls")
+
+    assert next(card for card in operator.cards if card.key == "operator_safing_controls").status == "warning"
+    assert next(card for card in operator.cards if card.key == "operator_safing_controls").detail.endswith(
+        "/ supervision=warning"
+    )
+    assert next(card for card in operator.cards if card.key == "operator_kill_path").value == "armed"
+    assert next(card for card in operator.cards if card.key == "operator_kill_path").status == "warning"
+
+
+def test_technical_dashboard_view_escalates_headline_from_build14():
+    snapshot = _snapshot().model_copy(
+        update={
+            "alerts": (),
+            "backlog_warning": False,
+            "stale_warning": False,
+            "loss_warning": False,
+        }
+    )
+    snapshot = snapshot.model_copy(
+        update={
+            "meta": snapshot.meta.model_copy(
+                update={
+                    "break_even_drift_alert": False,
+                    "edge_degraded_count": 0,
+                }
+            )
+        }
+    )
+
+    payload = build_technical_dashboard_payload(
+        snapshot,
+        active_modules=("protocols", "monitoring", "ui"),
+        active_engines=("engine_a", "engine_b"),
+        build14_projection=Build14Projection(
+            status="warning",
+            influence_mode="limited_influence",
+            action="downgrade_confidence",
+            severity="elevated",
+            summary="Build-14 limited influence requires warning-level supervision",
+            candidate_effect="confidence_downgrade",
+            confidence_penalty_weight=0.10,
+            recommended_budget_factor=0.85,
+        ),
+    )
+
+    view = build_technical_dashboard_view(payload)
+    system = next(section for section in view.sections if section.title == "System")
+    operator = next(section for section in view.sections if section.title == "Operator Controls")
+
+    assert next(card for card in system.cards if card.key == "headline_status").status == "warning"
+    assert next(card for card in operator.cards if card.key == "operator_safing_controls").status == "warning"
+    assert next(card for card in operator.cards if card.key == "operator_kill_path").status == "warning"
+
+
+def test_technical_dashboard_view_escalates_headline_from_replay_import():
+    snapshot = _snapshot().model_copy(
+        update={
+            "alerts": (),
+            "backlog_warning": False,
+            "stale_warning": False,
+            "loss_warning": False,
+        }
+    )
+    snapshot = snapshot.model_copy(
+        update={
+            "meta": snapshot.meta.model_copy(
+                update={
+                    "break_even_drift_alert": False,
+                    "edge_degraded_count": 0,
+                }
+            )
+        }
+    )
+
+    payload = build_technical_dashboard_payload(
+        snapshot,
+        active_modules=("protocols", "monitoring", "ui"),
+        active_engines=("engine_a", "engine_b"),
+        replay_projection=ReplayImportProjection(
+            status="warning",
+            artifact_id="artifact-1",
+            artifact_kind="review_packet",
+            lineage_version="a.v1.0.r1",
+            validation_status="needs_revision",
+            review_state="needs_revision",
+        ),
+    )
+
+    view = build_technical_dashboard_view(payload)
+    system = next(section for section in view.sections if section.title == "System")
+    operator = next(section for section in view.sections if section.title == "Operator Controls")
+
+    assert next(card for card in system.cards if card.key == "headline_status").status == "warning"
+    assert next(card for card in operator.cards if card.key == "operator_safing_controls").status == "warning"
+    assert next(card for card in operator.cards if card.key == "operator_kill_path").status == "warning"
+
+
+def test_technical_dashboard_view_escalates_headline_from_shadow_projection():
+    snapshot = _snapshot().model_copy(
+        update={
+            "alerts": (),
+            "backlog_warning": False,
+            "stale_warning": False,
+            "loss_warning": False,
+        }
+    )
+    snapshot = snapshot.model_copy(
+        update={
+            "meta": snapshot.meta.model_copy(
+                update={
+                    "break_even_drift_alert": False,
+                    "edge_degraded_count": 0,
+                }
+            )
+        }
+    )
+
+    payload = build_technical_dashboard_payload(
+        snapshot,
+        active_modules=("protocols", "monitoring", "ui"),
+        active_engines=("engine_a", "engine_b"),
+        shadow_projection=ShadowProjection(
+            status="warning",
+            run_state="completed",
+            verdict="needs_review",
+        ),
+    )
+
+    view = build_technical_dashboard_view(payload)
+    system = next(section for section in view.sections if section.title == "System")
+    operator = next(section for section in view.sections if section.title == "Operator Controls")
+
+    assert next(card for card in system.cards if card.key == "headline_status").status == "warning"
+    assert next(card for card in operator.cards if card.key == "operator_safing_controls").status == "warning"
+    assert next(card for card in operator.cards if card.key == "operator_kill_path").status == "warning"
 
 
 def test_technical_dashboard_view_projects_build14_limited_influence_when_available():
@@ -654,7 +1373,7 @@ def test_technical_dashboard_view_projects_build14_limited_influence_when_availa
 
     view = build_technical_dashboard_view(payload)
     system = next(section for section in view.sections if section.title == "System")
-    live = next(section for section in view.sections if section.title == "Build-13 Live-Light")
+    live = next(section for section in view.sections if section.title == "Build-13 Live")
     build14 = next(section for section in view.sections if section.title == "Build-14 Enablers")
 
     governed = next(card for card in system.cards if card.key == "governed_extensions")

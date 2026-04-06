@@ -1,4 +1,4 @@
-"""Dashboard projection tests for Build-13 Live-Light."""
+"""Dashboard projection tests for Build-13 governed Live."""
 
 from __future__ import annotations
 
@@ -84,7 +84,7 @@ def test_build_live_light_projection_returns_normalized_monitoring_summary():
 def test_build_live_light_dashboard_section_renders_expected_cards():
     section = build_live_light_dashboard_section(_summary())
 
-    assert section.title == "Build-13 Live-Light"
+    assert section.title == "Build-13 Live"
     keys = {card.key for card in section.cards}
     assert keys == {
         "live_light_run_state",

@@ -6,7 +6,11 @@ import json
 import shutil
 from pathlib import Path
 
-from interface_contracts import StrategyClassification
+from interface_contracts import (
+    CANONICAL_FEATURE_SET_VERSION,
+    CANONICAL_TRANSFORM_SET_VERSION,
+    StrategyClassification,
+)
 from local_replay_runtime import (
     HistoricalReplayDataset,
     HistoricalReplayOpportunity,
@@ -174,6 +178,8 @@ def test_orchestrator_slices_dataset_by_chunk_and_persists_slice_outputs():
         assert manifest["record_count"] == 2
         assert manifest["tick_count"] == 2
         assert manifest["tested_pairs"] == ["BTCUSDT", "ETHUSDT"]
+        assert manifest["feature_set_version"] == CANONICAL_FEATURE_SET_VERSION
+        assert manifest["transform_set_version"] == CANONICAL_TRANSFORM_SET_VERSION
         assert session_config["chunk_count"] == 3
         assert session_config["chunk_index"] == 2
         assert session_state["processed_records"] == 2

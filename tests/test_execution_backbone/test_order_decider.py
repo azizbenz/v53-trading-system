@@ -8,6 +8,7 @@ from execution_backbone.order_decider.intent_builder import (
     NoTradeDecision,
     NoTradeReason,
     OrderType,
+    VenueConstraintSnapshot,
     build_intent,
 )
 from execution_backbone.order_decider.order_type_selector import (
@@ -43,6 +44,33 @@ class TestIntentBuilder:
         assert intent.order_type == OrderType.MARKET
         assert intent.pair == "BTCUSDT"
         assert intent.expected_gain > intent.expected_cost
+
+    def test_build_intent_can_carry_venue_constraints_and_exact_fields(self):
+        intent = build_intent(
+            intent_id="i1",
+            pair="BTCUSDT",
+            engine_id="A",
+            side="buy",
+            order_type=OrderType.LIMIT,
+            quantity=0.12,
+            quantity_exact="0.12",
+            expected_cost=0.001,
+            expected_gain=0.005,
+            score=0.8,
+            justification="strong signal",
+            price_limit=50000.0,
+            price_limit_exact="50000",
+            venue_constraints=VenueConstraintSnapshot(
+                tick_size="0.1",
+                step_size="0.01",
+                min_notional="10",
+            ),
+        )
+
+        assert intent.quantity_exact == "0.12"
+        assert intent.price_limit_exact == "50000"
+        assert intent.venue_constraints is not None
+        assert intent.venue_constraints.tick_size == "0.1"
 
     def test_intent_frozen(self):
         intent = build_intent(

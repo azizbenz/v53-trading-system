@@ -134,6 +134,13 @@ class EngineBInput(BaseModel, frozen=True):
     structural_break: float = 0.0
     continuation_momentum: float = 0.0
     microstructure_breakout_confirmation: float = 0.0
+    sweep_score: float = 0.5
+    absorption_score: float = 0.5
+    poc_reversion_score: float = 0.5
+    false_breakout_score: float = 0.0
+    execution_fragility: float = 0.0
+    market_toxicity: float = 0.0
+    spread_regime_penalty: float = 0.0
     # Context scores (for conviction)
     regime_favorability: float = 0.5
     pair_health: float = 0.5
@@ -346,6 +353,13 @@ def run_engine_b(inputs: EngineBInput) -> EngineBOutput:
         structure_score=inputs.structure_is_range,
         context_score=context_score,
         cost_preference_score=1.0 - min(inputs.expected_cost / max(inputs.expected_gain, 1e-9), 1.0),
+        sweep_score=inputs.sweep_score,
+        absorption_score=inputs.absorption_score,
+        poc_reversion_score=inputs.poc_reversion_score,
+        false_breakout_score=inputs.false_breakout_score,
+        execution_fragility=inputs.execution_fragility,
+        market_toxicity=inputs.market_toxicity,
+        spread_regime_penalty=inputs.spread_regime_penalty,
         scoring_version=inputs.scoring_version,
     ))
     logs.append(EngineBLogEntry(

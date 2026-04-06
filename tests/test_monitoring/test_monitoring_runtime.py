@@ -14,6 +14,7 @@ from meta_minimal.dtr_core.decision_state_encoder import DecisionState
 from meta_minimal.dtr_core.dtr_record_builder import build_dtr
 from meta_minimal.edge_tracker_prudent_minimal.edge_status_classifier import EdgeClassification, EdgeStatus
 from monitoring import (
+    ExecutionNoTradeBridgeProjection,
     MonitoringRuntime,
     MonitoringRuntimeConfig,
     collect_engine_metrics,
@@ -466,3 +467,51 @@ def test_monitoring_runtime_persists_guardrail_state_across_restart():
         )
     finally:
         shutil.rmtree(state_dir, ignore_errors=True)
+
+
+def test_monitoring_runtime_accepts_execution_no_trade_bridge_projection():
+    runtime = MonitoringRuntime()
+
+    result = runtime.evaluate(
+        correlation_id="corr-runtime-exec-bridge",
+        profile=ProfileId.LIGHT,
+        runtime_mode=RuntimeMode.SHADOW,
+        timestamp_ms=1_700_000_002_000,
+        portfolio=collect_portfolio_metrics(
+            allocated_opportunities=1,
+            gross_capacity_used_pct=10.0,
+            loss_capacity_used_pct=2.0,
+            beta_utilization=0.1,
+            capital_deployed_usdt=250.0,
+            ce_net=0.001,
+        ),
+        infra=collect_infra_metrics(queue_backlog=5),
+        meta=_meta_metrics(),
+        active_modules=("monitoring", "ui", "protocols"),
+        active_engines=("engine_a", "engine_b"),
+        execution_no_trade_bridge_projection=ExecutionNoTradeBridgeProjection(
+            status="warning",
+            configured=True,
+            selection_status="binding_only",
+            current_snapshot_id="snap-2",
+            previous_snapshot_id="snap-1",
+            last_known_good_snapshot_id="snap-1",
+            binding_present=True,
+            loaded=False,
+            compiled_plan_ref="compiled/snap-2/execution_no_trade.json",
+            artifact_count=2,
+            error_type="ValueError",
+            detail="compiled hook plan payload mismatch",
+        ),
+    )
+
+    assert result.technical_payload.execution_no_trade_bridge.status == "warning"
+    assert result.technical_payload.execution_no_trade_bridge.current_snapshot_id == "snap-2"
+    execution_section = next(
+        section for section in result.technical_view.sections if section.title == "Execution"
+    )
+    assert any(
+        card.key == "execution_no_trade_bridge"
+        and card.value == "sel=binding_only / loaded=no"
+        for card in execution_section.cards
+    )

@@ -319,6 +319,42 @@ class TestConvictionBuilderA:
         assert r1.raw_score == r2.raw_score
         assert r1.conviction == r2.conviction
 
+    def test_market_physics_confirmation_and_penalties_shift_score(self):
+        base = build_conviction(ConvictionInput(
+            pair="BTCUSDT",
+            structure_score=0.7,
+            context_score=0.6,
+            flow_score=0.5,
+            cost_preference_score=0.5,
+        ))
+        enriched = build_conviction(ConvictionInput(
+            pair="BTCUSDT",
+            structure_score=0.7,
+            context_score=0.6,
+            flow_score=0.5,
+            cost_preference_score=0.5,
+            delta_confirmation=1.0,
+            competition_density=0.0,
+        ))
+        penalized = build_conviction(ConvictionInput(
+            pair="BTCUSDT",
+            structure_score=0.7,
+            context_score=0.6,
+            flow_score=0.5,
+            cost_preference_score=0.5,
+            execution_fragility=1.0,
+            market_toxicity=1.0,
+            spread_regime_penalty=1.0,
+        ))
+        assert enriched.raw_score > base.raw_score
+        assert penalized.raw_score < base.raw_score
+        assert enriched.block_scores["delta_confirmation"] == pytest.approx(1.0)
+        assert penalized.block_scores["execution_fragility"] == pytest.approx(1.0)
+        assert "fragility_score" in penalized.block_scores
+        assert "toxicity_score" in penalized.block_scores
+        assert "execution_survivability_score" in penalized.block_scores
+        assert "micro_friction_score" in penalized.block_scores
+
     def test_version_stored(self):
         result = build_conviction(ConvictionInput(
             pair="BTC", structure_score=0.5, context_score=0.5,
@@ -598,6 +634,27 @@ class TestEngineARunner:
         assert enriched_output.raw_score > base_output.raw_score
         assert enriched_output.block_scores["flow"] == pytest.approx(0.8)
         assert enriched_output.block_scores["cost_preference"] == pytest.approx(0.9)
+
+    def test_e2e_market_physics_inputs_shift_conviction_path(self):
+        base_output = run_engine_a(_make_good_inputs())
+        enriched_output = run_engine_a(_make_good_inputs(
+            delta_confirmation=1.0,
+            competition_density=0.0,
+        ))
+        penalized_output = run_engine_a(_make_good_inputs(
+            execution_fragility=1.0,
+            market_toxicity=1.0,
+            spread_regime_penalty=1.0,
+        ))
+
+        assert enriched_output.decision == EngineADecision.EMIT
+        assert penalized_output.decision == EngineADecision.EMIT
+        assert enriched_output.raw_score > base_output.raw_score
+        assert penalized_output.raw_score < base_output.raw_score
+        assert enriched_output.block_scores["delta_confirmation"] == pytest.approx(1.0)
+        assert penalized_output.block_scores["market_toxicity"] == pytest.approx(1.0)
+        assert "execution_survivability_score" in penalized_output.block_scores
+        assert penalized_output.block_scores["micro_friction_score"] > 0.0
 
     def test_e2e_no_trade_logs_present(self):
         """No-trade path also produces structured logs."""

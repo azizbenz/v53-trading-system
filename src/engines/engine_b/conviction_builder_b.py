@@ -12,6 +12,13 @@ from __future__ import annotations
 from enum import StrEnum
 
 from pydantic import BaseModel, Field
+from data_backbone.market_physics_math import (
+    clip01,
+    execution_survivability_score_v1,
+    fragility_score_v1,
+    micro_friction_score_v1,
+    toxicity_score_v1,
+)
 
 
 class ConvictionLevelB(StrEnum):
@@ -35,6 +42,13 @@ class ConvictionInputB(BaseModel, frozen=True):
     structure_score: float  # range compatibility
     context_score: float  # regime/health/freshness
     cost_preference_score: float = 0.0  # cleaner = better
+    sweep_score: float = 0.5
+    absorption_score: float = 0.5
+    poc_reversion_score: float = 0.5
+    false_breakout_score: float = 0.0
+    execution_fragility: float = 0.0
+    market_toxicity: float = 0.0
+    spread_regime_penalty: float = 0.0
     scoring_version: str = ""
 
 
@@ -61,18 +75,66 @@ def build_conviction_b(inputs: ConvictionInputB) -> ConvictionResultB:
 
     Conviction is capped at MEDIUM (Tier 2 max) — Engine B never gets Tier 3.
     """
+    fragility_score = fragility_score_v1(
+        inputs.execution_fragility,
+        spread_regime_penalty=inputs.spread_regime_penalty,
+    )
+    toxicity_score = toxicity_score_v1(
+        inputs.market_toxicity,
+        fragility_score=fragility_score,
+        spread_regime_penalty=inputs.spread_regime_penalty,
+    )
+    execution_survivability_score = execution_survivability_score_v1(
+        fragility_score=fragility_score,
+        toxicity_score=toxicity_score,
+        spread_regime_penalty=inputs.spread_regime_penalty,
+    )
+    micro_friction_score = micro_friction_score_v1(
+        spread_regime_penalty=inputs.spread_regime_penalty,
+        fragility_score=fragility_score,
+        toxicity_score=toxicity_score,
+    )
+
     block_scores = {
         "excess": inputs.excess_score,
         "structure": inputs.structure_score,
         "context": inputs.context_score,
         "cost_preference": inputs.cost_preference_score,
+        "sweep_score": inputs.sweep_score,
+        "absorption_score": inputs.absorption_score,
+        "poc_reversion_score": inputs.poc_reversion_score,
+        "false_breakout_score": inputs.false_breakout_score,
+        "execution_fragility": inputs.execution_fragility,
+        "market_toxicity": inputs.market_toxicity,
+        "spread_regime_penalty": inputs.spread_regime_penalty,
+        "fragility_score": fragility_score,
+        "toxicity_score": toxicity_score,
+        "execution_survivability_score": execution_survivability_score,
+        "micro_friction_score": micro_friction_score,
     }
 
-    raw = (
+    legacy_raw = (
         0.35 * inputs.excess_score
         + 0.25 * inputs.structure_score
         + 0.20 * inputs.context_score
         + 0.20 * inputs.cost_preference_score
+    )
+    sweep_adjustment = 0.08 * (inputs.sweep_score - 0.5)
+    absorption_adjustment = 0.06 * (inputs.absorption_score - 0.5)
+    poc_adjustment = 0.06 * (inputs.poc_reversion_score - 0.5)
+    false_breakout_penalty = 0.10 * inputs.false_breakout_score
+    execution_penalty = 0.08 * fragility_score
+    toxicity_penalty = 0.07 * toxicity_score
+    spread_penalty = 0.05 * micro_friction_score
+    raw = clip01(
+        legacy_raw
+        + sweep_adjustment
+        + absorption_adjustment
+        + poc_adjustment
+        - false_breakout_penalty
+        - execution_penalty
+        - toxicity_penalty
+        - spread_penalty
     )
 
     if raw >= _MEDIUM_THRESHOLD:

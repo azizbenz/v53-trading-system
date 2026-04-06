@@ -62,10 +62,46 @@ def _comparison_protocol(
         "candidate degrades Build-9 observability or DTR coverage",
         "candidate increases cost drift without offsetting edge",
     ]
+    target_components = tuple(
+        sorted(
+            {
+                hypothesis.target_component
+                for hypothesis in hypotheses
+                if hypothesis.target_component
+            }
+        )
+    )
+    signal_families = tuple(
+        sorted(
+            {
+                hypothesis.signal_family
+                for hypothesis in hypotheses
+                if hypothesis.signal_family
+            }
+        )
+    )
+    expected_replay_evidence = tuple(
+        dict.fromkeys(
+            evidence
+            for hypothesis in hypotheses
+            for evidence in hypothesis.expected_replay_evidence
+        )
+    )
+    expected_shadow_evidence = tuple(
+        dict.fromkeys(
+            evidence
+            for hypothesis in hypotheses
+            for evidence in hypothesis.expected_shadow_evidence
+        )
+    )
     return ReplayComparisonProtocol(
         protocol_id=f"{candidate.candidate_id}:comparison_protocol",
         candidate_id=candidate.candidate_id,
         evaluation_scope=replay_scope,
+        target_components=target_components,
+        signal_families=signal_families,
+        expected_replay_evidence=expected_replay_evidence,
+        expected_shadow_evidence=expected_shadow_evidence,
         comparison_metrics=tuple(metrics),
         rejection_criteria=tuple(rejection_criteria),
     )
@@ -151,6 +187,22 @@ def build_replay_export_bundles(
             for hypothesis in candidate_hypotheses
             for diagnostic_id in hypothesis.diagnostic_ids
         )
+        target_components = tuple(
+            sorted(
+                {
+                    hypothesis.target_component
+                    for hypothesis in candidate_hypotheses
+                    if hypothesis.target_component
+                }
+            )
+        )
+        expected_shadow_evidence = tuple(
+            dict.fromkeys(
+                evidence
+                for hypothesis in candidate_hypotheses
+                for evidence in hypothesis.expected_shadow_evidence
+            )
+        )
         payload_refs = tuple(
             sorted(
                 {
@@ -173,7 +225,10 @@ def build_replay_export_bundles(
             dataset_ref=dataset_ref,
             clock_ref=clock_ref,
             diagnostic_ids=diagnostic_ids,
+            hypothesis_ids=candidate.hypothesis_ids,
             candidate_ids=(candidate.candidate_id,),
+            target_components=target_components,
+            expected_shadow_evidence=expected_shadow_evidence,
             review_export_ref=review_export_ref,
             feature_bridge_ref=f"{candidate.candidate_id}:feature_bridge",
             parity_diagnostics_ref=f"{candidate.candidate_id}:parity_diagnostics",

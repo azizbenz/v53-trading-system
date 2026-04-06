@@ -198,7 +198,7 @@ def test_live_dashboard_view_exposes_manual_downgrade_actions():
         _payload().model_copy(
             update={
                 "runtime_mode": RuntimeMode.LIVE,
-                "deployment_state": "live_light",
+                "deployment_state": "live_complete",
                 "live_light_status": "healthy",
                 "micro_live_status": "healthy",
                 "shadow_status": "healthy",

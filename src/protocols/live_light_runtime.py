@@ -9,7 +9,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from interface_contracts import PromotionState, ProfileId, ReviewState, RuntimeMode
+from interface_contracts import ALL_PAIRS, PromotionState, ProfileId, ReviewState, RuntimeMode
 from monitoring import TechnicalDashboardPayload
 from protocols.contracts import (
     LiveLightDecision,
@@ -29,6 +29,7 @@ from protocols.errors import LiveLightInputError
 _BUILD14_CONTRACTS_MODULE = "complete_enablers.contracts"
 _BUILD14_SIGNAL_CLASS = "Build14InfluenceSignal"
 _BUILD14_REPORT_CLASS = "Build14InfluenceReport"
+_SHADOW_ENGINE_IDS = frozenset({"engine_a", "engine_b", "engine_c", "engine_d"})
 
 
 def _format_operator_safing_reason(request) -> str:
@@ -135,9 +136,9 @@ def _build14_reason_codes(signal: object | None) -> tuple[str, ...]:
 
 
 def _validate_micro_live_source_payload_scope(payload: TechnicalDashboardPayload) -> None:
-    if payload.profile != ProfileId.LIGHT:
+    if payload.profile != ProfileId.COMPLETE:
         raise LiveLightInputError(
-            "Build-13 Live-Light source payload must stay on profile=LIGHT"
+            "Build-13 Live-Light source payload must stay on profile=COMPLETE"
         )
     if payload.runtime_mode != RuntimeMode.MICRO_LIVE:
         raise LiveLightInputError(
@@ -185,9 +186,150 @@ def _validate_micro_live_consistency(
         raise LiveLightInputError(
             "Build-13 Live-Light requires an accepted replay import_validation_status"
         )
+    if replay_import.exported_from != "local":
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires replay import_exported_from=local"
+        )
+    if replay_import.source_profile != "complete":
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires replay import_source_profile=complete"
+        )
     if replay_import.rejection_reasons:
         raise LiveLightInputError(
             "Build-13 Live-Light requires empty replay import_rejection_reasons"
+        )
+    if replay_import.review_state not in {"pending", "approved"}:
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires replay import_review_state to stay pending or approved"
+        )
+    if not replay_import.dataset_ref:
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires replay import_dataset_ref"
+        )
+    if not replay_import.clock_ref:
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires replay import_clock_ref"
+        )
+    if replay_import.activation_stage != "shadow_ready":
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires replay import_activation_stage=shadow_ready"
+        )
+    if replay_import.health_state != "active":
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires replay import_health_state=active"
+        )
+    if replay_import.compatibility_status == "rejected":
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires a non-rejected replay import_compatibility_status"
+        )
+    if not replay_import.feature_lineage_required:
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires replay import_feature_lineage_required=True"
+        )
+    if not replay_import.feature_lineage_present:
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires replay import_feature_lineage_present=True"
+        )
+    if replay_import.feature_lineage_status != "ok":
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires replay import_feature_lineage_status=ok"
+        )
+    if not replay_import.transform_whitelist_required:
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires replay import_transform_whitelist_required=True"
+        )
+    if not replay_import.transform_whitelist_present:
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires replay import_transform_whitelist_present=True"
+        )
+    if replay_import.transform_whitelist_status != "ok":
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires replay import_transform_whitelist_status=ok"
+        )
+    if replay_import.signature_check_status in {
+        "trust_store_unavailable",
+        "key_id_unknown",
+        "key_revoked",
+        "payload_hash_mismatch",
+    }:
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires a non-rejected replay import_signature_check_status"
+        )
+    if replay_import.conflict_resolution_mode != "no_trade_then_strictest":
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires replay import_conflict_resolution_mode=no_trade_then_strictest"
+        )
+    if replay_import.conflict_hard_veto_action != "no_trade":
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires replay import_conflict_hard_veto_action=no_trade"
+        )
+    if replay_import.conflict_score_aggregation_mode != "bounded_sum_with_global_cap":
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires replay import_conflict_score_aggregation_mode=bounded_sum_with_global_cap"
+        )
+    if replay_import.conflict_size_reduce_mode != "min_factor_wins":
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires replay import_conflict_size_reduce_mode=min_factor_wins"
+        )
+    if replay_import.conflict_rank_adjust_mode != "bounded_sum":
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires replay import_conflict_rank_adjust_mode=bounded_sum"
+        )
+    if not replay_import.conflict_additive_soft_boosts_allowed:
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires replay import_conflict_additive_soft_boosts_allowed=True"
+        )
+    if not replay_import.conflict_additive_soft_reduces_allowed:
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires replay import_conflict_additive_soft_reduces_allowed=True"
+        )
+    if replay_import.registry_atomicity_mode != "atomic_snapshot_swap":
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires replay import_registry_atomicity_mode=atomic_snapshot_swap"
+        )
+    if replay_import.registry_concurrency_model != "single_writer_multi_reader":
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires replay import_registry_concurrency_model=single_writer_multi_reader"
+        )
+    if not replay_import.registry_publish_requires_atomic_replace:
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires replay import_registry_publish_requires_atomic_replace=True"
+        )
+    if not replay_import.registry_publish_requires_fsync:
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires replay import_registry_publish_requires_fsync=True"
+        )
+    if not replay_import.registry_rollback_to_last_known_good:
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires replay import_registry_rollback_to_last_known_good=True"
+        )
+    if replay_import.payload_ref_count < 5:
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires replay import_payload_ref_count>=5"
+        )
+    if not replay_import.payload_bundle_present:
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires replay import_payload_bundle_present=True"
+        )
+    if not replay_import.review_export_ref:
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires replay import_review_export_ref"
+        )
+    if not replay_import.feature_bridge_ref:
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires replay import_feature_bridge_ref"
+        )
+    if not replay_import.parity_diagnostics_ref:
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires replay import_parity_diagnostics_ref"
+        )
+    if not replay_import.replay_metrics_ref:
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires replay import_replay_metrics_ref"
+        )
+    if not replay_import.replay_dtr_ref:
+        raise LiveLightInputError(
+            "Build-13 Live-Light requires replay import_replay_dtr_ref"
         )
     if not replay_import.artifact_id or replay_import.artifact_id == "none":
         raise LiveLightInputError(
@@ -294,6 +436,252 @@ def _build14_guardrail_reasons(
     return tuple(reasons)
 
 
+def _shadow_portfolio_blocking_reasons(judgment) -> tuple[str, ...]:
+    if isinstance(judgment, dict):
+        judgment = type("_JudgmentProxy", (), judgment)()
+
+    if judgment.judgment_verdict == "promotable":
+        return ()
+
+    reasons = [
+        f"shadow portfolio judgment={judgment.judgment_verdict}: {judgment.rationale}"
+    ]
+    for label, pressure in (
+        ("physics", judgment.physics_pressure),
+        ("redundancy", judgment.redundancy_pressure),
+        ("cluster", judgment.cluster_pressure),
+        ("beta", judgment.beta_pressure),
+        ("gross_capacity", judgment.gross_capacity_pressure),
+        ("loss_capacity", judgment.loss_capacity_pressure),
+    ):
+        if pressure in {"elevated", "critical"}:
+            reasons.append(f"shadow portfolio {label}_pressure={pressure}")
+    if judgment.portfolio_rejected_engine_count > 0:
+        reasons.append(
+            f"shadow portfolio rejected_engines={judgment.portfolio_rejected_engine_count}"
+        )
+    for label, count in (
+        ("cluster_rejected_engines", judgment.cluster_rejected_engine_count),
+        ("beta_rejected_engines", judgment.beta_rejected_engine_count),
+        ("exposure_rejected_engines", judgment.exposure_rejected_engine_count),
+        ("loss_budget_rejected_engines", judgment.loss_budget_rejected_engine_count),
+    ):
+        if count > 0:
+            reasons.append(f"shadow portfolio {label}={count}")
+    if judgment.ranking_rejected_engine_count > 0:
+        reasons.append(
+            f"shadow ranking_rejected_engines={judgment.ranking_rejected_engine_count}"
+        )
+    for label, count in (
+        ("elevated_physics_engines", judgment.elevated_physics_engine_count),
+        ("critical_physics_engines", judgment.critical_physics_engine_count),
+    ):
+        if count > 0:
+            reasons.append(f"shadow portfolio {label}={count}")
+    if judgment.phantom_trade_count:
+        reasons.append(f"shadow phantom_trade_count={judgment.phantom_trade_count}")
+    return tuple(reasons)
+
+
+def _shadow_engine_scope_blocking_reasons(live_light_input: LiveLightInput) -> tuple[str, ...]:
+    reasons: list[str] = []
+    active_engines = set(live_light_input.active_engines)
+    shadow_promotable_engines = set(live_light_input.shadow_promotable_engines)
+    shadow_shadow_only_engines = set(live_light_input.shadow_shadow_only_engines)
+    shadow_rewrite_required_engines = set(live_light_input.shadow_rewrite_required_engines)
+
+    if not active_engines:
+        reasons.append("Build-13 Live-Light requires at least one governed engine")
+        return tuple(reasons)
+
+    unknown_active_engines = active_engines - _SHADOW_ENGINE_IDS
+    if unknown_active_engines:
+        reasons.append(
+            "Build-13 Live-Light allows only governed engines from the Full Shadow perimeter"
+        )
+
+    if shadow_promotable_engines:
+        unknown_shadow_promotable = shadow_promotable_engines - _SHADOW_ENGINE_IDS
+        if unknown_shadow_promotable:
+            reasons.append(
+                "Build-13 Live-Light shadow_promotable_engines must stay within the governed engine perimeter"
+            )
+        if not active_engines.issubset(shadow_promotable_engines):
+            reasons.append(
+                "Build-13 Live-Light active_engines must be PROMOTABLE in Shadow judgment"
+            )
+    elif shadow_shadow_only_engines or shadow_rewrite_required_engines:
+        reasons.append(
+            "Build-13 Live-Light requires at least one PROMOTABLE engine in Shadow judgment"
+        )
+
+    if active_engines & shadow_shadow_only_engines:
+        reasons.append(
+            "Build-13 Live-Light must not activate engines marked SHADOW_ONLY in Shadow judgment"
+        )
+    if active_engines & shadow_rewrite_required_engines:
+        reasons.append(
+            "Build-13 Live-Light must not activate engines marked REWRITE_REQUIRED in Shadow judgment"
+        )
+
+    return tuple(reasons)
+
+
+def _micro_live_surface_blocking_reasons(live_light_input: LiveLightInput) -> tuple[str, ...]:
+    reasons: list[str] = []
+    active_engines = set(live_light_input.active_engines)
+    live_pairs = set(live_light_input.live_pairs)
+    micro_live_planned_engines = set(live_light_input.micro_live_planned_engines)
+    micro_live_planned_pairs = set(live_light_input.micro_live_planned_pairs)
+
+    if not micro_live_planned_engines:
+        reasons.append("Build-13 Live-Light requires governed micro_live_planned_engines")
+    else:
+        unknown_planned_engines = micro_live_planned_engines - _SHADOW_ENGINE_IDS
+        if unknown_planned_engines:
+            reasons.append(
+                "Build-13 Live-Light micro_live_planned_engines must stay within the governed engine perimeter"
+            )
+        if not active_engines.issubset(micro_live_planned_engines):
+            reasons.append(
+                "Build-13 Live-Light active_engines must stay within the governed Micro-live planned_engines"
+            )
+
+    if not micro_live_planned_pairs:
+        reasons.append("Build-13 Live-Light requires governed micro_live_planned_pairs")
+    else:
+        invalid_planned_pairs = tuple(
+            pair for pair in micro_live_planned_pairs if pair not in ALL_PAIRS
+        )
+        if invalid_planned_pairs:
+            reasons.append(
+                "Build-13 Live-Light micro_live_planned_pairs must stay within the Complete pair scope"
+            )
+        if not live_pairs.issubset(micro_live_planned_pairs):
+            reasons.append(
+                "Build-13 Live-Light live_pairs must stay within the governed Micro-live planned_pairs"
+            )
+
+    return tuple(reasons)
+
+
+def _live_surface_budget_blocking_reasons(live_light_input: LiveLightInput) -> tuple[str, ...]:
+    reasons: list[str] = []
+
+    if not live_light_input.live_pairs:
+        reasons.append("Build-13 Live-Light requires at least one live pair")
+    elif len(live_light_input.live_pairs) > len(ALL_PAIRS):
+        reasons.append("Build-13 Live-Light must stay within the Complete pair scope")
+    else:
+        invalid_pairs = tuple(
+            pair for pair in live_light_input.live_pairs if pair not in ALL_PAIRS
+        )
+        if invalid_pairs:
+            reasons.append(
+                "Build-13 Live-Light live_pairs must stay within the Complete pair scope"
+            )
+
+    if live_light_input.max_pair_notional_usdt > live_light_input.max_total_notional_usdt:
+        reasons.append("Live-Light max_pair_notional_usdt must stay within total cap")
+    if (
+        live_light_input.requested_pair_notional_usdt
+        > live_light_input.requested_total_notional_usdt
+    ):
+        reasons.append(
+            "Live-Light requested_pair_notional_usdt must stay within total request"
+        )
+    if (
+        live_light_input.requested_total_notional_usdt
+        > live_light_input.max_total_notional_usdt
+    ):
+        reasons.append("Live-Light requested_total_notional_usdt exceeds max cap")
+    if (
+        live_light_input.requested_pair_notional_usdt
+        > live_light_input.max_pair_notional_usdt
+    ):
+        reasons.append("Live-Light requested_pair_notional_usdt exceeds max pair cap")
+    if (
+        live_light_input.execution_order_limit < 1
+        or live_light_input.execution_order_limit > 20
+    ):
+        reasons.append("Build-13 Live-Light requires execution_order_limit within [1, 20]")
+
+    return tuple(reasons)
+
+
+def _rollout_temporal_blocking_reasons(live_light_input: LiveLightInput) -> tuple[str, ...]:
+    reasons: list[str] = []
+
+    if live_light_input.shadow_days_completed < live_light_input.shadow_required_days:
+        reasons.append("Build-13 Live-Light requires a completed 30-day Shadow")
+    if not live_light_input.component_verdicts_rendered:
+        reasons.append("Build-13 Live-Light requires rendered component verdicts from Shadow")
+    if not live_light_input.shadow_report_ready:
+        reasons.append("Build-13 Live-Light requires shadow_report_ready=True")
+    if live_light_input.micro_live_stable_days < live_light_input.micro_live_required_days:
+        reasons.append("Build-13 Live-Light requires 7 stable Micro-live days")
+
+    return tuple(reasons)
+
+
+def _governance_envelope_blocking_reasons(live_light_input: LiveLightInput) -> tuple[str, ...]:
+    reasons: list[str] = []
+
+    if not live_light_input.correlation_id.strip():
+        reasons.append("Build-13 Live-Light requires a concrete correlation_id")
+    if live_light_input.profile != ProfileId.COMPLETE:
+        reasons.append("Build-13 Live-Light opens in COMPLETE profile only")
+    if live_light_input.runtime_mode != RuntimeMode.LIVE:
+        reasons.append("Build-13 Live-Light requires runtime_mode=LIVE")
+    if not live_light_input.micro_live_run_id.strip():
+        reasons.append("Build-13 Live-Light requires a concrete micro_live_run_id")
+    if not live_light_input.shadow_run_id.strip():
+        reasons.append("Build-13 Live-Light requires a concrete shadow_run_id")
+    if live_light_input.backtest_profile is not None:
+        reasons.append("BACKTEST_PROFILE is forbidden in the unified V5.3")
+    if live_light_input.creates_profile_fork:
+        reasons.append("Local/VPS profile forks are forbidden")
+    if live_light_input.automatic_complete_promotion_requested:
+        reasons.append(
+            "Build-13 Live-Light must not request automatic promotion to Complete"
+        )
+    if (
+        live_light_input.operator_safing_request is not None
+        and live_light_input.operator_safing_request.source_runtime_mode
+        != live_light_input.runtime_mode
+    ):
+        reasons.append(
+            "Build-13 Live-Light operator_safing_request must match source_runtime_mode=LIVE"
+        )
+    if live_light_input.shadow_required_days != 30:
+        reasons.append("Build-13 Live-Light requires shadow_required_days=30")
+    if live_light_input.micro_live_required_days != 7:
+        reasons.append("Build-13 Live-Light requires micro_live_required_days=7")
+    if (
+        not live_light_input.micro_live_import_artifact_id
+        or live_light_input.micro_live_import_artifact_id == "none"
+    ):
+        reasons.append(
+            "Build-13 Live-Light requires a concrete micro_live_import_artifact_id"
+        )
+    if (
+        not live_light_input.micro_live_import_lineage_version
+        or live_light_input.micro_live_import_lineage_version == "n/a"
+    ):
+        reasons.append(
+            "Build-13 Live-Light requires a concrete micro_live_import_lineage_version"
+        )
+    if not live_light_input.import_artifact_id or live_light_input.import_artifact_id == "none":
+        reasons.append("Build-13 Live-Light requires a concrete import_artifact_id")
+    if (
+        not live_light_input.import_lineage_version
+        or live_light_input.import_lineage_version == "n/a"
+    ):
+        reasons.append("Build-13 Live-Light requires a concrete lineage_version")
+
+    return tuple(reasons)
+
+
 def build_live_light_input_from_micro_live(
     micro_live_summary: MicroLiveRunSummary,
     micro_live_payload: TechnicalDashboardPayload,
@@ -370,15 +758,87 @@ def build_live_light_input_from_micro_live(
         shadow_required_days=resolved_shadow_required_days,
         component_verdicts_rendered=resolved_component_verdicts_rendered,
         shadow_report_ready=resolved_shadow_report_ready,
+        shadow_promotable_engines=micro_live_summary.shadow_promotable_engines,
+        shadow_shadow_only_engines=micro_live_summary.shadow_shadow_only_engines,
+        shadow_rewrite_required_engines=micro_live_summary.shadow_rewrite_required_engines,
+        shadow_portfolio_judgment=micro_live_summary.shadow_portfolio_judgment,
+        micro_live_planned_engines=micro_live_summary.execution_plan.planned_engines,
+        micro_live_planned_pairs=micro_live_summary.execution_plan.planned_pairs,
         micro_live_stable_days=micro_live_stable_days,
         micro_live_required_days=micro_live_required_days,
         build14_live_eligible=build14_live_eligible,
         micro_live_import_artifact_id=micro_live_summary.import_artifact_id,
         micro_live_import_lineage_version=micro_live_summary.import_lineage_version,
         import_artifact_id=micro_live_payload.replay_import.artifact_id,
+        import_exported_from=micro_live_payload.replay_import.exported_from,
         import_lineage_version=micro_live_payload.replay_import.lineage_version,
         import_validation_status=micro_live_payload.replay_import.validation_status,
+        import_source_profile=micro_live_payload.replay_import.source_profile,
+        import_review_state=micro_live_payload.replay_import.review_state,
         import_rejection_reasons=micro_live_payload.replay_import.rejection_reasons,
+        import_dataset_ref=micro_live_payload.replay_import.dataset_ref,
+        import_clock_ref=micro_live_payload.replay_import.clock_ref,
+        import_activation_stage=micro_live_payload.replay_import.activation_stage,
+        import_health_state=micro_live_payload.replay_import.health_state,
+        import_compatibility_status=micro_live_payload.replay_import.compatibility_status,
+        import_compatibility_reasons=micro_live_payload.replay_import.compatibility_reasons,
+        import_feature_lineage_required=(
+            micro_live_payload.replay_import.feature_lineage_required
+        ),
+        import_feature_lineage_present=(
+            micro_live_payload.replay_import.feature_lineage_present
+        ),
+        import_feature_lineage_status=(
+            micro_live_payload.replay_import.feature_lineage_status
+        ),
+        import_feature_lineage_reasons=(
+            micro_live_payload.replay_import.feature_lineage_reasons
+        ),
+        import_transform_whitelist_required=(
+            micro_live_payload.replay_import.transform_whitelist_required
+        ),
+        import_transform_whitelist_present=(
+            micro_live_payload.replay_import.transform_whitelist_present
+        ),
+        import_transform_whitelist_status=(
+            micro_live_payload.replay_import.transform_whitelist_status
+        ),
+        import_transform_whitelist_reasons=(
+            micro_live_payload.replay_import.transform_whitelist_reasons
+        ),
+        import_signature_check_status=micro_live_payload.replay_import.signature_check_status,
+        import_signature_check_reasons=micro_live_payload.replay_import.signature_check_reasons,
+        import_conflict_resolution_mode=micro_live_payload.replay_import.conflict_resolution_mode,
+        import_conflict_hard_veto_action=micro_live_payload.replay_import.conflict_hard_veto_action,
+        import_conflict_score_aggregation_mode=(
+            micro_live_payload.replay_import.conflict_score_aggregation_mode
+        ),
+        import_conflict_size_reduce_mode=micro_live_payload.replay_import.conflict_size_reduce_mode,
+        import_conflict_rank_adjust_mode=micro_live_payload.replay_import.conflict_rank_adjust_mode,
+        import_conflict_additive_soft_boosts_allowed=(
+            micro_live_payload.replay_import.conflict_additive_soft_boosts_allowed
+        ),
+        import_conflict_additive_soft_reduces_allowed=(
+            micro_live_payload.replay_import.conflict_additive_soft_reduces_allowed
+        ),
+        import_registry_atomicity_mode=micro_live_payload.replay_import.registry_atomicity_mode,
+        import_registry_concurrency_model=micro_live_payload.replay_import.registry_concurrency_model,
+        import_registry_publish_requires_atomic_replace=(
+            micro_live_payload.replay_import.registry_publish_requires_atomic_replace
+        ),
+        import_registry_publish_requires_fsync=(
+            micro_live_payload.replay_import.registry_publish_requires_fsync
+        ),
+        import_registry_rollback_to_last_known_good=(
+            micro_live_payload.replay_import.registry_rollback_to_last_known_good
+        ),
+        import_payload_ref_count=micro_live_payload.replay_import.payload_ref_count,
+        import_payload_bundle_present=micro_live_payload.replay_import.payload_bundle_present,
+        import_review_export_ref=micro_live_payload.replay_import.review_export_ref,
+        import_feature_bridge_ref=micro_live_payload.replay_import.feature_bridge_ref,
+        import_parity_diagnostics_ref=micro_live_payload.replay_import.parity_diagnostics_ref,
+        import_replay_metrics_ref=micro_live_payload.replay_import.replay_metrics_ref,
+        import_replay_dtr_ref=micro_live_payload.replay_import.replay_dtr_ref,
         onboarding_accepted=onboarding_accepted,
         onboarding_review_state=onboarding_review_state,
         onboarding_reasons=onboarding_reasons,
@@ -413,15 +873,19 @@ def run_live_light_gate(
     """
 
     hard_blocking_reasons: list[str] = []
+    hard_blocking_reasons.extend(_governance_envelope_blocking_reasons(live_light_input))
 
     # HARD STATEMENT §0.6: 30j shadow prerequisite
     if shadow_state_dir is not None:
         from protocols.shadow_runtime import check_shadow_30j_gate
-        gate_passed, report = check_shadow_30j_gate(shadow_state_dir, profile="light")
+        gate_passed, report = check_shadow_30j_gate(
+            shadow_state_dir,
+            profile=live_light_input.profile.value,
+        )
         if not gate_passed:
             days = report.get("consecutive_days", 0)
             hard_blocking_reasons.append(
-                f"HARD STATEMENT: Light shadow requires 30 consecutive days, "
+                f"HARD STATEMENT: {live_light_input.profile.value} shadow requires 30 consecutive days, "
                 f"currently at {days}/30"
             )
     micro_live_needs_review = False
@@ -472,14 +936,183 @@ def run_live_light_gate(
             f"micro-live gate: {reason}"
             for reason in live_light_input.micro_live_blocking_reasons
         )
+    hard_blocking_reasons.extend(_rollout_temporal_blocking_reasons(live_light_input))
+    hard_blocking_reasons.extend(_micro_live_surface_blocking_reasons(live_light_input))
+    hard_blocking_reasons.extend(_live_surface_budget_blocking_reasons(live_light_input))
+    hard_blocking_reasons.extend(_shadow_engine_scope_blocking_reasons(live_light_input))
+    hard_blocking_reasons.extend(
+        _shadow_portfolio_blocking_reasons(
+            live_light_input.shadow_portfolio_judgment
+        )
+    )
 
     if normalized_import_status != "accepted":
         hard_blocking_reasons.append(
             "Build-13 Live-Light requires an accepted import_validation_status"
         )
+    if live_light_input.import_exported_from != "local":
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires import_exported_from=local"
+        )
+    if live_light_input.import_source_profile != "complete":
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires import_source_profile=complete"
+        )
     if live_light_input.import_rejection_reasons:
         hard_blocking_reasons.append(
             "Build-13 Live-Light requires empty import_rejection_reasons"
+        )
+    if live_light_input.import_review_state not in {"pending", "approved"}:
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires import_review_state to stay pending or approved"
+        )
+    if not live_light_input.import_dataset_ref:
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires import_dataset_ref"
+        )
+    if not live_light_input.import_clock_ref:
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires import_clock_ref"
+        )
+    if live_light_input.import_activation_stage != "shadow_ready":
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires import_activation_stage=shadow_ready"
+        )
+    if live_light_input.import_health_state != "active":
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires import_health_state=active"
+        )
+    if live_light_input.import_compatibility_status == "rejected":
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires a non-rejected import_compatibility_status"
+        )
+    hard_blocking_reasons.extend(
+        f"import compatibility gate: {reason}"
+        for reason in live_light_input.import_compatibility_reasons
+    )
+    if not live_light_input.import_feature_lineage_required:
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires import_feature_lineage_required=True"
+        )
+    if not live_light_input.import_feature_lineage_present:
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires import_feature_lineage_present=True"
+        )
+    if live_light_input.import_feature_lineage_status != "ok":
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires import_feature_lineage_status=ok"
+        )
+    hard_blocking_reasons.extend(
+        f"import feature lineage gate: {reason}"
+        for reason in live_light_input.import_feature_lineage_reasons
+    )
+    if not live_light_input.import_transform_whitelist_required:
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires import_transform_whitelist_required=True"
+        )
+    if not live_light_input.import_transform_whitelist_present:
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires import_transform_whitelist_present=True"
+        )
+    if live_light_input.import_transform_whitelist_status != "ok":
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires import_transform_whitelist_status=ok"
+        )
+    hard_blocking_reasons.extend(
+        f"import transform whitelist gate: {reason}"
+        for reason in live_light_input.import_transform_whitelist_reasons
+    )
+    if live_light_input.import_signature_check_status in {
+        "trust_store_unavailable",
+        "key_id_unknown",
+        "key_revoked",
+        "payload_hash_mismatch",
+    }:
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires a non-rejected import_signature_check_status"
+        )
+    hard_blocking_reasons.extend(
+        f"import signature gate: {reason}"
+        for reason in live_light_input.import_signature_check_reasons
+    )
+    if live_light_input.import_conflict_resolution_mode != "no_trade_then_strictest":
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires canonical import_conflict_resolution_mode"
+        )
+    if live_light_input.import_conflict_hard_veto_action != "no_trade":
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires canonical import_conflict_hard_veto_action"
+        )
+    if (
+        live_light_input.import_conflict_score_aggregation_mode
+        != "bounded_sum_with_global_cap"
+    ):
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires canonical import_conflict_score_aggregation_mode"
+        )
+    if live_light_input.import_conflict_size_reduce_mode != "min_factor_wins":
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires canonical import_conflict_size_reduce_mode"
+        )
+    if live_light_input.import_conflict_rank_adjust_mode != "bounded_sum":
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires canonical import_conflict_rank_adjust_mode"
+        )
+    if not live_light_input.import_conflict_additive_soft_boosts_allowed:
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires import_conflict_additive_soft_boosts_allowed=True"
+        )
+    if not live_light_input.import_conflict_additive_soft_reduces_allowed:
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires import_conflict_additive_soft_reduces_allowed=True"
+        )
+    if live_light_input.import_registry_atomicity_mode != "atomic_snapshot_swap":
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires canonical import_registry_atomicity_mode"
+        )
+    if live_light_input.import_registry_concurrency_model != "single_writer_multi_reader":
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires canonical import_registry_concurrency_model"
+        )
+    if not live_light_input.import_registry_publish_requires_atomic_replace:
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires import_registry_publish_requires_atomic_replace=True"
+        )
+    if not live_light_input.import_registry_publish_requires_fsync:
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires import_registry_publish_requires_fsync=True"
+        )
+    if not live_light_input.import_registry_rollback_to_last_known_good:
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires import_registry_rollback_to_last_known_good=True"
+        )
+    if live_light_input.import_payload_ref_count < 5:
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires import_payload_ref_count>=5"
+        )
+    if not live_light_input.import_payload_bundle_present:
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires import_payload_bundle_present=True"
+        )
+    if not live_light_input.import_review_export_ref:
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires import_review_export_ref"
+        )
+    if not live_light_input.import_feature_bridge_ref:
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires import_feature_bridge_ref"
+        )
+    if not live_light_input.import_parity_diagnostics_ref:
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires import_parity_diagnostics_ref"
+        )
+    if not live_light_input.import_replay_metrics_ref:
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires import_replay_metrics_ref"
+        )
+    if not live_light_input.import_replay_dtr_ref:
+        hard_blocking_reasons.append(
+            "Build-13 Live-Light requires import_replay_dtr_ref"
         )
     if (
         live_light_input.micro_live_import_artifact_id
@@ -697,6 +1330,7 @@ def run_live_light_gate(
         build14_confidence_penalty_weight=confidence_penalty_weight,
         build14_recommended_budget_factor=recommended_budget_factor,
         build14_live_eligible=live_light_input.build14_live_eligible,
+        shadow_portfolio_judgment=live_light_input.shadow_portfolio_judgment,
     )
 
 

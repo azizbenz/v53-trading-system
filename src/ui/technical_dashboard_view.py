@@ -11,6 +11,90 @@ def _join(values: tuple[str, ...], *, empty: str) -> str:
     return ", ".join(values) if values else empty
 
 
+def _replay_signature_card_status(payload: TechnicalDashboardPayload) -> str:
+    replay = payload.replay_import
+    if replay.signature_check_status == "trust_eligible":
+        return "healthy"
+    if replay.signature_check_status == "not_provided":
+        return "planned" if replay.artifact_id == "none" else "info"
+    return "warning"
+
+
+def _replay_compatibility_card_status(payload: TechnicalDashboardPayload) -> str:
+    replay = payload.replay_import
+    if replay.compatibility_status == "supported":
+        return "healthy"
+    if replay.compatibility_status == "not_evaluated":
+        return "planned" if replay.artifact_id == "none" else "info"
+    return "warning"
+
+
+def _replay_compatibility_card_detail(payload: TechnicalDashboardPayload) -> str:
+    replay = payload.replay_import
+    if replay.compatibility_status == "not_evaluated" and replay.artifact_id == "none":
+        return "No replay import candidate materialized"
+    return _join(replay.compatibility_reasons, empty="No compatibility policy issue")
+
+
+def _replay_signature_card_detail(payload: TechnicalDashboardPayload) -> str:
+    replay = payload.replay_import
+    if replay.signature_check_status == "not_provided" and replay.artifact_id == "none":
+        return "No replay import candidate materialized"
+    key_id = replay.signature_key_id or "none"
+    trust = replay.trusted_key_status or "n/a"
+    reasons = _join(replay.signature_check_reasons, empty="No signature policy issue")
+    return f"key={key_id} / trust={trust} / {reasons}"
+
+
+def _replay_conflict_card_status(payload: TechnicalDashboardPayload) -> str:
+    replay = payload.replay_import
+    if replay.conflict_resolution_mode == "" and replay.artifact_id == "none":
+        return "planned"
+    if replay.conflict_hard_veto_action == "no_trade":
+        return "healthy"
+    return "warning"
+
+
+def _replay_conflict_card_detail(payload: TechnicalDashboardPayload) -> str:
+    replay = payload.replay_import
+    if replay.conflict_resolution_mode == "" and replay.artifact_id == "none":
+        return "No replay import candidate materialized"
+    return (
+        f"veto={replay.conflict_hard_veto_action or 'n/a'} / "
+        f"score={replay.conflict_score_aggregation_mode or 'n/a'} / "
+        f"size={replay.conflict_size_reduce_mode or 'n/a'} / "
+        f"rank={replay.conflict_rank_adjust_mode or 'n/a'} / "
+        f"boosts={'yes' if replay.conflict_additive_soft_boosts_allowed else 'no'} / "
+        f"reduces={'yes' if replay.conflict_additive_soft_reduces_allowed else 'no'}"
+    )
+
+
+def _replay_registry_card_status(payload: TechnicalDashboardPayload) -> str:
+    replay = payload.replay_import
+    if replay.registry_atomicity_mode == "" and replay.artifact_id == "none":
+        return "planned"
+    if (
+        replay.registry_publish_requires_atomic_replace
+        and replay.registry_publish_requires_fsync
+        and replay.registry_rollback_to_last_known_good
+    ):
+        return "healthy"
+    return "warning"
+
+
+def _replay_registry_card_detail(payload: TechnicalDashboardPayload) -> str:
+    replay = payload.replay_import
+    if replay.registry_atomicity_mode == "" and replay.artifact_id == "none":
+        return "No replay import candidate materialized"
+    return (
+        f"atomic={replay.registry_atomicity_mode or 'n/a'} / "
+        f"concurrency={replay.registry_concurrency_model or 'n/a'} / "
+        f"atomic_replace={'yes' if replay.registry_publish_requires_atomic_replace else 'no'} / "
+        f"fsync={'yes' if replay.registry_publish_requires_fsync else 'no'} / "
+        f"lkg={'yes' if replay.registry_rollback_to_last_known_good else 'no'}"
+    )
+
+
 def _engine_card(payload: TechnicalDashboardPayload) -> DashboardCard:
     if not payload.system.active_engines:
         return DashboardCard(
@@ -43,6 +127,14 @@ def _operator_safing_value(payload: TechnicalDashboardPayload) -> str:
     if not action:
         return "none"
     return f"{action} -> {target}" if target else action
+
+
+def _operator_supervision_status(payload: TechnicalDashboardPayload) -> str:
+    if payload.system.headline_status == "critical":
+        return "critical"
+    if payload.system.headline_status == "warning":
+        return "warning"
+    return "healthy"
 
 
 def _build14_reader_status(value: str) -> str:
@@ -86,6 +178,40 @@ def _build14_reader_cards(payload: TechnicalDashboardPayload) -> tuple[Dashboard
     return tuple(cards)
 
 
+def _engine_physics_detail(engine) -> str:
+    parts: list[str] = []
+    physics = engine.physics
+    if physics.physics_pressure_state and physics.physics_pressure_state != "nominal":
+        parts.append(f"state={physics.physics_pressure_state}")
+    if physics.delta_confirmation is not None:
+        parts.append(f"delta={physics.delta_confirmation:.2f}")
+    if physics.execution_fragility is not None:
+        parts.append(f"fragility={physics.execution_fragility:.2f}")
+    if physics.market_toxicity is not None:
+        parts.append(f"toxicity={physics.market_toxicity:.2f}")
+    if physics.spread_regime_penalty is not None:
+        parts.append(f"spread_penalty={physics.spread_regime_penalty:.2f}")
+    if physics.competition_support is not None:
+        parts.append(f"competition={physics.competition_support:.2f}")
+    if physics.sweep_score is not None:
+        parts.append(f"sweep={physics.sweep_score:.2f}")
+    if physics.absorption_score is not None:
+        parts.append(f"absorption={physics.absorption_score:.2f}")
+    if physics.poc_reversion_score is not None:
+        parts.append(f"poc={physics.poc_reversion_score:.2f}")
+    if physics.false_breakout_score is not None:
+        parts.append(f"false_breakout={physics.false_breakout_score:.2f}")
+    if physics.fragility_score is not None:
+        parts.append(f"fragility_score={physics.fragility_score:.2f}")
+    if physics.toxicity_score is not None:
+        parts.append(f"toxicity_score={physics.toxicity_score:.2f}")
+    if physics.execution_survivability_score is not None:
+        parts.append(f"survivability={physics.execution_survivability_score:.2f}")
+    if physics.micro_friction_score is not None:
+        parts.append(f"micro_friction={physics.micro_friction_score:.2f}")
+    return ", ".join(parts)
+
+
 def _operator_controls_section(payload: TechnicalDashboardPayload) -> DashboardSection:
     allowed_actions = build_light_allowed_actions(payload.runtime_mode)
     safing_actions = tuple(
@@ -95,6 +221,7 @@ def _operator_controls_section(payload: TechnicalDashboardPayload) -> DashboardS
     )
     latest_safing_action = payload.alerts.operator_runtime.latest_safing_action
     kill_path_active = payload.alerts.kill_switch_active or latest_safing_action == "set_halted"
+    supervision_status = _operator_supervision_status(payload)
 
     return DashboardSection(
         title="Operator Controls",
@@ -110,8 +237,11 @@ def _operator_controls_section(payload: TechnicalDashboardPayload) -> DashboardS
                 key="operator_safing_controls",
                 label="Safing Controls",
                 value=str(len(safing_actions)),
-                status="healthy" if safing_actions else "planned",
-                detail=_join(safing_actions, empty="No safing action exposed"),
+                status=supervision_status if safing_actions else "planned",
+                detail=(
+                    f"{_join(safing_actions, empty='No safing action exposed')} / "
+                    f"supervision={payload.system.headline_status}"
+                ),
             ),
             DashboardCard(
                 key="operator_latest_safing",
@@ -133,7 +263,7 @@ def _operator_controls_section(payload: TechnicalDashboardPayload) -> DashboardS
                 key="operator_kill_path",
                 label="Kill Path",
                 value="active" if kill_path_active else "armed",
-                status="critical" if kill_path_active else "healthy",
+                status="critical" if kill_path_active else supervision_status,
                 detail=(
                     "SET_HALTED is available via the local operator UI"
                     if not payload.alerts.kill_switch_active
@@ -206,6 +336,38 @@ def _engine_cards(payload: TechnicalDashboardPayload) -> tuple[DashboardCard, ..
             f"freq={engine.useful_frequency:.2f} / sharpe={engine.sharpe_per_trade:.2f} / "
             f"dd={engine.drawdown_pct:.1f}%"
         )
+        detail = (
+            f"{detail} / penalized={engine.scoring_penalized_score:.2f} / "
+            f"size_mult={engine.scoring_final_size_multiplier:.2f}"
+        )
+        if engine.scoring_ranking_score is not None:
+            detail = f"{detail} / ranking={engine.scoring_ranking_score:.2f}"
+        if engine.scoring_summary:
+            detail = f"{detail} / scoring={engine.scoring_summary}"
+        if engine.risk_summary:
+            detail = f"{detail} / risk={engine.risk_summary}"
+        if engine.scoring_reason_codes:
+            detail = f"{detail} / score_codes={','.join(engine.scoring_reason_codes)}"
+        if engine.risk_reason_codes:
+            detail = f"{detail} / risk_codes={','.join(engine.risk_reason_codes)}"
+        if engine.selection_outcome_code:
+            detail = f"{detail} / selection={engine.selection_outcome_code}"
+        if engine.portfolio_verdict_code:
+            detail = f"{detail} / portfolio={engine.portfolio_verdict_code}"
+        if engine.phantom_trade:
+            phantom_detail = engine.phantom_reason_code or "phantom"
+            detail = f"{detail} / phantom={phantom_detail}"
+        if engine.hard_blocked:
+            detail = f"{detail} / hard_blocked=yes"
+        if engine.risk_decision_severity:
+            detail = f"{detail} / risk_severity={engine.risk_decision_severity}"
+        if engine.drawdown_state_code:
+            detail = f"{detail} / drawdown={engine.drawdown_state_code}"
+        if engine.blocked_guard_count > 0:
+            detail = f"{detail} / blocked_guards={engine.blocked_guard_count}"
+        physics_detail = _engine_physics_detail(engine)
+        if physics_detail:
+            detail = f"{detail} / physics={physics_detail}"
         if engine.suspension_reason:
             detail = f"{detail} / reason={engine.suspension_reason}"
         cards.append(
@@ -217,6 +379,110 @@ def _engine_cards(payload: TechnicalDashboardPayload) -> tuple[DashboardCard, ..
                     f"edge={engine.net_edge_bps:.1f}"
                 ),
                 status=status,
+                detail=detail,
+            )
+        )
+    return tuple(cards)
+
+
+def _engine_judgment_cards(payload: TechnicalDashboardPayload) -> tuple[DashboardCard, ...]:
+    judgment = payload.engine_judgment
+    if not judgment.cards:
+        return (
+            DashboardCard(
+                key="engine_judgment_empty",
+                label="Engine Judgment",
+                value="not available",
+                status=judgment.status,
+                detail="No Shadow report-derived engine judgment has been projected yet.",
+            ),
+        )
+
+    promotable_count = sum(1 for card in judgment.cards if card.judgment_verdict == "promotable")
+    shadow_only_count = sum(1 for card in judgment.cards if card.judgment_verdict == "shadow-only")
+    rewrite_required_count = sum(
+        1 for card in judgment.cards if card.judgment_verdict == "rewrite-required"
+    )
+    dormant_count = sum(1 for card in judgment.cards if card.judgment_verdict == "dormant")
+
+    cards: list[DashboardCard] = [
+        DashboardCard(
+            key="engine_judgment_summary",
+            label="Verdict Summary",
+            value=(
+                f"promotable={promotable_count} / shadow-only={shadow_only_count} / "
+                f"rewrite={rewrite_required_count} / dormant={dormant_count}"
+            ),
+            status=judgment.status,
+            detail=f"engines={len(judgment.cards)} / supervised verdict surface",
+        ),
+        DashboardCard(
+            key="engine_judgment_source",
+            label="Shadow Source",
+            value=(
+                f"{judgment.source_shadow_days_completed}/"
+                f"{judgment.source_shadow_required_days} day(s)"
+            ),
+            status=judgment.status,
+            detail=(
+                f"report={judgment.source_report_id or 'n/a'} / "
+                f"run={judgment.source_shadow_run_id or 'n/a'}"
+            ),
+        ),
+    ]
+    if judgment.portfolio_judgment_verdict:
+        detail = (
+            f"physics={judgment.portfolio_physics_pressure or 'n/a'} / "
+            f"redundancy={judgment.portfolio_redundancy_pressure or 'n/a'} / "
+            f"cluster={judgment.portfolio_cluster_pressure or 'n/a'} / "
+            f"beta={judgment.portfolio_beta_pressure or 'n/a'} / "
+            f"gross={judgment.portfolio_gross_capacity_pressure or 'n/a'} / "
+            f"loss={judgment.portfolio_loss_capacity_pressure or 'n/a'} / "
+            f"portfolio_rejected={judgment.portfolio_rejected_engine_count} / "
+            f"ranking_rejected={judgment.ranking_rejected_engine_count} / "
+            f"elevated_physics={judgment.elevated_physics_engine_count} / "
+            f"critical_physics={judgment.critical_physics_engine_count} / "
+            f"phantom={judgment.phantom_trade_count}"
+        )
+        if judgment.portfolio_rationale:
+            detail = f"{detail} / rationale={judgment.portfolio_rationale}"
+        cards.append(
+            DashboardCard(
+                key="engine_judgment_portfolio",
+                label="Portfolio Verdict",
+                value=judgment.portfolio_judgment_verdict,
+                status=(
+                    "healthy"
+                    if judgment.portfolio_judgment_verdict == "promotable"
+                    else "warning"
+                    if judgment.portfolio_judgment_verdict == "shadow-only"
+                    else "critical"
+                    if judgment.portfolio_judgment_verdict == "rewrite-required"
+                    else "planned"
+                ),
+                detail=detail,
+            )
+        )
+    for card in judgment.cards:
+        detail = (
+            f"shadow_component={card.component_verdict} / useful_freq={card.useful_frequency:.2f} / "
+            f"ce={card.ce_expected:.4f} / cost_bps={card.estimated_cost_bps:.2f} / "
+            f"edge_net={card.edge_net:.4f} / economic_pass={card.economic_pass_rate:.2f} / "
+            f"redundancy={card.redundancy_score:.2f} / "
+            f"portfolio_contribution={card.portfolio_contribution:.4f} / "
+            f"conflict={card.conflict_rate:.2f} / marginal_edge={card.marginal_edge:.4f} / "
+            f"obs={card.observations}"
+        )
+        if card.rationale:
+            detail = f"{detail} / rationale={card.rationale}"
+        if card.evidence_summary:
+            detail = f"{detail} / evidence={card.evidence_summary}"
+        cards.append(
+            DashboardCard(
+                key=f"engine_judgment_{card.engine_id.lower()}",
+                label=card.engine_id,
+                value=card.judgment_verdict,
+                status=card.status,
                 detail=detail,
             )
         )
@@ -295,6 +561,31 @@ def _execution_cards(payload: TechnicalDashboardPayload) -> tuple[DashboardCard,
             ),
             detail="execution alert count",
         ),
+        DashboardCard(
+            key="execution_no_trade_bridge",
+            label="No-trade bridge",
+            value=(
+                f"sel={payload.execution_no_trade_bridge.selection_status} / "
+                f"loaded={'yes' if payload.execution_no_trade_bridge.loaded else 'no'}"
+            ),
+            status=payload.execution_no_trade_bridge.status,
+            detail=(
+                f"cfg={'yes' if payload.execution_no_trade_bridge.configured else 'no'} / "
+                f"binding={'yes' if payload.execution_no_trade_bridge.binding_present else 'no'} / "
+                f"snapshot={payload.execution_no_trade_bridge.current_snapshot_id or 'none'} / "
+                f"lkg={payload.execution_no_trade_bridge.last_known_good_snapshot_id or 'none'}"
+                + (
+                    f" / ref={payload.execution_no_trade_bridge.compiled_plan_ref}"
+                    if payload.execution_no_trade_bridge.compiled_plan_ref
+                    else ""
+                )
+                + (
+                    f" / err={payload.execution_no_trade_bridge.error_type}"
+                    if payload.execution_no_trade_bridge.error_type
+                    else ""
+                )
+            ),
+        ),
     )
 
 
@@ -342,6 +633,60 @@ def _infra_cards(payload: TechnicalDashboardPayload) -> tuple[DashboardCard, ...
             status="critical" if payload.infra.kill_switch_active else "warning" if (
                 payload.infra.dtr_loss_count > 0 or payload.infra.log_loss_count > 0
             ) else "healthy",
+        ),
+    )
+
+
+def _account_user_data_section(payload: TechnicalDashboardPayload) -> DashboardSection:
+    account = payload.account_user_data
+    if account.authenticated:
+        auth_value = "authenticated"
+    elif account.summary_ref:
+        auth_value = "not_authenticated"
+    else:
+        auth_value = "not_configured"
+
+    event_types = _join(account.event_types, empty="No account event observed")
+    pair_scope = _join(account.pair_scope, empty="No market pair scope recorded")
+    endpoint = account.endpoint or "No authenticated endpoint recorded"
+    return DashboardSection(
+        title="Account / User Data",
+        cards=(
+            DashboardCard(
+                key="account_user_data_auth",
+                label="Authentication",
+                value=auth_value,
+                status=account.status,
+                detail=(
+                    f"session={account.session_date or 'n/a'} / "
+                    f"mode={account.acquisition_mode or 'n/a'} / "
+                    f"endpoint={endpoint}"
+                ),
+            ),
+            DashboardCard(
+                key="account_user_data_subscription",
+                label="Subscription",
+                value=(
+                    f"id={account.subscription_id if account.subscription_id is not None else 'none'} / "
+                    f"events={account.event_count}"
+                ),
+                status="healthy" if account.authenticated else account.status,
+                detail=event_types,
+            ),
+            DashboardCard(
+                key="account_user_data_scope",
+                label="Scope",
+                value=f"pairs={len(account.pair_scope)} / event_types={len(account.event_types)}",
+                status="info" if account.pair_scope else account.status,
+                detail=pair_scope,
+            ),
+            DashboardCard(
+                key="account_user_data_artifacts",
+                label="Artifacts",
+                value="available" if account.summary_ref else "missing",
+                status=("healthy" if account.summary_ref else account.status),
+                detail=account.detail,
+            ),
         ),
     )
 
@@ -452,6 +797,10 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LightD
             cards=_engine_cards(payload),
         ),
         DashboardSection(
+            title="Engine Judgement",
+            cards=_engine_judgment_cards(payload),
+        ),
+        DashboardSection(
             title="Risk",
             cards=_risk_cards(payload),
         ),
@@ -463,6 +812,7 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LightD
             title="Data & Infra",
             cards=_infra_cards(payload),
         ),
+        _account_user_data_section(payload),
         DashboardSection(
             title="Build-9 Meta",
             cards=(
@@ -539,6 +889,26 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LightD
                         else "info"
                         if payload.build9x.status != "planned"
                         else "planned"
+                    ),
+                ),
+                DashboardCard(
+                    key="enrichment_mapping",
+                    label="Enrichment Mapping",
+                    value=(
+                        f"mapped={payload.build9x.enrichment_hypothesis_count} / "
+                        f"replay={payload.build9x.expected_replay_evidence_count} / "
+                        f"shadow={payload.build9x.expected_shadow_evidence_count}"
+                    ),
+                    status=(
+                        "warning"
+                        if payload.build9x.enrichment_hypothesis_count > 0
+                        else "info"
+                        if payload.build9x.status != "planned"
+                        else "planned"
+                    ),
+                    detail=(
+                        f"{payload.build9x.enrichment_summary} / "
+                        f"family={payload.build9x.latest_enrichment_signal_family or 'n/a'}"
                     ),
                 ),
                 DashboardCard(
@@ -796,7 +1166,7 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LightD
             ),
         ),
         DashboardSection(
-            title="Build-13 Live-Light",
+            title="Build-13 Live",
             cards=(
                 DashboardCard(
                     key="live_light_run_state",
@@ -1014,6 +1384,34 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LightD
                         payload.replay_import.rejection_reasons,
                         empty="No validation rejection",
                     ),
+                ),
+                DashboardCard(
+                    key="compatibility_policy",
+                    label="Compatibility Policy",
+                    value=payload.replay_import.compatibility_status,
+                    status=_replay_compatibility_card_status(payload),
+                    detail=_replay_compatibility_card_detail(payload),
+                ),
+                DashboardCard(
+                    key="signature_policy",
+                    label="Signature Policy",
+                    value=payload.replay_import.signature_check_status,
+                    status=_replay_signature_card_status(payload),
+                    detail=_replay_signature_card_detail(payload),
+                ),
+                DashboardCard(
+                    key="conflict_policy",
+                    label="Conflict Policy",
+                    value=payload.replay_import.conflict_resolution_mode or "not_configured",
+                    status=_replay_conflict_card_status(payload),
+                    detail=_replay_conflict_card_detail(payload),
+                ),
+                DashboardCard(
+                    key="registry_policy",
+                    label="Registry Policy",
+                    value=payload.replay_import.registry_atomicity_mode or "not_configured",
+                    status=_replay_registry_card_status(payload),
+                    detail=_replay_registry_card_detail(payload),
                 ),
             ),
         ),

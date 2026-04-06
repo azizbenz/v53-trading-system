@@ -73,7 +73,7 @@ def evaluate_shadow_readiness(
                 "complete_enablers",
                 {"build_market_toxicity_snapshot", "build_execution_fragility_score"},
             )
-            and is_module_active_in_profile("complete_enablers", ProfileId.LIGHT)
+            and is_module_active_in_profile("complete_enablers", ProfileId.COMPLETE)
         )
 
     missing_items: list[str] = []

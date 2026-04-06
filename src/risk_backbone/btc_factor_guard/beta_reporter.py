@@ -50,6 +50,11 @@ class BetaReporter:
             reason=reason, portfolio_beta_after=self._current_beta, timestamp=timestamp,
         ))
 
+    def sync_current_beta(self, portfolio_beta: float) -> None:
+        """Synchronize current beta from a governed portfolio snapshot."""
+
+        self._current_beta = portfolio_beta
+
     def get_stats(self) -> BetaStats:
         return BetaStats(
             current_portfolio_beta=self._current_beta,

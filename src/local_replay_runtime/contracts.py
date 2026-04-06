@@ -6,7 +6,13 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from interface_contracts import ProfileId, RuntimeMode, StrategyClassification
+from interface_contracts import (
+    ArtifactActivationStage,
+    ArtifactHealthState,
+    ProfileId,
+    RuntimeMode,
+    StrategyClassification,
+)
 from local_replay_runtime.artifact_manifest import ArtifactManifest
 from local_replay_runtime.enums import ReplayArtifactKind, ReplayLifecycleState
 
@@ -67,9 +73,19 @@ class ReplayBundle(BaseModel, frozen=True):
 
     manifest: ArtifactManifest
     artifact_kind: ReplayArtifactKind
+    activation_stage: ArtifactActivationStage = ArtifactActivationStage.REPLAY_ONLY
+    health_state: ArtifactHealthState = ArtifactHealthState.ACTIVE
     lifecycle_state: ReplayLifecycleState = ReplayLifecycleState.DRAFT
     payload_refs: tuple[str, ...] = ()
     notes: str = ""
+
+    @model_validator(mode="after")
+    def validate_bundle_policy(self) -> "ReplayBundle":
+        if self.activation_stage != self.manifest.activation_stage:
+            raise ValueError("ReplayBundle activation_stage must match manifest activation_stage")
+        if self.health_state != self.manifest.health_state:
+            raise ValueError("ReplayBundle health_state must match manifest health_state")
+        return self
 
 
 class ReplayExecutionPlan(BaseModel, frozen=True):

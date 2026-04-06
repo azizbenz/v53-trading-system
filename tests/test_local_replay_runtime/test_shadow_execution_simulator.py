@@ -5,6 +5,8 @@ from __future__ import annotations
 from local_replay_runtime import (
     HistoricalReplayDataset,
     HistoricalReplayOpportunity,
+    ParityTolerancePolicy,
+    ShadowExecutionSimulatorConfig,
     build_parity_diagnostics_payload,
     simulate_shadow_compatible_dtrs,
 )
@@ -100,4 +102,22 @@ def test_build_parity_diagnostics_payload_reports_ok_when_baselines_match():
 
     assert payload["parity_status"] == "ok"
     assert payload["decision_match_rate"] == 1.0
+    assert payload["score_alignment"] == "within_prudent_tolerance"
     assert payload["cost_alignment"] == "within_prudent_tolerance"
+    assert payload["baseline_status"] == "sufficient"
+    assert payload["parity_policy"]["float_precision"] == "binary64"
+
+
+def test_build_parity_diagnostics_payload_warns_when_policy_is_stricter_than_data():
+    dataset = _dataset()
+    records = simulate_shadow_compatible_dtrs(dataset)
+    payload = build_parity_diagnostics_payload(
+        dataset,
+        records,
+        config=ShadowExecutionSimulatorConfig(
+            parity_policy=ParityTolerancePolicy(minimum_compared_records=4)
+        ),
+    )
+
+    assert payload["parity_status"] == "warning"
+    assert payload["baseline_status"] == "insufficient"

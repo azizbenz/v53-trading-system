@@ -9,9 +9,22 @@ import pytest
 from pydantic import ValidationError
 
 import local_replay_runtime
-from interface_contracts import ProfileId, RuntimeMode, StrategyClassification
+from interface_contracts import (
+    CANONICAL_FEATURE_SET_VERSION,
+    CANONICAL_TRANSFORM_SET_VERSION,
+    ProfileId,
+    RuntimeMode,
+    StrategyClassification,
+)
 from local_replay_runtime import (
+    ActionUnit,
     ArtifactManifest,
+    ArtifactActivationStage,
+    ArtifactHealthState,
+    ArtifactLogicFormat,
+    ArtifactActionKind,
+    HookId,
+    HOOK_MODULE_BY_ID,
     LocalReplayOrchestrator,
     LocalReplayEvidenceRecorder,
     LocalReplayEvidenceRecorderConfig,
@@ -73,6 +86,13 @@ def test_local_replay_runtime_exports_expected_symbols():
         "ShadowExecutionSimulatorConfig",
         "simulate_shadow_compatible_dtrs",
         "build_parity_diagnostics_payload",
+        "ArtifactActivationStage",
+        "ArtifactHealthState",
+        "ArtifactLogicFormat",
+        "ArtifactActionKind",
+        "ActionUnit",
+        "HookId",
+        "HOOK_MODULE_BY_ID",
     }.issubset(set(local_replay_runtime.__all__))
 
 
@@ -88,6 +108,15 @@ def test_artifact_manifest_accepts_unified_v53_shape():
 
     assert manifest.runtime_mode == RuntimeMode.LOCAL_REPLAY
     assert manifest.shared_core_id == SHARED_CORE_ID
+    assert manifest.hypothesis_ids == ()
+    assert manifest.activation_stage == ArtifactActivationStage.REPLAY_ONLY
+    assert manifest.health_state == ArtifactHealthState.ACTIVE
+    assert manifest.distilled_logic_format == ArtifactLogicFormat.RULE_AST_JSON
+    assert manifest.feature_set_version == CANONICAL_FEATURE_SET_VERSION
+    assert manifest.transform_set_version == CANONICAL_TRANSFORM_SET_VERSION
+    assert manifest.allowed_hook_ids == ()
+    assert manifest.allowed_action_kinds == ()
+    assert manifest.allowed_action_units == ()
 
 
 def test_artifact_manifest_rejects_backtest_profile():
@@ -166,6 +195,17 @@ def test_artifact_manifest_rejects_duplicate_governed_refs():
             diagnostic_ids=("diag-1", "diag-1"),
         )
 
+    with pytest.raises(ValidationError):
+        ArtifactManifest(
+            artifact_id="artifact-2h",
+            correlation_id="corr-2h",
+            source_profile=ProfileId.LIGHT,
+            strategy_classification=StrategyClassification.A_VARIANT,
+            strategy_version="a.v1",
+            lineage_version="a.v1.1",
+            hypothesis_ids=("hyp-1", "hyp-1"),
+        )
+
 
 def test_artifact_manifest_rejects_implicit_promotion_request():
     with pytest.raises(ValidationError):
@@ -192,14 +232,15 @@ def test_replay_run_manifest_accepts_canonical_local_replay_shape():
         tested_pairs=("BTCUSDT", "ETHUSDT"),
         dataset_manifest_id="dataset-1",
         timeframe_scope="2026-03-01/2026-03-31",
-        feature_set_version="feature.v1",
+        feature_set_version="1.0.0",
+        transform_set_version="1.0.0",
         formula_set_version="formula.v1",
         scoring_version="score.v1",
         regime_version="regime.v1",
         risk_policy_version="risk.v1",
         cost_model_version="cost.v1",
         performance_mode="shadow_fidelity_mode",
-        artifact_schema_version="artifact.v1",
+        artifact_schema_version="1.0.0",
         artifact_hash="hash-1",
         clock_id="clock-1",
         start_timestamp_ms=1_700,
@@ -210,6 +251,8 @@ def test_replay_run_manifest_accepts_canonical_local_replay_shape():
 
     assert manifest.runtime_mode == RuntimeMode.LOCAL_REPLAY
     assert manifest.record_count == 42
+    assert manifest.feature_set_version == CANONICAL_FEATURE_SET_VERSION
+    assert manifest.transform_set_version == CANONICAL_TRANSFORM_SET_VERSION
 
 
 def test_replay_run_manifest_rejects_non_local_runtime_and_duplicate_scope():
@@ -226,14 +269,15 @@ def test_replay_run_manifest_rejects_non_local_runtime_and_duplicate_scope():
             tested_pairs=("BTCUSDT",),
             dataset_manifest_id="dataset-1",
             timeframe_scope="2026-03-01/2026-03-31",
-            feature_set_version="feature.v1",
+            feature_set_version="1.0.0",
+            transform_set_version="1.0.0",
             formula_set_version="formula.v1",
             scoring_version="score.v1",
             regime_version="regime.v1",
             risk_policy_version="risk.v1",
             cost_model_version="cost.v1",
             performance_mode="shadow_fidelity_mode",
-            artifact_schema_version="artifact.v1",
+            artifact_schema_version="1.0.0",
             artifact_hash="hash-1",
             clock_id="clock-1",
             start_timestamp_ms=1_700,
@@ -252,14 +296,15 @@ def test_replay_run_manifest_rejects_non_local_runtime_and_duplicate_scope():
             tested_pairs=("BTCUSDT",),
             dataset_manifest_id="dataset-1",
             timeframe_scope="2026-03-01/2026-03-31",
-            feature_set_version="feature.v1",
+            feature_set_version="1.0.0",
+            transform_set_version="1.0.0",
             formula_set_version="formula.v1",
             scoring_version="score.v1",
             regime_version="regime.v1",
             risk_policy_version="risk.v1",
             cost_model_version="cost.v1",
             performance_mode="research_fast_mode",
-            artifact_schema_version="artifact.v1",
+            artifact_schema_version="1.0.0",
             artifact_hash="hash-1",
             clock_id="clock-1",
             start_timestamp_ms=2_000,
@@ -320,6 +365,8 @@ def test_replay_bundle_wraps_manifest_without_mutating_policy():
     )
 
     assert bundle.manifest.artifact_id == "artifact-3"
+    assert bundle.activation_stage == ArtifactActivationStage.REPLAY_ONLY
+    assert bundle.health_state == ArtifactHealthState.ACTIVE
     assert bundle.lifecycle_state == ReplayLifecycleState.VALIDATED
 
 
@@ -338,6 +385,72 @@ def test_replay_bundle_defaults_to_draft_state():
     )
 
     assert bundle.lifecycle_state == ReplayLifecycleState.DRAFT
+
+
+def test_artifact_manifest_accepts_governed_hook_and_action_skeleton():
+    manifest = ArtifactManifest(
+        artifact_id="artifact-hooks",
+        correlation_id="corr-hooks",
+        source_profile=ProfileId.LIGHT,
+        strategy_classification=StrategyClassification.A_VARIANT,
+        strategy_version="a.v1",
+        lineage_version="a.v1.1",
+        activation_stage=ArtifactActivationStage.SHADOW_READY,
+        health_state=ArtifactHealthState.REVIEW_REQUIRED,
+        distilled_logic_format=ArtifactLogicFormat.THRESHOLD_JSON,
+        allowed_hook_ids=(HookId.ENGINE_A_PRE_ENTRY_CONFIRMATION,),
+        allowed_action_kinds=(ArtifactActionKind.SOFT_BOOST,),
+        allowed_action_units=(ActionUnit.RAW_SCORE_MULTIPLIER,),
+    )
+
+    assert manifest.allowed_hook_ids == (HookId.ENGINE_A_PRE_ENTRY_CONFIRMATION,)
+    assert manifest.allowed_action_kinds == (ArtifactActionKind.SOFT_BOOST,)
+    assert manifest.allowed_action_units == (ActionUnit.RAW_SCORE_MULTIPLIER,)
+    assert HOOK_MODULE_BY_ID[HookId.ENGINE_A_PRE_ENTRY_CONFIRMATION] == "engine_a_hooks.py"
+
+
+def test_artifact_manifest_rejects_duplicate_hook_and_action_entries():
+    with pytest.raises(ValidationError):
+        ArtifactManifest(
+            artifact_id="artifact-dup-hooks",
+            correlation_id="corr-dup-hooks",
+            source_profile=ProfileId.LIGHT,
+            strategy_classification=StrategyClassification.A_VARIANT,
+            strategy_version="a.v1",
+            lineage_version="a.v1.1",
+            allowed_hook_ids=(
+                HookId.ENGINE_A_PRE_ENTRY_CONFIRMATION,
+                HookId.ENGINE_A_PRE_ENTRY_CONFIRMATION,
+            ),
+        )
+
+    with pytest.raises(ValidationError):
+        ArtifactManifest(
+            artifact_id="artifact-dup-actions",
+            correlation_id="corr-dup-actions",
+            source_profile=ProfileId.LIGHT,
+            strategy_classification=StrategyClassification.A_VARIANT,
+            strategy_version="a.v1",
+            lineage_version="a.v1.1",
+            allowed_action_kinds=(
+                ArtifactActionKind.SOFT_BOOST,
+                ArtifactActionKind.SOFT_BOOST,
+            ),
+        )
+
+    with pytest.raises(ValidationError):
+        ArtifactManifest(
+            artifact_id="artifact-dup-action-units",
+            correlation_id="corr-dup-action-units",
+            source_profile=ProfileId.LIGHT,
+            strategy_classification=StrategyClassification.A_VARIANT,
+            strategy_version="a.v1",
+            lineage_version="a.v1.1",
+            allowed_action_units=(
+                ActionUnit.RAW_SCORE_MULTIPLIER,
+                ActionUnit.RAW_SCORE_MULTIPLIER,
+            ),
+        )
 
 
 def test_replay_clock_ref_rejects_inverted_ranges():
@@ -394,6 +507,7 @@ def test_local_replay_orchestrator_prepares_validated_bundle_when_refs_are_compl
     assert plan.bundle.manifest.review_export_ref == "exports/review.md"
     assert plan.bundle.manifest.feature_bridge_ref == "exports/feature_bridge.json"
     assert plan.bundle.manifest.parity_diagnostics_ref == "exports/parity.json"
+    assert plan.bundle.manifest.hypothesis_ids == ()
 
     evidence = LocalReplayOrchestrator.build_runtime_evidence(plan)
     assert isinstance(evidence, LocalReplayRuntimeEvidence)

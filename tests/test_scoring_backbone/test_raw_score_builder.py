@@ -118,6 +118,7 @@ class TestRawScoreCalculator:
             pair="BTCUSDT",
             features={"momentum": 0.5, "volume": 1.0},
             weights={"momentum": 2.0, "volume": 0.5},
+            scoring_version="v1",
         )
         assert result.raw_score == pytest.approx(1.5)
 
@@ -127,6 +128,7 @@ class TestRawScoreCalculator:
             pair="BTCUSDT",
             features={"momentum": 0.5, "volume": 1.0},
             weights={"momentum": 2.0, "volume": 0.5},
+            scoring_version="v1",
         )
         assert result.weighted_contributions["momentum"] == pytest.approx(1.0)
         assert result.weighted_contributions["volume"] == pytest.approx(0.5)
@@ -137,6 +139,7 @@ class TestRawScoreCalculator:
             pair="BTCUSDT",
             features={"momentum": 0.5, "extra": 9.0},
             weights={"momentum": 2.0},
+            scoring_version="v1",
         )
         assert result.raw_score == pytest.approx(1.0)
         assert "extra" not in result.weighted_contributions
@@ -145,7 +148,7 @@ class TestRawScoreCalculator:
         """Same input → same score."""
         kwargs = dict(
             engine_id="eng1", pair="BTCUSDT",
-            features={"a": 1.0, "b": 2.0}, weights={"a": 0.5, "b": 0.3},
+            features={"a": 1.0, "b": 2.0}, weights={"a": 0.5, "b": 0.3}, scoring_version="v1",
         )
         r1 = calculate_raw_score(**kwargs)
         r2 = calculate_raw_score(**kwargs)
@@ -163,13 +166,24 @@ class TestRawScoreCalculator:
             engine_id="eng1", pair="BTCUSDT",
             features={"z_feat": 1.0, "a_feat": 2.0},
             weights={"z_feat": 1.0, "a_feat": 1.0},
+            scoring_version="v1",
         )
         assert result.features_used == ("a_feat", "z_feat")
 
     def test_result_frozen(self):
-        result = calculate_raw_score("eng1", "BTC", {"a": 1.0}, {"a": 1.0})
+        result = calculate_raw_score("eng1", "BTC", {"a": 1.0}, {"a": 1.0}, scoring_version="v1")
         with pytest.raises(Exception):
             result.raw_score = 999.0
+
+    def test_rejects_blank_scoring_version(self):
+        with pytest.raises(ValueError, match="requires non-empty scoring_version"):
+            calculate_raw_score(
+                engine_id="eng1",
+                pair="BTCUSDT",
+                features={"a": 1.0},
+                weights={"a": 1.0},
+                scoring_version="   ",
+            )
 
 
 # ── score_component_breakdown ──
@@ -254,3 +268,8 @@ class TestScoreReporter:
         payload = reporter.evaluate("eng1", "BTC", 1.0, {}, (), "v1")
         with pytest.raises(Exception):
             payload.raw_score = 999.0
+
+    def test_rejects_blank_scoring_version(self):
+        reporter = ScoreReporter()
+        with pytest.raises(ValueError, match="requires non-empty scoring_version"):
+            reporter.evaluate("eng1", "BTC", 1.0, {}, (), "   ")

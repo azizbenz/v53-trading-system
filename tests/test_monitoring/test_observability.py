@@ -134,6 +134,11 @@ def _payload(
                 net_edge_bps=12.0,
                 expected_cost_bps=4.0,
                 ce_expected=0.0007,
+                physics_pressure_state="nominal",
+                fragility_score=0.08,
+                toxicity_score=0.14,
+                execution_survivability_score=0.94,
+                micro_friction_score=0.09,
             ),
             collect_engine_metrics(
                 engine_id="engine_b",
@@ -142,6 +147,11 @@ def _payload(
                 expected_cost_bps=3.0,
                 ce_expected=0.0002,
                 stale=True,
+                physics_pressure_state="elevated",
+                fragility_score=0.52,
+                toxicity_score=0.63,
+                execution_survivability_score=0.41,
+                micro_friction_score=0.47,
             ),
         ),
         pairs=(
@@ -354,6 +364,31 @@ def test_observability_export_tracks_modules_engines_and_governed_flags():
             lifecycle_state="exported",
             validation_status="needs_revision",
             review_state="needs_revision",
+            compatibility_status="rejected",
+            compatibility_reasons=("ARTIFACT_SCHEMA_MINOR_UNSUPPORTED", "FEATURE_SET_UNKNOWN"),
+            feature_lineage_required=True,
+            feature_lineage_present=True,
+            feature_lineage_status="invalid",
+            feature_lineage_reasons=("FEATURE_LINEAGE_MISSING_FEATURE_ID:delta_proxy_soft",),
+            transform_whitelist_required=True,
+            transform_whitelist_present=True,
+            transform_whitelist_status="invalid",
+            transform_whitelist_reasons=("TRANSFORM_WHITELIST_UNKNOWN_TRANSFORM:clip01",),
+            signature_check_status="key_id_unknown",
+            signature_key_id="lab_unknown",
+            signature_check_reasons=("KEY_ID_UNKNOWN",),
+            conflict_resolution_mode="no_trade_then_strictest",
+            conflict_hard_veto_action="no_trade",
+            conflict_score_aggregation_mode="bounded_sum_with_global_cap",
+            conflict_size_reduce_mode="min_factor_wins",
+            conflict_rank_adjust_mode="bounded_sum",
+            conflict_additive_soft_boosts_allowed=True,
+            conflict_additive_soft_reduces_allowed=True,
+            registry_atomicity_mode="atomic_snapshot_swap",
+            registry_concurrency_model="single_writer_multi_reader",
+            registry_publish_requires_atomic_replace=True,
+            registry_publish_requires_fsync=True,
+            registry_rollback_to_last_known_good=True,
             rejection_reasons=("lineage mismatch",),
         ),
         operator_runtime=OperatorRuntimeProjection(
@@ -378,7 +413,7 @@ def test_observability_export_tracks_modules_engines_and_governed_flags():
                     target="risk",
                     accepted=False,
                     message="operator action rejected: modify_risk_caps",
-                    rejection_reason="risk cap changes are forbidden in the locked Light UI",
+                    rejection_reason="risk cap changes are forbidden in the compatibility operator UI",
                 ),
                 OperatorRuntimeEvent(
                     timestamp_ms=1_700_000_000_012,
@@ -391,7 +426,7 @@ def test_observability_export_tracks_modules_engines_and_governed_flags():
                 ),
             ),
             rejection_event_count=1,
-            latest_rejection_reason="risk cap changes are forbidden in the locked Light UI",
+            latest_rejection_reason="risk cap changes are forbidden in the compatibility operator UI",
             pending_notification_count=2,
             pending_notification_alert_ids=("corr-obs:loss", "corr-obs:kill"),
             acknowledged_notification_count=1,
@@ -437,7 +472,72 @@ def test_observability_export_tracks_modules_engines_and_governed_flags():
         for sample in export.samples
     )
     assert any(sample.name == "v53_replay_validation_accepted" and sample.value == 0.0 for sample in export.samples)
+    assert any(
+        sample.name == "v53_replay_compatibility_status"
+        and sample.labels["status"] == "rejected"
+        for sample in export.samples
+    )
+    assert any(sample.name == "v53_replay_compatibility_reason_count" and sample.value == 2.0 for sample in export.samples)
+    assert any(sample.name == "v53_replay_feature_lineage_required" and sample.value == 1.0 for sample in export.samples)
+    assert any(sample.name == "v53_replay_feature_lineage_present" and sample.value == 1.0 for sample in export.samples)
+    assert any(
+        sample.name == "v53_replay_feature_lineage_status"
+        and sample.labels["status"] == "invalid"
+        for sample in export.samples
+    )
+    assert any(sample.name == "v53_replay_feature_lineage_reason_count" and sample.value == 1.0 for sample in export.samples)
+    assert any(sample.name == "v53_replay_transform_whitelist_required" and sample.value == 1.0 for sample in export.samples)
+    assert any(sample.name == "v53_replay_transform_whitelist_present" and sample.value == 1.0 for sample in export.samples)
+    assert any(
+        sample.name == "v53_replay_transform_whitelist_status"
+        and sample.labels["status"] == "invalid"
+        for sample in export.samples
+    )
+    assert any(sample.name == "v53_replay_transform_whitelist_reason_count" and sample.value == 1.0 for sample in export.samples)
+    assert any(sample.name == "v53_replay_signature_present" and sample.value == 1.0 for sample in export.samples)
+    assert any(
+        sample.name == "v53_replay_signature_check_status"
+        and sample.labels["status"] == "key_id_unknown"
+        and sample.labels["trusted_key_status"] == "n/a"
+        for sample in export.samples
+    )
+    assert any(sample.name == "v53_replay_signature_reason_count" and sample.value == 1.0 for sample in export.samples)
+    assert any(
+        sample.name == "v53_replay_conflict_resolution_mode"
+        and sample.labels["resolution_mode"] == "no_trade_then_strictest"
+        and sample.labels["hard_veto_action"] == "no_trade"
+        for sample in export.samples
+    )
+    assert any(sample.name == "v53_replay_conflict_additive_soft_boosts_allowed" and sample.value == 1.0 for sample in export.samples)
+    assert any(sample.name == "v53_replay_conflict_additive_soft_reduces_allowed" and sample.value == 1.0 for sample in export.samples)
+    assert any(
+        sample.name == "v53_replay_registry_atomicity_mode"
+        and sample.labels["atomicity_mode"] == "atomic_snapshot_swap"
+        and sample.labels["concurrency_model"] == "single_writer_multi_reader"
+        for sample in export.samples
+    )
+    assert any(sample.name == "v53_replay_registry_atomic_replace_required" and sample.value == 1.0 for sample in export.samples)
+    assert any(sample.name == "v53_replay_registry_fsync_required" and sample.value == 1.0 for sample in export.samples)
+    assert any(sample.name == "v53_replay_registry_last_known_good_enabled" and sample.value == 1.0 for sample in export.samples)
     assert any(sample.name == "v53_alert_operator_event_count" and sample.value == 4.0 for sample in export.samples)
+    assert any(
+        sample.name == "v53_engine_physics_pressure_state"
+        and sample.labels["engine"] == "engine_b"
+        and sample.labels["state"] == "elevated"
+        for sample in export.samples
+    )
+    assert any(
+        sample.name == "v53_engine_execution_survivability_score"
+        and sample.labels["engine"] == "engine_b"
+        and sample.value == 0.41
+        for sample in export.samples
+    )
+    assert any(
+        sample.name == "v53_engine_micro_friction_score"
+        and sample.labels["engine"] == "engine_a"
+        and sample.value == 0.09
+        for sample in export.samples
+    )
     assert any(
         sample.name == "v53_alert_operator_rejection_event_count" and sample.value == 1.0
         for sample in export.samples
@@ -458,12 +558,12 @@ def test_observability_export_tracks_modules_engines_and_governed_flags():
     )
     assert any(
         sample.name == "v53_alert_operator_latest_rejection"
-        and sample.labels["reason"] == "risk cap changes are forbidden in the locked Light UI"
+        and sample.labels["reason"] == "risk cap changes are forbidden in the compatibility operator UI"
         for sample in export.samples
     )
     assert any(
         sample.name == "v53_alert_operator_recent_rejection"
-        and sample.labels["reason"] == "risk cap changes are forbidden in the locked Light UI"
+        and sample.labels["reason"] == "risk cap changes are forbidden in the compatibility operator UI"
         for sample in export.samples
     )
 
@@ -494,3 +594,41 @@ def test_observability_export_preserves_correlation_id_in_all_samples():
     )
 
     assert all(sample.labels.get("correlation_id") == "corr-obs" for sample in export.samples)
+
+
+def test_observability_export_projects_execution_no_trade_bridge_metrics():
+    payload = _payload().model_copy(
+        update={
+            "execution_no_trade_bridge": _payload().execution_no_trade_bridge.model_copy(
+                update={
+                    "status": "warning",
+                    "configured": True,
+                    "selection_status": "binding_only",
+                    "binding_present": True,
+                    "loaded": False,
+                    "artifact_count": 2,
+                }
+            )
+        }
+    )
+
+    export = build_observability_export(payload)
+
+    assert any(
+        sample.name == "v53_execution_no_trade_bridge_status"
+        and sample.labels["status"] == "warning"
+        and sample.labels["selection_status"] == "binding_only"
+        for sample in export.samples
+    )
+    assert any(
+        sample.name == "v53_execution_no_trade_bridge_configured" and sample.value == 1.0
+        for sample in export.samples
+    )
+    assert any(
+        sample.name == "v53_execution_no_trade_bridge_binding_present" and sample.value == 1.0
+        for sample in export.samples
+    )
+    assert any(
+        sample.name == "v53_execution_no_trade_bridge_loaded" and sample.value == 0.0
+        for sample in export.samples
+    )

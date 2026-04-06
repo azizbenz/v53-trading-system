@@ -6,12 +6,28 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from data_backbone.market_physics_math import round_float64
 from local_replay_runtime.historical_data_gateway import (
     HistoricalReplayDataset,
     HistoricalReplayOpportunity,
 )
 from meta_minimal.dtr_core.decision_state_encoder import DecisionState
 from meta_minimal.dtr_core.dtr_record_builder import DTRRecord, build_dtr
+
+
+class ParityTolerancePolicy(BaseModel, frozen=True):
+    """Explicit parity policy for governed replay/shadow comparisons."""
+
+    parity_scope: str = "logical_decision_with_prudent_score_cost_tolerance"
+    decision_parity_kind: str = "logical_decision_state"
+    score_parity_kind: str = "bounded_float64_score_tolerance"
+    cost_parity_kind: str = "prudent_expected_cost_tolerance"
+    float_precision: str = "binary64"
+    minimum_compared_records: int = Field(default=1, ge=1)
+    decision_match_threshold: float = Field(default=0.95, ge=0.0, le=1.0)
+    score_match_threshold: float = Field(default=0.95, ge=0.0, le=1.0)
+    score_tolerance: float = Field(default=0.03, ge=0.0)
+    cost_tolerance: float = Field(default=0.0005, ge=0.0)
 
 
 class ShadowExecutionSimulatorConfig(BaseModel, frozen=True):
@@ -22,9 +38,7 @@ class ShadowExecutionSimulatorConfig(BaseModel, frozen=True):
     phantom_fill_threshold: float = Field(default=0.15, ge=0.0, le=1.0)
     reduced_fill_threshold: float = Field(default=0.95, ge=0.0, le=1.0)
     economic_absurdity_buffer_bps: float = Field(default=0.50, ge=0.0)
-    decision_match_threshold: float = Field(default=0.95, ge=0.0, le=1.0)
-    score_tolerance: float = Field(default=0.03, ge=0.0)
-    cost_tolerance: float = Field(default=0.0005, ge=0.0)
+    parity_policy: ParityTolerancePolicy = Field(default_factory=ParityTolerancePolicy)
 
 
 def _base_state(row: HistoricalReplayOpportunity) -> DecisionState:
@@ -171,6 +185,7 @@ def build_parity_diagnostics_payload(
     """Compare simulated replay outputs against optional production baselines."""
 
     effective_config = config or ShadowExecutionSimulatorConfig()
+    parity_policy = effective_config.parity_policy
     decision_compared = 0
     decision_matches = 0
     score_compared = 0
@@ -192,7 +207,10 @@ def build_parity_diagnostics_payload(
         )
         if baseline_score is not None:
             score_compared += 1
-            if abs(float(baseline_score) - record.final_score) <= effective_config.score_tolerance:
+            if (
+                abs(float(baseline_score) - record.final_score)
+                <= parity_policy.score_tolerance
+            ):
                 score_matches += 1
 
         if row.production_expected_cost is not None:
@@ -200,21 +218,38 @@ def build_parity_diagnostics_payload(
             cost_diffs.append(abs(row.production_expected_cost - record.expected_cost))
 
     decision_match_rate = (
-        round(decision_matches / decision_compared, 6) if decision_compared else 0.0
+        round_float64(decision_matches / decision_compared, 6)
+        if decision_compared
+        else 0.0
     )
-    score_match_rate = round(score_matches / score_compared, 6) if score_compared else 0.0
-    mean_cost_gap = round(sum(cost_diffs) / len(cost_diffs), 6) if cost_diffs else 0.0
+    score_match_rate = (
+        round_float64(score_matches / score_compared, 6) if score_compared else 0.0
+    )
+    mean_cost_gap = (
+        round_float64(sum(cost_diffs) / len(cost_diffs), 6) if cost_diffs else 0.0
+    )
+    baseline_status = (
+        "sufficient"
+        if decision_compared >= parity_policy.minimum_compared_records
+        else "insufficient"
+    )
+    score_alignment = (
+        "within_prudent_tolerance"
+        if score_compared and score_match_rate >= parity_policy.score_match_threshold
+        else ("missing_baseline" if score_compared == 0 else "diverged")
+    )
     cost_alignment = (
         "within_prudent_tolerance"
-        if cost_compared and mean_cost_gap <= effective_config.cost_tolerance
+        if cost_compared and mean_cost_gap <= parity_policy.cost_tolerance
         else ("missing_baseline" if cost_compared == 0 else "diverged")
     )
     parity_status = (
         "ok"
         if dataset.shared_core_match
         and dataset.missing_feature_rows == 0
-        and decision_compared > 0
-        and decision_match_rate >= effective_config.decision_match_threshold
+        and baseline_status == "sufficient"
+        and decision_match_rate >= parity_policy.decision_match_threshold
+        and score_alignment == "within_prudent_tolerance"
         and cost_alignment == "within_prudent_tolerance"
         else "warning"
     )
@@ -223,16 +258,20 @@ def build_parity_diagnostics_payload(
         "dataset_id": dataset.dataset_id,
         "decision_match_rate": decision_match_rate,
         "score_match_rate": score_match_rate,
+        "baseline_status": baseline_status,
+        "score_alignment": score_alignment,
         "cost_alignment": cost_alignment,
         "mean_cost_gap": mean_cost_gap,
         "compared_records": decision_compared,
         "missing_baseline_records": max(dataset.record_count - decision_compared, 0),
         "divergence_count": max(decision_compared - decision_matches, 0),
         "shared_core_match": dataset.shared_core_match,
+        "parity_policy": parity_policy.model_dump(mode="json"),
     }
 
 
 __all__ = [
+    "ParityTolerancePolicy",
     "ShadowExecutionSimulatorConfig",
     "simulate_shadow_compatible_dtrs",
     "build_parity_diagnostics_payload",

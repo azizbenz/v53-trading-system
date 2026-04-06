@@ -4,6 +4,8 @@ import logging
 import pytest
 
 from execution_backbone.execution_runtime import (
+    ExecutionNoTradeFilterInput,
+    ExecutionNoTradeFilterOutcome,
     ExecutionOpportunity,
     ExecutionRuntime,
     ExecutionSubmissionStatus,
@@ -14,8 +16,13 @@ from execution_backbone.execution_runtime import (
     VenueOrderEventType,
 )
 from execution_backbone.fill_tracker.order_terminal_state_resolver import TerminalCategory
-from execution_backbone.order_decider.intent_builder import NoTradeReason
+from execution_backbone.order_decider.intent_builder import NoTradeReason, VenueConstraintSnapshot
 from execution_backbone.reconciliation_layer.recovery_trigger import RecoveryAction
+from protocols import (
+    ExecutionNoTradeHookInput,
+    ExecutionNoTradeHookPlanPayload,
+    run_execution_no_trade_hook,
+)
 
 
 pytestmark = pytest.mark.build3
@@ -29,6 +36,10 @@ class FakeExecutionVenue:
         self._events: list[VenueOrderEvent] = []
         self.remote_state = RemoteExecutionState()
         self._counter = 0
+        self.constraints_by_pair: dict[str, VenueConstraintSnapshot] = {}
+
+    def fetch_venue_constraints(self, pair: str) -> VenueConstraintSnapshot | None:
+        return self.constraints_by_pair.get(pair)
 
     def submit_order(self, intent, now: float) -> SubmitReceipt:
         self._counter += 1
@@ -62,6 +73,14 @@ class FakeExecutionVenue:
         self._events.extend(events)
 
 
+class FakeVenueConstraintProvider:
+    def __init__(self) -> None:
+        self.constraints_by_pair: dict[str, VenueConstraintSnapshot] = {}
+
+    def fetch_venue_constraints(self, pair: str) -> VenueConstraintSnapshot | None:
+        return self.constraints_by_pair.get(pair)
+
+
 def _opportunity(
     *,
     intent_id: str = "intent-1",
@@ -86,6 +105,19 @@ def _opportunity(
         spread_bps=spread_bps,
         reference_price=reference_price,
     )
+
+
+def _compiled_execution_no_trade_filter(
+    payload: ExecutionNoTradeHookPlanPayload,
+):
+    def _evaluate(hook_input: ExecutionNoTradeFilterInput) -> ExecutionNoTradeFilterOutcome:
+        outcome = run_execution_no_trade_hook(
+            ExecutionNoTradeHookInput.model_validate(hook_input.model_dump()),
+            payload,
+        )
+        return ExecutionNoTradeFilterOutcome.model_validate(outcome.model_dump())
+
+    return _evaluate
 
 
 class TestExecutionRuntime:
@@ -187,6 +219,27 @@ class TestExecutionRuntime:
         assert submission.no_trade.reason == NoTradeReason.COST_EXCEEDS_EDGE
         assert len(adapter.submissions) == 0
 
+    def test_runtime_blocks_submission_from_execution_no_trade_filter(self):
+        adapter = FakeExecutionVenue()
+        runtime = ExecutionRuntime(
+            adapter,
+            execution_no_trade_filter=_compiled_execution_no_trade_filter(
+                ExecutionNoTradeHookPlanPayload(
+                    blocked=True,
+                    block_reason_codes=("ARTIFACT_EXECUTION_BLOCK",),
+                    detail="artifact veto at execution boundary",
+                )
+            ),
+        )
+
+        submission = runtime.submit_opportunity(_opportunity(intent_id="artifact-block"), now=12.0)
+
+        assert submission.status == ExecutionSubmissionStatus.NO_TRADE
+        assert submission.no_trade is not None
+        assert submission.no_trade.reason == NoTradeReason.HARD_BLOCKER
+        assert submission.detail == "artifact veto at execution boundary"
+        assert len(adapter.submissions) == 0
+
     def test_runtime_timeout_requests_cancel_and_finalizes_partial_cancel(self):
         adapter = FakeExecutionVenue()
         runtime = ExecutionRuntime(adapter)
@@ -253,6 +306,148 @@ class TestExecutionRuntime:
         fill_stats = runtime.get_fill_stats()
         assert fill_stats.cancellations == 1
         assert fill_stats.open_orders == 1
+
+    def test_runtime_normalizes_limit_order_to_venue_tick_and_step(self):
+        adapter = FakeExecutionVenue()
+        runtime = ExecutionRuntime(adapter)
+
+        submission = runtime.submit_opportunity(
+            _opportunity(
+                intent_id="limit-normalize",
+                side="buy",
+                quantity=1.234,
+                spread_bps=6.0,
+                reference_price=50000.03,
+            ).model_copy(
+                update={
+                    "venue_constraints": VenueConstraintSnapshot(
+                        tick_size="0.1",
+                        step_size="0.01",
+                        min_notional="10",
+                    )
+                }
+            ),
+            now=10.0,
+        )
+
+        assert submission.status == ExecutionSubmissionStatus.SUBMITTED
+        assert submission.intent is not None
+        assert submission.intent.order_type.value == "limit"
+        assert submission.intent.quantity == pytest.approx(1.23)
+        assert submission.intent.quantity_exact == "1.23"
+        assert submission.intent.price_limit == pytest.approx(50000.0)
+        assert submission.intent.price_limit_exact == "50000"
+
+    def test_runtime_can_source_venue_constraints_from_adapter(self):
+        adapter = FakeExecutionVenue()
+        adapter.constraints_by_pair["BTCUSDT"] = VenueConstraintSnapshot(
+            tick_size="0.1",
+            step_size="0.01",
+            min_notional="10",
+        )
+        runtime = ExecutionRuntime(adapter)
+
+        submission = runtime.submit_opportunity(
+            _opportunity(
+                intent_id="adapter-constraints",
+                side="buy",
+                quantity=1.234,
+                spread_bps=6.0,
+                reference_price=50000.03,
+            ),
+            now=10.5,
+        )
+
+        assert submission.status == ExecutionSubmissionStatus.SUBMITTED
+        assert submission.intent is not None
+        assert submission.intent.venue_constraints is not None
+        assert submission.intent.quantity_exact == "1.23"
+        assert submission.intent.price_limit_exact == "50000"
+
+    def test_runtime_can_source_venue_constraints_from_provider_fallback(self):
+        adapter = FakeExecutionVenue()
+        provider = FakeVenueConstraintProvider()
+        provider.constraints_by_pair["BTCUSDT"] = VenueConstraintSnapshot(
+            tick_size="0.1",
+            step_size="0.01",
+            min_notional="10",
+        )
+        runtime = ExecutionRuntime(adapter, venue_constraint_provider=provider)
+
+        submission = runtime.submit_opportunity(
+            _opportunity(
+                intent_id="provider-constraints",
+                side="buy",
+                quantity=1.234,
+                spread_bps=6.0,
+                reference_price=50000.03,
+            ),
+            now=10.7,
+        )
+
+        assert submission.status == ExecutionSubmissionStatus.SUBMITTED
+        assert submission.intent is not None
+        assert submission.intent.venue_constraints is not None
+        assert submission.intent.quantity_exact == "1.23"
+        assert submission.intent.price_limit_exact == "50000"
+
+    def test_runtime_blocks_when_normalized_order_breaks_min_notional(self):
+        adapter = FakeExecutionVenue()
+        runtime = ExecutionRuntime(adapter)
+
+        submission = runtime.submit_opportunity(
+            _opportunity(
+                intent_id="min-notional-block",
+                quantity=0.001,
+                spread_bps=6.0,
+                reference_price=1000.0,
+            ).model_copy(
+                update={
+                    "venue_constraints": VenueConstraintSnapshot(
+                        tick_size="0.1",
+                        step_size="0.001",
+                        min_notional="10",
+                    )
+                }
+            ),
+            now=11.0,
+        )
+
+        assert submission.status == ExecutionSubmissionStatus.NO_TRADE
+        assert submission.no_trade is not None
+        assert submission.no_trade.reason == NoTradeReason.VENUE_CONSTRAINTS
+        assert "min_notional" in submission.detail
+
+    def test_runtime_replace_order_applies_side_aware_tick_rounding(self):
+        adapter = FakeExecutionVenue()
+        runtime = ExecutionRuntime(adapter)
+
+        first = runtime.submit_opportunity(
+            _opportunity(
+                intent_id="replace-sell",
+                pair="BTCUSDT",
+                side="sell",
+                quantity=0.5,
+                spread_bps=6.0,
+                reference_price=50000.01,
+            ).model_copy(
+                update={
+                    "venue_constraints": VenueConstraintSnapshot(
+                        tick_size="0.1",
+                        step_size="0.01",
+                        min_notional="10",
+                    )
+                }
+            ),
+            now=20.0,
+        )
+
+        replacement = runtime.replace_order(first.order_id, new_price_limit=49999.91, now=21.0)
+
+        assert replacement.status == ExecutionSubmissionStatus.REPLACED
+        assert replacement.intent is not None
+        assert replacement.intent.price_limit == pytest.approx(50000.0)
+        assert replacement.intent.price_limit_exact == "50000"
 
     def test_runtime_critical_reconciliation_triggers_halt(self):
         adapter = FakeExecutionVenue()

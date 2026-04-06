@@ -23,10 +23,27 @@ def _complete_shadow_metrics(day_index: int) -> dict[str, float]:
         "economic_pass_rate": 0.67,
         "pair_health_ratio": 0.98,
         "backlog_avg": 2.0,
+        "capital_simulated_usdt": 10_000.0,
+        "gross_exposure_shadow_pct": 32.0,
+        "loss_budget_shadow_pct": 11.0,
+        "capital_free_usdt": 6_800.0,
+        "beta_btc_shadow": 0.27,
+        "dominant_cluster": "majors",
+        "pnl_shadow": 12.5 + day_index,
+        "dtr_loss_rate": 0.0,
+        "log_loss_rate": 0.0,
+        "event_latency_ms": 42.0,
+        "hard_block_rate": 0.18,
+        "phantom_trade_count": 0.0,
         "dtr_complete": 1.0,
         "decisions_reproducible": 1.0,
         "infra_stable": 1.0,
         "costs_plausible": 1.0,
+        "break_even_visible": 1.0,
+        "critical_alerts_visible": 1.0,
+        "operator_actions_logged": 1.0,
+        "ui_locked": 1.0,
+        "go_no_go_rendered": 1.0,
     }
     for engine_id, gross_frequency in (
         ("engine_a", 8.0),
@@ -172,13 +189,13 @@ class TestIntegrationBuild11Build13:
         """Complete 30-day shadow cycle enables Live-Light promotion."""
         from protocols.shadow_day_counter import ShadowDayCounter, ShadowProfile
         from protocols.shadow_runtime import check_shadow_30j_gate
-        from protocols.promotion_gates import check_light_to_micro_live
+        from protocols.promotion_gates import check_complete_to_micro_live
 
         base_ts = 1700000000.0
         one_day = 86_400.0
 
         # Phase 1: Record 30 consecutive shadow days
-        counter = ShadowDayCounter(state_dir=repo_tmp_path, profile=ShadowProfile.LIGHT)
+        counter = ShadowDayCounter(state_dir=repo_tmp_path, profile=ShadowProfile.COMPLETE)
         for i in range(30):
             rec = counter.record_shadow_day(
                 passed_all_gates=True,
@@ -188,17 +205,17 @@ class TestIntegrationBuild11Build13:
         assert counter.is_promotion_ready() is True
 
         # Phase 2: Verify persistence survives reload
-        counter2 = ShadowDayCounter(state_dir=repo_tmp_path, profile=ShadowProfile.LIGHT)
+        counter2 = ShadowDayCounter(state_dir=repo_tmp_path, profile=ShadowProfile.COMPLETE)
         assert counter2.get_status().consecutive_days == 30
 
         # Phase 3: Shadow gate passes
-        gate_passed, report = check_shadow_30j_gate(repo_tmp_path, profile="light")
+        gate_passed, report = check_shadow_30j_gate(repo_tmp_path, profile="complete")
         assert gate_passed is True
         assert report["is_complete"] is True
         assert report["shadow_report_ready"] is True
 
         # Phase 4: Promotion gate agrees
-        promo_result = check_light_to_micro_live(repo_tmp_path)
+        promo_result = check_complete_to_micro_live(repo_tmp_path)
         assert promo_result.passed is True
 
     def test_incomplete_shadow_blocks_live_light(self, repo_tmp_path):
@@ -206,24 +223,25 @@ class TestIntegrationBuild11Build13:
         from protocols.shadow_day_counter import ShadowDayCounter, ShadowProfile
         from protocols.shadow_runtime import check_shadow_30j_gate
         from protocols.live_light_runtime import run_live_light_gate
-        from protocols.contracts import LiveLightInput
+        from protocols.contracts import LiveLightInput, ShadowPortfolioJudgment
         from protocols.enums import MicroLiveRunState, MicroLiveVerdict
+        from interface_contracts import ProfileId
 
         base_ts = 1700000000.0
-        counter = ShadowDayCounter(state_dir=repo_tmp_path, profile=ShadowProfile.LIGHT)
+        counter = ShadowDayCounter(state_dir=repo_tmp_path, profile=ShadowProfile.COMPLETE)
         for i in range(15):  # Only 15 days
             counter.record_shadow_day(
                 passed_all_gates=True, now=base_ts + i * 80000
             )
 
         # Gate should fail
-        gate_passed, _ = check_shadow_30j_gate(repo_tmp_path, profile="light")
+        gate_passed, _ = check_shadow_30j_gate(repo_tmp_path, profile="complete")
         assert gate_passed is False
 
         # Live-Light gate should block with HARD STATEMENT
         live_input = LiveLightInput(
             correlation_id="test_int2",
-            profile="light",
+            profile=ProfileId.COMPLETE,
             runtime_mode="live",
             micro_live_run_id="mlr_001",
             shadow_run_id="sr_001",
@@ -234,14 +252,48 @@ class TestIntegrationBuild11Build13:
             shadow_required_days=30,
             component_verdicts_rendered=True,
             shadow_report_ready=True,
+            shadow_portfolio_judgment=ShadowPortfolioJudgment(
+                judgment_verdict="promotable",
+                rationale="integration helper default",
+            ),
             micro_live_stable_days=7,
             micro_live_required_days=7,
             micro_live_import_artifact_id="art_001",
             micro_live_import_lineage_version="v1.0",
             import_artifact_id="art_001",
+            import_exported_from="local",
             import_lineage_version="v1.0",
             import_validation_status="accepted",
+            import_source_profile="complete",
+            import_review_state="pending",
             import_rejection_reasons=(),
+            import_dataset_ref="dataset-1",
+            import_clock_ref="clock-1",
+            import_activation_stage="shadow_ready",
+            import_health_state="active",
+            import_compatibility_status="not_evaluated",
+            import_compatibility_reasons=(),
+            import_signature_check_status="not_provided",
+            import_signature_check_reasons=(),
+            import_conflict_resolution_mode="no_trade_then_strictest",
+            import_conflict_hard_veto_action="no_trade",
+            import_conflict_score_aggregation_mode="bounded_sum_with_global_cap",
+            import_conflict_size_reduce_mode="min_factor_wins",
+            import_conflict_rank_adjust_mode="bounded_sum",
+            import_conflict_additive_soft_boosts_allowed=True,
+            import_conflict_additive_soft_reduces_allowed=True,
+            import_registry_atomicity_mode="atomic_snapshot_swap",
+            import_registry_concurrency_model="single_writer_multi_reader",
+            import_registry_publish_requires_atomic_replace=True,
+            import_registry_publish_requires_fsync=True,
+            import_registry_rollback_to_last_known_good=True,
+            import_payload_ref_count=5,
+            import_payload_bundle_present=True,
+            import_review_export_ref="exports/review.md",
+            import_feature_bridge_ref="exports/feature_bridge.json",
+            import_parity_diagnostics_ref="exports/parity.json",
+            import_replay_metrics_ref="exports/replay_metrics.json",
+            import_replay_dtr_ref="exports/replay_dtr.json",
             onboarding_accepted=True,
             onboarding_review_state="pending",
             onboarding_reasons=(),
@@ -252,7 +304,9 @@ class TestIntegrationBuild11Build13:
             broker_ready=True,
             exchange_ready=True,
             active_engines=("engine_a",),
+            micro_live_planned_engines=("engine_a",),
             live_pairs=("BTCUSDT",),
+            micro_live_planned_pairs=("BTCUSDT",),
             requested_total_notional_usdt=100.0,
             requested_pair_notional_usdt=50.0,
             max_total_notional_usdt=200.0,
@@ -267,10 +321,10 @@ class TestIntegrationBuild11Build13:
     def test_gap_reset_blocks_promotion(self, repo_tmp_path):
         """A gap > 24h resets the counter and blocks promotion."""
         from protocols.shadow_day_counter import ShadowDayCounter, ShadowProfile
-        from protocols.promotion_gates import check_light_to_micro_live
+        from protocols.promotion_gates import check_complete_to_micro_live
 
         base_ts = 1700000000.0
-        counter = ShadowDayCounter(state_dir=repo_tmp_path, profile=ShadowProfile.LIGHT)
+        counter = ShadowDayCounter(state_dir=repo_tmp_path, profile=ShadowProfile.COMPLETE)
 
         # Record 29 days
         for i in range(29):
@@ -286,7 +340,7 @@ class TestIntegrationBuild11Build13:
         assert counter.get_status().consecutive_days == 1
         assert counter.get_status().resets >= 1
 
-        result = check_light_to_micro_live(repo_tmp_path)
+        result = check_complete_to_micro_live(repo_tmp_path)
         assert result.passed is False
 
 

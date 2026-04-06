@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 from interface_contracts import (
-    LIGHT_PAIRS,
+    ALL_PAIRS,
     OperatorSafingAction,
     OperatorSafingRequest,
     ProfileId,
@@ -31,9 +31,27 @@ from protocols.enums import (
 
 
 _ACCEPTED_IMPORT_STATUSES = frozenset({"accepted"})
+_ACCEPTED_IMPORT_REVIEW_STATES = frozenset({"pending", "approved"})
+_EXPECTED_IMPORT_SOURCE_PROFILE = ProfileId.COMPLETE.value
 _ACCEPTED_ONBOARDING_REVIEW_STATES = frozenset(
     {ReviewState.PENDING, ReviewState.APPROVED}
 )
+_REJECTED_IMPORT_COMPATIBILITY_STATUSES = frozenset({"rejected"})
+_REJECTED_IMPORT_SIGNATURE_STATUSES = frozenset(
+    {
+        "trust_store_unavailable",
+        "key_id_unknown",
+        "key_revoked",
+        "payload_hash_mismatch",
+    }
+)
+_EXPECTED_IMPORT_CONFLICT_RESOLUTION_MODE = "no_trade_then_strictest"
+_EXPECTED_IMPORT_CONFLICT_HARD_VETO_ACTION = "no_trade"
+_EXPECTED_IMPORT_CONFLICT_SCORE_AGGREGATION_MODE = "bounded_sum_with_global_cap"
+_EXPECTED_IMPORT_CONFLICT_SIZE_REDUCE_MODE = "min_factor_wins"
+_EXPECTED_IMPORT_CONFLICT_RANK_ADJUST_MODE = "bounded_sum"
+_EXPECTED_IMPORT_REGISTRY_ATOMICITY_MODE = "atomic_snapshot_swap"
+_EXPECTED_IMPORT_REGISTRY_CONCURRENCY_MODEL = "single_writer_multi_reader"
 _REQUIRED_SHADOW_ENGINE_IDS = frozenset(
     {"engine_a", "engine_b", "engine_c", "engine_d"}
 )
@@ -59,6 +77,18 @@ _KNOWN_SHADOW_BUILD14_READER_IDS = frozenset(
 )
 _MICRO_LIVE_ALLOWED_ENGINES = _REQUIRED_SHADOW_ENGINE_IDS
 _LIVE_LIGHT_ALLOWED_ENGINES = _REQUIRED_SHADOW_ENGINE_IDS
+ShadowEngineJudgmentVerdict = Literal[
+    "promotable",
+    "shadow-only",
+    "rewrite-required",
+    "dormant",
+]
+ShadowPortfolioJudgmentVerdict = Literal[
+    "promotable",
+    "shadow-only",
+    "rewrite-required",
+]
+ShadowPressureLevel = Literal["nominal", "elevated", "critical"]
 
 
 class ShadowTruthSet(BaseModel, frozen=True):
@@ -103,8 +133,46 @@ class ShadowValidationSet(BaseModel, frozen=True):
     accepted_import: bool = False
     import_validation_status: str = Field(..., min_length=1)
     import_artifact_id: str = ""
+    import_exported_from: str = ""
     import_lineage_version: str = ""
+    import_source_profile: str = ""
+    import_review_state: str = ""
     import_rejection_reasons: tuple[str, ...] = ()
+    import_dataset_ref: str = ""
+    import_clock_ref: str = ""
+    import_activation_stage: str = ""
+    import_health_state: str = ""
+    import_compatibility_status: str = "not_evaluated"
+    import_compatibility_reasons: tuple[str, ...] = ()
+    import_feature_lineage_required: bool = False
+    import_feature_lineage_present: bool = False
+    import_feature_lineage_status: str = "not_required"
+    import_feature_lineage_reasons: tuple[str, ...] = ()
+    import_transform_whitelist_required: bool = False
+    import_transform_whitelist_present: bool = False
+    import_transform_whitelist_status: str = "not_required"
+    import_transform_whitelist_reasons: tuple[str, ...] = ()
+    import_signature_check_status: str = "not_provided"
+    import_signature_check_reasons: tuple[str, ...] = ()
+    import_conflict_resolution_mode: str = ""
+    import_conflict_hard_veto_action: str = ""
+    import_conflict_score_aggregation_mode: str = ""
+    import_conflict_size_reduce_mode: str = ""
+    import_conflict_rank_adjust_mode: str = ""
+    import_conflict_additive_soft_boosts_allowed: bool = False
+    import_conflict_additive_soft_reduces_allowed: bool = False
+    import_registry_atomicity_mode: str = ""
+    import_registry_concurrency_model: str = ""
+    import_registry_publish_requires_atomic_replace: bool = False
+    import_registry_publish_requires_fsync: bool = False
+    import_registry_rollback_to_last_known_good: bool = False
+    import_payload_ref_count: int = Field(default=5, ge=0)
+    import_payload_bundle_present: bool = True
+    import_review_export_ref: str = "exports/review.md"
+    import_feature_bridge_ref: str = "exports/feature_bridge.json"
+    import_parity_diagnostics_ref: str = "exports/parity.json"
+    import_replay_metrics_ref: str = "exports/replay_metrics.json"
+    import_replay_dtr_ref: str = "exports/replay_dtr.json"
     runtime_data_source: Literal["unknown", "live_websocket", "recorded_replay"] = "unknown"
     runtime_feature_bridge_ready: bool = False
     runtime_parity_diagnostics_ready: bool = False
@@ -145,6 +213,185 @@ class ShadowValidationSet(BaseModel, frozen=True):
         if normalized_status in _ACCEPTED_IMPORT_STATUSES and not self.accepted_import:
             raise ValueError(
                 "accepted import_validation_status requires accepted_import=True"
+            )
+        if (
+            self.accepted_import
+            and self.import_exported_from != "local"
+        ):
+            raise ValueError(
+                "accepted_import=True requires import_exported_from=local"
+            )
+        if (
+            self.accepted_import
+            and self.import_source_profile != _EXPECTED_IMPORT_SOURCE_PROFILE
+        ):
+            raise ValueError(
+                "accepted_import=True requires import_source_profile=complete"
+            )
+        if (
+            self.accepted_import
+            and self.import_review_state not in _ACCEPTED_IMPORT_REVIEW_STATES
+        ):
+            raise ValueError(
+                "accepted_import=True requires import_review_state to stay pending or approved"
+            )
+        if self.accepted_import and not self.import_dataset_ref:
+            raise ValueError(
+                "accepted_import=True requires import_dataset_ref"
+            )
+        if self.accepted_import and not self.import_clock_ref:
+            raise ValueError(
+                "accepted_import=True requires import_clock_ref"
+            )
+        if (
+            self.accepted_import
+            and self.import_compatibility_status in _REJECTED_IMPORT_COMPATIBILITY_STATUSES
+        ):
+            raise ValueError(
+                "accepted_import=True requires a non-rejected import_compatibility_status"
+            )
+        if self.accepted_import and not self.import_feature_lineage_required:
+            raise ValueError(
+                "accepted_import=True requires import_feature_lineage_required=True"
+            )
+        if self.accepted_import and not self.import_feature_lineage_present:
+            raise ValueError(
+                "accepted_import=True requires import_feature_lineage_present=True"
+            )
+        if self.accepted_import and self.import_feature_lineage_status != "ok":
+            raise ValueError(
+                "accepted_import=True requires import_feature_lineage_status=ok"
+            )
+        if self.accepted_import and not self.import_transform_whitelist_required:
+            raise ValueError(
+                "accepted_import=True requires import_transform_whitelist_required=True"
+            )
+        if self.accepted_import and not self.import_transform_whitelist_present:
+            raise ValueError(
+                "accepted_import=True requires import_transform_whitelist_present=True"
+            )
+        if self.accepted_import and self.import_transform_whitelist_status != "ok":
+            raise ValueError(
+                "accepted_import=True requires import_transform_whitelist_status=ok"
+            )
+        if (
+            self.accepted_import
+            and self.import_signature_check_status in _REJECTED_IMPORT_SIGNATURE_STATUSES
+        ):
+            raise ValueError(
+                "accepted_import=True requires a non-rejected import_signature_check_status"
+            )
+        if self.accepted_import and self.import_activation_stage != "shadow_ready":
+            raise ValueError(
+                "accepted_import=True requires import_activation_stage=shadow_ready"
+            )
+        if self.accepted_import and self.import_health_state != "active":
+            raise ValueError(
+                "accepted_import=True requires import_health_state=active"
+            )
+        if (
+            self.accepted_import
+            and self.import_conflict_resolution_mode
+            != _EXPECTED_IMPORT_CONFLICT_RESOLUTION_MODE
+        ):
+            raise ValueError(
+                "accepted_import=True requires canonical import_conflict_resolution_mode"
+            )
+        if (
+            self.accepted_import
+            and self.import_conflict_hard_veto_action
+            != _EXPECTED_IMPORT_CONFLICT_HARD_VETO_ACTION
+        ):
+            raise ValueError(
+                "accepted_import=True requires canonical import_conflict_hard_veto_action"
+            )
+        if (
+            self.accepted_import
+            and self.import_conflict_score_aggregation_mode
+            != _EXPECTED_IMPORT_CONFLICT_SCORE_AGGREGATION_MODE
+        ):
+            raise ValueError(
+                "accepted_import=True requires canonical import_conflict_score_aggregation_mode"
+            )
+        if (
+            self.accepted_import
+            and self.import_conflict_size_reduce_mode
+            != _EXPECTED_IMPORT_CONFLICT_SIZE_REDUCE_MODE
+        ):
+            raise ValueError(
+                "accepted_import=True requires canonical import_conflict_size_reduce_mode"
+            )
+        if (
+            self.accepted_import
+            and self.import_conflict_rank_adjust_mode
+            != _EXPECTED_IMPORT_CONFLICT_RANK_ADJUST_MODE
+        ):
+            raise ValueError(
+                "accepted_import=True requires canonical import_conflict_rank_adjust_mode"
+            )
+        if self.accepted_import and not self.import_conflict_additive_soft_boosts_allowed:
+            raise ValueError(
+                "accepted_import=True requires import_conflict_additive_soft_boosts_allowed=True"
+            )
+        if self.accepted_import and not self.import_conflict_additive_soft_reduces_allowed:
+            raise ValueError(
+                "accepted_import=True requires import_conflict_additive_soft_reduces_allowed=True"
+            )
+        if (
+            self.accepted_import
+            and self.import_registry_atomicity_mode
+            != _EXPECTED_IMPORT_REGISTRY_ATOMICITY_MODE
+        ):
+            raise ValueError(
+                "accepted_import=True requires canonical import_registry_atomicity_mode"
+            )
+        if (
+            self.accepted_import
+            and self.import_registry_concurrency_model
+            != _EXPECTED_IMPORT_REGISTRY_CONCURRENCY_MODEL
+        ):
+            raise ValueError(
+                "accepted_import=True requires canonical import_registry_concurrency_model"
+            )
+        if self.accepted_import and not self.import_registry_publish_requires_atomic_replace:
+            raise ValueError(
+                "accepted_import=True requires import_registry_publish_requires_atomic_replace=True"
+            )
+        if self.accepted_import and not self.import_registry_publish_requires_fsync:
+            raise ValueError(
+                "accepted_import=True requires import_registry_publish_requires_fsync=True"
+            )
+        if self.accepted_import and not self.import_registry_rollback_to_last_known_good:
+            raise ValueError(
+                "accepted_import=True requires import_registry_rollback_to_last_known_good=True"
+            )
+        if self.accepted_import and self.import_payload_ref_count < 5:
+            raise ValueError(
+                "accepted_import=True requires import_payload_ref_count>=5"
+            )
+        if self.accepted_import and not self.import_payload_bundle_present:
+            raise ValueError(
+                "accepted_import=True requires import_payload_bundle_present=True"
+            )
+        if self.accepted_import and not self.import_review_export_ref:
+            raise ValueError(
+                "accepted_import=True requires import_review_export_ref"
+            )
+        if self.accepted_import and not self.import_feature_bridge_ref:
+            raise ValueError(
+                "accepted_import=True requires import_feature_bridge_ref"
+            )
+        if self.accepted_import and not self.import_parity_diagnostics_ref:
+            raise ValueError(
+                "accepted_import=True requires import_parity_diagnostics_ref"
+            )
+        if self.accepted_import and not self.import_replay_metrics_ref:
+            raise ValueError(
+                "accepted_import=True requires import_replay_metrics_ref"
+            )
+        if self.accepted_import and not self.import_replay_dtr_ref:
+            raise ValueError(
+                "accepted_import=True requires import_replay_dtr_ref"
             )
 
         if self.shadow_required_days != 30:
@@ -189,7 +436,7 @@ class ShadowInput(BaseModel, frozen=True):
     """Single governed input entering the Build-11 Shadow runtime."""
 
     correlation_id: str = Field(..., min_length=1)
-    profile: ProfileId = ProfileId.LIGHT
+    profile: ProfileId = ProfileId.COMPLETE
     runtime_mode: RuntimeMode = RuntimeMode.SHADOW
     truth_set: ShadowTruthSet
     validation_set: ShadowValidationSet
@@ -206,8 +453,8 @@ class ShadowInput(BaseModel, frozen=True):
 
     @model_validator(mode="after")
     def validate_governance(self) -> "ShadowInput":
-        if self.profile != ProfileId.LIGHT:
-            raise ValueError("Build-11 Shadow opens in LIGHT profile only")
+        if self.profile != ProfileId.COMPLETE:
+            raise ValueError("Build-11 Shadow opens in COMPLETE profile only")
         if self.runtime_mode != RuntimeMode.SHADOW:
             raise ValueError("Build-11 Shadow requires runtime_mode=SHADOW")
         if self.backtest_profile is not None:
@@ -579,11 +826,84 @@ class ShadowReportArtifact(BaseModel, frozen=True):
         return self
 
 
+class ShadowEngineJudgment(BaseModel, frozen=True):
+    """Engine-by-engine supervised judgment derived from the Build-11 shadow report."""
+
+    engine_id: str = Field(..., min_length=1)
+    component_verdict: str = Field(..., min_length=1)
+    judgment_verdict: ShadowEngineJudgmentVerdict
+    useful_frequency: float = Field(default=0.0, ge=0.0)
+    ce_expected: float | None = None
+    estimated_cost_bps: float = Field(default=0.0, ge=0.0)
+    edge_net: float = 0.0
+    economic_pass_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    conflict_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    marginal_edge: float = 0.0
+    redundancy_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    portfolio_contribution: float = 0.0
+    final_size_multiplier: float | None = None
+    selection_outcome_code: str = ""
+    portfolio_verdict_code: str = ""
+    phantom_trade: bool = False
+    hard_blocked: bool = False
+    risk_decision_severity: str = ""
+    physics_pressure_state: ShadowPressureLevel = "nominal"
+    fragility_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    toxicity_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    execution_survivability_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    micro_friction_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    observations: int = Field(default=0, ge=0)
+    rationale: str = ""
+    evidence_summary: str = ""
+
+
+class ShadowPortfolioJudgment(BaseModel, frozen=True):
+    """Portfolio-level supervised judgment derived from the governed Shadow payload."""
+
+    judgment_verdict: ShadowPortfolioJudgmentVerdict = "shadow-only"
+    physics_pressure: ShadowPressureLevel = "nominal"
+    redundancy_pressure: ShadowPressureLevel = "nominal"
+    cluster_pressure: ShadowPressureLevel = "nominal"
+    beta_pressure: ShadowPressureLevel = "nominal"
+    gross_capacity_pressure: ShadowPressureLevel = "nominal"
+    loss_capacity_pressure: ShadowPressureLevel = "nominal"
+    dominant_cluster: str = ""
+    beta_utilization: float | None = Field(default=None, ge=0.0)
+    gross_capacity_used_pct: float | None = Field(default=None, ge=0.0, le=100.0)
+    loss_capacity_used_pct: float | None = Field(default=None, ge=0.0, le=100.0)
+    hard_block_rate: float | None = Field(default=None, ge=0.0, le=1.0)
+    phantom_trade_count: int | None = Field(default=None, ge=0)
+    promotable_engine_count: int = Field(default=0, ge=0)
+    shadow_only_engine_count: int = Field(default=0, ge=0)
+    rewrite_required_engine_count: int = Field(default=0, ge=0)
+    dormant_engine_count: int = Field(default=0, ge=0)
+    elevated_physics_engine_count: int = Field(default=0, ge=0)
+    critical_physics_engine_count: int = Field(default=0, ge=0)
+    portfolio_rejected_engine_count: int = Field(default=0, ge=0)
+    ranking_rejected_engine_count: int = Field(default=0, ge=0)
+    cluster_rejected_engine_count: int = Field(default=0, ge=0)
+    beta_rejected_engine_count: int = Field(default=0, ge=0)
+    exposure_rejected_engine_count: int = Field(default=0, ge=0)
+    loss_budget_rejected_engine_count: int = Field(default=0, ge=0)
+    rationale: str = ""
+
+
+class ShadowEngineJudgmentSummary(BaseModel, frozen=True):
+    """Normalized judgment bundle used to decide engine promotion readiness after Shadow."""
+
+    source_report_id: str = ""
+    source_shadow_run_id: str = ""
+    source_shadow_days_completed: int = Field(default=0, ge=0)
+    source_shadow_required_days: int = Field(default=30, ge=1)
+    portfolio_judgment: ShadowPortfolioJudgment = ShadowPortfolioJudgment()
+    judgments: tuple[ShadowEngineJudgment, ...] = ()
+
+
 class MicroLiveInput(BaseModel, frozen=True):
     """Single governed input entering the minimal Build-12 Micro-live gate."""
 
     correlation_id: str = Field(..., min_length=1)
-    profile: ProfileId = ProfileId.LIGHT
+    profile: ProfileId = ProfileId.COMPLETE
     runtime_mode: RuntimeMode = RuntimeMode.MICRO_LIVE
     shadow_run_id: str = Field(..., min_length=1)
     shadow_truth_set_ref: str = Field(..., min_length=1)
@@ -598,12 +918,54 @@ class MicroLiveInput(BaseModel, frozen=True):
     build14_contribution_ready: bool = False
     shadow_validated_engines: tuple[str, ...] = ()
     shadow_dormant_components: tuple[str, ...] = ()
+    shadow_promotable_engines: tuple[str, ...] = ()
+    shadow_shadow_only_engines: tuple[str, ...] = ()
+    shadow_rewrite_required_engines: tuple[str, ...] = ()
+    shadow_portfolio_judgment: ShadowPortfolioJudgment = ShadowPortfolioJudgment()
     shadow_import_artifact_id: str = Field(..., min_length=1)
     shadow_import_lineage_version: str = Field(..., min_length=1)
     import_artifact_id: str = Field(..., min_length=1)
+    import_exported_from: str = ""
     import_lineage_version: str = Field(..., min_length=1)
     import_validation_status: str = Field(..., min_length=1)
+    import_source_profile: str = ""
+    import_review_state: str = ""
     import_rejection_reasons: tuple[str, ...] = ()
+    import_dataset_ref: str = ""
+    import_clock_ref: str = ""
+    import_activation_stage: str = ""
+    import_health_state: str = ""
+    import_compatibility_status: str = "not_evaluated"
+    import_compatibility_reasons: tuple[str, ...] = ()
+    import_feature_lineage_required: bool = False
+    import_feature_lineage_present: bool = False
+    import_feature_lineage_status: str = "not_required"
+    import_feature_lineage_reasons: tuple[str, ...] = ()
+    import_transform_whitelist_required: bool = False
+    import_transform_whitelist_present: bool = False
+    import_transform_whitelist_status: str = "not_required"
+    import_transform_whitelist_reasons: tuple[str, ...] = ()
+    import_signature_check_status: str = "not_provided"
+    import_signature_check_reasons: tuple[str, ...] = ()
+    import_conflict_resolution_mode: str = ""
+    import_conflict_hard_veto_action: str = ""
+    import_conflict_score_aggregation_mode: str = ""
+    import_conflict_size_reduce_mode: str = ""
+    import_conflict_rank_adjust_mode: str = ""
+    import_conflict_additive_soft_boosts_allowed: bool = False
+    import_conflict_additive_soft_reduces_allowed: bool = False
+    import_registry_atomicity_mode: str = ""
+    import_registry_concurrency_model: str = ""
+    import_registry_publish_requires_atomic_replace: bool = False
+    import_registry_publish_requires_fsync: bool = False
+    import_registry_rollback_to_last_known_good: bool = False
+    import_payload_ref_count: int = Field(default=5, ge=0)
+    import_payload_bundle_present: bool = True
+    import_review_export_ref: str = "exports/review.md"
+    import_feature_bridge_ref: str = "exports/feature_bridge.json"
+    import_parity_diagnostics_ref: str = "exports/parity.json"
+    import_replay_metrics_ref: str = "exports/replay_metrics.json"
+    import_replay_dtr_ref: str = "exports/replay_dtr.json"
     onboarding_accepted: bool = False
     onboarding_review_state: ReviewState = ReviewState.PENDING
     onboarding_reasons: tuple[str, ...] = ()
@@ -624,8 +986,8 @@ class MicroLiveInput(BaseModel, frozen=True):
 
     @model_validator(mode="after")
     def validate_governance(self) -> "MicroLiveInput":
-        if self.profile != ProfileId.LIGHT:
-            raise ValueError("Build-12 Micro-live opens in LIGHT profile only")
+        if self.profile != ProfileId.COMPLETE:
+            raise ValueError("Build-12 Micro-live opens in COMPLETE profile only")
         if self.runtime_mode != RuntimeMode.MICRO_LIVE:
             raise ValueError("Build-12 Micro-live requires runtime_mode=MICRO_LIVE")
         if self.backtest_profile is not None:
@@ -665,9 +1027,147 @@ class MicroLiveInput(BaseModel, frozen=True):
             raise ValueError(
                 "Build-12 Micro-live requires an accepted import_validation_status"
             )
+        if self.import_exported_from != "local":
+            raise ValueError(
+                "Build-12 Micro-live requires import_exported_from=local"
+            )
+        if self.import_source_profile != _EXPECTED_IMPORT_SOURCE_PROFILE:
+            raise ValueError(
+                "Build-12 Micro-live requires import_source_profile=complete"
+            )
         if self.import_rejection_reasons:
             raise ValueError(
                 "Build-12 Micro-live requires empty import_rejection_reasons"
+            )
+        if self.import_review_state not in _ACCEPTED_IMPORT_REVIEW_STATES:
+            raise ValueError(
+                "Build-12 Micro-live requires import_review_state to stay pending or approved"
+            )
+        if not self.import_dataset_ref:
+            raise ValueError("Build-12 Micro-live requires import_dataset_ref")
+        if not self.import_clock_ref:
+            raise ValueError("Build-12 Micro-live requires import_clock_ref")
+        if self.import_activation_stage != "shadow_ready":
+            raise ValueError(
+                "Build-12 Micro-live requires import_activation_stage=shadow_ready"
+            )
+        if self.import_health_state != "active":
+            raise ValueError(
+                "Build-12 Micro-live requires import_health_state=active"
+            )
+        if self.import_compatibility_status in _REJECTED_IMPORT_COMPATIBILITY_STATUSES:
+            raise ValueError(
+                "Build-12 Micro-live requires a non-rejected import_compatibility_status"
+            )
+        if not self.import_feature_lineage_required:
+            raise ValueError(
+                "Build-12 Micro-live requires import_feature_lineage_required=True"
+            )
+        if not self.import_feature_lineage_present:
+            raise ValueError(
+                "Build-12 Micro-live requires import_feature_lineage_present=True"
+            )
+        if self.import_feature_lineage_status != "ok":
+            raise ValueError(
+                "Build-12 Micro-live requires import_feature_lineage_status=ok"
+            )
+        if not self.import_transform_whitelist_required:
+            raise ValueError(
+                "Build-12 Micro-live requires import_transform_whitelist_required=True"
+            )
+        if not self.import_transform_whitelist_present:
+            raise ValueError(
+                "Build-12 Micro-live requires import_transform_whitelist_present=True"
+            )
+        if self.import_transform_whitelist_status != "ok":
+            raise ValueError(
+                "Build-12 Micro-live requires import_transform_whitelist_status=ok"
+            )
+        if self.import_signature_check_status in _REJECTED_IMPORT_SIGNATURE_STATUSES:
+            raise ValueError(
+                "Build-12 Micro-live requires a non-rejected import_signature_check_status"
+            )
+        if self.import_conflict_resolution_mode != _EXPECTED_IMPORT_CONFLICT_RESOLUTION_MODE:
+            raise ValueError(
+                "Build-12 Micro-live requires canonical import_conflict_resolution_mode"
+            )
+        if self.import_conflict_hard_veto_action != _EXPECTED_IMPORT_CONFLICT_HARD_VETO_ACTION:
+            raise ValueError(
+                "Build-12 Micro-live requires canonical import_conflict_hard_veto_action"
+            )
+        if (
+            self.import_conflict_score_aggregation_mode
+            != _EXPECTED_IMPORT_CONFLICT_SCORE_AGGREGATION_MODE
+        ):
+            raise ValueError(
+                "Build-12 Micro-live requires canonical import_conflict_score_aggregation_mode"
+            )
+        if self.import_conflict_size_reduce_mode != _EXPECTED_IMPORT_CONFLICT_SIZE_REDUCE_MODE:
+            raise ValueError(
+                "Build-12 Micro-live requires canonical import_conflict_size_reduce_mode"
+            )
+        if self.import_conflict_rank_adjust_mode != _EXPECTED_IMPORT_CONFLICT_RANK_ADJUST_MODE:
+            raise ValueError(
+                "Build-12 Micro-live requires canonical import_conflict_rank_adjust_mode"
+            )
+        if not self.import_conflict_additive_soft_boosts_allowed:
+            raise ValueError(
+                "Build-12 Micro-live requires import_conflict_additive_soft_boosts_allowed=True"
+            )
+        if not self.import_conflict_additive_soft_reduces_allowed:
+            raise ValueError(
+                "Build-12 Micro-live requires import_conflict_additive_soft_reduces_allowed=True"
+            )
+        if self.import_registry_atomicity_mode != _EXPECTED_IMPORT_REGISTRY_ATOMICITY_MODE:
+            raise ValueError(
+                "Build-12 Micro-live requires canonical import_registry_atomicity_mode"
+            )
+        if (
+            self.import_registry_concurrency_model
+            != _EXPECTED_IMPORT_REGISTRY_CONCURRENCY_MODEL
+        ):
+            raise ValueError(
+                "Build-12 Micro-live requires canonical import_registry_concurrency_model"
+            )
+        if not self.import_registry_publish_requires_atomic_replace:
+            raise ValueError(
+                "Build-12 Micro-live requires import_registry_publish_requires_atomic_replace=True"
+            )
+        if not self.import_registry_publish_requires_fsync:
+            raise ValueError(
+                "Build-12 Micro-live requires import_registry_publish_requires_fsync=True"
+            )
+        if not self.import_registry_rollback_to_last_known_good:
+            raise ValueError(
+                "Build-12 Micro-live requires import_registry_rollback_to_last_known_good=True"
+            )
+        if self.import_payload_ref_count < 5:
+            raise ValueError(
+                "Build-12 Micro-live requires import_payload_ref_count>=5"
+            )
+        if not self.import_payload_bundle_present:
+            raise ValueError(
+                "Build-12 Micro-live requires import_payload_bundle_present=True"
+            )
+        if not self.import_review_export_ref:
+            raise ValueError(
+                "Build-12 Micro-live requires import_review_export_ref"
+            )
+        if not self.import_feature_bridge_ref:
+            raise ValueError(
+                "Build-12 Micro-live requires import_feature_bridge_ref"
+            )
+        if not self.import_parity_diagnostics_ref:
+            raise ValueError(
+                "Build-12 Micro-live requires import_parity_diagnostics_ref"
+            )
+        if not self.import_replay_metrics_ref:
+            raise ValueError(
+                "Build-12 Micro-live requires import_replay_metrics_ref"
+            )
+        if not self.import_replay_dtr_ref:
+            raise ValueError(
+                "Build-12 Micro-live requires import_replay_dtr_ref"
             )
         if self.shadow_import_artifact_id == "none":
             raise ValueError(
@@ -709,7 +1209,7 @@ class MicroLiveInput(BaseModel, frozen=True):
             )
         if not self.shadow_validated_engines:
             raise ValueError(
-                "Build-12 Micro-live requires at least one SHADOW_VALIDATED Light engine"
+                "Build-12 Micro-live requires at least one SHADOW_VALIDATED engine"
             )
         unknown_shadow_validated = (
             set(self.shadow_validated_engines) - _MICRO_LIVE_ALLOWED_ENGINES
@@ -722,6 +1222,30 @@ class MicroLiveInput(BaseModel, frozen=True):
             raise ValueError(
                 "Build-12 Micro-live active_engines must be SHADOW_VALIDATED in Shadow"
             )
+        if self.shadow_promotable_engines:
+            unknown_shadow_promotable = (
+                set(self.shadow_promotable_engines) - _MICRO_LIVE_ALLOWED_ENGINES
+            )
+            if unknown_shadow_promotable:
+                raise ValueError(
+                    "Build-12 Micro-live shadow_promotable_engines must stay within the governed engine perimeter"
+                )
+            if not set(self.active_engines).issubset(set(self.shadow_promotable_engines)):
+                raise ValueError(
+                    "Build-12 Micro-live active_engines must be PROMOTABLE in Shadow judgment"
+                )
+        elif self.shadow_shadow_only_engines or self.shadow_rewrite_required_engines:
+            raise ValueError(
+                "Build-12 Micro-live requires at least one PROMOTABLE engine in Shadow judgment"
+            )
+        if set(self.active_engines) & set(self.shadow_shadow_only_engines):
+            raise ValueError(
+                "Build-12 Micro-live must not activate engines marked SHADOW_ONLY in Shadow judgment"
+            )
+        if set(self.active_engines) & set(self.shadow_rewrite_required_engines):
+            raise ValueError(
+                "Build-12 Micro-live must not activate engines marked REWRITE_REQUIRED in Shadow judgment"
+            )
         if set(self.active_engines) & set(self.shadow_dormant_components):
             raise ValueError(
                 "Build-12 Micro-live must not activate components marked DORMANT in Shadow"
@@ -729,12 +1253,12 @@ class MicroLiveInput(BaseModel, frozen=True):
 
         if not self.probe_pairs:
             raise ValueError("Build-12 Micro-live requires at least one probe pair")
-        if len(self.probe_pairs) > len(LIGHT_PAIRS):
-            raise ValueError("Build-12 Micro-live must stay within the Light pair scope")
-        invalid_pairs = tuple(pair for pair in self.probe_pairs if pair not in LIGHT_PAIRS)
+        if len(self.probe_pairs) > len(ALL_PAIRS):
+            raise ValueError("Build-12 Micro-live must stay within the Complete pair scope")
+        invalid_pairs = tuple(pair for pair in self.probe_pairs if pair not in ALL_PAIRS)
         if invalid_pairs:
             raise ValueError(
-                "Build-12 Micro-live probe_pairs must stay within the Light pair scope"
+                "Build-12 Micro-live probe_pairs must stay within the Complete pair scope"
             )
 
         if self.max_pair_notional_usdt > self.max_total_notional_usdt:
@@ -818,6 +1342,10 @@ class MicroLiveRunSummary(BaseModel, frozen=True):
     operator_safing_request: OperatorSafingRequest | None = None
     shadow_validated_engines: tuple[str, ...] = ()
     shadow_dormant_components: tuple[str, ...] = ()
+    shadow_promotable_engines: tuple[str, ...] = ()
+    shadow_shadow_only_engines: tuple[str, ...] = ()
+    shadow_rewrite_required_engines: tuple[str, ...] = ()
+    shadow_portfolio_judgment: ShadowPortfolioJudgment = ShadowPortfolioJudgment()
 
     @property
     def blocking_reason_count(self) -> int:
@@ -836,7 +1364,7 @@ class LiveLightInput(BaseModel, frozen=True):
     """Single governed input entering the minimal Build-13 Live-Light gate."""
 
     correlation_id: str = Field(..., min_length=1)
-    profile: ProfileId = ProfileId.LIGHT
+    profile: ProfileId = ProfileId.COMPLETE
     runtime_mode: RuntimeMode = RuntimeMode.LIVE
     micro_live_run_id: str = Field(..., min_length=1)
     shadow_run_id: str = Field(..., min_length=1)
@@ -847,15 +1375,59 @@ class LiveLightInput(BaseModel, frozen=True):
     shadow_required_days: int = Field(..., ge=1)
     component_verdicts_rendered: bool
     shadow_report_ready: bool
+    shadow_promotable_engines: tuple[str, ...] = ()
+    shadow_shadow_only_engines: tuple[str, ...] = ()
+    shadow_rewrite_required_engines: tuple[str, ...] = ()
+    shadow_portfolio_judgment: ShadowPortfolioJudgment = ShadowPortfolioJudgment()
+    micro_live_planned_engines: tuple[str, ...] = ()
+    micro_live_planned_pairs: tuple[str, ...] = ()
     micro_live_stable_days: int = Field(..., ge=0)
     micro_live_required_days: int = Field(..., ge=1)
     build14_live_eligible: bool = False
     micro_live_import_artifact_id: str = Field(..., min_length=1)
     micro_live_import_lineage_version: str = Field(..., min_length=1)
     import_artifact_id: str = Field(..., min_length=1)
+    import_exported_from: str = ""
     import_lineage_version: str = Field(..., min_length=1)
     import_validation_status: str = Field(..., min_length=1)
+    import_source_profile: str = ""
+    import_review_state: str = ""
     import_rejection_reasons: tuple[str, ...] = ()
+    import_dataset_ref: str = ""
+    import_clock_ref: str = ""
+    import_activation_stage: str = ""
+    import_health_state: str = ""
+    import_compatibility_status: str = "not_evaluated"
+    import_compatibility_reasons: tuple[str, ...] = ()
+    import_feature_lineage_required: bool = False
+    import_feature_lineage_present: bool = False
+    import_feature_lineage_status: str = "not_required"
+    import_feature_lineage_reasons: tuple[str, ...] = ()
+    import_transform_whitelist_required: bool = False
+    import_transform_whitelist_present: bool = False
+    import_transform_whitelist_status: str = "not_required"
+    import_transform_whitelist_reasons: tuple[str, ...] = ()
+    import_signature_check_status: str = "not_provided"
+    import_signature_check_reasons: tuple[str, ...] = ()
+    import_conflict_resolution_mode: str = ""
+    import_conflict_hard_veto_action: str = ""
+    import_conflict_score_aggregation_mode: str = ""
+    import_conflict_size_reduce_mode: str = ""
+    import_conflict_rank_adjust_mode: str = ""
+    import_conflict_additive_soft_boosts_allowed: bool = False
+    import_conflict_additive_soft_reduces_allowed: bool = False
+    import_registry_atomicity_mode: str = ""
+    import_registry_concurrency_model: str = ""
+    import_registry_publish_requires_atomic_replace: bool = False
+    import_registry_publish_requires_fsync: bool = False
+    import_registry_rollback_to_last_known_good: bool = False
+    import_payload_ref_count: int = Field(default=5, ge=0)
+    import_payload_bundle_present: bool = True
+    import_review_export_ref: str = "exports/review.md"
+    import_feature_bridge_ref: str = "exports/feature_bridge.json"
+    import_parity_diagnostics_ref: str = "exports/parity.json"
+    import_replay_metrics_ref: str = "exports/replay_metrics.json"
+    import_replay_dtr_ref: str = "exports/replay_dtr.json"
     onboarding_accepted: bool = False
     onboarding_review_state: ReviewState = ReviewState.PENDING
     onboarding_reasons: tuple[str, ...] = ()
@@ -879,8 +1451,8 @@ class LiveLightInput(BaseModel, frozen=True):
 
     @model_validator(mode="after")
     def validate_governance(self) -> "LiveLightInput":
-        if self.profile != ProfileId.LIGHT:
-            raise ValueError("Build-13 Live-Light opens in LIGHT profile only")
+        if self.profile != ProfileId.COMPLETE:
+            raise ValueError("Build-13 Live-Light opens in COMPLETE profile only")
         if self.runtime_mode != RuntimeMode.LIVE:
             raise ValueError("Build-13 Live-Light requires runtime_mode=LIVE")
         if self.backtest_profile is not None:
@@ -926,9 +1498,147 @@ class LiveLightInput(BaseModel, frozen=True):
             raise ValueError(
                 "Build-13 Live-Light requires an accepted import_validation_status"
             )
+        if self.import_exported_from != "local":
+            raise ValueError(
+                "Build-13 Live-Light requires import_exported_from=local"
+            )
+        if self.import_source_profile != _EXPECTED_IMPORT_SOURCE_PROFILE:
+            raise ValueError(
+                "Build-13 Live-Light requires import_source_profile=complete"
+            )
         if self.import_rejection_reasons:
             raise ValueError(
                 "Build-13 Live-Light requires empty import_rejection_reasons"
+            )
+        if self.import_review_state not in _ACCEPTED_IMPORT_REVIEW_STATES:
+            raise ValueError(
+                "Build-13 Live-Light requires import_review_state to stay pending or approved"
+            )
+        if not self.import_dataset_ref:
+            raise ValueError("Build-13 Live-Light requires import_dataset_ref")
+        if not self.import_clock_ref:
+            raise ValueError("Build-13 Live-Light requires import_clock_ref")
+        if self.import_activation_stage != "shadow_ready":
+            raise ValueError(
+                "Build-13 Live-Light requires import_activation_stage=shadow_ready"
+            )
+        if self.import_health_state != "active":
+            raise ValueError(
+                "Build-13 Live-Light requires import_health_state=active"
+            )
+        if self.import_compatibility_status in _REJECTED_IMPORT_COMPATIBILITY_STATUSES:
+            raise ValueError(
+                "Build-13 Live-Light requires a non-rejected import_compatibility_status"
+            )
+        if not self.import_feature_lineage_required:
+            raise ValueError(
+                "Build-13 Live-Light requires import_feature_lineage_required=True"
+            )
+        if not self.import_feature_lineage_present:
+            raise ValueError(
+                "Build-13 Live-Light requires import_feature_lineage_present=True"
+            )
+        if self.import_feature_lineage_status != "ok":
+            raise ValueError(
+                "Build-13 Live-Light requires import_feature_lineage_status=ok"
+            )
+        if not self.import_transform_whitelist_required:
+            raise ValueError(
+                "Build-13 Live-Light requires import_transform_whitelist_required=True"
+            )
+        if not self.import_transform_whitelist_present:
+            raise ValueError(
+                "Build-13 Live-Light requires import_transform_whitelist_present=True"
+            )
+        if self.import_transform_whitelist_status != "ok":
+            raise ValueError(
+                "Build-13 Live-Light requires import_transform_whitelist_status=ok"
+            )
+        if self.import_signature_check_status in _REJECTED_IMPORT_SIGNATURE_STATUSES:
+            raise ValueError(
+                "Build-13 Live-Light requires a non-rejected import_signature_check_status"
+            )
+        if self.import_conflict_resolution_mode != _EXPECTED_IMPORT_CONFLICT_RESOLUTION_MODE:
+            raise ValueError(
+                "Build-13 Live-Light requires canonical import_conflict_resolution_mode"
+            )
+        if self.import_conflict_hard_veto_action != _EXPECTED_IMPORT_CONFLICT_HARD_VETO_ACTION:
+            raise ValueError(
+                "Build-13 Live-Light requires canonical import_conflict_hard_veto_action"
+            )
+        if (
+            self.import_conflict_score_aggregation_mode
+            != _EXPECTED_IMPORT_CONFLICT_SCORE_AGGREGATION_MODE
+        ):
+            raise ValueError(
+                "Build-13 Live-Light requires canonical import_conflict_score_aggregation_mode"
+            )
+        if self.import_conflict_size_reduce_mode != _EXPECTED_IMPORT_CONFLICT_SIZE_REDUCE_MODE:
+            raise ValueError(
+                "Build-13 Live-Light requires canonical import_conflict_size_reduce_mode"
+            )
+        if self.import_conflict_rank_adjust_mode != _EXPECTED_IMPORT_CONFLICT_RANK_ADJUST_MODE:
+            raise ValueError(
+                "Build-13 Live-Light requires canonical import_conflict_rank_adjust_mode"
+            )
+        if not self.import_conflict_additive_soft_boosts_allowed:
+            raise ValueError(
+                "Build-13 Live-Light requires import_conflict_additive_soft_boosts_allowed=True"
+            )
+        if not self.import_conflict_additive_soft_reduces_allowed:
+            raise ValueError(
+                "Build-13 Live-Light requires import_conflict_additive_soft_reduces_allowed=True"
+            )
+        if self.import_registry_atomicity_mode != _EXPECTED_IMPORT_REGISTRY_ATOMICITY_MODE:
+            raise ValueError(
+                "Build-13 Live-Light requires canonical import_registry_atomicity_mode"
+            )
+        if (
+            self.import_registry_concurrency_model
+            != _EXPECTED_IMPORT_REGISTRY_CONCURRENCY_MODEL
+        ):
+            raise ValueError(
+                "Build-13 Live-Light requires canonical import_registry_concurrency_model"
+            )
+        if not self.import_registry_publish_requires_atomic_replace:
+            raise ValueError(
+                "Build-13 Live-Light requires import_registry_publish_requires_atomic_replace=True"
+            )
+        if not self.import_registry_publish_requires_fsync:
+            raise ValueError(
+                "Build-13 Live-Light requires import_registry_publish_requires_fsync=True"
+            )
+        if not self.import_registry_rollback_to_last_known_good:
+            raise ValueError(
+                "Build-13 Live-Light requires import_registry_rollback_to_last_known_good=True"
+            )
+        if self.import_payload_ref_count < 5:
+            raise ValueError(
+                "Build-13 Live-Light requires import_payload_ref_count>=5"
+            )
+        if not self.import_payload_bundle_present:
+            raise ValueError(
+                "Build-13 Live-Light requires import_payload_bundle_present=True"
+            )
+        if not self.import_review_export_ref:
+            raise ValueError(
+                "Build-13 Live-Light requires import_review_export_ref"
+            )
+        if not self.import_feature_bridge_ref:
+            raise ValueError(
+                "Build-13 Live-Light requires import_feature_bridge_ref"
+            )
+        if not self.import_parity_diagnostics_ref:
+            raise ValueError(
+                "Build-13 Live-Light requires import_parity_diagnostics_ref"
+            )
+        if not self.import_replay_metrics_ref:
+            raise ValueError(
+                "Build-13 Live-Light requires import_replay_metrics_ref"
+            )
+        if not self.import_replay_dtr_ref:
+            raise ValueError(
+                "Build-13 Live-Light requires import_replay_dtr_ref"
             )
         if self.micro_live_import_artifact_id == "none":
             raise ValueError(
@@ -968,15 +1678,69 @@ class LiveLightInput(BaseModel, frozen=True):
             raise ValueError(
                 "Build-13 Live-Light allows only governed engines from the Full Shadow perimeter"
             )
+        if self.shadow_promotable_engines:
+            unknown_shadow_promotable = (
+                set(self.shadow_promotable_engines) - _LIVE_LIGHT_ALLOWED_ENGINES
+            )
+            if unknown_shadow_promotable:
+                raise ValueError(
+                    "Build-13 Live-Light shadow_promotable_engines must stay within the governed engine perimeter"
+                )
+            if not set(self.active_engines).issubset(set(self.shadow_promotable_engines)):
+                raise ValueError(
+                    "Build-13 Live-Light active_engines must be PROMOTABLE in Shadow judgment"
+                )
+        elif self.shadow_shadow_only_engines or self.shadow_rewrite_required_engines:
+            raise ValueError(
+                "Build-13 Live-Light requires at least one PROMOTABLE engine in Shadow judgment"
+            )
+        if set(self.active_engines) & set(self.shadow_shadow_only_engines):
+            raise ValueError(
+                "Build-13 Live-Light must not activate engines marked SHADOW_ONLY in Shadow judgment"
+            )
+        if set(self.active_engines) & set(self.shadow_rewrite_required_engines):
+            raise ValueError(
+                "Build-13 Live-Light must not activate engines marked REWRITE_REQUIRED in Shadow judgment"
+            )
+        if not self.micro_live_planned_engines:
+            raise ValueError(
+                "Build-13 Live-Light requires governed micro_live_planned_engines"
+            )
+        unknown_planned_engines = (
+            set(self.micro_live_planned_engines) - _LIVE_LIGHT_ALLOWED_ENGINES
+        )
+        if unknown_planned_engines:
+            raise ValueError(
+                "Build-13 Live-Light micro_live_planned_engines must stay within the governed engine perimeter"
+            )
+        if not set(self.active_engines).issubset(set(self.micro_live_planned_engines)):
+            raise ValueError(
+                "Build-13 Live-Light active_engines must stay within the governed Micro-live planned_engines"
+            )
 
         if not self.live_pairs:
             raise ValueError("Build-13 Live-Light requires at least one live pair")
-        if len(self.live_pairs) > len(LIGHT_PAIRS):
-            raise ValueError("Build-13 Live-Light must stay within the Light pair scope")
-        invalid_pairs = tuple(pair for pair in self.live_pairs if pair not in LIGHT_PAIRS)
+        if len(self.live_pairs) > len(ALL_PAIRS):
+            raise ValueError("Build-13 Live-Light must stay within the Complete pair scope")
+        invalid_pairs = tuple(pair for pair in self.live_pairs if pair not in ALL_PAIRS)
         if invalid_pairs:
             raise ValueError(
-                "Build-13 Live-Light live_pairs must stay within the Light pair scope"
+                "Build-13 Live-Light live_pairs must stay within the Complete pair scope"
+            )
+        if not self.micro_live_planned_pairs:
+            raise ValueError(
+                "Build-13 Live-Light requires governed micro_live_planned_pairs"
+            )
+        invalid_planned_pairs = tuple(
+            pair for pair in self.micro_live_planned_pairs if pair not in ALL_PAIRS
+        )
+        if invalid_planned_pairs:
+            raise ValueError(
+                "Build-13 Live-Light micro_live_planned_pairs must stay within the Complete pair scope"
+            )
+        if not set(self.live_pairs).issubset(set(self.micro_live_planned_pairs)):
+            raise ValueError(
+                "Build-13 Live-Light live_pairs must stay within the governed Micro-live planned_pairs"
             )
 
         if self.max_pair_notional_usdt > self.max_total_notional_usdt:
@@ -1078,6 +1842,7 @@ class LiveLightRunSummary(BaseModel, frozen=True):
     build14_confidence_penalty_weight: float = Field(default=0.0, ge=0.0, le=0.25)
     build14_recommended_budget_factor: float = Field(default=1.0, ge=0.0, le=1.0)
     build14_live_eligible: bool = False
+    shadow_portfolio_judgment: ShadowPortfolioJudgment = ShadowPortfolioJudgment()
 
     @property
     def blocking_reason_count(self) -> int:
@@ -1110,6 +1875,12 @@ __all__ = [
     "ShadowBuild14ReaderContribution",
     "ShadowReportSection",
     "ShadowReportArtifact",
+    "ShadowEngineJudgmentVerdict",
+    "ShadowEngineJudgment",
+    "ShadowPortfolioJudgmentVerdict",
+    "ShadowPressureLevel",
+    "ShadowPortfolioJudgment",
+    "ShadowEngineJudgmentSummary",
     "MicroLiveInput",
     "MicroLiveDecision",
     "MicroLiveExecutionPlan",

@@ -55,6 +55,24 @@ def build_build9x_projection(
     replay_candidate_count = sum(
         candidate.governance_stage in _REPLAY_READY_STAGES for candidate in bundle.candidates
     )
+    mapped_hypotheses = tuple(
+        hypothesis for hypothesis in bundle.hypotheses if hypothesis.target_component
+    )
+    latest_hypothesis = mapped_hypotheses[-1] if mapped_hypotheses else None
+    expected_replay_evidence = tuple(
+        dict.fromkeys(
+            evidence
+            for hypothesis in mapped_hypotheses
+            for evidence in hypothesis.expected_replay_evidence
+        )
+    )
+    expected_shadow_evidence = tuple(
+        dict.fromkeys(
+            evidence
+            for hypothesis in mapped_hypotheses
+            for evidence in hypothesis.expected_shadow_evidence
+        )
+    )
     diagnostics_summary = bundle.breakdown_report.summary
     if capacity_snapshot.review_blocked_due_to_incomplete_data and capacity_snapshot.blocking_reasons:
         diagnostics_summary = (
@@ -80,6 +98,20 @@ def build_build9x_projection(
         replay_candidate_count=replay_candidate_count,
         memory_record_count=1 if bundle.memory_record.record_id or bundle.memory_record.summary else 0,
         latest_memory_summary=bundle.memory_record.rejection_reason or bundle.memory_record.summary,
+        enrichment_hypothesis_count=len(mapped_hypotheses),
+        latest_enrichment_target=(
+            latest_hypothesis.target_component if latest_hypothesis is not None else ""
+        ),
+        latest_enrichment_signal_family=(
+            latest_hypothesis.signal_family if latest_hypothesis is not None else ""
+        ),
+        expected_replay_evidence_count=len(expected_replay_evidence),
+        expected_shadow_evidence_count=len(expected_shadow_evidence),
+        enrichment_summary=(
+            f"{latest_hypothesis.category} -> {latest_hypothesis.target_component}"
+            if latest_hypothesis is not None
+            else "No enrichment hypothesis mapped"
+        ),
         review_export_ready=(
             bool(bundle.review_export.export_ref)
             and not bundle.review_export.review_blocked_due_to_incomplete_data

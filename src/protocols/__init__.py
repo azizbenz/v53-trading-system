@@ -16,6 +16,12 @@ from protocols.contracts import (
     ShadowBuild14ReaderContribution,
     ShadowComponentAssessment,
     ShadowDecision,
+    ShadowEngineJudgment,
+    ShadowEngineJudgmentSummary,
+    ShadowEngineJudgmentVerdict,
+    ShadowPortfolioJudgment,
+    ShadowPortfolioJudgmentVerdict,
+    ShadowPressureLevel,
     ShadowEngineReport,
     ShadowInput,
     ShadowReportSection,
@@ -72,10 +78,13 @@ from protocols.shadow_dashboard import (
     build_shadow_dashboard_section,
     build_shadow_projection,
 )
+from protocols.engine_judgment_dashboard import build_engine_judgment_projection
 from protocols.shadow_day_counter import ShadowDayCounter, ShadowProfile
 from protocols.shadow_runtime import (
     build_shadow_runtime_evidence,
     build_shadow_input_from_payloads,
+    derive_shadow_portfolio_judgment,
+    derive_shadow_engine_judgment_summary,
     compare_shadow_candidate,
     run_shadow_validation,
 )
@@ -123,6 +132,42 @@ from protocols.shadow_runtime_evidence import (
     ShadowRuntimeEvidenceRecorderConfig,
     ShadowRuntimeEvidenceRecorderState,
 )
+from protocols.artifact_action_composer import (
+    ArtifactHookActionInput,
+    ComposedArtifactHookEffect,
+    compose_artifact_hook_actions,
+)
+from protocols.compiled_artifact_registry_store import (
+    CompiledArtifactHookBinding,
+    CompiledArtifactPublishResult,
+    CompiledArtifactRegistryPointer,
+    CompiledArtifactRegistrySnapshot,
+    CompiledArtifactRegistryStore,
+)
+from protocols.compiled_hook_plan_loader import (
+    CompiledHookPlanDocument,
+    CompiledHookPlanLoadStatus,
+    CompiledHookPlanSelection,
+    load_compiled_hook_plan,
+    select_current_compiled_hook_plan,
+)
+from protocols.execution_no_trade_hook import (
+    ExecutionNoTradeHookInput,
+    ExecutionNoTradeHookOutcome,
+    ExecutionNoTradeHookPlanPayload,
+    load_execution_no_trade_hook_payload,
+    run_execution_no_trade_hook,
+)
+from protocols.execution_no_trade_filter_bridge import ExecutionNoTradeFilterBridge
+from protocols.execution_no_trade_filter_bridge import (
+    ExecutionNoTradeFilterBridgeStatus,
+    inspect_execution_no_trade_filter_bridge,
+)
+from protocols.execution_runtime_bootstrap import (
+    build_execution_runtime,
+    inspect_execution_runtime_bootstrap,
+)
+from protocols.execution_runtime_dashboard import build_execution_no_trade_bridge_projection
 
 __all__ = [
     "LiveLightInput",
@@ -167,6 +212,12 @@ __all__ = [
     "ShadowReportArtifact",
     "ShadowComponentAssessment",
     "ShadowDecision",
+    "ShadowEngineJudgmentVerdict",
+    "ShadowEngineJudgment",
+    "ShadowPortfolioJudgmentVerdict",
+    "ShadowPressureLevel",
+    "ShadowPortfolioJudgment",
+    "ShadowEngineJudgmentSummary",
     "ShadowRunSummary",
     "ShadowRunState",
     "ShadowVerdict",
@@ -186,6 +237,8 @@ __all__ = [
     "ShadowProfile",
     "build_shadow_runtime_evidence",
     "build_shadow_input_from_payloads",
+    "derive_shadow_portfolio_judgment",
+    "derive_shadow_engine_judgment_summary",
     "compare_shadow_candidate",
     "run_shadow_validation",
     "build_shadow_daily_metrics_summary",
@@ -219,4 +272,29 @@ __all__ = [
     "ShadowSessionRegistry",
     "build_shadow_projection",
     "build_shadow_dashboard_section",
+    "build_engine_judgment_projection",
+    "ArtifactHookActionInput",
+    "ComposedArtifactHookEffect",
+    "compose_artifact_hook_actions",
+    "CompiledArtifactHookBinding",
+    "CompiledArtifactRegistrySnapshot",
+    "CompiledArtifactRegistryPointer",
+    "CompiledArtifactPublishResult",
+    "CompiledArtifactRegistryStore",
+    "CompiledHookPlanLoadStatus",
+    "CompiledHookPlanDocument",
+    "CompiledHookPlanSelection",
+    "load_compiled_hook_plan",
+    "select_current_compiled_hook_plan",
+    "ExecutionNoTradeHookPlanPayload",
+    "ExecutionNoTradeHookInput",
+    "ExecutionNoTradeHookOutcome",
+    "load_execution_no_trade_hook_payload",
+    "run_execution_no_trade_hook",
+    "ExecutionNoTradeFilterBridge",
+    "ExecutionNoTradeFilterBridgeStatus",
+    "inspect_execution_no_trade_filter_bridge",
+    "build_execution_runtime",
+    "inspect_execution_runtime_bootstrap",
+    "build_execution_no_trade_bridge_projection",
 ]

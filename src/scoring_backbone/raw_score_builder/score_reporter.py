@@ -48,6 +48,10 @@ class ScoreReporter:
         scoring_version: str,
     ) -> ScorePayload:
         """Build ScorePayload with anomaly detection."""
+        normalized_scoring_version = _require_scoring_version(
+            scoring_version,
+            context="ScoreReporter.evaluate",
+        )
         is_anomaly = raw_score < self._anomaly_low or raw_score > self._anomaly_high
         anomaly_reason = ""
         if is_anomaly:
@@ -62,7 +66,7 @@ class ScoreReporter:
             raw_score=raw_score,
             block_scores=block_scores,
             features_used=features_used,
-            scoring_version=scoring_version,
+            scoring_version=normalized_scoring_version,
             is_anomaly=is_anomaly,
             anomaly_reason=anomaly_reason,
         )
@@ -78,3 +82,12 @@ class ScoreReporter:
             min_score=min(self._scores),
             max_score=max(self._scores),
         )
+
+
+def _require_scoring_version(scoring_version: str, *, context: str) -> str:
+    """Reject blank score versions on the governed scoring rail."""
+
+    normalized = scoring_version.strip()
+    if not normalized:
+        raise ValueError(f"{context} requires non-empty scoring_version")
+    return normalized

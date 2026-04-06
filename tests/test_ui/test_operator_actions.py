@@ -1,4 +1,4 @@
-"""Tests for governed operator actions in the locked Light UI."""
+"""Tests for governed operator actions in the compatibility operator UI."""
 
 from __future__ import annotations
 
@@ -155,7 +155,7 @@ def test_micro_live_downgrade_to_shadow_is_rejected_from_shadow_runtime():
     )
 
     assert outcome.accepted is False
-    assert outcome.rejection_reason == "action is outside the governed Light UI surface"
+    assert outcome.rejection_reason == "action is outside the governed compatibility operator UI surface"
 
 
 def test_record_screen_open_creates_auditable_entry():

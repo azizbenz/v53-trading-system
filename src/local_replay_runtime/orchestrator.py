@@ -78,7 +78,10 @@ class LocalReplayOrchestrator:
         dataset_ref: ReplayDatasetRef | None = None,
         clock_ref: ReplayClockRef | None = None,
         diagnostic_ids: tuple[str, ...] = (),
+        hypothesis_ids: tuple[str, ...] = (),
         candidate_ids: tuple[str, ...] = (),
+        target_components: tuple[str, ...] = (),
+        expected_shadow_evidence: tuple[str, ...] = (),
         review_export_ref: str = "",
         feature_bridge_ref: str = "",
         parity_diagnostics_ref: str = "",
@@ -118,12 +121,17 @@ class LocalReplayOrchestrator:
             replay_metrics_ref=replay_metrics_ref,
             replay_dtr_ref=replay_dtr_ref,
             diagnostic_ids=diagnostic_ids,
+            hypothesis_ids=hypothesis_ids,
             candidate_ids=candidate_ids,
+            target_components=target_components,
+            expected_shadow_evidence=expected_shadow_evidence,
             review_export_ref=review_export_ref,
         )
         bundle = ReplayBundle(
             manifest=manifest,
             artifact_kind=artifact_kind,
+            activation_stage=manifest.activation_stage,
+            health_state=manifest.health_state,
             lifecycle_state=(
                 ReplayLifecycleState.VALIDATED
                 if not validation_notes

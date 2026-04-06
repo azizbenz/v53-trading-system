@@ -1,0 +1,1260 @@
+# 2026-04-03 — V5.3 Architecture de transformation orientée liquidité
+## Audit critique détaillé + architecture cible en Markdown
+
+---
+
+## 0. Objet du document
+
+Ce document répond à trois besoins :
+
+1. auditer de façon critique la proposition de transformation de V5.3 vers une lecture **microstructure / topographie de liquidité** ;
+2. dire **ce qu’il faut transformer**, **ce qu’il faut garder**, **ce qu’il faut refuser** ;
+3. fournir une **architecture V5.3 réécrite en Markdown**, compatible avec le canon existant et avec une trajectoire d’implémentation réaliste.
+
+Le but n’est pas de créer une seconde V5.3.
+Le but est de faire évoluer **la vraie V5.3** d’un système trop centré sur la géométrie naïve du prix vers un système centré sur :
+
+- la liquidité,
+- la friction d’exécution,
+- la topographie du volume,
+- la microstructure exploitable à horizon VPS,
+- la discipline de preuve replay → shadow → micro-live → live.
+
+---
+
+## 1. Verdict exécutif
+
+### 1.1 Verdict net
+
+Oui, la transformation proposée va dans la **bonne direction stratégique**.
+
+Mais elle doit être reformulée ainsi :
+
+> **V5.3 ne doit pas “abandonner le prix”, elle doit rétrograder les indicateurs années 90 du rang de logique primaire au rang de fallback, de mesure d’échelle et d’explicabilité secondaire.**
+
+Autrement dit :
+
+- **primaire** : liquidité, volume profile, sweeps, absorption, delta, friction microstructure, quality of flow ;
+- **secondaire** : ATR, moyennes, oscillateurs, volatilité simple, structure prix seule ;
+- **interdit** : refaire la logique de V5.3 sous forme d’un moteur parallèle caché.
+
+### 1.2 Reformulation doctrinale
+
+L’ancienne question implicite de nombreux systèmes retail est :
+
+> “Le prix a-t-il franchi une ligne ?”
+
+La nouvelle question V5.3 doit devenir :
+
+> “Quel acteur a consommé la liquidité, quelle topographie reste devant moi, et l’edge survit-il encore à la friction réelle du marché ?”
+
+### 1.3 Conclusion stratégique
+
+La transformation ne doit **pas** produire :
+
+- un moteur E,
+- un nouveau profil,
+- un bypass de Shadow/Micro-live/Live,
+- une V5.3 locale différente de la V5.3 VPS,
+- une couche “IA microstructure” libre et incontrôlée.
+
+Elle doit produire :
+
+- un **Build-14 enrichi**,
+- un **risk_backbone élargi par la friction microstructure**,
+- des **invalidation mappers A/B/C/D basés sur la liquidité valide**,
+- des **reason codes explicables**,
+- une **UI qui montre la matrice de liquidité**,
+- une **chaîne de preuve complète** par hypothèse d’enrichissement.
+
+---
+
+## 2. Diagnostic critique du manifeste “physique du marché”
+
+## 2.1 Ce que le manifeste voit juste
+
+### A. Le vrai angle mort n’est pas seulement l’alpha, c’est la géométrie du risque
+
+Le diagnostic le plus fort est le suivant :
+
+- le petit compte sur VPS ne souffre pas seulement d’un edge insuffisant ;
+- il souffre d’une **géométrie de stop trop prévisible** ;
+- il souffre d’un **coût microstructure sous-modélisé** ;
+- il souffre d’une **lecture trop prix-centrique** alors que le marché réel se joue à travers la liquidité.
+
+C’est juste.
+
+### B. La bonne cible d’intégration est Build-14, pas un nouveau moteur
+
+Le manifeste a raison quand il dit que les idées de sweep, void, absorption, delta, mur de liquidité ne doivent pas créer une nouvelle architecture parallèle.
+
+Ces briques doivent vivre dans :
+
+- `complete_enablers`,
+- `risk_backbone`,
+- `scoring_backbone`,
+- `monitoring`,
+- et dans les gates A/B/C/D.
+
+### C. Le plus gros gain potentiel est sur la sortie, pas seulement l’entrée
+
+Le point le plus profond de la transformation n’est pas “entrer mieux”, mais :
+
+- arrêter les stops ATR aveugles,
+- arrêter les entrées économiquement mortes avant exécution,
+- relier la taille de position à une invalidation physique crédible,
+- faire de la friction microstructure un hard gate si elle tue l’edge.
+
+### D. Le petit compte peut exploiter un avantage asymétrique
+
+Un petit compte 4k$–6k$ n’a pas l’avantage de vitesse.
+Il a un autre avantage :
+
+- peu d’impact marché,
+- possibilité d’être invisible,
+- possibilité d’attendre la fin d’un sweep,
+- possibilité de recycler des déséquilibres laissés par des acteurs supérieurs.
+
+C’est une intuition valide.
+
+---
+
+## 2.2 Ce que le manifeste surestime ou doit corriger
+
+### A. Il ne faut pas opposer brutalement “prix” contre “liquidité”
+
+Le prix reste utile.
+Ce qui est faux, c’est de le laisser gouverner seul.
+
+Il faut donc distinguer :
+
+#### Prix à conserver
+- structure locale,
+- régimes de compression / expansion,
+- amplitude de mouvement,
+- normalisation des distances,
+- fallback quand la lecture microstructure est indisponible.
+
+#### Prix à déclasser
+- stop ATR universel,
+- breakout prix pur sans lecture de mur / vide,
+- mean reversion sur simple écart à moyenne,
+- validation de trend par prix seul sans lecture de flux.
+
+### B. Les proxies microstructure doivent rester honnêtes
+
+Sur une VPS et sans vrai flux L3 institutionnel, beaucoup de mesures resteront des **proxies**.
+
+Exemples :
+- `Delta ≈ (Close - Open) × Volume` : utile, mais approximation ;
+- détection de sweep par wick + volume + rejet : utile, mais pas preuve parfaite ;
+- absorption via OBI + prix qui ne bouge pas : utile, mais à calibrer par paire.
+
+Conclusion :
+
+> la microstructure retail/VPS doit être **probabiliste et gouvernée**, jamais traitée comme vérité absolue.
+
+### C. Il ne faut pas promouvoir trop vite au hard block central
+
+Beaucoup de nouveaux signaux proposés doivent commencer en :
+
+- lecture seule,
+- shadow analytics,
+- influence limitée,
+- pénalité légère,
+- alerte ou enrichissement monitoring.
+
+Trop de hard blocks nouveaux trop tôt recréeraient exactement le vieux problème V5.2 :
+
+- sur-filtrage,
+- stérilisation,
+- sophistication décorative,
+- fréquence utile détruite.
+
+### D. Le plus grand risque caché : la sur-ingénierie
+
+La transformation peut échouer si elle introduit :
+
+- trop de readers à la fois,
+- trop de reason codes non consolidés,
+- trop de logique en moteur au lieu de gates explicables,
+- trop de dépendances CPU / mémoire sur VPS,
+- trop de belles idées sans boucle d’évidence.
+
+---
+
+## 3. Doctrine de transformation recommandée
+
+## 3.1 Nouvelle hiérarchie décisionnelle de V5.3
+
+### Avant
+1. structure prix
+2. indicateurs / features classiques
+3. scoring
+4. risk
+5. exécution
+6. monitoring
+
+### Après
+1. **data quality et pair health**
+2. **topographie de liquidité et microstructure exploitable**
+3. **lecture structurelle prix/régime comme cadre secondaire**
+4. **scoring économique explicable**
+5. **risk avec guard de friction microstructure**
+6. **exécution et vérité de coût**
+7. **portfolio et overlap d’edge**
+8. **monitoring / meta / replay evidence**
+
+## 3.2 Règle de conception centrale
+
+Toute nouvelle brique doit répondre à la question :
+
+> apporte-t-elle un gain réel de lecture du marché ou de survie économique, sans créer une nouvelle source opaque de veto ?
+
+Si la réponse est non, elle doit être rejetée.
+
+---
+
+## 4. Ce qu’il faut garder, transformer, rejeter
+
+## 4.1 À garder
+
+### Fondations V5.3
+- `interface_contracts`
+- `manifest_registry`
+- `dag_validator`
+- `contract_test_suite`
+- `smoke_bootstrap_recovery`
+- `protocols`
+- `meta_learning`
+- `local_replay_runtime`
+
+### Backbones centraux
+- `data_backbone`
+- `execution_backbone`
+- `risk_backbone`
+- `scoring_backbone`
+- `portfolio_minimal`
+- `meta_minimal`
+- `monitoring`
+- `ui`
+
+### Moteurs canoniques
+- A, B, C, D
+
+### Logique canonique à préserver
+- profils `LIGHT` et `COMPLETE` uniquement,
+- `runtime_mode` pour local/VPS,
+- passage obligatoire `LOCAL_REPLAY -> SHADOW -> MICRO_LIVE -> LIVE`,
+- aucun bypass de Build-11/12/13.
+
+## 4.2 À transformer
+
+### Build-14
+Le faire passer de “couche d’enrichissement disponible” à “brique maîtresse de lecture liquidité”.
+
+### Risk backbone
+Ajouter la survie microstructure :
+- spread widening,
+- slippage proxy,
+- stop viability,
+- liquidity stop,
+- edge net after friction.
+
+### Scoring backbone
+Le rendre capable de porter :
+- reason codes physiques,
+- boosts/downgrades microstructure,
+- pénalités de toxicité,
+- pénalités de mur,
+- pénalités de delta divergence.
+
+### Invalidation mappers
+Passer de :
+- distance géométrique prix,
+vers :
+- distance à un niveau de liquidité valide,
+- fallback ATR seulement si la donnée microstructure n’est pas exploitable.
+
+### Monitoring/UI
+Faire apparaître la topographie de liquidité comme une surface de vérité opératoire.
+
+## 4.3 À rejeter
+
+- nouveau moteur E/F/G,
+- microstructure comme “agent autonome”,
+- hard blocks massifs dès la première intégration,
+- duplication local/VPS de la logique métier,
+- plugin de recherche live non gouverné,
+- évolution implicite de Light vers Complete,
+- remplacements complets de A/B/C/D par des readers.
+
+---
+
+## 5. Architecture V5.3 cible après transformation
+
+## 5.1 Vue d’ensemble
+
+```text
+V5.3
+├── Layer 1 — Foundations / Contracts / Governance
+│   ├── interface_contracts
+│   ├── manifest_registry
+│   ├── dag_validator
+│   ├── contract_test_suite
+│   └── smoke_bootstrap_recovery
+│
+├── Layer 2 — Market Data / Quality / Pair Health
+│   ├── websocket_gateway
+│   ├── rest_bootstrap
+│   ├── event_normalizer
+│   ├── internal_router
+│   ├── freshness_checker
+│   ├── consistency_checker
+│   └── pair_health_scorer
+│
+├── Layer 3 — Market Physics / Build-14 Enablers
+│   ├── ofi_calculator
+│   ├── book_imbalance
+│   ├── microprice_estimator
+│   ├── persistence_filter
+│   ├── volume_delta_aggregator          [nouveau]
+│   ├── rolling_volume_profile           [nouveau ou via lob_deep_filter_vwa]
+│   ├── sweep_detector                   [nouveau]
+│   ├── absorption_detector              [nouveau]
+│   ├── liquidity_wall_locator           [nouveau logique ou sous-composant]
+│   ├── liquidity_void_estimator         [nouveau logique ou sous-composant]
+│   └── micro_friction_estimator         [nouveau logique ou sous-composant]
+│
+├── Layer 4 — Regime / Context
+│   ├── regime_classifier_simple
+│   ├── hmm_regime_layer
+│   └── regime_confidence
+│
+├── Layer 5 — Signal Engines
+│   ├── engine_a
+│   ├── engine_b
+│   ├── engine_c
+│   └── engine_d
+│
+├── Layer 6 — Scoring / Ranking / Sizing
+│   ├── raw_score_builder
+│   ├── penalty_aggregator
+│   ├── hard_block_gate
+│   └── ranking_router
+│
+├── Layer 7 — Risk / Survival
+│   ├── exposure_budgeter
+│   ├── loss_budgeter
+│   ├── btc_factor_guard
+│   ├── correlation_cluster_guard
+│   ├── micro_friction_guard             [nouveau]
+│   └── stop_viability_guard             [nouveau ou sous-logique]
+│
+├── Layer 8 — Execution / Cost Truth
+│   ├── order_decider
+│   ├── fill_tracker
+│   ├── execution_cost_meter
+│   └── reconciliation_layer
+│
+├── Layer 9 — Portfolio / Selection
+│   ├── opportunity_selector
+│   ├── allocation_router
+│   ├── effective_edge_diversity
+│   └── risk_contribution_monitor
+│
+├── Layer 10 — Meta / Evidence / Learning
+│   ├── dtr_core
+│   ├── cra_monitor
+│   ├── break_even_dashboard
+│   ├── edge_tracker_prudent_minimal
+│   ├── meta_learning
+│   └── replay_bundle_builder
+│
+├── Layer 11 — Monitoring / UI / Operator Control
+│   ├── metrics_collector
+│   ├── alert_manager
+│   ├── health_dashboard_backend
+│   ├── technical_dashboard_view
+│   └── ui_light_locked / UI complete
+│
+└── Layer 12 — Runtime Modes / Protocols
+    ├── LOCAL_REPLAY
+    ├── SHADOW
+    ├── MICRO_LIVE
+    └── LIVE
+```
+
+---
+
+## 5.2 Principe architectural central
+
+Le cœur de transformation n’est pas dans Layer 5 seulement.
+Il est dans la chaîne suivante :
+
+```text
+data quality
+-> market physics / liquidity topology
+-> signal engine gates
+-> scoring explicable
+-> risk de friction
+-> execution truth
+-> meta evidence
+-> monitoring
+```
+
+Cela signifie :
+
+- les moteurs ne doivent plus “voir seulement des prix” ;
+- le scoring ne doit plus pénaliser sans raconter la physique ;
+- le risk ne doit plus ignorer la friction ;
+- le monitoring ne doit plus montrer seulement PnL et coûts agrégés.
+
+---
+
+## 6. Architecture détaillée par famille
+
+## 6.1 Layer 1 — Foundations
+
+### Mission
+Empêcher la transformation microstructure de créer une dette d’architecture.
+
+### Travaux requis
+- enrichir les contrats pour nouveaux snapshots/events,
+- versionner les nouveaux readers,
+- mettre à jour manifest, DAG, tests de surface,
+- empêcher qu’un composant Build-14 ne contourne risk/scoring/protocols.
+
+### Verdict
+Transformation obligatoire, mais faible en volume de code.
+C’est du contrôle structurel.
+
+---
+
+## 6.2 Layer 2 — Data / Quality / Health
+
+### Mission
+Fournir une donnée suffisamment propre pour que les signaux microstructure aient un sens.
+
+### Transformation requise
+Avant de promouvoir une logique microstructure, il faut durcir la vérité de ces facts :
+
+- fraicheur 1m/5m,
+- duplications,
+- out-of-order,
+- trous de volume,
+- incohérences mid/spread/OBI,
+- saturation router / backlog.
+
+### Règle critique
+
+> aucune “physique du marché” ne vaut quelque chose si le flux est sale.
+
+### Audit critique
+Le danger ici est de croire qu’un signal sophistiqué compense une donnée dégradée.
+C’est faux.
+
+---
+
+## 6.3 Layer 3 — Market Physics / Build-14 Enablers
+
+C’est la couche maîtresse de la transformation.
+
+### 6.3.1 `volume_delta_aggregator` [nouveau]
+
+#### Mission
+Estimer la pression agressive nette par barre et son cumul.
+
+#### Inputs
+- OHLCV 1m/5m,
+- direction de clôture,
+- volume,
+- contexte spread/microprice si disponible.
+
+#### Outputs
+- `delta_volume`,
+- `cumulative_delta`,
+- `dominance`,
+- `is_divergence`.
+
+#### Politique d’influence
+- lecture seule au départ,
+- puis boost/downgrade moteur,
+- pas hard block immédiat partout.
+
+#### Risque
+Le proxy de delta peut mentir sur des barres bruitées ou sur des actifs très irréguliers.
+
+### 6.3.2 `rolling_volume_profile` via `lob_deep_filter_vwa` enrichi
+
+#### Mission
+Faire apparaître :
+- POC,
+- value area,
+- HVN,
+- LVN,
+- vide de liquidité proche,
+- mur de liquidité proche.
+
+#### Principe
+Le moteur ne regarde plus seulement où est le prix, mais **où le marché a accepté ou refusé d’échanger du volume**.
+
+#### Rôle stratégique
+- remplace une partie de la moyenne naïve dans B,
+- discrimine les bons et mauvais breakouts de C,
+- donne la géométrie des stops A/B/C/D.
+
+### 6.3.3 `sweep_detector` [nouveau]
+
+#### Mission
+Détecter les sweeps plausibles à horizon VPS.
+
+#### Usage recommandé
+- moteur B : fade post-sweep,
+- moteur D : second chance après vidage et défense du niveau,
+- monitoring : montrer les zones de balayage récentes.
+
+#### Risque
+Le sweep ne doit pas être traité comme certitude institutionnelle. C’est une hypothèse observée.
+
+### 6.3.4 `absorption_detector` [nouveau]
+
+#### Mission
+Détecter quand une agression n’obtient pas le déplacement attendu.
+
+#### Usage recommandé
+- validation de défense de niveau,
+- signal de re-entry discipliné,
+- diagnostic de faux breakout.
+
+#### Risque
+Très sensible au bruit si l’order book est pauvre ou si la paire est sale.
+
+### 6.3.5 `micro_friction_estimator` [nouveau logique]
+
+#### Mission
+Estimer :
+- spread courant,
+- spread widening,
+- slippage proxy,
+- coût implicite probable,
+- danger de friction.
+
+#### Usage
+Source de vérité pour `micro_friction_guard`.
+
+---
+
+## 6.4 Layer 4 — Regime / Context
+
+### Rôle après transformation
+Le régime ne doit pas disparaître.
+Il doit encadrer la validité des signaux physiques.
+
+Exemples :
+- B + sweep fade est plus crédible en régime non-chaotique ;
+- C + void traverse est plus crédible en expansion propre ;
+- D + absorption re-entry est plus crédible si le contexte global n’est pas déjà épuisé.
+
+### Règle
+Le régime reste un **cadre**, pas un remplaçant de la microstructure.
+
+---
+
+## 6.5 Layer 5 — Moteurs A/B/C/D après transformation
+
+## 6.5.1 Engine A — Premium Trend devient “Delta-Confirmed Trend”
+
+### Ce qu’il garde
+- structure,
+- contexte,
+- qualité premium,
+- logique de tendance/expansion.
+
+### Ce qu’il ajoute
+- confirmation par delta cumulé,
+- rejet des faux trends portés par retrait passif,
+- meilleur contrôle de la validité physique du move.
+
+### Nouveau pattern central
+- trend prix + delta confirmé = boost,
+- trend prix + delta divergente = downgrade fort ou block.
+
+### Ce qu’il ne faut pas faire
+Transformer A en pur moteur de delta.
+A reste un moteur premium de structure.
+
+## 6.5.2 Engine B — Mean Reversion devient “Sweep / Rebalancing Reversion”
+
+### Ce qu’il garde
+- logique de retour à l’équilibre,
+- rôle d’augmentation de fréquence utile.
+
+### Ce qu’il doit perdre
+- mean reversion déclenchée par écart prix pur seulement,
+- reversion sans événement de liquidité.
+
+### Ce qu’il ajoute
+- fade post-sweep,
+- retour vers POC,
+- inventory rebalancing,
+- absorption/rejet local.
+
+### Verdict
+C’est probablement le moteur qui a le plus à gagner de la transformation.
+
+## 6.5.3 Engine C — Breakout devient “Void Traverse Breakout”
+
+### Ce qu’il garde
+- logique de cassure / continuation,
+- rôle propre par rapport à A.
+
+### Ce qu’il ajoute
+- boost si vide de liquidité devant,
+- blocage si mur HVN proche,
+- lecture anti-faux-breakout.
+
+### Verdict
+Transformation très puissante, mais à introduire prudemment.
+
+## 6.5.4 Engine D — Re-entry devient “Absorption Re-entry”
+
+### Ce qu’il garde
+- réengagement discipliné,
+- valeur marginale positive seulement.
+
+### Ce qu’il ajoute
+- re-entry seulement si niveau défendu,
+- lien explicite à l’absorption,
+- pas de re-entry sans preuve contextuelle.
+
+### Verdict
+Très cohérent conceptuellement, mais nécessite une excellente traçabilité.
+
+---
+
+## 6.6 Layer 6 — Scoring / Ranking / Sizing
+
+### Mission après transformation
+Faire du scoring une couche de **traduction économique de la physique du marché**.
+
+### Ce qu’il faut ajouter
+
+#### Nouvelles familles de signaux de scoring
+- `delta_confirmation`
+- `delta_divergence`
+- `sweep_context`
+- `absorption_context`
+- `liquidity_void_context`
+- `liquidity_wall_context`
+- `micro_friction_penalty`
+- `stop_viability_penalty`
+
+#### Nouvelles familles de reason codes
+- `PHYSICS_A_DELTA_CONFIRM_BOOST`
+- `PHYSICS_A_DELTA_DIVERGENCE_BLOCK`
+- `PHYSICS_B_SWEEP_FADE_BOOST`
+- `PHYSICS_B_NO_SWEEP_REDUCE`
+- `PHYSICS_C_VOID_BOOST`
+- `PHYSICS_C_HVN_WALL_BLOCK`
+- `PHYSICS_D_ABSORPTION_REENTRY`
+
+### Sizing
+Le sizing doit être recalculé si le stop n’est plus ATR-based mais liquidity-based.
+
+### Danger majeur
+Introduire trop de boosts/downgrades sans hiérarchie claire.
+
+### Règle
+Le scoring doit rester lisible par :
+- composantes dominantes,
+- pénalités dominantes,
+- hard blockers,
+- outcome final.
+
+---
+
+## 6.7 Layer 7 — Risk / Survival
+
+C’est la deuxième couche maîtresse de la transformation.
+
+## 6.7.1 `micro_friction_guard` [nouveau]
+
+### Mission
+Refuser un trade si la friction probable tue l’espérance du moteur.
+
+### Inputs
+- spread actuel,
+- spread rolling,
+- volatilité courte,
+- volume moyen court,
+- taille d’ordre,
+- edge moteur estimé,
+- coût attendu déjà connu.
+
+### Outputs
+- `accepted/refused/reduced`,
+- `estimated_micro_cost`,
+- `dominant_reason_code`,
+- `explain_summary`.
+
+### Règle critique
+Il doit s’exécuter avant qu’un trade économiquement mort consomme du capital mental ou opérationnel.
+
+## 6.7.2 `stop_viability_guard` [nouveau logique]
+
+### Mission
+Dire si un stop physiquement crédible existe.
+
+### Cas possibles
+- mur liquide utilisable,
+- extrême de sweep exploitable,
+- niveau défendu utilisable,
+- fallback ATR toléré,
+- aucun stop viable -> refus du trade.
+
+### Danger majeur
+Un système peut avoir un bon signal mais un mauvais stop.
+Dans ce cas, le bon verdict est le refus.
+
+## 6.7.3 Invalidation mappers A/B/C/D
+
+### Nouvelle règle
+L’invalidation doit chercher :
+1. niveau physique valide,
+2. distance exploitable,
+3. bruit tolérable,
+4. fallback si nécessaire.
+
+### Ce qu’il ne faut pas faire
+- supprimer totalement ATR,
+- ignorer les cas où la microstructure est absente ou non fiable.
+
+ATR doit devenir un **fallback dégradé**, pas un standard universel.
+
+---
+
+## 6.8 Layer 8 — Execution / Cost Truth
+
+### Mission après transformation
+Tester si la nouvelle lecture microstructure améliore réellement :
+- le coût ex ante,
+- le coût réalisé,
+- les partial fills,
+- la réconciliation,
+- la CE nette.
+
+### Audit critique
+Toute hypothèse microstructure doit survivre à :
+- `execution_cost_meter`,
+- `break_even_dashboard`,
+- `cra_monitor`,
+- `edge_tracker_prudent_minimal`.
+
+### Règle non négociable
+Un enrichissement qui améliore la beauté du setup mais dégrade le coût net doit être rejeté.
+
+---
+
+## 6.9 Layer 9 — Portfolio
+
+### Mission après transformation
+Empêcher que plusieurs signaux “liquidité” ne soient en réalité :
+- le même edge crowdé,
+- la même concentration facteur BTC,
+- la même exposition à un seul thème microstructurel.
+
+### Ce qu’il faut ajouter
+- overlap d’edge physique,
+- diversité réelle des contextes de liquidité,
+- pénalisation des signaux clone.
+
+### Exemple
+Deux signaux sur BTC et ETH qui ne sont que deux fades post-sweep du même choc systémique ne doivent pas être traités comme diversification vraie.
+
+---
+
+## 6.10 Layer 10 — Meta / Evidence / Learning
+
+### Mission
+Transformer chaque hypothèse d’enrichissement en objet audit-able.
+
+### Ce qu’il faut ajouter
+Pour chaque idée :
+- identifiant hypothèse,
+- reader concerné,
+- moteur concerné,
+- politique d’influence,
+- replay evidence bundle,
+- shadow evidence bundle,
+- métriques de coût,
+- métriques CE,
+- métriques stérilisation,
+- verdict : `conserver / durcir / shadow_only / rejeter / promouvoir`.
+
+### Conclusion
+Sans cette couche, la transformation microstructure deviendra vite un amas d’heuristiques.
+
+---
+
+## 6.11 Layer 11 — Monitoring / UI
+
+### Mission après transformation
+Faire apparaître la **matrice de liquidité** comme surface opératoire.
+
+### Nouveaux panneaux recommandés
+
+#### 1. Liquidity Topography
+- POC 1h / 24h,
+- VAL high / low,
+- nearest HVN / LVN,
+- distance au vide,
+- distance au mur.
+
+#### 2. Sweep & Absorption Monitor
+- dernier sweep par paire,
+- intensité sweep,
+- dernière absorption,
+- état de défense des niveaux.
+
+#### 3. Delta & Flow Panel
+- cumulative delta,
+- dominance acheteur/vendeur,
+- divergence delta/prix.
+
+#### 4. Micro-Friction Panel
+- spread normal / widened / dangerous,
+- slippage estimé,
+- friction score,
+- nombre de blocks micro_friction.
+
+### Règle
+L’UI ne doit pas juste être plus riche.
+Elle doit être plus **actionnable**.
+
+---
+
+## 6.12 Layer 12 — Runtime / Protocols
+
+### Mission
+Empêcher que la transformation microstructure se propage sans preuve.
+
+### Règle de rollout
+1. `LOCAL_REPLAY` fidélité maximale,
+2. `LOCAL_REPLAY` fast mode même logique métier,
+3. `SHADOW` avec projection complète des reasons,
+4. `MICRO_LIVE` ultra-prudent,
+5. `LIVE_LIGHT` après vérité coût / réconciliation.
+
+### Interdiction
+Aucun enrichissement microstructure ne doit obtenir un privilège spécial pour bypass cette chaîne.
+
+---
+
+## 7. Proposition de nouveaux composants et contrats
+
+## 7.1 Fichiers à créer
+
+```text
+src/complete_enablers/volume_delta_aggregator.py
+src/complete_enablers/sweep_detector.py
+src/complete_enablers/absorption_detector.py
+src/risk_backbone/micro_friction_guard.py
+src/complete_enablers/liquidity_topography_contracts.py   # optionnel si séparation utile
+```
+
+## 7.2 Fichiers à modifier en priorité
+
+```text
+src/complete_enablers/lob_deep_filter_vwa.py
+src/risk_backbone/risk_runtime.py
+src/scoring_backbone/scoring_runtime.py
+src/scoring_backbone/penalty_aggregator.py
+src/engines/engine_a/engine_a_runner.py
+src/engines/engine_b/engine_b_runner.py
+src/engines/engine_c/engine_c_runner.py
+src/engines/engine_d/engine_d_runner.py
+src/engines/engine_*/invalidation_mapper_*.py
+src/monitoring/contracts.py
+src/monitoring/metrics_collector.py
+src/ui/technical_dashboard_view.py
+scripts/run_local_replay_shadow.py
+src/protocols/contracts.py
+src/meta_learning/* (projection hypothèse / reader / verdict)
+```
+
+## 7.3 Nouveaux contrats recommandés
+
+### `VolumeDeltaSnapshot`
+- `pair_id`
+- `timestamp`
+- `timeframe`
+- `delta_volume`
+- `cumulative_delta`
+- `dominance`
+- `is_divergence`
+
+### `LiquidityTopographySnapshot`
+- `pair_id`
+- `timestamp`
+- `poc_price_1h`
+- `poc_price_24h`
+- `val_high_24h`
+- `val_low_24h`
+- `nearest_hvn`
+- `nearest_lvn`
+- `liquidity_void_distance_pct`
+- `is_liquidity_void_ahead`
+- `nearest_wall_price`
+- `topography_confidence`
+
+### `SweepEvent`
+- `direction`
+- `exhaustion_price`
+- `intensity`
+- `timestamp`
+- `level_reference_type`
+- `valid_until`
+
+### `AbsorptionEvent`
+- `level_price`
+- `aggressive_side`
+- `absorbed_volume`
+- `timestamp`
+- `absorption_score`
+
+### `MicroFrictionAssessment`
+- `estimated_spread_cost_bps`
+- `estimated_slippage_bps`
+- `estimated_total_friction_bps`
+- `engine_edge_estimate_bps`
+- `friction_ratio`
+- `verdict`
+- `reason_code`
+
+---
+
+## 8. Politique d’introduction recommandée
+
+## 8.1 Étape 0 — Instrumentation d’abord
+
+Avant de donner du poids aux nouvelles briques, il faut :
+- ids stables,
+- reason codes,
+- export replay,
+- evidence shadow,
+- UI minimale,
+- métriques moteur/pair/risk.
+
+## 8.2 Étape 1 — Lecture seule
+
+Activer en lecture seule :
+- volume delta,
+- topographie volume,
+- sweep,
+- absorption,
+- friction score.
+
+Aucun impact sur live.
+Seulement monitoring, replay, shadow, meta.
+
+## 8.3 Étape 2 — Influence limitée
+
+Autoriser :
+- boosts légers,
+- downgrades légers,
+- reason codes,
+- pénalités micro_friction,
+- meilleure invalidation mapper.
+
+Toujours sans hard veto massif.
+
+## 8.4 Étape 3 — Promotion sélective
+
+Seulement si démontré :
+- micro_friction_guard peut devenir hard block,
+- C peut hard block devant un mur HVN,
+- D peut exiger absorption,
+- A peut bloquer certaines divergences delta.
+
+## 8.5 Étape 4 — Durcissement par moteur
+
+- B : durcissement post-sweep,
+- C : durcissement anti-wall,
+- D : durcissement absorption re-entry,
+- A : durcissement delta divergence.
+
+---
+
+## 9. Plan critique de transformation par lots
+
+## Lot T0 — Stabilisation de preuve
+
+### But
+S’assurer que toute nouvelle idée est traçable.
+
+### Livrables
+- nouveaux contracts,
+- nouveaux reason codes,
+- export replay enrichi,
+- projection monitoring/UI,
+- tests contracts/runtime.
+
+## Lot T1 — Topographie de liquidité
+
+### But
+Faire de `lob_deep_filter_vwa` la brique maîtresse.
+
+### Livrables
+- POC,
+- VAL,
+- HVN/LVN,
+- distance mur/vide,
+- snapshot versionné.
+
+## Lot T2 — Delta / Sweep / Absorption
+
+### But
+Créer les trois “yeux 2026” de V5.3.
+
+### Livrables
+- `volume_delta_aggregator`,
+- `sweep_detector`,
+- `absorption_detector`,
+- evidence bundle par reader.
+
+## Lot T3 — Risk microstructure
+
+### But
+Faire entrer la friction dans la survie système.
+
+### Livrables
+- `micro_friction_guard`,
+- `stop_viability_guard`,
+- invalidation mapper liquidity-based.
+
+## Lot T4 — Hardening moteurs
+
+### But
+Reconditionner A/B/C/D sans créer de nouveau moteur.
+
+### Livrables
+- A delta-confirmed,
+- B sweep-fade/rebalancing,
+- C void-traverse,
+- D absorption re-entry.
+
+## Lot T5 — Portfolio / overlap d’edge
+
+### But
+Empêcher la duplication cachée des mêmes trades physiques.
+
+### Livrables
+- overlap microstructure,
+- diversité effective,
+- corrélation d’edge enrichie.
+
+## Lot T6 — Monitoring / UI 2026
+
+### But
+Rendre la matrice de liquidité visible et actionnable.
+
+### Livrables
+- panneaux liquidity topography,
+- delta,
+- sweep,
+- micro-friction,
+- reasons projetées pair / engine / risk.
+
+---
+
+## 10. Principaux risques de cette transformation
+
+## 10.1 Risque 1 — Nouveau sur-filtrage
+
+### Cause
+Trop de nouvelles conditions deviennent implicitement fatales.
+
+### Contre-mesure
+Commencer par lecture seule et influence limitée.
+
+## 10.2 Risque 2 — Faux sentiment de vérité microstructure
+
+### Cause
+Les proxies retail/VPS sont pris pour des faits L3 institutionnels.
+
+### Contre-mesure
+Toujours exposer un score de confiance et mesurer la robustesse par paire.
+
+## 10.3 Risque 3 — Inflation des reason codes
+
+### Cause
+Trop de codes non hiérarchisés.
+
+### Contre-mesure
+Taxonomie stable par familles :
+- `PHYSICS_A_*`
+- `PHYSICS_B_*`
+- `PHYSICS_C_*`
+- `PHYSICS_D_*`
+- `RISK_MICRO_*`
+- `LIQUIDITY_*`
+
+## 10.4 Risque 4 — Coût CPU / mémoire / complexité VPS
+
+### Cause
+Calculs trop lourds en continu.
+
+### Contre-mesure
+- batch rolling contrôlé,
+- fréquence d’update bornée,
+- séparation fast path / analytical path,
+- profiling par pair.
+
+## 10.5 Risque 5 — Bypass du canon
+
+### Cause
+La transformation devient un nouveau master officieux.
+
+### Contre-mesure
+Ce document doit rester **subordonné** au master canonique.
+
+---
+
+## 11. Merge gates recommandés pour la transformation
+
+Refuser si :
+
+- un nouveau moteur est créé,
+- un nouveau profil est créé,
+- un reader Build-14 pilote seul l’entrée live,
+- un nouveau hard block est activé sans campagne shadow dédiée,
+- l’export replay n’explique pas les nouveaux readers,
+- la UI n’expose pas les nouvelles reasons critiques,
+- le fast mode replay change les décisions métier,
+- le risk microstructure n’est pas traçable,
+- l’invalidation mapper liquidity-based ne possède pas de fallback explicite,
+- la transformation améliore la logique mais dégrade le coût net,
+- la CE baisse malgré une hausse de sophistication.
+
+---
+
+## 12. Architecture V5.3 en format synthétique prêt à coder
+
+```text
+V5.3
+├── Foundations
+│   ├── Contracts
+│   ├── Manifest
+│   ├── DAG
+│   ├── Contract tests
+│   └── Smoke bootstrap/recovery
+│
+├── Data Backbone
+│   ├── WebSocket / REST bootstrap
+│   ├── Event normalization
+│   ├── Internal routing
+│   ├── Freshness
+│   ├── Consistency
+│   └── Pair health
+│
+├── Market Physics Backbone
+│   ├── OFI
+│   ├── Book imbalance
+│   ├── Microprice
+│   ├── Persistence filter
+│   ├── Volume delta
+│   ├── Rolling volume profile
+│   ├── Sweep detection
+│   ├── Absorption detection
+│   ├── Wall / void locator
+│   └── Micro friction estimator
+│
+├── Regime Backbone
+│   ├── Simple regime
+│   ├── HMM regime
+│   └── Regime confidence
+│
+├── Signal Engines
+│   ├── A = Premium Trend + Delta Confirmation
+│   ├── B = Mean Reversion + Sweep / POC / Rebalancing
+│   ├── C = Breakout + Void Traverse
+│   └── D = Re-entry + Absorption Defense
+│
+├── Scoring Backbone
+│   ├── Raw score builder
+│   ├── Penalty aggregator
+│   ├── Hard block gate
+│   └── Ranking router
+│
+├── Risk Backbone
+│   ├── Exposure budgeter
+│   ├── Loss budgeter
+│   ├── BTC factor guard
+│   ├── Correlation cluster guard
+│   ├── Micro friction guard
+│   └── Stop viability / liquidity stop logic
+│
+├── Execution Backbone
+│   ├── Order decider
+│   ├── Fill tracker
+│   ├── Execution cost meter
+│   └── Reconciliation layer
+│
+├── Portfolio Backbone
+│   ├── Opportunity selector
+│   ├── Allocation router
+│   ├── Risk contribution monitor
+│   └── Effective edge diversity
+│
+├── Meta / Evidence Backbone
+│   ├── DTR core
+│   ├── CRA monitor
+│   ├── Break-even dashboard
+│   ├── Edge tracker prudent
+│   ├── Meta learning
+│   └── Replay bundle builder
+│
+├── Monitoring / UI Backbone
+│   ├── Metrics collector
+│   ├── Alerts
+│   ├── Dashboard backend
+│   ├── Technical dashboard
+│   └── Locked operator UI
+│
+└── Runtime / Protocol Backbone
+    ├── LOCAL_REPLAY
+    ├── SHADOW
+    ├── MICRO_LIVE
+    └── LIVE
+```
+
+---
+
+## 13. Verdict final d’audit
+
+### Ce qu’il faut faire maintenant
+
+1. **valider la doctrine** : liquidité primaire, prix secondaire ;
+2. **réécrire Build-14** comme colonne vertébrale de lecture liquidité ;
+3. **ajouter micro_friction_guard** au risk ;
+4. **remplacer progressivement les stops ATR purs** par des invalidations liquidity-based ;
+5. **reconditionner A/B/C/D** via gates explicables ;
+6. **projeter tous les nouveaux reason codes** dans replay/shadow/ui/meta ;
+7. **mesurer la vérité économique** avant toute promotion forte.
+
+### Ce qu’il ne faut surtout pas faire
+
+1. coder tout d’un coup ;
+2. croire qu’un proxy microstructure vaut un flux institutionnel parfait ;
+3. promouvoir 15 nouveaux hard blockers en live ;
+4. confondre sophistication et monétisabilité ;
+5. laisser Build-14 devenir une architecture parallèle ;
+6. oublier que la transformation doit rester compatible avec Light.
+
+### Phrase de synthèse
+
+> **La bonne V5.3 2026 n’est pas une V5.3 qui ajoute plus d’indicateurs.**
+>
+> **C’est une V5.3 qui comprend où le marché a réellement accepté d’échanger, où il a balayé, où il absorbe, et quand la friction rend le trade absurde.**
+

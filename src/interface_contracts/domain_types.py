@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field, field_validator
 
 @unique
 class EngineId(str, Enum):
-    """Moteurs de trading V5.3. Light = A+B, Complete = A+B+C+D."""
+    """Moteurs de trading canoniques de l'unique V5.3."""
     A = "engine_a"
     B = "engine_b"
     C = "engine_c"
@@ -44,7 +44,11 @@ class RegimeId(str, Enum):
 
 @unique
 class ProfileId(str, Enum):
-    """Profil d'activation système."""
+    """Profil d'activation système.
+
+    `LIGHT` remains as a constrained compatibility surface.
+    `COMPLETE` is the governed runtime target for Shadow -> Micro-live -> Live.
+    """
     LIGHT = "light"
     COMPLETE = "complete"
 
@@ -93,7 +97,11 @@ class ReviewState(str, Enum):
 
 @unique
 class DeploymentState(str, Enum):
-    """État de déploiement du système ou d'un module."""
+    """État de déploiement du système ou d'un module.
+
+    `LIVE_LIGHT` is retained for backward-compatible projections.
+    `LIVE_COMPLETE` remains the canonical governed live destination.
+    """
     OFFLINE = "offline"
     BOOTSTRAP = "bootstrap"
     SHADOW = "shadow"

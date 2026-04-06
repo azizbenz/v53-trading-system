@@ -32,7 +32,10 @@ class TestFeeMeter:
     def test_compute_fee(self):
         f = compute_fee("o1", "BTC", price=50000.0, quantity=1.0, fee_amount=50.0)
         assert f.gross_value == 50000.0
+        assert f.gross_value_exact == "50000"
+        assert f.fee_amount_exact == "50"
         assert f.fee_rate == pytest.approx(0.001)
+        assert f.fee_rate_exact == "0.001"
 
     def test_maker_flag(self):
         f = compute_fee("o1", "BTC", 50000.0, 1.0, 25.0, maker=True)

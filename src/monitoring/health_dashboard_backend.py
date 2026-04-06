@@ -1,4 +1,4 @@
-"""Stable backend payload for the locked Build-10 Light UI."""
+"""Stable backend payload for the compatibility operator UI."""
 
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ def _resolve_deployment_state(
     ):
         return DeploymentState.DEGRADED
     if live_light_status != "planned" or snapshot.runtime_mode == RuntimeMode.LIVE:
-        return DeploymentState.LIVE_LIGHT
+        return DeploymentState.LIVE_COMPLETE
     if micro_live_status != "planned" or snapshot.runtime_mode == RuntimeMode.MICRO_LIVE:
         return DeploymentState.MICRO_LIVE
     if shadow_status != "planned" or snapshot.runtime_mode == RuntimeMode.SHADOW:
@@ -75,8 +75,8 @@ def _resolve_last_transition_summary(
         return "kill_switch_active -> halted"
     if deployment_state == DeploymentState.DEGRADED:
         return f"{snapshot.runtime_mode.value} -> degraded"
-    if deployment_state == DeploymentState.LIVE_LIGHT:
-        return "entered live_light"
+    if deployment_state == DeploymentState.LIVE_COMPLETE:
+        return "entered live_complete"
     if deployment_state == DeploymentState.MICRO_LIVE:
         return "entered micro_live"
     if deployment_state == DeploymentState.SHADOW:

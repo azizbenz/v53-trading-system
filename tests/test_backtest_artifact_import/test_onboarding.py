@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 import pytest
 from pydantic import ValidationError
 
 from interface_contracts import ProfileId, PromotionState, StrategyClassification
 from backtest_artifact_import import (
     ArtifactImportRequest,
+    ArtifactPayloadRefBundle,
     StrategyLineageRecord,
     StrategyOnboardingRequest,
     validate_strategy_onboarding_request,
@@ -19,7 +22,7 @@ def _manifest(**overrides) -> ArtifactManifest:
     defaults = dict(
         artifact_id="artifact-onb",
         correlation_id="corr-onb",
-        source_profile=ProfileId.LIGHT,
+        source_profile=ProfileId.COMPLETE,
         strategy_classification=StrategyClassification.A_VARIANT,
         strategy_version="a.v3",
         lineage_version="a.v3.1",
@@ -38,17 +41,23 @@ def _manifest(**overrides) -> ArtifactManifest:
 
 
 def _import_request(**overrides) -> ArtifactImportRequest:
+    payload_bundle = ArtifactPayloadRefBundle(
+        review_export_ref="exports/review.md",
+        feature_bridge_ref="exports/feature_bridge.json",
+        parity_diagnostics_ref="exports/parity.json",
+        replay_metrics_ref="exports/replay_metrics.json",
+        replay_dtr_ref="exports/replay_dtr.json",
+        supplementary_refs=("exports/bundle.json",),
+    )
     defaults = dict(
         manifest=_manifest(),
         artifact_kind=ReplayArtifactKind.REVIEW_PACKET,
-        payload_refs=(
-            "exports/review.md",
-            "exports/feature_bridge.json",
-            "exports/parity.json",
-            "exports/replay_metrics.json",
-            "exports/replay_dtr.json",
-            "exports/bundle.json",
-        ),
+        payload_bundle=payload_bundle,
+        payload_refs=payload_bundle.payload_refs,
+        lifecycle_policy={"ttl_max_days": 30, "rule_half_life_days": 7},
+        training_end=date(2026, 4, 1),
+        governance_reference_date=date(2026, 4, 6),
+        drift_score_threshold=0.85,
     )
     defaults.update(overrides)
     return ArtifactImportRequest(**defaults)
@@ -153,7 +162,7 @@ def test_onboarding_rejects_automatic_promotion_and_gate_bypass():
 def test_onboarding_propagates_import_gate_failures():
     decision = validate_strategy_onboarding_request(
         _request(
-            import_request=_import_request(payload_refs=()),
+            import_request=_import_request(payload_bundle=None, payload_refs=()),
         )
     )
 

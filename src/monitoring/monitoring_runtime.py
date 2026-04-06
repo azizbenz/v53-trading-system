@@ -22,6 +22,7 @@ from monitoring.contracts import (
     Build14Projection,
     Build9XProjection,
     EngineMetrics,
+    ExecutionNoTradeBridgeProjection,
     HealthDashboardPayload,
     InfraMetrics,
     LiveLightProjection,
@@ -119,6 +120,7 @@ class MonitoringRuntime:
         micro_live_projection: MicroLiveProjection | None = None,
         live_light_projection: LiveLightProjection | None = None,
         build14_projection: Build14Projection | None = None,
+        execution_no_trade_bridge_projection: ExecutionNoTradeBridgeProjection | None = None,
         replay_projection: ReplayImportProjection | None = None,
     ) -> MonitoringRuntimeResult:
         """Evaluate the full Build-10 runtime path on real runtime inputs."""
@@ -182,6 +184,7 @@ class MonitoringRuntime:
             micro_live_projection=micro_live_projection,
             live_light_projection=live_light_projection,
             build14_projection=build14_projection,
+            execution_no_trade_bridge_projection=execution_no_trade_bridge_projection,
             replay_projection=replay_projection,
             operator_runtime=operator_runtime,
         )

@@ -61,6 +61,11 @@ class ExposureReporter:
     def record_position_closed(self, size: float) -> None:
         self._current_gross = max(0.0, self._current_gross - size)
 
+    def sync_current_gross(self, gross: float) -> None:
+        """Synchronize current gross from a governed portfolio snapshot."""
+
+        self._current_gross = max(0.0, gross)
+
     def get_stats(self) -> ExposureStats:
         total = self._accepted + self._refused
         return ExposureStats(

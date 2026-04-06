@@ -1,4 +1,4 @@
-"""Build-13 Live-Light supervision helpers for the technical interface."""
+"""Build-13 governed live supervision helpers for the technical interface."""
 
 from __future__ import annotations
 
@@ -96,7 +96,7 @@ def build_live_light_dashboard_section(summary: LiveLightRunSummary) -> Dashboar
         else "No blocking reason"
     )
     return DashboardSection(
-        title="Build-13 Live-Light",
+        title="Build-13 Live",
         cards=(
             DashboardCard(
                 key="live_light_run_state",

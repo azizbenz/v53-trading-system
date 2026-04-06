@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import pytest
+
 from engine_a import EngineARuntime, EngineARuntimeInput, EngineARuntimeStatus
 from engines.engine_a.engine_a_runner import EngineAInput
 from interface_contracts import EngineId, RegimeId, Side, SignalType
+from risk_backbone.emergency_kill_switch.circuit_breaker import EmergencyCircuitBreaker, KillSwitchReason
 from risk_backbone.risk_runtime import RiskLimits, RiskRuntime
 from scoring_backbone.hard_block_gate.blocker_evaluator import BlockerCondition
 from scoring_backbone.penalty_aggregator.penalty_registry import (
@@ -126,6 +129,46 @@ def test_runtime_emits_canonical_signal_and_accepts_through_risk():
     events = {entry.event for entry in result.log_entries}
     assert "engine_a_scoring_completed" in events
     assert "engine_a_accepted" in events
+
+
+def test_runtime_can_derive_now_from_timestamp_ms_when_omitted():
+    runtime = EngineARuntime(scoring_runtime=_scoring_runtime(), risk_runtime=_risk_runtime())
+
+    result = runtime.evaluate(_runtime_input())
+
+    assert result.status == EngineARuntimeStatus.ACCEPTED
+    assert result.risk_evaluation is not None
+    assert result.risk_evaluation.accepted is True
+
+
+def test_runtime_blocks_before_scoring_when_circuit_breaker_is_tripped(tmp_path):
+    breaker = EmergencyCircuitBreaker(state_dir=tmp_path)
+    breaker.trip(KillSwitchReason.OPERATOR_MANUAL, "manual stop")
+    runtime = EngineARuntime(
+        scoring_runtime=_scoring_runtime(),
+        risk_runtime=_risk_runtime(),
+        circuit_breaker=breaker,
+    )
+
+    result = runtime.evaluate(_runtime_input(), now=11.0)
+
+    assert result.status == EngineARuntimeStatus.CIRCUIT_BREAKER_BLOCKED
+    assert result.signal_candidate is None
+    assert result.scoring_round is None
+    assert result.scoring_audit is None
+    assert result.risk_evaluation is None
+    assert result.engine_output.decision == "no_trade"
+    assert any(entry.event == "engine_a_circuit_breaker_blocked" for entry in result.log_entries)
+
+
+def test_runtime_rejects_blank_scoring_version():
+    runtime = EngineARuntime(scoring_runtime=_scoring_runtime(), risk_runtime=_risk_runtime())
+
+    with pytest.raises(ValueError, match="requires non-empty scoring_version"):
+        runtime.evaluate(
+            _runtime_input(engine_inputs=_good_engine_inputs(scoring_version="   ")),
+            now=12.0,
+        )
 
 
 def test_runtime_hard_blocked_logs_explicit_reasons():

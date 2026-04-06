@@ -9,6 +9,14 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
+from interface_contracts import (
+    CANONICAL_FEATURE_SET_VERSION,
+    CANONICAL_TRANSFORM_SET_VERSION,
+    CANONICAL_TRANSFORM_WHITELIST,
+    FeatureLineageLock,
+    canonical_feature_ids,
+    validate_feature_lineage_lock,
+)
 from meta_minimal.dtr_core.decision_state_encoder import DecisionState
 
 FeatureScalar = str | int | float | bool
@@ -215,7 +223,11 @@ def load_historical_replay_dataset(
     )
 
 
-def build_feature_bridge_payload(dataset: HistoricalReplayDataset) -> dict[str, Any]:
+def build_feature_bridge_payload(
+    dataset: HistoricalReplayDataset,
+    *,
+    feature_lineage_lock: FeatureLineageLock | None = None,
+) -> dict[str, Any]:
     """Summarize whether the historical dataset materialized the feature bridge."""
 
     bridge_status = (
@@ -223,18 +235,38 @@ def build_feature_bridge_payload(dataset: HistoricalReplayDataset) -> dict[str, 
         if dataset.shared_core_match and dataset.missing_feature_rows == 0
         else "warning"
     )
+    lineage_reasons = validate_feature_lineage_lock(
+        dataset.feature_keys,
+        feature_lineage_lock,
+    )
+    canonical_ids = set(canonical_feature_ids())
+    recognized_feature_keys = tuple(
+        key for key in dataset.feature_keys if key in canonical_ids
+    )
+    unrecognized_feature_keys = tuple(
+        key for key in dataset.feature_keys if key not in canonical_ids
+    )
     return {
         "bridge_status": bridge_status,
         "dataset_id": dataset.dataset_id,
         "source": dataset.source,
         "source_path": dataset.source_path,
+        "feature_set_version": CANONICAL_FEATURE_SET_VERSION,
+        "transform_set_version": CANONICAL_TRANSFORM_SET_VERSION,
+        "canonical_feature_dictionary_size": len(canonical_ids),
+        "canonical_transform_whitelist_size": len(CANONICAL_TRANSFORM_WHITELIST),
         "record_count": dataset.record_count,
         "pairs": list(dataset.pair_scope),
         "engines": list(dataset.engine_scope),
         "feature_keys": list(dataset.feature_keys),
+        "recognized_feature_keys": list(recognized_feature_keys),
+        "unrecognized_feature_keys": list(unrecognized_feature_keys),
         "rows_with_features": dataset.rows_with_features,
         "missing_feature_rows": dataset.missing_feature_rows,
         "shared_core_match": dataset.shared_core_match,
+        "lineage_lock_present": feature_lineage_lock is not None,
+        "lineage_lock_status": "ok" if not lineage_reasons else "missing",
+        "lineage_lock_reasons": list(lineage_reasons),
         "path_materialized": dataset.rows_with_features > 0,
         "feature_to_engine_path": "historical_prices -> computed_features -> engines -> scoring",
     }

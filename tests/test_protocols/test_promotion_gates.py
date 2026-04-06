@@ -1,4 +1,4 @@
-"""Tests for protocols.promotion_gates — HARD STATEMENT §0.6."""
+"""Tests for protocols.promotion_gates - HARD STATEMENT §0.6."""
 
 import pytest
 
@@ -6,6 +6,7 @@ from protocols.promotion_gates import (
     PromotionGateResult,
     check_all_gates,
     check_complete_to_live,
+    check_complete_to_micro_live,
     check_light_to_micro_live,
 )
 from protocols.shadow_day_counter import ShadowDayCounter, ShadowProfile
@@ -89,9 +90,9 @@ def _fill_shadow_days(
     with_complete_report: bool = False,
 ):
     """Helper: record N consecutive passing shadow days."""
-    c = ShadowDayCounter(state_dir=state_dir, profile=profile)
+    counter = ShadowDayCounter(state_dir=state_dir, profile=profile)
     for i in range(count):
-        c.record_shadow_day(
+        counter.record_shadow_day(
             passed_all_gates=True,
             metrics_summary=_complete_shadow_metrics(i) if with_complete_report else None,
             now=BASE_TS + i * ONE_DAY * 0.5,
@@ -99,7 +100,7 @@ def _fill_shadow_days(
 
 
 class TestLightToMicroLive:
-    """Light → Micro-live gate (30 days shadow)."""
+    """Legacy compatibility LIGHT -> Micro-live gate."""
 
     def test_rejects_with_zero_days(self, gate_dir):
         result = check_light_to_micro_live(gate_dir)
@@ -144,8 +145,36 @@ class TestLightToMicroLive:
         assert result.profile == "light"
 
 
+class TestCompleteToMicroLive:
+    """Canonical COMPLETE -> Micro-live gate."""
+
+    def test_rejects_with_zero_days(self, gate_dir):
+        result = check_complete_to_micro_live(gate_dir)
+        assert result.passed is False
+        assert "BLOCKED" in result.message
+
+    def test_rejects_with_15_days(self, gate_dir):
+        _fill_shadow_days(gate_dir, ShadowProfile.COMPLETE, 15)
+        result = check_complete_to_micro_live(gate_dir)
+        assert result.passed is False
+        assert result.remaining_days == 15
+
+    def test_accepts_with_30_days(self, gate_dir):
+        _fill_shadow_days(
+            gate_dir, ShadowProfile.COMPLETE, 30, with_complete_report=True
+        )
+        result = check_complete_to_micro_live(gate_dir)
+        assert result.passed is True
+        assert result.message == "PASSED"
+
+    def test_gate_name(self, gate_dir):
+        result = check_complete_to_micro_live(gate_dir)
+        assert result.gate_name == "complete_shadow_30j_for_micro_live"
+        assert result.profile == "complete"
+
+
 class TestCompleteToLive:
-    """Complete → Live gate (30 days shadow)."""
+    """Canonical COMPLETE -> Live gate."""
 
     def test_rejects_with_zero_days(self, gate_dir):
         result = check_complete_to_live(gate_dir)
@@ -173,20 +202,20 @@ class TestCompleteToLive:
 
 
 class TestCheckAllGates:
-    """Combined gate check."""
+    """Compatibility aggregate gate check."""
 
     def test_both_fail_with_empty_state(self, gate_dir):
         results = check_all_gates(gate_dir)
         assert len(results) == 2
-        assert all(not r.passed for r in results)
+        assert all(not result.passed for result in results)
 
     def test_light_passes_complete_fails(self, gate_dir):
         _fill_shadow_days(
             gate_dir, ShadowProfile.LIGHT, 30, with_complete_report=True
         )
         results = check_all_gates(gate_dir)
-        light_result = [r for r in results if r.profile == "light"][0]
-        complete_result = [r for r in results if r.profile == "complete"][0]
+        light_result = [result for result in results if result.profile == "light"][0]
+        complete_result = [result for result in results if result.profile == "complete"][0]
         assert light_result.passed is True
         assert complete_result.passed is False
 
@@ -198,16 +227,16 @@ class TestCheckAllGates:
             gate_dir, ShadowProfile.COMPLETE, 30, with_complete_report=True
         )
         results = check_all_gates(gate_dir)
-        assert all(r.passed for r in results)
+        assert all(result.passed for result in results)
 
 
 class TestResetTracking:
     """Reset count visible in gate results."""
 
     def test_resets_tracked_in_result(self, gate_dir):
-        c = ShadowDayCounter(state_dir=gate_dir, profile=ShadowProfile.LIGHT)
-        c.record_shadow_day(passed_all_gates=True, now=BASE_TS)
-        # Force gap > 24h
-        c.record_shadow_day(passed_all_gates=True, now=BASE_TS + 200_000)
+        counter = ShadowDayCounter(state_dir=gate_dir, profile=ShadowProfile.LIGHT)
+        counter.record_shadow_day(passed_all_gates=True, now=BASE_TS)
+        counter.record_shadow_day(passed_all_gates=True, now=BASE_TS + 200_000)
         result = check_light_to_micro_live(gate_dir)
         assert result.total_resets >= 1
+

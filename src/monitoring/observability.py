@@ -521,6 +521,41 @@ def build_observability_export(payload: TechnicalDashboardPayload) -> Observabil
             labels=base_labels,
         ),
         _sample(
+            "v53_execution_no_trade_bridge_status",
+            kind="state",
+            value=1.0,
+            labels={
+                **base_labels,
+                "status": payload.execution_no_trade_bridge.status,
+                "selection_status": payload.execution_no_trade_bridge.selection_status,
+            },
+        ),
+        _sample(
+            "v53_execution_no_trade_bridge_configured",
+            kind="state",
+            value=1.0 if payload.execution_no_trade_bridge.configured else 0.0,
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_execution_no_trade_bridge_binding_present",
+            kind="state",
+            value=1.0 if payload.execution_no_trade_bridge.binding_present else 0.0,
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_execution_no_trade_bridge_loaded",
+            kind="state",
+            value=1.0 if payload.execution_no_trade_bridge.loaded else 0.0,
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_execution_no_trade_bridge_artifact_count",
+            kind="gauge",
+            value=float(payload.execution_no_trade_bridge.artifact_count),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
             "v53_build14_status",
             kind="state",
             value=1.0,
@@ -613,6 +648,151 @@ def build_observability_export(payload: TechnicalDashboardPayload) -> Observabil
             "v53_replay_validation_accepted",
             kind="state",
             value=1.0 if payload.replay_import.validation_status == "accepted" else 0.0,
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_replay_compatibility_status",
+            kind="state",
+            value=1.0,
+            labels={
+                **base_labels,
+                "status": payload.replay_import.compatibility_status,
+            },
+        ),
+        _sample(
+            "v53_replay_compatibility_reason_count",
+            kind="gauge",
+            value=float(len(payload.replay_import.compatibility_reasons)),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_replay_feature_lineage_required",
+            kind="state",
+            value=1.0 if payload.replay_import.feature_lineage_required else 0.0,
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_replay_feature_lineage_present",
+            kind="state",
+            value=1.0 if payload.replay_import.feature_lineage_present else 0.0,
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_replay_feature_lineage_status",
+            kind="state",
+            value=1.0,
+            labels={
+                **base_labels,
+                "status": payload.replay_import.feature_lineage_status,
+            },
+        ),
+        _sample(
+            "v53_replay_feature_lineage_reason_count",
+            kind="gauge",
+            value=float(len(payload.replay_import.feature_lineage_reasons)),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_replay_transform_whitelist_required",
+            kind="state",
+            value=1.0 if payload.replay_import.transform_whitelist_required else 0.0,
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_replay_transform_whitelist_present",
+            kind="state",
+            value=1.0 if payload.replay_import.transform_whitelist_present else 0.0,
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_replay_transform_whitelist_status",
+            kind="state",
+            value=1.0,
+            labels={
+                **base_labels,
+                "status": payload.replay_import.transform_whitelist_status,
+            },
+        ),
+        _sample(
+            "v53_replay_transform_whitelist_reason_count",
+            kind="gauge",
+            value=float(len(payload.replay_import.transform_whitelist_reasons)),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_replay_signature_present",
+            kind="state",
+            value=1.0 if payload.replay_import.signature_check_status != "not_provided" else 0.0,
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_replay_signature_check_status",
+            kind="state",
+            value=1.0,
+            labels={
+                **base_labels,
+                "status": payload.replay_import.signature_check_status,
+                "trusted_key_status": payload.replay_import.trusted_key_status or "n/a",
+            },
+        ),
+        _sample(
+            "v53_replay_signature_reason_count",
+            kind="gauge",
+            value=float(len(payload.replay_import.signature_check_reasons)),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_replay_conflict_resolution_mode",
+            kind="state",
+            value=1.0,
+            labels={
+                **base_labels,
+                "resolution_mode": payload.replay_import.conflict_resolution_mode or "n/a",
+                "hard_veto_action": payload.replay_import.conflict_hard_veto_action or "n/a",
+            },
+        ),
+        _sample(
+            "v53_replay_conflict_additive_soft_boosts_allowed",
+            kind="state",
+            value=1.0 if payload.replay_import.conflict_additive_soft_boosts_allowed else 0.0,
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_replay_conflict_additive_soft_reduces_allowed",
+            kind="state",
+            value=1.0 if payload.replay_import.conflict_additive_soft_reduces_allowed else 0.0,
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_replay_registry_atomicity_mode",
+            kind="state",
+            value=1.0,
+            labels={
+                **base_labels,
+                "atomicity_mode": payload.replay_import.registry_atomicity_mode or "n/a",
+                "concurrency_model": payload.replay_import.registry_concurrency_model or "n/a",
+            },
+        ),
+        _sample(
+            "v53_replay_registry_atomic_replace_required",
+            kind="state",
+            value=1.0 if payload.replay_import.registry_publish_requires_atomic_replace else 0.0,
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_replay_registry_fsync_required",
+            kind="state",
+            value=1.0 if payload.replay_import.registry_publish_requires_fsync else 0.0,
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_replay_registry_last_known_good_enabled",
+            kind="state",
+            value=1.0 if payload.replay_import.registry_rollback_to_last_known_good else 0.0,
             labels=base_labels,
         ),
         _sample(
@@ -938,6 +1118,59 @@ def build_observability_export(payload: TechnicalDashboardPayload) -> Observabil
                 labels={**base_labels, "engine": engine.engine_id},
             )
         )
+        if engine.physics.physics_pressure_state:
+            samples.append(
+                _sample(
+                    "v53_engine_physics_pressure_state",
+                    kind="state",
+                    value=1.0,
+                    labels={
+                        **base_labels,
+                        "engine": engine.engine_id,
+                        "state": engine.physics.physics_pressure_state,
+                    },
+                )
+            )
+        if engine.physics.fragility_score is not None:
+            samples.append(
+                _sample(
+                    "v53_engine_fragility_score",
+                    kind="gauge",
+                    value=engine.physics.fragility_score,
+                    unit="ratio",
+                    labels={**base_labels, "engine": engine.engine_id},
+                )
+            )
+        if engine.physics.toxicity_score is not None:
+            samples.append(
+                _sample(
+                    "v53_engine_toxicity_score",
+                    kind="gauge",
+                    value=engine.physics.toxicity_score,
+                    unit="ratio",
+                    labels={**base_labels, "engine": engine.engine_id},
+                )
+            )
+        if engine.physics.execution_survivability_score is not None:
+            samples.append(
+                _sample(
+                    "v53_engine_execution_survivability_score",
+                    kind="gauge",
+                    value=engine.physics.execution_survivability_score,
+                    unit="ratio",
+                    labels={**base_labels, "engine": engine.engine_id},
+                )
+            )
+        if engine.physics.micro_friction_score is not None:
+            samples.append(
+                _sample(
+                    "v53_engine_micro_friction_score",
+                    kind="gauge",
+                    value=engine.physics.micro_friction_score,
+                    unit="ratio",
+                    labels={**base_labels, "engine": engine.engine_id},
+                )
+            )
 
     for pair in payload.pairs:
         samples.append(

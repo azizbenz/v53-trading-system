@@ -9,13 +9,33 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from interface_contracts import execution_decimal
 
 
 class OrderType(StrEnum):
     MARKET = "market"
     LIMIT = "limit"
     NO_TRADE = "no_trade"
+
+
+class VenueConstraintSnapshot(BaseModel, frozen=True):
+    """Minimal venue constraint snapshot used at the exchange-facing boundary."""
+
+    tick_size: str | None = None
+    step_size: str | None = None
+    min_notional: str | None = None
+
+    @model_validator(mode="after")
+    def validate_values(self) -> "VenueConstraintSnapshot":
+        if self.tick_size is not None and execution_decimal(self.tick_size, name="tick_size") <= 0:
+            raise ValueError("tick_size must be > 0")
+        if self.step_size is not None and execution_decimal(self.step_size, name="step_size") <= 0:
+            raise ValueError("step_size must be > 0")
+        if self.min_notional is not None and execution_decimal(self.min_notional, name="min_notional") <= 0:
+            raise ValueError("min_notional must be > 0")
+        return self
 
 
 class ExecutionIntent(BaseModel, frozen=True):
@@ -30,13 +50,16 @@ class ExecutionIntent(BaseModel, frozen=True):
     side: str  # "buy" | "sell"
     order_type: OrderType
     quantity: float
+    quantity_exact: str = ""
     price_limit: float | None = None  # only for LIMIT orders
+    price_limit_exact: str | None = None
     expected_cost: float = 0.0  # ex ante estimated total cost
     expected_gain: float = 0.0  # expected signal gain
     score: float = 0.0  # final signal score
     justification: str = ""
     timeout_s: float = 0.0  # 0 = no timeout
     profile: str = "LIGHT"
+    venue_constraints: VenueConstraintSnapshot | None = None
     metadata: dict[str, object] = Field(default_factory=dict)
 
 
@@ -48,6 +71,7 @@ class NoTradeReason(StrEnum):
     INFRASTRUCTURE_DOWN = "infrastructure_down"
     HARD_BLOCKER = "hard_blocker"
     SCORE_TOO_LOW = "score_too_low"
+    VENUE_CONSTRAINTS = "venue_constraints"
 
 
 class NoTradeDecision(BaseModel, frozen=True):
@@ -73,9 +97,12 @@ def build_intent(
     expected_gain: float,
     score: float,
     justification: str,
+    quantity_exact: str = "",
     price_limit: float | None = None,
+    price_limit_exact: str | None = None,
     timeout_s: float = 0.0,
     profile: str = "LIGHT",
+    venue_constraints: VenueConstraintSnapshot | None = None,
 ) -> ExecutionIntent:
     """Build a validated ExecutionIntent."""
     return ExecutionIntent(
@@ -85,11 +112,14 @@ def build_intent(
         side=side,
         order_type=order_type,
         quantity=quantity,
+        quantity_exact=quantity_exact,
         price_limit=price_limit,
+        price_limit_exact=price_limit_exact,
         expected_cost=expected_cost,
         expected_gain=expected_gain,
         score=score,
         justification=justification,
         timeout_s=timeout_s,
         profile=profile,
+        venue_constraints=venue_constraints,
     )

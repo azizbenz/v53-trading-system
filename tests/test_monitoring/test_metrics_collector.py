@@ -65,16 +65,63 @@ class TestEngineMetrics:
         m = collect_engine_metrics(
             engine_id="engine_a", emitted_signals=5,
             net_edge_bps=12.0, expected_cost_bps=3.0, ce_expected=0.001,
+            scoring_penalized_score=1.25,
+            scoring_ranking_score=0.8,
+            scoring_final_size_multiplier=0.5,
+            selection_outcome_code="selected",
+            portfolio_verdict_code="compatible",
+            phantom_trade=False,
+            hard_blocked=False,
+            risk_decision_severity="nominal",
+            drawdown_state_code="accepted",
+            blocked_guard_count=0,
+            physics_pressure_state="nominal",
+            delta_confirmation=0.9,
+            execution_fragility=0.1,
+            market_toxicity=0.2,
+            spread_regime_penalty=0.1,
+            competition_support=0.8,
+            fragility_score=0.09,
+            toxicity_score=0.08,
+            execution_survivability_score=0.95,
+            micro_friction_score=0.07,
         )
         assert isinstance(m, EngineMetrics)
         assert m.stale is False
+        assert m.scoring_penalized_score == pytest.approx(1.25)
+        assert m.scoring_ranking_score == pytest.approx(0.8)
+        assert m.selection_outcome_code == "selected"
+        assert m.risk_decision_severity == "nominal"
+        assert m.physics.delta_confirmation == pytest.approx(0.9)
+        assert m.physics.competition_support == pytest.approx(0.8)
+        assert m.physics.physics_pressure_state == "nominal"
+        assert m.physics.execution_survivability_score == pytest.approx(0.95)
 
     def test_stale_engine(self):
         m = collect_engine_metrics(
             engine_id="engine_b", emitted_signals=0,
             net_edge_bps=0.0, expected_cost_bps=0.0, ce_expected=0.0, stale=True,
+            phantom_trade=True,
+            phantom_reason_code="PHANTOM_RISK",
+            blocked_guard_count=2,
+            sweep_score=0.7,
+            absorption_score=0.6,
+            poc_reversion_score=0.8,
+            false_breakout_score=0.3,
+            physics_pressure_state="elevated",
+            fragility_score=0.65,
+            toxicity_score=0.72,
+            execution_survivability_score=0.38,
+            micro_friction_score=0.61,
         )
         assert m.stale is True
+        assert m.phantom_trade is True
+        assert m.phantom_reason_code == "PHANTOM_RISK"
+        assert m.blocked_guard_count == 2
+        assert m.physics.sweep_score == pytest.approx(0.7)
+        assert m.physics.false_breakout_score == pytest.approx(0.3)
+        assert m.physics.physics_pressure_state == "elevated"
+        assert m.physics.micro_friction_score == pytest.approx(0.61)
 
     def test_empty_engine_id_rejected(self):
         with pytest.raises(ValidationError):

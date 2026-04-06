@@ -1,4 +1,4 @@
-"""Governed operator actions for the locked Build-10 Light UI."""
+"""Governed operator actions for the compatibility operator UI."""
 
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ def _target_runtime_mode_for_action(
 def build_light_allowed_actions(
     runtime_mode: RuntimeMode = RuntimeMode.SHADOW,
 ) -> tuple[OperatorActionType, ...]:
-    """Return the governed action surface exposed by the Light UI."""
+    """Return the governed action surface exposed by the compatibility UI."""
 
     if runtime_mode == RuntimeMode.LIVE:
         return (
@@ -90,7 +90,7 @@ def evaluate_light_operator_action(
     critical_alert_ids: tuple[str, ...] = (),
     max_light_pairs: int = 6,
 ) -> OperatorActionOutcome:
-    """Accept or reject a Light operator action without touching runtime state."""
+    """Accept or reject a compatibility-surface operator action without touching runtime state."""
 
     requested_entry = OperatorActionLogEntry(
         timestamp_ms=request.timestamp_ms,
@@ -189,7 +189,7 @@ def _rejection_reason(
     max_light_pairs: int,
 ) -> str:
     if request.profile != ProfileId.LIGHT:
-        return "only profile=LIGHT is supported by the locked Light UI"
+        return "only profile=LIGHT is supported by the compatibility operator UI"
     allowed_actions = build_light_allowed_actions(request.runtime_mode)
     if request.action not in allowed_actions:
         return _forbidden_reason(request, max_light_pairs=max_light_pairs)
@@ -199,7 +199,7 @@ def _rejection_reason(
         if not request.target:
             return "suspend_pair requires a pair target"
         if allowed_pairs and request.target not in set(allowed_pairs):
-            return "pair is outside the governed Light surface"
+            return "pair is outside the governed compatibility surface"
         return ""
     if request.action == OperatorActionType.REQUEST_PAIR_RESUME:
         if not request.target:
@@ -209,13 +209,13 @@ def _rejection_reason(
         return ""
     if request.action == OperatorActionType.SUSPEND_ENGINE:
         if request.target not in _LIGHT_SUSPENDABLE_ENGINES:
-            return "Light UI can only suspend engines A or B"
+            return "compatibility operator UI can only suspend engines A or B"
         return ""
     if request.action == OperatorActionType.ACKNOWLEDGE_CRITICAL_ALERT:
         if not request.target:
             return "acknowledge_critical_alert requires a critical alert id"
         if critical_alert_ids and request.target not in set(critical_alert_ids):
-            return "critical alert id is not currently visible in the Light UI"
+            return "critical alert id is not currently visible in the compatibility operator UI"
         return ""
     if request.action == OperatorActionType.VIEW_CRITICAL_SCREENS:
         return ""
@@ -240,22 +240,22 @@ def _forbidden_reason(
     max_light_pairs: int,
 ) -> str:
     if request.action == OperatorActionType.LOAD_COMPLETE:
-        return "loading Complete is forbidden from the Light UI"
+        return "loading Complete is forbidden from the compatibility operator UI"
     if request.action == OperatorActionType.ACTIVATE_ENGINE:
         if request.target in {"engine_c", "engine_d"}:
             return "activating engines C/D is forbidden in Light"
-        return "engine activation is not exposed by the locked Light UI"
+        return "engine activation is not exposed by the compatibility operator UI"
     if request.action == OperatorActionType.ACTIVATE_PAIRS:
         if request.requested_pair_count > max_light_pairs:
             return f"activating more than {max_light_pairs} pairs is forbidden in Light"
-        return "pair activation is not exposed by the locked Light UI"
+        return "pair activation is not exposed by the compatibility operator UI"
     if request.action == OperatorActionType.MODIFY_RISK_CAPS:
-        return "risk cap changes are forbidden in the locked Light UI"
+        return "risk cap changes are forbidden in the compatibility operator UI"
     if request.action == OperatorActionType.BYPASS_HARD_BLOCKER:
-        return "hard blocker bypass is forbidden in the locked Light UI"
+        return "hard blocker bypass is forbidden in the compatibility operator UI"
     if request.action == OperatorActionType.INJECT_CONFIG:
-        return "unversioned config injection is forbidden in the locked Light UI"
-    return "action is outside the governed Light UI surface"
+        return "unversioned config injection is forbidden in the compatibility operator UI"
+    return "action is outside the governed compatibility operator UI surface"
 
 
 __all__ = [

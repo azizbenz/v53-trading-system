@@ -122,7 +122,10 @@ class TestFillAggregator:
         result = agg.record_fill(fill)
         assert result.fill_count == 1
         assert result.total_filled_qty == 1.0
+        assert result.total_filled_qty_exact == "1"
+        assert result.total_notional_exact == "50000"
         assert result.total_fees == 50.0
+        assert result.total_fees_exact == "50"
 
     def test_multiple_fills(self):
         agg = FillAggregator()
@@ -137,7 +140,10 @@ class TestFillAggregator:
         assert result.fill_count == 2
         assert result.total_filled_qty == 1.0
         assert result.average_price == pytest.approx(50050.0)
+        assert result.average_price_exact == "50050"
+        assert result.total_notional_exact == "50050"
         assert result.total_fees == pytest.approx(50.1)
+        assert result.total_fees_exact == "50.1"
 
     def test_total_fills(self):
         agg = FillAggregator()

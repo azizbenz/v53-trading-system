@@ -7,7 +7,12 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field, model_validator
 
-from interface_contracts import ProfileId, StrategyClassification
+from interface_contracts import (
+    CANONICAL_FEATURE_SET_VERSION,
+    CANONICAL_TRANSFORM_SET_VERSION,
+    ProfileId,
+    StrategyClassification,
+)
 from interface_contracts.atomic_io import atomic_write_json
 from local_replay_runtime.historical_data_gateway import (
     HistoricalReplayDataset,
@@ -252,14 +257,15 @@ def build_execution_input_from_dataset(
             tested_pairs=dataset.pair_scope,
             dataset_manifest_id=dataset.dataset_id,
             timeframe_scope=clock.timeframe_scope,
-            feature_set_version="feature.v1",
+            feature_set_version=CANONICAL_FEATURE_SET_VERSION,
+            transform_set_version=CANONICAL_TRANSFORM_SET_VERSION,
             formula_set_version="formula.v1",
             scoring_version="score.v1",
             regime_version="regime.v1",
             risk_policy_version="risk.v1",
             cost_model_version="cost.v1",
             performance_mode=performance_mode,  # type: ignore[arg-type]
-            artifact_schema_version="artifact.v1",
+            artifact_schema_version="1.0.0",
             artifact_hash=f"artifact-{run_id}",
             clock_id=clock.clock_ref.clock_id,
             start_timestamp_ms=clock.clock_ref.start_timestamp_ms,

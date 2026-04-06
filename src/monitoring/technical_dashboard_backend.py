@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from monitoring.alert_manager import build_monitoring_alerts
 from monitoring.contracts import (
+    AccountUserDataProjection,
     AlertProjection,
     Build14Projection,
     Build9MetaProjection,
     Build9XProjection,
+    EngineJudgmentProjection,
+    ExecutionNoTradeBridgeProjection,
     LiveLightProjection,
     MicroLiveProjection,
     MonitoringSnapshot,
@@ -38,6 +41,12 @@ def _default_build9x_projection(*, active_modules: tuple[str, ...]) -> Build9XPr
         replay_candidate_count=0,
         memory_record_count=0,
         latest_memory_summary="No memory records",
+        enrichment_hypothesis_count=0,
+        latest_enrichment_target="",
+        latest_enrichment_signal_family="",
+        expected_replay_evidence_count=0,
+        expected_shadow_evidence_count=0,
+        enrichment_summary="No enrichment hypothesis mapped",
         review_export_ready=False,
         review_export_ref="",
         learning_queue_depth=0,
@@ -68,9 +77,25 @@ def _default_replay_projection(*, active_modules: tuple[str, ...]) -> ReplayImpo
         artifact_id="none",
         artifact_kind="No replay bundle exported",
         lineage_version="n/a",
+        activation_stage="",
+        health_state="",
         lifecycle_state="Awaiting LOCAL_REPLAY artifact",
         validation_status="not_run",
         review_state="No import review executed",
+        compatibility_status="not_evaluated",
+        signature_check_status="not_provided",
+        conflict_resolution_mode="",
+        conflict_hard_veto_action="",
+        conflict_score_aggregation_mode="",
+        conflict_size_reduce_mode="",
+        conflict_rank_adjust_mode="",
+        conflict_additive_soft_boosts_allowed=False,
+        conflict_additive_soft_reduces_allowed=False,
+        registry_atomicity_mode="",
+        registry_concurrency_model="",
+        registry_publish_requires_atomic_replace=False,
+        registry_publish_requires_fsync=False,
+        registry_rollback_to_last_known_good=False,
         rejection_reasons=(),
     )
 
@@ -174,6 +199,42 @@ def _default_build14_projection(*, active_modules: tuple[str, ...]) -> Build14Pr
     )
 
 
+def _default_engine_judgment_projection() -> EngineJudgmentProjection:
+    return EngineJudgmentProjection(
+        status="planned",
+        source_report_id="",
+        source_shadow_run_id="",
+        source_shadow_days_completed=0,
+        source_shadow_required_days=30,
+        cards=(),
+    )
+
+
+def _default_account_user_data_projection() -> AccountUserDataProjection:
+    return AccountUserDataProjection(
+        status="planned",
+        authenticated=False,
+        detail="No authenticated Binance user-data stream captured",
+    )
+
+
+def _default_execution_no_trade_bridge_projection(
+    *,
+    active_modules: tuple[str, ...],
+) -> ExecutionNoTradeBridgeProjection:
+    module_active = "protocols" in active_modules
+    return ExecutionNoTradeBridgeProjection(
+        status="info" if module_active else "planned",
+        configured=False,
+        selection_status="not_configured",
+        detail=(
+            "Compiled execution no-trade bridge is available but not configured"
+            if module_active
+            else "Compiled execution no-trade bridge is not materialized"
+        ),
+    )
+
+
 def _build_build9_meta_projection(snapshot: MonitoringSnapshot) -> Build9MetaProjection:
     break_even_state = "drift_alert" if snapshot.meta.break_even_drift_alert else "stable"
     return Build9MetaProjection(
@@ -233,6 +294,113 @@ def _build_alert_projection(
         ),
         operator_runtime=operator_runtime or OperatorRuntimeProjection(),
     )
+
+
+def _elevate_headline_status_from_engine_judgment(
+    headline_status: str,
+    *,
+    engine_judgment: EngineJudgmentProjection,
+) -> str:
+    if engine_judgment.status == "critical":
+        return "critical"
+    if engine_judgment.status == "warning" and headline_status == "healthy":
+        return "warning"
+    return headline_status
+
+
+def _elevate_headline_status_from_build14(
+    headline_status: str,
+    *,
+    build14: Build14Projection,
+) -> str:
+    if build14.severity == "critical" or build14.status == "critical":
+        return "critical"
+    if (
+        build14.severity == "elevated" or build14.status == "warning"
+    ) and headline_status == "healthy":
+        return "warning"
+    return headline_status
+
+
+def _elevate_headline_status_from_account_user_data(
+    headline_status: str,
+    *,
+    account_user_data: AccountUserDataProjection,
+) -> str:
+    if account_user_data.status == "critical":
+        return "critical"
+    if account_user_data.status == "warning" and headline_status == "healthy":
+        return "warning"
+    return headline_status
+
+
+def _elevate_headline_status_from_replay_import(
+    headline_status: str,
+    *,
+    replay_import: ReplayImportProjection,
+) -> str:
+    if replay_import.status == "critical":
+        return "critical"
+    if replay_import.status == "warning" and headline_status == "healthy":
+        return "warning"
+    return headline_status
+
+
+def _elevate_headline_status_from_rollout(
+    headline_status: str,
+    *,
+    shadow: ShadowProjection,
+    micro_live: MicroLiveProjection,
+    live_light: LiveLightProjection,
+) -> str:
+    rollout_statuses = (shadow.status, micro_live.status, live_light.status)
+    if "critical" in rollout_statuses:
+        return "critical"
+    if "warning" in rollout_statuses and headline_status == "healthy":
+        return "warning"
+    return headline_status
+
+
+def _elevate_headline_status_from_execution_no_trade_bridge(
+    headline_status: str,
+    *,
+    execution_no_trade_bridge: ExecutionNoTradeBridgeProjection,
+) -> str:
+    if execution_no_trade_bridge.status == "critical":
+        return "critical"
+    if execution_no_trade_bridge.status == "warning" and headline_status == "healthy":
+        return "warning"
+    return headline_status
+
+
+def _elevate_headline_status_from_build9x(
+    headline_status: str,
+    *,
+    build9x: Build9XProjection,
+) -> str:
+    if build9x.status == "critical":
+        return "critical"
+    if build9x.status == "warning" and headline_status == "healthy":
+        return "warning"
+    return headline_status
+
+
+def _elevate_headline_status_from_build9_meta(
+    headline_status: str,
+    *,
+    build9_meta: Build9MetaProjection,
+) -> str:
+    statuses = (
+        build9_meta.dtr_status,
+        build9_meta.cra_status,
+        build9_meta.break_even_status,
+        build9_meta.edge_status,
+    )
+    if "critical" in statuses:
+        return "critical"
+    if "warning" in statuses and headline_status == "healthy":
+        return "warning"
+    return headline_status
 
 
 def _operator_safing_message(operator_runtime: OperatorRuntimeProjection) -> str:
@@ -336,10 +504,13 @@ def build_technical_dashboard_payload(
     active_modules: tuple[str, ...] = (),
     active_engines: tuple[str, ...] = (),
     build9x_projection: Build9XProjection | None = None,
+    engine_judgment_projection: EngineJudgmentProjection | None = None,
     shadow_projection: ShadowProjection | None = None,
     micro_live_projection: MicroLiveProjection | None = None,
     live_light_projection: LiveLightProjection | None = None,
     build14_projection: Build14Projection | None = None,
+    account_user_data_projection: AccountUserDataProjection | None = None,
+    execution_no_trade_bridge_projection: ExecutionNoTradeBridgeProjection | None = None,
     replay_projection: ReplayImportProjection | None = None,
     operator_runtime: OperatorRuntimeProjection | None = None,
 ) -> TechnicalDashboardPayload:
@@ -351,6 +522,15 @@ def build_technical_dashboard_payload(
         operator_runtime=operator_runtime,
     ).headline_status
     build9x = build9x_projection or _default_build9x_projection(active_modules=active_modules)
+    headline_status = _elevate_headline_status_from_build9x(
+        headline_status,
+        build9x=build9x,
+    )
+    engine_judgment = engine_judgment_projection or _default_engine_judgment_projection()
+    headline_status = _elevate_headline_status_from_engine_judgment(
+        headline_status,
+        engine_judgment=engine_judgment,
+    )
     shadow = shadow_projection or _default_shadow_projection(active_modules=active_modules)
     micro_live = _apply_operator_safing_to_micro_live_projection(
         micro_live_projection or _default_micro_live_projection(active_modules=active_modules),
@@ -361,7 +541,39 @@ def build_technical_dashboard_payload(
         operator_runtime=operator_runtime,
     )
     build14 = build14_projection or _default_build14_projection(active_modules=active_modules)
+    headline_status = _elevate_headline_status_from_build14(
+        headline_status,
+        build14=build14,
+    )
+    account_user_data = account_user_data_projection or _default_account_user_data_projection()
+    headline_status = _elevate_headline_status_from_account_user_data(
+        headline_status,
+        account_user_data=account_user_data,
+    )
+    execution_no_trade_bridge = (
+        execution_no_trade_bridge_projection
+        or _default_execution_no_trade_bridge_projection(active_modules=active_modules)
+    )
     replay_import = replay_projection or _default_replay_projection(active_modules=active_modules)
+    headline_status = _elevate_headline_status_from_execution_no_trade_bridge(
+        headline_status,
+        execution_no_trade_bridge=execution_no_trade_bridge,
+    )
+    headline_status = _elevate_headline_status_from_replay_import(
+        headline_status,
+        replay_import=replay_import,
+    )
+    headline_status = _elevate_headline_status_from_rollout(
+        headline_status,
+        shadow=shadow,
+        micro_live=micro_live,
+        live_light=live_light,
+    )
+    build9_meta = _build_build9_meta_projection(resolved_snapshot)
+    headline_status = _elevate_headline_status_from_build9_meta(
+        headline_status,
+        build9_meta=build9_meta,
+    )
     stale_engines = tuple(
         engine.engine_id
         for engine in resolved_snapshot.engines
@@ -393,12 +605,15 @@ def build_technical_dashboard_payload(
         engines=resolved_snapshot.engines,
         pairs=resolved_snapshot.pairs,
         infra=resolved_snapshot.infra,
-        build9_meta=_build_build9_meta_projection(resolved_snapshot),
+        build9_meta=build9_meta,
         build9x=build9x,
+        engine_judgment=engine_judgment,
         shadow=shadow,
         micro_live=micro_live,
         live_light=live_light,
         build14=build14,
+        account_user_data=account_user_data,
+        execution_no_trade_bridge=execution_no_trade_bridge,
         replay_import=replay_import,
         alerts=_build_alert_projection(
             resolved_snapshot,

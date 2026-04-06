@@ -46,6 +46,14 @@ class ClusterReporter:
             pair=pair, cluster_id=cluster_id, accepted=False, reason=reason, timestamp=timestamp,
         ))
 
+    def sync_cluster_exposures(self, exposures: dict[str, float]) -> None:
+        """Synchronize cluster exposures from a governed portfolio snapshot."""
+
+        self._cluster_sizes = {
+            cluster_id: max(0.0, exposure)
+            for cluster_id, exposure in exposures.items()
+        }
+
     def get_stats(self) -> ClusterStats:
         dominant = ""
         dominant_exp = 0.0

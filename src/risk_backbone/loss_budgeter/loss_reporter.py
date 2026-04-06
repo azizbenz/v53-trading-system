@@ -54,6 +54,11 @@ class LossReporter:
     def record_position_closed(self, loss_amount: float) -> None:
         self._current_budget = max(0.0, self._current_budget - loss_amount)
 
+    def sync_current_budget(self, budget: float) -> None:
+        """Synchronize current budget from a governed portfolio snapshot."""
+
+        self._current_budget = max(0.0, budget)
+
     def get_stats(self) -> LossStats:
         return LossStats(
             current_budget=self._current_budget,

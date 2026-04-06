@@ -265,6 +265,10 @@ def test_run_meta_learning_review_blocks_handoff_when_capacity_is_incomplete():
     assert projection.review_export_ready is False
     assert projection.learning_capture_mode == "capture_minimale"
     assert projection.learning_backpressure_active is True
+    assert projection.enrichment_hypothesis_count > 0
+    assert projection.latest_enrichment_target != ""
+    assert projection.expected_replay_evidence_count > 0
+    assert projection.expected_shadow_evidence_count > 0
     assert any(
         transition.from_state == "draft" and transition.to_state == "under_review"
         for transition in bundle.lifecycle_transitions

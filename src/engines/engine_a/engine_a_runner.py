@@ -114,6 +114,11 @@ class EngineAInput(BaseModel, frozen=True):
     flow_coherence: float = 0.5
     flow_score: float = 0.0
     cost_preference_score: float = 0.0
+    delta_confirmation: float = 0.5
+    execution_fragility: float = 0.0
+    market_toxicity: float = 0.0
+    spread_regime_penalty: float = 0.0
+    competition_density: float = 0.5
     # Cost inputs
     expected_gain: float = 0.0
     expected_cost: float = 0.0
@@ -277,6 +282,11 @@ def run_engine_a(inputs: EngineAInput) -> EngineAOutput:
         context_score=context.context_score,
         flow_score=inputs.flow_score,
         cost_preference_score=inputs.cost_preference_score,
+        delta_confirmation=inputs.delta_confirmation,
+        execution_fragility=inputs.execution_fragility,
+        market_toxicity=inputs.market_toxicity,
+        spread_regime_penalty=inputs.spread_regime_penalty,
+        competition_density=inputs.competition_density,
         scoring_version=inputs.scoring_version,
     ))
     logs.append(EngineALogEntry(

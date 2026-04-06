@@ -15,6 +15,15 @@ from local_replay_runtime.contracts import (
     ReplayExecutionPlan,
 )
 from local_replay_runtime.enums import ReplayArtifactKind, ReplayLifecycleState
+from interface_contracts import (
+    ActionUnit,
+    ArtifactActivationStage,
+    ArtifactActionKind,
+    ArtifactHealthState,
+    ArtifactLogicFormat,
+    HookId,
+    HOOK_MODULE_BY_ID,
+)
 from local_replay_runtime.errors import (
     BacktestProfileForbiddenError,
     LocalReplayRuntimeError,
@@ -90,6 +99,7 @@ from local_replay_runtime.runtime_evidence import (
     LocalReplayEvidenceRecorderState,
 )
 from local_replay_runtime.shadow_execution_simulator import (
+    ParityTolerancePolicy,
     ShadowExecutionSimulatorConfig,
     build_parity_diagnostics_payload,
     simulate_shadow_compatible_dtrs,
@@ -151,11 +161,19 @@ __all__ = [
     "ReplayClockTick",
     "HistoricalReplayClock",
     "build_replay_clock",
+    "ParityTolerancePolicy",
     "ShadowExecutionSimulatorConfig",
     "simulate_shadow_compatible_dtrs",
     "build_parity_diagnostics_payload",
     "ReplayArtifactKind",
     "ReplayLifecycleState",
+    "ArtifactActivationStage",
+    "ArtifactHealthState",
+    "ArtifactLogicFormat",
+    "ArtifactActionKind",
+    "ActionUnit",
+    "HookId",
+    "HOOK_MODULE_BY_ID",
     "LocalReplayRuntimeError",
     "RuntimeModeViolationError",
     "BacktestProfileForbiddenError",

@@ -1,18 +1,12 @@
-"""
-4.5.3 - Profile Registry: runtime mapping of modules to Light / Complete.
+"""Runtime mapping of modules to the declared LIGHT / COMPLETE profiles.
 
-Rules:
+Current doctrine:
+- `COMPLETE` is the governed runtime target for Shadow -> Micro-live -> Live.
+- `LIGHT` remains as a constrained compatibility profile and is not the governed
+  Shadow runtime anymore.
 - COMMON modules are active in both profiles when their manifest status is ACTIVE.
-- LIGHT modules are active in Light and Complete when their manifest status is ACTIVE.
-- COMPLETE modules are active only in Complete when their manifest status is ACTIVE,
-  except for the governed Full Shadow participants explicitly exposed under LIGHT.
-- On the Full Shadow migration branch, complete_enablers and engines C/D are
-  runtime-visible in LIGHT because Build-11 observes A/B/C/D + Build-14 under
-  profile=LIGHT, runtime_mode=SHADOW.
-- Auxiliary governed modules (for monitoring, meta-learning, replay/import scaffolds)
-  may be visible in both profiles without implying that their dedicated runtime_mode
-  is fully operated yet.
-- The `protocols` module can now expose Build-11 Shadow, Build-12 Micro-live, and Build-13 Live-Light while Complete remains closed.
+- LIGHT-scoped modules are active in both profiles when their manifest status is ACTIVE.
+- COMPLETE-scoped modules are active only in COMPLETE when their manifest status is ACTIVE.
 """
 
 from __future__ import annotations
@@ -44,16 +38,11 @@ _ENGINE_MODULE_MAP: dict[EngineId, str] = {
     EngineId.D: "engine_d",
 }
 
-_FULL_SHADOW_LIGHT_VISIBLE_COMPLETE_MODULES = frozenset(
-    {"complete_enablers", "engine_c", "engine_d"}
-)
-
-
 def get_modules_for_profile(profile: ProfileId) -> tuple[ModuleEntry, ...]:
     """Return runtime-active modules for a given profile.
 
-    The manifest keeps the full V5.3 roadmap, but runtime profile activation
-    must expose only modules that are actually implemented today.
+    The manifest keeps the full V5.3 roadmap, but profile activation must expose
+    only modules implemented for the selected profile surface.
     """
     active_modules = tuple(m for m in MODULES if m.status == ModuleStatus.ACTIVE)
 
@@ -61,7 +50,6 @@ def get_modules_for_profile(profile: ProfileId) -> tuple[ModuleEntry, ...]:
         return tuple(
             m for m in active_modules
             if m.profile_scope in (ProfileScope.COMMON, ProfileScope.LIGHT)
-            or m.module_name in _FULL_SHADOW_LIGHT_VISIBLE_COMPLETE_MODULES
         )
 
     return tuple(active_modules)
@@ -105,7 +93,7 @@ def is_module_active_in_profile(module_name: str, profile: ProfileId) -> bool:
 
 
 def get_complete_only_modules() -> tuple[ModuleEntry, ...]:
-    """Return declared modules that exist only in Complete profile."""
+    """Return declared modules that are reserved to COMPLETE."""
     return tuple(m for m in MODULES if m.profile_scope == ProfileScope.COMPLETE)
 
 

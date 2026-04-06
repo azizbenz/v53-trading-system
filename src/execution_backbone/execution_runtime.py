@@ -14,6 +14,14 @@ from typing import Protocol
 
 from pydantic import BaseModel, Field
 
+from interface_contracts import (
+    decimal_to_canonical_str,
+    decimal_to_float64,
+    execution_decimal,
+    multiply_exact,
+    quantize_down_to_step,
+    quantize_up_to_step,
+)
 from .execution_cost_meter.adverse_selection_meter import compute_adverse_selection
 from .execution_cost_meter.cost_aggregator import CostAggregate, CostAggregator, compute_trade_cost
 from .execution_cost_meter.elw_meter import compute_elw
@@ -31,6 +39,7 @@ from .order_decider.intent_builder import (
     NoTradeDecision,
     NoTradeReason,
     OrderType,
+    VenueConstraintSnapshot,
     build_intent,
 )
 from .order_decider.order_type_selector import select_order_type
@@ -40,6 +49,7 @@ from .reconciliation_layer.fill_reconciler import FillReconciliationResult, reco
 from .reconciliation_layer.order_reconciler import OrderReconciliationResult, reconcile_orders
 from .reconciliation_layer.position_reconciler import PositionReconciliationResult, reconcile_positions
 from .reconciliation_layer.recovery_trigger import RecoveryDecision, RecoveryTrigger
+from .venue_constraints_provider import VenueConstraintProvider
 
 
 logger = logging.getLogger(__name__)
@@ -83,6 +93,7 @@ class ExecutionOpportunity(BaseModel, frozen=True):
     reference_price: float | None = None
     price_limit: float | None = None
     profile: str = "LIGHT"
+    venue_constraints: VenueConstraintSnapshot | None = None
     metadata: dict[str, object] = Field(default_factory=dict)
 
 
@@ -185,8 +196,30 @@ class RuntimeReconciliationResult(BaseModel, frozen=True):
     recovery_decision: RecoveryDecision
 
 
+class ExecutionNoTradeFilterInput(BaseModel, frozen=True):
+    """Bounded typed input for a pre-submit execution no-trade filter."""
+
+    intent_id: str = Field(..., min_length=1)
+    pair: str = Field(..., min_length=1)
+    engine_id: str = Field(..., min_length=1)
+    expected_cost: float = 0.0
+    expected_gain: float = 0.0
+    score: float = 0.0
+
+
+class ExecutionNoTradeFilterOutcome(BaseModel, frozen=True):
+    """Bounded typed output for a pre-submit execution no-trade filter."""
+
+    blocked: bool = False
+    block_reason_codes: tuple[str, ...] = ()
+    detail: str = ""
+
+
 class ExecutionVenueAdapter(Protocol):
     """Adapter contract for the Build-3 execution runtime."""
+
+    def fetch_venue_constraints(self, pair: str) -> VenueConstraintSnapshot | None:
+        ...
 
     def submit_order(self, intent: ExecutionIntent, now: float) -> SubmitReceipt:
         ...
@@ -201,6 +234,13 @@ class ExecutionVenueAdapter(Protocol):
         ...
 
     def fetch_remote_state(self) -> RemoteExecutionState:
+        ...
+
+
+class ExecutionNoTradeFilter(Protocol):
+    """Bounded pre-submit veto surface for the execution edge."""
+
+    def __call__(self, hook_input: ExecutionNoTradeFilterInput) -> ExecutionNoTradeFilterOutcome:
         ...
 
 
@@ -222,9 +262,13 @@ class ExecutionRuntime:
         *,
         default_fee_rate: float = 0.001,
         max_recon_age_s: float = 60.0,
+        venue_constraint_provider: VenueConstraintProvider | None = None,
+        execution_no_trade_filter: ExecutionNoTradeFilter | None = None,
     ) -> None:
         self._adapter = adapter
         self._default_fee_rate = default_fee_rate
+        self._venue_constraint_provider = venue_constraint_provider
+        self._execution_no_trade_filter = execution_no_trade_filter
         self._decision_reporter = DecisionReporter()
         self._state_tracker = OrderStateTracker()
         self._fill_aggregator = FillAggregator()
@@ -343,6 +387,50 @@ class ExecutionRuntime:
                 detail=no_trade.detail,
             )
 
+        resolved_constraints = self._resolve_venue_constraints(opportunity)
+        quantity = opportunity.quantity
+        quantity_exact = ""
+        price_limit_exact: str | None = None
+        if resolved_constraints is not None:
+            normalization = self._normalize_venue_order_fields(
+                quantity=opportunity.quantity,
+                side=opportunity.side,
+                order_type=decision.order_type,
+                price_limit=price_limit,
+                reference_price=opportunity.reference_price,
+                constraints=resolved_constraints,
+            )
+            if normalization.error_detail is not None:
+                no_trade = NoTradeDecision(
+                    pair=opportunity.pair,
+                    engine_id=opportunity.engine_id,
+                    reason=NoTradeReason.VENUE_CONSTRAINTS,
+                    detail=normalization.error_detail,
+                    expected_cost=opportunity.expected_cost,
+                    expected_gain=opportunity.expected_gain,
+                    score=opportunity.score,
+                )
+                self._decision_reporter.record_no_trade(no_trade, timestamp=now)
+                logger.warning(
+                    "execution_submission_venue_constraints",
+                    extra={
+                        "intent_id": opportunity.intent_id,
+                        "pair": opportunity.pair,
+                        "engine_id": opportunity.engine_id,
+                        "detail": normalization.error_detail,
+                        "timestamp": now,
+                    },
+                )
+                return ExecutionSubmission(
+                    status=ExecutionSubmissionStatus.NO_TRADE,
+                    no_trade=no_trade,
+                    detail=no_trade.detail,
+                )
+            quantity = normalization.quantity
+            quantity_exact = normalization.quantity_exact
+            price_limit = normalization.price_limit
+            price_limit_exact = normalization.price_limit_exact
+
         timeout_policy = select_timeout_policy(decision.order_type)
         intent = build_intent(
             intent_id=opportunity.intent_id,
@@ -350,15 +438,51 @@ class ExecutionRuntime:
             engine_id=opportunity.engine_id,
             side=opportunity.side,
             order_type=decision.order_type,
-            quantity=opportunity.quantity,
+            quantity=quantity,
+            quantity_exact=quantity_exact,
             expected_cost=opportunity.expected_cost,
             expected_gain=opportunity.expected_gain,
             score=opportunity.score,
             justification=opportunity.justification or decision.reason,
             price_limit=price_limit,
+            price_limit_exact=price_limit_exact,
             timeout_s=timeout_policy.timeout_s,
             profile=opportunity.profile,
+            venue_constraints=resolved_constraints,
         )
+        hook_outcome = self._run_execution_no_trade_filter(opportunity)
+        if hook_outcome is not None and hook_outcome.blocked:
+            detail = hook_outcome.detail.strip()
+            if not detail:
+                detail = (
+                    f"execution no-trade filter blocked {opportunity.pair} / "
+                    f"{opportunity.engine_id}"
+                )
+            no_trade = NoTradeDecision(
+                pair=opportunity.pair,
+                engine_id=opportunity.engine_id,
+                reason=NoTradeReason.HARD_BLOCKER,
+                detail=detail,
+                expected_cost=opportunity.expected_cost,
+                expected_gain=opportunity.expected_gain,
+                score=opportunity.score,
+            )
+            self._decision_reporter.record_no_trade(no_trade, timestamp=now)
+            logger.warning(
+                "execution_submission_filtered",
+                extra={
+                    "intent_id": opportunity.intent_id,
+                    "pair": opportunity.pair,
+                    "engine_id": opportunity.engine_id,
+                    "block_reason_codes": hook_outcome.block_reason_codes,
+                    "timestamp": now,
+                },
+            )
+            return ExecutionSubmission(
+                status=ExecutionSubmissionStatus.NO_TRADE,
+                no_trade=no_trade,
+                detail=detail,
+            )
         receipt = self._adapter.submit_order(intent, now)
         self._register_live_order(receipt.order_id, intent, receipt.submitted_at)
         self._decision_reporter.record_trade(intent, timestamp=now)
@@ -396,10 +520,27 @@ class ExecutionRuntime:
         if self._state_tracker.is_terminal(order_id):
             raise ValueError(f"Cannot replace terminal order '{order_id}'")
 
+        price_limit = new_price_limit
+        price_limit_exact: str | None = None
+        if intent.venue_constraints is not None:
+            normalization = self._normalize_venue_order_fields(
+                quantity=intent.quantity,
+                side=intent.side,
+                order_type=intent.order_type,
+                price_limit=new_price_limit,
+                reference_price=new_price_limit,
+                constraints=intent.venue_constraints,
+            )
+            if normalization.error_detail is not None:
+                raise ValueError(normalization.error_detail)
+            price_limit = normalization.price_limit
+            price_limit_exact = normalization.price_limit_exact
+
         replacement_intent = intent.model_copy(
             update={
                 "intent_id": f"{intent.intent_id}:replace:{int(now * 1000)}",
-                "price_limit": new_price_limit,
+                "price_limit": price_limit,
+                "price_limit_exact": price_limit_exact,
                 "timeout_s": intent.timeout_s if new_timeout_s is None else new_timeout_s,
             },
         )
@@ -668,7 +809,7 @@ class ExecutionRuntime:
             fill_quantities=tuple(fill.quantity for fill in aggregated.fills),
             current_mid=post_fill_mid_price if context.current_mid is None else context.current_mid,
         )
-        notional = max(record.quantity * max(aggregated.average_price, 1.0), 1e-9)
+        notional = max(aggregated.total_notional, 1e-9)
         variance_component = 0.0
         if aggregated.average_price > 0:
             variance_component = partial_fill.price_variance / max(aggregated.average_price**2, 1e-9)
@@ -702,6 +843,22 @@ class ExecutionRuntime:
         }
         return mapping.get(guard.blocks[0], NoTradeReason.HARD_BLOCKER)
 
+    def _run_execution_no_trade_filter(
+        self,
+        opportunity: ExecutionOpportunity,
+    ) -> ExecutionNoTradeFilterOutcome | None:
+        if self._execution_no_trade_filter is None:
+            return None
+        hook_input = ExecutionNoTradeFilterInput(
+            intent_id=opportunity.intent_id,
+            pair=opportunity.pair,
+            engine_id=opportunity.engine_id,
+            expected_cost=opportunity.expected_cost,
+            expected_gain=opportunity.expected_gain,
+            score=opportunity.score,
+        )
+        return self._execution_no_trade_filter(hook_input)
+
     def _update_local_position(self, pair: str, side: str, quantity: float) -> None:
         base_asset = self._extract_base_asset(pair)
         signed_quantity = quantity if side.lower() == "buy" else -quantity
@@ -733,3 +890,99 @@ class ExecutionRuntime:
             if pair.endswith(suffix) and len(pair) > len(suffix):
                 return pair[: -len(suffix)]
         return pair
+
+    def _resolve_venue_constraints(
+        self,
+        opportunity: ExecutionOpportunity,
+    ) -> VenueConstraintSnapshot | None:
+        if opportunity.venue_constraints is not None:
+            return opportunity.venue_constraints
+        adapter_constraints = self._adapter.fetch_venue_constraints(opportunity.pair)
+        if adapter_constraints is not None:
+            return adapter_constraints
+        if self._venue_constraint_provider is None:
+            return None
+        return self._venue_constraint_provider.fetch_venue_constraints(opportunity.pair)
+
+    def _normalize_venue_order_fields(
+        self,
+        *,
+        quantity: float,
+        side: str,
+        order_type: OrderType,
+        price_limit: float | None,
+        reference_price: float | None,
+        constraints: VenueConstraintSnapshot,
+    ) -> "_NormalizedVenueOrderFields":
+        quantity_decimal = execution_decimal(quantity, name="quantity")
+        quantity_decimal = (
+            quantize_down_to_step(quantity_decimal, constraints.step_size)
+            if constraints.step_size is not None
+            else quantity_decimal
+        )
+        if quantity_decimal <= 0:
+            return _NormalizedVenueOrderFields(
+                quantity=0.0,
+                quantity_exact="0",
+                error_detail="venue constraints reduce quantity to zero",
+            )
+
+        normalized_price_limit: float | None = price_limit
+        price_limit_exact: str | None = None
+        price_anchor_decimal = (
+            execution_decimal(price_limit, name="price_limit")
+            if price_limit is not None
+            else (
+                execution_decimal(reference_price, name="reference_price")
+                if reference_price is not None
+                else None
+            )
+        )
+
+        if price_limit is not None and constraints.tick_size is not None:
+            normalized_price_decimal = (
+                quantize_down_to_step(price_limit, constraints.tick_size)
+                if side.lower() == "buy"
+                else quantize_up_to_step(price_limit, constraints.tick_size)
+            )
+            if normalized_price_decimal <= 0:
+                return _NormalizedVenueOrderFields(
+                    quantity=0.0,
+                    quantity_exact="0",
+                    error_detail="venue constraints reduce price limit to zero",
+                )
+            normalized_price_limit = decimal_to_float64(normalized_price_decimal)
+            price_limit_exact = decimal_to_canonical_str(normalized_price_decimal)
+            price_anchor_decimal = normalized_price_decimal
+
+        if constraints.min_notional is not None:
+            if price_anchor_decimal is None:
+                return _NormalizedVenueOrderFields(
+                    quantity=0.0,
+                    quantity_exact="0",
+                    error_detail="min_notional requires a usable price anchor",
+                )
+            normalized_notional = multiply_exact(quantity_decimal, price_anchor_decimal)
+            if normalized_notional < execution_decimal(
+                constraints.min_notional, name="min_notional"
+            ):
+                return _NormalizedVenueOrderFields(
+                    quantity=0.0,
+                    quantity_exact="0",
+                    error_detail="normalized order violates venue min_notional",
+                )
+
+        return _NormalizedVenueOrderFields(
+            quantity=decimal_to_float64(quantity_decimal),
+            quantity_exact=decimal_to_canonical_str(quantity_decimal),
+            price_limit=normalized_price_limit,
+            price_limit_exact=price_limit_exact,
+        )
+
+
+class _NormalizedVenueOrderFields(BaseModel, frozen=True):
+    quantity: float
+    quantity_exact: str
+    price_limit: float | None = None
+    price_limit_exact: str | None = None
+    error_detail: str | None = None
