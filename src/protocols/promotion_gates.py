@@ -82,7 +82,23 @@ def check_complete_to_micro_live(state_dir: Path) -> PromotionGateResult:
 
 
 def check_complete_to_live(state_dir: Path) -> PromotionGateResult:
-    """HARD: COMPLETE must have 30 consecutive shadow days before going live."""
+    """HARD: COMPLETE must pass micro-live gate before going live.
+
+    Sequential enforcement: shadow→micro-live gate must pass before live gate is
+    evaluated. Without this chain, both gates collapse to the same check.
+    """
+    micro_live = check_complete_to_micro_live(state_dir)
+    if not micro_live.passed:
+        # BS-next gate: live gate is blocked until micro-live gate passes first
+        return PromotionGateResult(
+            gate_name="complete_shadow_30j",
+            passed=False,
+            profile="complete",
+            consecutive_days=micro_live.consecutive_days,
+            remaining_days=micro_live.remaining_days,
+            total_resets=micro_live.total_resets,
+            message=f"BLOCKED: micro-live gate not passed — {micro_live.message}",
+        )
     return _check_shadow_gate(
         state_dir,
         profile="complete",
@@ -91,9 +107,14 @@ def check_complete_to_live(state_dir: Path) -> PromotionGateResult:
 
 
 def check_all_gates(state_dir: Path) -> tuple[PromotionGateResult, ...]:
-    """Compatibility surface returning the historical dual-profile gate set."""
+    """Returns all active promotion gate results.
+
+    BS-37 fix: check_complete_to_micro_live was previously omitted.
+    Order: COMPLETE micro-live, COMPLETE live, LIGHT micro-live (legacy).
+    """
     return (
-        check_light_to_micro_live(state_dir),
+        check_complete_to_micro_live(state_dir),
         check_complete_to_live(state_dir),
+        check_light_to_micro_live(state_dir),
     )
 

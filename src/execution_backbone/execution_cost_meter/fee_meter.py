@@ -44,6 +44,8 @@ def compute_fee(
 ) -> FeeBreakdown:
     """Compute explicit fee breakdown."""
     gross_value_exact = multiply_exact(price, quantity)
+    if gross_value_exact == 0:
+        raise ValueError("gross_value must be > 0 to compute fee rate")
     fee_amount_decimal = execution_decimal(fee_amount, name="fee_amount")
     fee_rate_exact = divide_exact_or_zero(fee_amount_decimal, gross_value_exact)
 

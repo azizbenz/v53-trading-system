@@ -22,7 +22,7 @@ from protocols.shadow_websocket_ingest import (
     ObservedWebSocketMessage,
     build_snapshot_batch_from_observed_websocket_messages,
 )
-from interface_contracts.atomic_io import atomic_write_json
+from interface_contracts.atomic_io import atomic_write_json, atomic_write_text
 
 
 class NativeWebSocketClient(Protocol):
@@ -42,6 +42,21 @@ class NativeWebSocketClient(Protocol):
 
 
 SocketFactory = Callable[[str, float, float], NativeWebSocketClient]
+
+
+def _is_timeout_exception(exc: BaseException) -> bool:
+    """BS-2C: isinstance check replaces fragile __class__.__name__ string match.
+
+    websocket-client is optional; guard the import so this helper works in all
+    test environments where the library may not be installed.
+    """
+    if isinstance(exc, TimeoutError):
+        return True
+    try:
+        import websocket as _ws  # type: ignore[import-not-found]
+        return isinstance(exc, _ws.WebSocketTimeoutException)
+    except ImportError:
+        return False
 
 
 def _default_socket_factory(
@@ -78,6 +93,12 @@ class BinanceSpotLiveWebSocketAdapter(WebSocketGatewayAdapter):
         self._request_id = 0
 
     def connect(self, endpoint: str) -> None:
+        stale_client = self._clients.get(endpoint)
+        if stale_client is not None:
+            try:
+                stale_client.close()
+            except Exception:
+                pass
         client = self._socket_factory(
             endpoint,
             self._config.connect_timeout_s,
@@ -112,7 +133,7 @@ class BinanceSpotLiveWebSocketAdapter(WebSocketGatewayAdapter):
         try:
             raw_payload = client.recv()
         except Exception as exc:
-            if exc.__class__.__name__ in {"WebSocketTimeoutException", "TimeoutError"}:
+            if _is_timeout_exception(exc):
                 return None
             raise
         if raw_payload in (None, "", b""):
@@ -200,6 +221,8 @@ class BinanceSpotLiveWebSocketAdapter(WebSocketGatewayAdapter):
                 payload={
                     "bids": data.get("b", []),
                     "asks": data.get("a", []),
+                    "first_update_id": data.get("U"),
+                    "final_update_id": data.get("u"),
                     "last_update_id": data.get("u"),
                 },
                 recv_time=now,
@@ -365,7 +388,7 @@ def capture_live_user_data_stream(
             try:
                 raw_payload = client.recv()
             except Exception as exc:
-                if exc.__class__.__name__ in {"WebSocketTimeoutException", "TimeoutError"}:
+                if _is_timeout_exception(exc):
                     idle_polls += 1
                     continue
                 raise
@@ -406,7 +429,8 @@ def capture_live_user_data_stream(
     if subscription_id is None:
         raise RuntimeError("Binance user data stream subscription did not succeed")
 
-    events_path.write_text(
+    atomic_write_text(
+        events_path,
         "\n".join(json.dumps(item, ensure_ascii=True) for item in observed_events),
         encoding="utf-8",
     )

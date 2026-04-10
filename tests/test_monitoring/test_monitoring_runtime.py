@@ -5,7 +5,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from interface_contracts import PairHealthLevel, ProfileId, RuntimeMode
+from interface_contracts import HookId, PairHealthLevel, ProfileId, RuntimeMode
 from meta import build_break_even_report, build_cra_report, build_dtr_summary, build_edge_report
 from meta_minimal.break_even_dashboard.motor_pair_break_even_view import BreakEvenView
 from meta_minimal.cra_monitor.cra_alert_builder import CRAAlert, CRAAlertLevel
@@ -17,13 +17,14 @@ from monitoring import (
     ExecutionNoTradeBridgeProjection,
     MonitoringRuntime,
     MonitoringRuntimeConfig,
+    RuntimeHookBridgeProjection,
     collect_engine_metrics,
     collect_infra_metrics,
     collect_meta_metrics,
     collect_pair_metrics,
     collect_portfolio_metrics,
 )
-from ui import LightUIRuntime, OperatorActionRequest, OperatorActionType
+from ui import LockedOperatorUiRuntime, OperatorActionRequest, OperatorActionType
 
 
 def _scratch_dir(name: str) -> Path:
@@ -201,7 +202,7 @@ def test_monitoring_runtime_chains_build10_path_end_to_end():
     assert result.health_payload.last_transition_summary == "kill_switch_active -> halted"
     assert result.health_payload.shadow_status == "healthy"
     assert result.health_payload.micro_live_status == "planned"
-    assert result.health_payload.live_light_status == "planned"
+    assert result.health_payload.live_status == "planned"
     assert result.health_payload.operator_runtime.event_count == 1
     assert result.health_payload.operator_runtime.latest_event_message == "screen opened: overview"
     assert result.health_payload.operator_runtime.pending_notification_count == 2
@@ -223,18 +224,18 @@ def test_monitoring_runtime_chains_build10_path_end_to_end():
         and sample.labels.get("event_type") == "screen_opened"
         for sample in result.observability_export.samples
     )
-    light_titles = {section.title for section in result.light_view.sections}
-    assert {"Pairs", "Engines", "Risk", "Execution", "Data & Infra", "Alerts & Events"}.issubset(light_titles)
-    assert result.light_view.pending_notifications
-    assert result.light_view.pending_notifications[0].alert_id == "corr-runtime:loss"
-    assert len(result.light_view.pending_notifications) == 2
-    assert result.light_view.event_log[0].message == "screen opened: overview"
-    light_profile = next(section for section in result.light_view.sections if section.title == "Profile & State")
-    assert any(card.key == "deployment_state" and card.value == "halted" for card in light_profile.cards)
-    assert any(card.key == "last_transition" and card.value == "kill_switch_active -> halted" for card in light_profile.cards)
-    light_alerts = next(section for section in result.light_view.sections if section.title == "Alerts & Events")
-    assert any(card.key == "operator_events" and card.detail == "screen opened: overview" for card in light_alerts.cards)
-    assert any(card.key == "critical_notifications" and card.value == "pending=2 / ack=0" for card in light_alerts.cards)
+    locked_titles = {section.title for section in result.locked_operator_view.sections}
+    assert {"Pairs", "Engines", "Risk", "Execution", "Data & Infra", "Alerts & Events"}.issubset(locked_titles)
+    assert result.locked_operator_view.pending_notifications
+    assert result.locked_operator_view.pending_notifications[0].alert_id == "corr-runtime:loss"
+    assert len(result.locked_operator_view.pending_notifications) == 2
+    assert result.locked_operator_view.event_log[0].message == "screen opened: overview"
+    locked_profile = next(section for section in result.locked_operator_view.sections if section.title == "Profile & State")
+    assert any(card.key == "deployment_state" and card.value == "halted" for card in locked_profile.cards)
+    assert any(card.key == "last_transition" and card.value == "kill_switch_active -> halted" for card in locked_profile.cards)
+    locked_alerts = next(section for section in result.locked_operator_view.sections if section.title == "Alerts & Events")
+    assert any(card.key == "operator_events" and card.detail == "screen opened: overview" for card in locked_alerts.cards)
+    assert any(card.key == "critical_notifications" and card.value == "pending=2 / ack=0" for card in locked_alerts.cards)
 
 
 def test_monitoring_runtime_tracks_session_high_water_mark_and_stale_spikes():
@@ -292,9 +293,44 @@ def test_monitoring_runtime_tracks_session_high_water_mark_and_stale_spikes():
     assert second.snapshot.infra.stale_spike_count == 1
 
 
+def test_monitoring_runtime_preserves_complete_governed_rail_in_payload_and_view():
+    runtime = MonitoringRuntime()
+
+    result = runtime.evaluate(
+        correlation_id="corr-runtime-complete",
+        profile=ProfileId.COMPLETE,
+        runtime_mode=RuntimeMode.LIVE,
+        timestamp_ms=1_700_000_000_750,
+        portfolio=collect_portfolio_metrics(
+            allocated_opportunities=1,
+            gross_capacity_used_pct=15.0,
+            loss_capacity_used_pct=4.0,
+            beta_utilization=0.2,
+            capital_deployed_usdt=300.0,
+            ce_net=0.001,
+        ),
+        infra=collect_infra_metrics(queue_backlog=5),
+        meta=_meta_metrics(),
+        active_modules=("monitoring", "ui", "protocols"),
+        active_engines=("engine_a", "engine_b"),
+    )
+
+    assert result.health_payload.profile == ProfileId.COMPLETE
+    assert result.health_payload.runtime_mode == RuntimeMode.LIVE
+    assert result.technical_payload.profile == ProfileId.COMPLETE
+    assert result.technical_payload.runtime_mode == RuntimeMode.LIVE
+    build10_section = next(
+        section for section in result.technical_view.sections if section.title == "Build-10"
+    )
+    assert any(
+        card.key == "build10_governed_rail" and card.value == "complete / live"
+        for card in build10_section.cards
+    )
+
+
 def test_monitoring_runtime_propagates_ui_safing_request_into_technical_payload_defaults():
-    light_ui_runtime = LightUIRuntime()
-    outcome = light_ui_runtime.submit_action(
+    locked_operator_ui_runtime = LockedOperatorUiRuntime()
+    outcome = locked_operator_ui_runtime.submit_action(
         OperatorActionRequest(
             timestamp_ms=1_700_000_000_250,
             correlation_id="corr-runtime-safing",
@@ -304,7 +340,7 @@ def test_monitoring_runtime_propagates_ui_safing_request_into_technical_payload_
             reason="manual requalification requested",
         )
     )
-    runtime = MonitoringRuntime(light_ui_runtime=light_ui_runtime)
+    runtime = MonitoringRuntime(locked_operator_ui_runtime=locked_operator_ui_runtime)
 
     result = runtime.evaluate(
         correlation_id="corr-runtime-safing",
@@ -346,8 +382,8 @@ def test_monitoring_runtime_propagates_ui_safing_request_into_technical_payload_
 
 
 def test_monitoring_runtime_builds_typed_operator_safing_request_from_ui_state():
-    light_ui_runtime = LightUIRuntime()
-    light_ui_runtime.submit_action(
+    locked_operator_ui_runtime = LockedOperatorUiRuntime()
+    locked_operator_ui_runtime.submit_action(
         OperatorActionRequest(
             timestamp_ms=1_700_000_000_260,
             correlation_id="corr-runtime-safing-live",
@@ -357,7 +393,7 @@ def test_monitoring_runtime_builds_typed_operator_safing_request_from_ui_state()
             reason="execution drift requires step-down",
         )
     )
-    runtime = MonitoringRuntime(light_ui_runtime=light_ui_runtime)
+    runtime = MonitoringRuntime(locked_operator_ui_runtime=locked_operator_ui_runtime)
 
     request = runtime.build_latest_operator_safing_request()
 
@@ -514,4 +550,51 @@ def test_monitoring_runtime_accepts_execution_no_trade_bridge_projection():
         card.key == "execution_no_trade_bridge"
         and card.value == "sel=binding_only / loaded=no"
         for card in execution_section.cards
+    )
+
+
+def test_monitoring_runtime_accepts_runtime_hook_bridge_projections():
+    runtime = MonitoringRuntime()
+
+    result = runtime.evaluate(
+        correlation_id="corr-runtime-hooks",
+        profile=ProfileId.LIGHT,
+        runtime_mode=RuntimeMode.SHADOW,
+        timestamp_ms=1_700_000_002_500,
+        portfolio=collect_portfolio_metrics(
+            allocated_opportunities=1,
+            gross_capacity_used_pct=10.0,
+            loss_capacity_used_pct=2.0,
+            beta_utilization=0.1,
+            capital_deployed_usdt=250.0,
+            ce_net=0.001,
+        ),
+        infra=collect_infra_metrics(queue_backlog=5),
+        meta=_meta_metrics(),
+        runtime_hook_bridge_projections=(
+            RuntimeHookBridgeProjection(
+                hook_id=HookId.ENGINE_C_VOID_VALIDATION,
+                label="Engine C void",
+                status="warning",
+                configured=True,
+                selection_status="binding_only",
+                binding_present=True,
+                detail="Compiled Engine C bridge binding published but plan not loaded",
+            ),
+        ),
+    )
+
+    engine_c = next(
+        projection
+        for projection in result.technical_payload.runtime_hook_bridges
+        if projection.hook_id == HookId.ENGINE_C_VOID_VALIDATION
+    )
+    assert engine_c.status == "warning"
+    hook_section = next(
+        section for section in result.technical_view.sections if section.title == "Artifact Hooks"
+    )
+    assert any(
+        card.key == "runtime_hook_bridge_engine_c_void_validation"
+        and card.status == "warning"
+        for card in hook_section.cards
     )

@@ -66,11 +66,11 @@ def divide_exact_or_zero(
     numerator: Decimal | SupportsFloat | str,
     denominator: Decimal | SupportsFloat | str,
 ) -> Decimal:
-    """Exact Decimal division with explicit zero-denominator fallback."""
+    """Exact Decimal division with explicit zero-denominator failure."""
 
     denominator_decimal = execution_decimal(denominator, name="denominator")
     if denominator_decimal == 0:
-        return Decimal("0")
+        raise ZeroDivisionError("denominator must not be zero")
     with localcontext() as context:
         context.prec = EXECUTION_DECIMAL_CONTEXT_PRECISION
         context.rounding = EXECUTION_DECIMAL_ROUNDING
@@ -127,10 +127,31 @@ def quantize_up_to_step(
         return units * step_decimal
 
 
-def decimal_to_float64(value: Decimal | SupportsFloat | str) -> float:
+def decimal_to_float64_abs_loss(value: Decimal | SupportsFloat | str) -> Decimal:
+    """Measure the exact Decimal loss introduced by the float64 bridge."""
+
+    decimal_value = execution_decimal(value)
+    return abs(decimal_value - Decimal.from_float(float(decimal_value)))
+
+
+def decimal_to_float64(
+    value: Decimal | SupportsFloat | str,
+    *,
+    max_abs_loss: Decimal | SupportsFloat | str | None = None,
+    name: str = "value",
+) -> float:
     """Bridge exact Decimal execution values back to Python float / binary64."""
 
-    return float(execution_decimal(value))
+    decimal_value = execution_decimal(value, name=name)
+    float_value = float(decimal_value)
+    if max_abs_loss is not None:
+        allowed_loss = execution_decimal(max_abs_loss, name="max_abs_loss")
+        actual_loss = abs(decimal_value - Decimal.from_float(float_value))
+        if actual_loss > allowed_loss:
+            raise ValueError(
+                f"{name} loses {actual_loss} when bridged to float64, above allowed {allowed_loss}",
+            )
+    return float_value
 
 
 __all__ = [
@@ -143,5 +164,6 @@ __all__ = [
     "sum_exact",
     "quantize_down_to_step",
     "quantize_up_to_step",
+    "decimal_to_float64_abs_loss",
     "decimal_to_float64",
 ]

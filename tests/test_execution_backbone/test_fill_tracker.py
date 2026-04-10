@@ -180,6 +180,14 @@ class TestFillAggregator:
                 quantity=0.5, price=3000.0, timestamp=101.0,
             ))
 
+    def test_zero_quantity_fill_is_rejected_during_aggregation(self):
+        agg = FillAggregator()
+        with pytest.raises(ValueError, match="aggregated fill quantity must be > 0"):
+            agg.record_fill(FillEvent(
+                fill_id="f0", order_id="o0", pair="BTC", side="buy",
+                quantity=0.0, price=50000.0, timestamp=100.0,
+            ))
+
 
 # --- Latency Meter ---
 

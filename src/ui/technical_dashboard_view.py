@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from monitoring.contracts import TechnicalDashboardPayload
-from ui.contracts import DashboardCard, DashboardSection, LightDashboardView
-from ui.operator_actions import build_light_allowed_actions
+from ui.contracts import DashboardCard, DashboardSection, LockedOperatorDashboardView
+from ui.operator_actions import build_locked_operator_allowed_actions
 
 
 def _join(values: tuple[str, ...], *, empty: str) -> str:
@@ -13,7 +13,7 @@ def _join(values: tuple[str, ...], *, empty: str) -> str:
 
 def _replay_signature_card_status(payload: TechnicalDashboardPayload) -> str:
     replay = payload.replay_import
-    if replay.signature_check_status == "trust_eligible":
+    if replay.signature_check_status in {"trust_eligible", "verified"}:
         return "healthy"
     if replay.signature_check_status == "not_provided":
         return "planned" if replay.artifact_id == "none" else "info"
@@ -213,7 +213,7 @@ def _engine_physics_detail(engine) -> str:
 
 
 def _operator_controls_section(payload: TechnicalDashboardPayload) -> DashboardSection:
-    allowed_actions = build_light_allowed_actions(payload.runtime_mode)
+    allowed_actions = build_locked_operator_allowed_actions(payload.runtime_mode)
     safing_actions = tuple(
         action.value
         for action in allowed_actions
@@ -584,9 +584,89 @@ def _execution_cards(payload: TechnicalDashboardPayload) -> tuple[DashboardCard,
                     if payload.execution_no_trade_bridge.error_type
                     else ""
                 )
+                + (
+                    f" / mode={payload.execution_no_trade_bridge.failure_mode}"
+                    if payload.execution_no_trade_bridge.failure_mode
+                    else ""
+                )
+                + (
+                    f" / stage={payload.execution_no_trade_bridge.error_stage}"
+                    if payload.execution_no_trade_bridge.error_stage
+                    else ""
+                )
             ),
         ),
     )
+
+
+def _runtime_hook_bridge_cards(payload: TechnicalDashboardPayload) -> tuple[DashboardCard, ...]:
+    bridges = payload.runtime_hook_bridges
+    if not bridges:
+        return (
+            DashboardCard(
+                key="runtime_hook_bridges_empty",
+                label="Runtime Hooks",
+                value="0",
+                status="planned",
+                detail="No runtime hook bridge projection materialized",
+            ),
+        )
+
+    configured_count = sum(1 for bridge in bridges if bridge.configured)
+    loaded_count = sum(1 for bridge in bridges if bridge.loaded)
+    warning_count = sum(1 for bridge in bridges if bridge.status == "warning")
+    critical_count = sum(1 for bridge in bridges if bridge.status == "critical")
+    cards: list[DashboardCard] = [
+        DashboardCard(
+            key="runtime_hook_bridges_summary",
+            label="Summary",
+            value=(
+                f"open={len(bridges)} / configured={configured_count} / "
+                f"loaded={loaded_count}"
+            ),
+            status=(
+                "critical"
+                if critical_count > 0
+                else "warning"
+                if warning_count > 0
+                else "healthy"
+                if loaded_count > 0
+                else "info"
+            ),
+            detail=(
+                f"warning={warning_count} / critical={critical_count} / "
+                f"execution_no_trade={payload.execution_no_trade_bridge.status}"
+            ),
+        )
+    ]
+    for bridge in bridges:
+        action_kinds = ",".join(bridge.action_kinds) if bridge.action_kinds else "none"
+        detail = (
+            f"cfg={'yes' if bridge.configured else 'no'} / "
+            f"binding={'yes' if bridge.binding_present else 'no'} / "
+            f"artifacts={bridge.artifact_count} / "
+            f"actions={action_kinds} / "
+            f"snapshot={bridge.current_snapshot_id or 'none'} / "
+            f"lkg={bridge.last_known_good_snapshot_id or 'none'}"
+        )
+        if bridge.compiled_plan_ref:
+            detail = f"{detail} / ref={bridge.compiled_plan_ref}"
+        if bridge.error_type:
+            detail = f"{detail} / err={bridge.error_type}"
+        if bridge.failure_mode:
+            detail = f"{detail} / mode={bridge.failure_mode}"
+        if bridge.error_stage:
+            detail = f"{detail} / stage={bridge.error_stage}"
+        cards.append(
+            DashboardCard(
+                key=f"runtime_hook_bridge_{bridge.hook_id.value}",
+                label=bridge.label,
+                value=f"sel={bridge.selection_status} / loaded={'yes' if bridge.loaded else 'no'}",
+                status=bridge.status,
+                detail=detail,
+            )
+        )
+    return tuple(cards)
 
 
 def _infra_cards(payload: TechnicalDashboardPayload) -> tuple[DashboardCard, ...]:
@@ -691,10 +771,66 @@ def _account_user_data_section(payload: TechnicalDashboardPayload) -> DashboardS
     )
 
 
-def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LightDashboardView:
+def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LockedOperatorDashboardView:
     """Project normalized monitoring truth into the locked Build-10 UI surface."""
 
     sections = (
+        DashboardSection(
+            title="Build-10",
+            cards=(
+                DashboardCard(
+                    key="build10_state",
+                    label="State",
+                    value="implemented",
+                    status="healthy",
+                    detail="Typed payload, view, and HTML supervision pipeline are active.",
+                ),
+                DashboardCard(
+                    key="build10_governed_rail",
+                    label="Governed Rail",
+                    value=f"{payload.profile.value} / {payload.runtime_mode.value}",
+                    status="info",
+                    detail=(
+                        "Build-10 supervises the governed runtime rail and exposes the "
+                        "locked operator surface."
+                    ),
+                ),
+                DashboardCard(
+                    key="build10_extensions",
+                    label="Governed Extensions",
+                    value=(
+                        f"9X={payload.system.build9x_status} / "
+                        f"shadow={payload.system.shadow_status} / "
+                        f"micro={payload.system.micro_live_status} / "
+                        f"live={payload.system.live_light_status} / "
+                        f"b14={payload.system.build14_status} / "
+                        f"replay={payload.system.replay_import_status}"
+                    ),
+                    status=(
+                        "critical"
+                        if "critical" in {
+                            payload.system.build9x_status,
+                            payload.system.shadow_status,
+                            payload.system.micro_live_status,
+                            payload.system.live_light_status,
+                            payload.system.build14_status,
+                            payload.system.replay_import_status,
+                        }
+                        else "warning"
+                        if "warning" in {
+                            payload.system.build9x_status,
+                            payload.system.shadow_status,
+                            payload.system.micro_live_status,
+                            payload.system.live_light_status,
+                            payload.system.build14_status,
+                            payload.system.replay_import_status,
+                        }
+                        else "info"
+                    ),
+                    detail=payload.system.governed_extensions_detail,
+                ),
+            ),
+        ),
         DashboardSection(
             title="System",
             cards=(
@@ -1338,6 +1474,10 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LightD
             )
             + _build14_reader_cards(payload),
         ),
+        DashboardSection(
+            title="Artifact Hooks",
+            cards=_runtime_hook_bridge_cards(payload),
+        ),
         _operator_controls_section(payload),
         DashboardSection(
             title="Replay & Import",
@@ -1504,7 +1644,8 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LightD
                         else "info"
                     ),
                     detail=(
-                        payload.alerts.operator_runtime.latest_event_message
+                        payload.alerts.operator_runtime.last_error
+                        or payload.alerts.operator_runtime.latest_event_message
                         or "No operator event projected"
                     ),
                 ),
@@ -1538,7 +1679,7 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LightD
         ),
     )
 
-    return LightDashboardView(
+    return LockedOperatorDashboardView(
         timestamp_ms=payload.timestamp_ms,
         correlation_id=payload.correlation_id,
         profile=payload.profile,

@@ -9,6 +9,7 @@ from backtest_artifact_import import (
     ArtifactPayloadRefBundle,
     ArtifactUploadContext,
     ArtifactUploadRequest,
+    build_lab_fixture_signature_envelope,
     build_artifact_upload_decision,
     build_import_request_from_upload_request,
     validate_import_request,
@@ -45,6 +46,7 @@ def _payload_bundle() -> ArtifactPayloadRefBundle:
 
 
 def _manifest(**overrides) -> ArtifactManifest:
+    signature_envelope = build_lab_fixture_signature_envelope()
     defaults = dict(
         artifact_id="ART_B_SWEEP_FADE_V1",
         correlation_id="corr-upload-1",
@@ -58,11 +60,7 @@ def _manifest(**overrides) -> ArtifactManifest:
         allowed_hook_ids=(HookId.ENGINE_B_SWEEP_VALIDATION,),
         allowed_action_kinds=(ArtifactActionKind.SOFT_BOOST,),
         allowed_action_units=(ActionUnit.RAW_SCORE_MULTIPLIER,),
-        signature_envelope=ArtifactSignatureEnvelope(
-            key_id="lab_ed25519_2026_q2_k1",
-            public_key_author_sig="sig",
-            payload_hash_sha256="hash",
-        ),
+        signature_envelope=signature_envelope,
         dataset_ref="dataset-1",
         clock_ref="clock-1",
         feature_bridge_ref="exports/feature_bridge.json",
@@ -80,6 +78,7 @@ def _manifest(**overrides) -> ArtifactManifest:
 def _bundle(**overrides) -> ArtifactExportBundle:
     feature_set_version = overrides.get("feature_set_version", "1.0.0")
     transform_set_version = overrides.get("transform_set_version", "1.0.0")
+    signature_envelope = build_lab_fixture_signature_envelope()
     defaults = dict(
         artifact_id="ART_B_SWEEP_FADE_V1",
         artifact_version="1.0.0",
@@ -111,8 +110,8 @@ def _bundle(**overrides) -> ArtifactExportBundle:
                 "fragility_score": 0.15,
             },
         ),
-        payload_hash_sha256="hash",
-        public_key_author_sig="sig",
+        payload_hash_sha256=signature_envelope.payload_hash_sha256,
+        public_key_author_sig=signature_envelope.public_key_author_sig,
         dataset_id="dataset-1",
         feature_set_version=feature_set_version,
         transform_set_version=transform_set_version,
@@ -163,6 +162,7 @@ def _upload_request(**overrides) -> ArtifactUploadRequest:
         payload_bundle=_payload_bundle(),
         uploaded_by="lab-user",
         upload_context=ArtifactUploadContext.LOCAL_LAB,
+        governance_reference_date=date(2026, 4, 6),
     )
     defaults.update(overrides)
     return ArtifactUploadRequest(**defaults)
@@ -171,6 +171,27 @@ def _upload_request(**overrides) -> ArtifactUploadRequest:
 def test_upload_request_requires_bundle_manifest_alignment():
     with pytest.raises(ValidationError):
         _upload_request(bundle=_bundle(feature_set_version="2.0.0"))
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    (
+        ("review_export_ref", "exports/review_v2.md"),
+        ("feature_bridge_ref", "exports/feature_bridge_v2.json"),
+        ("parity_diagnostics_ref", "exports/parity_v2.json"),
+        ("replay_metrics_ref", "exports/replay_metrics_v2.json"),
+        ("replay_dtr_ref", "exports/replay_dtr_v2.json"),
+    ),
+)
+def test_upload_request_requires_manifest_payload_bundle_alignment(
+    field_name: str,
+    value: str,
+):
+    with pytest.raises(
+        ValidationError,
+        match=f"ArtifactUploadRequest manifest\\.{field_name} must match payload_bundle\\.{field_name}",
+    ):
+        _upload_request(manifest=_manifest(**{field_name: value}))
 
 
 def test_build_import_request_from_upload_request_keeps_governed_payload_bundle():
@@ -189,10 +210,21 @@ def test_build_import_request_from_upload_request_keeps_governed_payload_bundle(
     assert import_request.expected_transform_ids == (TransformWhitelistId.SWEEP_SCORE_V1,)
     assert import_request.lifecycle_policy == upload_request.bundle.lifecycle_policy
     assert import_request.training_end == upload_request.bundle.training_end
-    assert import_request.governance_reference_date == date.today()
+    assert import_request.governance_reference_date == upload_request.governance_reference_date
     assert import_request.drift_score_threshold == upload_request.bundle.drift_score_threshold
     assert import_request.proof_required is True
     assert import_request.proof_summary == upload_request.bundle.proof_summary
+
+
+def test_upload_request_requires_explicit_governance_reference_date():
+    with pytest.raises(ValidationError):
+        ArtifactUploadRequest(
+            bundle=_bundle(),
+            manifest=_manifest(),
+            payload_bundle=_payload_bundle(),
+            uploaded_by="lab-user",
+            upload_context=ArtifactUploadContext.LOCAL_LAB,
+        )
 
 
 def test_build_artifact_upload_decision_maps_accepted_dry_run():
@@ -207,12 +239,13 @@ def test_build_artifact_upload_decision_maps_accepted_dry_run():
 
 
 def test_build_artifact_upload_decision_maps_signature_rejection():
+    signature_envelope = build_lab_fixture_signature_envelope()
     upload_request = _upload_request(
         manifest=_manifest(
             signature_envelope=ArtifactSignatureEnvelope(
                 key_id="lab_unknown",
-                public_key_author_sig="sig",
-                payload_hash_sha256="hash",
+                public_key_author_sig=signature_envelope.public_key_author_sig,
+                payload_hash_sha256=signature_envelope.payload_hash_sha256,
             )
         )
     )

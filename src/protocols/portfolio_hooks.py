@@ -1,10 +1,14 @@
-"""Typed skeleton for the canonical PORTFOLIO_RELATIVE_RANK_ADJUSTMENT hook."""
+"""Bounded executor surface for the canonical PORTFOLIO_RELATIVE_RANK_ADJUSTMENT hook."""
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from interface_contracts import HookId
+from portfolio_minimal import (
+    PortfolioRelativeRankAdjustmentInput,
+    PortfolioRelativeRankAdjustmentOutcome,
+)
+from interface_contracts import HookId, is_runtime_open_hook_id
 
 from .compiled_hook_plan_loader import (
     CompiledHookPlanLoadStatus,
@@ -13,28 +17,13 @@ from .compiled_hook_plan_loader import (
 
 
 HOOK_ID = HookId.PORTFOLIO_RELATIVE_RANK_ADJUSTMENT
-RUNTIME_OPEN = False
+RUNTIME_OPEN = is_runtime_open_hook_id(HOOK_ID)
 
 
 class PortfolioRelativeRankHookPlanPayload(BaseModel, frozen=True):
-    """Minimal compiled payload shape for the unopened portfolio hook rail."""
+    """Typed compiled payload for the bounded portfolio rank-adjustment hook."""
 
-    reason_codes: tuple[str, ...] = ()
-    detail: str = ""
-
-
-class PortfolioRelativeRankHookInput(BaseModel, frozen=True):
-    """Minimal typed input kept intentionally narrow until the rail is opened."""
-
-    context_id: str = Field(..., min_length=1)
-    pair: str = ""
-    engine_id: str = ""
-
-
-class PortfolioRelativeRankHookOutcome(BaseModel, frozen=True):
-    """Placeholder typed outcome for the unopened portfolio hook rail."""
-
-    accepted: bool = True
+    rank_delta: float = 0.0
     reason_codes: tuple[str, ...] = ()
     detail: str = ""
 
@@ -56,13 +45,21 @@ def load_portfolio_relative_rank_hook_payload(
 
 
 def run_portfolio_relative_rank_hook(
-    hook_input: PortfolioRelativeRankHookInput,
+    hook_input: PortfolioRelativeRankAdjustmentInput,
     hook_payload: PortfolioRelativeRankHookPlanPayload,
-) -> PortfolioRelativeRankHookOutcome:
-    """Keep the hook explicitly closed until the portfolio artifact rail is opened."""
+) -> PortfolioRelativeRankAdjustmentOutcome:
+    """Run the bounded portfolio relative-rank hook with no dynamic code path."""
 
-    raise NotImplementedError(
-        "PORTFOLIO_RELATIVE_RANK_ADJUSTMENT remains a typed skeleton until this hook rail is opened"
+    detail = hook_payload.detail.strip()
+    if not detail:
+        detail = (
+            f"compiled portfolio relative-rank adjustment evaluated {hook_input.pair} / "
+            f"{hook_input.engine_id}"
+        )
+    return PortfolioRelativeRankAdjustmentOutcome(
+        rank_delta=hook_payload.rank_delta,
+        reason_codes=hook_payload.reason_codes,
+        detail=detail,
     )
 
 
@@ -70,8 +67,6 @@ __all__ = [
     "HOOK_ID",
     "RUNTIME_OPEN",
     "PortfolioRelativeRankHookPlanPayload",
-    "PortfolioRelativeRankHookInput",
-    "PortfolioRelativeRankHookOutcome",
     "load_portfolio_relative_rank_hook_payload",
     "run_portfolio_relative_rank_hook",
 ]

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 import math
+from typing import Protocol
 
 from pydantic import BaseModel, Field
 from data_backbone.market_physics_math import (
@@ -51,6 +52,7 @@ class RiskLimits(BaseModel, frozen=True):
     loss_cap: float
     beta_cap: float
     cluster_cap: float
+    beta_mapping_max_age_s: float = 86_400.0
     drawdown_warning_threshold_pct: float = 0.02
     drawdown_observe_threshold_pct: float = 0.04
 
@@ -108,6 +110,39 @@ class RiskPhysicsScores(BaseModel, frozen=True):
     pressure_state: str = "nominal"
 
 
+class RiskMicroFrictionPrecheckInput(BaseModel, frozen=True):
+    """Bounded typed input for the runtime-open micro-friction precheck hook."""
+
+    context_id: str = Field(..., min_length=1)
+    pair: str = Field(..., min_length=1)
+    engine_id: str = Field(..., min_length=1)
+    size: float = 0.0
+    planned_loss: float | None = None
+    fragility_score: float = 0.0
+    toxicity_score: float = 0.0
+    execution_survivability_score: float = 1.0
+    micro_friction_score: float = 0.0
+    pressure_state: str = "nominal"
+
+
+class RiskMicroFrictionPrecheckOutcome(BaseModel, frozen=True):
+    """Deterministic outcome of the bounded risk micro-friction precheck hook."""
+
+    accepted: bool = True
+    reason_codes: tuple[str, ...] = ()
+    detail: str = ""
+
+
+class RiskMicroFrictionPrecheckHook(Protocol):
+    """Bounded hook surface injected into the real Build-4 risk runtime rail."""
+
+    def __call__(
+        self,
+        hook_input: RiskMicroFrictionPrecheckInput,
+    ) -> RiskMicroFrictionPrecheckOutcome:
+        ...
+
+
 class RiskEvaluation(BaseModel, frozen=True):
     action: RiskRuntimeAction
     accepted: bool
@@ -132,6 +167,7 @@ def _build_reason_details(
     cluster_results: tuple[ClusterCapResult, ...],
     drawdown_result: DrawdownGuardResult,
     beta_mapping_missing_pairs: tuple[str, ...] = (),
+    beta_mapping_stale_pairs: tuple[str, ...] = (),
 ) -> tuple[RiskReasonDetail, ...]:
     details: list[RiskReasonDetail] = []
 
@@ -180,6 +216,16 @@ def _build_reason_details(
                 category="beta_cap",
                 verdict="rejected_missing_beta_mapping",
                 message=f"missing explicit beta mapping for pair {pair}",
+            )
+        )
+
+    for pair in beta_mapping_stale_pairs:
+        details.append(
+            RiskReasonDetail(
+                code="RISK_BETA_MAPPING_STALE",
+                category="beta_cap",
+                verdict="rejected_stale_beta_mapping",
+                message=f"stale beta mapping for pair {pair}",
             )
         )
 
@@ -337,6 +383,7 @@ class RiskRuntime:
         pair_beta_registry: PairBetaRegistry | None = None,
         cluster_registry: ClusterRegistry | None = None,
         snapshot: PortfolioRiskSnapshot | None = None,
+        micro_friction_precheck_hook: RiskMicroFrictionPrecheckHook | None = None,
     ) -> None:
         self._limits = limits
         self._pair_beta_registry = pair_beta_registry or PairBetaRegistry()
@@ -357,6 +404,7 @@ class RiskRuntime:
         self._loss_reporter = LossReporter(loss_cap=limits.loss_cap)
         self._beta_reporter = BetaReporter(beta_cap=limits.beta_cap)
         self._cluster_reporter = ClusterReporter()
+        self._micro_friction_precheck_hook = micro_friction_precheck_hook
         self._seed_reporters_from_snapshot()
 
     def set_equity(self, *, current_equity: float, session_peak_equity: float) -> None:
@@ -480,7 +528,12 @@ class RiskRuntime:
         )
 
         current_positions = self._positions_by_pair()
-        betas, pair_beta, beta_mapping_missing_pairs = self._resolve_governed_betas(candidate, current_positions)
+        (
+            betas,
+            pair_beta,
+            beta_mapping_missing_pairs,
+            beta_mapping_stale_pairs,
+        ) = self._resolve_governed_betas(candidate, current_positions, timestamp)
         beta_projection = check_projected_beta(
             current_positions=current_positions,
             betas=betas,
@@ -538,6 +591,7 @@ class RiskRuntime:
             cluster_results=cluster_results,
             drawdown_result=drawdown_result,
             beta_mapping_missing_pairs=beta_mapping_missing_pairs,
+            beta_mapping_stale_pairs=beta_mapping_stale_pairs,
         )
         dominant_reason_code = reason_details[0].code if reason_details else ""
 
@@ -548,6 +602,8 @@ class RiskRuntime:
             rejected_components.append(loss_result.reason)
         for pair in beta_mapping_missing_pairs:
             rejected_components.append(f"missing explicit beta mapping for pair {pair}")
+        for pair in beta_mapping_stale_pairs:
+            rejected_components.append(f"stale beta mapping for pair {pair}")
         if beta_result.verdict != BetaCapVerdict.ACCEPTED:
             rejected_components.append(beta_result.reason)
         for cluster_result in cluster_results:
@@ -625,6 +681,54 @@ class RiskRuntime:
                 reasons=(reason,),
                 reason_details=reason_details,
                 dominant_reason_code=dominant_reason_code,
+                explain_summary=explainability.summary,
+                explainability=explainability,
+                gross_result=gross_result,
+                loss_result=loss_result,
+                beta_projection=beta_projection,
+                beta_result=beta_result,
+                cluster_results=cluster_results,
+                drawdown_result=drawdown_result,
+            )
+
+        hook_outcome = self._run_micro_friction_precheck_hook(candidate, physics_scores, timestamp)
+        if hook_outcome is not None and not hook_outcome.accepted:
+            hook_reason_codes = hook_outcome.reason_codes or ("RISK_MICRO_FRICTION_PRECHECK_BLOCK",)
+            hook_detail = hook_outcome.detail.strip()
+            if not hook_detail:
+                hook_detail = (
+                    "compiled risk micro-friction precheck blocked "
+                    f"{candidate.pair} / {candidate.engine_id}"
+                )
+            hook_reason_details = tuple(
+                RiskReasonDetail(
+                    code=reason_code,
+                    category="micro_friction_hook",
+                    verdict="rejected_micro_friction_precheck",
+                    message=hook_detail,
+                )
+                for reason_code in hook_reason_codes
+            )
+            blocked_reason_details = reason_details + hook_reason_details
+            self._record_refusals(
+                candidate,
+                pair_beta,
+                cluster_results,
+                (hook_detail,),
+                timestamp,
+            )
+            explainability = _build_risk_explainability(
+                action=RiskRuntimeAction.REJECT,
+                reason_details=blocked_reason_details,
+                drawdown_result=drawdown_result,
+                physics_scores=physics_scores,
+            )
+            return RiskEvaluation(
+                action=RiskRuntimeAction.REJECT,
+                accepted=False,
+                reasons=(hook_detail,),
+                reason_details=blocked_reason_details,
+                dominant_reason_code=hook_reason_codes[0],
                 explain_summary=explainability.summary,
                 explainability=explainability,
                 gross_result=gross_result,
@@ -751,15 +855,25 @@ class RiskRuntime:
         self,
         candidate: RiskCandidate,
         current_positions: dict[str, float],
-    ) -> tuple[dict[str, float], float, tuple[str, ...]]:
-        """Resolve beta inputs while rejecting implicit registry defaults on the open rail."""
+        now: float,
+    ) -> tuple[dict[str, float], float, tuple[str, ...], tuple[str, ...]]:
+        """Resolve beta inputs while rejecting implicit or stale registry mappings on the open rail."""
 
         betas: dict[str, float] = {}
         missing_pairs: list[str] = []
+        stale_pairs: list[str] = []
 
         for pair in current_positions:
             if not self._pair_beta_registry.has_explicit_beta(pair):
                 missing_pairs.append(pair)
+                betas[pair] = 0.0
+                continue
+            if not self._pair_beta_registry.is_fresh(
+                pair,
+                now=now,
+                max_age_s=self._limits.beta_mapping_max_age_s,
+            ):
+                stale_pairs.append(pair)
             betas[pair] = self._pair_beta_registry.get_beta(pair).beta
 
         if candidate.pair_beta is not None:
@@ -767,9 +881,22 @@ class RiskRuntime:
         else:
             if not self._pair_beta_registry.has_explicit_beta(candidate.pair):
                 missing_pairs.append(candidate.pair)
-            candidate_beta = self._pair_beta_registry.get_beta(candidate.pair).beta
+                candidate_beta = 0.0
+            else:
+                if not self._pair_beta_registry.is_fresh(
+                    candidate.pair,
+                    now=now,
+                    max_age_s=self._limits.beta_mapping_max_age_s,
+                ):
+                    stale_pairs.append(candidate.pair)
+                candidate_beta = self._pair_beta_registry.get_beta(candidate.pair).beta
 
-        return betas, candidate_beta, tuple(dict.fromkeys(missing_pairs))
+        return (
+            betas,
+            candidate_beta,
+            tuple(dict.fromkeys(missing_pairs)),
+            tuple(dict.fromkeys(stale_pairs)),
+        )
 
     def _seed_reporters_from_snapshot(self) -> None:
         gross_snapshot = calculate_gross_exposure(tuple(self._positions))
@@ -777,7 +904,14 @@ class RiskRuntime:
         self._loss_reporter.sync_current_budget(self._current_loss_budget)
 
         positions_by_pair = self._positions_by_pair()
-        betas = {pair: self._pair_beta_registry.get_beta(pair).beta for pair in positions_by_pair}
+        betas = {
+            pair: (
+                self._pair_beta_registry.get_beta(pair).beta
+                if self._pair_beta_registry.has_explicit_beta(pair)
+                else 0.0
+            )
+            for pair in positions_by_pair
+        }
         self._beta_reporter.sync_current_beta(
             calculate_portfolio_beta(positions_by_pair, betas).beta_port
         )
@@ -818,6 +952,29 @@ class RiskRuntime:
                 reason,
                 timestamp=now,
             )
+
+    def _run_micro_friction_precheck_hook(
+        self,
+        candidate: RiskCandidate,
+        physics_scores: RiskPhysicsScores,
+        now: float,
+    ) -> RiskMicroFrictionPrecheckOutcome | None:
+        if self._micro_friction_precheck_hook is None:
+            return None
+        return self._micro_friction_precheck_hook(
+            RiskMicroFrictionPrecheckInput(
+                context_id=f"{candidate.pair}:{candidate.engine_id}:{now:.6f}",
+                pair=candidate.pair,
+                engine_id=candidate.engine_id,
+                size=candidate.size,
+                planned_loss=candidate.planned_loss,
+                fragility_score=physics_scores.fragility_score,
+                toxicity_score=physics_scores.toxicity_score,
+                execution_survivability_score=physics_scores.execution_survivability_score,
+                micro_friction_score=physics_scores.micro_friction_score,
+                pressure_state=physics_scores.pressure_state,
+            )
+        )
 
 
 def _require_runtime_timestamp(now: float | None, *, context: str) -> float:

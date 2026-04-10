@@ -6,6 +6,7 @@ import pytest
 
 from interface_contracts import (
     decimal_to_canonical_str,
+    decimal_to_float64_abs_loss,
     decimal_to_float64,
     divide_exact_or_zero,
     execution_decimal,
@@ -30,9 +31,20 @@ def test_exact_multiply_and_sum_keep_execution_values_stable():
     assert sum_exact((0.1, 0.2, 0.3)) == Decimal("0.6")
 
 
-def test_divide_exact_or_zero_returns_zero_for_zero_denominator():
-    assert divide_exact_or_zero("1", "0") == Decimal("0")
+def test_divide_exact_or_zero_raises_for_zero_denominator():
+    with pytest.raises(ZeroDivisionError):
+        divide_exact_or_zero("1", "0")
 
 
 def test_decimal_to_float64_bridges_exact_values_back_to_runtime():
     assert decimal_to_float64(Decimal("50.125")) == pytest.approx(50.125)
+
+
+def test_decimal_to_float64_abs_loss_exposes_bridge_precision_gap():
+    loss = decimal_to_float64_abs_loss(Decimal("0.1"))
+    assert loss > Decimal("0")
+
+
+def test_decimal_to_float64_rejects_loss_above_allowed_bound():
+    with pytest.raises(ValueError, match="above allowed"):
+        decimal_to_float64(Decimal("0.1"), max_abs_loss=Decimal("1e-20"), name="price")

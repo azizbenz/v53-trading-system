@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 import math
+from typing import Protocol
 
 from pydantic import BaseModel, Field
 
@@ -36,6 +37,7 @@ _ENGINE_D_FEATURE_WEIGHTS: dict[str, float] = {
 class EngineDRuntimeStatus(StrEnum):
     NO_TRADE = "no_trade"
     CIRCUIT_BREAKER_BLOCKED = "circuit_breaker_blocked"
+    HOOK_BLOCKED = "hook_blocked"
     HARD_BLOCKED = "hard_blocked"
     REJECTED_RANKING = "rejected_ranking"
     REJECTED_PORTFOLIO = "rejected_portfolio"
@@ -47,7 +49,7 @@ class EngineDRuntimeStatus(StrEnum):
 
 class EngineDRuntimeInput(BaseModel, frozen=True):
     engine_inputs: EngineDInput
-    timestamp_ms: int
+    timestamp_ms: int = Field(..., ge=1_000_000_000_000)  # BS-86: must be milliseconds, not seconds
     portfolio: PortfolioState
     projected_size: float
     projected_loss: float | None = None
@@ -62,6 +64,42 @@ class EngineDRuntimeInput(BaseModel, frozen=True):
     max_selections: int = 1
     corr_penalty: float = 0.0
     risk_penalty: float = 0.0
+
+
+class EngineDReentryValidationInput(BaseModel, frozen=True):
+    """Bounded typed input for the Engine D re-entry validation hook."""
+
+    context_id: str = ""
+    trade_id: str = ""
+    pair: str = Field(..., min_length=1)
+    engine_id: str = Field(..., min_length=1)
+    scoring_version: str = Field(..., min_length=1)
+    link_type: str = ""
+    structure_reformed_detected: bool = False
+    raw_score: float = 0.0
+    penalized_score: float = 0.0
+    expected_cost: float = 0.0
+    expected_ce: float = 0.0
+    conviction: str = ""
+    tier: str = ""
+
+
+class EngineDReentryValidationOutcome(BaseModel, frozen=True):
+    """Deterministic outcome of the bounded Engine D re-entry validation hook."""
+
+    accepted: bool = True
+    reason_codes: tuple[str, ...] = ()
+    detail: str = ""
+
+
+class EngineDReentryValidationHook(Protocol):
+    """Bounded hook surface injected into the real Engine D runtime rail."""
+
+    def __call__(
+        self,
+        hook_input: EngineDReentryValidationInput,
+    ) -> EngineDReentryValidationOutcome:
+        ...
 
 
 class EngineDRuntimeResult(BaseModel, frozen=True):
@@ -113,11 +151,15 @@ class EngineDRuntime:
         *,
         scoring_runtime: ScoringRuntime,
         risk_runtime: RiskRuntime,
-        circuit_breaker: EmergencyCircuitBreaker | None = None,
+        circuit_breaker: EmergencyCircuitBreaker,
+        reentry_validation_hook: EngineDReentryValidationHook | None = None,
     ) -> None:
+        if circuit_breaker is None:
+            raise ValueError("EngineDRuntime requires a circuit_breaker")
         self._scoring_runtime = scoring_runtime
         self._risk_runtime = risk_runtime
         self._circuit_breaker = circuit_breaker
+        self._reentry_validation_hook = reentry_validation_hook
 
     def evaluate(
         self,
@@ -127,7 +169,7 @@ class EngineDRuntime:
     ) -> EngineDRuntimeResult:
         timestamp = _resolve_runtime_now(runtime_input.timestamp_ms, now, context="EngineDRuntime.evaluate")
         _require_scoring_version(runtime_input.engine_inputs.scoring_version, context="EngineDRuntime.evaluate")
-        if self._circuit_breaker is not None and not self._circuit_breaker.is_trading_allowed():
+        if not self._circuit_breaker.is_trading_allowed():
             return _build_circuit_breaker_blocked_result(runtime_input, self._circuit_breaker)
         engine_output = run_engine_d(runtime_input.engine_inputs)
         logs = list(engine_output.log_entries)
@@ -135,6 +177,31 @@ class EngineDRuntime:
         if engine_output.decision != "emit":
             return EngineDRuntimeResult(
                 status=EngineDRuntimeStatus.NO_TRADE,
+                engine_output=engine_output,
+                log_entries=tuple(logs),
+            )
+
+        hook_outcome = self._run_reentry_validation_hook(runtime_input, engine_output)
+        if hook_outcome is not None and not hook_outcome.accepted:
+            detail = hook_outcome.detail.strip()
+            if not detail:
+                detail = (
+                    "compiled engine_d re-entry validation blocked "
+                    f"{engine_output.pair} / {engine_output.engine_id}"
+                )
+            reasons = hook_outcome.reason_codes or (detail,)
+            logs.append(
+                _runtime_log_entry(
+                    runtime_input,
+                    engine_output,
+                    event="engine_d_hook_blocked",
+                    raw_score=engine_output.raw_score,
+                    penalized_score=engine_output.penalized_score,
+                    reasons=reasons,
+                )
+            )
+            return EngineDRuntimeResult(
+                status=EngineDRuntimeStatus.HOOK_BLOCKED,
                 engine_output=engine_output,
                 log_entries=tuple(logs),
             )
@@ -151,10 +218,29 @@ class EngineDRuntime:
             now=timestamp,
         )
         scoring_audit = next(
-            audit
-            for audit in scoring_round.audits
-            if audit.engine_id == "engine_d" and audit.pair == engine_output.pair
+            (
+                audit
+                for audit in scoring_round.audits
+                if audit.engine_id == "engine_d" and audit.pair == engine_output.pair
+            ),
+            None,
         )
+        # BS-next: next() without default raises StopIteration if audit absent
+        if scoring_audit is None:
+            logs.append(_runtime_log_entry(
+                runtime_input,
+                engine_output,
+                event="engine_d_scoring_audit_missing",
+                reasons=("scoring audit not found for engine_d — hard blocked",),
+            ))
+            return EngineDRuntimeResult(
+                status=EngineDRuntimeStatus.HARD_BLOCKED,
+                engine_output=engine_output,
+                signal_candidate=signal_candidate,
+                scoring_round=scoring_round,
+                scoring_audit=None,
+                log_entries=tuple(logs),
+            )
         penalized_score = max(
             0.0,
             scoring_audit.raw_score_result.raw_score - scoring_audit.penalty_cap_result.capped_score_penalty,
@@ -299,6 +385,31 @@ class EngineDRuntime:
             scoring_audit=scoring_audit,
             risk_evaluation=risk_evaluation,
             log_entries=tuple(logs),
+        )
+
+    def _run_reentry_validation_hook(
+        self,
+        runtime_input: EngineDRuntimeInput,
+        engine_output: EngineDOutput,
+    ) -> EngineDReentryValidationOutcome | None:
+        if self._reentry_validation_hook is None:
+            return None
+        return self._reentry_validation_hook(
+            EngineDReentryValidationInput(
+                context_id=engine_output.origin_context_id,
+                trade_id=engine_output.origin_trade_id,
+                pair=engine_output.pair,
+                engine_id=engine_output.engine_id,
+                scoring_version=engine_output.scoring_version,
+                link_type=engine_output.link_type,
+                structure_reformed_detected=engine_output.structure_reformed_detected,
+                raw_score=engine_output.raw_score,
+                penalized_score=engine_output.penalized_score,
+                expected_cost=engine_output.expected_cost,
+                expected_ce=engine_output.ce_expected,
+                conviction=engine_output.conviction.value,
+                tier=engine_output.tier_suggestion.value,
+            )
         )
 
 

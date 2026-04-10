@@ -95,6 +95,16 @@ class TestRateLimitGuard:
         guard.record_call(101.0)
         assert guard.usage_rate == 0.5
 
+    def test_prune_keeps_container_identity(self):
+        guard = RateLimitGuard(max_calls=3, window_size_s=10.0)
+        guard.record_call(100.0)
+        guard.record_call(101.0)
+        container_id = id(guard._call_times)
+
+        assert guard.can_call(112.0) is True
+        assert id(guard._call_times) == container_id
+        assert len(guard._call_times) == 0
+
 
 # --- Gap Fill Controller ---
 
@@ -175,6 +185,7 @@ class _FakeSnapshotProvider:
         self.gap_snapshot: Snapshot | None = None
         self.fetch_error: Exception | None = None
         self.fill_error: Exception | None = None
+        self.fill_calls: int = 0
 
     def fetch_snapshot(self, pair: str, data_type: str) -> Snapshot:
         if self.fetch_error is not None:
@@ -183,6 +194,7 @@ class _FakeSnapshotProvider:
         return self.snapshot
 
     def fill_gap(self, pair: str, data_type: str, gap_start: float, gap_end: float) -> Snapshot:
+        self.fill_calls += 1
         if self.fill_error is not None:
             raise self.fill_error
         assert self.gap_snapshot is not None
@@ -259,6 +271,36 @@ class TestRestBootstrapRuntime:
         )
         assert result.outcome == BootstrapOutcome.SUCCESS
         assert result.gap_fill_result is not None
+
+    def test_gap_fill_respects_record_call_failure_after_gap_validation(self):
+        provider = _FakeSnapshotProvider()
+        provider.gap_snapshot = Snapshot(
+            pair="BTCUSDT",
+            data_type="orderbook",
+            payload={"bids": [], "asks": []},
+            fetch_time=105.0,
+        )
+
+        class _RaceyRateLimitGuard:
+            def record_call(self, now: float) -> bool:
+                return False
+
+        runtime = RestBootstrapRuntime(provider, rate_limit_guard=_RaceyRateLimitGuard())
+        result = runtime.resync(
+            "BTCUSDT",
+            "orderbook",
+            gap_start=100.0,
+            gap_end=110.0,
+            now=106.0,
+            max_gap_s=30.0,
+            max_age_s=10.0,
+        )
+
+        assert result.outcome == BootstrapOutcome.RATE_LIMITED
+        assert result.blocked is True
+        assert result.gap_fill_result is not None
+        assert result.gap_fill_result.decision == GapFillDecision.REJECT_RATE_LIMITED
+        assert provider.fill_calls == 0
 
     def test_runtime_logs_bootstrap_request(self, caplog: pytest.LogCaptureFixture):
         caplog.set_level(logging.INFO)

@@ -7,6 +7,7 @@ blocking and ranking selection.
 from __future__ import annotations
 
 import math
+from typing import Protocol
 
 from pydantic import BaseModel, Field, field_validator
 from data_backbone.market_physics_math import (
@@ -42,6 +43,9 @@ class ScoringCandidateInput(BaseModel, frozen=True):
     allowed_features: frozenset[str]
     weights: dict[str, float]
     scoring_version: str
+    raw_score_multiplier: float = Field(default=1.0, ge=0.0)
+    raw_score_add: float = 0.0
+    raw_score_cap: float | None = Field(default=None, ge=0.0)
     score_penalties: tuple[ScorePenaltyItem, ...] = ()
     size_penalties: tuple[SizePenaltyItem, ...] = ()
     blocker_conditions: BlockerCondition = Field(default_factory=BlockerCondition)
@@ -66,6 +70,62 @@ class ScoringCandidateInput(BaseModel, frozen=True):
             raise ValueError("scoring_version must be non-empty")
         return normalized
 
+    @field_validator("raw_score_multiplier", "raw_score_add", "raw_score_cap")
+    @classmethod
+    def _validate_finite_adjustments(cls, value: float | None):
+        if value is None:
+            return value
+        if not math.isfinite(value):
+            raise ValueError("raw score adjustments must be finite")
+        return value
+
+
+class ScoringSoftPenaltyLayerInput(BaseModel, frozen=True):
+    """Bounded typed input for the runtime-open scoring soft-penalty hook."""
+
+    context_id: str = Field(..., min_length=1)
+    pair: str = Field(..., min_length=1)
+    engine_id: str = Field(..., min_length=1)
+    scoring_version: str = Field(..., min_length=1)
+    expected_cost: float = 0.0
+    expected_ce: float = 0.0
+    corr_penalty: float = 0.0
+    risk_penalty: float = 0.0
+    fragility_score: float = 0.0
+    toxicity_score: float = 0.0
+    execution_survivability_score: float = 1.0
+    micro_friction_score: float = 0.0
+    pressure_state: str = "nominal"
+
+
+class ScoringSoftPenaltyLayerOutcome(BaseModel, frozen=True):
+    """Deterministic outcome of the bounded scoring soft-penalty hook."""
+
+    raw_score_multiplier_delta: float = 0.0
+    raw_score_add: float = 0.0
+    raw_score_cap: float | None = Field(default=None, ge=0.0)
+    reason_codes: tuple[str, ...] = ()
+    detail: str = ""
+
+    @field_validator("raw_score_multiplier_delta", "raw_score_add", "raw_score_cap")
+    @classmethod
+    def _validate_finite_hook_adjustments(cls, value: float | None):
+        if value is None:
+            return value
+        if not math.isfinite(value):
+            raise ValueError("soft penalty hook adjustments must be finite")
+        return value
+
+
+class ScoringSoftPenaltyLayerHook(Protocol):
+    """Bounded hook surface injected into the real Build-5 scoring runtime rail."""
+
+    def __call__(
+        self,
+        hook_input: ScoringSoftPenaltyLayerInput,
+    ) -> ScoringSoftPenaltyLayerOutcome:
+        ...
+
 
 class ScoringExplainability(BaseModel, frozen=True):
     """Structured Build-5 explanation emitted with each candidate audit."""
@@ -73,6 +133,7 @@ class ScoringExplainability(BaseModel, frozen=True):
     dominant_feature_keys: tuple[str, ...] = ()
     dominant_score_penalty_ids: tuple[str, ...] = ()
     dominant_size_penalty_ids: tuple[str, ...] = ()
+    artifact_hook_reason_codes: tuple[str, ...] = ()
     hard_block_codes: tuple[str, ...] = ()
     portfolio_verdict_code: str = ""
     selection_outcome_code: str = ""
@@ -90,6 +151,9 @@ class ScoringEconomicsProjection(BaseModel, frozen=True):
     penalized_score: float = 0.0
     ranking_score: float | None = None
     final_size_multiplier: float = 1.0
+    artifact_raw_score_multiplier_delta: float = 0.0
+    artifact_raw_score_add: float = 0.0
+    artifact_raw_score_cap: float | None = None
     phantom_trade: bool = False
     phantom_reason_code: str = ""
     hard_blocked: bool = False
@@ -149,11 +213,13 @@ class ScoringRuntime:
         min_size_multiplier: float = 0.05,
         anomaly_low: float = -10.0,
         anomaly_high: float = 10.0,
+        soft_penalty_hook: ScoringSoftPenaltyLayerHook | None = None,
     ) -> None:
         self._penalty_registry = penalty_registry
         self._ranking_weights = ranking_weights or RankingWeights()
         self._max_score_penalty = max_score_penalty
         self._min_size_multiplier = min_size_multiplier
+        self._soft_penalty_hook = soft_penalty_hook
         self._score_reporter = ScoreReporter(anomaly_low=anomaly_low, anomaly_high=anomaly_high)
         self._penalty_reporter = PenaltyReporter()
         self._blocker_reporter = BlockerReporter()
@@ -172,6 +238,7 @@ class ScoringRuntime:
         candidate_index = _build_candidate_index(candidates)
         audits_by_key: dict[tuple[str, str], ScoringCandidateAudit] = {}
         physics_projection_by_key: dict[tuple[str, str], ScoringPhysicsProjection] = {}
+        hook_outcomes_by_key: dict[tuple[str, str], ScoringSoftPenaltyLayerOutcome | None] = {}
         ranking_candidates: list[RankingCandidate] = []
         blocked_keys: set[tuple[str, str]] = set()
         portfolio_results: dict[tuple[str, str], CompatibilityResult] = {}
@@ -180,21 +247,28 @@ class ScoringRuntime:
             key = (candidate.engine_id, candidate.pair)
             physics_projection = _build_physics_projection(candidate)
             physics_projection_by_key[key] = physics_projection
+            hook_outcome = self._run_soft_penalty_hook(candidate, physics_projection)
+            hook_outcomes_by_key[key] = hook_outcome
+            adjusted_candidate = _apply_soft_penalty_hook(candidate, hook_outcome)
+            candidate_index[key] = adjusted_candidate
             feature_selection = select_features(
-                engine_id=candidate.engine_id,
-                raw_features=candidate.raw_features,
-                allowed_features=candidate.allowed_features,
+                engine_id=adjusted_candidate.engine_id,
+                raw_features=adjusted_candidate.raw_features,
+                allowed_features=adjusted_candidate.allowed_features,
             )
             raw_score_result = calculate_raw_score(
-                engine_id=candidate.engine_id,
-                pair=candidate.pair,
+                engine_id=adjusted_candidate.engine_id,
+                pair=adjusted_candidate.pair,
                 features=feature_selection.selected,
-                weights=candidate.weights,
-                scoring_version=candidate.scoring_version,
+                weights=adjusted_candidate.weights,
+                scoring_version=adjusted_candidate.scoring_version,
+                raw_score_multiplier=adjusted_candidate.raw_score_multiplier,
+                raw_score_add=adjusted_candidate.raw_score_add,
+                raw_score_cap=adjusted_candidate.raw_score_cap,
             )
             score_payload = self._score_reporter.evaluate(
-                engine_id=candidate.engine_id,
-                pair=candidate.pair,
+                engine_id=adjusted_candidate.engine_id,
+                pair=adjusted_candidate.pair,
                 raw_score=raw_score_result.raw_score,
                 block_scores=raw_score_result.weighted_contributions,
                 features_used=raw_score_result.features_used,
@@ -202,11 +276,11 @@ class ScoringRuntime:
             )
             score_penalty_result = build_score_penalty(
                 raw_score=raw_score_result.raw_score,
-                penalties=candidate.score_penalties,
+                penalties=adjusted_candidate.score_penalties,
                 registry=self._penalty_registry,
             )
             size_penalty_result = build_size_penalty(
-                penalties=candidate.size_penalties,
+                penalties=adjusted_candidate.size_penalties,
                 registry=self._penalty_registry,
             )
             penalty_cap_result = evaluate_penalty_cap(
@@ -219,8 +293,8 @@ class ScoringRuntime:
             )
             self._penalty_reporter.record(
                 PenaltyEvent(
-                    engine_id=candidate.engine_id,
-                    pair=candidate.pair,
+                    engine_id=adjusted_candidate.engine_id,
+                    pair=adjusted_candidate.pair,
                     score_penalty=penalty_cap_result.capped_score_penalty,
                     size_multiplier=penalty_cap_result.capped_size_multiplier,
                     is_phantom=penalty_cap_result.verdict == PenaltyCapVerdict.PHANTOM_RISK,
@@ -229,14 +303,14 @@ class ScoringRuntime:
                 ),
             )
 
-            blocker_evaluations = evaluate_blockers(candidate.blocker_conditions)
+            blocker_evaluations = evaluate_blockers(adjusted_candidate.blocker_conditions)
             triggered = tuple(
                 (evaluation.blocker_id, evaluation.reason)
                 for evaluation in blocker_evaluations
                 if evaluation.triggered
             )
             encoded = encode_reasons(triggered)
-            hard_block_decision = build_decision(candidate.pair, candidate.engine_id, encoded)
+            hard_block_decision = build_decision(adjusted_candidate.pair, adjusted_candidate.engine_id, encoded)
 
             if hard_block_decision.is_blocked:
                 blocked_keys.add(key)
@@ -245,20 +319,20 @@ class ScoringRuntime:
                 self._blocker_reporter.record_passed()
                 ranking_candidates.append(
                     RankingCandidate(
-                        engine_id=candidate.engine_id,
-                        pair=candidate.pair,
+                        engine_id=adjusted_candidate.engine_id,
+                        pair=adjusted_candidate.pair,
                         penalized_score=raw_score_result.raw_score - penalty_cap_result.capped_score_penalty,
                         size_multiplier=penalty_cap_result.capped_size_multiplier,
-                        expected_cost=candidate.expected_cost,
-                        expected_ce=candidate.expected_ce,
-                        projected_risk=candidate.risk_penalty,
-                        cluster_id=candidate.cluster_id,
+                        expected_cost=adjusted_candidate.expected_cost,
+                        expected_ce=adjusted_candidate.expected_ce,
+                        projected_risk=adjusted_candidate.risk_penalty,
+                        cluster_id=adjusted_candidate.cluster_id,
                     ),
                 )
 
             audits_by_key[key] = ScoringCandidateAudit(
-                engine_id=candidate.engine_id,
-                pair=candidate.pair,
+                engine_id=adjusted_candidate.engine_id,
+                pair=adjusted_candidate.pair,
                 feature_selection=feature_selection,
                 raw_score_result=raw_score_result,
                 score_payload=score_payload,
@@ -268,18 +342,20 @@ class ScoringRuntime:
                 hard_block_decision=hard_block_decision,
                 is_phantom=penalty_cap_result.verdict == PenaltyCapVerdict.PHANTOM_RISK,
                 explainability=_build_explainability(
-                    candidate=candidate,
+                    candidate=adjusted_candidate,
                     raw_score_result=raw_score_result,
                     score_penalty_result=score_penalty_result,
                     size_penalty_result=size_penalty_result,
                     hard_block_decision=hard_block_decision,
+                    hook_outcome=hook_outcome,
                     physics_projection=physics_projection,
                 ),
                 economics=_build_economics_projection(
-                    candidate=candidate,
+                    candidate=adjusted_candidate,
                     raw_score_result=raw_score_result,
                     penalty_cap_result=penalty_cap_result,
                     hard_block_decision=hard_block_decision,
+                    hook_outcome=hook_outcome,
                     physics_projection=physics_projection,
                 ),
             )
@@ -362,6 +438,7 @@ class ScoringRuntime:
                 key,
                 context="ScoringRuntime.run_round audit reconciliation",
             )
+            hook_outcome = hook_outcomes_by_key.get(key)
             audits.append(
                 audit.model_copy(
                     update={
@@ -373,6 +450,7 @@ class ScoringRuntime:
                             score_penalty_result=audit.score_penalty_result,
                             size_penalty_result=audit.size_penalty_result,
                             hard_block_decision=audit.hard_block_decision,
+                            hook_outcome=hook_outcome,
                             portfolio_result=portfolio_results.get(key),
                             selection_entry=selection_by_key.get(key),
                             physics_projection=physics_projection,
@@ -382,6 +460,7 @@ class ScoringRuntime:
                             raw_score_result=audit.raw_score_result,
                             penalty_cap_result=audit.penalty_cap_result,
                             hard_block_decision=audit.hard_block_decision,
+                            hook_outcome=hook_outcome,
                             portfolio_result=portfolio_results.get(key),
                             selection_entry=selection_by_key.get(key),
                             physics_projection=physics_projection,
@@ -399,6 +478,17 @@ class ScoringRuntime:
             penalty_stats=self._penalty_reporter.get_stats(),
             blocker_stats=self._blocker_reporter.get_stats(),
             ranking_stats=self._ranking_reporter.get_stats(),
+        )
+
+    def _run_soft_penalty_hook(
+        self,
+        candidate: ScoringCandidateInput,
+        physics_projection: ScoringPhysicsProjection,
+    ) -> ScoringSoftPenaltyLayerOutcome | None:
+        if self._soft_penalty_hook is None:
+            return None
+        return self._soft_penalty_hook(
+            _build_scoring_soft_penalty_hook_input(candidate, physics_projection)
         )
 
 
@@ -468,6 +558,7 @@ def _build_explainability(
     score_penalty_result: ScorePenaltyResult,
     size_penalty_result: SizePenaltyResult,
     hard_block_decision: HardBlockDecision,
+    hook_outcome: ScoringSoftPenaltyLayerOutcome | None = None,
     portfolio_result: CompatibilityResult | None = None,
     selection_entry: SelectionEntry | None = None,
     physics_projection: ScoringPhysicsProjection | None = None,
@@ -495,6 +586,7 @@ def _build_explainability(
             key=lambda penalty: penalty.multiplier,
         )[:3]
     )
+    artifact_hook_reason_codes = () if hook_outcome is None else hook_outcome.reason_codes
     hard_block_codes = tuple(reason.code for reason in hard_block_decision.reasons)
     portfolio_verdict_code = portfolio_result.verdict.value if portfolio_result is not None else ""
     selection_outcome_code = selection_entry.outcome.value if selection_entry is not None else ""
@@ -506,6 +598,19 @@ def _build_explainability(
         f"cost={candidate.expected_cost:.4f}",
         f"ce={candidate.expected_ce:.4f}",
     ]
+    if hook_outcome is not None and (
+        hook_outcome.raw_score_multiplier_delta != 0.0
+        or hook_outcome.raw_score_add != 0.0
+        or hook_outcome.raw_score_cap is not None
+    ):
+        summary_parts.append(
+            "artifact="
+            f"mult={hook_outcome.raw_score_multiplier_delta:+.4f},"
+            f"add={hook_outcome.raw_score_add:+.4f},"
+            f"cap={hook_outcome.raw_score_cap if hook_outcome.raw_score_cap is not None else 'none'}"
+        )
+    if artifact_hook_reason_codes:
+        summary_parts.append(f"artifact_codes={','.join(artifact_hook_reason_codes)}")
     if hard_block_codes:
         summary_parts.append(f"hard_block={hard_block_codes[0]}")
     if portfolio_verdict_code:
@@ -533,6 +638,7 @@ def _build_explainability(
         dominant_feature_keys=dominant_feature_keys,
         dominant_score_penalty_ids=dominant_score_penalty_ids,
         dominant_size_penalty_ids=dominant_size_penalty_ids,
+        artifact_hook_reason_codes=artifact_hook_reason_codes,
         hard_block_codes=hard_block_codes,
         portfolio_verdict_code=portfolio_verdict_code,
         selection_outcome_code=selection_outcome_code,
@@ -547,6 +653,7 @@ def _build_economics_projection(
     raw_score_result: RawScoreResult,
     penalty_cap_result: PenaltyCapResult,
     hard_block_decision: HardBlockDecision,
+    hook_outcome: ScoringSoftPenaltyLayerOutcome | None = None,
     portfolio_result: CompatibilityResult | None = None,
     selection_entry: SelectionEntry | None = None,
     physics_projection: ScoringPhysicsProjection | None = None,
@@ -564,6 +671,11 @@ def _build_economics_projection(
         penalized_score=raw_score_result.raw_score - penalty_cap_result.capped_score_penalty,
         ranking_score=selection_entry.ranking_score if selection_entry is not None else None,
         final_size_multiplier=penalty_cap_result.capped_size_multiplier,
+        artifact_raw_score_multiplier_delta=(
+            0.0 if hook_outcome is None else hook_outcome.raw_score_multiplier_delta
+        ),
+        artifact_raw_score_add=0.0 if hook_outcome is None else hook_outcome.raw_score_add,
+        artifact_raw_score_cap=None if hook_outcome is None else hook_outcome.raw_score_cap,
         phantom_trade=penalty_cap_result.verdict == PenaltyCapVerdict.PHANTOM_RISK,
         phantom_reason_code=phantom_reason_code,
         hard_blocked=hard_block_decision.is_blocked,
@@ -626,4 +738,54 @@ def _build_physics_projection(candidate: ScoringCandidateInput) -> ScoringPhysic
         execution_survivability_score=execution_survivability,
         micro_friction_score=micro_friction,
         pressure_state=pressure_state,
+    )
+
+
+def _build_scoring_soft_penalty_hook_input(
+    candidate: ScoringCandidateInput,
+    physics_projection: ScoringPhysicsProjection,
+) -> ScoringSoftPenaltyLayerInput:
+    return ScoringSoftPenaltyLayerInput(
+        context_id=f"{candidate.engine_id}:{candidate.pair}:{candidate.scoring_version}",
+        pair=candidate.pair,
+        engine_id=candidate.engine_id,
+        scoring_version=candidate.scoring_version,
+        expected_cost=candidate.expected_cost,
+        expected_ce=candidate.expected_ce,
+        corr_penalty=candidate.corr_penalty,
+        risk_penalty=candidate.risk_penalty,
+        fragility_score=physics_projection.fragility_score,
+        toxicity_score=physics_projection.toxicity_score,
+        execution_survivability_score=physics_projection.execution_survivability_score,
+        micro_friction_score=physics_projection.micro_friction_score,
+        pressure_state=physics_projection.pressure_state,
+    )
+
+
+def _apply_soft_penalty_hook(
+    candidate: ScoringCandidateInput,
+    hook_outcome: ScoringSoftPenaltyLayerOutcome | None,
+) -> ScoringCandidateInput:
+    if hook_outcome is None:
+        return candidate
+    if (
+        hook_outcome.raw_score_multiplier_delta == 0.0
+        and hook_outcome.raw_score_add == 0.0
+        and hook_outcome.raw_score_cap is None
+    ):
+        return candidate
+
+    merged_cap = hook_outcome.raw_score_cap
+    if candidate.raw_score_cap is not None:
+        merged_cap = candidate.raw_score_cap if merged_cap is None else min(candidate.raw_score_cap, merged_cap)
+
+    return candidate.model_copy(
+        update={
+            "raw_score_multiplier": max(
+                0.0,
+                candidate.raw_score_multiplier + hook_outcome.raw_score_multiplier_delta,
+            ),
+            "raw_score_add": candidate.raw_score_add + hook_outcome.raw_score_add,
+            "raw_score_cap": merged_cap,
+        }
     )

@@ -7,7 +7,15 @@ More cost-sensitive than Engine A, shorter holding, Tier 1-2 max.
 """
 
 from .engine_b_runner import EngineBDecision, EngineBInput, EngineBLogEntry, EngineBOutput, run_engine_b
-from .engine_b_runtime import EngineBRuntime, EngineBRuntimeInput, EngineBRuntimeResult, EngineBRuntimeStatus
+from .engine_b_runtime import (
+    EngineBRuntime,
+    EngineBRuntimeInput,
+    EngineBRuntimeResult,
+    EngineBRuntimeStatus,
+    EngineBSweepValidationHook,
+    EngineBSweepValidationInput,
+    EngineBSweepValidationOutcome,
+)
 
 __all__ = [
     "EngineBDecision",
@@ -18,5 +26,8 @@ __all__ = [
     "EngineBRuntimeInput",
     "EngineBRuntimeResult",
     "EngineBRuntimeStatus",
+    "EngineBSweepValidationHook",
+    "EngineBSweepValidationInput",
+    "EngineBSweepValidationOutcome",
     "run_engine_b",
 ]

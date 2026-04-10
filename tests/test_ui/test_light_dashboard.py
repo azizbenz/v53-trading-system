@@ -1,4 +1,4 @@
-"""Tests for the locked Build-10 Light UI backend surface."""
+"""Tests for the locked Build-10 operator dashboard surface."""
 
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ from monitoring import (
 from ui import build_light_dashboard_view
 
 
-def _payload() -> HealthDashboardPayload:
-    return HealthDashboardPayload(
+def _payload(**overrides) -> HealthDashboardPayload:
+    payload = HealthDashboardPayload(
         timestamp_ms=1_700_000_000_000,
         correlation_id="corr-ui",
         profile=ProfileId.LIGHT,
@@ -116,6 +116,7 @@ def _payload() -> HealthDashboardPayload:
             latest_acknowledged_alert_id="corr-ui:critical-latency",
         ),
     )
+    return payload.model_copy(update=overrides) if overrides else payload
 
 
 def test_ui_exports_expected_symbols():
@@ -147,6 +148,24 @@ def test_light_dashboard_view_is_locked_and_structured():
         "Alerts & Events",
         "Future Learning",
     } == titles
+
+
+def test_light_dashboard_view_prefers_operator_runtime_last_error_in_alert_history():
+    view = build_light_dashboard_view(
+        _payload(
+            operator_runtime=OperatorRuntimeProjection(
+                event_count=1,
+                latest_event_type="operator_action_accepted",
+                latest_event_message="screen opened: overview",
+                last_error="state_file_corrupted:JSONDecodeError:bad payload",
+            )
+        )
+    )
+    alerts = next(section for section in view.sections if section.title == "Alerts & Events")
+
+    assert next(card for card in alerts.cards if card.key == "operator_events").detail == (
+        "state_file_corrupted:JSONDecodeError:bad payload"
+    )
     assert view.control_surface.profile_selector_enabled is False
     assert view.control_surface.engine_cd_toggle_enabled is False
     assert view.control_surface.complete_pairs_enabled is False
@@ -217,3 +236,23 @@ def test_live_dashboard_view_exposes_manual_downgrade_actions():
         ui.OperatorActionType.VIEW_ALERT_HISTORY,
         ui.OperatorActionType.ACKNOWLEDGE_CRITICAL_ALERT,
     )
+
+
+def test_complete_profile_view_reports_governed_surface_without_light_wording():
+    view = build_light_dashboard_view(
+        _payload(
+            profile=ProfileId.COMPLETE,
+            runtime_mode=RuntimeMode.LIVE,
+            deployment_state="live_complete",
+            shadow_status="healthy",
+            micro_live_status="healthy",
+            live_light_status="healthy",
+        )
+    )
+    profile_state = next(section for section in view.sections if section.title == "Profile & State")
+    profile_card = next(card for card in profile_state.cards if card.key == "profile")
+    controls_card = next(card for card in profile_state.cards if card.key == "controls_locked")
+
+    assert view.profile == ProfileId.COMPLETE
+    assert profile_card.detail == "Locked COMPLETE governed surface"
+    assert controls_card.detail == "No profile-expansion or custom overrides exposed"

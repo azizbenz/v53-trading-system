@@ -1,0 +1,16 @@
+schema_version: binance_adapter.v1
+rest_base_url: https://api.binance.com
+timeout_s: 5.0
+recv_window_ms: 5000
+calibration_root: config/calibration
+calibration_version: v1
+fee_aware_edge_gate_enabled: false
+time_sync_drift_threshold_id: THR-X01
+websocket_endpoint: wss://stream.binance.com:9443/ws
+websocket_gap_threshold_id: THR-X02
+websocket_silence_threshold_s: 30.0
+websocket_snapshot_limit: 1000
+user_data_websocket_endpoint: wss://ws-api.binance.com:443/ws-api/v3
+user_data_connect_timeout_s: 5.0
+user_data_recv_timeout_s: 0.2
+user_data_max_messages_per_poll: 32

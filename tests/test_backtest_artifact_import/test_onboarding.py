@@ -7,12 +7,18 @@ from datetime import date
 import pytest
 from pydantic import ValidationError
 
-from interface_contracts import ProfileId, PromotionState, StrategyClassification
+from interface_contracts import (
+    ArtifactSignatureEnvelope,
+    ProfileId,
+    PromotionState,
+    StrategyClassification,
+)
 from backtest_artifact_import import (
     ArtifactImportRequest,
     ArtifactPayloadRefBundle,
     StrategyLineageRecord,
     StrategyOnboardingRequest,
+    build_lab_fixture_signature_envelope,
     validate_strategy_onboarding_request,
 )
 from local_replay_runtime import ArtifactManifest, ReplayArtifactKind
@@ -97,6 +103,20 @@ def test_onboarding_accepts_a_variant_after_import_gate():
 
     assert decision.accepted is True
     assert decision.normalized_promotion_state == PromotionState.SHADOW_CANDIDATE
+
+
+def test_onboarding_propagates_signature_verifier_to_import_gate():
+    request = _request(
+        import_request=_import_request(
+            manifest=_manifest(
+                signature_envelope=build_lab_fixture_signature_envelope()
+            )
+        )
+    )
+
+    decision = validate_strategy_onboarding_request(request)
+
+    assert decision.accepted is True
 
 
 def test_onboarding_keeps_build14_enabler_replay_only():

@@ -21,6 +21,7 @@ __contract_version__ = "1.0.0"
 from .domain_types import *
 from .feature_lock_contracts import *
 from .artifact_contracts import *
+from .binance_contracts import *
 from .market_event_contracts import *
 from .decision_contracts import *
 from .meta_contracts import *
@@ -48,18 +49,25 @@ __all__ = [
     "ArtifactConflictResolutionMode", "ScoreConflictAggregationMode",
     "SizeReduceConflictMode", "RankAdjustConflictMode",
     "CompiledRegistryAtomicityMode", "CompiledRegistryConcurrencyModel",
+    "ArtifactRuntimeFailureMode", "ArtifactRuntimeFailureStage",
     "DistilledRuleLogicalOp", "DistilledRuleOperator", "ArtifactClass",
     "ArtifactCompatibilityStatus", "ArtifactTrustKeyStatus", "ArtifactPolicyErrorCode",
     "ArtifactCompatibilityEntry", "ArtifactSignatureEnvelope", "ArtifactTrustStoreEntry",
     "ArtifactConflictPolicy", "CompiledArtifactRegistryPolicy",
     "DistilledRuleCondition", "DistilledRuleAction", "DistilledRule",
-    "ArtifactProofSummary", "ArtifactProofFloorPolicy",
+    "ArtifactProofSummary", "ArtifactProofFloorPolicy", "ArtifactRuntimeErrorPolicy",
     "ArtifactLifecyclePolicy", "ArtifactTtlStatus", "ArtifactDriftStatus",
     "ArtifactRuntimeGovernanceEvaluation", "ArtifactExportBundle",
-    "HOOK_MODULE_BY_ID", "NON_ACTIVE_ARTIFACT_HEALTH_STATES",
+    "HOOK_MODULE_BY_ID", "RUNTIME_OPEN_HOOK_IDS", "NON_ACTIVE_ARTIFACT_HEALTH_STATES",
     "CANONICAL_ARTIFACT_CONFLICT_POLICY", "CANONICAL_COMPILED_ARTIFACT_REGISTRY_POLICY",
-    "CANONICAL_ARTIFACT_PROOF_FLOOR_POLICY", "validate_artifact_proof_summary",
+    "CANONICAL_ARTIFACT_PROOF_FLOOR_POLICY", "CANONICAL_ARTIFACT_RUNTIME_ERROR_POLICY",
+    "is_runtime_open_hook_id",
+    "validate_artifact_proof_summary",
     "evaluate_artifact_runtime_governance",
+    # binance_contracts
+    "BinanceAccountSnapshot", "BinanceAssetBalance", "BinanceCredentials",
+    "BinanceExchangeInfo", "BinanceRateLimit", "BinanceServerTime",
+    "BinanceSymbolInfo", "BinanceTimeSyncResult",
     # domain_types — Pairs
     "LIGHT_PAIRS", "COMPLETE_ADDITIONAL_PAIRS", "ALL_PAIRS",
     "ENGINE_PAIR_MAP", "PAIR_TIER_MAP",
@@ -79,7 +87,7 @@ __all__ = [
     "EXECUTION_DECIMAL_CONTEXT_PRECISION", "EXECUTION_DECIMAL_ROUNDING",
     "execution_decimal", "decimal_to_canonical_str", "multiply_exact",
     "divide_exact_or_zero", "sum_exact", "quantize_down_to_step",
-    "quantize_up_to_step", "decimal_to_float64",
+    "quantize_up_to_step", "decimal_to_float64_abs_loss", "decimal_to_float64",
     # error_contracts
     "V53BaseError", "ContractViolationError", "DependencyViolationError",
     "DataStaleError", "RiskBudgetExceededError", "PairSuspendedError",

@@ -5,7 +5,10 @@ from __future__ import annotations
 import json
 
 from meta_minimal.edge_tracker_prudent_minimal.edge_status_classifier import EdgeStatus
+from meta_minimal.dtr_core.decision_state_encoder import DecisionState
+from meta_minimal.dtr_core.dtr_record_builder import build_dtr
 from meta_minimal.meta_runtime import (
+    build_meta_runtime_result_from_records,
     MetaInputSource,
     MetaRuntime,
     MetaRuntimeConfig,
@@ -159,3 +162,43 @@ def test_local_replay_edge_is_not_promoted_to_credible():
     assert result.dtr_summary.local_replay_input_count == 35
     assert result.edge_report.total_scopes >= 1
     assert all(classification.status != EdgeStatus.CREDIBLE for classification in result.edge_report.classifications)
+
+
+def test_build_meta_runtime_result_from_records_reconstructs_reports_from_dtr_exports():
+    records = (
+        build_dtr(
+            dtr_id="dtr-1",
+            pair="BTCUSDT",
+            engine_id="engine_a",
+            decision_state=DecisionState.EXECUTED,
+            expected_cost=0.001,
+            realized_cost=0.0009,
+            gross_return=0.004,
+            runtime_mode="local_replay",
+            input_source="local_replay",
+            timestamp=1_700_000_000.0,
+        ),
+        build_dtr(
+            dtr_id="dtr-2",
+            pair="BTCUSDT",
+            engine_id="engine_a",
+            decision_state=DecisionState.EXECUTED,
+            expected_cost=0.0011,
+            realized_cost=0.0010,
+            gross_return=0.0042,
+            runtime_mode="local_replay",
+            input_source="local_replay",
+            timestamp=1_700_000_100.0,
+        ),
+    )
+
+    result = build_meta_runtime_result_from_records(records)
+
+    assert result.status == MetaRuntimeStatus.HAS_PATH_WARNINGS
+    assert result.records == records
+    assert result.dtr_summary.total_records == 2
+    assert result.dtr_summary.local_replay_input_count == 2
+    assert result.cra_report.total_trades == 2
+    assert result.break_even_report.views
+    assert result.edge_report.total_scopes >= 1
+    assert any("local replay inputs detected" in warning for warning in result.warnings)

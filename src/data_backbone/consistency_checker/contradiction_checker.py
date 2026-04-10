@@ -6,6 +6,7 @@ Invariant: every contradiction is visible. No silent tolerance.
 
 from __future__ import annotations
 
+from collections import deque
 from enum import StrEnum
 
 from pydantic import BaseModel, Field
@@ -36,10 +37,21 @@ class ContradictionChecker:
     # GEM-06: timestamps within this window are not flagged as reversals
     _JITTER_TOLERANCE_S: float = 0.010  # 10ms
 
-    def __init__(self, jitter_tolerance_s: float | None = None) -> None:
-        self._contradictions: list[ContradictionEvent] = []
+    def __init__(
+        self,
+        jitter_tolerance_s: float | None = None,
+        *,
+        max_retained_contradictions: int = 2048,
+    ) -> None:
+        if max_retained_contradictions <= 0:
+            raise ValueError("max_retained_contradictions must be > 0")
+        self._contradictions: deque[ContradictionEvent] = deque(
+            maxlen=max_retained_contradictions
+        )
+        self._max_retained_contradictions = max_retained_contradictions
         self._last_exchange_time: dict[tuple[str, str], float] = {}
         self._total_checked: int = 0
+        self._total_contradictions: int = 0
         if jitter_tolerance_s is not None:
             self._JITTER_TOLERANCE_S = jitter_tolerance_s
 
@@ -63,6 +75,7 @@ class ContradictionChecker:
                 timestamp=recv_time,
             )
             self._contradictions.append(event)
+            self._total_contradictions += 1
             return event
         return None
 
@@ -79,6 +92,7 @@ class ContradictionChecker:
                 timestamp=recv_time,
             )
             self._contradictions.append(event)
+            self._total_contradictions += 1
             return event
         return None
 
@@ -89,6 +103,10 @@ class ContradictionChecker:
 
     @property
     def total_contradictions(self) -> int:
+        return self._total_contradictions
+
+    @property
+    def retained_contradictions(self) -> int:
         return len(self._contradictions)
 
     @property

@@ -41,7 +41,9 @@ def calculate_portfolio_beta(
 
     for pair, size in positions.items():
         w_j = size / total_exposure
-        beta_j = betas.get(pair, 0.8)  # default beta
+        if pair not in betas:
+            raise ValueError(f"calculate_portfolio_beta requires explicit beta for pair {pair}")
+        beta_j = betas[pair]
         contrib = w_j * beta_j
         contributions[pair] = contrib
         beta_port += contrib

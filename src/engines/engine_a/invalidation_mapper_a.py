@@ -2,19 +2,24 @@
 Build-6 / engine_a / invalidation_mapper_A
 Define structural invalidation for Engine A signals.
 
-A premium signal without readable invalidation is not exploitable.
-
-Direction policy (spot-halal profile):
-  Engine A is long-only. The runner rejects direction_score <= 0
-  before reaching this module. Invalidation is always mapped below entry.
-  The short branch is retained defensively but unreachable in normal flow.
+Engine A is long-only on the governed rail. The short branch is retained
+defensively but is not reachable in normal runtime flow.
 """
 
 from __future__ import annotations
 
 from enum import StrEnum
 
+from data_backbone import TO_CALIBRATE
 from pydantic import BaseModel
+
+
+ENGINE_A_INVALIDATION_PROFILE_ID = "engine_a_invalidation.to_calibrate.v1"
+ENGINE_A_INVALIDATION_CALIBRATION_STATUS = TO_CALIBRATE
+ENGINE_A_INVALIDATION_DEFAULTS: dict[str, float] = {
+    "atr_stop_multiplier": 1.5,
+    "default_holding_hours": 4.0,
+}
 
 
 class InvalidationType(StrEnum):
@@ -29,8 +34,8 @@ class InvalidationRule(BaseModel, frozen=True):
 
     invalidation_type: InvalidationType
     description: str
-    level: float | None = None  # price level if applicable
-    horizon_hours: float | None = None  # time-based expiry
+    level: float | None = None
+    horizon_hours: float | None = None
 
 
 class InvalidationMap(BaseModel, frozen=True):
@@ -42,6 +47,8 @@ class InvalidationMap(BaseModel, frozen=True):
     primary_invalidation: str = ""
     expected_holding_hours: float = 0.0
     has_invalidation: bool = False
+    calibration_profile_id: str = ENGINE_A_INVALIDATION_PROFILE_ID
+    calibration_status: str = ENGINE_A_INVALIDATION_CALIBRATION_STATUS
 
 
 def build_invalidation(
@@ -49,48 +56,46 @@ def build_invalidation(
     direction_score: float,
     entry_price: float,
     atr: float,
-    holding_hours: float = 4.0,
+    holding_hours: float = ENGINE_A_INVALIDATION_DEFAULTS["default_holding_hours"],
 ) -> InvalidationMap:
-    """Build invalidation map for an Engine A signal.
+    """Build invalidation map for an Engine A signal."""
 
-    Primary invalidation: price level based on ATR.
-    Secondary: structure break, time expiry, regime change.
-    """
     rules: list[InvalidationRule] = []
+    atr_stop_multiplier = ENGINE_A_INVALIDATION_DEFAULTS["atr_stop_multiplier"]
 
-    # Price-level invalidation: opposite direction from entry
     if atr > 0 and entry_price > 0:
         if direction_score > 0:
-            # Long: invalidation below entry
-            inv_level = entry_price - 1.5 * atr
+            inv_level = entry_price - atr_stop_multiplier * atr
         else:
-            # Short: invalidation above entry
-            inv_level = entry_price + 1.5 * atr
+            inv_level = entry_price + atr_stop_multiplier * atr
 
-        rules.append(InvalidationRule(
-            invalidation_type=InvalidationType.PRICE_LEVEL,
-            description=f"structural invalidation at {inv_level:.2f}",
-            level=inv_level,
-        ))
+        rules.append(
+            InvalidationRule(
+                invalidation_type=InvalidationType.PRICE_LEVEL,
+                description=f"structural invalidation at {inv_level:.2f}",
+                level=inv_level,
+            )
+        )
 
-    # Time-based expiry
-    rules.append(InvalidationRule(
-        invalidation_type=InvalidationType.TIME_EXPIRY,
-        description=f"time expiry after {holding_hours:.1f}h",
-        horizon_hours=holding_hours,
-    ))
-
-    # Structure break (always present as concept)
-    rules.append(InvalidationRule(
-        invalidation_type=InvalidationType.STRUCTURE_BREAK,
-        description="trend structure broken — continuation invalidated",
-    ))
-
-    # Regime change
-    rules.append(InvalidationRule(
-        invalidation_type=InvalidationType.REGIME_CHANGE,
-        description="regime shifted to unfavorable",
-    ))
+    rules.append(
+        InvalidationRule(
+            invalidation_type=InvalidationType.TIME_EXPIRY,
+            description=f"time expiry after {holding_hours:.1f}h",
+            horizon_hours=holding_hours,
+        )
+    )
+    rules.append(
+        InvalidationRule(
+            invalidation_type=InvalidationType.STRUCTURE_BREAK,
+            description="trend structure broken - continuation invalidated",
+        )
+    )
+    rules.append(
+        InvalidationRule(
+            invalidation_type=InvalidationType.REGIME_CHANGE,
+            description="regime shifted to unfavorable",
+        )
+    )
 
     primary = rules[0].description if rules else ""
 
@@ -100,4 +105,6 @@ def build_invalidation(
         primary_invalidation=primary,
         expected_holding_hours=holding_hours,
         has_invalidation=len(rules) > 0,
+        calibration_profile_id=ENGINE_A_INVALIDATION_PROFILE_ID,
+        calibration_status=ENGINE_A_INVALIDATION_CALIBRATION_STATUS,
     )

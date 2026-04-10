@@ -13,6 +13,7 @@ from backtest_artifact_import.compatibility_policy import (
     evaluate_artifact_compatibility_policy,
 )
 from backtest_artifact_import.signature_policy import (
+    ArtifactSignatureVerifier,
     DEFAULT_ARTIFACT_TRUST_STORE,
     evaluate_artifact_signature_policy,
 )
@@ -44,6 +45,7 @@ def validate_import_request(
     request: ArtifactImportRequest,
     *,
     expected_payload_hash_sha256: str | None = None,
+    signature_verifier: ArtifactSignatureVerifier | None = None,
 ) -> ArtifactImportDecision:
     """Validate import request without bypassing promotion gates."""
     validate_artifact_manifest(request.manifest)
@@ -55,6 +57,7 @@ def validate_import_request(
         request.manifest,
         trust_store=DEFAULT_ARTIFACT_TRUST_STORE,
         expected_payload_hash_sha256=expected_payload_hash_sha256,
+        signature_verifier=signature_verifier,
     )
     reasons.extend(signature_check.reasons)
 
@@ -221,6 +224,7 @@ def summarize_import_request(
     decision: ArtifactImportDecision,
     *,
     expected_payload_hash_sha256: str | None = None,
+    signature_verifier: ArtifactSignatureVerifier | None = None,
 ) -> ArtifactImportSummary:
     """Build a stable summary for monitoring and UI projections."""
     compatibility_check = evaluate_artifact_compatibility_policy(request.manifest)
@@ -228,6 +232,7 @@ def summarize_import_request(
         request.manifest,
         trust_store=DEFAULT_ARTIFACT_TRUST_STORE,
         expected_payload_hash_sha256=expected_payload_hash_sha256,
+        signature_verifier=signature_verifier,
     )
     feature_lineage_reasons: tuple[str, ...] = ()
     feature_lineage_status = "not_required"
@@ -363,11 +368,16 @@ def summarize_import_request(
 
 def validate_strategy_onboarding_request(
     request: StrategyOnboardingRequest,
+    *,
+    signature_verifier: ArtifactSignatureVerifier | None = None,
 ) -> StrategyOnboardingDecision:
     """Validate the minimal governed strategy onboarding flow."""
 
     reasons: list[str] = []
-    import_decision = validate_import_request(request.import_request)
+    import_decision = validate_import_request(
+        request.import_request,
+        signature_verifier=signature_verifier,
+    )
     if not import_decision.accepted:
         reasons.extend(f"import gate: {reason}" for reason in import_decision.reasons)
 

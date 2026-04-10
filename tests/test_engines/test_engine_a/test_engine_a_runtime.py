@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+import shutil
+
 import pytest
 
-from engine_a import EngineARuntime, EngineARuntimeInput, EngineARuntimeStatus
+from engines.engine_a import (
+    EngineAPreEntryValidationInput,
+    EngineAPreEntryValidationOutcome,
+    EngineARuntime,
+    EngineARuntimeInput,
+    EngineARuntimeStatus,
+)
 from engines.engine_a.engine_a_runner import EngineAInput
 from interface_contracts import EngineId, RegimeId, Side, SignalType
 from risk_backbone.emergency_kill_switch.circuit_breaker import EmergencyCircuitBreaker, KillSwitchReason
@@ -111,8 +120,32 @@ def _runtime_input(**overrides) -> EngineARuntimeInput:
     return EngineARuntimeInput(**defaults)
 
 
+def _breaker_state_dir(name: str) -> Path:
+    state_dir = Path(".codex_kill_switch_tests") / name
+    shutil.rmtree(state_dir, ignore_errors=True)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    return state_dir
+
+
+def _runtime(name: str, **overrides) -> EngineARuntime:
+    return EngineARuntime(
+        scoring_runtime=overrides.pop("scoring_runtime", _scoring_runtime()),
+        risk_runtime=overrides.pop("risk_runtime", _risk_runtime()),
+        circuit_breaker=overrides.pop("circuit_breaker", EmergencyCircuitBreaker(state_dir=_breaker_state_dir(name))),
+        **overrides,
+    )
+
+
+def _blocking_pre_entry_hook(_: EngineAPreEntryValidationInput) -> EngineAPreEntryValidationOutcome:
+    return EngineAPreEntryValidationOutcome(
+        accepted=False,
+        reason_codes=("ARTIFACT_PRE_ENTRY_BLOCK",),
+        detail="artifact veto on engine_a pre-entry confirmation",
+    )
+
+
 def test_runtime_emits_canonical_signal_and_accepts_through_risk():
-    runtime = EngineARuntime(scoring_runtime=_scoring_runtime(), risk_runtime=_risk_runtime())
+    runtime = _runtime("engine_a_accepts")
 
     result = runtime.evaluate(_runtime_input(), now=10.0)
 
@@ -132,7 +165,7 @@ def test_runtime_emits_canonical_signal_and_accepts_through_risk():
 
 
 def test_runtime_can_derive_now_from_timestamp_ms_when_omitted():
-    runtime = EngineARuntime(scoring_runtime=_scoring_runtime(), risk_runtime=_risk_runtime())
+    runtime = _runtime("engine_a_derive_now")
 
     result = runtime.evaluate(_runtime_input())
 
@@ -141,8 +174,8 @@ def test_runtime_can_derive_now_from_timestamp_ms_when_omitted():
     assert result.risk_evaluation.accepted is True
 
 
-def test_runtime_blocks_before_scoring_when_circuit_breaker_is_tripped(tmp_path):
-    breaker = EmergencyCircuitBreaker(state_dir=tmp_path)
+def test_runtime_blocks_before_scoring_when_circuit_breaker_is_tripped():
+    breaker = EmergencyCircuitBreaker(state_dir=_breaker_state_dir("engine_a"))
     breaker.trip(KillSwitchReason.OPERATOR_MANUAL, "manual stop")
     runtime = EngineARuntime(
         scoring_runtime=_scoring_runtime(),
@@ -161,8 +194,17 @@ def test_runtime_blocks_before_scoring_when_circuit_breaker_is_tripped(tmp_path)
     assert any(entry.event == "engine_a_circuit_breaker_blocked" for entry in result.log_entries)
 
 
+def test_runtime_requires_explicit_circuit_breaker():
+    with pytest.raises(ValueError, match="requires a circuit_breaker"):
+        EngineARuntime(
+            scoring_runtime=_scoring_runtime(),
+            risk_runtime=_risk_runtime(),
+            circuit_breaker=None,
+        )
+
+
 def test_runtime_rejects_blank_scoring_version():
-    runtime = EngineARuntime(scoring_runtime=_scoring_runtime(), risk_runtime=_risk_runtime())
+    runtime = _runtime("engine_a_blank_version")
 
     with pytest.raises(ValueError, match="requires non-empty scoring_version"):
         runtime.evaluate(
@@ -171,8 +213,38 @@ def test_runtime_rejects_blank_scoring_version():
         )
 
 
+def test_runtime_can_be_blocked_by_pre_entry_validation_hook():
+    runtime = _runtime(
+        "engine_a_hook_blocked",
+        pre_entry_validation_hook=_blocking_pre_entry_hook,
+    )
+
+    result = runtime.evaluate(_runtime_input(), now=12.5)
+
+    assert result.status == EngineARuntimeStatus.HOOK_BLOCKED
+    assert result.signal_candidate is None
+    assert result.scoring_round is None
+    blocked_logs = [entry for entry in result.log_entries if entry.event == "engine_a_hook_blocked"]
+    assert len(blocked_logs) == 1
+    assert blocked_logs[0].reasons == ("ARTIFACT_PRE_ENTRY_BLOCK",)
+
+
+def test_runtime_rejects_missing_scoring_audit_for_engine_candidate():
+    class _MalformedScoringRuntime:
+        def run_round(self, *args, **kwargs):
+            return type("MalformedScoringRound", (), {"audits": ()})()
+
+    runtime = _runtime(
+        "engine_a_missing_audit",
+        scoring_runtime=_MalformedScoringRuntime(),
+    )
+
+    with pytest.raises(ValueError, match="missing scoring audit for engine_a/BTCUSDT"):
+        runtime.evaluate(_runtime_input(), now=13.0)
+
+
 def test_runtime_hard_blocked_logs_explicit_reasons():
-    runtime = EngineARuntime(scoring_runtime=_scoring_runtime(), risk_runtime=_risk_runtime())
+    runtime = _runtime("engine_a_hard_blocked")
     runtime_input = _runtime_input(
         blocker_conditions=BlockerCondition(is_stale_hard=True, is_pair_suspended=True),
     )
@@ -190,7 +262,7 @@ def test_runtime_hard_blocked_logs_explicit_reasons():
 
 
 def test_runtime_rejected_by_ranking_is_auditable():
-    runtime = EngineARuntime(scoring_runtime=_scoring_runtime(), risk_runtime=_risk_runtime())
+    runtime = _runtime("engine_a_rejected_ranking")
     peer = ScoringCandidateInput(
         engine_id="engine_b",
         pair="ETHUSDT",
@@ -229,7 +301,7 @@ def test_runtime_rejected_by_ranking_is_auditable():
 
 
 def test_runtime_rejected_by_portfolio_is_auditable():
-    runtime = EngineARuntime(scoring_runtime=_scoring_runtime(), risk_runtime=_risk_runtime())
+    runtime = _runtime("engine_a_rejected_portfolio")
     result = runtime.evaluate(
         _runtime_input(
             portfolio=_portfolio_state(remaining_gross_capacity=10.0),
@@ -253,7 +325,7 @@ def test_runtime_cannot_bypass_risk_runtime():
             cluster_cap=5000.0,
         )
     )
-    runtime = EngineARuntime(scoring_runtime=_scoring_runtime(), risk_runtime=risk_runtime)
+    runtime = _runtime("engine_a_risk_runtime", risk_runtime=risk_runtime)
 
     result = runtime.evaluate(_runtime_input(projected_size=1000.0), now=50.0)
 

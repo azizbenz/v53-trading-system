@@ -107,17 +107,16 @@ class TestStaleHardGuard:
         result = evaluate_staleness("BTC", "trade", 1.0, soft_threshold_s=5.0, hard_threshold_s=30.0)
         assert result.verdict == StaleVerdict.FRESH
 
-    def test_exchange_stale_shadow_is_logged_only(self):
+    def test_exchange_stale_shadow_is_blocking(self):
         result = evaluate_exchange_staleness(
             "BTC",
             "trade",
             local_timestamp=100.5,
             exchange_timestamp=100.0,
             runtime_mode=RuntimeMode.SHADOW,
-            stale_threshold_s=0.2,
         )
-        assert result.verdict == StaleVerdict.DEGRADED
-        assert result.blocked is False
+        assert result.verdict == StaleVerdict.HARD_STALE
+        assert result.blocked is True
 
     def test_exchange_stale_micro_live_is_blocking(self):
         result = evaluate_exchange_staleness(
@@ -126,7 +125,6 @@ class TestStaleHardGuard:
             local_timestamp=100.5,
             exchange_timestamp=100.0,
             runtime_mode=RuntimeMode.MICRO_LIVE,
-            stale_threshold_s=0.2,
         )
         assert result.verdict == StaleVerdict.HARD_STALE
         assert result.blocked is True
@@ -138,10 +136,33 @@ class TestStaleHardGuard:
             local_timestamp=100.5,
             exchange_timestamp=100.0,
             runtime_mode=RuntimeMode.LIVE,
-            stale_threshold_s=0.2,
         )
         assert result.verdict == StaleVerdict.HARD_STALE
         assert result.blocked is True
+
+    def test_exchange_stale_local_replay_is_degraded(self):
+        result = evaluate_exchange_staleness(
+            "BTC",
+            "trade",
+            local_timestamp=100.5,
+            exchange_timestamp=100.0,
+            runtime_mode=RuntimeMode.LOCAL_REPLAY,
+        )
+        assert result.verdict == StaleVerdict.DEGRADED
+        assert result.blocked is False
+
+    def test_exchange_reverse_clock_skew_is_detected(self):
+        result = evaluate_exchange_staleness(
+            "BTC",
+            "trade",
+            local_timestamp=100.0,
+            exchange_timestamp=100.5,
+            runtime_mode=RuntimeMode.SHADOW,
+        )
+        assert result.verdict == StaleVerdict.HARD_STALE
+        assert result.blocked is True
+        assert result.delta_s == pytest.approx(0.5)
+        assert result.signed_delta_s == pytest.approx(-0.5)
 
 
 class TestFreshnessReporter:

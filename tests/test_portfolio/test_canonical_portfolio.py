@@ -5,7 +5,10 @@ from __future__ import annotations
 import portfolio
 from portfolio import OrchestratorConfig, OrchestratorResult, run_portfolio_pipeline
 from portfolio_minimal.allocation_router.base_size_builder import SizeProfile
-from portfolio_minimal.opportunity_selector.candidate_pool_builder import OpportunityCandidate
+from portfolio_minimal.opportunity_selector.candidate_pool_builder import (
+    CANDIDATE_POOL_FRESHNESS_DISABLED,
+    OpportunityCandidate,
+)
 from portfolio_minimal.opportunity_selector.eligibility_filter import PortfolioSnapshot
 from portfolio_minimal.portfolio_orchestrator import (
     OrchestratorConfig as ImplOrchestratorConfig,
@@ -58,6 +61,7 @@ def test_portfolio_facade_runs_minimal_pipeline():
             remaining_beta_capacity=1.0,
             remaining_cluster_capacity={"btc_cluster": 500.0},
         ),
+        freshness_policy=CANDIDATE_POOL_FRESHNESS_DISABLED,
     )
 
     result = run_portfolio_pipeline((candidate,), config)

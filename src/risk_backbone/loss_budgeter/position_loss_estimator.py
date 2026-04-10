@@ -36,8 +36,8 @@ def estimate_position_loss(
     """
     if entry_price <= 0:
         raise ValueError(f"entry_price must be positive, got {entry_price}")
-    if stop_price < 0:
-        raise ValueError(f"stop_price must be non-negative, got {stop_price}")
+    if stop_price <= 0:
+        raise ValueError(f"stop_price must be positive, got {stop_price}")
 
     loss_pct = abs(entry_price - stop_price) / entry_price
     loss_amount = size * loss_pct

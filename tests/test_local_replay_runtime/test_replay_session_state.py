@@ -146,11 +146,19 @@ def test_replay_session_state_store_persists_export_completion():
                     timestamp=1_700_000_000.0,
                 ),
             ),
-            feature_bridge_payload={"bridge_status": "ok"},
-            parity_diagnostics_payload={
-                "parity_status": "ok",
-                "decision_match_rate": 1.0,
+            feature_bridge_payload={
+                "bridge_status": "ok",
+                "dataset_id": "dataset-session-store-1",
+                "feature_set_version": "2.0.0",
+                "transform_set_version": "2.0.0",
+                "pairs": ["BTCUSDT"],
+                "engines": ["engine_a"],
             },
+        parity_diagnostics_payload={
+            "parity_status": "ok",
+            "dataset_id": "dataset-session-store-1",
+            "decision_match_rate": 1.0,
+        },
             review_notes=("session_store",),
         )
         session_config = build_replay_session_config(
@@ -188,5 +196,28 @@ def test_replay_session_state_store_persists_export_completion():
         assert state.replay_metrics_ready is True
         assert state.replay_dtr_ready is True
         assert len(state.artifact_paths) == 6
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_replay_session_state_store_backs_up_corrupted_state_and_marks_last_error():
+    output_dir = _scratch_dir("session_store_corrupted")
+    shutil.rmtree(output_dir, ignore_errors=True)
+    output_dir.mkdir(parents=True, exist_ok=False)
+    try:
+        state_path = output_dir / "replay_session_state.json"
+        state_path.write_text("{ invalid json", encoding="utf-8")
+
+        store = ReplaySessionStateStore(
+            config=ReplaySessionStoreConfig(
+                state_dir=output_dir,
+                persist_state=True,
+            )
+        )
+        state = store.build_state()
+
+        assert state_path.with_suffix(".corrupted").exists()
+        assert "state_file_corrupted" in state.last_error
+        assert state.lifecycle_state == "idle"
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)

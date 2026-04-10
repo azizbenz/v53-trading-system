@@ -124,12 +124,8 @@ def _validate_shadow_import_consistency(
         raise MicroLiveInputError(
             "Build-12 Micro-live requires replay import_transform_whitelist_status=ok"
         )
-    if replay_import.signature_check_status in {
-        "trust_store_unavailable",
-        "key_id_unknown",
-        "key_revoked",
-        "payload_hash_mismatch",
-    }:
+    if replay_import.signature_check_status != "verified":
+        # BS-40: allowlist — only "verified" passes
         raise MicroLiveInputError(
             "Build-12 Micro-live requires a non-rejected replay import_signature_check_status"
         )
@@ -826,12 +822,8 @@ def run_micro_live_gate(
         f"import transform whitelist gate: {reason}"
         for reason in micro_live_input.import_transform_whitelist_reasons
     )
-    if micro_live_input.import_signature_check_status in {
-        "trust_store_unavailable",
-        "key_id_unknown",
-        "key_revoked",
-        "payload_hash_mismatch",
-    }:
+    if micro_live_input.import_signature_check_status != "verified":
+        # BS-40: allowlist — only "verified" passes
         hard_blocking_reasons.append(
             "Build-12 Micro-live requires a non-rejected import_signature_check_status"
         )

@@ -39,6 +39,7 @@ _ACCEPTED_ONBOARDING_REVIEW_STATES = frozenset(
 _REJECTED_IMPORT_COMPATIBILITY_STATUSES = frozenset({"rejected"})
 _REJECTED_IMPORT_SIGNATURE_STATUSES = frozenset(
     {
+        "signature_invalid",
         "trust_store_unavailable",
         "key_id_unknown",
         "key_revoked",
@@ -1859,6 +1860,11 @@ class LiveLightRunSummary(BaseModel, frozen=True):
 
 ShadowValidationSet.model_rebuild()
 
+LiveInput = LiveLightInput
+LiveDecision = LiveLightDecision
+LiveExecutionIntent = LiveLightExecutionIntent
+LiveRunSummary = LiveLightRunSummary
+
 
 __all__ = [
     "ShadowTruthSet",
@@ -1885,6 +1891,10 @@ __all__ = [
     "MicroLiveDecision",
     "MicroLiveExecutionPlan",
     "MicroLiveRunSummary",
+    "LiveInput",
+    "LiveDecision",
+    "LiveExecutionIntent",
+    "LiveRunSummary",
     "LiveLightInput",
     "LiveLightDecision",
     "LiveLightExecutionIntent",

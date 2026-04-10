@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 import math
+from typing import Protocol
 
 from pydantic import BaseModel, Field
 
@@ -40,19 +41,13 @@ from .engine_a_runner import (
     EngineAOutput,
     run_engine_a,
 )
-
-
-_ENGINE_A_FEATURE_WEIGHTS: dict[str, float] = {
-    "structure": 0.40,
-    "context": 0.25,
-    "flow": 0.15,
-    "cost_preference": 0.20,
-}
+from .conviction_builder_a import ENGINE_A_CONVICTION_FEATURE_WEIGHTS
 
 
 class EngineARuntimeStatus(StrEnum):
     NO_TRADE = "no_trade"
     CIRCUIT_BREAKER_BLOCKED = "circuit_breaker_blocked"
+    HOOK_BLOCKED = "hook_blocked"
     HARD_BLOCKED = "hard_blocked"
     REJECTED_RANKING = "rejected_ranking"
     REJECTED_PORTFOLIO = "rejected_portfolio"
@@ -66,7 +61,7 @@ class EngineARuntimeInput(BaseModel, frozen=True):
     """Inputs required to run Engine A through Build-5 and Build-4."""
 
     engine_inputs: EngineAInput
-    timestamp_ms: int
+    timestamp_ms: int = Field(..., ge=1_000_000_000_000)  # BS-86: must be milliseconds, not seconds
     portfolio: PortfolioState
     projected_size: float
     projected_loss: float | None = None
@@ -81,6 +76,41 @@ class EngineARuntimeInput(BaseModel, frozen=True):
     max_selections: int = 1
     corr_penalty: float = 0.0
     risk_penalty: float = 0.0
+
+
+class EngineAPreEntryValidationInput(BaseModel, frozen=True):
+    """Bounded typed input for the Engine A pre-entry confirmation hook."""
+
+    context_id: str = Field(..., min_length=1)
+    pair: str = Field(..., min_length=1)
+    engine_id: str = Field(..., min_length=1)
+    scoring_version: str = Field(..., min_length=1)
+    raw_score: float = 0.0
+    expected_cost: float = 0.0
+    expected_ce: float = 0.0
+    conviction: str = ""
+    tier: str = ""
+    structure_verdict: str = ""
+    context_verdict: str = ""
+    cost_verdict: str = ""
+
+
+class EngineAPreEntryValidationOutcome(BaseModel, frozen=True):
+    """Deterministic outcome of the bounded Engine A pre-entry hook."""
+
+    accepted: bool = True
+    reason_codes: tuple[str, ...] = ()
+    detail: str = ""
+
+
+class EngineAPreEntryValidationHook(Protocol):
+    """Bounded hook surface injected into the real Engine A runtime rail."""
+
+    def __call__(
+        self,
+        hook_input: EngineAPreEntryValidationInput,
+    ) -> EngineAPreEntryValidationOutcome:
+        ...
 
 
 class EngineARuntimeResult(BaseModel, frozen=True):
@@ -103,11 +133,15 @@ class EngineARuntime:
         *,
         scoring_runtime: ScoringRuntime,
         risk_runtime: RiskRuntime,
-        circuit_breaker: EmergencyCircuitBreaker | None = None,
+        circuit_breaker: EmergencyCircuitBreaker,
+        pre_entry_validation_hook: EngineAPreEntryValidationHook | None = None,
     ) -> None:
+        if circuit_breaker is None:
+            raise ValueError("EngineARuntime requires a circuit_breaker")
         self._scoring_runtime = scoring_runtime
         self._risk_runtime = risk_runtime
         self._circuit_breaker = circuit_breaker
+        self._pre_entry_validation_hook = pre_entry_validation_hook
 
     def evaluate(
         self,
@@ -118,7 +152,7 @@ class EngineARuntime:
         """Evaluate Engine A through the canonical Build-6 path."""
         timestamp = _resolve_runtime_now(runtime_input.timestamp_ms, now, context="EngineARuntime.evaluate")
         _require_scoring_version(runtime_input.engine_inputs.scoring_version, context="EngineARuntime.evaluate")
-        if self._circuit_breaker is not None and not self._circuit_breaker.is_trading_allowed():
+        if not self._circuit_breaker.is_trading_allowed():
             return _build_circuit_breaker_blocked_result(runtime_input, self._circuit_breaker)
         engine_output = run_engine_a(runtime_input.engine_inputs)
         logs = list(engine_output.log_entries)
@@ -126,6 +160,36 @@ class EngineARuntime:
         if engine_output.decision != "emit":
             return EngineARuntimeResult(
                 status=EngineARuntimeStatus.NO_TRADE,
+                engine_output=engine_output,
+                log_entries=tuple(logs),
+            )
+
+        hook_outcome = self._run_pre_entry_validation_hook(runtime_input, engine_output)
+        if hook_outcome is not None and not hook_outcome.accepted:
+            detail = hook_outcome.detail.strip()
+            if not detail:
+                detail = (
+                    "compiled engine_a pre-entry confirmation blocked "
+                    f"{engine_output.pair} / {engine_output.engine_id}"
+                )
+            reasons = hook_outcome.reason_codes or (detail,)
+            logs.append(
+                EngineALogEntry(
+                    event="engine_a_hook_blocked",
+                    pair=engine_output.pair,
+                    regime=runtime_input.engine_inputs.regime,
+                    raw_score=engine_output.raw_score,
+                    block_scores=engine_output.block_scores,
+                    expected_cost=engine_output.expected_cost,
+                    ce_expected=engine_output.ce_expected,
+                    conviction=engine_output.conviction.value,
+                    tier=engine_output.tier_suggestion.value,
+                    reasons=reasons,
+                    scoring_version=engine_output.scoring_version,
+                ),
+            )
+            return EngineARuntimeResult(
+                status=EngineARuntimeStatus.HOOK_BLOCKED,
                 engine_output=engine_output,
                 log_entries=tuple(logs),
             )
@@ -139,10 +203,11 @@ class EngineARuntime:
             max_selections=runtime_input.max_selections,
             now=timestamp,
         )
-        scoring_audit = next(
-            audit
-            for audit in scoring_round.audits
-            if audit.engine_id == "engine_a" and audit.pair == engine_output.pair
+        scoring_audit = _resolve_scoring_audit(
+            scoring_round,
+            engine_id="engine_a",
+            pair=engine_output.pair,
+            context="EngineARuntime.evaluate",
         )
 
         penalized_score = max(
@@ -331,6 +396,33 @@ class EngineARuntime:
             log_entries=tuple(logs),
         )
 
+    def _run_pre_entry_validation_hook(
+        self,
+        runtime_input: EngineARuntimeInput,
+        engine_output: EngineAOutput,
+    ) -> EngineAPreEntryValidationOutcome | None:
+        if self._pre_entry_validation_hook is None:
+            return None
+        return self._pre_entry_validation_hook(
+            EngineAPreEntryValidationInput(
+                context_id=(
+                    f"{engine_output.pair}:{runtime_input.timestamp_ms}:"
+                    f"{engine_output.engine_id}:{engine_output.scoring_version}"
+                ),
+                pair=engine_output.pair,
+                engine_id=engine_output.engine_id,
+                scoring_version=engine_output.scoring_version,
+                raw_score=engine_output.raw_score,
+                expected_cost=engine_output.expected_cost,
+                expected_ce=engine_output.ce_expected,
+                conviction=engine_output.conviction.value,
+                tier=engine_output.tier_suggestion.value,
+                structure_verdict=engine_output.structure_verdict.value,
+                context_verdict=engine_output.context_verdict.value,
+                cost_verdict=engine_output.cost_verdict.value,
+            )
+        )
+
 
 def _build_circuit_breaker_blocked_result(
     runtime_input: EngineARuntimeInput,
@@ -360,14 +452,14 @@ def _build_circuit_breaker_blocked_result(
 def _build_scoring_candidate(runtime_input: EngineARuntimeInput, engine_output: EngineAOutput) -> ScoringCandidateInput:
     raw_features = {
         key: engine_output.block_scores.get(key, 0.0)
-        for key in _ENGINE_A_FEATURE_WEIGHTS
+        for key in ENGINE_A_CONVICTION_FEATURE_WEIGHTS
     }
     return ScoringCandidateInput(
         engine_id="engine_a",
         pair=engine_output.pair,
         raw_features=raw_features,
-        allowed_features=frozenset(_ENGINE_A_FEATURE_WEIGHTS),
-        weights=dict(_ENGINE_A_FEATURE_WEIGHTS),
+        allowed_features=frozenset(ENGINE_A_CONVICTION_FEATURE_WEIGHTS),
+        weights=dict(ENGINE_A_CONVICTION_FEATURE_WEIGHTS),
         scoring_version=engine_output.scoring_version or runtime_input.engine_inputs.scoring_version,
         score_penalties=runtime_input.score_penalties,
         size_penalties=runtime_input.size_penalties,
@@ -404,6 +496,25 @@ def _require_scoring_version(scoring_version: str, *, context: str) -> str:
     if not normalized:
         raise ValueError(f"{context} requires non-empty scoring_version")
     return normalized
+
+
+def _resolve_scoring_audit(
+    scoring_round: ScoringRoundResult,
+    *,
+    engine_id: str,
+    pair: str,
+    context: str,
+) -> ScoringCandidateAudit:
+    matches = [
+        audit
+        for audit in scoring_round.audits
+        if audit.engine_id == engine_id and audit.pair == pair
+    ]
+    if not matches:
+        raise ValueError(f"{context} is missing scoring audit for {engine_id}/{pair}")
+    if len(matches) > 1:
+        raise ValueError(f"{context} found duplicate scoring audits for {engine_id}/{pair}")
+    return matches[0]
 
 
 def _build_signal_candidate(inputs: EngineAInput, engine_output: EngineAOutput, timestamp_ms: int) -> SignalCandidate:

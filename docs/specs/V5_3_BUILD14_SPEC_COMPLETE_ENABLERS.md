@@ -10,15 +10,24 @@
 
 Ce document couvre **Build-14** du plan officiel V5.3.
 
+## 0.0 Note de lecture active
+
+- ce document reste l’addendum des enablers Build-14 ; il ne remplace pas les builds canoniques
+- dans le repo actif, le rail gouverné courant Build-11 -> Build-13 lit déjà `profil=COMPLETE`
+- dans ce document, les mentions `Light`, `Live-Light` ou `Shadow intégral` doivent être lues comme des libellés historiques, sauf quand elles désignent explicitement une surface de compatibilité locale
+- `extension COMPLETE` désigne ici le rollout enrichi Build-14/15/16/17 au-delà du rail gouverné courant déjà ouvert
+
 Build-14 a une mission unique :
 
 > renforcer une architecture complete deja assumee en ajoutant les **briques
 > d’enrichissement strictement utiles**, sans casser la stabilite du rollout
-> LIGHT et sans confondre sophistication de recherche et valeur de production.
+> gouverné courant et sans confondre sophistication de recherche et valeur de production.
 
-`COMPLETE` désigne ici exclusivement l'enveloppe de rollout élargie.
-Le Shadow du profil `LIGHT` avec Build-14, A/B et les enrichissements activés
-à 100% en observation est appelé `Shadow intégral`.
+Le rail gouverné courant reste `profil=COMPLETE`.
+Dans ce document, l’`extension COMPLETE` désigne l’enveloppe de rollout élargie
+Build-14/15/16/17 au-delà de ce rail de base.
+Le Shadow avec Build-14, A/B et les enrichissements activés à 100% en
+observation garde le libellé historique `Shadow intégral`.
 
 Les composants couverts ici sont :
 
@@ -43,11 +52,11 @@ doctrine cible unique.
 
 Même si tout le code Complete (Builds 14→17) est implémenté et testé :
 
-1. **Light doit avoir tradé en Shadow intégral 30 jours consécutifs minimum** avant toute activation live Light
-2. **Light doit être stable en Live-Light** avant toute considération de Complete
-3. **Complete doit avoir tradé en shadow 30 jours consécutifs minimum** (en parallèle de Light live) avant toute activation Live-Complete
-4. **Non-régression Light obligatoire** pendant les 30 jours de shadow Complete — dégradation = désactivation + compteur à zéro
-5. **Rapport comparatif Light vs Complete** obligatoire et approuvé par l'opérateur avant Live-Complete
+1. **Le rail gouverné courant doit avoir tradé en Shadow intégral 30 jours consécutifs minimum** avant toute activation live sur ce rail
+2. **Le rail gouverné courant doit être stable en Live** avant toute considération d’extension COMPLETE
+3. **La configuration enrichie Build-14/15/16/17 doit avoir tradé en Shadow 30 jours consécutifs minimum** avant toute activation live élargie
+4. **Non-régression du rail gouverné courant obligatoire** pendant les 30 jours de shadow enrichi — dégradation = désactivation + compteur à zéro
+5. **Rapport comparatif rail gouverné courant vs configuration enrichie** obligatoire et approuvé par l'opérateur avant live élargi
 
 Le code est prêt ≠ le système est prêt. Seul le temps réel de marché valide un système de trading.
 
@@ -72,7 +81,7 @@ Un contrat seul, quelques readers isolés ou un socle analytique partiel ne suff
 Il ne doit pas être lu comme :
 
 - la preuve que Build-15/16/17 sont déjà activables
-- une autorisation à présenter `COMPLETE` comme déjà exécutable
+- une autorisation à présenter l’extension COMPLETE comme déjà exécutable
 
 En date du 31 mars 2026, le dépôt contient déjà :
 
@@ -84,7 +93,7 @@ Ce qui n’existe toujours pas à ce stade :
 
 - aucun moteur autonome Build-14
 - aucun bypass de A/B, du risk backbone ou du portfolio
-- aucune activation implicite de `COMPLETE`
+- aucune activation implicite de l’extension COMPLETE
 
 ## 0.2 Relation avec l’addendum, l’onboarding et LOCAL_REPLAY
 
@@ -111,7 +120,7 @@ Conséquences :
 
 Le Build-14 existe pour répondre à une question stratégique :
 
-> le rollout LIGHT stable peut-il être enrichi par des briques analytiques
+> le rail gouverné courant stable peut-il être enrichi par des briques analytiques
 > supplémentaires qui améliorent réellement la lecture du risque, de la
 > corrélation, de la microstructure et de la diversité d’edge, sans détériorer
 > la stabilité opérationnelle de l’architecture complète ?
@@ -130,11 +139,11 @@ En pratique, Build-14 doit permettre de tester, en environnement contrôlé :
 
 Build-14 n’est pas :
 
-- une activation implicite de la Complete
+- une activation implicite de l’extension COMPLETE
 - une autorisation à coder C et D en live
 - une excuse pour introduire des modules de prestige
 - une relance du scope recherche sans garde-fous
-- un abandon de la discipline Light
+- un abandon de la discipline du rail gouverné courant
 
 Build-14 est :
 
@@ -151,7 +160,7 @@ Build-14 est :
 Les conditions suivantes doivent être satisfaites :
 
 - Build-1 à Build-13 validés
-- `profil=LIGHT`, `runtime_mode=LIVE` techniquement stable
+- `profil=COMPLETE`, `runtime_mode=LIVE` techniquement stable
 - coûts réels suffisamment compris
 - A/B compris économiquement
 - portefeuille Light crédible
@@ -190,7 +199,7 @@ Les moteurs et paires disponibles génèrent-ils une vraie diversification d’e
 
 Build-14 ne peut pas commencer si une des conditions suivantes n’est pas satisfaite :
 
-- Live-Light techniquement fragile
+- le live gouverné courant techniquement fragile
 - réconciliation encore instable
 - coûts réels encore mal compris
 - A/B non stabilisés
@@ -203,7 +212,7 @@ Build-14 ne peut pas commencer si une des conditions suivantes n’est pas satis
 # 6. Périmètre du Build-14
 
 ## 6.1 Profil actif
-- état canonique d'observation initiale : `profil=LIGHT`, `runtime_mode=SHADOW`
+- état canonique d'observation initiale : `profil=COMPLETE`, `runtime_mode=SHADOW`
 - `Build-14` y entre comme enabler `SHADOW_ENABLED`
 - Build-14 enablers **activés à 100% en Shadow intégral** (`SHADOW_ENABLED`)
 
@@ -228,7 +237,7 @@ Les enablers sont activés à 100% pendant le `Shadow intégral` de 30 jours :
 - activation large de C live
 - activation large de D live
 - optimisation lourde non démontrée
-- extension COMPLETE live sans gates passées
+- extension live enrichie au-delà du rail gouverné courant sans gates passées
 
 ## 6.5 Règles d’activation obligatoires
 
@@ -237,7 +246,7 @@ Les enablers sont activés à 100% pendant le `Shadow intégral` de 30 jours :
 - jamais bypass de A/B/C/D
 - jamais bypass du risk backbone
 - jamais bypass du portfolio
-- jamais promotion implicite vers la Complete
+- jamais promotion implicite vers l’extension COMPLETE
 - Hard State : `CODED` → `SHADOW_ENABLED` → verdict → `SHADOW_VALIDATED` ou `DORMANT`
 
 ## 6.6 Angles morts critiques de Build-14
@@ -255,7 +264,7 @@ Toute brique Build-14 doit d’abord prouver trois choses :
 
 1. **utilité économique ou de pilotage**
 2. **stabilité technique**
-3. **non-régression Light**
+3. **non-régression du rail gouverné courant**
 
 Si elle échoue sur l’un des trois axes, elle ne doit pas être promue.
 

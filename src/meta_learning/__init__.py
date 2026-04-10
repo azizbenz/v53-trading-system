@@ -27,6 +27,10 @@ from meta_learning.contracts import (
     ReviewDecisionRecord,
     ReviewRecord,
     TradeLearningInput,
+    TradeLossAttribution,
+    TradeLossAttributionReport,
+    TradeLossEvidence,
+    TradeLossFailureModeSummary,
     HypothesisRecord,
 )
 from meta_learning.enums import (
@@ -78,6 +82,7 @@ from meta_learning.near_miss_analyzer import analyze_near_misses
 from meta_learning.post_trade_diagnostic_engine import build_post_trade_diagnostics
 from meta_learning.monitoring_projection import build_build9x_projection
 from meta_learning.merge_gates import evaluate_build9x_merge_gates
+from meta_learning.trade_loss_attribution import build_trade_loss_attribution_report
 from meta_learning.replay_bundle_builder import (
     build_replay_export_bundles,
     enrich_candidates_with_replay_refs,
@@ -98,6 +103,10 @@ __all__ = [
     "TradeLearningInput",
     "DiagnosticEvidence",
     "DiagnosticResult",
+    "TradeLossEvidence",
+    "TradeLossAttribution",
+    "TradeLossFailureModeSummary",
+    "TradeLossAttributionReport",
     "ReviewDecisionRecord",
     "ArchiveEligibilityRecord",
     "LearningCapacitySnapshot",
@@ -132,6 +141,7 @@ __all__ = [
     "LiveMutationForbiddenError",
     "ImplicitPromotionForbiddenError",
     "build_post_trade_diagnostics",
+    "build_trade_loss_attribution_report",
     "classify_mistakes",
     "analyze_near_misses",
     "build_breakdown_report",

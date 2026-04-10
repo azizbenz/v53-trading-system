@@ -19,7 +19,7 @@
   - création d’un profil "BACKTEST" autonome
   - moteur de recherche libre non gouverné dans la VPS
   - exécution de code stratégie arbitraire uploadé
-  - bypass des builds officiels Shadow / Micro-live / Live-Light
+  - bypass des builds officiels Shadow / Micro-live / Live
 
 ---
 
@@ -158,6 +158,9 @@ Il doit être traité comme :
 - un runner local utilisant les modules canoniques V5.3
 
 ## 4.2 Relation avec Build-11 Shadow
+Lecture active :
+- le local replay doit reutiliser la logique du Shadow gouverne courant
+- `Shadow Light` reste seulement un libelle historique de document, pas le nom du rail runtime actif
 
 Le local replay doit réutiliser la même **logique** que le Shadow Light.
 
@@ -423,6 +426,9 @@ Le runtime doit toujours être défini par :
 - `runtime_mode`
 
 Exemples :
+Lecture active du repo courant :
+- le rail gouverne actif s'illustre en pratique par `COMPLETE + LOCAL_REPLAY`, `COMPLETE + SHADOW`, `COMPLETE + MICRO_LIVE`, `COMPLETE + LIVE`
+- `LIGHT + LOCAL_REPLAY` reste une surface de compatibilite explicite
 - `LIGHT + LOCAL_REPLAY`
 - `LIGHT + SHADOW`
 - `LIGHT + MICRO_LIVE`

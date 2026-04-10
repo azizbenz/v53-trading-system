@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from html import escape
 import json
 import sys
 from pathlib import Path
@@ -97,6 +98,192 @@ _PAIR_BETA_MAP = {
 }
 
 
+def _quote_powershell_arg(value: str) -> str:
+    escaped = value.replace('"', '`"')
+    if any(character.isspace() or character in '"`' for character in value):
+        return f'"{escaped}"'
+    return escaped
+
+
+def _build_complete_dashboard_command(
+    *,
+    output_dir: Path,
+    demo: bool,
+    selected_pairs: tuple[str, ...],
+) -> str:
+    args = ["python", ".\\scripts\\run_complete_dashboard.py"]
+    if demo:
+        args.append("--demo")
+    args.extend(["--output-dir", _quote_powershell_arg(str(output_dir))])
+    for pair in selected_pairs:
+        args.extend(["--pair", pair])
+    return " ".join(args)
+
+
+def _build_pair_selection_assistant(
+    *,
+    output_dir: Path,
+    demo: bool,
+    selected_pairs: tuple[str, ...],
+) -> tuple[str, str]:
+    selected_set = set(selected_pairs)
+    choices_html = "".join(
+        (
+            "<label class='selection-choice'>"
+            f"<input type='checkbox' data-complete-pair value='{escape(pair)}'"
+            f"{' checked' if pair in selected_set else ''}>"
+            f"<span>{escape(pair)}</span>"
+            "</label>"
+        )
+        for pair in _COMPLETE_PAIR_ORDER
+    )
+    initial_command = _build_complete_dashboard_command(
+        output_dir=output_dir,
+        demo=demo,
+        selected_pairs=selected_pairs,
+    )
+    html = (
+        "<section class='section selection-assistant' id='section-complete-pair-selection'>"
+        "<h2>Governed Complete Pair Selection</h2>"
+        "<p class='selection-assistant-note'>"
+        "Interactive local helper only. The current dashboard remains tied to the exported payload until you relaunch "
+        "the launcher with the generated governed command."
+        "</p>"
+        "<div class='selection-toolbar'>"
+        "<label><span>First N Canonical Pairs</span>"
+        f"<input id='complete-pair-count' type='number' min='1' max='{len(_COMPLETE_PAIR_ORDER)}' value='{len(selected_pairs)}'>"
+        "</label>"
+        "<button id='complete-pair-apply-count' type='button'>Apply First N</button>"
+        "<button id='complete-pair-select-all' type='button'>Select All 12</button>"
+        "</div>"
+        f"<p class='selection-summary' id='complete-pair-summary'>{len(selected_pairs)}/{len(_COMPLETE_PAIR_ORDER)} selected</p>"
+        f"<div class='selection-grid'>{choices_html}</div>"
+        f"<pre class='selection-command'><code id='complete-pair-command'>{escape(initial_command)}</code></pre>"
+        "<div class='selection-actions'>"
+        "<button id='complete-pair-copy-command' type='button'>Copy PowerShell Command</button>"
+        "</div>"
+        "</section>"
+    )
+    script = f"""
+  <script>
+    (() => {{
+      const pairInputs = Array.from(document.querySelectorAll("[data-complete-pair]"));
+      const pairCountInput = document.getElementById("complete-pair-count");
+      const applyCountButton = document.getElementById("complete-pair-apply-count");
+      const selectAllButton = document.getElementById("complete-pair-select-all");
+      const copyButton = document.getElementById("complete-pair-copy-command");
+      const summaryEl = document.getElementById("complete-pair-summary");
+      const commandEl = document.getElementById("complete-pair-command");
+      if (!pairInputs.length || !pairCountInput || !applyCountButton || !selectAllButton || !copyButton || !summaryEl || !commandEl) {{
+        return;
+      }}
+
+      const allPairs = {json.dumps(list(_COMPLETE_PAIR_ORDER))};
+      const demo = {json.dumps(demo)};
+      const outputDir = {json.dumps(str(output_dir))};
+
+      function quoteArgument(value) {{
+        return /\\s/.test(value) ? '"' + value.replaceAll('"', '`"') + '"' : value;
+      }}
+
+      function selectedPairs() {{
+        return pairInputs.filter((input) => input.checked).map((input) => input.value);
+      }}
+
+      function commandFor(selected) {{
+        if (!selected.length) {{
+          return "Select at least one canonical COMPLETE pair before relaunch.";
+        }}
+        const args = ["python", ".\\\\scripts\\\\run_complete_dashboard.py"];
+        if (demo) {{
+          args.push("--demo");
+        }}
+        args.push("--output-dir", quoteArgument(outputDir));
+        selected.forEach((pair) => {{
+          args.push("--pair", pair);
+        }});
+        return args.join(" ");
+      }}
+
+      function sync() {{
+        const selected = selectedPairs();
+        summaryEl.textContent = `${{selected.length}}/${{allPairs.length}} selected`;
+        commandEl.textContent = commandFor(selected);
+      }}
+
+      function applyFirstN() {{
+        const parsed = Number.parseInt(pairCountInput.value, 10);
+        const bounded = Number.isFinite(parsed) ? Math.min(allPairs.length, Math.max(1, parsed)) : allPairs.length;
+        pairCountInput.value = String(bounded);
+        pairInputs.forEach((input, index) => {{
+          input.checked = index < bounded;
+        }});
+        sync();
+      }}
+
+      pairInputs.forEach((input) => {{
+        input.addEventListener("change", () => {{
+          pairCountInput.value = String(selectedPairs().length || 1);
+          sync();
+        }});
+      }});
+      applyCountButton.addEventListener("click", applyFirstN);
+      selectAllButton.addEventListener("click", () => {{
+        pairInputs.forEach((input) => {{
+          input.checked = true;
+        }});
+        pairCountInput.value = String(allPairs.length);
+        sync();
+      }});
+      copyButton.addEventListener("click", async () => {{
+        try {{
+          await navigator.clipboard.writeText(commandEl.textContent || "");
+          copyButton.textContent = "Copied";
+          window.setTimeout(() => {{
+            copyButton.textContent = "Copy PowerShell Command";
+          }}, 1200);
+        }} catch (_error) {{
+          copyButton.textContent = "Copy failed";
+          window.setTimeout(() => {{
+            copyButton.textContent = "Copy PowerShell Command";
+          }}, 1200);
+        }}
+      }});
+
+      sync();
+    }})();
+  </script>
+"""
+    return html, script
+
+
+def _resolve_selected_pairs(
+    *,
+    selected_pairs: tuple[str, ...] = (),
+    selected_pair_count: int | None = None,
+) -> tuple[str, ...]:
+    available_pairs = tuple(_COMPLETE_PAIR_ORDER)
+    available_set = set(available_pairs)
+    if selected_pairs:
+        normalized_requested = tuple(
+            dict.fromkeys(str(pair).strip().upper() for pair in selected_pairs if str(pair).strip())
+        )
+        invalid_pairs = tuple(pair for pair in normalized_requested if pair not in available_set)
+        if invalid_pairs:
+            raise ValueError(
+                "selected_pairs must stay within the canonical Complete universe: "
+                + ", ".join(invalid_pairs)
+            )
+        resolved = tuple(pair for pair in available_pairs if pair in set(normalized_requested))
+        if selected_pair_count is not None and selected_pair_count != len(resolved):
+            raise ValueError("selected_pair_count must match the explicit selected_pairs length")
+        return resolved
+    pair_count = len(available_pairs) if selected_pair_count is None else selected_pair_count
+    if pair_count < 1 or pair_count > len(available_pairs):
+        raise ValueError(f"selected_pair_count must stay within 1..{len(available_pairs)}")
+    return available_pairs[:pair_count]
+
+
 def _configure_stdio() -> None:
     stdout = getattr(sys, "stdout", None)
     if stdout is not None and hasattr(stdout, "reconfigure"):
@@ -122,9 +309,9 @@ def _active_engines_for_pair(pair: str) -> tuple[str, ...]:
     return tuple(engines)
 
 
-def _build_demo_pairs():
+def _build_demo_pairs(selected_pairs: tuple[str, ...]):
     cards = []
-    for index, pair in enumerate(_COMPLETE_PAIR_ORDER):
+    for index, pair in enumerate(selected_pairs):
         health = PairHealthLevel.HEALTHY
         is_active = True
         suspension_reason = ""
@@ -201,8 +388,8 @@ def _build_demo_engines():
     )
 
 
-def _build_demo_snapshot():
-    pairs = _build_demo_pairs()
+def _build_demo_snapshot(selected_pairs: tuple[str, ...]):
+    pairs = _build_demo_pairs(selected_pairs)
     engines = _build_demo_engines()
     snapshot = collect_monitoring_snapshot(
         correlation_id="corr-complete-demo",
@@ -224,7 +411,7 @@ def _build_demo_snapshot():
             queue_backlog=44,
             backlog_high_water_mark=96,
             reconnect_count=2,
-            stale_pairs=("MATICUSDT",),
+            stale_pairs=tuple(pair for pair in ("MATICUSDT",) if pair in selected_pairs),
             stale_spike_count=1,
             recovery_retry_count=1,
             dtr_loss_count=0,
@@ -265,7 +452,39 @@ def _build_demo_snapshot():
     return snapshot
 
 
-def _build_demo_supplement() -> CompleteDashboardSupplement:
+def _filter_pair_labeled_values(
+    values: tuple[str, ...],
+    selected_pairs: tuple[str, ...],
+) -> tuple[str, ...]:
+    selected = set(selected_pairs)
+    return tuple(
+        value
+        for value in values
+        if value.split(":", 1)[0].strip().upper() in selected
+    )
+
+
+def _build_demo_supplement(selected_pairs: tuple[str, ...]) -> CompleteDashboardSupplement:
+    filtered_top_risk = _filter_pair_labeled_values(
+        ("SOLUSDT:14%", "AVAXUSDT:12%", "BTCUSDT:11%"),
+        selected_pairs,
+    )
+    filtered_pair_risk = _filter_pair_labeled_values(
+        ("SOLUSDT:14%", "AVAXUSDT:12%", "BTCUSDT:11%"),
+        selected_pairs,
+    )
+    pair_health_transition_summary = (
+        "1 stale transition in the last governed window"
+        if "MATICUSDT" in selected_pairs
+        else "No stale pair transition recorded in the selected governed scope"
+    )
+    if "NEARUSDT" in selected_pairs:
+        pair_health_transition_summary = f"{pair_health_transition_summary}; NEAR stayed suspended"
+    break_even_summary = (
+        ("engine_c drift alert", "MATICUSDT below break-even")
+        if "MATICUSDT" in selected_pairs
+        else ("engine_c drift alert",)
+    )
     pair_metadata = tuple(
         CompletePairMetadata(
             pair=pair,
@@ -274,13 +493,13 @@ def _build_demo_supplement() -> CompleteDashboardSupplement:
             beta_pair=_PAIR_BETA_MAP[pair],
             active_engines=_active_engines_for_pair(pair),
         )
-        for pair in _COMPLETE_PAIR_ORDER
+        for pair in selected_pairs
     )
     engine_metadata = (
         CompleteEngineMetadata(
             engine_id="engine_a",
             dominant_cluster="btc_core",
-            active_pairs=tuple(pair for pair in _COMPLETE_PAIR_ORDER if "engine_a" in _active_engines_for_pair(pair)),
+            active_pairs=tuple(pair for pair in selected_pairs if "engine_a" in _active_engines_for_pair(pair)),
             cost_p90_bps=1.9,
             sterilization_note="low sterilization",
             marginal_cost_note="baseline reference",
@@ -289,7 +508,7 @@ def _build_demo_supplement() -> CompleteDashboardSupplement:
         CompleteEngineMetadata(
             engine_id="engine_b",
             dominant_cluster="alts_beta",
-            active_pairs=tuple(pair for pair in _COMPLETE_PAIR_ORDER if "engine_b" in _active_engines_for_pair(pair)),
+            active_pairs=tuple(pair for pair in selected_pairs if "engine_b" in _active_engines_for_pair(pair)),
             cost_p90_bps=2.3,
             sterilization_note="moderate sterilization",
             marginal_cost_note="higher than A but still positive",
@@ -298,7 +517,7 @@ def _build_demo_supplement() -> CompleteDashboardSupplement:
         CompleteEngineMetadata(
             engine_id="engine_c",
             dominant_cluster="alts_expansion",
-            active_pairs=tuple(pair for pair in _COMPLETE_PAIR_ORDER if "engine_c" in _active_engines_for_pair(pair)),
+            active_pairs=tuple(pair for pair in selected_pairs if "engine_c" in _active_engines_for_pair(pair)),
             cost_p90_bps=2.9,
             sterilization_note="watch C on crowded expansions",
             marginal_cost_note="C costs +0.5bps vs A baseline",
@@ -307,7 +526,7 @@ def _build_demo_supplement() -> CompleteDashboardSupplement:
         CompleteEngineMetadata(
             engine_id="engine_d",
             dominant_cluster="alts_rotation",
-            active_pairs=tuple(pair for pair in _COMPLETE_PAIR_ORDER if "engine_d" in _active_engines_for_pair(pair)),
+            active_pairs=tuple(pair for pair in selected_pairs if "engine_d" in _active_engines_for_pair(pair)),
             cost_p90_bps=3.4,
             sterilization_note="high review pressure",
             marginal_cost_note="D costs +1.1bps vs do-nothing baseline",
@@ -323,17 +542,17 @@ def _build_demo_supplement() -> CompleteDashboardSupplement:
         k_eff=3.4,
         variance_estimate=0.0284,
         cluster_pressure_summary="alts_expansion still dominates gross risk; btc_core remains secondary",
-        top_risk_contributors=("SOLUSDT:14%", "AVAXUSDT:12%", "engine_c:11%"),
+        top_risk_contributors=filtered_top_risk or ("engine_c:11%",),
         engine_risk_contributors=("engine_a:29%", "engine_b:24%", "engine_c:27%", "engine_d:20%"),
-        pair_risk_contributors=("SOLUSDT:14%", "AVAXUSDT:12%", "BTCUSDT:11%"),
+        pair_risk_contributors=filtered_pair_risk or ("BTCUSDT:11%",),
         cost_drift_vs_light_bps=0.42,
-        pair_health_transition_summary="1 stale transition in the last governed window; NEAR stayed suspended",
+        pair_health_transition_summary=pair_health_transition_summary,
         io_status="disk_io nominal; queue disk spill not triggered",
         end_to_end_latency_ms=420,
         hard_block_rate_pct=7.5,
         ranking_rejection_rate_pct=22.0,
         phantom_trade_count=3,
-        break_even_summary=("engine_c drift alert", "MATICUSDT below break-even"),
+        break_even_summary=break_even_summary,
         edge_drift_summary=("engine_d marginal edge compressed", "engine_c still positive but fragile"),
         covariance_summary="Ledoit-Wolf shrinkage matrix available",
         top_correlations=("SOLUSDT-AVAXUSDT:0.82", "ADAUSDT-MATICUSDT:0.79", "BTCUSDT-ETHUSDT:0.74"),
@@ -352,12 +571,15 @@ def _build_demo_supplement() -> CompleteDashboardSupplement:
             "D remains gated unless marginal value recovers",
             "Rollback to Light remains available",
         ),
+        selected_pairs=selected_pairs,
+        available_pairs=_COMPLETE_PAIR_ORDER,
+        pair_selection_source="operator_selected_complete_scope",
         pair_metadata=pair_metadata,
         engine_metadata=engine_metadata,
     )
 
 
-def _availability_sections() -> tuple[DashboardSection, ...]:
+def _availability_sections(selected_pairs: tuple[str, ...]) -> tuple[DashboardSection, ...]:
     active_modules = tuple(module.module_name for module in get_modules_for_profile(ProfileId.COMPLETE))
     runtime_engines = tuple(
         engine.value for engine in sorted(get_engines_for_profile(ProfileId.COMPLETE), key=lambda item: item.value)
@@ -377,9 +599,9 @@ def _availability_sections() -> tuple[DashboardSection, ...]:
                 DashboardCard(
                     key="complete_overview_surface",
                     label="Canonical Surface",
-                    value=f"{len(complete_pairs)} pairs / 4 engines",
+                    value=f"{len(selected_pairs)}/{len(complete_pairs)} pairs / 4 engines",
                     status="info",
-                    detail=", ".join(complete_pairs),
+                    detail=f"selected={', '.join(selected_pairs)} / universe={', '.join(complete_pairs)}",
                 ),
             ),
         ),
@@ -430,7 +652,13 @@ def _planned_section(title: str, detail: str) -> DashboardSection:
     )
 
 
-def export_complete_dashboard(output_dir: Path, *, demo: bool = False) -> CompleteDashboardArtifacts:
+def export_complete_dashboard(
+    output_dir: Path,
+    *,
+    demo: bool = False,
+    selected_pairs: tuple[str, ...] = (),
+    selected_pair_count: int | None = None,
+) -> CompleteDashboardArtifacts:
     """Export the local Build-17 Complete interface to a static HTML file."""
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -440,6 +668,10 @@ def export_complete_dashboard(output_dir: Path, *, demo: bool = False) -> Comple
     view_json_path: Path | None = None
     observability_text_path: Path | None = None
     supplement_json_path: Path | None = None
+    resolved_pairs = _resolve_selected_pairs(
+        selected_pairs=selected_pairs,
+        selected_pair_count=selected_pair_count,
+    )
 
     future_panels = (
         "complete_governance",
@@ -452,16 +684,21 @@ def export_complete_dashboard(output_dir: Path, *, demo: bool = False) -> Comple
         "One V5.3 only. No profile custom. No unversioned config injection.",
         "Build-17 Complete remains governed and must not bypass Light, Shadow, Micro-live, or rollback gates.",
     )
+    selection_assistant_html, selection_assistant_script = _build_pair_selection_assistant(
+        output_dir=output_dir,
+        demo=demo,
+        selected_pairs=resolved_pairs,
+    )
 
     if demo:
-        snapshot = _build_demo_snapshot()
+        snapshot = _build_demo_snapshot(resolved_pairs)
         active_modules = tuple(module.module_name for module in get_modules_for_profile(ProfileId.COMPLETE))
         payload = build_technical_dashboard_payload(
             snapshot,
             active_modules=active_modules,
             active_engines=("engine_a", "engine_b", "engine_c", "engine_d"),
         )
-        supplement = _build_demo_supplement()
+        supplement = _build_demo_supplement(resolved_pairs)
         sections = build_complete_dashboard_sections(payload, supplement)
         observability = build_observability_export(payload)
         html = render_technical_dashboard_html(
@@ -470,7 +707,8 @@ def export_complete_dashboard(output_dir: Path, *, demo: bool = False) -> Comple
             source_mode="demo_payload",
             source_note=(
                 "This page is a governed Build-17 Complete demo surface. "
-                "It visualizes the canonical 12-pair / 4-engine target without claiming a live production Complete rollout."
+                f"It visualizes a governed {len(resolved_pairs)}-pair selection from the canonical 12-pair / 4-engine target "
+                "without claiming a live production Complete rollout."
             ),
             sections=sections,
             future_panels=future_panels,
@@ -478,6 +716,8 @@ def export_complete_dashboard(output_dir: Path, *, demo: bool = False) -> Comple
             observability_text=observability.text_payload,
             raw_payload_json=payload.model_dump_json(indent=2),
             raw_view_json=json.dumps([section.model_dump(mode="json") for section in sections], indent=2),
+            additional_sections_html=selection_assistant_html,
+            additional_script=selection_assistant_script,
         )
         payload_json_path = output_dir / "complete_dashboard.payload.json"
         view_json_path = output_dir / "complete_dashboard.view.json"
@@ -497,11 +737,13 @@ def export_complete_dashboard(output_dir: Path, *, demo: bool = False) -> Comple
             source_mode="availability_only",
             source_note=(
                 "No live Complete runtime snapshot is currently wired into this launcher. "
-                "The page shows the canonical Build-17 surface and marks unavailable runtime values explicitly."
+                "The page shows the governed Build-17 pair scope and marks unavailable runtime values explicitly."
             ),
-            sections=_availability_sections(),
+            sections=_availability_sections(resolved_pairs),
             future_panels=future_panels,
             footer_notes=footer_notes,
+            additional_sections_html=selection_assistant_html,
+            additional_script=selection_assistant_script,
         )
 
     html_path.write_text(html, encoding="utf-8")
@@ -532,9 +774,25 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Render a governed Build-17 Complete demo payload.",
     )
+    parser.add_argument(
+        "--pair",
+        action="append",
+        default=[],
+        help="Repeatable canonical Complete pair selector. When omitted, the launcher uses the first N governed pairs.",
+    )
+    parser.add_argument(
+        "--pair-count",
+        type=int,
+        help="Governed Complete pair count. When --pair is omitted, selects the first N canonical Complete pairs.",
+    )
     args = parser.parse_args(argv)
 
-    artifacts = export_complete_dashboard(args.output_dir, demo=args.demo)
+    artifacts = export_complete_dashboard(
+        args.output_dir,
+        demo=args.demo,
+        selected_pairs=tuple(args.pair),
+        selected_pair_count=args.pair_count,
+    )
     print(f"Complete dashboard HTML: {artifacts.html_path}")
     if artifacts.payload_json_path is not None:
         print(f"Complete payload JSON: {artifacts.payload_json_path}")

@@ -37,6 +37,56 @@ def _format_labels(labels: dict[str, str]) -> str:
     return f"{{{joined}}}"
 
 
+def _runtime_hook_bridge_samples(payload: TechnicalDashboardPayload) -> tuple[MetricSample, ...]:
+    base_labels = _labels(payload)
+    samples: list[MetricSample] = []
+    for bridge in payload.runtime_hook_bridges:
+        hook_labels = {
+            **base_labels,
+            "hook_id": bridge.hook_id.value,
+            "status": bridge.status,
+            "selection_status": bridge.selection_status,
+            "failure_mode": bridge.failure_mode or "none",
+            "error_stage": bridge.error_stage or "none",
+        }
+        samples.extend(
+            (
+                _sample(
+                    "v53_runtime_hook_bridge_status",
+                    kind="state",
+                    value=1.0,
+                    labels=hook_labels,
+                ),
+                _sample(
+                    "v53_runtime_hook_bridge_configured",
+                    kind="state",
+                    value=1.0 if bridge.configured else 0.0,
+                    labels={**base_labels, "hook_id": bridge.hook_id.value},
+                ),
+                _sample(
+                    "v53_runtime_hook_bridge_binding_present",
+                    kind="state",
+                    value=1.0 if bridge.binding_present else 0.0,
+                    labels={**base_labels, "hook_id": bridge.hook_id.value},
+                ),
+                _sample(
+                    "v53_runtime_hook_bridge_loaded",
+                    kind="state",
+                    value=1.0 if bridge.loaded else 0.0,
+                    labels={**base_labels, "hook_id": bridge.hook_id.value},
+                ),
+                _sample(
+                    "v53_runtime_hook_bridge_artifact_count",
+                    kind="gauge",
+                    value=float(bridge.artifact_count),
+                    unit="count",
+                    labels={**base_labels, "hook_id": bridge.hook_id.value},
+                ),
+            )
+        )
+    return tuple(samples)
+
+
 def build_observability_export(payload: TechnicalDashboardPayload) -> ObservabilityExport:
     """Emit a grouped, stable metrics surface from the Build-10 technical payload."""
 
@@ -528,6 +578,8 @@ def build_observability_export(payload: TechnicalDashboardPayload) -> Observabil
                 **base_labels,
                 "status": payload.execution_no_trade_bridge.status,
                 "selection_status": payload.execution_no_trade_bridge.selection_status,
+                "failure_mode": payload.execution_no_trade_bridge.failure_mode or "none",
+                "error_stage": payload.execution_no_trade_bridge.error_stage or "none",
             },
         ),
         _sample(
@@ -555,6 +607,7 @@ def build_observability_export(payload: TechnicalDashboardPayload) -> Observabil
             unit="count",
             labels=base_labels,
         ),
+        *_runtime_hook_bridge_samples(payload),
         _sample(
             "v53_build14_status",
             kind="state",

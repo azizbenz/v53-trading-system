@@ -4,7 +4,7 @@ Check if an opportunity is structurally eligible for portfolio consideration.
 
 IMPORTANT: This module does NOT reject based on size/capacity.
 Size reduction is handled downstream by allocation_router.
-Only hard structural rejections happen here (fail-closed no-cluster).
+Only hard structural rejections happen here (fail-closed cluster mapping).
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from portfolio_minimal.opportunity_selector.candidate_pool_builder import Opport
 class EligibilityVerdict(StrEnum):
     ELIGIBLE = "eligible"
     REJECTED_NO_CLUSTER = "rejected_no_cluster"
+    REJECTED_UNKNOWN_CLUSTER = "rejected_unknown_cluster"
 
 
 class PortfolioSnapshot(BaseModel, frozen=True):
@@ -46,7 +47,7 @@ def check_eligibility(
 ) -> EligibilityResult:
     """Check if a candidate is structurally eligible for selection.
 
-    Only hard rejection: fail-closed when cluster_id is missing.
+    Only hard rejections: fail-closed when cluster_id is missing or unknown.
     Size-based constraints (gross cap, cluster cap, loss budget, beta budget)
     are NOT checked here — allocation_router handles reduction.
     """
@@ -57,6 +58,14 @@ def check_eligibility(
             engine_id=candidate.engine_id,
             verdict=EligibilityVerdict.REJECTED_NO_CLUSTER,
             reason=f"{candidate.pair}: no cluster mapping — fail-closed",
+        )
+
+    if candidate.cluster_id not in snapshot.remaining_cluster_capacity:
+        return EligibilityResult(
+            pair=candidate.pair,
+            engine_id=candidate.engine_id,
+            verdict=EligibilityVerdict.REJECTED_UNKNOWN_CLUSTER,
+            reason=f"{candidate.pair}: unknown cluster mapping '{candidate.cluster_id}' — fail-closed",
         )
 
     return EligibilityResult(

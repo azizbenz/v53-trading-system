@@ -12,6 +12,9 @@ from .engine_c_runner import (
     run_engine_c,
 )
 from .engine_c_runtime import (
+    EngineCVoidValidationHook,
+    EngineCVoidValidationInput,
+    EngineCVoidValidationOutcome,
     EngineCRuntime,
     EngineCRuntimeInput,
     EngineCRuntimeResult,
@@ -29,6 +32,9 @@ __all__ = [
     "EngineCInvalidation",
     "EngineCLogEntry",
     "EngineCOutput",
+    "EngineCVoidValidationHook",
+    "EngineCVoidValidationInput",
+    "EngineCVoidValidationOutcome",
     "EngineCRuntime",
     "EngineCRuntimeInput",
     "EngineCRuntimeResult",

@@ -3,8 +3,6 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-import pytest
-
 from interface_contracts import ArtifactActionKind, HookId
 from interface_contracts.atomic_io import atomic_write_json
 from protocols import (
@@ -136,7 +134,7 @@ def test_select_current_compiled_hook_plan_loads_plan_and_validates_binding_matc
         shutil.rmtree(state_dir, ignore_errors=True)
 
 
-def test_select_current_compiled_hook_plan_rejects_plan_binding_mismatch():
+def test_select_current_compiled_hook_plan_returns_load_error_on_plan_binding_mismatch():
     state_dir = Path("build/test_protocols_compiled_hook_plan_loader_mismatch")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
@@ -159,10 +157,15 @@ def test_select_current_compiled_hook_plan_rejects_plan_binding_mismatch():
             },
         )
 
-        with pytest.raises(ValueError):
-            select_current_compiled_hook_plan(
-                store,
-                HookId.ENGINE_A_PRE_ENTRY_CONFIRMATION,
-            )
+        selection = select_current_compiled_hook_plan(
+            store,
+            HookId.ENGINE_A_PRE_ENTRY_CONFIRMATION,
+        )
+
+        assert selection.status == CompiledHookPlanLoadStatus.LOAD_ERROR
+        assert selection.binding == binding
+        assert selection.plan is None
+        assert selection.error_type == "ValueError"
+        assert "artifact_ids must match binding artifact_ids" in selection.error_detail
     finally:
         shutil.rmtree(state_dir, ignore_errors=True)

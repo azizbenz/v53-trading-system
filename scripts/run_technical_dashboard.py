@@ -17,12 +17,16 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from backtest_artifact_import import (  # noqa: E402
-    ArtifactImportRequest,
     ArtifactImportSummary,
     ArtifactPayloadRefBundle,
+    ArtifactUploadContext,
     StrategyLineageRecord,
     StrategyOnboardingRequest,
+    build_lab_fixture_signature_envelope,
+    build_artifact_upload_decision,
+    build_import_context_from_replay_plan,
     build_replay_import_projection,
+    build_upload_context_from_replay_import_context,
     summarize_import_request,
     validate_import_request,
     validate_strategy_onboarding_request,
@@ -32,18 +36,15 @@ from complete_enablers import (  # noqa: E402
 )
 from interface_contracts import (  # noqa: E402
     ArtifactActivationStage,
-    CANONICAL_FEATURE_SET_VERSION,
-    CANONICAL_PHYSICS_FEATURE_DICTIONARY,
-    CANONICAL_TRANSFORM_SET_VERSION,
-    FeatureLineageLock,
-    FeatureLineageRecord,
+    ArtifactClass,
+    ArtifactLifecyclePolicy,
+    ArtifactLogicFormat,
+    ArtifactProofSummary,
+    ArtifactSignatureEnvelope,
     PairHealthLevel,
     ProfileId,
     RuntimeMode,
     StrategyClassification,
-    TransformWhitelistId,
-    TransformWhitelistLock,
-    canonical_transform_ids,
 )
 from local_replay_runtime import (  # noqa: E402
     LocalReplayEvidenceRecorder,
@@ -108,6 +109,7 @@ from protocols import (  # noqa: E402
     build_live_light_projection,
     build_micro_live_input_from_shadow,
     build_micro_live_projection,
+    build_runtime_hook_bridge_projections,
     build_shadow_projection,
     build_shadow_input_from_payloads,
     run_live_light_gate,
@@ -128,6 +130,15 @@ class DashboardArtifacts:
     observability_text_path: Path | None = None
     local_replay_evidence_json_path: Path | None = None
     shadow_runtime_evidence_json_path: Path | None = None
+    upload_request_json_path: Path | None = None
+    upload_decision_json_path: Path | None = None
+
+
+_DASHBOARD_IMPORT_LIFECYCLE_POLICY = ArtifactLifecyclePolicy(
+    ttl_max_days=30,
+    rule_half_life_days=7,
+)
+_DASHBOARD_IMPORT_DRIFT_SCORE_THRESHOLD = 0.85
 
 
 def _configure_stdio() -> None:
@@ -153,65 +164,6 @@ def _status_for_build14(value: str) -> str:
 
 def _load_json_file(path: Path):
     return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _build_local_replay_feature_locks(
-    feature_bridge_ref: str,
-) -> tuple[
-    FeatureLineageLock,
-    TransformWhitelistLock,
-    tuple[str, ...],
-    tuple[TransformWhitelistId, ...],
-]:
-    feature_bridge_path = Path(feature_bridge_ref)
-    feature_bridge_payload = (
-        _load_json_file(feature_bridge_path) if feature_bridge_path.is_file() else {}
-    )
-    raw_feature_keys = tuple(
-        str(item)
-        for item in (
-            feature_bridge_payload.get("recognized_feature_keys")
-            or feature_bridge_payload.get("feature_keys")
-            or ()
-        )
-    )
-    feature_ids = tuple(
-        feature_id
-        for feature_id in raw_feature_keys
-        if feature_id in CANONICAL_PHYSICS_FEATURE_DICTIONARY
-    )
-
-    records = []
-    transform_ids: list[TransformWhitelistId] = []
-    for feature_id in feature_ids:
-        entry = CANONICAL_PHYSICS_FEATURE_DICTIONARY[feature_id]
-        records.append(
-            FeatureLineageRecord(
-                feature_id=feature_id,
-                family=entry.family,
-                source_inputs=("historical_prices",),
-                transform_ids=entry.default_transform_ids,
-                equation_id=entry.equation_id,
-                feature_set_version=CANONICAL_FEATURE_SET_VERSION,
-                transform_set_version=CANONICAL_TRANSFORM_SET_VERSION,
-            )
-        )
-        transform_ids.extend(entry.default_transform_ids)
-
-    unique_transform_ids = tuple(dict.fromkeys(transform_ids)) or canonical_transform_ids()
-    return (
-        FeatureLineageLock(
-            feature_set_version=CANONICAL_FEATURE_SET_VERSION,
-            transform_set_version=CANONICAL_TRANSFORM_SET_VERSION,
-            records=tuple(records),
-        ),
-        TransformWhitelistLock(
-            transform_set_version=CANONICAL_TRANSFORM_SET_VERSION,
-            allowed_transform_ids=unique_transform_ids,
-        ),
-        feature_ids,
-        unique_transform_ids,
-    )
 
 
 def _load_artifact_import_summary(
@@ -893,29 +845,72 @@ def _build_demo_replay_projection(bundle):
         replay_dtr_ref=replay_dtr_ref,
         notes="Demo replay plan generated for the local dashboard launcher",
     )
+    signature_envelope = build_lab_fixture_signature_envelope()
     governed_manifest = replay_plan.bundle.manifest.model_copy(
-        update={"activation_stage": ArtifactActivationStage.SHADOW_READY}
+        update={
+            "activation_stage": ArtifactActivationStage.SHADOW_READY,
+        }
     )
-    (
-        feature_lineage_lock,
-        transform_whitelist_lock,
-        expected_feature_ids,
-        expected_transform_ids,
-    ) = _build_local_replay_feature_locks(feature_bridge_ref)
-    import_request = ArtifactImportRequest(
-        manifest=governed_manifest,
-        artifact_kind=replay_plan.bundle.artifact_kind,
+    governed_replay_plan = replay_plan.model_copy(
+        update={
+            "bundle": replay_plan.bundle.model_copy(
+                update={"manifest": governed_manifest}
+            )
+        }
+    )
+    governance_reference_date = datetime.fromtimestamp(
+        clock_ref.end_timestamp_ms / 1000.0,
+        tz=UTC,
+    ).date()
+    import_context = build_import_context_from_replay_plan(
+        governed_replay_plan,
         payload_bundle=payload_bundle,
-        payload_refs=replay_plan.bundle.payload_refs,
-        feature_lineage_lock=feature_lineage_lock,
-        feature_lineage_required=True,
-        expected_feature_ids=expected_feature_ids,
-        transform_whitelist_lock=transform_whitelist_lock,
-        transform_whitelist_required=True,
-        expected_transform_ids=expected_transform_ids,
+        lifecycle_policy=_DASHBOARD_IMPORT_LIFECYCLE_POLICY,
+        training_end=governance_reference_date,
+        governance_reference_date=governance_reference_date,
+        drift_score_threshold=_DASHBOARD_IMPORT_DRIFT_SCORE_THRESHOLD,
     )
+    local_replay_recorder = LocalReplayEvidenceRecorder()
+    local_replay_recorder.load_execution_plan(governed_replay_plan)
+    local_replay_recorder.mark_payloads_generated(governed_replay_plan.bundle.payload_refs)
+    local_replay_evidence = local_replay_recorder.build_evidence()
+    upload_context = build_upload_context_from_replay_import_context(
+        import_context,
+        local_replay_evidence=local_replay_evidence,
+        signature_envelope=signature_envelope,
+        uploaded_by="technical_dashboard_demo",
+        upload_context=ArtifactUploadContext.LOCAL_LAB,
+        governance_reference_date=governance_reference_date,
+        artifact_class=ArtifactClass.DAMAGE_REDUCER,
+        artifact_scope="technical_dashboard:demo",
+        lifecycle_policy=_DASHBOARD_IMPORT_LIFECYCLE_POLICY,
+        drift_score_threshold=_DASHBOARD_IMPORT_DRIFT_SCORE_THRESHOLD,
+        proof_summary=ArtifactProofSummary(
+            anti_cowardice_pass=True,
+            friction_regret_pass=True,
+            walk_forward_pass=True,
+            regime_segmentation_pass=True,
+            operational_burden_pass=True,
+            capital_efficiency_pass=True,
+            ablation_delta_net_pnl=0.12,
+            ablation_delta_ce=0.03,
+            friction_regret_value=0.01,
+            block_rate_delta=0.02,
+        ),
+        distilled_logic_format=ArtifactLogicFormat.THRESHOLD_JSON,
+        covariance_shrinkage_matrix_ref="matrix_ref:technical_dashboard_demo",
+    )
+    upload_request = upload_context.upload_request
+    import_request = upload_context.import_request
     import_decision = validate_import_request(import_request)
-    import_summary = summarize_import_request(import_request, import_decision)
+    upload_decision = build_artifact_upload_decision(
+        upload_request,
+        import_decision,
+    )
+    import_summary = summarize_import_request(
+        import_request,
+        import_decision,
+    )
     onboarding_request = StrategyOnboardingRequest(
         proposal_id="proposal-demo-1",
         proposal_name="Demo A variant",
@@ -936,7 +931,16 @@ def _build_demo_replay_projection(bundle):
     )
     onboarding_decision = validate_strategy_onboarding_request(onboarding_request)
     projection = build_replay_import_projection(import_summary)
-    return replay_plan, import_summary, onboarding_decision, projection
+    return (
+        replay_plan.model_copy(
+            update={"bundle": governed_replay_plan.bundle}
+        ),
+        upload_request,
+        upload_decision,
+        import_summary,
+        onboarding_decision,
+        projection,
+    )
 
 
 def _materialize_demo_local_replay_evidence(replay_plan, output_dir: Path):
@@ -1903,6 +1907,8 @@ def export_technical_dashboard(
     observability_text_path: Path | None = None
     local_replay_evidence_json_path: Path | None = None
     shadow_runtime_evidence_json_path: Path | None = None
+    upload_request_json_path: Path | None = None
+    upload_decision_json_path: Path | None = None
 
     future_panels = (
         "technical_supervision",
@@ -1928,7 +1934,14 @@ def export_technical_dashboard(
             break_even_report,
             edge_report,
         )
-        replay_plan, import_summary, onboarding_decision, replay_projection = _build_demo_replay_projection(bundle)
+        (
+            replay_plan,
+            upload_request,
+            upload_decision,
+            import_summary,
+            onboarding_decision,
+            replay_projection,
+        ) = _build_demo_replay_projection(bundle)
         local_replay_evidence, local_replay_evidence_json_path = _materialize_demo_local_replay_evidence(
             replay_plan,
             output_dir,
@@ -1937,11 +1950,15 @@ def export_technical_dashboard(
         active_engines = tuple(
             engine.value for engine in sorted(get_engines_for_profile(ProfileId.COMPLETE), key=lambda item: item.value)
         )
+        runtime_hook_bridge_projections = build_runtime_hook_bridge_projections(
+            compiled_registry_state_dir=output_dir
+        )
         payload = build_technical_dashboard_payload(
             snapshot,
             active_modules=active_modules,
             active_engines=active_engines,
             build9x_projection=build9x_projection,
+            runtime_hook_bridge_projections=runtime_hook_bridge_projections,
             replay_projection=replay_projection,
         )
         shadow_summary, shadow_projection, shadow_runtime_evidence_json_path = _build_demo_shadow_projection(
@@ -1963,6 +1980,7 @@ def export_technical_dashboard(
             build9x_projection=build9x_projection,
             shadow_projection=shadow_projection,
             micro_live_projection=micro_live_projection,
+            runtime_hook_bridge_projections=runtime_hook_bridge_projections,
             replay_projection=replay_projection,
         )
         build14_report, build14_projection = _build_build14_report_and_projection(
@@ -1985,6 +2003,7 @@ def export_technical_dashboard(
             micro_live_projection=micro_live_projection,
             live_light_projection=live_light_projection,
             build14_projection=build14_projection,
+            runtime_hook_bridge_projections=runtime_hook_bridge_projections,
             replay_projection=replay_projection,
         )
         shadow_report = _build_demo_shadow_report_artifact(
@@ -2022,9 +2041,13 @@ def export_technical_dashboard(
         payload_json_path = output_dir / "technical_dashboard.payload.json"
         view_json_path = output_dir / "technical_dashboard.view.json"
         observability_text_path = output_dir / "technical_dashboard.metrics.txt"
+        upload_request_json_path = output_dir / "technical_dashboard.upload_request.json"
+        upload_decision_json_path = output_dir / "technical_dashboard.upload_decision.json"
         payload_json_path.write_text(payload.model_dump_json(indent=2), encoding="utf-8")
         view_json_path.write_text(view.model_dump_json(indent=2), encoding="utf-8")
         observability_text_path.write_text(observability.text_payload, encoding="utf-8")
+        upload_request_json_path.write_text(upload_request.model_dump_json(indent=2), encoding="utf-8")
+        upload_decision_json_path.write_text(upload_decision.model_dump_json(indent=2), encoding="utf-8")
     else:
         runtime_root = local_runtime_root or (REPO_ROOT / "build" / "build11_live_websocket_campaign")
         live_payload_bundle = (
@@ -2077,6 +2100,8 @@ def export_technical_dashboard(
         observability_text_path=observability_text_path,
         local_replay_evidence_json_path=local_replay_evidence_json_path,
         shadow_runtime_evidence_json_path=shadow_runtime_evidence_json_path,
+        upload_request_json_path=upload_request_json_path,
+        upload_decision_json_path=upload_decision_json_path,
     )
 
 

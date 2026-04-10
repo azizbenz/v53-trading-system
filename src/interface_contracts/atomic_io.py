@@ -1,66 +1,64 @@
-"""
-GEM-19 — Atomic I/O: write-tmp-then-rename for all state persistence.
-
-Invariant: a crash at any point must never leave a half-written state file.
-Pattern: write to .tmp, fsync, then os.replace (atomic on same filesystem).
-"""
+"""Atomic file I/O helpers — write-and-rename pattern to prevent partial/corrupt writes."""
 
 from __future__ import annotations
 
 import json
 import os
-import tempfile
+import uuid
 from pathlib import Path
 from typing import Any
 
 
-def atomic_write_text(path: Path, content: str, encoding: str = "utf-8") -> None:
-    """Write text atomically via tmp-file + os.replace.
+def atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> None:
+    """Write *text* to *path* atomically (write to tmp then rename).
 
-    Guarantees:
-    - No partial writes visible at ``path``.
-    - fsync before rename to survive power loss.
+    Creates parent directories if they do not exist.
+    Calls fsync before rename to ensure durability.
+    Raises on I/O failure; leaves the target file unchanged.
     """
-    parent = path.parent
-    parent.mkdir(parents=True, exist_ok=True)
-
-    fd, tmp_path = tempfile.mkstemp(dir=parent, prefix=".tmp_", suffix=".partial")
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.parent / f"{path.name}.tmp_{uuid.uuid4().hex}"
     try:
-        with os.fdopen(fd, "w", encoding=encoding) as f:
-            f.write(content)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, str(path))
-    except BaseException:
-        # Clean up tmp on any failure
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
+        with tmp.open("w", encoding=encoding) as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except Exception:
+        tmp.unlink(missing_ok=True)
         raise
 
 
-def atomic_write_json(path: Path, data: Any, indent: int = 2) -> None:
-    """Serialize ``data`` to JSON and write atomically."""
-    content = json.dumps(data, ensure_ascii=False, indent=indent, default=str)
-    atomic_write_text(path, content)
+def atomic_write_json(path: Path, data: Any, *, indent: int | None = None) -> None:
+    """Write *data* as UTF-8 JSON to *path* atomically (write to tmp then rename).
+
+    Creates parent directories if they do not exist.
+    Calls fsync before rename to ensure durability.
+    Raises on serialization or I/O failure; leaves the target file unchanged.
+    """
+    atomic_write_text(path, json.dumps(data, indent=indent), encoding="utf-8")
 
 
 def atomic_write_bytes(path: Path, data: bytes) -> None:
-    """Write raw bytes atomically via tmp-file + os.replace."""
-    parent = path.parent
-    parent.mkdir(parents=True, exist_ok=True)
+    """Write *data* as raw bytes to *path* atomically (write to tmp then rename).
 
-    fd, tmp_path = tempfile.mkstemp(dir=parent, prefix=".tmp_", suffix=".partial")
+    Creates parent directories if they do not exist.
+    Calls fsync before rename to ensure durability.
+    Raises on I/O failure; leaves the target file unchanged.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.parent / f"{path.name}.tmp_{uuid.uuid4().hex}"
     try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(data)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, str(path))
-    except BaseException:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
+        with tmp.open("wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except Exception:
+        tmp.unlink(missing_ok=True)
         raise
+
+
+__all__ = ["atomic_write_bytes", "atomic_write_json", "atomic_write_text"]

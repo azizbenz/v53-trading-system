@@ -183,6 +183,12 @@ def build_live_light_dashboard_section(summary: LiveLightRunSummary) -> Dashboar
 
 
 __all__ = [
+    "build_live_projection",
+    "build_live_dashboard_section",
     "build_live_light_projection",
     "build_live_light_dashboard_section",
 ]
+
+
+build_live_projection = build_live_light_projection
+build_live_dashboard_section = build_live_light_dashboard_section

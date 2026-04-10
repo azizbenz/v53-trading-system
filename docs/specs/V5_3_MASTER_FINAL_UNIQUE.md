@@ -33,7 +33,7 @@ Un développeur, un opérateur ou une IA ne doit jamais implémenter une brique 
 Pour éviter toute double vérité :
 
 - le **core Build-1 à Build-9** reste la base réellement exécutable / gelable
-- **Build-10** dispose désormais d’une première implémentation codée côté monitoring backend et projection UI Light verrouillée
+- **Build-10** dispose désormais d’une première implémentation codée côté monitoring backend et projection UI opérateur verrouillée (libellé historique : `Light UI`)
 - **Build-9X** est une extension méta **post-Build-9** maintenant codée dans une première version gouvernée, tout en restant soumise au pipeline canonique
 - `LOCAL_REPLAY`, l’export d’artifact et l’import VPS disposent désormais de **scaffolds minimaux codés** ; cela ne vaut pas ouverture d’un runtime complet autonome
 - **Build-11 à Build-17** restent des etapes canoniques de validation et
@@ -382,13 +382,12 @@ Un état de rollout se lit toujours comme :
 
 Repères canoniques :
 
-- `profil=LIGHT`, `runtime_mode=LOCAL_REPLAY` : préparation locale et preuve
-  avant candidature
-- `profil=LIGHT`, `runtime_mode=SHADOW` : Build-11, nommé `Shadow intégral`
-- `profil=LIGHT`, `runtime_mode=MICRO_LIVE` : Build-12
-- `profil=LIGHT`, `runtime_mode=LIVE` : Build-13, nommé `Live-Light`
-- `profil=COMPLETE`, `runtime_mode=SHADOW` : Shadow Complete
-- `profil=COMPLETE`, `runtime_mode=LIVE` : Live-Complete
+- `profil=LIGHT`, `runtime_mode=LOCAL_REPLAY` : surface locale de compatibilité et preuve contrainte
+- `profil=COMPLETE`, `runtime_mode=LOCAL_REPLAY` : baseline gouvernée des exports et reprises locales
+- `profil=COMPLETE`, `runtime_mode=SHADOW` : Build-11 actif dans le runtime gouverné courant
+- `profil=COMPLETE`, `runtime_mode=MICRO_LIVE` : Build-12 actif dans le runtime gouverné courant
+- `profil=COMPLETE`, `runtime_mode=LIVE` : Build-13 actif dans le runtime gouverné courant
+- les libellés historiques `Shadow intégral`, `Micro-live Light` et `Live-Light` restent des noms de phase ou de compatibilité documentaire ; ils ne décrivent plus la cible runtime gouvernée active
 
 Règle de lecture :
 
@@ -1387,12 +1386,12 @@ Verdict :
 
 ---
 
-## Build-10 — Monitoring + UI Light (P0/P1)
+## Build-10 — Monitoring + UI Light (libellé historique ; surface opérateur verrouillée) (P0/P1)
 Modules :
 - metrics_collector
 - alert_manager
 - dashboard backend
-- UI Light verrouillée
+- UI opérateur verrouillée (surface historique : `Light UI`)
 
 Objectif :
 - supervision actionnable
@@ -1408,7 +1407,7 @@ Go :
 ## Build-11 — Shadow Light
 Objectif :
 - valider la logique sans capital
-- état canonique : `profil=LIGHT`, `runtime_mode=SHADOW`
+- état canonique : `profil=COMPLETE`, `runtime_mode=SHADOW`
 
 Go :
 - décisions reproductibles
@@ -1421,7 +1420,7 @@ Go :
 ## Build-12 — Micro-live Light
 Objectif :
 - valider exécution réelle et coûts
-- état canonique : `profil=LIGHT`, `runtime_mode=MICRO_LIVE`
+- état canonique : `profil=COMPLETE`, `runtime_mode=MICRO_LIVE`
 
 Go :
 - coûts réels acceptables
@@ -1434,7 +1433,7 @@ Go :
 ## Build-13 — Live-Light
 Objectif :
 - première production réelle
-- état canonique : `profil=LIGHT`, `runtime_mode=LIVE`
+- état canonique : `profil=COMPLETE`, `runtime_mode=LIVE`
 
 Go :
 - fréquence utile > V5.2

@@ -3,13 +3,14 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from interface_contracts import ArtifactActionKind, HookId
+from interface_contracts import ArtifactActionKind, HookId, RUNTIME_OPEN_HOOK_IDS
 from interface_contracts.atomic_io import atomic_write_json
 from protocols import (
     CompiledArtifactHookBinding,
     CompiledArtifactRegistrySnapshot,
     CompiledArtifactRegistryStore,
     build_execution_no_trade_bridge_projection,
+    build_runtime_hook_bridge_projections,
 )
 
 
@@ -101,7 +102,92 @@ def test_build_execution_no_trade_bridge_projection_returns_warning_on_invalid_p
         )
 
         assert projection.status == "warning"
-        assert projection.selection_status == "binding_only"
+        assert projection.selection_status == "load_error"
+        assert projection.failure_mode == "fail_open_baseline_skip_artifact"
+        assert projection.error_stage == "plan_selection"
         assert projection.error_type == "ValueError"
+    finally:
+        shutil.rmtree(state_dir, ignore_errors=True)
+
+
+def test_build_runtime_hook_bridge_projections_returns_all_runtime_open_hooks_when_unconfigured():
+    projections = build_runtime_hook_bridge_projections()
+
+    assert tuple(projection.hook_id for projection in projections) == RUNTIME_OPEN_HOOK_IDS
+    assert all(projection.status == "planned" for projection in projections)
+    assert all(projection.selection_status == "not_configured" for projection in projections)
+
+
+def test_build_runtime_hook_bridge_projections_projects_loaded_engine_b_and_execution_hooks():
+    state_dir = Path("build/test_protocols_execution_runtime_dashboard_runtime_hooks")
+    shutil.rmtree(state_dir, ignore_errors=True)
+    try:
+        store = CompiledArtifactRegistryStore(state_dir)
+        store.publish(
+            CompiledArtifactRegistrySnapshot(
+                snapshot_id="snap-1",
+                generated_at_ms=1000,
+                artifact_ids=("artifact-1", "artifact-2"),
+                hook_bindings=(
+                    CompiledArtifactHookBinding(
+                        hook_id=HookId.EXECUTION_NO_TRADE_FILTER,
+                        artifact_ids=("artifact-1",),
+                        action_kinds=(ArtifactActionKind.NO_TRADE,),
+                        compiled_plan_ref="compiled/snap-1/execution_no_trade.json",
+                    ),
+                    CompiledArtifactHookBinding(
+                        hook_id=HookId.ENGINE_B_SWEEP_VALIDATION,
+                        artifact_ids=("artifact-2",),
+                        action_kinds=(ArtifactActionKind.SOFT_REDUCE,),
+                        compiled_plan_ref="compiled/snap-1/engine_b_sweep.json",
+                    ),
+                ),
+            )
+        )
+        atomic_write_json(
+            state_dir / "compiled" / "snap-1" / "execution_no_trade.json",
+            {
+                "snapshot_id": "snap-1",
+                "hook_id": HookId.EXECUTION_NO_TRADE_FILTER.value,
+                "artifact_ids": ["artifact-1"],
+                "action_kinds": [ArtifactActionKind.NO_TRADE.value],
+                "generated_at_ms": 1000,
+                "opaque_plan_payload": {"blocked": True},
+            },
+        )
+        atomic_write_json(
+            state_dir / "compiled" / "snap-1" / "engine_b_sweep.json",
+            {
+                "snapshot_id": "snap-1",
+                "hook_id": HookId.ENGINE_B_SWEEP_VALIDATION.value,
+                "artifact_ids": ["artifact-2"],
+                "action_kinds": [ArtifactActionKind.SOFT_REDUCE.value],
+                "generated_at_ms": 1000,
+                "opaque_plan_payload": {"raw_score_add": -0.1},
+            },
+        )
+
+        projections = build_runtime_hook_bridge_projections(
+            compiled_registry_state_dir=state_dir
+        )
+
+        execution = next(
+            projection
+            for projection in projections
+            if projection.hook_id == HookId.EXECUTION_NO_TRADE_FILTER
+        )
+        engine_b = next(
+            projection
+            for projection in projections
+            if projection.hook_id == HookId.ENGINE_B_SWEEP_VALIDATION
+        )
+
+        assert execution.status == "healthy"
+        assert execution.loaded is True
+        assert execution.artifact_count == 1
+        assert engine_b.status == "healthy"
+        assert engine_b.loaded is True
+        assert engine_b.artifact_count == 1
+        assert engine_b.action_kinds == ("soft_reduce",)
     finally:
         shutil.rmtree(state_dir, ignore_errors=True)

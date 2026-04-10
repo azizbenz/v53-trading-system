@@ -24,9 +24,11 @@ class DecisionEvent(BaseModel, frozen=True):
     order_type: OrderType
     is_trade: bool
     justification: str
+    no_trade_reason: str | None = None
     expected_cost: float = 0.0
     expected_gain: float = 0.0
     net_expected: float = 0.0
+    context: dict[str, str | float | int | bool] = Field(default_factory=dict)
     timestamp: float = 0.0
 
 
@@ -81,9 +83,11 @@ class DecisionReporter:
             order_type=OrderType.NO_TRADE,
             is_trade=False,
             justification=f"{decision.reason}: {decision.detail}",
+            no_trade_reason=decision.reason.value,
             expected_cost=decision.expected_cost,
             expected_gain=decision.expected_gain,
             net_expected=decision.expected_gain - decision.expected_cost,
+            context=dict(decision.context),
             timestamp=timestamp,
         )
         self._events.append(event)
@@ -96,7 +100,9 @@ class DecisionReporter:
                 "expected_gain": event.expected_gain,
                 "net_expected": event.net_expected,
                 "timestamp": event.timestamp,
+                "no_trade_reason": event.no_trade_reason,
                 "detail": event.justification,
+                "context": event.context,
             },
         )
 
@@ -108,7 +114,9 @@ class DecisionReporter:
 
         by_reason: dict[str, int] = {}
         for e in no_trades:
-            reason = e.justification.split(":")[0] if ":" in e.justification else e.justification
+            reason = e.no_trade_reason or (
+                e.justification.split(":")[0] if ":" in e.justification else e.justification
+            )
             by_reason[reason] = by_reason.get(reason, 0) + 1
 
         total = len(self._events)

@@ -44,6 +44,9 @@ def _candidate(
     market_toxicity: float = 0.0,
     spread_regime_penalty: float = 0.0,
     participation_penalty: float = 0.0,
+    raw_score_multiplier: float = 1.0,
+    raw_score_add: float = 0.0,
+    raw_score_cap: float | None = None,
     scoring_version: str = "5.0",
 ) -> ScoringCandidateInput:
     return ScoringCandidateInput(
@@ -53,6 +56,9 @@ def _candidate(
         allowed_features=frozenset({"momentum", "flow"}),
         weights={"momentum": 2.0, "flow": 1.0},
         scoring_version=scoring_version,
+        raw_score_multiplier=raw_score_multiplier,
+        raw_score_add=raw_score_add,
+        raw_score_cap=raw_score_cap,
         score_penalties=score_penalties,
         size_penalties=size_penalties,
         blocker_conditions=blocker_conditions or BlockerCondition(),
@@ -72,6 +78,95 @@ def _candidate(
 
 
 class TestScoringRuntime:
+    def test_runtime_applies_scoring_soft_penalty_hook_before_raw_score_calculation(self):
+        def _soft_penalty(_hook_input):
+            return scoring_runtime_module.ScoringSoftPenaltyLayerOutcome(
+                raw_score_multiplier_delta=-0.10,
+                raw_score_add=-0.02,
+                raw_score_cap=2.0,
+                reason_codes=("ARTIFACT_SCORING_SOFT_REDUCE",),
+                detail="artifact scoring soft penalty applied",
+            )
+
+        runtime = ScoringRuntime(_registry(), soft_penalty_hook=_soft_penalty)
+        result = runtime.run_round(
+            (
+                _candidate(
+                    engine_id="eng_a",
+                    pair="BTCUSDT",
+                    raw_features={"momentum": 1.0, "flow": 0.5},
+                    expected_ce=0.2,
+                    expected_cost=0.05,
+                    projected_size=10.0,
+                    projected_loss=1.0,
+                    projected_beta_impact=0.01,
+                    cluster_id="majors",
+                    raw_score_multiplier=1.10,
+                    raw_score_add=0.05,
+                    raw_score_cap=2.20,
+                ),
+            ),
+            portfolio=PortfolioState(
+                remaining_gross_capacity=1000.0,
+                remaining_loss_capacity=100.0,
+                remaining_beta_capacity=1.0,
+                remaining_cluster_capacity={"majors": 500.0},
+            ),
+            max_selections=1,
+            now=4.0,
+        )
+
+        audit = result.audits[0]
+        assert audit.raw_score_result.base_raw_score == pytest.approx(2.5)
+        assert audit.raw_score_result.raw_score_multiplier == pytest.approx(1.0)
+        assert audit.raw_score_result.raw_score_add == pytest.approx(0.03)
+        assert audit.raw_score_result.raw_score_cap == pytest.approx(2.0)
+        assert audit.raw_score_result.raw_score == pytest.approx(2.0)
+        assert audit.explainability.artifact_hook_reason_codes == ("ARTIFACT_SCORING_SOFT_REDUCE",)
+        assert "artifact=mult=-0.1000,add=-0.0200,cap=2.0" in audit.explainability.summary
+        assert audit.economics.artifact_raw_score_multiplier_delta == pytest.approx(-0.10)
+        assert audit.economics.artifact_raw_score_add == pytest.approx(-0.02)
+        assert audit.economics.artifact_raw_score_cap == pytest.approx(2.0)
+
+    def test_runtime_applies_raw_score_adjustments_before_penalties(self):
+        runtime = ScoringRuntime(_registry())
+        result = runtime.run_round(
+            (
+                _candidate(
+                    engine_id="eng_a",
+                    pair="BTCUSDT",
+                    raw_features={"momentum": 1.0, "flow": 0.5},
+                    expected_ce=0.2,
+                    expected_cost=0.05,
+                    projected_size=10.0,
+                    projected_loss=1.0,
+                    projected_beta_impact=0.01,
+                    cluster_id="majors",
+                    raw_score_multiplier=1.10,
+                    raw_score_add=0.05,
+                    raw_score_cap=2.20,
+                ),
+            ),
+            portfolio=PortfolioState(
+                remaining_gross_capacity=1000.0,
+                remaining_loss_capacity=100.0,
+                remaining_beta_capacity=1.0,
+                remaining_cluster_capacity={"majors": 500.0},
+            ),
+            max_selections=1,
+            now=5.0,
+        )
+
+        audit = result.audits[0]
+        assert audit.raw_score_result.base_raw_score == pytest.approx(2.5)
+        assert audit.raw_score_result.raw_score_multiplier == pytest.approx(1.10)
+        assert audit.raw_score_result.raw_score_add == pytest.approx(0.05)
+        assert audit.raw_score_result.raw_score_cap == pytest.approx(2.20)
+        assert audit.raw_score_result.raw_score == pytest.approx(2.20)
+        assert audit.economics.penalized_score == pytest.approx(2.20)
+        assert audit.selection_entry is not None
+        assert audit.selection_entry.outcome == SelectionOutcome.SELECTED
+
     def test_runtime_distinguishes_penalty_from_relative_ranking_rejection(self):
         runtime = ScoringRuntime(_registry())
         portfolio = PortfolioState(

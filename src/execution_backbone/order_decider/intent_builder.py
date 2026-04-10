@@ -58,7 +58,7 @@ class ExecutionIntent(BaseModel, frozen=True):
     score: float = 0.0  # final signal score
     justification: str = ""
     timeout_s: float = 0.0  # 0 = no timeout
-    profile: str = "LIGHT"
+    profile: str = "COMPLETE"  # BS-49: LIGHT removed — COMPLETE is the only governed profile
     venue_constraints: VenueConstraintSnapshot | None = None
     metadata: dict[str, object] = Field(default_factory=dict)
 
@@ -69,6 +69,7 @@ class NoTradeReason(StrEnum):
     PAIR_SUSPENDED = "pair_suspended"
     RISK_BUDGET_EXHAUSTED = "risk_budget_exhausted"
     INFRASTRUCTURE_DOWN = "infrastructure_down"
+    SHARIA_BLOCKED = "sharia_blocked"
     HARD_BLOCKER = "hard_blocker"
     SCORE_TOO_LOW = "score_too_low"
     VENUE_CONSTRAINTS = "venue_constraints"
@@ -84,6 +85,7 @@ class NoTradeDecision(BaseModel, frozen=True):
     expected_cost: float = 0.0
     expected_gain: float = 0.0
     score: float = 0.0
+    context: dict[str, str | float | int | bool] = Field(default_factory=dict)
 
 
 def build_intent(
@@ -101,7 +103,7 @@ def build_intent(
     price_limit: float | None = None,
     price_limit_exact: str | None = None,
     timeout_s: float = 0.0,
-    profile: str = "LIGHT",
+    profile: str = "COMPLETE",  # BS-49: LIGHT removed — COMPLETE is the only governed profile
     venue_constraints: VenueConstraintSnapshot | None = None,
 ) -> ExecutionIntent:
     """Build a validated ExecutionIntent."""

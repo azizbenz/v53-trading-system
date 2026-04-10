@@ -234,6 +234,32 @@ def test_binance_live_adapter_batches_multi_pair_multi_stream_subscriptions():
     ]
 
 
+def test_binance_live_adapter_reconnect_closes_stale_client():
+    first_socket = _FakeSocket([])
+    second_socket = _FakeSocket([])
+    sockets = [first_socket, second_socket]
+    config = ShadowLiveWebSocketConfig(
+        endpoint="wss://stream.binance.com:9443/ws",
+        pairs=("BTCUSDT",),
+        stream_types=("trade",),
+    )
+
+    def _socket_factory(endpoint: str, connect_timeout_s: float, recv_timeout_s: float) -> _FakeSocket:
+        return sockets.pop(0)
+
+    adapter = BinanceSpotLiveWebSocketAdapter(
+        config,
+        socket_factory=_socket_factory,
+        clock=lambda: 1_700_000_000.0,
+    )
+
+    adapter.connect(config.endpoint)
+    adapter.connect(config.endpoint)
+
+    assert first_socket.closed is True
+    assert adapter._clients[config.endpoint] is second_socket
+
+
 def test_capture_live_websocket_snapshot_batch_captures_private_user_data_sidecar(
     monkeypatch,
 ):

@@ -1,14 +1,14 @@
-"""Projection layer for the locked Build-10 Light UI."""
+"""Projection layer for the locked Build-10 operator UI."""
 
 from __future__ import annotations
 
 from interface_contracts import DeploymentState
 from monitoring.contracts import HealthDashboardPayload
-from ui.contracts import DashboardCard, DashboardSection, LightDashboardView
-from ui.operator_actions import build_light_allowed_actions, record_screen_open
+from ui.contracts import DashboardCard, DashboardSection, LockedOperatorDashboardView
+from ui.operator_actions import build_locked_operator_allowed_actions, record_screen_open
 
 
-def build_light_dashboard_view(payload: HealthDashboardPayload) -> LightDashboardView:
+def build_locked_operator_dashboard_view(payload: HealthDashboardPayload) -> LockedOperatorDashboardView:
     """Render the stable backend payload into a locked UI view model."""
 
     sections = (
@@ -25,13 +25,13 @@ def build_light_dashboard_view(payload: HealthDashboardPayload) -> LightDashboar
         _build_future_learning_section(payload),
     )
 
-    return LightDashboardView(
+    return LockedOperatorDashboardView(
         timestamp_ms=payload.timestamp_ms,
         correlation_id=payload.correlation_id,
         profile=payload.profile,
         runtime_mode=payload.runtime_mode,
         sections=sections,
-        allowed_actions=build_light_allowed_actions(payload.runtime_mode),
+        allowed_actions=build_locked_operator_allowed_actions(payload.runtime_mode),
         event_log=(
             record_screen_open(
                 correlation_id=payload.correlation_id,
@@ -79,7 +79,7 @@ def _build_profile_state_section(payload: HealthDashboardPayload) -> DashboardSe
                 label="Profile",
                 value=_enum_label(payload.profile),
                 status="healthy",
-                detail="Locked Light surface",
+                detail=f"Locked {_enum_label(payload.profile).upper()} governed surface",
             ),
             DashboardCard(
                 key="deployment_state",
@@ -100,7 +100,7 @@ def _build_profile_state_section(payload: HealthDashboardPayload) -> DashboardSe
                 label="Controls",
                 value="locked" if payload.controls_locked else "open",
                 status="healthy" if payload.controls_locked else "warning",
-                detail="No Complete/custom overrides exposed",
+                detail="No profile-expansion or custom overrides exposed",
             ),
         ),
     )
@@ -146,7 +146,7 @@ def _build_pair_cards(payload: HealthDashboardPayload) -> tuple[DashboardCard, .
                 label="Pairs",
                 value="none",
                 status="info",
-                detail="No pair metrics projected into the locked Light UI",
+                detail="No pair metrics projected into the locked operator UI",
             ),
         )
 
@@ -174,7 +174,7 @@ def _build_engine_cards(payload: HealthDashboardPayload) -> tuple[DashboardCard,
                 label="Engines",
                 value="none",
                 status="info",
-                detail="No engine metrics projected into the locked Light UI",
+                detail="No engine metrics projected into the locked operator UI",
             ),
         )
 
@@ -369,7 +369,11 @@ def _build_alerts_events_section(payload: HealthDashboardPayload) -> DashboardSe
                 label="Operator Events",
                 value=str(payload.operator_runtime.event_count),
                 status="warning" if payload.operator_runtime.event_count > 1 else "info",
-                detail=payload.operator_runtime.latest_event_message or "No operator event recorded yet",
+                detail=(
+                    payload.operator_runtime.last_error
+                    or payload.operator_runtime.latest_event_message
+                    or "No operator event recorded yet"
+                ),
             ),
             DashboardCard(
                 key="critical_notifications",
@@ -449,6 +453,10 @@ def _enum_label(value) -> str:
     return getattr(value, "value", str(value))
 
 
+build_light_dashboard_view = build_locked_operator_dashboard_view
+
+
 __all__ = [
+    "build_locked_operator_dashboard_view",
     "build_light_dashboard_view",
 ]

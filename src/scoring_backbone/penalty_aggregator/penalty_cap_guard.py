@@ -50,8 +50,15 @@ def evaluate_penalty_cap(
 
     is_capped = capped_sp < score_penalty or capped_sm > size_multiplier
 
-    # Phantom risk: effective value near zero or negative relative to expected cost
-    is_phantom = effective_value <= expected_cost and raw_score > 0
+    # Phantom risk: effective value near zero or negative relative to expected cost.
+    # BS-88: skip phantom check when expected_cost <= 0 — no positive cost baseline to compare
+    # against; checking effective_value <= 0.0 would only catch non-positive trades, not
+    # the intended "trade earns less than it costs" case.
+    is_phantom = (
+        expected_cost > 0.0
+        and effective_value <= expected_cost
+        and raw_score > 0
+    )
 
     if is_phantom:
         verdict = PenaltyCapVerdict.PHANTOM_RISK

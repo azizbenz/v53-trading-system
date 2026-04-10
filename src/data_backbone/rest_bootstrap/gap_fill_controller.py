@@ -49,6 +49,14 @@ def evaluate_gap_fill(
         pair=pair, gap_start=gap_start, gap_end=gap_end, gap_size_s=gap_size,
     )
 
+    if gap_size <= 0.0:
+        # BS-89: negative or zero gap (clock reversal / inverted timestamps) — never fill
+        return GapFillResult(
+            request=request,
+            decision=GapFillDecision.REJECT_TOO_LARGE,
+            message=f"Gap {gap_size:.3f}s is non-positive (clock reversal or inverted timestamps)",
+        )
+
     if rate_limited:
         return GapFillResult(
             request=request,

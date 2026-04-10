@@ -11,6 +11,7 @@ from interface_contracts import (
     AlertRecord,
     AlertSeverity,
     DeploymentState,
+    HookId,
     PairHealthLevel,
     ProfileId,
     RuntimeMode,
@@ -174,7 +175,7 @@ class MonitoringSnapshot(TimestampedModel):
 
 
 class AlertHistoryEntry(BaseModel, frozen=True):
-    """Short Build-10 alert lifecycle history exposed to the locked Light UI."""
+    """Short Build-10 alert lifecycle history exposed to the locked operator UI."""
 
     alert_id: str = Field(..., min_length=1)
     severity: AlertSeverity
@@ -187,7 +188,7 @@ class AlertHistoryEntry(BaseModel, frozen=True):
 
 
 class OperatorRuntimeEvent(BaseModel, frozen=True):
-    """Audit-ready operator log event projected from the locked Light UI into monitoring."""
+    """Audit-ready operator log event projected from the locked operator UI into monitoring."""
 
     timestamp_ms: int = Field(..., ge=0)
     correlation_id: str = Field(..., min_length=1)
@@ -208,6 +209,7 @@ class OperatorRuntimeProjection(BaseModel, frozen=True):
     event_count: int = Field(default=0, ge=0)
     latest_event_type: str = ""
     latest_event_message: str = ""
+    last_error: str = ""
     recent_event_log: tuple[OperatorRuntimeEvent, ...] = ()
     rejection_event_count: int = Field(default=0, ge=0)
     latest_rejection_reason: str = ""
@@ -222,7 +224,7 @@ class OperatorRuntimeProjection(BaseModel, frozen=True):
 
 
 class HealthDashboardPayload(TimestampedModel):
-    """Stable backend payload structured for the locked Light UI."""
+    """Stable backend payload structured for the locked Build-10 operator UI."""
 
     correlation_id: str = Field(..., min_length=1)
     profile: ProfileId
@@ -279,6 +281,10 @@ class HealthDashboardPayload(TimestampedModel):
     operator_runtime: OperatorRuntimeProjection = OperatorRuntimeProjection()
     controls_locked: bool = True
 
+    @property
+    def live_status(self) -> ProjectionStatus:
+        return self.live_light_status
+
 
 class SystemProjection(BaseModel, frozen=True):
     """Normalized system-level projection used by the technical dashboard."""
@@ -294,6 +300,37 @@ class SystemProjection(BaseModel, frozen=True):
     build14_status: ProjectionStatus = "planned"
     replay_import_status: ProjectionStatus = "planned"
     governed_extensions_detail: str = ""
+
+    @property
+    def live_status(self) -> ProjectionStatus:
+        return self.live_light_status
+
+
+class FleetNodeProjection(BaseModel, frozen=True):
+    """Read-only synthetic summary for one VPS in a future fleet overview."""
+
+    vps_id: str = Field(..., min_length=1)
+    health_status: ProjectionStatus
+    runtime_mode: RuntimeMode | None = None
+    artifact_version: str = ""
+    heartbeat_age_ms: int | None = Field(default=None, ge=0)
+    alert_state: HeadlineStatus = "healthy"
+
+
+class FleetOverviewProjection(TimestampedModel):
+    """Read-only fleet summary. Deep diagnostics still live on the selected VPS."""
+
+    nodes: tuple[FleetNodeProjection, ...] = ()
+    active_vps_id: str = ""
+
+    @model_validator(mode="after")
+    def validate_fleet(self) -> "FleetOverviewProjection":
+        vps_ids = tuple(node.vps_id for node in self.nodes)
+        if len(set(vps_ids)) != len(vps_ids):
+            raise ValueError("FleetOverviewProjection nodes must have unique vps_id values")
+        if self.active_vps_id and self.active_vps_id not in set(vps_ids):
+            raise ValueError("FleetOverviewProjection active_vps_id must reference a node in nodes")
+        return self
 
 
 class Build9MetaProjection(BaseModel, frozen=True):
@@ -502,7 +539,12 @@ class MicroLiveProjection(BaseModel, frozen=True):
 
 
 class LiveLightProjection(BaseModel, frozen=True):
-    """Normalized Build-13 Live-Light summary consumed by Build-10 supervision."""
+    """Normalized Build-13 Live summary consumed by Build-10 supervision.
+
+    `Live-Light` remains the historical label carried by the surrounding
+    contract surface, but the governed rail represented here is the active
+    Build-13 Live runtime on `profile=COMPLETE`.
+    """
 
     status: ProjectionStatus = "planned"
     run_state: str = "not_run"
@@ -534,6 +576,9 @@ class LiveLightProjection(BaseModel, frozen=True):
     build14_reason_codes: tuple[str, ...] = ()
     build14_confidence_penalty_weight: float = Field(default=0.0, ge=0.0, le=0.25)
     build14_recommended_budget_factor: float = Field(default=1.0, ge=0.0, le=1.0)
+
+
+LiveProjection = LiveLightProjection
 
 
 class Build14ReaderProjection(BaseModel, frozen=True):
@@ -621,6 +666,28 @@ class AccountUserDataProjection(BaseModel, frozen=True):
     detail: str = "No authenticated Binance user-data stream captured"
 
 
+class RuntimeHookBridgeProjection(BaseModel, frozen=True):
+    """Normalized monitoring projection for any bounded compiled runtime hook bridge."""
+
+    hook_id: HookId
+    label: str = Field(..., min_length=1)
+    status: ProjectionStatus = "planned"
+    configured: bool = False
+    selection_status: str = "not_configured"
+    current_snapshot_id: str = ""
+    previous_snapshot_id: str = ""
+    last_known_good_snapshot_id: str = ""
+    binding_present: bool = False
+    loaded: bool = False
+    compiled_plan_ref: str = ""
+    artifact_count: int = Field(default=0, ge=0)
+    action_kinds: tuple[str, ...] = ()
+    failure_mode: str = ""
+    error_stage: str = ""
+    error_type: str = ""
+    detail: str = "Compiled runtime hook bridge not configured"
+
+
 class ExecutionNoTradeBridgeProjection(BaseModel, frozen=True):
     """Governed monitoring projection of the bounded compiled no-trade bridge."""
 
@@ -634,6 +701,8 @@ class ExecutionNoTradeBridgeProjection(BaseModel, frozen=True):
     loaded: bool = False
     compiled_plan_ref: str = ""
     artifact_count: int = Field(default=0, ge=0)
+    failure_mode: str = ""
+    error_stage: str = ""
     error_type: str = ""
     detail: str = "Compiled execution no-trade bridge not configured"
 
@@ -684,6 +753,7 @@ class TechnicalDashboardPayload(TimestampedModel):
     build14: Build14Projection = Build14Projection()
     account_user_data: AccountUserDataProjection = AccountUserDataProjection()
     execution_no_trade_bridge: ExecutionNoTradeBridgeProjection = ExecutionNoTradeBridgeProjection()
+    runtime_hook_bridges: tuple[RuntimeHookBridgeProjection, ...] = ()
     replay_import: ReplayImportProjection
     alerts: AlertProjection
     future_panels: tuple[str, ...] = (
@@ -696,6 +766,88 @@ class TechnicalDashboardPayload(TimestampedModel):
         "artifact_import",
         "observability_export",
     )
+
+    @property
+    def live(self) -> LiveProjection:
+        return self.live_light
+
+
+class LocalLabMonitoringBackendPayload(TimestampedModel):
+    """Descriptive backend payload for future Local IA Lab monitoring surfaces."""
+
+    correlation_id: str = Field(..., min_length=1)
+    profile: ProfileId
+    runtime_mode: RuntimeMode
+    status: ProjectionStatus
+    detail: str = Field(..., min_length=1)
+    run_id: str = Field(..., min_length=1)
+    export_dir: str = Field(..., min_length=1)
+    dataset_manifest_id: str = Field(..., min_length=1)
+    artifact_id: str = Field(..., min_length=1)
+    selected_pair: str = ""
+    selected_engine_id: str = ""
+    release_status: str = Field(..., min_length=1)
+    bridge_status: str = Field(..., min_length=1)
+    promotion_readiness_status: str = Field(..., min_length=1)
+    activation_stage: str = Field(..., min_length=1)
+    normalized_promotion_state: str = Field(..., min_length=1)
+    review_state: str = Field(..., min_length=1)
+    release_gate_status: str = Field(..., min_length=1)
+    semantic_status: str = Field(..., min_length=1)
+    review_ready: bool = False
+    trade_loss_attribution_ready: bool = False
+    walk_forward_review_ready: bool = False
+    artifact_ablation_ready: bool = False
+    artifact_proof_ready: bool = False
+    edge_calibration_ready: bool = False
+    release_ready_for_shadow: bool = False
+    ready_for_shadow_import_dry_run: bool = False
+    scope_count: int = Field(default=0, ge=0)
+    scope_ready_count: int = Field(default=0, ge=0)
+    scope_blocked_count: int = Field(default=0, ge=0)
+    release_scope_ready_count: int = Field(default=0, ge=0)
+    release_scope_blocked_count: int = Field(default=0, ge=0)
+    observability_sample_count: int = Field(default=0, ge=0)
+    blocking_reason_count: int = Field(default=0, ge=0)
+    release_gate_reason_count: int = Field(default=0, ge=0)
+    blocking_reasons: tuple[str, ...] = ()
+    artifact_proof_validation_reasons: tuple[str, ...] = ()
+    recalibration_blocking_reasons: tuple[str, ...] = ()
+    release_gate_reasons: tuple[str, ...] = ()
+    bridge_blocking_reasons: tuple[str, ...] = ()
+    observability_export_ref: str = ""
+    scope_matrix_ref: str = ""
+    artifact_release_candidate_ref: str = ""
+    artifact_import_dry_run_bridge_ref: str = ""
+    artifact_promotion_readiness_summary_ref: str = ""
+
+
+class LocalLabMonitoringIngestionSummary(TimestampedModel):
+    """Typed summary describing whether a Local IA Lab monitoring bundle is ingestion-ready."""
+
+    correlation_id: str = Field(..., min_length=1)
+    profile: ProfileId
+    runtime_mode: RuntimeMode
+    projection_status: ProjectionStatus
+    selected_pair: str = ""
+    selected_engine_id: str = ""
+    release_status: str = Field(..., min_length=1)
+    bridge_status: str = Field(..., min_length=1)
+    promotion_readiness_status: str = Field(..., min_length=1)
+    release_ready_for_shadow: bool = False
+    ready_for_shadow_import_dry_run: bool = False
+    sample_count: int = Field(default=0, ge=0)
+    text_payload_present: bool = False
+    text_payload_line_count: int = Field(default=0, ge=0)
+    scope_count: int = Field(default=0, ge=0)
+    release_scope_ready_count: int = Field(default=0, ge=0)
+    release_scope_blocked_count: int = Field(default=0, ge=0)
+    blocking_reason_count: int = Field(default=0, ge=0)
+    release_gate_reason_count: int = Field(default=0, ge=0)
+    ingestion_ready: bool = False
+    ingestion_detail: str = Field(..., min_length=1)
+    observability_export_ref: str = ""
+    backend_payload_ref: str = ""
 
 
 class MetricSample(BaseModel, frozen=True):
@@ -740,14 +892,18 @@ __all__ = [
     "EngineJudgmentProjection",
     "ShadowProjection",
     "MicroLiveProjection",
+    "LiveProjection",
     "LiveLightProjection",
     "Build14ReaderProjection",
     "Build14Projection",
     "AccountUserDataProjection",
+    "RuntimeHookBridgeProjection",
     "ExecutionNoTradeBridgeProjection",
     "ReplayImportProjection",
     "AlertProjection",
     "TechnicalDashboardPayload",
+    "LocalLabMonitoringBackendPayload",
+    "LocalLabMonitoringIngestionSummary",
     "MetricKind",
     "MetricSample",
     "ObservabilityExport",

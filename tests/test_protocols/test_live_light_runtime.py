@@ -74,7 +74,7 @@ def _micro_live_payload(
     transform_whitelist_present: bool = True,
     transform_whitelist_status: str = "ok",
     transform_whitelist_reasons: tuple[str, ...] = (),
-    signature_check_status: str = "not_provided",
+    signature_check_status: str = "verified",
     signature_check_reasons: tuple[str, ...] = (),
     conflict_resolution_mode: str = "no_trade_then_strictest",
     conflict_hard_veto_action: str = "no_trade",
@@ -1734,6 +1734,73 @@ def test_run_live_light_gate_blocks_untyped_build14_object():
     )
 
     summary = run_live_light_gate(live_input, build14_influence=rogue_object)
+
+    assert summary.decision.verdict == LiveLightVerdict.BLOCKED
+    assert summary.decision.allowed_to_execute_small is False
+    assert (
+        "Build-14 influence must be a typed Build14InfluenceSignal or Build14InfluenceReport"
+        in summary.decision.blocking_reasons
+    )
+
+
+def test_run_live_light_gate_blocks_build14_duck_typed_impostor():
+    live_input = build_live_light_input_from_micro_live(
+        _micro_live_summary(),
+        _micro_live_payload(),
+        live_pairs=("BTCUSDT",),
+        requested_total_notional_usdt=80.0,
+        requested_pair_notional_usdt=40.0,
+        max_total_notional_usdt=100.0,
+        max_pair_notional_usdt=50.0,
+        micro_live_stable_days=7,
+        observability_ready=True,
+        halt_ready=True,
+        execution_ready=True,
+        broker_ready=True,
+        exchange_ready=True,
+        onboarding_accepted=True,
+        build14_live_eligible=True,
+    )
+
+    class Build14InfluenceSignal:
+        __module__ = "complete_enablers.contracts"
+
+        def __init__(self, **data):
+            defaults = {
+                "correlation_id": "corr-live",
+                "influence_mode": "limited_influence",
+                "action": "downgrade_confidence",
+                "severity": "elevated",
+                "families": ("microstructure",),
+                "summary": "Duck-typed impostor must be rejected",
+                "reason_codes": ("market_toxicity_snapshot_elevated",),
+                "confidence_penalty_weight": 0.10,
+                "recommended_budget_factor": 0.85,
+                "requires_manual_review": False,
+                "candidate_effect": "confidence_downgrade",
+                "stability_confirmed": True,
+                "non_regression_required": True,
+                "can_override_engines": False,
+                "can_bypass_risk": False,
+                "can_bypass_portfolio": False,
+                "can_trade_autonomously": False,
+            }
+            defaults.update(data)
+            for key, value in defaults.items():
+                setattr(self, key, value)
+
+        def model_dump(self):
+            return self.__dict__.copy()
+
+        @classmethod
+        def model_validate(cls, data):
+            if isinstance(data, cls):
+                return data
+            return cls(**data)
+
+    spoofed_signal = Build14InfluenceSignal()
+
+    summary = run_live_light_gate(live_input, build14_influence=spoofed_signal)
 
     assert summary.decision.verdict == LiveLightVerdict.BLOCKED
     assert summary.decision.allowed_to_execute_small is False

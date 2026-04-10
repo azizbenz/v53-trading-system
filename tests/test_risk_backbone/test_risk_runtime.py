@@ -2,7 +2,15 @@
 
 import pytest
 
-from risk_backbone import PortfolioRiskSnapshot, RiskCandidate, RiskLimits, RiskRuntime, RiskRuntimeAction
+from risk_backbone import (
+    PortfolioRiskSnapshot,
+    RiskCandidate,
+    RiskLimits,
+    RiskMicroFrictionPrecheckHook,
+    RiskMicroFrictionPrecheckOutcome,
+    RiskRuntime,
+    RiskRuntimeAction,
+)
 from risk_backbone.btc_factor_guard.pair_beta_registry import PairBetaRegistry
 from risk_backbone.correlation_cluster_guard.cluster_registry import ClusterRegistry
 from risk_backbone.exposure_budgeter.gross_exposure_calculator import Position
@@ -23,17 +31,22 @@ def _limits() -> RiskLimits:
     )
 
 
-def _runtime(snapshot: PortfolioRiskSnapshot | None = None) -> RiskRuntime:
+def _runtime(
+    snapshot: PortfolioRiskSnapshot | None = None,
+    *,
+    micro_friction_precheck_hook: RiskMicroFrictionPrecheckHook | None = None,
+) -> RiskRuntime:
     beta_registry = PairBetaRegistry()
-    beta_registry.set_beta("BTCUSDT", 1.0)
-    beta_registry.set_beta("ETHUSDT", 0.6)
-    beta_registry.set_beta("LINKUSDT", 0.55)
-    beta_registry.set_beta("SOLUSDT", 0.7)
+    beta_registry.set_beta("BTCUSDT", 1.0, as_of_ts=0.0)
+    beta_registry.set_beta("ETHUSDT", 0.6, as_of_ts=0.0)
+    beta_registry.set_beta("LINKUSDT", 0.55, as_of_ts=0.0)
+    beta_registry.set_beta("SOLUSDT", 0.7, as_of_ts=0.0)
     return RiskRuntime(
         _limits(),
         pair_beta_registry=beta_registry,
         cluster_registry=ClusterRegistry(),
         snapshot=snapshot,
+        micro_friction_precheck_hook=micro_friction_precheck_hook,
     )
 
 
@@ -268,6 +281,43 @@ class TestRiskRuntime:
         assert evaluation.dominant_reason_code == "RISK_BETA_MAPPING_MISSING"
         assert evaluation.reason_details[0].message == "missing explicit beta mapping for pair XRPUSDT"
 
+    def test_runtime_rejects_stale_beta_mapping(self):
+        beta_registry = PairBetaRegistry()
+        beta_registry.set_beta("BTCUSDT", 1.0, as_of_ts=0.0)
+        beta_registry.set_beta("ETHUSDT", 0.6, as_of_ts=0.0)
+        runtime = RiskRuntime(
+            RiskLimits(
+                gross_cap=500.0,
+                position_cap=250.0,
+                loss_cap=100.0,
+                beta_cap=1.0,
+                cluster_cap=200.0,
+                beta_mapping_max_age_s=10.0,
+                drawdown_warning_threshold_pct=0.02,
+                drawdown_observe_threshold_pct=0.04,
+            ),
+            pair_beta_registry=beta_registry,
+            cluster_registry=ClusterRegistry(),
+            snapshot=PortfolioRiskSnapshot(
+                current_equity=1000.0,
+                session_peak_equity=1000.0,
+            ),
+        )
+        evaluation = runtime.evaluate_candidate(
+            RiskCandidate(
+                pair="ETHUSDT",
+                engine_id="eng-a",
+                size=40.0,
+                planned_loss=5.0,
+            ),
+            now=20.0,
+        )
+
+        assert evaluation.action == RiskRuntimeAction.REJECT
+        assert evaluation.accepted is False
+        assert evaluation.dominant_reason_code == "RISK_BETA_MAPPING_STALE"
+        assert evaluation.reason_details[0].message == "stale beta mapping for pair ETHUSDT"
+
     def test_runtime_marks_elevated_execution_pressure_without_rejecting(self):
         runtime = _runtime(
             PortfolioRiskSnapshot(
@@ -294,6 +344,43 @@ class TestRiskRuntime:
         assert evaluation.explain_summary.startswith("risk=accept / physics=elevated")
         assert evaluation.explainability.execution_survivability_score < 1.0
         assert evaluation.explainability.micro_friction_score > 0.0
+
+    def test_runtime_rejects_when_micro_friction_precheck_hook_blocks(self):
+        def _block_micro_friction(_hook_input):
+            return RiskMicroFrictionPrecheckOutcome(
+                accepted=False,
+                reason_codes=("ARTIFACT_RISK_MICRO_FRICTION_BLOCK",),
+                detail="artifact veto on risk micro-friction precheck",
+            )
+
+        runtime = _runtime(
+            PortfolioRiskSnapshot(
+                current_equity=1000.0,
+                session_peak_equity=1000.0,
+            ),
+            micro_friction_precheck_hook=_block_micro_friction,
+        )
+        evaluation = runtime.evaluate_candidate(
+            RiskCandidate(
+                pair="ETHUSDT",
+                engine_id="eng-a",
+                size=40.0,
+                planned_loss=5.0,
+                execution_fragility=0.8,
+                market_toxicity=0.8,
+                spread_regime_penalty=0.6,
+            ),
+            now=60.5,
+        )
+
+        assert evaluation.action == RiskRuntimeAction.REJECT
+        assert evaluation.accepted is False
+        assert evaluation.dominant_reason_code == "ARTIFACT_RISK_MICRO_FRICTION_BLOCK"
+        assert evaluation.reason_details[-1].category == "micro_friction_hook"
+        assert evaluation.reason_details[-1].message == "artifact veto on risk micro-friction precheck"
+        assert evaluation.explainability.physics_pressure_state == "elevated"
+        assert evaluation.explainability.blocked_guard_codes[-1] == "ARTIFACT_RISK_MICRO_FRICTION_BLOCK"
+        assert evaluation.reasons == ("artifact veto on risk micro-friction precheck",)
 
     def test_runtime_reduces_exposure_on_severe_execution_pressure(self):
         runtime = _runtime(

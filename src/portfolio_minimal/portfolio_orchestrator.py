@@ -6,7 +6,7 @@ Pipeline:
 1. candidate_pool_builder  → filter positive score + size
 2. conflict_checker         → deduplicate pairs by ranking_score
 3. comparative_ranker       → rank by composite R_i
-4. selection_resolver       → select eligible (fail-closed no-cluster)
+4. selection_resolver       → select eligible (fail-closed cluster mapping)
 5. base_size_builder        → base size from profile
 6. score_size_mapper        → tier + score modulation
 7. portfolio_cap_applier    → apply gross/cluster/loss/beta caps
@@ -20,9 +20,13 @@ allocation_router reduces it first.
 
 from __future__ import annotations
 
+import math
+from typing import Protocol
+
 from pydantic import BaseModel
 
 from portfolio_minimal.opportunity_selector.candidate_pool_builder import (
+    CandidatePoolFreshnessPolicy,
     CandidatePoolRejection,
     OpportunityCandidate,
     build_candidate_pool,
@@ -59,11 +63,10 @@ class OrchestratorConfig(BaseModel, frozen=True):
 
     size_profile: SizeProfile
     initial_snapshot: PortfolioSnapshot
+    freshness_policy: CandidatePoolFreshnessPolicy
     position_cap: float = 500.0
     min_viable_size: float = 10.0
     cluster_crowding_threshold: int = 3
-    now_ts: float | None = None
-    max_signal_age_s: float | None = None
 
 
 class OrchestratorResult(BaseModel, frozen=True):
@@ -77,9 +80,46 @@ class OrchestratorResult(BaseModel, frozen=True):
     report: AllocationReport = AllocationReport()
 
 
+class PortfolioRelativeRankAdjustmentInput(BaseModel, frozen=True):
+    """Bounded typed input for the runtime-open portfolio relative-rank hook."""
+
+    context_id: str
+    pair: str
+    engine_id: str
+    ranking_score: float
+    rank: int
+    ranking_version: str
+    penalized_score: float
+    expected_cost: float
+    expected_ce: float
+    ev_net: float
+    cluster_id: str
+    tier_suggestion: str
+
+
+class PortfolioRelativeRankAdjustmentOutcome(BaseModel, frozen=True):
+    """Deterministic outcome of the bounded portfolio relative-rank hook."""
+
+    rank_delta: float = 0.0
+    reason_codes: tuple[str, ...] = ()
+    detail: str = ""
+
+
+class PortfolioRelativeRankAdjustmentHook(Protocol):
+    """Bounded hook surface injected into the real Build-8 portfolio pipeline rail."""
+
+    def __call__(
+        self,
+        hook_input: PortfolioRelativeRankAdjustmentInput,
+    ) -> PortfolioRelativeRankAdjustmentOutcome:
+        ...
+
+
 def run_portfolio_pipeline(
     candidates: tuple[OpportunityCandidate, ...],
     config: OrchestratorConfig,
+    *,
+    relative_rank_hook: PortfolioRelativeRankAdjustmentHook | None = None,
 ) -> OrchestratorResult:
     """Run the full Build-8 portfolio pipeline.
 
@@ -89,8 +129,7 @@ def run_portfolio_pipeline(
     # ── 1. Build candidate pool ──
     pool = build_candidate_pool(
         candidates,
-        now_ts=config.now_ts,
-        max_signal_age_s=config.max_signal_age_s,
+        freshness_policy=config.freshness_policy,
     )
     if pool.pool_size == 0:
         return OrchestratorResult(
@@ -106,8 +145,9 @@ def run_portfolio_pipeline(
 
     # ── 3. Rank survivors ──
     ranked = rank_candidates(conflict_result.survivors)
+    ranked = _apply_relative_rank_adjustments(ranked, relative_rank_hook)
 
-    # ── 4. Selection (only structural rejection: no-cluster) ──
+    # ── 4. Selection (only structural rejections: cluster mapping fail-close) ──
     selection = resolve_selection(ranked, config.initial_snapshot)
 
     # ── 5-8. Allocation pipeline for each selected candidate ──
@@ -200,4 +240,57 @@ def run_portfolio_pipeline(
         conflicts=conflict_result,
         selection=selection,
         report=report,
+    )
+
+
+def _apply_relative_rank_adjustments(
+    ranked: tuple[RankedCandidate, ...],
+    relative_rank_hook: PortfolioRelativeRankAdjustmentHook | None,
+) -> tuple[RankedCandidate, ...]:
+    if relative_rank_hook is None or not ranked:
+        return ranked
+
+    adjusted: list[RankedCandidate] = []
+    for entry in ranked:
+        outcome = relative_rank_hook(
+            PortfolioRelativeRankAdjustmentInput(
+                context_id=(
+                    f"{entry.candidate.engine_id}:{entry.candidate.pair}:"
+                    f"{entry.ranking_version}:{entry.rank}"
+                ),
+                pair=entry.candidate.pair,
+                engine_id=entry.candidate.engine_id,
+                ranking_score=entry.ranking_score,
+                rank=entry.rank,
+                ranking_version=entry.ranking_version,
+                penalized_score=entry.candidate.penalized_score,
+                expected_cost=entry.candidate.expected_cost,
+                expected_ce=entry.candidate.ce_expected,
+                ev_net=entry.candidate.ev_net,
+                cluster_id=entry.candidate.cluster_id,
+                tier_suggestion=entry.candidate.tier_suggestion,
+            )
+        )
+        if not math.isfinite(outcome.rank_delta):
+            raise ValueError("portfolio relative-rank hook requires finite rank_delta")
+        adjusted.append(
+            entry.model_copy(
+                update={
+                    "ranking_score": entry.ranking_score + outcome.rank_delta,
+                }
+            )
+        )
+
+    adjusted.sort(
+        key=lambda rc: (
+            -rc.ranking_score,
+            rc.candidate.pair,
+            rc.candidate.engine_id,
+            rc.candidate.direction,
+            rc.candidate.emitted_at,
+        )
+    )
+    return tuple(
+        candidate.model_copy(update={"rank": index + 1})
+        for index, candidate in enumerate(adjusted)
     )

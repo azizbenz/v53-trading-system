@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import monitoring
 
-from interface_contracts import PairHealthLevel, ProfileId, RuntimeMode
+from interface_contracts import HookId, PairHealthLevel, ProfileId, RuntimeMode
 from meta import build_break_even_report, build_cra_report, build_dtr_summary, build_edge_report
 from meta_minimal.break_even_dashboard.motor_pair_break_even_view import BreakEvenView
 from meta_minimal.cra_monitor.cra_alert_builder import CRAAlert, CRAAlertLevel
@@ -21,6 +21,7 @@ from monitoring import (
     OperatorRuntimeEvent,
     OperatorRuntimeProjection,
     ReplayImportProjection,
+    RuntimeHookBridgeProjection,
     ShadowProjection,
     build_observability_export,
     build_technical_dashboard_payload,
@@ -42,6 +43,7 @@ def _payload(
     build14_projection: Build14Projection | None = None,
     replay_projection: ReplayImportProjection | None = None,
     operator_runtime: OperatorRuntimeProjection | None = None,
+    runtime_hook_bridge_projections: tuple[RuntimeHookBridgeProjection, ...] | None = None,
     active_modules: tuple[str, ...] = (),
     active_engines: tuple[str, ...] = (),
 ):
@@ -169,6 +171,7 @@ def _payload(
         build14_projection=build14_projection,
         replay_projection=replay_projection,
         operator_runtime=operator_runtime,
+        runtime_hook_bridge_projections=runtime_hook_bridge_projections,
     )
 
 
@@ -607,6 +610,8 @@ def test_observability_export_projects_execution_no_trade_bridge_metrics():
                     "binding_present": True,
                     "loaded": False,
                     "artifact_count": 2,
+                    "failure_mode": "fail_open_baseline_skip_artifact",
+                    "error_stage": "plan_selection",
                 }
             )
         }
@@ -618,6 +623,8 @@ def test_observability_export_projects_execution_no_trade_bridge_metrics():
         sample.name == "v53_execution_no_trade_bridge_status"
         and sample.labels["status"] == "warning"
         and sample.labels["selection_status"] == "binding_only"
+        and sample.labels["failure_mode"] == "fail_open_baseline_skip_artifact"
+        and sample.labels["error_stage"] == "plan_selection"
         for sample in export.samples
     )
     assert any(
@@ -630,5 +637,45 @@ def test_observability_export_projects_execution_no_trade_bridge_metrics():
     )
     assert any(
         sample.name == "v53_execution_no_trade_bridge_loaded" and sample.value == 0.0
+        for sample in export.samples
+    )
+
+
+def test_observability_export_projects_runtime_hook_bridge_metrics():
+    payload = _payload(
+        runtime_hook_bridge_projections=(
+            RuntimeHookBridgeProjection(
+                hook_id=HookId.ENGINE_D_REENTRY_VALIDATION,
+                label="Engine D re-entry",
+                status="warning",
+                configured=True,
+                selection_status="binding_only",
+                binding_present=True,
+                artifact_count=3,
+                failure_mode="fail_open_baseline_skip_artifact",
+                error_stage="plan_selection",
+            ),
+        )
+    )
+
+    export = build_observability_export(payload)
+
+    assert any(
+        sample.name == "v53_runtime_hook_bridge_status"
+        and sample.labels["hook_id"] == HookId.ENGINE_D_REENTRY_VALIDATION.value
+        and sample.labels["status"] == "warning"
+        and sample.labels["selection_status"] == "binding_only"
+        for sample in export.samples
+    )
+    assert any(
+        sample.name == "v53_runtime_hook_bridge_binding_present"
+        and sample.labels["hook_id"] == HookId.ENGINE_D_REENTRY_VALIDATION.value
+        and sample.value == 1.0
+        for sample in export.samples
+    )
+    assert any(
+        sample.name == "v53_runtime_hook_bridge_artifact_count"
+        and sample.labels["hook_id"] == HookId.ENGINE_D_REENTRY_VALIDATION.value
+        and sample.value == 3.0
         for sample in export.samples
     )

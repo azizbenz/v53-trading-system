@@ -10,7 +10,7 @@ GEM-19: disk flush via atomic write (write-tmp-then-rename).
 
 from __future__ import annotations
 
-import json
+import atexit
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -36,10 +36,15 @@ class DTRStore:
 
     def __init__(self, flush_dir: Path | None = None) -> None:
         self._records: list[DTRRecord] = []
+        self._serialized: list[dict] = []  # BS-62: cache to avoid O(N²) re-serialization
+        self._records_by_pair: dict[str, list[DTRRecord]] = {}
+        self._records_by_engine: dict[str, list[DTRRecord]] = {}
+        self._records_by_state: dict[str, list[DTRRecord]] = {}
         self._attempted: int = 0
         self._dropped: int = 0
         self._flush_dir = flush_dir
         self._last_flush_index: int = 0
+        atexit.register(self.flush_to_disk)  # BS-62: flush on clean exit / unhandled exception
 
     def persist(self, record: DTRRecord) -> bool:
         """Persist a DTR. Returns True on success, False on failure.
@@ -48,7 +53,13 @@ class DTRStore:
         """
         self._attempted += 1
         try:
+            serialized = record.model_dump(mode="json")  # BS-62: serialize once at persist time
             self._records.append(record)
+            self._serialized.append(serialized)
+            # BS-67: maintain append-only secondary indexes to avoid O(N) scans on hot lookups.
+            self._records_by_pair.setdefault(record.pair, []).append(record)
+            self._records_by_engine.setdefault(record.engine_id, []).append(record)
+            self._records_by_state.setdefault(str(record.decision_state), []).append(record)
             return True
         except Exception:
             self._dropped += 1
@@ -68,15 +79,15 @@ class DTRStore:
 
     def get_by_pair(self, pair: str) -> tuple[DTRRecord, ...]:
         """Return DTRs for a specific pair."""
-        return tuple(r for r in self._records if r.pair == pair)
+        return tuple(self._records_by_pair.get(pair, ()))
 
     def get_by_engine(self, engine_id: str) -> tuple[DTRRecord, ...]:
         """Return DTRs for a specific engine."""
-        return tuple(r for r in self._records if r.engine_id == engine_id)
+        return tuple(self._records_by_engine.get(engine_id, ()))
 
     def get_by_state(self, state: str) -> tuple[DTRRecord, ...]:
         """Return DTRs with a specific decision state."""
-        return tuple(r for r in self._records if r.decision_state == state)
+        return tuple(self._records_by_state.get(str(state), ()))
 
     def get_stats(self) -> PersistenceStats:
         """Return persistence statistics."""
@@ -106,9 +117,9 @@ class DTRStore:
         if not new_records:
             return 0
 
-        # Serialize all records (not just new — full snapshot for atomicity)
-        data = [r.model_dump(mode="json") for r in self._records]
-        atomic_write_json(target, data)
+        # BS-62: use pre-serialized cache — O(1) per record instead of O(N) re-serialization.
+        # Full snapshot written for JSON atomicity (readers expect a valid array).
+        atomic_write_json(target, self._serialized)
 
         flushed = len(new_records)
         self._last_flush_index = len(self._records)

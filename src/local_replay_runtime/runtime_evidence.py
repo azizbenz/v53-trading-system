@@ -24,6 +24,7 @@ class LocalReplayEvidenceRecorderState(BaseModel):
 
     artifact_id: str = ""
     lineage_version: str = ""
+    last_error: str = ""
     data_source: str = "unknown"
     validation_ready: bool = False
     feature_bridge_ref: str = ""
@@ -129,13 +130,29 @@ class LocalReplayEvidenceRecorder:
             ),
         )
 
+    def build_state(self) -> LocalReplayEvidenceRecorderState:
+        """Return the current recorder state snapshot."""
+
+        return self._state.model_copy(deep=True)
+
     def _load_or_create(self) -> LocalReplayEvidenceRecorderState:
         if self._state_path is not None and self._state_path.exists():
             try:
                 data = json.loads(self._state_path.read_text(encoding="utf-8"))
+                if not isinstance(data, dict):
+                    raise ValueError(
+                        f"State file root must be a JSON object, got {type(data).__name__}"
+                    )
                 return LocalReplayEvidenceRecorderState(**data)
-            except (json.JSONDecodeError, OSError, ValueError):
-                pass
+            except (json.JSONDecodeError, OSError, ValueError, TypeError) as exc:
+                backup = self._state_path.with_suffix(".corrupted")
+                try:
+                    self._state_path.rename(backup)
+                except OSError:
+                    pass
+                return LocalReplayEvidenceRecorderState(
+                    last_error=f"state_file_corrupted:{type(exc).__name__}:{exc}"
+                )
         return LocalReplayEvidenceRecorderState()
 
     def _persist(self) -> None:

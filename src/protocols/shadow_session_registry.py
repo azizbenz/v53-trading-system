@@ -28,6 +28,7 @@ class ShadowSessionRegistryState(BaseModel):
     """Persisted registry of governed Shadow days."""
 
     entries: list[ShadowSessionEntry] = Field(default_factory=list)
+    last_error: str | None = None  # BS-65: set when state file was corrupted on load
 
 
 class ShadowSessionRegistry:
@@ -47,9 +48,19 @@ class ShadowSessionRegistry:
         if self._state_file.exists():
             try:
                 data = json.loads(self._state_file.read_text(encoding="utf-8"))
+                if not isinstance(data, dict):
+                    raise ValueError(f"State root must be a JSON object, got {type(data).__name__}")
                 return ShadowSessionRegistryState(**data)
-            except (json.JSONDecodeError, OSError, ValueError):
-                pass
+            except (json.JSONDecodeError, OSError, ValueError, TypeError) as exc:
+                # BS-65: fail-safe — backup corrupted file, reset with error marker
+                backup = self._state_file.with_suffix(".corrupted")
+                try:
+                    self._state_file.rename(backup)
+                except OSError:
+                    pass
+                return ShadowSessionRegistryState(
+                    last_error=f"state_file_corrupted:{type(exc).__name__}:{exc}",
+                )
         return ShadowSessionRegistryState()
 
     def _persist(self) -> None:
@@ -93,12 +104,44 @@ class ShadowSessionRegistry:
     def state_path(self) -> Path:
         return self._state_file
 
+    def ensure_persisted(self) -> None:
+        self._persist()
+
+    def recover_from_entries(self, entries: tuple[ShadowSessionEntry, ...]) -> None:
+        """Rebuild semantic registry state from recovered entries."""
+
+        if not entries:
+            raise ValueError(
+                "ShadowSessionRegistry.recover_from_entries requires at least one entry"
+            )
+        session_dates = tuple(entry.session_date for entry in entries)
+        parsed_dates = tuple(date.fromisoformat(value) for value in session_dates)
+        if len(parsed_dates) != len(set(parsed_dates)):
+            raise ValueError(
+                "ShadowSessionRegistry.recover_from_entries requires unique session_date values"
+            )
+        for previous_date, current_date in zip(parsed_dates, parsed_dates[1:]):
+            if current_date <= previous_date:
+                raise ValueError(
+                    "ShadowSessionRegistry.recover_from_entries requires strictly increasing session_date values"
+                )
+        self._state.entries = list(entries)
+        self._state.last_error = None
+        self._persist()
+
     def append_entries(self, entries: tuple[ShadowSessionEntry, ...]) -> None:
         if not entries:
             return
         self.validate_session_dates(tuple(entry.session_date for entry in entries))
-        self._state.entries.extend(entries)
-        self._persist()
+        # BS-68: build the candidate registry in a separate list so a persist failure
+        # can restore the exact previous in-memory state without leaving ghost entries.
+        original_entries = self._state.entries
+        self._state.entries = [*original_entries, *entries]
+        try:
+            self._persist()
+        except Exception:
+            self._state.entries = original_entries
+            raise
 
 
 __all__ = [

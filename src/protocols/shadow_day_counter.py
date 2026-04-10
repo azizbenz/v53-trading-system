@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from enum import StrEnum
 
@@ -47,7 +47,7 @@ class ShadowDayRecord(BaseModel, frozen=True):
     metrics_summary: dict[str, float | str] = Field(default_factory=dict)
 
 
-class ShadowCounterState(BaseModel):
+class ShadowCounterState(BaseModel, frozen=True):
     """Persisted counter state."""
 
     profile: ShadowProfile
@@ -57,6 +57,7 @@ class ShadowCounterState(BaseModel):
     started_at: float | None = None
     daily_records: list[ShadowDayRecord] = Field(default_factory=list)
     resets: int = 0  # number of times counter was reset due to gap
+    last_error: str | None = None  # BS-65: set when state file was corrupted on load
 
     @property
     def is_complete(self) -> bool:
@@ -146,15 +147,31 @@ class ShadowDayCounter:
         if self._state_file.exists():
             try:
                 data = json.loads(self._state_file.read_text(encoding="utf-8"))
-                return ShadowCounterState(**data)
-            except (json.JSONDecodeError, ValueError):
-                pass  # corrupted — start fresh
+                if not isinstance(data, dict):
+                    raise ValueError(f"State root must be a JSON object, got {type(data).__name__}")
+                return ShadowCounterState.model_validate(data)
+            except (json.JSONDecodeError, OSError, ValueError, TypeError) as exc:
+                # BS-65: fail-safe — backup corrupted file, reset with error marker
+                backup = self._state_file.with_suffix(".corrupted")
+                try:
+                    self._state_file.rename(backup)
+                except OSError:
+                    pass
+                return ShadowCounterState(
+                    profile=self._profile,
+                    last_error=f"state_file_corrupted:{type(exc).__name__}:{exc}",
+                )
         return ShadowCounterState(profile=self._profile)
 
     def _persist(self) -> None:
         """Atomically persist state to disk."""
         self._state_dir.mkdir(parents=True, exist_ok=True)
         atomic_write_json(self._state_file, self._state.model_dump(mode="json"))
+
+    def _replace_state(self, **updates: object) -> None:
+        payload = self._state.model_dump(mode="python")
+        payload.update(updates)
+        self._state = ShadowCounterState.model_validate(payload)
 
     def record_shadow_day(
         self,
@@ -176,19 +193,21 @@ class ShadowDayCounter:
         - If gap since last shadow > 24h → reset counter to 0.
         - If gates failed → day not counted (counter unchanged).
         """
-        ts = now or time.time()
+        ts = time.time() if now is None else now
 
         # Check for 24h gap reset
         if self._state.last_shadow_timestamp is not None:
             gap = ts - self._state.last_shadow_timestamp
             if gap > _MAX_GAP_SECONDS:
-                self._state.consecutive_days = 0
-                self._state.resets += 1
-                self._state.daily_records = []
-                self._state.started_at = None
+                self._replace_state(
+                    consecutive_days=0,
+                    resets=self._state.resets + 1,
+                    daily_records=[],
+                    started_at=None,
+                )
 
         # Update timestamp regardless (attempt was made)
-        self._state.last_shadow_timestamp = ts
+        self._replace_state(last_shadow_timestamp=ts)
 
         if not passed_all_gates:
             # Day does not count, but we record the attempt
@@ -205,19 +224,22 @@ class ShadowDayCounter:
 
         # Successful day
         if self._state.started_at is None:
-            self._state.started_at = ts
+            self._replace_state(started_at=ts)
 
-        self._state.consecutive_days += 1
+        next_consecutive_days = self._state.consecutive_days + 1
 
         record = ShadowDayRecord(
-            day_number=self._state.consecutive_days,
+            day_number=next_consecutive_days,
             date=datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d"),
             timestamp=ts,
             profile=self._profile,
             passed_all_gates=True,
             metrics_summary=metrics_summary or {},
         )
-        self._state.daily_records.append(record)
+        self._replace_state(
+            consecutive_days=next_consecutive_days,
+            daily_records=[*self._state.daily_records, record],
+        )
         self._persist()
         return record
 
@@ -228,6 +250,52 @@ class ShadowDayCounter:
     def get_status(self) -> ShadowCounterState:
         """Return current counter state."""
         return self._state
+
+    def recover_from_records(self, records: tuple[ShadowDayRecord, ...]) -> None:
+        """Rebuild semantic state from persisted successful day records.
+
+        This recovery path is used after a corrupted counter file was reset but the
+        durable day-record artifacts still exist on disk.
+        """
+
+        if not records:
+            raise ValueError("ShadowDayCounter.recover_from_records requires at least one record")
+
+        previous_date: date | None = None
+        previous_timestamp: float | None = None
+        for index, record in enumerate(records, start=1):
+            if record.profile != self._profile:
+                raise ValueError(
+                    "ShadowDayCounter.recover_from_records requires matching profile records"
+                )
+            if not record.passed_all_gates:
+                raise ValueError(
+                    "ShadowDayCounter.recover_from_records requires successful records only"
+                )
+            if record.day_number != index:
+                raise ValueError(
+                    "ShadowDayCounter.recover_from_records requires contiguous day_number values"
+                )
+            current_date = date.fromisoformat(record.date)
+            if previous_date is not None and current_date <= previous_date:
+                raise ValueError(
+                    "ShadowDayCounter.recover_from_records requires strictly increasing dates"
+                )
+            if previous_timestamp is not None and record.timestamp <= previous_timestamp:
+                raise ValueError(
+                    "ShadowDayCounter.recover_from_records requires strictly increasing timestamps"
+                )
+            previous_date = current_date
+            previous_timestamp = record.timestamp
+
+        self._replace_state(
+            consecutive_days=len(records),
+            last_shadow_timestamp=records[-1].timestamp,
+            started_at=records[0].timestamp,
+            daily_records=list(records),
+            last_error=None,
+        )
+        self._persist()
 
     def _successful_daily_records(self) -> list[ShadowDayRecord]:
         return [record for record in self._state.daily_records if record.passed_all_gates]

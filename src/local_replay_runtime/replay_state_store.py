@@ -35,6 +35,7 @@ class ReplaySessionState(BaseModel):
 
     run_id: str = ""
     strategy_id: str = ""
+    last_error: str = ""
     lifecycle_state: ReplaySessionLifecycle = "idle"
     input_kind: str = "demo_dataset"
     input_path: str = ""
@@ -144,9 +145,20 @@ class ReplaySessionStateStore:
         if self._state_path is not None and self._state_path.exists():
             try:
                 data = json.loads(self._state_path.read_text(encoding="utf-8"))
+                if not isinstance(data, dict):
+                    raise ValueError(
+                        f"State file root must be a JSON object, got {type(data).__name__}"
+                    )
                 return ReplaySessionState(**data)
-            except (json.JSONDecodeError, OSError, ValueError):
-                pass
+            except (json.JSONDecodeError, OSError, ValueError, TypeError) as exc:
+                backup = self._state_path.with_suffix(".corrupted")
+                try:
+                    self._state_path.rename(backup)
+                except OSError:
+                    pass
+                return ReplaySessionState(
+                    last_error=f"state_file_corrupted:{type(exc).__name__}:{exc}"
+                )
         return ReplaySessionState()
 
     def _persist(self) -> None:

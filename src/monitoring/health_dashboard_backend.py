@@ -1,4 +1,4 @@
-"""Stable backend payload for the compatibility operator UI."""
+"""Stable backend payload for the locked Build-10 operator UI."""
 
 from __future__ import annotations
 

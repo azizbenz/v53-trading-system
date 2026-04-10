@@ -204,9 +204,9 @@ class TestCompleteToLive:
 class TestCheckAllGates:
     """Compatibility aggregate gate check."""
 
-    def test_both_fail_with_empty_state(self, gate_dir):
+    def test_all_fail_with_empty_state(self, gate_dir):
         results = check_all_gates(gate_dir)
-        assert len(results) == 2
+        assert len(results) == 3  # BS-37: complete_to_micro_live added
         assert all(not result.passed for result in results)
 
     def test_light_passes_complete_fails(self, gate_dir):

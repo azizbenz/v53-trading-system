@@ -10,18 +10,25 @@
 
 Ce document couvre **Build-11** du plan officiel V5.3.
 
+## 0.0 Note de lecture active
+
+- le nom de fichier et le libellé `Shadow Light` sont conservés pour continuité documentaire
+- la lecture gouvernée courante de Build-11 dans le repo actif est : `profil=COMPLETE`, `runtime_mode=SHADOW`
+- `Shadow intégral` reste le nom de phase lisible historique de ce rail gouverné
+- `profil=LIGHT`, `runtime_mode=LOCAL_REPLAY` reste une surface locale de compatibilité / preuve, pas la cible VPS gouvernée de Build-11
+
 Build-11 a une mission unique :
 
-> valider la **V5.3 Light en mode Shadow intégral**, c’est-à-dire dans des conditions de flux et de logique aussi proches que possible du réel, mais sans engager de capital.
+> valider la **V5.3 en mode Shadow intégral**, c’est-à-dire dans des conditions de flux et de logique aussi proches que possible du réel, mais sans engager de capital.
 
 Build-11 ne crée pas un nouveau moteur ni un nouveau module central.
 Il définit le **protocole de vérité pré-micro-live**.
 
-## HARD STATEMENT — 30 jours de Shadow intégral (profil `LIGHT`) obligatoires
+## HARD STATEMENT — 30 jours de Shadow intégral obligatoires
 
 > **NON NÉGOCIABLE. Aucune dérogation, aucun raccourci, aucune exception.**
 
-- La version Light doit trader en mode **SHADOW** pendant un minimum de **30 jours calendaires consécutifs**
+- Le rail gouverné courant doit trader en mode **SHADOW** pendant un minimum de **30 jours calendaires consécutifs**
 - Données réelles obligatoires (WebSocket live ou replay de données réelles enregistrées)
 - Pipeline complet : data → engine → scoring → portfolio → execution simulée
 - DTR complet produit pendant les 30 jours
@@ -70,15 +77,15 @@ Build-11 reste strictement dans la V5.3 unifiée :
 ## 1.0 Règle lexicale
 
 - `LIGHT` et `COMPLETE` restent les deux seuls profils de rollout
-- dans ce document, `Shadow intégral` désigne le Shadow du profil `LIGHT`
-  où A/B/C/D et Build-14 sont activés à 100% en observation
-- `Shadow intégral` n'est pas le profil `COMPLETE`
+- dans la lecture gouvernée courante, Build-11 correspond au rail `profil=COMPLETE`, `runtime_mode=SHADOW`
+- dans ce document, `Shadow intégral` reste le libellé historique lisible de ce même rail, où A/B/C/D et Build-14 sont activés à 100% en observation
+- `Shadow intégral` n'introduit jamais un troisième profil distinct
 
 Le Shadow existe pour tester **la solution intégrale observée** simultanément :
 
 - la qualité de la chaîne data
 - la cohérence scoring / hard-soft-rank
-- l’arbitrage portefeuille **A/B/C/D** observé dans l’enveloppe runtime Light
+- l’arbitrage portefeuille **A/B/C/D** observé dans l’enveloppe runtime gouvernée courante
 - les coûts attendus par moteur
 - la discipline du risk backbone
 - la qualité des DTR / CRA / break-even / edge tracker
@@ -86,7 +93,7 @@ Le Shadow existe pour tester **la solution intégrale observée** simultanément
 - **les enrichissements Build-14** (microstructure, régime, covariance, risk contribution, edge diversity) activés à 100%
 - **les interactions inter-moteurs** A/B/C/D : conflits, duplication, concentration, complémentarité
 - **la robustesse portefeuille** avec A/B/C/D et les enrichissements Build-14
-- **le coût réel simulé prudent** avec activation Light + Build-14 + observation C/D
+- **le coût réel simulé prudent** avec activation gouvernée courante + Build-14 + observation C/D
 
 Le Shadow n’est plus une simple validation Light minimale. Il est la **phase de vérité système** où l’on observe la solution intégrale avant de décider quoi promouvoir.
 
@@ -132,7 +139,7 @@ Les builds précédents doivent être terminés et gelés :
 
 ## Après Build-11
 Si Build-11 est validé, alors seulement :
-- Build-12 : micro-live Light
+- Build-12 : micro-live gouverné (libellé historique : `Micro-live Light`)
 
 ## 3.1 Relation avec Build-9X et LOCAL_REPLAY
 
@@ -184,8 +191,8 @@ Build-11 ne peut pas commencer si une des conditions suivantes n’est pas satis
 # 6. Périmètre du Shadow intégral
 
 ## 6.1 Profil actif
-- état canonique : `profil=LIGHT`, `runtime_mode=SHADOW`
-- nom de phase lisible : `Shadow intégral`
+- état canonique : `profil=COMPLETE`, `runtime_mode=SHADOW`
+- nom de phase lisible historique : `Shadow intégral`
 - 6 paires maximum
 - **Shadow intégral actif** : A/B/C/D + Build-14
 
@@ -216,11 +223,11 @@ de mise en service dédiés.
 - portfolio Light (arbitrage A/B/C/D, enrichi par Build-14)
 - meta complet (DTR, CRA, edge tracker)
 - monitoring complet
-- UI Light verrouillée
+- UI opérateur verrouillée (surface historique : `Light UI`)
 - **Build-14 enablers activés à 100%** : microstructure enrichie, régime enrichi, covariance robuste, risk contribution, edge diversity
 
 ## 6.5 Composants interdits
-- extension COMPLETE live sans gates passées
+- extension live au-delà du rail gouverné courant sans gates passées
 - overrides UI de caps
 - logique RL / POMDP / experimentation libre
 - **confondre activation Shadow et promotion live**
@@ -369,7 +376,7 @@ On valide :
 ## 9.5 Axe E — Gouvernance opérateur
 On valide :
 - alertes critiques visibles
-- UI Light verrouillée
+- UI opérateur verrouillée (surface historique : `Light UI`)
 - impossibilité de sortir du profil
 - journalisation des actions
 

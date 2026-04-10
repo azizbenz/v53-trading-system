@@ -102,6 +102,12 @@ class TestBuiltInChecks:
         assert not ok
         assert "FD leak detected" in detail
 
+    def test_fd_leak_check_fails_when_cumulative_count_exceeds_ceiling(self):
+        check = check_fd_leak(10, fd_counter=lambda: 14, max_total_fd_count=13)
+        ok, detail = check()
+        assert not ok
+        assert "cumulative FD count" in detail
+
     def test_kill_switch_persistence_with_fake_factory(self, repo_tmp_path):
         class FakeBreaker:
             def __init__(self, state_dir):

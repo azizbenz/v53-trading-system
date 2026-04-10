@@ -218,7 +218,7 @@ MODULES: tuple[ModuleEntry, ...] = (
         build_stage=10,
         description="Build-9X gouverne: diagnostics, hypotheses, candidats et exports de revue",
     ),
-    # ── Build-10: Monitoring + UI Light ──
+    # ── Build-10: Monitoring + locked operator UI (historical: Light UI) ──
     ModuleEntry(
         module_name="monitoring",
         module_layer=ModuleLayer.MONITORING,
@@ -227,7 +227,7 @@ MODULES: tuple[ModuleEntry, ...] = (
         priority=Priority.P0,
         profile_scope=ProfileScope.LIGHT,
         build_stage=10,
-        description="Métriques, alertes, dashboard backend",
+        description="Métriques, alertes, dashboard backend pour la supervision opérateur verrouillée",
     ),
     ModuleEntry(
         module_name="ui",
@@ -237,9 +237,9 @@ MODULES: tuple[ModuleEntry, ...] = (
         priority=Priority.P1,
         profile_scope=ProfileScope.LIGHT,
         build_stage=10,
-        description="UI Light verrouillée",
+        description="UI opérateur verrouillée (surface historique: Light UI)",
     ),
-    # ── Build-11/12/13: Protocols Light ──
+    # ── Build-11/12/13: Governed protocols rail (historical labels kept) ──
     ModuleEntry(
         module_name="protocols",
         module_layer=ModuleLayer.PROTOCOL,
@@ -248,7 +248,7 @@ MODULES: tuple[ModuleEntry, ...] = (
         priority=Priority.P0,
         profile_scope=ProfileScope.LIGHT,
         build_stage=11,
-        description="Build-11 Shadow, Build-12 Micro-live et Build-13 Live-Light reels et gouvernes; Complete reste ferme dans le meme module",
+        description="Build-11 Shadow, Build-12 Micro-live et Build-13 Live gouvernes sur le rail runtime actif COMPLETE; les labels Shadow Light / Micro-live Light / Live-Light restent historiques",
     ),
     # ── Build-14: Complete Enablers ──
     ModuleEntry(

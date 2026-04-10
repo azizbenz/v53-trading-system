@@ -25,6 +25,7 @@ from monitoring.contracts import (
     ExecutionNoTradeBridgeProjection,
     HealthDashboardPayload,
     InfraMetrics,
+    LiveProjection,
     LiveLightProjection,
     MetaMetrics,
     MicroLiveProjection,
@@ -33,6 +34,7 @@ from monitoring.contracts import (
     PairMetrics,
     PortfolioMetrics,
     ReplayImportProjection,
+    RuntimeHookBridgeProjection,
     ShadowProjection,
     TechnicalDashboardPayload,
 )
@@ -69,11 +71,15 @@ class MonitoringRuntimeResult(BaseModel, frozen=True):
 
     snapshot: MonitoringSnapshot
     health_payload: HealthDashboardPayload
-    light_view: BaseModel
+    locked_operator_view: BaseModel
     technical_payload: TechnicalDashboardPayload
     technical_view: BaseModel
     observability_export: ObservabilityExport
     state_path: str = ""
+
+    @property
+    def light_view(self) -> BaseModel:
+        return self.locked_operator_view
 
 
 class MonitoringRuntime:
@@ -82,9 +88,14 @@ class MonitoringRuntime:
     def __init__(
         self,
         *,
+        locked_operator_ui_runtime: object | None = None,
         light_ui_runtime: object | None = None,
         config: MonitoringRuntimeConfig | None = None,
     ) -> None:
+        if locked_operator_ui_runtime is not None and light_ui_runtime is not None:
+            raise ValueError(
+                "Use either locked_operator_ui_runtime or legacy light_ui_runtime, not both"
+            )
         self._config = config or MonitoringRuntimeConfig()
         self._state_path = (
             self._config.state_dir / self._config.state_filename
@@ -99,7 +110,10 @@ class MonitoringRuntime:
             history_limit=self._config.alert_history_limit,
             history=state.alert_history,
         )
-        self._light_ui_runtime = light_ui_runtime or _ui_module().LightUIRuntime()
+        runtime_surface = locked_operator_ui_runtime or light_ui_runtime
+        self._locked_operator_ui_runtime = (
+            runtime_surface or _ui_module().LockedOperatorUiRuntime()
+        )
 
     def evaluate(
         self,
@@ -118,12 +132,20 @@ class MonitoringRuntime:
         build9x_projection: Build9XProjection | None = None,
         shadow_projection: ShadowProjection | None = None,
         micro_live_projection: MicroLiveProjection | None = None,
+        live_projection: LiveProjection | None = None,
         live_light_projection: LiveLightProjection | None = None,
         build14_projection: Build14Projection | None = None,
         execution_no_trade_bridge_projection: ExecutionNoTradeBridgeProjection | None = None,
+        runtime_hook_bridge_projections: tuple[RuntimeHookBridgeProjection, ...] | None = None,
         replay_projection: ReplayImportProjection | None = None,
     ) -> MonitoringRuntimeResult:
         """Evaluate the full Build-10 runtime path on real runtime inputs."""
+
+        if live_projection is not None and live_light_projection is not None:
+            raise ValueError(
+                "Use either live_projection or legacy live_light_projection, not both"
+            )
+        resolved_live_projection = live_projection or live_light_projection
 
         resolved_infra = self._resolve_infra(infra=infra, pairs=pairs)
         snapshot = collect_monitoring_snapshot(
@@ -153,14 +175,14 @@ class MonitoringRuntime:
                 micro_live_projection.status if micro_live_projection is not None else None
             ),
             live_light_status=(
-                live_light_projection.status if live_light_projection is not None else None
+                resolved_live_projection.status if resolved_live_projection is not None else None
             ),
         )
-        light_runtime_result = self._light_ui_runtime.build_view(
+        locked_operator_runtime_result = self._locked_operator_ui_runtime.build_view(
             preliminary_health_payload,
             alerts=resolved_snapshot.alerts,
         )
-        operator_runtime = self._light_ui_runtime.get_operator_projection()
+        operator_runtime = self._locked_operator_ui_runtime.get_operator_projection()
         health_payload = build_health_dashboard_payload(
             resolved_snapshot,
             alert_history=alert_history,
@@ -172,7 +194,7 @@ class MonitoringRuntime:
                 micro_live_projection.status if micro_live_projection is not None else None
             ),
             live_light_status=(
-                live_light_projection.status if live_light_projection is not None else None
+                resolved_live_projection.status if resolved_live_projection is not None else None
             ),
         )
         technical_payload = build_technical_dashboard_payload(
@@ -182,9 +204,10 @@ class MonitoringRuntime:
             build9x_projection=build9x_projection,
             shadow_projection=shadow_projection,
             micro_live_projection=micro_live_projection,
-            live_light_projection=live_light_projection,
+            live_projection=resolved_live_projection,
             build14_projection=build14_projection,
             execution_no_trade_bridge_projection=execution_no_trade_bridge_projection,
+            runtime_hook_bridge_projections=runtime_hook_bridge_projections,
             replay_projection=replay_projection,
             operator_runtime=operator_runtime,
         )
@@ -192,7 +215,7 @@ class MonitoringRuntime:
         return MonitoringRuntimeResult(
             snapshot=resolved_snapshot,
             health_payload=health_payload,
-            light_view=light_runtime_result.view,
+            locked_operator_view=locked_operator_runtime_result.view,
             technical_payload=technical_payload,
             technical_view=_ui_module().build_technical_dashboard_view(technical_payload),
             observability_export=build_observability_export(technical_payload),
@@ -202,7 +225,7 @@ class MonitoringRuntime:
     def build_latest_operator_safing_request(self) -> OperatorSafingRequest | None:
         """Translate the latest accepted UI safing action into a typed protocol request."""
 
-        operator_runtime = self._light_ui_runtime.get_operator_projection()
+        operator_runtime = self._locked_operator_ui_runtime.get_operator_projection()
         if not operator_runtime.latest_safing_action:
             return None
 

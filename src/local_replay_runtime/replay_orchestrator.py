@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Callable, TypeVar
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from interface_contracts import (
     CANONICAL_FEATURE_SET_VERSION,
@@ -50,6 +51,8 @@ from local_replay_runtime.shadow_execution_simulator import (
 )
 from meta_minimal.dtr_core.dtr_record_builder import DTRRecord
 
+_LoadedModelT = TypeVar("_LoadedModelT")
+
 
 class ReplayOrchestratorRequest(BaseModel, frozen=True):
     """Inputs required to run the governed LOCAL_REPLAY orchestrator."""
@@ -63,7 +66,7 @@ class ReplayOrchestratorRequest(BaseModel, frozen=True):
     performance_mode: str = Field(..., min_length=1)
     input_kind: ReplayInputKind | None = None
     dataset: HistoricalReplayDataset | None = None
-    profile_scope: ProfileId = ProfileId.LIGHT
+    profile_scope: ProfileId = ProfileId.COMPLETE
     chunk_count: int = Field(default=1, ge=1)
     chunk_index: int = Field(default=1, ge=1)
     selected_chunk_indices: tuple[int, ...] = ()
@@ -215,12 +218,91 @@ def _read_dtr_records(replay_dtr_path: Path) -> tuple[DTRRecord, ...]:
     return tuple(records)
 
 
+def _load_json_sidecar_with_backup(
+    path: Path,
+    *,
+    label: str,
+    parser: Callable[[str], _LoadedModelT],
+) -> _LoadedModelT:
+    try:
+        return parser(path.read_text(encoding="utf-8"))
+    except (OSError, ValidationError, ValueError, TypeError) as exc:
+        backup = path.with_suffix(".corrupted")
+        try:
+            path.replace(backup)
+        except OSError:
+            pass
+        raise ValueError(f"LOCAL_REPLAY {label} is corrupted: {path.name}") from exc
+
+
+def _load_existing_resume_metadata(
+    output_dir: Path,
+) -> tuple[ReplaySessionConfig, ReplayRunManifest] | None:
+    session_config_path = output_dir / "replay_session_config.json"
+    replay_run_manifest_path = output_dir / "replay_run_manifest.json"
+    if not session_config_path.exists() or not replay_run_manifest_path.exists():
+        return None
+    session_config = _load_json_sidecar_with_backup(
+        session_config_path,
+        label="resume metadata",
+        parser=ReplaySessionConfig.model_validate_json,
+    )
+    replay_run_manifest = _load_json_sidecar_with_backup(
+        replay_run_manifest_path,
+        label="resume metadata",
+        parser=ReplayRunManifest.model_validate_json,
+    )
+    return session_config, replay_run_manifest
+
+
+def _validate_resume_request_against_existing_export(
+    request: ReplayOrchestratorRequest,
+    *,
+    session_config: ReplaySessionConfig,
+    replay_run_manifest: ReplayRunManifest,
+) -> None:
+    mismatches: list[str] = []
+    expected_fields = (
+        ("run_id", request.run_id, session_config.run_id),
+        ("strategy_id", request.strategy_id, session_config.strategy_id),
+        ("strategy_version", request.strategy_version, session_config.strategy_version),
+        ("lineage_version", request.lineage_version, session_config.lineage_version),
+        ("profile_scope", request.profile_scope.value, session_config.profile_scope.value),
+        ("performance_mode", request.performance_mode, session_config.performance_mode),
+        (
+            "strategy_classification",
+            request.strategy_classification.value,
+            replay_run_manifest.strategy_classification.value,
+        ),
+        ("chunk_count", request.chunk_count, session_config.chunk_count),
+    )
+    for field_name, actual, expected in expected_fields:
+        if actual != expected:
+            mismatches.append(f"{field_name} expected {expected!r}, got {actual!r}")
+
+    if not request.run_all_chunks and request.chunk_index != session_config.chunk_index:
+        mismatches.append(
+            f"chunk_index expected {session_config.chunk_index!r}, got {request.chunk_index!r}"
+        )
+    if request.input_kind is not None and request.input_kind != session_config.input_kind:
+        mismatches.append(
+            f"input_kind expected {session_config.input_kind!r}, got {request.input_kind!r}"
+        )
+    if mismatches:
+        raise ValueError(
+            "LOCAL_REPLAY resume request does not match the persisted export: "
+            + "; ".join(mismatches)
+        )
+
+
 def _load_chunk_session_summary(output_dir: Path) -> ReplayChunkSessionSummary | None:
     chunk_session_path = output_dir / "replay_chunk_session.json"
     if not chunk_session_path.exists():
         return None
-    return ReplayChunkSessionSummary.model_validate_json(
-        chunk_session_path.read_text(encoding="utf-8")
+    return _load_json_sidecar_with_backup(
+        chunk_session_path,
+        label="chunk session metadata",
+        parser=ReplayChunkSessionSummary.model_validate_json,
     )
 
 
@@ -322,14 +404,19 @@ def _existing_export_completed(
     if not all(path.exists() for path in required):
         return None
 
-    session_config = ReplaySessionConfig.model_validate_json(
-        session_config_path.read_text(encoding="utf-8")
+    metadata = _load_existing_resume_metadata(output_dir)
+    if metadata is None:
+        return None
+    session_config, _ = metadata
+    performance_mode_guard = _load_json_sidecar_with_backup(
+        performance_mode_guard_path,
+        label="resume sidecar",
+        parser=PerformanceModeGuardReport.model_validate_json,
     )
-    performance_mode_guard = PerformanceModeGuardReport.model_validate_json(
-        performance_mode_guard_path.read_text(encoding="utf-8")
-    )
-    run_consistency_guard = RunConsistencyGuardReport.model_validate_json(
-        run_consistency_guard_path.read_text(encoding="utf-8")
+    run_consistency_guard = _load_json_sidecar_with_backup(
+        run_consistency_guard_path,
+        label="resume sidecar",
+        parser=RunConsistencyGuardReport.model_validate_json,
     )
     export_result = ReplayExecutionResult(
         export_result=ReplayArtifactExportResult(
@@ -341,8 +428,10 @@ def _existing_export_completed(
             replay_metrics_path=replay_metrics_path,
             replay_dtr_path=replay_dtr_path,
         ),
-        metrics_summary=ReplayMetricsSummary.model_validate_json(
-            replay_metrics_path.read_text(encoding="utf-8")
+        metrics_summary=_load_json_sidecar_with_backup(
+            replay_metrics_path,
+            label="resume sidecar",
+            parser=ReplayMetricsSummary.model_validate_json,
         ),
     )
     dataset_id = "resumed_dataset"
@@ -415,6 +504,18 @@ def _existing_multi_chunk_export_completed(
         return None
     if chunk_session.window_end_ms != request.window_end_ms:
         return None
+    metadata = _load_existing_resume_metadata(output_dir)
+    if metadata is None:
+        return None
+    session_config, replay_run_manifest = metadata
+    try:
+        _validate_resume_request_against_existing_export(
+            request,
+            session_config=session_config,
+            replay_run_manifest=replay_run_manifest,
+        )
+    except ValueError:
+        return None
     if not all(
         artifact.chunk_output_dir.exists()
         and artifact.replay_run_manifest_path.exists()
@@ -480,6 +581,15 @@ def _orchestrate_single_chunk_export(
     if request.resume:
         resumed = _existing_export_completed(output_dir, state_store=state_store)
         if resumed is not None:
+            metadata = _load_existing_resume_metadata(output_dir)
+            if metadata is None:
+                raise ValueError("LOCAL_REPLAY resume metadata is missing for a completed export")
+            session_config, replay_run_manifest = metadata
+            _validate_resume_request_against_existing_export(
+                request,
+                session_config=session_config,
+                replay_run_manifest=replay_run_manifest,
+            )
             if request.dataset is not None:
                 resumed_dataset = _slice_dataset_for_chunk(
                     request.dataset,

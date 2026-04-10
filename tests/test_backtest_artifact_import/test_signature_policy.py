@@ -3,6 +3,7 @@ from __future__ import annotations
 from interface_contracts import ArtifactSignatureEnvelope, ProfileId, StrategyClassification
 from backtest_artifact_import import (
     ArtifactSignatureCheckStatus,
+    build_lab_fixture_signature_envelope,
     evaluate_artifact_signature_policy,
 )
 from local_replay_runtime import ArtifactManifest
@@ -37,7 +38,20 @@ def test_signature_policy_allows_unsigned_manifest_without_forcing_rejection():
     assert result.accepted is True
 
 
-def test_signature_policy_marks_trust_eligible_known_active_key():
+def test_signature_policy_verifies_signed_manifest_with_built_in_verifier():
+    result = evaluate_artifact_signature_policy(
+        _manifest(
+            signature_envelope=build_lab_fixture_signature_envelope()
+        )
+    )
+
+    assert result.status == ArtifactSignatureCheckStatus.VERIFIED
+    assert result.accepted is True
+    assert result.trusted_key_status == "active"
+    assert result.reasons == ()
+
+
+def test_signature_policy_rejects_invalid_signature_material():
     result = evaluate_artifact_signature_policy(
         _manifest(
             signature_envelope=ArtifactSignatureEnvelope(
@@ -45,11 +59,11 @@ def test_signature_policy_marks_trust_eligible_known_active_key():
                 public_key_author_sig="sig",
                 payload_hash_sha256="hash",
             )
-        )
+        ),
     )
 
-    assert result.status == ArtifactSignatureCheckStatus.TRUST_ELIGIBLE
-    assert result.accepted is True
+    assert result.status == ArtifactSignatureCheckStatus.SIGNATURE_INVALID
+    assert result.accepted is False
     assert result.trusted_key_status == "active"
 
 

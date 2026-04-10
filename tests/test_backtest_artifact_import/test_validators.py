@@ -28,6 +28,7 @@ from interface_contracts import (
 from backtest_artifact_import import (
     ArtifactImportRequest,
     ArtifactPayloadRefBundle,
+    build_lab_fixture_signature_envelope,
     summarize_import_request,
     validate_import_request,
 )
@@ -117,6 +118,18 @@ def test_import_request_can_derive_payload_refs_from_typed_bundle():
         "exports/replay_dtr.json",
         "exports/bundle.json",
     )
+
+
+def test_payload_bundle_rejects_duplicate_refs():
+    with pytest.raises(ValidationError, match="ArtifactPayloadRefBundle refs must be unique"):
+        ArtifactPayloadRefBundle(
+            review_export_ref="exports/review.md",
+            feature_bridge_ref="exports/feature_bridge.json",
+            parity_diagnostics_ref="exports/parity.json",
+            replay_metrics_ref="exports/replay_metrics.json",
+            replay_dtr_ref="exports/replay_dtr.json",
+            supplementary_refs=("exports/review.md",),
+        )
 
 
 def test_import_request_rejects_payload_refs_mismatch_with_typed_bundle():
@@ -362,13 +375,14 @@ def test_import_request_acceptance_keeps_pending_review():
 
 
 def test_import_request_rejects_unknown_signature_key_id():
+    signature_envelope = build_lab_fixture_signature_envelope()
     decision = validate_import_request(
         _request(
             manifest=_manifest(
                 signature_envelope=ArtifactSignatureEnvelope(
                     key_id="lab_ed25519_unknown",
-                    public_key_author_sig="sig",
-                    payload_hash_sha256="hash",
+                    public_key_author_sig=signature_envelope.public_key_author_sig,
+                    payload_hash_sha256=signature_envelope.payload_hash_sha256,
                 )
             )
         )
@@ -379,12 +393,13 @@ def test_import_request_rejects_unknown_signature_key_id():
 
 
 def test_import_request_rejects_payload_hash_mismatch_when_expected_hash_is_supplied():
+    signature_envelope = build_lab_fixture_signature_envelope()
     decision = validate_import_request(
         _request(
             manifest=_manifest(
                 signature_envelope=ArtifactSignatureEnvelope(
                     key_id="lab_ed25519_2026_q2_k1",
-                    public_key_author_sig="sig",
+                    public_key_author_sig=signature_envelope.public_key_author_sig,
                     payload_hash_sha256="hash-a",
                 )
             )
@@ -396,6 +411,19 @@ def test_import_request_rejects_payload_hash_mismatch_when_expected_hash_is_supp
     assert "PAYLOAD_HASH_MISMATCH" in decision.reasons
 
 
+def test_import_request_accepts_signed_manifest_with_built_in_verifier():
+    decision = validate_import_request(
+        _request(
+            manifest=_manifest(
+                signature_envelope=build_lab_fixture_signature_envelope()
+            )
+        )
+    )
+
+    assert decision.accepted is True
+    assert "SIGNATURE_INVALID" not in decision.reasons
+
+
 def test_import_summary_projects_clean_monitoring_facts():
     request = _request(
         manifest=_manifest(
@@ -403,11 +431,7 @@ def test_import_summary_projects_clean_monitoring_facts():
             allowed_hook_ids=(HookId.ENGINE_A_PRE_ENTRY_CONFIRMATION,),
             allowed_action_kinds=(ArtifactActionKind.SOFT_BOOST,),
             allowed_action_units=(ActionUnit.RAW_SCORE_MULTIPLIER,),
-            signature_envelope=ArtifactSignatureEnvelope(
-                key_id="lab_ed25519_2026_q2_k1",
-                public_key_author_sig="sig",
-                payload_hash_sha256="hash",
-            ),
+            signature_envelope=build_lab_fixture_signature_envelope(),
         )
     )
     decision = validate_import_request(request)
@@ -428,7 +452,7 @@ def test_import_summary_projects_clean_monitoring_facts():
     assert summary.allowed_action_units == (ActionUnit.RAW_SCORE_MULTIPLIER,)
     assert summary.signature_envelope is not None
     assert summary.signature_envelope.key_id == "lab_ed25519_2026_q2_k1"
-    assert summary.signature_check_status.value == "trust_eligible"
+    assert summary.signature_check_status.value == "verified"
     assert summary.signature_key_id == "lab_ed25519_2026_q2_k1"
     assert summary.trusted_key_status == "active"
     assert summary.conflict_policy.hard_veto_action == ArtifactActionKind.NO_TRADE

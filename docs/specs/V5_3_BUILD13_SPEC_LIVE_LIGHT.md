@@ -10,15 +10,22 @@
 
 Ce document couvre **Build-13** du plan officiel V5.3.
 
+## 0.0 Note de lecture active
+
+- le nom de fichier et le libellé `Live-Light` sont conservés pour continuité documentaire
+- la lecture gouvernée courante de Build-13 dans le repo actif est : `profil=COMPLETE`, `runtime_mode=LIVE`
+- `Live-Light` reste le nom de phase lisible historique de ce rail gouverné
+- `LIGHT` peut encore apparaître comme surface de compatibilité ou libellé historique, pas comme état canonique actif de Build-13
+
 Build-13 a une mission unique :
 
-> définir le protocole de **Live-Light**, c’est-à-dire la première production réelle de la V5.3 en profil Light, après validation du Shadow et du Micro-live.
+> définir le protocole de **Live-Light**, c’est-à-dire la première production réelle gouvernée de la V5.3 après validation du Shadow et du Micro-live.
 
 ## HARD STATEMENT — Prérequis temporels non négociables
 
 > **NON NÉGOCIABLE. Aucune dérogation.**
 
-- **HARD : Light a tradé en Shadow intégral 30 jours calendaires consécutifs minimum** (Build-11 validé, avec A/B/C/D et Build-14 activés à 100%)
+- **HARD : le rail gouverné courant a tradé en Shadow intégral 30 jours calendaires consécutifs minimum** (Build-11 validé, avec A/B/C/D et Build-14 activés à 100%)
 - **HARD : Verdict post-Shadow rendu composant par composant** (chaque moteur/enabler : `SHADOW_VALIDATED` ou `DORMANT`)
 - **HARD : Micro-live stable minimum 7 jours** (Build-12 validé, avec uniquement les composants `SHADOW_VALIDATED`)
 - **HARD : Rapport shadow produit, exploitable et approuvé** (incluant comparaison inter-moteurs et contribution Build-14)
@@ -54,7 +61,7 @@ Un gate, un planner, un execution-intent builder ou une surface bornée ne suffi
 Il ne doit pas être lu comme :
 
 - la preuve qu’un simple gate Live-Light suffit
-- la preuve que tout le rollout `COMPLETE` est déjà autorisé
+- la preuve que toute extension du rollout au-delà du rail gouverné courant est déjà autorisée
 - une autorisation à ouvrir Build-14, Build-15, Build-16 ou Build-17 sans validation effective
 
 ## 0.2 Règle d’unification local / VPS
@@ -73,17 +80,17 @@ Build-13 reste strictement dans la V5.3 unifiée :
 
 Le Live-Light existe pour tester simultanément, dans des conditions réelles de production :
 
-- la stabilité continue du rollout LIGHT sur la même architecture complète
+- la stabilité continue du rail gouverné courant sur la même architecture complète
 - la robustesse des composants effectivement `SHADOW_VALIDATED` et autorisés en live
 - la cohérence du portefeuille minimal
 - la soutenabilité des coûts réels
 - la qualité de la réconciliation sur la durée
 - la discipline de supervision et de rollback
-- la crédibilité économique du rollout LIGHT
+- la crédibilité économique du rail gouverné courant
 
 Le Live-Light doit répondre à une question simple :
 
-> la V5.3 en rollout LIGHT peut-elle rester en production réelle, de façon
+> la V5.3 sur le rail gouverné courant peut-elle rester en production réelle, de façon
 > stable, explicable et économiquement crédible, sans dépendre d’ajustements
 > manuels improvisés ?
 
@@ -114,11 +121,11 @@ Build-13 est :
 Les conditions suivantes doivent être satisfaites :
 
 - Build-1 à Build-10 validés
-- Build-11 `profil=LIGHT`, `runtime_mode=SHADOW` validé
-- Build-12 `profil=LIGHT`, `runtime_mode=MICRO_LIVE` validé avec verdict GO
+- Build-11 `profil=COMPLETE`, `runtime_mode=SHADOW` validé
+- Build-12 `profil=COMPLETE`, `runtime_mode=MICRO_LIVE` validé avec verdict GO
 - coûts réels compatibles avec les hypothèses prudentes
 - réconciliation fiable
-- UI Light verrouillée
+- UI opérateur verrouillée
 - protocole de rollback défini
 
 ## Après Build-13
@@ -176,8 +183,8 @@ Build-13 ne peut pas commencer si une des conditions suivantes n’est pas satis
 # 6. Périmètre du Live-Light
 
 ## 6.1 Profil actif
-- état canonique : `profil=LIGHT`, `runtime_mode=LIVE`
-- nom de phase lisible : `Live-Light`
+- état canonique : `profil=COMPLETE`, `runtime_mode=LIVE`
+- nom de phase lisible historique : `Live-Light`
 - 6 paires maximum
 - coeur runtime attendu : moteurs A et B, avec C/D seulement s’ils ont été `SHADOW_VALIDATED` et industrialisés
 
@@ -202,7 +209,8 @@ Uniquement les paires validées par Shadow + Micro-live, typiquement :
 - portfolio minimal
 - meta minimal
 - monitoring complet Light
-- UI Light verrouillée
+- monitoring complet gouverné
+- UI opérateur verrouillée
 - protocole rollback
 - protocole degraded
 - protocole halted
@@ -210,7 +218,7 @@ Uniquement les paires validées par Shadow + Micro-live, typiquement :
 ## 6.5 Composants interdits
 - activation réelle non gouvernée de C
 - activation réelle non gouvernée de D
-- extension COMPLETE sans gates passées
+- extension du rollout au-delà du rail gouverné courant sans gates passées
 - activation > 6 paires
 - overrides opérateur sur caps de risque
 - montée sauvage de taille

@@ -10,9 +10,15 @@
 
 Ce document couvre **Build-10** du plan officiel V5.3.
 
+## 0.0 Note de lecture active
+
+- le nom de fichier et le libellé `Monitoring + UI Light` sont conservés pour continuité documentaire
+- dans le repo actif, Build-10 est la surface opérateur verrouillée projetée sur le rail gouverné courant et sur la surface de compatibilité `LIGHT`
+- `Light UI` reste un libellé historique ; la lecture active est `UI opérateur verrouillée`
+
 Build-10 a une mission unique :
 
-> rendre la V5.3 Light **observable, gouvernable et non contournable** par une couche de monitoring et d’interface opérateur verrouillée.
+> rendre la V5.3 **observable, gouvernable et non contournable** par une couche de monitoring et d’interface opérateur verrouillée.
 
 Les modules couverts ici sont :
 
@@ -22,9 +28,9 @@ Les modules couverts ici sont :
 4. `ui_light_locked`
 
 Build-10 ne cherche pas encore à produire toute la surface UI finale.
-Il doit produire une **UI LIGHT verrouillée**, orientée risque, coût, santé
-infra, état portefeuille et supervision de l’architecture complète sous borne
-de rollout.
+Il doit produire une **UI opérateur verrouillée** (libellé historique :
+`UI LIGHT verrouillée`), orientée risque, coût, santé infra, état portefeuille
+et supervision de l’architecture complète sous borne de rollout.
 
 ---
 
@@ -56,10 +62,10 @@ Build-10 existe pour résoudre cela.
 ## 1.2 Position dans l’architecture
 
 Build-10 est :
-- **obligatoire en Light**
-- **obligatoire en Complete**
+- **obligatoire sur la surface de compatibilité Light**
+- **obligatoire sur le rail gouverné courant**
 - **P0/P1**
-- la couche de supervision active de la Light
+- la couche de supervision active de l’opérateur
 - la couche qui transforme le système en outil opérable
 
 ## 1.3 Critère de réussite
@@ -69,7 +75,7 @@ Build-10 est réussi si :
 - les métriques critiques sont centralisées
 - les alertes utiles sont visibles
 - les dashboards exposent capital, risque, coût, CE, santé, backlog, DTR
-- l’UI Light ne permet aucun contournement structurel
+- l’UI opérateur verrouillée ne permet aucun contournement structurel
 - l’opérateur peut comprendre l’état du système en quelques secondes
 - toute action sensible est journalisée
 
@@ -110,8 +116,8 @@ Alerte associée à une décision ou réaction concrète :
 ## 2.3 Dashboard santé
 Vue consolidée de l’état du portefeuille, des moteurs, des paires et de l’infrastructure.
 
-## 2.4 UI Light verrouillée
-Interface opérateur qui expose la supervision et les actions autorisées du profil Light, sans permettre :
+## 2.4 UI opérateur verrouillée (historique : UI Light)
+Interface opérateur qui expose la supervision et les actions autorisées du profil courant, sans permettre :
 - profil custom
 - activation d’un moteur hors gates ou hors budget
 - activation > 6 paires en LIGHT

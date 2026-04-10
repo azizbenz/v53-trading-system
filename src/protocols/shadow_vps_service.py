@@ -294,9 +294,20 @@ class ShadowVpsServiceStore:
         if self._state_path.exists():
             try:
                 data = json.loads(self._state_path.read_text(encoding="utf-8"))
+                if not isinstance(data, dict):
+                    raise ValueError(f"State file root must be a JSON object, got {type(data).__name__}")
                 return ShadowVpsServiceState(**data)
-            except (json.JSONDecodeError, OSError, ValueError):
-                pass
+            except (json.JSONDecodeError, OSError, ValueError, TypeError) as exc:
+                # BS-122: fail-safe — backup corrupted file before reset
+                # Preserves forensic evidence; marks state so caller can alert
+                backup = self._state_path.with_suffix(".corrupted")
+                try:
+                    self._state_path.rename(backup)
+                except OSError:
+                    pass
+                return ShadowVpsServiceState(
+                    last_error=f"state_file_corrupted:{type(exc).__name__}:{exc}"
+                )
         return ShadowVpsServiceState()
 
     def persist(self) -> None:

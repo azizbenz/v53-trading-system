@@ -501,17 +501,16 @@ class TestMonotonicClock:
 class TestBuild2ExchangeStaleRuntimeMode:
     """Build-2 stale local/exchange behavior depends on runtime_mode."""
 
-    def test_shadow_logs_but_does_not_block(self):
+    def test_shadow_blocks(self):
         result = evaluate_exchange_staleness(
             "BTCUSDT",
             "trade",
             local_timestamp=100.5,
             exchange_timestamp=100.0,
             runtime_mode=RuntimeMode.SHADOW,
-            stale_threshold_s=0.2,
         )
-        assert result.verdict == Build2StaleVerdict.DEGRADED
-        assert result.blocked is False
+        assert result.verdict == Build2StaleVerdict.HARD_STALE
+        assert result.blocked is True
 
     def test_micro_live_blocks(self):
         result = evaluate_exchange_staleness(
@@ -520,7 +519,6 @@ class TestBuild2ExchangeStaleRuntimeMode:
             local_timestamp=100.5,
             exchange_timestamp=100.0,
             runtime_mode=RuntimeMode.MICRO_LIVE,
-            stale_threshold_s=0.2,
         )
         assert result.verdict == Build2StaleVerdict.HARD_STALE
         assert result.blocked is True
@@ -841,7 +839,15 @@ class TestLiveLightShadowPrerequisite:
             import_health_state="active",
             import_compatibility_status="not_evaluated",
             import_compatibility_reasons=(),
-            import_signature_check_status="not_provided",
+            import_feature_lineage_required=True,
+            import_feature_lineage_present=True,
+            import_feature_lineage_status="ok",
+            import_feature_lineage_reasons=(),
+            import_transform_whitelist_required=True,
+            import_transform_whitelist_present=True,
+            import_transform_whitelist_status="ok",
+            import_transform_whitelist_reasons=(),
+            import_signature_check_status="verified",
             import_signature_check_reasons=(),
             import_conflict_resolution_mode="no_trade_then_strictest",
             import_conflict_hard_veto_action="no_trade",

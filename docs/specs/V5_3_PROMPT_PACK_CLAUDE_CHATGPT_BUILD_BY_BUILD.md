@@ -1004,8 +1004,12 @@ Interdits :
 ```text
 Tu dois piloter / auditer Build-11 du projet V5.3.
 
+Lecture active :
+- `Shadow Light` reste un libelle historique
+- le rail gouverne courant a lire dans le repo actif est `profile=COMPLETE`, `runtime_mode=SHADOW`
+
 Objectif :
-valider le Shadow Light avant micro-live.
+valider le Shadow gouverne avant micro-live.
 
 Je veux un protocole ou un audit centré sur :
 - coûts shadow prudents
@@ -1041,8 +1045,12 @@ Produis uniquement les utilitaires explicitement demandés.
 ```text
 Tu dois piloter / auditer Build-12 du projet V5.3.
 
+Lecture active :
+- `Micro-live Light` reste un libelle historique
+- le rail gouverne courant a lire dans le repo actif est `profile=COMPLETE`, `runtime_mode=MICRO_LIVE`
+
 Objectif :
-valider le micro-live Light à taille ultra-prudente.
+valider le micro-live gouverne à taille ultra-prudente.
 
 Je veux vérifier :
 - coûts réels
@@ -1051,7 +1059,7 @@ Je veux vérifier :
 - CE réelle
 - respect de la discipline de taille
 - kill / halt conditions
-- verdict GO / NO-GO vers Live-Light
+- verdict GO / NO-GO vers Live
 ```
 
 ## 31.2 Prompt Claude Pro
@@ -1062,7 +1070,7 @@ Claude Pro peut aider à :
 
 Prompt :
 ```text
-Construis uniquement les utilitaires techniques nécessaires au micro-live Light du projet V5.3.
+Construis uniquement les utilitaires techniques nécessaires au micro-live gouverne du projet V5.3.
 
 Interdits :
 - augmentation implicite des tailles
@@ -1079,8 +1087,12 @@ Interdits :
 ```text
 Tu dois piloter / auditer Build-13 du projet V5.3.
 
+Lecture active :
+- `Live-Light` reste un libelle historique
+- le rail gouverne courant a lire dans le repo actif est `profile=COMPLETE`, `runtime_mode=LIVE`
+
 Objectif :
-valider la production Live-Light.
+valider la production Live gouvernee.
 
 Je veux vérifier :
 - stabilité technique

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from interface_contracts import RuntimeMode
 
@@ -34,16 +34,35 @@ class StaleGuardResult(BaseModel, frozen=True):
 class ExchangeStalenessResult(BaseModel, frozen=True):
     """Explicit stale verdict from local vs exchange timestamps."""
 
+    policy_id: str = Field(..., min_length=1)
     pair: str
     stream_type: str
     runtime_mode: RuntimeMode
     local_timestamp: float
     exchange_timestamp: float
     delta_s: float
+    signed_delta_s: float
     stale_threshold_s: float
     verdict: StaleVerdict
     blocked: bool = False
     logged: bool = True
+
+
+class ExchangeStalenessPolicy(BaseModel, frozen=True):
+    """Typed policy for exchange staleness evaluation."""
+
+    policy_id: str = Field(..., min_length=1)
+    stale_threshold_s: float = Field(..., ge=0.0)
+    blocking_runtime_modes: frozenset[RuntimeMode] = frozenset()
+
+
+CANONICAL_EXCHANGE_STALENESS_POLICY = ExchangeStalenessPolicy(
+    policy_id="exchange_staleness_policy.v1",
+    stale_threshold_s=0.2,
+    blocking_runtime_modes=frozenset(
+        {RuntimeMode.SHADOW, RuntimeMode.MICRO_LIVE, RuntimeMode.LIVE}
+    ),
+)
 
 
 def evaluate_staleness(
@@ -92,32 +111,37 @@ def evaluate_exchange_staleness(
     local_timestamp: float,
     exchange_timestamp: float,
     runtime_mode: RuntimeMode,
-    stale_threshold_s: float = 0.2,
+    policy: ExchangeStalenessPolicy = CANONICAL_EXCHANGE_STALENESS_POLICY,
 ) -> ExchangeStalenessResult:
     """Evaluate stale status from local vs exchange timestamps."""
-    delta = max(0.0, local_timestamp - exchange_timestamp)
-    if delta <= stale_threshold_s:
+    signed_delta = local_timestamp - exchange_timestamp
+    delta = abs(signed_delta)
+    if delta <= policy.stale_threshold_s:
         return ExchangeStalenessResult(
+            policy_id=policy.policy_id,
             pair=pair,
             stream_type=stream_type,
             runtime_mode=runtime_mode,
             local_timestamp=local_timestamp,
             exchange_timestamp=exchange_timestamp,
             delta_s=delta,
-            stale_threshold_s=stale_threshold_s,
+            signed_delta_s=signed_delta,
+            stale_threshold_s=policy.stale_threshold_s,
             verdict=StaleVerdict.FRESH,
         )
 
-    blocked = runtime_mode in {RuntimeMode.MICRO_LIVE, RuntimeMode.LIVE}
+    blocked = runtime_mode in policy.blocking_runtime_modes
     verdict = StaleVerdict.HARD_STALE if blocked else StaleVerdict.DEGRADED
     return ExchangeStalenessResult(
+        policy_id=policy.policy_id,
         pair=pair,
         stream_type=stream_type,
         runtime_mode=runtime_mode,
         local_timestamp=local_timestamp,
         exchange_timestamp=exchange_timestamp,
         delta_s=delta,
-        stale_threshold_s=stale_threshold_s,
+        signed_delta_s=signed_delta,
+        stale_threshold_s=policy.stale_threshold_s,
         verdict=verdict,
         blocked=blocked,
     )

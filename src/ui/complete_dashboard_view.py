@@ -61,6 +61,9 @@ class CompleteDashboardSupplement(BaseModel, frozen=True):
     d_marginal_contribution: str = "not available"
     event_log_refs: tuple[str, ...] = ()
     complete_gates: tuple[str, ...] = ()
+    selected_pairs: tuple[str, ...] = ()
+    available_pairs: tuple[str, ...] = ()
+    pair_selection_source: str = "canonical_complete_universe"
     allowed_actions: tuple[str, ...] = (
         "suspend_pair",
         "request_pair_resume",
@@ -129,7 +132,10 @@ def _build_overview_section(
                 label="Pairs / Engines",
                 value=f"{active_pairs}/{len(payload.pairs)} pairs / {engines_visible} engines",
                 status="healthy" if active_pairs else "warning",
-                detail=", ".join(engine.engine_id for engine in payload.engines) or "No engine projected",
+                detail=(
+                    f"engines={', '.join(engine.engine_id for engine in payload.engines) or 'none'} / "
+                    f"selected={_join(supplement.selected_pairs or tuple(pair.pair for pair in payload.pairs), empty='none')}"
+                ),
             ),
             DashboardCard(
                 key="overview_capital",
@@ -199,6 +205,19 @@ def _build_profile_state_section(
                 value=str(len(supplement.complete_gates)),
                 status=gate_status,
                 detail=_join(supplement.complete_gates, empty="No gate evidence attached"),
+            ),
+            DashboardCard(
+                key="pair_selection_scope",
+                label="Pair Scope",
+                value=(
+                    f"{len(supplement.selected_pairs or tuple(pair.pair for pair in payload.pairs))}/"
+                    f"{len(supplement.available_pairs or tuple(pair.pair for pair in payload.pairs))} selected"
+                ),
+                status="info",
+                detail=(
+                    f"source={supplement.pair_selection_source} / "
+                    f"selected={_join(supplement.selected_pairs or tuple(pair.pair for pair in payload.pairs), empty='none')}"
+                ),
             ),
             DashboardCard(
                 key="rollback_halt",

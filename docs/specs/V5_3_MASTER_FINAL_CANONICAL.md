@@ -100,6 +100,10 @@ Mais le code existant ne donne **aucun droit de promotion automatique**.
 [TOUT CODÉ] → Light Shadow 30j → Light Live → Complete Shadow 30j → Complete Live
 ```
 
+Note de lecture active :
+- dans le code gouverné courant, les rails Build-11 / Build-12 / Build-13 s'ouvrent en `profil=COMPLETE`
+- les libellés `Light Shadow`, `Light Live` et `Live-Light` ci-dessus doivent être lus comme des noms de phase historiques ou documentaires, pas comme la cible runtime gouvernée active
+
 0. **Shadow = phase de vérité système complète** : pendant les 30 jours, la solution est testée dans sa forme complète utile. Build-14 activé à 100%, moteurs A/B/C/D actifs, tous les enrichissements observés. Le Shadow n'est plus une validation Light minimale.
 1. **Light Shadow 30 jours** : Light trade en SHADOW sur données réelles pendant 30 jours calendaires consécutifs minimum. Build-14, C/D et enrichissements activés à 100% en Shadow. Interruption > 24h = compteur à zéro. Rapport shadow exploitable obligatoire incluant comparaison inter-moteurs et contribution Build-14.
 2. **Verdict post-Shadow** : à l'issue des 30 jours, décision de promotion composant par composant. Activation Shadow ≠ promotion Live automatique. Possibilité de rollback, downgrade ou désactivation sélective.
@@ -397,6 +401,7 @@ Il ne doit pas être lu comme :
 - la preuve que Build-11/12/13 sont déjà runtime-ready
 - la preuve que `COMPLETE` est déjà exécutable
 - la preuve que Build-9X ou `LOCAL_REPLAY` sont déjà complets, opérés de bout en bout ou validés pour Build-11+
+- la preuve que les libellés historiques `Light Shadow` / `Live-Light` décrivent encore la cible runtime gouvernée active
 
 ---
 

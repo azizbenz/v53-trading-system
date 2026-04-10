@@ -12,16 +12,23 @@ Covers all spec-mandated tests:
 import pytest
 
 from engines.engine_a.structure_detector_a import (
+    ENGINE_A_STRUCTURE_CALIBRATION_STATUS,
+    ENGINE_A_STRUCTURE_PROFILE_ID,
     StructureVerdict,
     StructureInput,
     detect_structure,
 )
 from engines.engine_a.context_validator_a import (
+    ENGINE_A_CONTEXT_CALIBRATION_STATUS,
+    ENGINE_A_CONTEXT_PROFILE_ID,
     ContextVerdict,
     ContextInput,
     validate_context,
 )
 from engines.engine_a.cost_feasibility_a import (
+    ENGINE_A_COST_CALIBRATION_STATUS,
+    ENGINE_A_COST_DEFAULTS,
+    ENGINE_A_COST_PROFILE_ID,
     CostVerdict,
     CostInput,
     check_cost_feasibility,
@@ -30,9 +37,17 @@ from engines.engine_a.conviction_builder_a import (
     ConvictionLevel,
     TierSuggestion,
     ConvictionInput,
+    ENGINE_A_CONVICTION_INPUT_DEFAULTS,
+    ENGINE_A_CONVICTION_NORMALIZATION,
+    ENGINE_A_CONVICTION_PROFILE_ID,
+    ENGINE_A_CONVICTION_CALIBRATION_STATUS,
+    MARKET_PHYSICS_CALIBRATION_PROFILE_ID,
+    MARKET_PHYSICS_CALIBRATION_STATUS,
     build_conviction,
 )
 from engines.engine_a.invalidation_mapper_a import (
+    ENGINE_A_INVALIDATION_CALIBRATION_STATUS,
+    ENGINE_A_INVALIDATION_PROFILE_ID,
     InvalidationType,
     build_invalidation,
 )
@@ -43,6 +58,7 @@ from engines.engine_a.signal_reporter_a import (
     SignalReporterA,
 )
 from engines.engine_a.engine_a_runner import (
+    ENGINE_A_RUNNER_INPUT_DEFAULTS,
     EngineADecision,
     EngineAInput,
     EngineAOutput,
@@ -126,6 +142,18 @@ class TestStructureDetectorA:
         high_zone = detect_structure(StructureInput(**base, zone_proximity=1.0))
         assert high_zone.structure_score > low_zone.structure_score
 
+    def test_structure_profile_is_explicitly_marked_to_calibrate(self):
+        result = detect_structure(StructureInput(
+            pair="BTCUSDT",
+            direction_score=0.8,
+            continuation_score=0.9,
+            structure_quality=0.85,
+            zone_proximity=0.7,
+            trend_stability=0.8,
+        ))
+        assert result.calibration_profile_id == ENGINE_A_STRUCTURE_PROFILE_ID
+        assert result.calibration_status == ENGINE_A_STRUCTURE_CALIBRATION_STATUS
+
     def test_result_frozen(self):
         result = detect_structure(StructureInput(
             pair="BTC", direction_score=0.5, continuation_score=0.5,
@@ -185,6 +213,18 @@ class TestContextValidatorA:
             flow_coherence=0.5,
         ))
         assert result.verdict == ContextVerdict.NEUTRAL
+
+    def test_context_profile_is_explicitly_marked_to_calibrate(self):
+        result = validate_context(ContextInput(
+            pair="BTCUSDT",
+            regime_favorability=0.9,
+            regime_confidence=0.8,
+            pair_health=0.9,
+            data_freshness=0.95,
+            flow_coherence=0.8,
+        ))
+        assert result.calibration_profile_id == ENGINE_A_CONTEXT_PROFILE_ID
+        assert result.calibration_status == ENGINE_A_CONTEXT_CALIBRATION_STATUS
 
     def test_result_frozen(self):
         result = validate_context(ContextInput(
@@ -261,6 +301,18 @@ class TestCostFeasibilityA:
         ))
         with pytest.raises(Exception):
             result.verdict = "x"
+
+    def test_cost_profile_is_explicitly_marked_to_calibrate(self):
+        result = check_cost_feasibility(CostInput(
+            pair="BTCUSDT",
+            expected_gain=0.005,
+            expected_cost=0.001,
+            candidate_size=1000.0,
+        ))
+        assert result.calibration_profile_id == ENGINE_A_COST_PROFILE_ID
+        assert result.calibration_status == ENGINE_A_COST_CALIBRATION_STATUS
+        assert CostInput.model_fields["delta_safe"].default == ENGINE_A_COST_DEFAULTS["delta_safe"]
+        assert CostInput.model_fields["ce_min"].default == ENGINE_A_COST_DEFAULTS["ce_min"]
 
 
 # ── conviction_builder_A ──
@@ -362,6 +414,20 @@ class TestConvictionBuilderA:
         ))
         assert result.scoring_version == "v3.0"
 
+    def test_calibration_profiles_are_propagated(self):
+        result = build_conviction(ConvictionInput(
+            pair="BTC", structure_score=0.5, context_score=0.5,
+        ))
+        assert result.calibration_profile_id == ENGINE_A_CONVICTION_PROFILE_ID
+        assert result.calibration_status == ENGINE_A_CONVICTION_CALIBRATION_STATUS
+        assert result.physics_calibration_profile_id == MARKET_PHYSICS_CALIBRATION_PROFILE_ID
+        assert result.physics_calibration_status == MARKET_PHYSICS_CALIBRATION_STATUS
+
+    def test_conviction_defaults_are_explicitly_governed(self):
+        assert ConvictionInput.model_fields["delta_confirmation"].default == ENGINE_A_CONVICTION_INPUT_DEFAULTS["delta_confirmation"]
+        assert ConvictionInput.model_fields["competition_density"].default == ENGINE_A_CONVICTION_INPUT_DEFAULTS["competition_density"]
+        assert ENGINE_A_CONVICTION_NORMALIZATION["neutral_midpoint"] == 0.5
+
     def test_result_frozen(self):
         result = build_conviction(ConvictionInput(
             pair="BTC", structure_score=0.5, context_score=0.5,
@@ -429,6 +495,11 @@ class TestInvalidationMapperA:
         result = build_invalidation("BTC", 0.8, 50000.0, 500.0)
         with pytest.raises(Exception):
             result.pair = "ETH"
+
+    def test_invalidation_profile_is_explicitly_marked_to_calibrate(self):
+        result = build_invalidation("BTC", 0.8, 50000.0, 500.0)
+        assert result.calibration_profile_id == ENGINE_A_INVALIDATION_PROFILE_ID
+        assert result.calibration_status == ENGINE_A_INVALIDATION_CALIBRATION_STATUS
 
 
 # ── signal_reporter_A ──
@@ -532,6 +603,13 @@ def _make_good_inputs(**overrides) -> EngineAInput:
     )
     defaults.update(overrides)
     return EngineAInput(**defaults)
+
+
+def test_engine_a_runner_defaults_are_explicitly_governed():
+    assert EngineAInput.model_fields["regime_favorability"].default == ENGINE_A_RUNNER_INPUT_DEFAULTS["regime_favorability"]
+    assert EngineAInput.model_fields["competition_density"].default == ENGINE_A_RUNNER_INPUT_DEFAULTS["competition_density"]
+    assert EngineAInput.model_fields["holding_period"].default == ENGINE_A_RUNNER_INPUT_DEFAULTS["holding_period"]
+    assert EngineAInput.model_fields["delta_safe"].default == ENGINE_A_RUNNER_INPUT_DEFAULTS["delta_safe"]
 
 
 class TestEngineARunner:
@@ -655,6 +733,29 @@ class TestEngineARunner:
         assert penalized_output.block_scores["market_toxicity"] == pytest.approx(1.0)
         assert "execution_survivability_score" in penalized_output.block_scores
         assert penalized_output.block_scores["micro_friction_score"] > 0.0
+
+    def test_e2e_derives_delta_confirmation_from_soft_delta_proxy_when_not_explicit(self):
+        output = run_engine_a(_make_good_inputs(
+            delta_proxy_soft_value=4.0,
+            delta_proxy_reference_volume=10.0,
+        ))
+
+        assert output.decision == EngineADecision.EMIT
+        assert output.block_scores["delta_confirmation"] == pytest.approx(0.7)
+
+    def test_e2e_explicit_delta_confirmation_overrides_raw_delta_proxy(self):
+        output = run_engine_a(_make_good_inputs(
+            delta_confirmation=0.9,
+            delta_proxy_soft_value=-10.0,
+            delta_proxy_reference_volume=10.0,
+        ))
+
+        assert output.decision == EngineADecision.EMIT
+        assert output.block_scores["delta_confirmation"] == pytest.approx(0.9)
+
+    def test_e2e_rejects_delta_proxy_without_reference_volume(self):
+        with pytest.raises(ValueError, match="reference_volume"):
+            run_engine_a(_make_good_inputs(delta_proxy_soft_value=4.0))
 
     def test_e2e_no_trade_logs_present(self):
         """No-trade path also produces structured logs."""

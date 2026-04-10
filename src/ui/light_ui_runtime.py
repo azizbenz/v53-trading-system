@@ -1,4 +1,4 @@
-"""Stateful runtime for the locked Build-10 Light UI."""
+"""Stateful runtime for the locked Build-10 operator UI."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from monitoring.contracts import (
     OperatorRuntimeProjection,
 )
 from ui.contracts import (
+    LockedOperatorDashboardView,
     NotificationDeliveryState,
     OperatorActionLogEntry,
     OperatorActionOutcome,
@@ -24,10 +25,13 @@ from ui.contracts import (
     OperatorEventType,
     OperatorNotificationContract,
     OperatorNotificationRecord,
-    LightDashboardView,
 )
-from ui.operator_actions import build_light_allowed_actions, evaluate_light_operator_action, record_screen_open
-from ui.ui_light_locked import build_light_dashboard_view
+from ui.operator_actions import (
+    build_locked_operator_allowed_actions,
+    evaluate_locked_operator_action,
+    record_screen_open,
+)
+from ui.ui_light_locked import build_locked_operator_dashboard_view
 
 
 _OPERATOR_PROJECTION_EVENT_LIMIT = 10
@@ -40,8 +44,8 @@ _OPERATOR_SAFING_ACTIONS = frozenset(
 )
 
 
-class LightUIRuntimeConfig(BaseModel, frozen=True):
-    """Runtime configuration for the locked Build-10 Light UI."""
+class LockedOperatorUiRuntimeConfig(BaseModel, frozen=True):
+    """Runtime configuration for the locked Build-10 operator UI."""
 
     state_dir: Path | None = None
     persist_history: bool = False
@@ -50,10 +54,11 @@ class LightUIRuntimeConfig(BaseModel, frozen=True):
     state_filename: str = "light_ui_runtime_state.json"
 
 
-class LightUIRuntimeState(BaseModel):
-    """Persisted state for the locked Light UI runtime."""
+class LockedOperatorUiRuntimeState(BaseModel):
+    """Persisted state for the locked operator UI runtime."""
 
     session_id: str
+    last_error: str = ""
     active_view: str = "overview"
     last_action: str = ""
     consultation_filters: tuple[str, ...] = ()
@@ -62,19 +67,19 @@ class LightUIRuntimeState(BaseModel):
     visible_critical_alert_ids: tuple[str, ...] = ()
 
 
-class LightUIRuntimeResult(BaseModel, frozen=True):
-    """Audit-ready Build-10 Light UI runtime result."""
+class LockedOperatorUiRuntimeResult(BaseModel, frozen=True):
+    """Audit-ready Build-10 operator UI runtime result."""
 
-    view: LightDashboardView
+    view: LockedOperatorDashboardView
     visible_critical_alert_ids: tuple[str, ...] = ()
     state_path: str = ""
 
 
-class LightUIRuntime:
-    """Stateful Build-10 runtime for locked UI actions and critical notifications."""
+class LockedOperatorUiRuntime:
+    """Stateful Build-10 runtime for locked operator actions and critical notifications."""
 
-    def __init__(self, *, config: LightUIRuntimeConfig | None = None) -> None:
-        self._config = config or LightUIRuntimeConfig()
+    def __init__(self, *, config: LockedOperatorUiRuntimeConfig | None = None) -> None:
+        self._config = config or LockedOperatorUiRuntimeConfig()
         self._state_path = (
             self._config.state_dir / self._config.state_filename
             if self._config.state_dir is not None
@@ -88,8 +93,8 @@ class LightUIRuntime:
         *,
         alerts: tuple[AlertRecord, ...] = (),
         active_view: str = "overview",
-    ) -> LightUIRuntimeResult:
-        """Project the Light UI with stateful history and notification records."""
+    ) -> LockedOperatorUiRuntimeResult:
+        """Project the locked operator UI with stateful history and notification records."""
 
         self._record_screen_open(
             correlation_id=payload.correlation_id,
@@ -109,14 +114,14 @@ class LightUIRuntime:
         )
         self._persist()
 
-        base_view = build_light_dashboard_view(
+        base_view = build_locked_operator_dashboard_view(
             payload.model_copy(update={"operator_runtime": self._project_operator_runtime()})
         )
-        return LightUIRuntimeResult(
+        return LockedOperatorUiRuntimeResult(
             view=base_view.model_copy(
                 update={
                     "event_log": tuple(self._tail_events()),
-                    "allowed_actions": build_light_allowed_actions(payload.runtime_mode),
+                    "allowed_actions": build_locked_operator_allowed_actions(payload.runtime_mode),
                     "notification_contract": OperatorNotificationContract(
                         critical_delivery_required=True,
                         implementation_status="contract_only",
@@ -142,9 +147,9 @@ class LightUIRuntime:
         allowed_pairs: tuple[str, ...] = (),
         resumable_pairs: tuple[str, ...] = (),
     ) -> OperatorActionOutcome:
-        """Evaluate and record an operator action through the locked Light UI."""
+        """Evaluate and record an operator action through the locked operator UI."""
 
-        outcome = evaluate_light_operator_action(
+        outcome = evaluate_locked_operator_action(
             request,
             allowed_pairs=allowed_pairs,
             resumable_pairs=resumable_pairs,
@@ -160,7 +165,7 @@ class LightUIRuntime:
         self._persist()
         return outcome
 
-    def get_state(self) -> LightUIRuntimeState:
+    def get_state(self) -> LockedOperatorUiRuntimeState:
         """Return the current UI runtime state."""
 
         return self._state
@@ -170,14 +175,31 @@ class LightUIRuntime:
 
         return self._project_operator_runtime()
 
-    def _load_or_create(self) -> LightUIRuntimeState:
+    def _fresh_state(self, *, last_error: str = "") -> LockedOperatorUiRuntimeState:
+        return LockedOperatorUiRuntimeState(
+            session_id=f"light-ui-session-{uuid4().hex}",
+            last_error=last_error,
+        )
+
+    def _load_or_create(self) -> LockedOperatorUiRuntimeState:
         if self._state_path is not None and self._state_path.exists():
             try:
                 data = json.loads(self._state_path.read_text(encoding="utf-8"))
-                return LightUIRuntimeState(**data)
-            except (json.JSONDecodeError, ValueError, OSError):
-                pass
-        return LightUIRuntimeState(session_id=f"light-ui-session-{uuid4().hex}")
+                if not isinstance(data, dict):
+                    raise ValueError(
+                        f"State file root must be a JSON object, got {type(data).__name__}"
+                    )
+                return LockedOperatorUiRuntimeState(**data)
+            except (json.JSONDecodeError, ValueError, OSError, TypeError) as exc:
+                backup = self._state_path.with_suffix(".corrupted")
+                try:
+                    self._state_path.rename(backup)
+                except OSError:
+                    pass
+                return self._fresh_state(
+                    last_error=f"state_file_corrupted:{type(exc).__name__}:{exc}"
+                )
+        return self._fresh_state()
 
     def _persist(self) -> None:
         if not self._config.persist_history or self._state_path is None:
@@ -327,6 +349,7 @@ class LightUIRuntime:
                 else ""
             ),
             latest_event_message=latest_event.message if latest_event is not None else "",
+            last_error=self._state.last_error,
             recent_event_log=recent_events,
             rejection_event_count=len(rejection_events),
             latest_rejection_reason=(
@@ -363,7 +386,17 @@ class LightUIRuntime:
         )
 
 
+LightUIRuntimeConfig = LockedOperatorUiRuntimeConfig
+LightUIRuntimeState = LockedOperatorUiRuntimeState
+LightUIRuntimeResult = LockedOperatorUiRuntimeResult
+LightUIRuntime = LockedOperatorUiRuntime
+
+
 __all__ = [
+    "LockedOperatorUiRuntimeConfig",
+    "LockedOperatorUiRuntimeState",
+    "LockedOperatorUiRuntimeResult",
+    "LockedOperatorUiRuntime",
     "LightUIRuntimeConfig",
     "LightUIRuntimeState",
     "LightUIRuntimeResult",

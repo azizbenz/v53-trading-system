@@ -1,10 +1,11 @@
-"""Typed skeleton for the canonical ENGINE_B_SWEEP_VALIDATION hook."""
+"""Bounded executor surface for the canonical ENGINE_B_SWEEP_VALIDATION hook."""
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from interface_contracts import HookId
+from engines.engine_b import EngineBSweepValidationInput, EngineBSweepValidationOutcome
+from interface_contracts import HookId, is_runtime_open_hook_id
 
 from .compiled_hook_plan_loader import (
     CompiledHookPlanLoadStatus,
@@ -13,29 +14,18 @@ from .compiled_hook_plan_loader import (
 
 
 HOOK_ID = HookId.ENGINE_B_SWEEP_VALIDATION
-RUNTIME_OPEN = False
+RUNTIME_OPEN = is_runtime_open_hook_id(HOOK_ID)
 
 
 class EngineBSweepHookPlanPayload(BaseModel, frozen=True):
-    """Minimal compiled payload shape for the unopened Engine B hook rail."""
+    """Typed compiled payload for the bounded Engine B sweep-validation hook."""
 
-    reason_codes: tuple[str, ...] = ()
-    detail: str = ""
-
-
-class EngineBSweepHookInput(BaseModel, frozen=True):
-    """Minimal typed input kept intentionally narrow until the rail is opened."""
-
-    context_id: str = Field(..., min_length=1)
-    pair: str = ""
-    engine_id: str = ""
-
-
-class EngineBSweepHookOutcome(BaseModel, frozen=True):
-    """Placeholder typed outcome for the unopened Engine B hook rail."""
-
-    accepted: bool = True
-    reason_codes: tuple[str, ...] = ()
+    blocked: bool = False
+    block_reason_codes: tuple[str, ...] = ()
+    raw_score_multiplier_delta: float = 0.0
+    raw_score_add: float = 0.0
+    conviction_add: float = 0.0
+    raw_score_cap: float | None = None
     detail: str = ""
 
 
@@ -54,13 +44,43 @@ def load_engine_b_sweep_hook_payload(
 
 
 def run_engine_b_sweep_hook(
-    hook_input: EngineBSweepHookInput,
+    hook_input: EngineBSweepValidationInput,
     hook_payload: EngineBSweepHookPlanPayload,
-) -> EngineBSweepHookOutcome:
-    """Keep the hook explicitly closed until the Engine B artifact rail is opened."""
+) -> EngineBSweepValidationOutcome:
+    """Run the bounded Engine B sweep-validation hook with no dynamic code path."""
 
-    raise NotImplementedError(
-        "ENGINE_B_SWEEP_VALIDATION remains a typed skeleton until this hook rail is opened"
+    if not hook_payload.blocked:
+        detail = hook_payload.detail.strip()
+        if not detail and (
+            hook_payload.raw_score_multiplier_delta != 0.0
+            or hook_payload.raw_score_add != 0.0
+            or hook_payload.conviction_add != 0.0
+            or hook_payload.raw_score_cap is not None
+        ):
+            detail = (
+                f"compiled Engine B sweep validation adjusted {hook_input.pair} / "
+                f"{hook_input.engine_id}"
+            )
+        return EngineBSweepValidationOutcome(
+            accepted=True,
+            reason_codes=hook_payload.block_reason_codes,
+            detail=detail,
+            raw_score_multiplier_delta=hook_payload.raw_score_multiplier_delta,
+            raw_score_add=hook_payload.raw_score_add,
+            conviction_add=hook_payload.conviction_add,
+            raw_score_cap=hook_payload.raw_score_cap,
+        )
+
+    detail = hook_payload.detail.strip()
+    if not detail:
+        detail = (
+            f"compiled Engine B sweep validation blocked {hook_input.pair} / "
+            f"{hook_input.engine_id}"
+        )
+    return EngineBSweepValidationOutcome(
+        accepted=False,
+        reason_codes=hook_payload.block_reason_codes,
+        detail=detail,
     )
 
 
@@ -68,8 +88,6 @@ __all__ = [
     "HOOK_ID",
     "RUNTIME_OPEN",
     "EngineBSweepHookPlanPayload",
-    "EngineBSweepHookInput",
-    "EngineBSweepHookOutcome",
     "load_engine_b_sweep_hook_payload",
     "run_engine_b_sweep_hook",
 ]

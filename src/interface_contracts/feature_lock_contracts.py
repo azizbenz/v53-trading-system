@@ -58,6 +58,7 @@ class TransformWhitelistId(str, Enum):
     CAPRATIO = "capratio"
     DELTA_PROXY_SOFT = "delta_proxy_soft"
     DELTA_PROXY_SIGN = "delta_proxy_sign"
+    DELTA_CONFIRMATION_V1 = "delta_confirmation_v1"
     PARTICIPATION_RATIO = "participation_ratio"
     VOID_SCORE_DISCRETE = "void_score_discrete"
     SWEEP_SCORE_V1 = "sweep_score_v1"
@@ -200,6 +201,13 @@ CANONICAL_PHYSICS_FEATURE_DICTIONARY: dict[str, FeatureDictionaryEntry] = {
         equation_id="P2.3.delta_proxy_sign",
         default_transform_ids=(TransformWhitelistId.DELTA_PROXY_SIGN,),
         description="Documented fallback delta proxy",
+    ),
+    "delta_confirmation": FeatureDictionaryEntry(
+        feature_id="delta_confirmation",
+        family=PhysicsFeatureFamily.DELTA_PROXY,
+        equation_id="P2.3.delta_confirmation_v1",
+        default_transform_ids=(TransformWhitelistId.DELTA_CONFIRMATION_V1,),
+        description="Canonical normalized delta confirmation derived from a delta proxy",
     ),
     "participation_ratio_1m": FeatureDictionaryEntry(
         feature_id="participation_ratio_1m",

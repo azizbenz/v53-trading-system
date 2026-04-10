@@ -18,6 +18,9 @@ from interface_contracts import (
     ArtifactPolicyErrorCode,
     ArtifactProofFloorPolicy,
     ArtifactProofSummary,
+    ArtifactRuntimeErrorPolicy,
+    ArtifactRuntimeFailureMode,
+    ArtifactRuntimeFailureStage,
     ArtifactSignatureEnvelope,
     ArtifactDriftStatus,
     ArtifactRuntimeGovernanceEvaluation,
@@ -27,6 +30,7 @@ from interface_contracts import (
     CANONICAL_ARTIFACT_CONFLICT_POLICY,
     CANONICAL_COMPILED_ARTIFACT_REGISTRY_POLICY,
     CANONICAL_ARTIFACT_PROOF_FLOOR_POLICY,
+    CANONICAL_ARTIFACT_RUNTIME_ERROR_POLICY,
     CompiledRegistryAtomicityMode,
     CompiledRegistryConcurrencyModel,
     DistilledRule,
@@ -213,6 +217,23 @@ def test_canonical_artifact_proof_floor_policy_is_bounded_and_explicit():
     assert isinstance(CANONICAL_ARTIFACT_PROOF_FLOOR_POLICY, ArtifactProofFloorPolicy)
     assert CANONICAL_ARTIFACT_PROOF_FLOOR_POLICY.min_ablation_delta_net_pnl == 0.01
     assert CANONICAL_ARTIFACT_PROOF_FLOOR_POLICY.max_friction_regret_value == 0.05
+
+
+def test_canonical_artifact_runtime_error_policy_is_fail_open_for_open_runtime_rail():
+    assert isinstance(CANONICAL_ARTIFACT_RUNTIME_ERROR_POLICY, ArtifactRuntimeErrorPolicy)
+    assert (
+        CANONICAL_ARTIFACT_RUNTIME_ERROR_POLICY.selection_failure_mode
+        == ArtifactRuntimeFailureMode.FAIL_OPEN_BASELINE_SKIP_ARTIFACT
+    )
+    assert (
+        CANONICAL_ARTIFACT_RUNTIME_ERROR_POLICY.payload_load_failure_mode
+        == ArtifactRuntimeFailureMode.FAIL_OPEN_BASELINE_SKIP_ARTIFACT
+    )
+    assert (
+        CANONICAL_ARTIFACT_RUNTIME_ERROR_POLICY.hook_execution_failure_mode
+        == ArtifactRuntimeFailureMode.FAIL_OPEN_BASELINE_SKIP_ARTIFACT
+    )
+    assert ArtifactRuntimeFailureStage.PLAN_SELECTION.value == "plan_selection"
 
 
 def test_validate_artifact_proof_summary_accepts_canonical_good_proof():

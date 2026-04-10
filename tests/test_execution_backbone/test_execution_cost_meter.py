@@ -12,7 +12,9 @@ from execution_backbone.execution_cost_meter.elw_meter import (
     compute_implicit_round_trip,
 )
 from execution_backbone.execution_cost_meter.adverse_selection_meter import (
+    AdverseSelectionDelayPolicy,
     compute_adverse_selection,
+    resolve_adverse_selection_delay_s,
 )
 from execution_backbone.execution_cost_meter.partial_fill_cost_meter import (
     compute_partial_fill_cost,
@@ -44,6 +46,10 @@ class TestFeeMeter:
     def test_estimate_fee(self):
         est = estimate_fee(50000.0, 1.0, fee_rate=0.001)
         assert est == pytest.approx(50.0)
+
+    def test_compute_fee_rejects_zero_gross_value(self):
+        with pytest.raises(ValueError, match="gross_value must be > 0"):
+            compute_fee("o1", "BTC", 50000.0, 0.0, 0.0)
 
 
 # --- ELW Meter ---
@@ -100,6 +106,42 @@ class TestAdverseSelection:
     def test_zero_exec_price(self):
         m = compute_adverse_selection("o1", "BTC", "buy", 0.0, 100.0, 5.0)
         assert m.adverse_selection == 0.0
+
+    def test_delay_policy_uses_pair_override(self):
+        policy = AdverseSelectionDelayPolicy(
+            policy_id="adverse_selection_delay.test.v1",
+            default_delay_s=5.0,
+            pair_delay_overrides_s={"NEARUSDT": 9.0},
+        )
+        assert resolve_adverse_selection_delay_s(
+            pair="NEARUSDT",
+            event_delay_s=None,
+            policy=policy,
+        ) == pytest.approx(9.0)
+
+    def test_explicit_event_delay_overrides_policy(self):
+        policy = AdverseSelectionDelayPolicy(
+            policy_id="adverse_selection_delay.test.v1",
+            default_delay_s=5.0,
+            pair_delay_overrides_s={"NEARUSDT": 9.0},
+        )
+        assert resolve_adverse_selection_delay_s(
+            pair="NEARUSDT",
+            event_delay_s=1.5,
+            policy=policy,
+        ) == pytest.approx(1.5)
+
+    def test_invalid_event_delay_is_rejected(self):
+        policy = AdverseSelectionDelayPolicy(
+            policy_id="adverse_selection_delay.test.v1",
+            default_delay_s=5.0,
+        )
+        with pytest.raises(ValueError):
+            resolve_adverse_selection_delay_s(
+                pair="BTCUSDT",
+                event_delay_s=0.0,
+                policy=policy,
+            )
 
 
 # --- Partial Fill Cost ---

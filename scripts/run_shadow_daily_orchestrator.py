@@ -51,30 +51,31 @@ def _resolve_slot(
     session_date: str | None,
 ) -> ShadowDailyPlanSlot | None:
     if export_dir is not None:
-        resolved_session_date = session_date
-        if resolved_session_date is None:
-            try:
-                ShadowDailyPlanSlot(session_date=export_dir.name)
-            except ValueError as exc:
+        discovered_slot = orchestrator.build_slot_from_export_dir(export_dir)
+        if session_date is None:
+            if discovered_slot is None:
                 raise ValueError(
-                    "--session-date is required when --export-dir is not an ISO date directory"
-                ) from exc
-            resolved_session_date = export_dir.name
+                    "--session-date is required when the export directory does not expose governed session metadata"
+                )
+            return discovered_slot
+        if discovered_slot is not None and discovered_slot.session_date != session_date:
+            raise ValueError(
+                "Explicit --session-date does not match governed export metadata: "
+                f"{session_date} != {discovered_slot.session_date}"
+            )
         return ShadowDailyPlanSlot(
-            session_date=resolved_session_date,
+            session_date=session_date,
             export_dir_ref=str(export_dir.resolve()),
         )
 
     if exports_root is not None:
         if session_date is not None:
-            candidate = exports_root / session_date
-            if not candidate.is_dir():
-                raise FileNotFoundError(
-                    f"Missing dated export directory for session_date={session_date}: {candidate}"
-                )
-            return ShadowDailyPlanSlot(
-                session_date=session_date,
-                export_dir_ref=str(candidate.resolve()),
+            for slot in orchestrator.discover_slots(exports_root):
+                if slot.session_date == session_date:
+                    return slot
+            raise FileNotFoundError(
+                "Missing export directory with governed session_date="
+                f"{session_date} under {exports_root}"
             )
         return orchestrator.select_next_slot(exports_root)
 
@@ -117,6 +118,9 @@ def orchestrate_one_shadow_day(
     shadow_summary = json.loads(
         artifacts.shadow_summary_json_path.read_text(encoding="utf-8")
     )
+    shadow_day_record = json.loads(
+        artifacts.shadow_day_record_json_path.read_text(encoding="utf-8")
+    )
     shadow_session_summary = json.loads(
         artifacts.shadow_session_summary_json_path.read_text(encoding="utf-8")
     )
@@ -134,6 +138,7 @@ def orchestrate_one_shadow_day(
         shadow_session_registry_ref=str(
             artifacts.shadow_session_registry_json_path.resolve()
         ),
+        shadow_day_recorded=bool(shadow_day_record.get("passed_all_gates", False)),
         accepted=bool(shadow_summary["decision"]["accepted"]),
         consecutive_days=int(shadow_session_summary["consecutive_days"]),
         remaining_days=int(shadow_session_summary["remaining_days"]),
@@ -162,6 +167,7 @@ def orchestrate_one_shadow_day(
                 "shadow_session_registry_ref": str(
                     artifacts.shadow_session_registry_json_path.resolve()
                 ),
+                "shadow_day_recorded": record.shadow_day_recorded,
                 "accepted": record.accepted,
                 "consecutive_days": record.consecutive_days,
                 "remaining_days": record.remaining_days,

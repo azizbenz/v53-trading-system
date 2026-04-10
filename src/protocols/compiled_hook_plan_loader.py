@@ -20,6 +20,7 @@ class CompiledHookPlanLoadStatus(StrEnum):
     NO_SNAPSHOT = "no_snapshot"
     NO_BINDING = "no_binding"
     BINDING_ONLY = "binding_only"
+    LOAD_ERROR = "load_error"
     LOADED = "loaded"
 
 
@@ -54,6 +55,8 @@ class CompiledHookPlanSelection(BaseModel, frozen=True):
     binding: CompiledArtifactHookBinding | None = None
     compiled_plan_path: Path | None = None
     plan: CompiledHookPlanDocument | None = None
+    error_type: str = ""
+    error_detail: str = ""
 
 
 def load_compiled_hook_plan(path: Path) -> CompiledHookPlanDocument:
@@ -96,13 +99,24 @@ def select_current_compiled_hook_plan(
         )
 
     compiled_plan_path = _resolve_compiled_plan_path(store.state_dir, binding.compiled_plan_ref)
-    plan = load_compiled_hook_plan(compiled_plan_path)
-    _validate_plan_matches_binding(
-        snapshot_id=snapshot.snapshot_id,
-        hook_id=hook_id,
-        binding=binding,
-        plan=plan,
-    )
+    try:
+        plan = load_compiled_hook_plan(compiled_plan_path)
+        _validate_plan_matches_binding(
+            snapshot_id=snapshot.snapshot_id,
+            hook_id=hook_id,
+            binding=binding,
+            plan=plan,
+        )
+    except Exception as exc:
+        return CompiledHookPlanSelection(
+            hook_id=hook_id,
+            snapshot_id=snapshot.snapshot_id,
+            status=CompiledHookPlanLoadStatus.LOAD_ERROR,
+            binding=binding,
+            compiled_plan_path=compiled_plan_path,
+            error_type=type(exc).__name__,
+            error_detail=str(exc),
+        )
     return CompiledHookPlanSelection(
         hook_id=hook_id,
         snapshot_id=snapshot.snapshot_id,

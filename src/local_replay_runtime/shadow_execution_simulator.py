@@ -41,6 +41,24 @@ class ShadowExecutionSimulatorConfig(BaseModel, frozen=True):
     parity_policy: ParityTolerancePolicy = Field(default_factory=ParityTolerancePolicy)
 
 
+class ReplayParityDiagnosticsSummary(BaseModel, frozen=True):
+    """Typed parity diagnostics payload exported by governed LOCAL_REPLAY."""
+
+    parity_status: str = Field(..., min_length=1)
+    dataset_id: str = "unknown_dataset"
+    decision_match_rate: float = Field(..., ge=0.0, le=1.0)
+    score_match_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    baseline_status: str = "unknown"
+    score_alignment: str = "unknown"
+    cost_alignment: str = "unknown"
+    mean_cost_gap: float = Field(default=0.0, ge=0.0)
+    compared_records: int = Field(default=0, ge=0)
+    missing_baseline_records: int = Field(default=0, ge=0)
+    divergence_count: int = Field(default=0, ge=0)
+    shared_core_match: bool = False
+    parity_policy: dict[str, Any] = Field(default_factory=dict)
+
+
 def _base_state(row: HistoricalReplayOpportunity) -> DecisionState:
     if row.target_decision_state is not None:
         return row.target_decision_state
@@ -253,25 +271,26 @@ def build_parity_diagnostics_payload(
         and cost_alignment == "within_prudent_tolerance"
         else "warning"
     )
-    return {
-        "parity_status": parity_status,
-        "dataset_id": dataset.dataset_id,
-        "decision_match_rate": decision_match_rate,
-        "score_match_rate": score_match_rate,
-        "baseline_status": baseline_status,
-        "score_alignment": score_alignment,
-        "cost_alignment": cost_alignment,
-        "mean_cost_gap": mean_cost_gap,
-        "compared_records": decision_compared,
-        "missing_baseline_records": max(dataset.record_count - decision_compared, 0),
-        "divergence_count": max(decision_compared - decision_matches, 0),
-        "shared_core_match": dataset.shared_core_match,
-        "parity_policy": parity_policy.model_dump(mode="json"),
-    }
+    return ReplayParityDiagnosticsSummary(
+        parity_status=parity_status,
+        dataset_id=dataset.dataset_id,
+        decision_match_rate=decision_match_rate,
+        score_match_rate=score_match_rate,
+        baseline_status=baseline_status,
+        score_alignment=score_alignment,
+        cost_alignment=cost_alignment,
+        mean_cost_gap=mean_cost_gap,
+        compared_records=decision_compared,
+        missing_baseline_records=max(dataset.record_count - decision_compared, 0),
+        divergence_count=max(decision_compared - decision_matches, 0),
+        shared_core_match=dataset.shared_core_match,
+        parity_policy=parity_policy.model_dump(mode="json"),
+    ).model_dump(mode="json")
 
 
 __all__ = [
     "ParityTolerancePolicy",
+    "ReplayParityDiagnosticsSummary",
     "ShadowExecutionSimulatorConfig",
     "simulate_shadow_compatible_dtrs",
     "build_parity_diagnostics_payload",

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import importlib
+import json
 import sys
 from pathlib import Path
 
@@ -324,6 +325,90 @@ def _run_meta_chain(portfolio_result: object) -> SmokeCheck:
     )
 
 
+def _run_execution_bootstrap_smoke() -> SmokeCheck:
+    from interface_contracts.binance_contracts import BinanceCredentials
+    from protocols import build_binance_execution_runtime
+    from venue_adapters.binance_spot.time_sync import BinanceAdapterConfig
+
+    class _FakeSocket:
+        def __init__(self, messages) -> None:
+            self._messages = list(messages)
+
+        def settimeout(self, timeout: float) -> None:
+            return None
+
+        def send(self, payload: str) -> None:
+            return None
+
+        def recv(self):
+            if not self._messages:
+                raise TimeoutError("no more messages")
+            return self._messages.pop(0)
+
+        def close(self) -> None:
+            return None
+
+    runtime = build_binance_execution_runtime(
+        credentials=BinanceCredentials(
+            api_key="smoke-api-key",
+            secret_key="smoke-secret-key",
+            label="smoke",
+        ),
+        config=BinanceAdapterConfig(rest_base_url="https://testnet.binance.vision"),
+        user_data_stream_enabled=True,
+        user_data_socket_factory=lambda endpoint, connect_timeout_s, recv_timeout_s: _FakeSocket(
+            [
+                json.dumps(
+                    {
+                        "id": "v53-user-data-subscribe",
+                        "status": 200,
+                        "result": {"subscriptionId": 7},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "subscriptionId": 7,
+                        "event": {
+                            "e": "executionReport",
+                            "E": 1_710_000_007_000,
+                            "s": "BTCUSDT",
+                            "c": "v53_engine_a_intent-1",
+                            "S": "BUY",
+                            "o": "LIMIT",
+                            "f": "GTC",
+                            "q": "0.25000000",
+                            "p": "50000.10000000",
+                            "x": "NEW",
+                            "X": "NEW",
+                            "i": 123462,
+                            "l": "0.00000000",
+                            "z": "0.00000000",
+                            "L": "0.00000000",
+                            "n": "0",
+                            "N": None,
+                            "t": -1,
+                            "r": "NONE",
+                        },
+                    }
+                ),
+            ]
+        ),
+        clock_ms=lambda: 1_710_000_000_000,
+    )
+    events = runtime._adapter.poll_order_events()
+    if len(events) != 1 or events[0].event_type.value != "ack":
+        return SmokeCheck(
+            "execution_bootstrap",
+            False,
+            "bounded Binance execution bootstrap did not emit the expected ACK event",
+        )
+    return SmokeCheck(
+        "execution_bootstrap",
+        True,
+        "bounded Binance execution bootstrap wires authenticated user-data polling",
+    )
+
+
 def _format_report(checks: list[SmokeCheck], build1_text: str) -> str:
     lines = [
         "=" * 60,
@@ -374,6 +459,7 @@ def main() -> int:
             checks.append(portfolio_check)
             if portfolio_check.passed:
                 checks.append(_run_meta_chain(portfolio_result))
+            checks.append(_run_execution_bootstrap_smoke())
 
     print(_format_report(checks, build1_text))
 

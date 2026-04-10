@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import UTC, datetime
+import json
 import sys
 from pathlib import Path
 
@@ -14,17 +15,22 @@ SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from interface_contracts import StrategyClassification  # noqa: E402
+from interface_contracts import ProfileId, StrategyClassification  # noqa: E402
 from local_replay_runtime import (  # noqa: E402
+    EdgeGateCalibrationConfig,
     HistoricalReplayDataset,
     HistoricalReplayOpportunity,
     HistoricalSnapshotBatch,
     ReplayInputKind,
+    build_edge_gate_calibration_artifact,
+    calibrate_edge_gate_thresholds,
+    load_replay_dtr_records,
     load_historical_replay_dataset,
     load_historical_snapshot_batch,
     orchestrate_local_replay_export,
     ReplayOrchestratorRequest,
     route_snapshot_batch_to_dataset,
+    write_edge_gate_calibration_artifact,
 )
 
 
@@ -185,10 +191,86 @@ def _parse_chunk_indices(raw_value: str) -> tuple[int, ...]:
     return tuple(sorted(values))
 
 
+def _option_was_provided(argv: list[str], option: str) -> bool:
+    return any(token == option or token.startswith(f"{option}=") for token in argv)
+
+
+def _load_existing_resume_metadata(output_dir: Path) -> tuple[dict[str, object], dict[str, object]] | None:
+    session_config_path = output_dir / "replay_session_config.json"
+    run_manifest_path = output_dir / "replay_run_manifest.json"
+    if not session_config_path.exists() or not run_manifest_path.exists():
+        return None
+    session_config = json.loads(session_config_path.read_text(encoding="utf-8"))
+    run_manifest = json.loads(run_manifest_path.read_text(encoding="utf-8"))
+    return session_config, run_manifest
+
+
+def _emit_edge_calibration(
+    *,
+    replay_dtr_path: Path,
+    output_path: Path,
+    signed_by: str,
+    calibration_version: str,
+    bootstrap_samples: int,
+    min_positive_trades: int,
+    min_cost_observations: int,
+    rng_seed: int,
+) -> Path:
+    records = load_replay_dtr_records(replay_dtr_path)
+    config = EdgeGateCalibrationConfig(
+        calibration_version=calibration_version,
+        bootstrap_samples=bootstrap_samples,
+        min_positive_trades=min_positive_trades,
+        min_cost_observations=min_cost_observations,
+        rng_seed=rng_seed,
+    )
+    report = calibrate_edge_gate_thresholds(records, config=config)
+    artifact = build_edge_gate_calibration_artifact(
+        report,
+        signed_by=signed_by,
+        config=config,
+    )
+    return write_edge_gate_calibration_artifact(artifact, output_path)
+
+
+def _hydrate_resume_defaults(
+    args: argparse.Namespace,
+    *,
+    raw_argv: list[str],
+) -> argparse.Namespace:
+    if not args.resume:
+        return args
+    metadata = _load_existing_resume_metadata(args.output_dir)
+    if metadata is None:
+        return args
+    session_config, run_manifest = metadata
+
+    if not _option_was_provided(raw_argv, "--run-id"):
+        args.run_id = str(session_config["run_id"])
+    if not _option_was_provided(raw_argv, "--strategy-id"):
+        args.strategy_id = str(session_config["strategy_id"])
+    if not _option_was_provided(raw_argv, "--strategy-version"):
+        args.strategy_version = str(session_config["strategy_version"])
+    if not _option_was_provided(raw_argv, "--strategy-classification"):
+        args.strategy_classification = str(run_manifest["strategy_classification"])
+    if not _option_was_provided(raw_argv, "--lineage-version"):
+        args.lineage_version = str(session_config["lineage_version"])
+    if not _option_was_provided(raw_argv, "--performance-mode"):
+        args.performance_mode = str(session_config["performance_mode"])
+    if not _option_was_provided(raw_argv, "--profile-scope"):
+        args.profile_scope = str(session_config["profile_scope"])
+    if not _option_was_provided(raw_argv, "--chunk-count"):
+        args.chunk_count = int(session_config["chunk_count"])
+    if not _option_was_provided(raw_argv, "--chunk-index"):
+        args.chunk_index = int(session_config["chunk_index"])
+    return args
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint for the governed LOCAL_REPLAY export generator."""
 
     _configure_stdio()
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
     parser = argparse.ArgumentParser(
         description="Generate a governed LOCAL_REPLAY export artifact directory.",
     )
@@ -249,6 +331,15 @@ def main(argv: list[str] | None = None) -> int:
         help="Performance mode recorded in the replay_run_manifest.",
     )
     parser.add_argument(
+        "--profile-scope",
+        choices=tuple(profile.value for profile in ProfileId),
+        default=ProfileId.COMPLETE.value,
+        help=(
+            "Profile scope recorded in the replay_run_manifest. "
+            "Default stays COMPLETE to align the governed IA Lab -> VPS import chain."
+        ),
+    )
+    parser.add_argument(
         "--chunk-count",
         type=int,
         default=1,
@@ -298,7 +389,34 @@ def main(argv: list[str] | None = None) -> int:
             "and write a canonical root export consumable by run_local_replay_shadow.py."
         ),
     )
-    args = parser.parse_args(argv)
+    parser.add_argument(
+        "--emit-edge-calibration",
+        action="store_true",
+        help="Also emit a signed THR-E01/THR-E02 artifact from replay_dtr evidence.",
+    )
+    parser.add_argument(
+        "--edge-calibration-output-path",
+        type=Path,
+        default=None,
+        help=(
+            "Optional YAML path for the EDGE calibration artifact. "
+            "Defaults to <output-dir>/calibration/edge_gate.yml when --emit-edge-calibration is used."
+        ),
+    )
+    parser.add_argument(
+        "--edge-calibration-signed-by",
+        default="",
+        help="Human attestation identity used when --emit-edge-calibration is enabled.",
+    )
+    parser.add_argument("--edge-calibration-version", default="v1")
+    parser.add_argument("--edge-bootstrap-samples", type=int, default=2_000)
+    parser.add_argument("--edge-min-positive-trades", type=int, default=200)
+    parser.add_argument("--edge-min-cost-observations", type=int, default=500)
+    parser.add_argument("--edge-rng-seed", type=int, default=53)
+    args = parser.parse_args(raw_argv)
+    args = _hydrate_resume_defaults(args, raw_argv=raw_argv)
+    if args.emit_edge_calibration and not args.edge_calibration_signed_by.strip():
+        parser.error("--edge-calibration-signed-by is required when --emit-edge-calibration is enabled")
     try:
         selected_chunk_indices = (
             _parse_chunk_indices(args.chunk_indices)
@@ -331,6 +449,7 @@ def main(argv: list[str] | None = None) -> int:
             strategy_classification=StrategyClassification(args.strategy_classification),
             lineage_version=args.lineage_version,
             performance_mode=args.performance_mode,
+            profile_scope=ProfileId(args.profile_scope),
             input_kind=input_kind,
             dataset=dataset,
             chunk_count=args.chunk_count,
@@ -366,6 +485,21 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Parity diagnostics JSON: {export_result.parity_diagnostics_path}")
     print(f"Replay metrics JSON: {export_result.replay_metrics_path}")
     print(f"Replay DTR JSONL: {export_result.replay_dtr_path}")
+    if args.emit_edge_calibration:
+        output_path = args.edge_calibration_output_path or (
+            args.output_dir / "calibration" / "edge_gate.yml"
+        )
+        written_calibration_path = _emit_edge_calibration(
+            replay_dtr_path=export_result.replay_dtr_path,
+            output_path=output_path,
+            signed_by=args.edge_calibration_signed_by.strip(),
+            calibration_version=args.edge_calibration_version,
+            bootstrap_samples=args.edge_bootstrap_samples,
+            min_positive_trades=args.edge_min_positive_trades,
+            min_cost_observations=args.edge_min_cost_observations,
+            rng_seed=args.edge_rng_seed,
+        )
+        print(f"EDGE calibration YAML: {written_calibration_path}")
     if result.chunk_session_path is not None:
         print(f"Replay chunk session JSON: {result.chunk_session_path}")
     print("Use this directory as --export-dir for run_local_replay_shadow.py.")

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from complete_enablers.contracts import Build14InfluenceReport, Build14InfluenceSignal
 from pydantic import ValidationError
 
 from interface_contracts import ALL_PAIRS, PromotionState, ProfileId, ReviewState, RuntimeMode
@@ -26,9 +27,7 @@ from protocols.enums import (
 )
 from protocols.errors import LiveLightInputError
 
-_BUILD14_CONTRACTS_MODULE = "complete_enablers.contracts"
-_BUILD14_SIGNAL_CLASS = "Build14InfluenceSignal"
-_BUILD14_REPORT_CLASS = "Build14InfluenceReport"
+Build14InfluenceContract = Build14InfluenceSignal | Build14InfluenceReport
 _SHADOW_ENGINE_IDS = frozenset({"engine_a", "engine_b", "engine_c", "engine_d"})
 
 
@@ -52,40 +51,34 @@ def _normalized_value(value: object, default: str) -> str:
     return str(enum_value)
 
 
-def _is_typed_build14_contract(value: object, *, class_name: str) -> bool:
-    return (
-        value.__class__.__module__ == _BUILD14_CONTRACTS_MODULE
-        and value.__class__.__name__ == class_name
-    )
-
-
-def _revalidate_typed_build14_contract(value: object) -> object:
-    model_dump = getattr(value, "model_dump", None)
-    model_validate = getattr(value.__class__, "model_validate", None)
-    if not callable(model_dump) or not callable(model_validate):
-        raise TypeError("Build-14 influence must expose Pydantic model_dump/model_validate")
-    return model_validate(model_dump())
+def _revalidate_typed_build14_contract(
+    value: Build14InfluenceContract,
+) -> Build14InfluenceContract:
+    return value.__class__.model_validate(value.model_dump())
 
 
 def _resolve_validated_build14_signal(
     build14_influence: object | None,
     *,
     expected_correlation_id: str,
-) -> tuple[object | None, tuple[str, ...]]:
+) -> tuple[Build14InfluenceSignal | None, tuple[str, ...]]:
     if build14_influence is None:
         return None, ()
 
-    if _is_typed_build14_contract(build14_influence, class_name=_BUILD14_SIGNAL_CLASS):
+    typed_contract: Build14InfluenceContract
+    if isinstance(build14_influence, Build14InfluenceSignal):
         contract_kind = "signal"
-    elif _is_typed_build14_contract(build14_influence, class_name=_BUILD14_REPORT_CLASS):
+        typed_contract = build14_influence
+    elif isinstance(build14_influence, Build14InfluenceReport):
         contract_kind = "report"
+        typed_contract = build14_influence
     else:
         return None, (
             "Build-14 influence must be a typed Build14InfluenceSignal or Build14InfluenceReport",
         )
 
     try:
-        validated_contract = _revalidate_typed_build14_contract(build14_influence)
+        validated_contract = _revalidate_typed_build14_contract(typed_contract)
     except ValidationError as exc:
         first_error = exc.errors()[0] if exc.errors() else {}
         detail = str(first_error.get("msg", "")).strip()
@@ -97,25 +90,18 @@ def _resolve_validated_build14_signal(
         return None, (f"Build-14 influence failed typed contract validation: {detail}",)
 
     if contract_kind == "report":
-        report_correlation_id = str(getattr(validated_contract, "correlation_id", "")).strip()
+        report_correlation_id = validated_contract.correlation_id.strip()
         if not report_correlation_id:
             return None, ("Build-14 influence report must expose a concrete correlation_id",)
         if report_correlation_id != expected_correlation_id:
             return None, (
                 "Build-14 influence correlation_id must match the current Live-Light run",
             )
-        signal = getattr(validated_contract, "signal", None)
-        if signal is None or not _is_typed_build14_contract(
-            signal,
-            class_name=_BUILD14_SIGNAL_CLASS,
-        ):
-            return None, (
-                "Build-14 influence report must carry a typed Build14InfluenceSignal",
-            )
+        signal = validated_contract.signal
     else:
         signal = validated_contract
 
-    signal_correlation_id = str(getattr(signal, "correlation_id", "")).strip()
+    signal_correlation_id = signal.correlation_id.strip()
     if not signal_correlation_id:
         return None, ("Build-14 influence must expose a concrete correlation_id",)
     if signal_correlation_id != expected_correlation_id:
@@ -246,12 +232,8 @@ def _validate_micro_live_consistency(
         raise LiveLightInputError(
             "Build-13 Live-Light requires replay import_transform_whitelist_status=ok"
         )
-    if replay_import.signature_check_status in {
-        "trust_store_unavailable",
-        "key_id_unknown",
-        "key_revoked",
-        "payload_hash_mismatch",
-    }:
+    if replay_import.signature_check_status != "verified":
+        # BS-40: allowlist — only "verified" passes
         raise LiveLightInputError(
             "Build-13 Live-Light requires a non-rejected replay import_signature_check_status"
         )
@@ -1022,12 +1004,8 @@ def run_live_light_gate(
         f"import transform whitelist gate: {reason}"
         for reason in live_light_input.import_transform_whitelist_reasons
     )
-    if live_light_input.import_signature_check_status in {
-        "trust_store_unavailable",
-        "key_id_unknown",
-        "key_revoked",
-        "payload_hash_mismatch",
-    }:
+    if live_light_input.import_signature_check_status != "verified":
+        # BS-40: allowlist — only "verified" passes
         hard_blocking_reasons.append(
             "Build-13 Live-Light requires a non-rejected import_signature_check_status"
         )
@@ -1335,6 +1313,12 @@ def run_live_light_gate(
 
 
 __all__ = [
+    "build_live_input_from_micro_live",
+    "run_live_gate",
     "build_live_light_input_from_micro_live",
     "run_live_light_gate",
 ]
+
+
+build_live_input_from_micro_live = build_live_light_input_from_micro_live
+run_live_gate = run_live_light_gate

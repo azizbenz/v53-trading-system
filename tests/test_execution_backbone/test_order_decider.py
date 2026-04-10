@@ -96,6 +96,20 @@ class TestIntentBuilder:
         assert d.reason == NoTradeReason.COST_EXCEEDS_EDGE
         assert d.reason == NoTradeReason.COST_EXCEEDS_GAIN
 
+    def test_no_trade_decision_can_carry_structured_context(self):
+        d = NoTradeDecision(
+            pair="BTC",
+            engine_id="A",
+            reason=NoTradeReason.COST_EXCEEDS_EDGE,
+            context={
+                "gate": "fee_aware_edge",
+                "threshold_bps": 21.5,
+            },
+        )
+
+        assert d.context["gate"] == "fee_aware_edge"
+        assert d.context["threshold_bps"] == pytest.approx(21.5)
+
 
 # --- Order Type Selector ---
 
@@ -201,6 +215,7 @@ class TestDecisionReporter:
         no_trade = NoTradeDecision(
             pair="ETH", engine_id="B",
             reason=NoTradeReason.COST_EXCEEDS_GAIN,
+            context={"gate": "fee_aware_edge", "threshold_bps": 20.0},
         )
         reporter.record_no_trade(no_trade, timestamp=101.0)
 
@@ -209,6 +224,12 @@ class TestDecisionReporter:
         assert stats.trades == 1
         assert stats.no_trades == 1
         assert stats.trade_rate == 0.5
+        assert stats.by_no_trade_reason == {"cost_exceeds_edge": 1}
+
+        no_trade_events = [event for event in reporter.get_events() if not event.is_trade]
+        assert len(no_trade_events) == 1
+        assert no_trade_events[0].no_trade_reason == "cost_exceeds_edge"
+        assert no_trade_events[0].context["gate"] == "fee_aware_edge"
 
     def test_filter_by_pair(self):
         reporter = DecisionReporter()
@@ -230,9 +251,19 @@ class TestDecisionReporter:
         )
         reporter.record_trade(intent, timestamp=100.0)
         reporter.record_no_trade(
-            NoTradeDecision(pair="ETH", engine_id="B", reason=NoTradeReason.COST_EXCEEDS_GAIN),
+            NoTradeDecision(
+                pair="ETH",
+                engine_id="B",
+                reason=NoTradeReason.COST_EXCEEDS_GAIN,
+                context={"gate": "fee_aware_edge", "reason_code": "EDGE_INSUFFICIENT_VS_FEES"},
+            ),
             timestamp=101.0,
         )
         messages = {record.message for record in caplog.records}
         assert "execution_decision_trade_recorded" in messages
         assert "execution_decision_no_trade_recorded" in messages
+        no_trade_log = next(
+            record for record in caplog.records if record.message == "execution_decision_no_trade_recorded"
+        )
+        assert no_trade_log.no_trade_reason == "cost_exceeds_edge"
+        assert no_trade_log.context["reason_code"] == "EDGE_INSUFFICIENT_VS_FEES"

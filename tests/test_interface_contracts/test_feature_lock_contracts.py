@@ -22,8 +22,10 @@ def test_feature_lock_exports_minimal_canonical_dictionary_and_whitelist():
     assert CANONICAL_FEATURE_SET_VERSION == "1.0.0"
     assert CANONICAL_TRANSFORM_SET_VERSION == "1.0.0"
     assert "delta_proxy_soft_1m" in CANONICAL_PHYSICS_FEATURE_DICTIONARY
+    assert "delta_confirmation" in CANONICAL_PHYSICS_FEATURE_DICTIONARY
     assert "micro_friction_score" in CANONICAL_PHYSICS_FEATURE_DICTIONARY
     assert TransformWhitelistId.CLIP01 in CANONICAL_TRANSFORM_WHITELIST
+    assert TransformWhitelistId.DELTA_CONFIRMATION_V1 in CANONICAL_TRANSFORM_WHITELIST
     assert TransformWhitelistId.MICRO_FRICTION_SCORE_V1 in CANONICAL_TRANSFORM_WHITELIST
 
 

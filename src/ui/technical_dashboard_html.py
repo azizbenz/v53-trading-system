@@ -77,9 +77,9 @@ def _render_panel_navigation(future_panels: tuple[str, ...]) -> str:
         return ""
     specs = {
         "technical_supervision": (
-            "Technical Supervision",
-            "Live sections: System, Portfolio, Pairs, Engines, Risk, Execution, Data & Infra, Alerts.",
-            "#section-system",
+            "Build-10 Technical Supervision",
+            "Build-10 state, operator surface, and live sections: System, Portfolio, Pairs, Engines, Risk, Execution, Data & Infra, Alerts.",
+            "#section-build-10",
         ),
         "build9x_diagnostics": (
             "Build-9X Diagnostics",
@@ -883,6 +883,8 @@ def render_technical_dashboard_html(
     observability_text: str = "",
     raw_payload_json: str = "",
     raw_view_json: str = "",
+    additional_sections_html: str = "",
+    additional_script: str = "",
 ) -> str:
     """Render a local static HTML page for the technical dashboard."""
 
@@ -1128,6 +1130,92 @@ def render_technical_dashboard_html(
       background: #e4eefc;
       border-color: #4a7fd1;
     }}
+    .selection-assistant-note {{
+      margin: 0 0 16px;
+      color: var(--muted);
+      font-size: 14px;
+    }}
+    .selection-toolbar {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      align-items: end;
+      margin-bottom: 16px;
+    }}
+    .selection-toolbar label {{
+      display: grid;
+      gap: 6px;
+      font-size: 13px;
+      color: var(--muted);
+    }}
+    .selection-toolbar input,
+    .selection-toolbar button {{
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font: inherit;
+      background: #fff;
+      color: var(--text);
+    }}
+    .selection-toolbar button {{
+      cursor: pointer;
+      font-weight: 700;
+      background: #e4eefc;
+      border-color: #4a7fd1;
+    }}
+    .selection-summary {{
+      margin: 0 0 12px;
+      color: var(--muted);
+      font-size: 13px;
+    }}
+    .selection-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px;
+      margin-bottom: 16px;
+    }}
+    .selection-choice {{
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #f8fbfd;
+      font-size: 13px;
+      color: var(--text);
+    }}
+    .selection-choice input {{
+      margin: 0;
+    }}
+    .selection-command {{
+      margin: 0;
+      padding: 12px 14px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #10171f;
+      color: #edf3fb;
+      font-size: 13px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }}
+    .selection-actions {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 12px;
+    }}
+    .selection-actions button {{
+      border: 1px solid #4a7fd1;
+      border-radius: 10px;
+      padding: 10px 12px;
+      font: inherit;
+      font-weight: 700;
+      background: #e4eefc;
+      color: var(--text);
+      cursor: pointer;
+    }}
     .market-lab-status {{
       display: grid;
       gap: 6px;
@@ -1162,6 +1250,7 @@ def render_technical_dashboard_html(
       </div>
       <p class="hero-note">{escape(source_note)}</p>
     </section>
+    {additional_sections_html}
     {market_lab}
     {panel_navigation}
     {rendered_sections}
@@ -1171,6 +1260,7 @@ def render_technical_dashboard_html(
     {footer_section}
   </main>
   {market_lab_script}
+  {additional_script}
 </body>
 </html>
 """

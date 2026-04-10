@@ -39,10 +39,12 @@ from local_replay_runtime.enums import ReplayArtifactKind
 
 
 class ArtifactSignatureCheckStatus(StrEnum):
-    """Import-side signature policy status without claiming cryptographic verification."""
+    """Typed import-side signature policy status for governed artifact intake."""
 
     NOT_PROVIDED = "not_provided"
     TRUST_ELIGIBLE = "trust_eligible"
+    VERIFIED = "verified"
+    SIGNATURE_INVALID = "signature_invalid"
     TRUST_STORE_UNAVAILABLE = "trust_store_unavailable"
     KEY_ID_UNKNOWN = "key_id_unknown"
     KEY_REVOKED = "key_revoked"
@@ -77,6 +79,20 @@ class ArtifactPayloadRefBundle(BaseModel, frozen=True):
     replay_metrics_ref: str = Field(..., min_length=1)
     replay_dtr_ref: str = Field(..., min_length=1)
     supplementary_refs: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_uniqueness(self) -> "ArtifactPayloadRefBundle":
+        refs = (
+            self.review_export_ref,
+            self.feature_bridge_ref,
+            self.parity_diagnostics_ref,
+            self.replay_metrics_ref,
+            self.replay_dtr_ref,
+            *self.supplementary_refs,
+        )
+        if len(set(refs)) != len(refs):
+            raise ValueError("ArtifactPayloadRefBundle refs must be unique")
+        return self
 
     @property
     def payload_refs(self) -> tuple[str, ...]:
@@ -245,6 +261,7 @@ class ArtifactUploadRequest(BaseModel, frozen=True):
     payload_bundle: ArtifactPayloadRefBundle
     uploaded_by: str = Field(..., min_length=1)
     upload_context: ArtifactUploadContext
+    governance_reference_date: date
     artifact_kind: ReplayArtifactKind = ReplayArtifactKind.REVIEW_PACKET
     dry_run: bool = True
     target_runtime_mode: RuntimeMode = RuntimeMode.SHADOW
@@ -299,6 +316,26 @@ class ArtifactUploadRequest(BaseModel, frozen=True):
         if self.bundle.distilled_logic_format != self.manifest.distilled_logic_format:
             raise ValueError(
                 "ArtifactUploadRequest bundle.distilled_logic_format must match manifest.distilled_logic_format"
+            )
+        if self.manifest.review_export_ref != self.payload_bundle.review_export_ref:
+            raise ValueError(
+                "ArtifactUploadRequest manifest.review_export_ref must match payload_bundle.review_export_ref"
+            )
+        if self.manifest.feature_bridge_ref != self.payload_bundle.feature_bridge_ref:
+            raise ValueError(
+                "ArtifactUploadRequest manifest.feature_bridge_ref must match payload_bundle.feature_bridge_ref"
+            )
+        if self.manifest.parity_diagnostics_ref != self.payload_bundle.parity_diagnostics_ref:
+            raise ValueError(
+                "ArtifactUploadRequest manifest.parity_diagnostics_ref must match payload_bundle.parity_diagnostics_ref"
+            )
+        if self.manifest.replay_metrics_ref != self.payload_bundle.replay_metrics_ref:
+            raise ValueError(
+                "ArtifactUploadRequest manifest.replay_metrics_ref must match payload_bundle.replay_metrics_ref"
+            )
+        if self.manifest.replay_dtr_ref != self.payload_bundle.replay_dtr_ref:
+            raise ValueError(
+                "ArtifactUploadRequest manifest.replay_dtr_ref must match payload_bundle.replay_dtr_ref"
             )
         envelope = self.manifest.signature_envelope
         if envelope is None:

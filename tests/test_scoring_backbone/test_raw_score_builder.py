@@ -1,32 +1,16 @@
-"""Tests for scoring_backbone.raw_score_builder — Build-5."""
+"""Tests for scoring_backbone.raw_score_builder."""
+
 import pytest
 
-from scoring_backbone.raw_score_builder.feature_selector import (
-    FeatureSelection,
-    select_features,
-)
-from scoring_backbone.raw_score_builder.weight_registry import (
-    WeightSet,
-    WeightRegistry,
-)
-from scoring_backbone.raw_score_builder.raw_score_calculator import (
-    RawScoreResult,
-    calculate_raw_score,
-)
+from scoring_backbone.raw_score_builder.feature_selector import select_features
+from scoring_backbone.raw_score_builder.raw_score_calculator import calculate_raw_score
 from scoring_backbone.raw_score_builder.score_component_breakdown import (
-    ScoreBreakdown,
-    decompose_score,
-    BLOCK_STRUCTURE,
     BLOCK_CONTEXT,
     BLOCK_FLOW,
+    BLOCK_STRUCTURE,
+    decompose_score,
 )
-from scoring_backbone.raw_score_builder.score_reporter import (
-    ScorePayload,
-    ScoreReporter,
-)
-
-
-# ── feature_selector ──
+from scoring_backbone.raw_score_builder.score_reporter import ScoreReporter
 
 
 class TestFeatureSelector:
@@ -48,7 +32,7 @@ class TestFeatureSelector:
         assert "volume" in result.missing
         assert result.selected["momentum"] == 0.5
 
-    def test_no_unauthorised_feature_passes(self):
+    def test_no_unauthorized_feature_passes(self):
         result = select_features(
             engine_id="eng1",
             raw_features={"forbidden": 9.9, "momentum": 0.5},
@@ -72,47 +56,8 @@ class TestFeatureSelector:
             result.engine_id = "x"
 
 
-# ── weight_registry ──
-
-
-class TestWeightRegistry:
-    def test_register_and_get(self):
-        reg = WeightRegistry()
-        ws = WeightSet(engine_id="eng1", version="1.0", weights={"momentum": 0.8})
-        reg.register(ws)
-        assert reg.get_weights("eng1") == ws
-
-    def test_version_tracking(self):
-        reg = WeightRegistry()
-        reg.register(WeightSet(engine_id="eng1", version="1.0", weights={}))
-        assert reg.get_version("eng1") == "1.0"
-
-    def test_unknown_engine(self):
-        reg = WeightRegistry()
-        assert reg.get_weights("unknown") is None
-        assert reg.get_version("unknown") == ""
-
-    def test_history(self):
-        reg = WeightRegistry()
-        ws1 = WeightSet(engine_id="eng1", version="1.0", weights={})
-        ws2 = WeightSet(engine_id="eng1", version="2.0", weights={"a": 1.0})
-        reg.register(ws1)
-        reg.register(ws2)
-        assert len(reg.get_history()) == 2
-
-    def test_engine_count(self):
-        reg = WeightRegistry()
-        reg.register(WeightSet(engine_id="eng1", version="1.0", weights={}))
-        reg.register(WeightSet(engine_id="eng2", version="1.0", weights={}))
-        assert reg.engine_count == 2
-
-
-# ── raw_score_calculator ──
-
-
 class TestRawScoreCalculator:
     def test_basic_score(self):
-        """S_i^raw = Σ α_m · F_{i,m}."""
         result = calculate_raw_score(
             engine_id="eng1",
             pair="BTCUSDT",
@@ -145,10 +90,12 @@ class TestRawScoreCalculator:
         assert "extra" not in result.weighted_contributions
 
     def test_reproducibility(self):
-        """Same input → same score."""
         kwargs = dict(
-            engine_id="eng1", pair="BTCUSDT",
-            features={"a": 1.0, "b": 2.0}, weights={"a": 0.5, "b": 0.3}, scoring_version="v1",
+            engine_id="eng1",
+            pair="BTCUSDT",
+            features={"a": 1.0, "b": 2.0},
+            weights={"a": 0.5, "b": 0.3},
+            scoring_version="v1",
         )
         r1 = calculate_raw_score(**kwargs)
         r2 = calculate_raw_score(**kwargs)
@@ -156,14 +103,18 @@ class TestRawScoreCalculator:
 
     def test_version_stored(self):
         result = calculate_raw_score(
-            engine_id="eng1", pair="BTCUSDT",
-            features={"a": 1.0}, weights={"a": 1.0}, scoring_version="v2.1",
+            engine_id="eng1",
+            pair="BTCUSDT",
+            features={"a": 1.0},
+            weights={"a": 1.0},
+            scoring_version="v2.1",
         )
         assert result.scoring_version == "v2.1"
 
     def test_features_used_sorted(self):
         result = calculate_raw_score(
-            engine_id="eng1", pair="BTCUSDT",
+            engine_id="eng1",
+            pair="BTCUSDT",
             features={"z_feat": 1.0, "a_feat": 2.0},
             weights={"z_feat": 1.0, "a_feat": 1.0},
             scoring_version="v1",
@@ -184,9 +135,6 @@ class TestRawScoreCalculator:
                 weights={"a": 1.0},
                 scoring_version="   ",
             )
-
-
-# ── score_component_breakdown ──
 
 
 class TestScoreComponentBreakdown:
@@ -225,9 +173,6 @@ class TestScoreComponentBreakdown:
         result = decompose_score("eng1", "BTCUSDT", {}, {})
         assert result.raw_score == 0.0
         assert result.block_scores == {}
-
-
-# ── score_reporter ──
 
 
 class TestScoreReporter:

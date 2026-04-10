@@ -91,6 +91,10 @@ class LiveLightVerdict(StrEnum):
     BLOCKED = "blocked"
 
 
+LiveRunState = LiveLightRunState
+LiveVerdict = LiveLightVerdict
+
+
 __all__ = [
     "ShadowRunState",
     "ShadowVerdict",
@@ -101,6 +105,8 @@ __all__ = [
     "ShadowDivergenceSeverity",
     "MicroLiveRunState",
     "MicroLiveVerdict",
+    "LiveRunState",
+    "LiveVerdict",
     "LiveLightRunState",
     "LiveLightVerdict",
 ]

@@ -2,6 +2,7 @@
 
 from meta_minimal import break_even_dashboard, cra_monitor, dtr_core, edge_tracker_prudent_minimal
 from meta_minimal.meta_runtime import (
+    build_meta_runtime_result_from_records,
     MetaInputSource,
     MetaRuntime,
     MetaRuntimeConfig,
@@ -15,6 +16,7 @@ __all__ = [
     "cra_monitor",
     "dtr_core",
     "edge_tracker_prudent_minimal",
+    "build_meta_runtime_result_from_records",
     "MetaInputSource",
     "MetaRuntime",
     "MetaRuntimeConfig",

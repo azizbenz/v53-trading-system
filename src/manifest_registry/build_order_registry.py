@@ -94,7 +94,7 @@ BUILD_STAGES: tuple[BuildStage, ...] = (
     BuildStage(
         stage=10,
         name="Monitoring + UI Light",
-        description="Supervision verrouillee + Build-9X gouverne + scaffolds replay/import minimaux",
+        description="Supervision operateur verrouillee (libelle historique: UI Light) + Build-9X gouverne + scaffolds replay/import minimaux",
         modules=(
             "local_replay_runtime",
             "backtest_artifact_import",
@@ -106,25 +106,25 @@ BUILD_STAGES: tuple[BuildStage, ...] = (
     BuildStage(
         stage=11,
         name="Shadow Light",
-        description="Validation Shadow gouvernee sans capital; Build-12 Micro-live puis Build-13 Live-Light ouvrent ensuite dans le meme module",
+        description="Validation Shadow gouvernee sur le rail runtime actif COMPLETE, sans capital; Build-12 Micro-live puis Build-13 Live-Light ouvrent ensuite dans le meme module",
         modules=("protocols",),
     ),
     BuildStage(
         stage=12,
         name="Micro-live Light",
-        description="Validation gouvernee avec capital reel ultra-prudent, budget micro et probes minimaux; Build-13 Live-Light reste ensuite gouverne et distinct",
+        description="Validation Micro-live gouvernee sur le rail runtime actif COMPLETE, avec capital reel ultra-prudent; Build-13 Live-Light reste ensuite gouverne et distinct",
         modules=("protocols",),
     ),
     BuildStage(
         stage=13,
         name="Live-Light",
-        description="Premiere execution reelle minimale et gouvernee en profil Light, sans ouvrir Complete",
+        description="Premiere execution reelle minimale et gouvernee sur le rail runtime actif COMPLETE, sans ouvrir l'extension Complete",
         modules=("protocols",),
     ),
     BuildStage(
         stage=14,
         name="Complete Enablers",
-        description="Enrichissements sans casser Light",
+        description="Enrichissements sans casser le rail gouverne courant",
         modules=("complete_enablers",),
     ),
     BuildStage(

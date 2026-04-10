@@ -11,16 +11,19 @@ from monitoring.contracts import (
     Build9XProjection,
     EngineJudgmentProjection,
     ExecutionNoTradeBridgeProjection,
+    LiveProjection,
     LiveLightProjection,
     MicroLiveProjection,
     MonitoringSnapshot,
     OperatorRuntimeProjection,
+    RuntimeHookBridgeProjection,
     ReplayImportProjection,
     ShadowProjection,
     SystemProjection,
     TechnicalDashboardPayload,
 )
 from monitoring.health_dashboard_backend import build_health_dashboard_payload
+from interface_contracts import HookId, RUNTIME_OPEN_HOOK_IDS
 
 
 def _resolve_snapshot(snapshot: MonitoringSnapshot) -> MonitoringSnapshot:
@@ -235,6 +238,106 @@ def _default_execution_no_trade_bridge_projection(
     )
 
 
+_RUNTIME_HOOK_BRIDGE_LABELS: dict[HookId, str] = {
+    HookId.ENGINE_A_PRE_ENTRY_CONFIRMATION: "Engine A pre-entry",
+    HookId.ENGINE_B_SWEEP_VALIDATION: "Engine B sweep",
+    HookId.ENGINE_C_VOID_VALIDATION: "Engine C void",
+    HookId.ENGINE_D_REENTRY_VALIDATION: "Engine D re-entry",
+    HookId.RISK_MICRO_FRICTION_PRECHECK: "Risk micro-friction",
+    HookId.SCORING_SOFT_PENALTY_LAYER: "Scoring soft penalty",
+    HookId.PORTFOLIO_RELATIVE_RANK_ADJUSTMENT: "Portfolio relative rank",
+    HookId.EXECUTION_NO_TRADE_FILTER: "Execution no-trade",
+}
+
+
+def _default_runtime_hook_bridge_projection(
+    hook_id: HookId,
+    *,
+    active_modules: tuple[str, ...],
+) -> RuntimeHookBridgeProjection:
+    module_active = "protocols" in active_modules
+    label = _RUNTIME_HOOK_BRIDGE_LABELS[hook_id]
+    detail = (
+        f"Compiled {label.lower()} bridge is available but not configured"
+        if module_active
+        else f"Compiled {label.lower()} bridge is not materialized"
+    )
+    return RuntimeHookBridgeProjection(
+        hook_id=hook_id,
+        label=label,
+        status="info" if module_active else "planned",
+        configured=False,
+        selection_status="not_configured",
+        detail=detail,
+    )
+
+
+def _runtime_hook_bridge_from_execution_no_trade_projection(
+    projection: ExecutionNoTradeBridgeProjection,
+) -> RuntimeHookBridgeProjection:
+    return RuntimeHookBridgeProjection(
+        hook_id=HookId.EXECUTION_NO_TRADE_FILTER,
+        label=_RUNTIME_HOOK_BRIDGE_LABELS[HookId.EXECUTION_NO_TRADE_FILTER],
+        status=projection.status,
+        configured=projection.configured,
+        selection_status=projection.selection_status,
+        current_snapshot_id=projection.current_snapshot_id,
+        previous_snapshot_id=projection.previous_snapshot_id,
+        last_known_good_snapshot_id=projection.last_known_good_snapshot_id,
+        binding_present=projection.binding_present,
+        loaded=projection.loaded,
+        compiled_plan_ref=projection.compiled_plan_ref,
+        artifact_count=projection.artifact_count,
+        failure_mode=projection.failure_mode,
+        error_stage=projection.error_stage,
+        error_type=projection.error_type,
+        detail=projection.detail,
+    )
+
+
+def _execution_no_trade_bridge_from_runtime_hook_projection(
+    projection: RuntimeHookBridgeProjection,
+) -> ExecutionNoTradeBridgeProjection:
+    return ExecutionNoTradeBridgeProjection(
+        status=projection.status,
+        configured=projection.configured,
+        selection_status=projection.selection_status,
+        current_snapshot_id=projection.current_snapshot_id,
+        previous_snapshot_id=projection.previous_snapshot_id,
+        last_known_good_snapshot_id=projection.last_known_good_snapshot_id,
+        binding_present=projection.binding_present,
+        loaded=projection.loaded,
+        compiled_plan_ref=projection.compiled_plan_ref,
+        artifact_count=projection.artifact_count,
+        failure_mode=projection.failure_mode,
+        error_stage=projection.error_stage,
+        error_type=projection.error_type,
+        detail=projection.detail,
+    )
+
+
+def _normalize_runtime_hook_bridge_projections(
+    *,
+    active_modules: tuple[str, ...],
+    execution_no_trade_bridge: ExecutionNoTradeBridgeProjection,
+    runtime_hook_bridge_projections: tuple[RuntimeHookBridgeProjection, ...] | None,
+) -> tuple[RuntimeHookBridgeProjection, ...]:
+    projections = {
+        hook_id: _default_runtime_hook_bridge_projection(
+            hook_id,
+            active_modules=active_modules,
+        )
+        for hook_id in RUNTIME_OPEN_HOOK_IDS
+    }
+    projections[HookId.EXECUTION_NO_TRADE_FILTER] = (
+        _runtime_hook_bridge_from_execution_no_trade_projection(execution_no_trade_bridge)
+    )
+    if runtime_hook_bridge_projections is not None:
+        for projection in runtime_hook_bridge_projections:
+            projections[projection.hook_id] = projection
+    return tuple(projections[hook_id] for hook_id in RUNTIME_OPEN_HOOK_IDS)
+
+
 def _build_build9_meta_projection(snapshot: MonitoringSnapshot) -> Build9MetaProjection:
     break_even_state = "drift_alert" if snapshot.meta.break_even_drift_alert else "stable"
     return Build9MetaProjection(
@@ -351,7 +454,7 @@ def _elevate_headline_status_from_rollout(
     *,
     shadow: ShadowProjection,
     micro_live: MicroLiveProjection,
-    live_light: LiveLightProjection,
+    live_light: LiveProjection,
 ) -> str:
     rollout_statuses = (shadow.status, micro_live.status, live_light.status)
     if "critical" in rollout_statuses:
@@ -369,6 +472,19 @@ def _elevate_headline_status_from_execution_no_trade_bridge(
     if execution_no_trade_bridge.status == "critical":
         return "critical"
     if execution_no_trade_bridge.status == "warning" and headline_status == "healthy":
+        return "warning"
+    return headline_status
+
+
+def _elevate_headline_status_from_runtime_hook_bridges(
+    headline_status: str,
+    *,
+    runtime_hook_bridges: tuple[RuntimeHookBridgeProjection, ...],
+) -> str:
+    statuses = tuple(projection.status for projection in runtime_hook_bridges)
+    if "critical" in statuses:
+        return "critical"
+    if "warning" in statuses and headline_status == "healthy":
         return "warning"
     return headline_status
 
@@ -462,10 +578,10 @@ def _apply_operator_safing_to_micro_live_projection(
 
 
 def _apply_operator_safing_to_live_light_projection(
-    projection: LiveLightProjection,
+    projection: LiveProjection,
     *,
     operator_runtime: OperatorRuntimeProjection | None,
-) -> LiveLightProjection:
+) -> LiveProjection:
     if operator_runtime is None:
         return projection
     if operator_runtime.latest_safing_source_runtime_mode != "live":
@@ -507,14 +623,22 @@ def build_technical_dashboard_payload(
     engine_judgment_projection: EngineJudgmentProjection | None = None,
     shadow_projection: ShadowProjection | None = None,
     micro_live_projection: MicroLiveProjection | None = None,
+    live_projection: LiveProjection | None = None,
     live_light_projection: LiveLightProjection | None = None,
     build14_projection: Build14Projection | None = None,
     account_user_data_projection: AccountUserDataProjection | None = None,
     execution_no_trade_bridge_projection: ExecutionNoTradeBridgeProjection | None = None,
+    runtime_hook_bridge_projections: tuple[RuntimeHookBridgeProjection, ...] | None = None,
     replay_projection: ReplayImportProjection | None = None,
     operator_runtime: OperatorRuntimeProjection | None = None,
 ) -> TechnicalDashboardPayload:
     """Normalize runtime supervision truth into a typed Build-10 payload."""
+
+    if live_projection is not None and live_light_projection is not None:
+        raise ValueError(
+            "Use either live_projection or legacy live_light_projection, not both"
+        )
+    resolved_live_projection = live_projection or live_light_projection
 
     resolved_snapshot = _resolve_snapshot(snapshot)
     headline_status = build_health_dashboard_payload(
@@ -537,7 +661,7 @@ def build_technical_dashboard_payload(
         operator_runtime=operator_runtime,
     )
     live_light = _apply_operator_safing_to_live_light_projection(
-        live_light_projection or _default_live_light_projection(active_modules=active_modules),
+        resolved_live_projection or _default_live_light_projection(active_modules=active_modules),
         operator_runtime=operator_runtime,
     )
     build14 = build14_projection or _default_build14_projection(active_modules=active_modules)
@@ -550,14 +674,38 @@ def build_technical_dashboard_payload(
         headline_status,
         account_user_data=account_user_data,
     )
-    execution_no_trade_bridge = (
-        execution_no_trade_bridge_projection
-        or _default_execution_no_trade_bridge_projection(active_modules=active_modules)
+    execution_runtime_hook_projection = None
+    if runtime_hook_bridge_projections is not None:
+        execution_runtime_hook_projection = next(
+            (
+                projection
+                for projection in runtime_hook_bridge_projections
+                if projection.hook_id == HookId.EXECUTION_NO_TRADE_FILTER
+            ),
+            None,
+        )
+    execution_no_trade_bridge = execution_no_trade_bridge_projection
+    if execution_no_trade_bridge is None and execution_runtime_hook_projection is not None:
+        execution_no_trade_bridge = _execution_no_trade_bridge_from_runtime_hook_projection(
+            execution_runtime_hook_projection
+        )
+    if execution_no_trade_bridge is None:
+        execution_no_trade_bridge = _default_execution_no_trade_bridge_projection(
+            active_modules=active_modules
+        )
+    runtime_hook_bridges = _normalize_runtime_hook_bridge_projections(
+        active_modules=active_modules,
+        execution_no_trade_bridge=execution_no_trade_bridge,
+        runtime_hook_bridge_projections=runtime_hook_bridge_projections,
     )
     replay_import = replay_projection or _default_replay_projection(active_modules=active_modules)
     headline_status = _elevate_headline_status_from_execution_no_trade_bridge(
         headline_status,
         execution_no_trade_bridge=execution_no_trade_bridge,
+    )
+    headline_status = _elevate_headline_status_from_runtime_hook_bridges(
+        headline_status,
+        runtime_hook_bridges=runtime_hook_bridges,
     )
     headline_status = _elevate_headline_status_from_replay_import(
         headline_status,
@@ -597,7 +745,7 @@ def build_technical_dashboard_payload(
             build14_status=build14.status,
             replay_import_status=replay_import.status,
             governed_extensions_detail=(
-                "Build-9X, Shadow, Micro-live, Live-Light, replay/import, and Build-14 enablers remain governed. "
+                "Build-9X, Shadow, Micro-live, Live (historical label: Live-Light), replay/import, and Build-14 enablers remain governed. "
                 "Complete stays closed and Build-14 does not bypass engines, risk, or portfolio."
             ),
         ),
@@ -614,6 +762,7 @@ def build_technical_dashboard_payload(
         build14=build14,
         account_user_data=account_user_data,
         execution_no_trade_bridge=execution_no_trade_bridge,
+        runtime_hook_bridges=runtime_hook_bridges,
         replay_import=replay_import,
         alerts=_build_alert_projection(
             resolved_snapshot,

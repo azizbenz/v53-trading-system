@@ -163,6 +163,23 @@ def _read_live_websocket_config(config_path: Path) -> ShadowLiveWebSocketConfig:
     )
 
 
+def _pin_auto_export_session_date(auto_export_dir: Path, session_date: str) -> None:
+    manifest_path = auto_export_dir / "replay_run_manifest.json"
+    if not manifest_path.is_file():
+        return
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        return
+    governed_timeframe_scope = f"{session_date}/{session_date}"
+    if payload.get("timeframe_scope") == governed_timeframe_scope:
+        return
+    payload["timeframe_scope"] = governed_timeframe_scope
+    manifest_path.write_text(
+        json.dumps(payload, indent=2),
+        encoding="utf-8",
+    )
+
+
 def _discover_raw_input_slot(raw_inputs_root: Path, session_date: str) -> ShadowVpsRawInputSlot:
     raw_input_dir = raw_inputs_root / session_date
     if not raw_input_dir.is_dir():
@@ -735,12 +752,17 @@ def run_shadow_vps_service(
                     raw_slot,
                     auto_exports_root=resolved_auto_exports_root,
                 )
+                _pin_auto_export_session_date(auto_export_dir, raw_slot.session_date)
                 next_slot = daily_orchestrator.select_next_slot(resolved_auto_exports_root)
             elif websocket_slot is not None:
                 auto_snapshot_dir, auto_export_dir = _ensure_auto_export_from_websocket_slot(
                     websocket_slot,
                     auto_snapshots_root=resolved_auto_snapshots_root,
                     auto_exports_root=resolved_auto_exports_root,
+                )
+                _pin_auto_export_session_date(
+                    auto_export_dir,
+                    websocket_slot.session_date,
                 )
                 next_slot = daily_orchestrator.select_next_slot(resolved_auto_exports_root)
             elif live_config is not None:
@@ -752,6 +774,7 @@ def run_shadow_vps_service(
                         live_captures_root=resolved_live_captures_root,
                         auto_exports_root=resolved_auto_exports_root,
                     )
+                    _pin_auto_export_session_date(auto_export_dir, live_session_date)
                     next_slot = daily_orchestrator.select_next_slot(resolved_auto_exports_root)
             else:
                 next_slot = (

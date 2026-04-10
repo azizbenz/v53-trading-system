@@ -11,6 +11,14 @@ from pydantic import BaseModel, Field
 from .consumer_registry import ConsumerPriority, ConsumerSubscription
 
 
+_CONSUMER_PRIORITY_ORDER = {
+    ConsumerPriority.CRITICAL: 0,
+    ConsumerPriority.HIGH: 1,
+    ConsumerPriority.NORMAL: 2,
+    ConsumerPriority.LOW: 3,
+}
+
+
 class DispatchResult(BaseModel, frozen=True):
     """Result of dispatching a single event."""
 
@@ -36,7 +44,15 @@ def dispatch_event(
     dispatched: list[str] = []
     dropped: list[str] = []
 
-    for consumer in consumers:
+    ordered_consumers = sorted(
+        consumers,
+        key=lambda consumer: (
+            _CONSUMER_PRIORITY_ORDER.get(consumer.priority, 99),
+            consumer.consumer_id,
+        ),
+    )
+
+    for consumer in ordered_consumers:
         if consumer.consumer_id in blocked_consumers:
             dropped.append(consumer.consumer_id)
         else:

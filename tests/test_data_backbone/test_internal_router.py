@@ -77,6 +77,15 @@ class TestPriorityDispatcher:
         assert result.total_dispatched == 2
         assert "a" in result.dispatched_to
 
+    def test_dispatch_enforces_priority_order_even_if_input_is_unsorted(self):
+        consumers = (
+            ConsumerSubscription(consumer_id="analytics", priority=ConsumerPriority.NORMAL),
+            ConsumerSubscription(consumer_id="risk", priority=ConsumerPriority.CRITICAL),
+            ConsumerSubscription(consumer_id="scoring", priority=ConsumerPriority.HIGH),
+        )
+        result = dispatch_event("trade", "BTCUSDT", consumers)
+        assert result.dispatched_to == ("risk", "scoring", "analytics")
+
     def test_dispatch_with_blocked(self):
         consumers = (
             ConsumerSubscription(consumer_id="a"),
@@ -141,6 +150,9 @@ class TestQueueManager:
 # --- Backpressure Guard ---
 
 class TestBackpressureGuard:
+    def test_backpressure_actions_do_not_expose_dead_block_state(self):
+        assert {action.value for action in BackpressureAction} == {"none", "warn", "drop"}
+
     def test_no_pressure(self):
         result = evaluate_backpressure("c1", 0.3, ConsumerPriority.NORMAL)
         assert result.action == BackpressureAction.NONE

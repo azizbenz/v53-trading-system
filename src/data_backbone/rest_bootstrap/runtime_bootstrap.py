@@ -142,18 +142,8 @@ class RestBootstrapRuntime:
             gap_start,
             gap_end,
             max_gap_s=max_gap_s,
-            rate_limited=not self._rate_limit.can_call(now),
+            rate_limited=False,
         )
-        if gap_fill.decision == GapFillDecision.REJECT_RATE_LIMITED:
-            return self._record(
-                pair=pair,
-                operation="gap_fill",
-                outcome=BootstrapOutcome.RATE_LIMITED,
-                timestamp=now,
-                gap_fill_result=gap_fill,
-                blocked=True,
-                message=gap_fill.message,
-            )
         if gap_fill.decision == GapFillDecision.REJECT_TOO_LARGE:
             return self._record(
                 pair=pair,
@@ -165,7 +155,20 @@ class RestBootstrapRuntime:
                 message=gap_fill.message,
             )
 
-        self._rate_limit.record_call(now)
+        if not self._rate_limit.record_call(now):
+            return self._record(
+                pair=pair,
+                operation="gap_fill",
+                outcome=BootstrapOutcome.RATE_LIMITED,
+                timestamp=now,
+                gap_fill_result=GapFillResult(
+                    request=gap_fill.request,
+                    decision=GapFillDecision.REJECT_RATE_LIMITED,
+                    message="REST rate limit reached",
+                ),
+                blocked=True,
+                message="REST rate limit reached",
+            )
         try:
             snapshot = self._provider.fill_gap(pair, data_type, gap_start, gap_end)
         except Exception as exc:

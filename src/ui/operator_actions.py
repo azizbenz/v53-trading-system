@@ -1,4 +1,4 @@
-"""Governed operator actions for the compatibility operator UI."""
+"""Governed operator actions for the locked operator UI surface."""
 
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ _LIGHT_ALLOWED_ACTIONS = (
 )
 
 _LIGHT_SUSPENDABLE_ENGINES = frozenset({"engine_a", "engine_b"})
+_OPERATOR_UI_SUPPORTED_PROFILES = frozenset({ProfileId.LIGHT, ProfileId.COMPLETE})
 _OPERATOR_REASON_REQUIRED_ACTIONS = frozenset(
     {
         OperatorActionType.SET_HALTED,
@@ -42,10 +43,10 @@ def _target_runtime_mode_for_action(
     return None
 
 
-def build_light_allowed_actions(
+def build_locked_operator_allowed_actions(
     runtime_mode: RuntimeMode = RuntimeMode.SHADOW,
 ) -> tuple[OperatorActionType, ...]:
-    """Return the governed action surface exposed by the compatibility UI."""
+    """Return the governed action surface exposed by the locked UI."""
 
     if runtime_mode == RuntimeMode.LIVE:
         return (
@@ -82,7 +83,7 @@ def record_screen_open(
     )
 
 
-def evaluate_light_operator_action(
+def evaluate_locked_operator_action(
     request: OperatorActionRequest,
     *,
     allowed_pairs: tuple[str, ...] = (),
@@ -90,7 +91,7 @@ def evaluate_light_operator_action(
     critical_alert_ids: tuple[str, ...] = (),
     max_light_pairs: int = 6,
 ) -> OperatorActionOutcome:
-    """Accept or reject a compatibility-surface operator action without touching runtime state."""
+    """Accept or reject a governed operator action without touching runtime state."""
 
     requested_entry = OperatorActionLogEntry(
         timestamp_ms=request.timestamp_ms,
@@ -188,9 +189,9 @@ def _rejection_reason(
     critical_alert_ids: tuple[str, ...],
     max_light_pairs: int,
 ) -> str:
-    if request.profile != ProfileId.LIGHT:
-        return "only profile=LIGHT is supported by the compatibility operator UI"
-    allowed_actions = build_light_allowed_actions(request.runtime_mode)
+    if request.profile not in _OPERATOR_UI_SUPPORTED_PROFILES:
+        return "only canonical profiles LIGHT/COMPLETE are supported by the locked operator UI"
+    allowed_actions = build_locked_operator_allowed_actions(request.runtime_mode)
     if request.action not in allowed_actions:
         return _forbidden_reason(request, max_light_pairs=max_light_pairs)
     if request.action in _OPERATOR_REASON_REQUIRED_ACTIONS and not request.reason.strip():
@@ -259,7 +260,11 @@ def _forbidden_reason(
 
 
 __all__ = [
-    "build_light_allowed_actions",
+    "build_locked_operator_allowed_actions",
     "record_screen_open",
-    "evaluate_light_operator_action",
+    "evaluate_locked_operator_action",
 ]
+
+
+build_light_allowed_actions = build_locked_operator_allowed_actions
+evaluate_light_operator_action = evaluate_locked_operator_action

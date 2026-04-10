@@ -17,7 +17,6 @@ class BackpressureAction(StrEnum):
     NONE = "none"
     WARN = "warn"
     DROP = "drop"
-    BLOCK = "block"
 
 
 class BackpressureStatus(BaseModel, frozen=True):

@@ -2,6 +2,7 @@
 
 import json
 import pytest
+from pydantic import ValidationError
 
 from protocols.shadow_day_counter import (
     ShadowCounterState,
@@ -102,6 +103,20 @@ def counter_dir(repo_tmp_path):
 
 class TestDayCountIncrement:
     """Correct day counting."""
+
+    def test_explicit_zero_timestamp_is_preserved(self, counter_dir):
+        c = ShadowDayCounter(state_dir=counter_dir, profile=ShadowProfile.LIGHT)
+        rec = c.record_shadow_day(passed_all_gates=True, now=0.0)
+        assert rec.timestamp == 0.0
+        assert rec.date == "1970-01-01"
+        assert c.get_status().last_shadow_timestamp == 0.0
+
+    def test_status_snapshot_is_frozen(self, counter_dir):
+        c = ShadowDayCounter(state_dir=counter_dir, profile=ShadowProfile.LIGHT)
+        c.record_shadow_day(passed_all_gates=True, now=BASE_TS)
+        status = c.get_status()
+        with pytest.raises(ValidationError):
+            status.consecutive_days = 99
 
     def test_first_day_increments_to_1(self, counter_dir):
         c = ShadowDayCounter(state_dir=counter_dir, profile=ShadowProfile.LIGHT)

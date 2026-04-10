@@ -12,24 +12,25 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+from data_backbone import TO_CALIBRATE
 from pydantic import BaseModel
 
 
 class BreakoutVerdict(StrEnum):
-    CLEAR = "clear"  # no breakout detected, safe for reversion
-    WARNING = "warning"  # possible breakout, penalize
-    BLOCKED = "blocked"  # confirmed breakout, reject reversion
+    CLEAR = "clear"
+    WARNING = "warning"
+    BLOCKED = "blocked"
 
 
 class BreakoutInput(BaseModel, frozen=True):
     """Inputs for anti-breakout filter."""
 
     pair: str
-    regime_trend_strength: float = 0.0  # [0,1] — how strongly trending
-    volume_anomaly: float = 0.0  # [0,1] — abnormal volume in move direction
-    structural_break: float = 0.0  # [0,1] — confirmation of level breach
-    continuation_momentum: float = 0.0  # [0,1] — momentum continuation signal
-    microstructure_breakout_confirmation: float = 0.0  # [0,1] — order-flow confirms breakout
+    regime_trend_strength: float = 0.0
+    volume_anomaly: float = 0.0
+    structural_break: float = 0.0
+    continuation_momentum: float = 0.0
+    microstructure_breakout_confirmation: float = 0.0
 
 
 class BreakoutResult(BaseModel, frozen=True):
@@ -37,38 +38,54 @@ class BreakoutResult(BaseModel, frozen=True):
 
     pair: str
     verdict: BreakoutVerdict
-    breakout_score: float  # [0,1] — combined breakout risk
+    breakout_score: float
     reason: str = ""
+    calibration_profile_id: str = "engine_b_breakout_filter.to_calibrate.v1"
+    calibration_status: str = TO_CALIBRATE
 
 
-_BLOCKED_THRESHOLD = 0.65
-_WARNING_THRESHOLD = 0.35
+ENGINE_B_BREAKOUT_FILTER_PROFILE_ID = "engine_b_breakout_filter.to_calibrate.v1"
+ENGINE_B_BREAKOUT_FILTER_CALIBRATION_STATUS = TO_CALIBRATE
+ENGINE_B_BREAKOUT_FILTER_WEIGHTS: dict[str, float] = {
+    "regime_trend_strength": 0.30,
+    "volume_anomaly": 0.25,
+    "structural_break": 0.25,
+    "continuation_momentum": 0.20,
+    "microstructure_breakout_confirmation": 0.15,
+}
+ENGINE_B_BREAKOUT_FILTER_THRESHOLDS: dict[str, float] = {
+    "blocked": 0.65,
+    "warning": 0.35,
+}
 
 
 def evaluate_breakout_risk(inputs: BreakoutInput) -> BreakoutResult:
-    """Evaluate breakout risk for a mean-reversion candidate.
+    """Evaluate breakout risk for a mean-reversion candidate."""
 
-    breakout_score = 0.30·regime_trend + 0.25·volume_anomaly
-                   + 0.25·structural_break + 0.20·continuation_momentum
-
-    BLOCKED if score >= 0.65 (hostile continuation likely)
-    WARNING if score >= 0.35 (ambiguous, penalize)
-    CLEAR otherwise (safe for reversion)
-    """
     score = (
-        0.30 * inputs.regime_trend_strength
-        + 0.25 * inputs.volume_anomaly
-        + 0.25 * inputs.structural_break
-        + 0.20 * inputs.continuation_momentum
+        ENGINE_B_BREAKOUT_FILTER_WEIGHTS["regime_trend_strength"]
+        * inputs.regime_trend_strength
+        + ENGINE_B_BREAKOUT_FILTER_WEIGHTS["volume_anomaly"] * inputs.volume_anomaly
+        + ENGINE_B_BREAKOUT_FILTER_WEIGHTS["structural_break"] * inputs.structural_break
+        + ENGINE_B_BREAKOUT_FILTER_WEIGHTS["continuation_momentum"]
+        * inputs.continuation_momentum
     )
-    score = min(1.0, score + 0.15 * inputs.microstructure_breakout_confirmation)
+    score = min(
+        1.0,
+        score
+        + ENGINE_B_BREAKOUT_FILTER_WEIGHTS["microstructure_breakout_confirmation"]
+        * inputs.microstructure_breakout_confirmation,
+    )
 
-    if score >= _BLOCKED_THRESHOLD:
+    if score >= ENGINE_B_BREAKOUT_FILTER_THRESHOLDS["blocked"]:
         verdict = BreakoutVerdict.BLOCKED
-        reason = f"breakout risk {score:.3f} >= {_BLOCKED_THRESHOLD} — hostile continuation"
-    elif score >= _WARNING_THRESHOLD:
+        reason = (
+            f"breakout risk {score:.3f} >= "
+            f"{ENGINE_B_BREAKOUT_FILTER_THRESHOLDS['blocked']} hostile continuation"
+        )
+    elif score >= ENGINE_B_BREAKOUT_FILTER_THRESHOLDS["warning"]:
         verdict = BreakoutVerdict.WARNING
-        reason = f"breakout risk {score:.3f} — ambiguous, penalizing"
+        reason = f"breakout risk {score:.3f} ambiguous, penalizing"
     else:
         verdict = BreakoutVerdict.CLEAR
         reason = ""
@@ -78,4 +95,6 @@ def evaluate_breakout_risk(inputs: BreakoutInput) -> BreakoutResult:
         verdict=verdict,
         breakout_score=score,
         reason=reason,
+        calibration_profile_id=ENGINE_B_BREAKOUT_FILTER_PROFILE_ID,
+        calibration_status=ENGINE_B_BREAKOUT_FILTER_CALIBRATION_STATUS,
     )

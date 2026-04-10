@@ -129,6 +129,22 @@ class CompiledRegistryConcurrencyModel(str, Enum):
 
 
 @unique
+class ArtifactRuntimeFailureMode(str, Enum):
+    """Canonical runtime handling mode for bounded artifact influence failures."""
+
+    FAIL_OPEN_BASELINE_SKIP_ARTIFACT = "fail_open_baseline_skip_artifact"
+
+
+@unique
+class ArtifactRuntimeFailureStage(str, Enum):
+    """Where a bounded artifact runtime rail failed."""
+
+    PLAN_SELECTION = "plan_selection"
+    PAYLOAD_LOAD = "payload_load"
+    HOOK_EXECUTION = "hook_execution"
+
+
+@unique
 class DistilledRuleLogicalOp(str, Enum):
     """Logical operator joining multiple rule conditions."""
 
@@ -397,6 +413,20 @@ class ArtifactProofFloorPolicy(BaseModel, frozen=True):
     max_block_rate_delta: float = 0.10
 
 
+class ArtifactRuntimeErrorPolicy(BaseModel, frozen=True):
+    """Bounded runtime error policy for artifact influence on the open VPS rail."""
+
+    selection_failure_mode: ArtifactRuntimeFailureMode = (
+        ArtifactRuntimeFailureMode.FAIL_OPEN_BASELINE_SKIP_ARTIFACT
+    )
+    payload_load_failure_mode: ArtifactRuntimeFailureMode = (
+        ArtifactRuntimeFailureMode.FAIL_OPEN_BASELINE_SKIP_ARTIFACT
+    )
+    hook_execution_failure_mode: ArtifactRuntimeFailureMode = (
+        ArtifactRuntimeFailureMode.FAIL_OPEN_BASELINE_SKIP_ARTIFACT
+    )
+
+
 class ArtifactLifecyclePolicy(BaseModel, frozen=True):
     """Typed lifecycle policy attached to an exported artifact bundle."""
 
@@ -535,6 +565,23 @@ HOOK_MODULE_BY_ID: dict[HookId, str] = {
     HookId.EXECUTION_NO_TRADE_FILTER: "execution_hooks.py",
 }
 
+RUNTIME_OPEN_HOOK_IDS: tuple[HookId, ...] = (
+    HookId.ENGINE_A_PRE_ENTRY_CONFIRMATION,
+    HookId.ENGINE_B_SWEEP_VALIDATION,
+    HookId.ENGINE_C_VOID_VALIDATION,
+    HookId.ENGINE_D_REENTRY_VALIDATION,
+    HookId.RISK_MICRO_FRICTION_PRECHECK,
+    HookId.SCORING_SOFT_PENALTY_LAYER,
+    HookId.PORTFOLIO_RELATIVE_RANK_ADJUSTMENT,
+    HookId.EXECUTION_NO_TRADE_FILTER,
+)
+
+
+def is_runtime_open_hook_id(hook_id: HookId) -> bool:
+    """Return whether a canonical hook id is open on the active runtime rail."""
+
+    return hook_id in RUNTIME_OPEN_HOOK_IDS
+
 
 NON_ACTIVE_ARTIFACT_HEALTH_STATES: frozenset[ArtifactHealthState] = frozenset(
     {ArtifactHealthState.DORMANT, ArtifactHealthState.EXPIRED}
@@ -543,6 +590,7 @@ NON_ACTIVE_ARTIFACT_HEALTH_STATES: frozenset[ArtifactHealthState] = frozenset(
 CANONICAL_ARTIFACT_CONFLICT_POLICY = ArtifactConflictPolicy()
 CANONICAL_COMPILED_ARTIFACT_REGISTRY_POLICY = CompiledArtifactRegistryPolicy()
 CANONICAL_ARTIFACT_PROOF_FLOOR_POLICY = ArtifactProofFloorPolicy()
+CANONICAL_ARTIFACT_RUNTIME_ERROR_POLICY = ArtifactRuntimeErrorPolicy()
 
 
 def validate_artifact_proof_summary(
@@ -659,6 +707,8 @@ __all__ = [
     "RankAdjustConflictMode",
     "CompiledRegistryAtomicityMode",
     "CompiledRegistryConcurrencyModel",
+    "ArtifactRuntimeFailureMode",
+    "ArtifactRuntimeFailureStage",
     "DistilledRuleLogicalOp",
     "DistilledRuleOperator",
     "ArtifactClass",
@@ -675,16 +725,20 @@ __all__ = [
     "DistilledRule",
     "ArtifactProofSummary",
     "ArtifactProofFloorPolicy",
+    "ArtifactRuntimeErrorPolicy",
     "ArtifactLifecyclePolicy",
     "ArtifactTtlStatus",
     "ArtifactDriftStatus",
     "ArtifactRuntimeGovernanceEvaluation",
     "ArtifactExportBundle",
     "HOOK_MODULE_BY_ID",
+    "RUNTIME_OPEN_HOOK_IDS",
     "NON_ACTIVE_ARTIFACT_HEALTH_STATES",
     "CANONICAL_ARTIFACT_CONFLICT_POLICY",
     "CANONICAL_COMPILED_ARTIFACT_REGISTRY_POLICY",
     "CANONICAL_ARTIFACT_PROOF_FLOOR_POLICY",
+    "CANONICAL_ARTIFACT_RUNTIME_ERROR_POLICY",
+    "is_runtime_open_hook_id",
     "validate_artifact_proof_summary",
     "evaluate_artifact_runtime_governance",
 ]

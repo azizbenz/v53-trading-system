@@ -32,6 +32,7 @@ class ShadowRuntimeEvidenceRecorderState(BaseModel):
     runtime_config_ref: str = ""
     runtime_shadow_dtr_persisted: bool = False
     runtime_shadow_dtr_ref: str = ""
+    last_error: str | None = None  # BS-65: set when state file was corrupted on load
 
 
 class ShadowRuntimeEvidenceRecorder:
@@ -115,9 +116,19 @@ class ShadowRuntimeEvidenceRecorder:
         if self._state_path is not None and self._state_path.exists():
             try:
                 data = json.loads(self._state_path.read_text(encoding="utf-8"))
+                if not isinstance(data, dict):
+                    raise ValueError(f"State root must be a JSON object, got {type(data).__name__}")
                 return ShadowRuntimeEvidenceRecorderState(**data)
-            except (json.JSONDecodeError, OSError, ValueError):
-                pass
+            except (json.JSONDecodeError, OSError, ValueError, TypeError) as exc:
+                # BS-65: fail-safe — backup corrupted file, reset with error marker
+                backup = self._state_path.with_suffix(".corrupted")
+                try:
+                    self._state_path.rename(backup)
+                except OSError:
+                    pass
+                return ShadowRuntimeEvidenceRecorderState(
+                    last_error=f"state_file_corrupted:{type(exc).__name__}:{exc}",
+                )
         return ShadowRuntimeEvidenceRecorderState()
 
     def _persist(self) -> None:

@@ -167,6 +167,12 @@ class OrderStateTracker:
     def get_all(self) -> tuple[OrderRecord, ...]:
         return tuple(self._orders.values())
 
+    def evict_order(self, order_id: str) -> None:
+        """Drop one finalized order record from in-memory tracking."""
+
+        self._orders.pop(order_id, None)
+        self._seen_fill_ids.pop(order_id, None)
+
     def _get(self, order_id: str) -> OrderRecord:
         if order_id not in self._orders:
             raise KeyError(f"Order '{order_id}' not registered")

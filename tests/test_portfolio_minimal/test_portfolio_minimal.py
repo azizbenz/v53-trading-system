@@ -8,12 +8,17 @@ P0-2 (loss + beta budgets applied), P1-1/2/3 (orchestrator, ranking dedup, phant
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 # ── opportunity_selector imports ──
 from portfolio_minimal.opportunity_selector.candidate_pool_builder import (
+    CANDIDATE_POOL_FRESHNESS_DISABLED,
     CandidatePool,
+    CandidatePoolFreshnessPolicy,
+    CandidatePoolFreshnessMode,
     CandidatePoolRejectReason,
     OpportunityCandidate,
+    build_enforced_candidate_pool_freshness,
     build_candidate_pool,
 )
 from portfolio_minimal.opportunity_selector.eligibility_filter import (
@@ -68,6 +73,7 @@ from portfolio_minimal.allocation_router.allocation_reporter import (
 from portfolio_minimal.portfolio_orchestrator import (
     OrchestratorConfig,
     OrchestratorResult,
+    PortfolioRelativeRankAdjustmentOutcome,
     run_portfolio_pipeline,
 )
 
@@ -115,51 +121,79 @@ def _cand(
 
 class TestCandidatePoolBuilder:
     def test_valid_candidates_included(self):
-        pool = build_candidate_pool((_cand(),))
+        pool = build_candidate_pool(
+            (_cand(),),
+            freshness_policy=CANDIDATE_POOL_FRESHNESS_DISABLED,
+        )
         assert pool.pool_size == 1
         assert pool.candidates[0].pair == "BTC/USDT"
 
     def test_zero_score_excluded(self):
-        pool = build_candidate_pool((_cand(score=0.0),))
+        pool = build_candidate_pool(
+            (_cand(score=0.0),),
+            freshness_policy=CANDIDATE_POOL_FRESHNESS_DISABLED,
+        )
         assert pool.pool_size == 0
 
     def test_negative_score_excluded(self):
-        pool = build_candidate_pool((_cand(score=-0.1),))
+        pool = build_candidate_pool(
+            (_cand(score=-0.1),),
+            freshness_policy=CANDIDATE_POOL_FRESHNESS_DISABLED,
+        )
         assert pool.pool_size == 0
 
     def test_zero_size_excluded(self):
-        pool = build_candidate_pool((_cand(size=0.0),))
+        pool = build_candidate_pool(
+            (_cand(size=0.0),),
+            freshness_policy=CANDIDATE_POOL_FRESHNESS_DISABLED,
+        )
         assert pool.pool_size == 0
 
     def test_engines_present_deduped(self):
-        pool = build_candidate_pool((
-            _cand(pair="A", engine="engine_a"),
-            _cand(pair="B", engine="engine_b"),
-            _cand(pair="C", engine="engine_a"),
-        ))
+        pool = build_candidate_pool(
+            (
+                _cand(pair="A", engine="engine_a"),
+                _cand(pair="B", engine="engine_b"),
+                _cand(pair="C", engine="engine_a"),
+            ),
+            freshness_policy=CANDIDATE_POOL_FRESHNESS_DISABLED,
+        )
         assert pool.engines_present == ("engine_a", "engine_b")
 
     def test_empty_pool(self):
-        pool = build_candidate_pool(())
+        pool = build_candidate_pool(
+            (),
+            freshness_policy=CANDIDATE_POOL_FRESHNESS_DISABLED,
+        )
         assert pool.pool_size == 0
         assert pool.engines_present == ()
 
     def test_expired_signal_rejected_with_audit(self):
         pool = build_candidate_pool(
             (_cand(pair="BTC/USDT", engine="engine_a", emitted_at=100.0),),
-            now_ts=500.0,
-            max_signal_age_s=60.0,
+            freshness_policy=build_enforced_candidate_pool_freshness(
+                now_ts=500.0,
+                max_signal_age_s=60.0,
+            ),
         )
         assert pool.pool_size == 0
         assert pool.rejected_count == 1
         assert pool.rejected_candidates[0].reason == CandidatePoolRejectReason.SIGNAL_EXPIRED
 
-    def test_signal_not_rejected_without_expiry_config(self):
+    def test_signal_not_rejected_with_explicitly_disabled_freshness(self):
         pool = build_candidate_pool(
             (_cand(pair="BTC/USDT", engine="engine_a", emitted_at=100.0),),
+            freshness_policy=CANDIDATE_POOL_FRESHNESS_DISABLED,
         )
         assert pool.pool_size == 1
         assert pool.rejected_count == 0
+
+    def test_disabled_freshness_policy_rejects_hidden_values(self):
+        with pytest.raises(ValueError, match="disabled candidate-pool freshness policy"):
+            CandidatePoolFreshnessPolicy(
+                mode=CandidatePoolFreshnessMode.DISABLED,
+                now_ts=500.0,
+            )
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -191,15 +225,15 @@ class TestEligibilityFilter:
         r = check_eligibility(_cand(size=2000.0), self._snapshot(cluster_cap=100.0))
         assert r.verdict == EligibilityVerdict.ELIGIBLE
 
-    def test_unknown_cluster_still_eligible(self):
-        """Candidate with a cluster not in snapshot is still eligible —
-        allocation_router will cap to 0 if no cluster capacity."""
+    def test_unknown_cluster_rejected_fail_closed(self):
+        """Unknown cluster mapping is rejected before allocation."""
         snap = PortfolioSnapshot(
             remaining_gross_capacity=1000.0,
             remaining_cluster_capacity={},
         )
         r = check_eligibility(_cand(cluster="unknown"), snap)
-        assert r.verdict == EligibilityVerdict.ELIGIBLE
+        assert r.verdict == EligibilityVerdict.REJECTED_UNKNOWN_CLUSTER
+        assert "unknown cluster mapping" in r.reason
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -367,6 +401,18 @@ class TestSelectionResolver:
         r = resolve_selection(ranked, snap)
         assert len(r.rejected) == 1
         assert r.rejected[0].verdict == SelectionVerdict.REJECTED_NO_CLUSTER
+
+    def test_rejected_unknown_cluster(self):
+        ranked = self._ranked((_cand(pair="X", cluster="unknown"),))
+        snap = PortfolioSnapshot(
+            remaining_gross_capacity=1000.0,
+            remaining_cluster_capacity={},
+        )
+        r = resolve_selection(ranked, snap)
+        assert len(r.selected) == 0
+        assert len(r.rejected) == 1
+        assert r.rejected[0].verdict == SelectionVerdict.REJECTED_UNKNOWN_CLUSTER
+        assert "unknown cluster mapping" in r.rejected[0].reason
 
     def test_mixed_cluster_and_no_cluster(self):
         ranked = self._ranked((
@@ -685,7 +731,20 @@ class TestPortfolioOrchestrator:
                 remaining_beta_capacity=beta_cap,
                 remaining_cluster_capacity={"btc_cluster": cluster_cap, "eth_cluster": cluster_cap},
             ),
+            freshness_policy=CANDIDATE_POOL_FRESHNESS_DISABLED,
         )
+
+    def test_orchestrator_requires_explicit_freshness_policy(self):
+        with pytest.raises(ValidationError, match="freshness_policy"):
+            OrchestratorConfig(
+                size_profile=SizeProfile(available_capital=10_000.0),
+                initial_snapshot=PortfolioSnapshot(
+                    remaining_gross_capacity=1_000.0,
+                    remaining_loss_capacity=50.0,
+                    remaining_beta_capacity=1.0,
+                    remaining_cluster_capacity={"btc_cluster": 500.0},
+                ),
+            )
 
     def test_basic_e2e_pipeline(self):
         """Full pipeline: 2 candidates → both allocated."""
@@ -697,6 +756,33 @@ class TestPortfolioOrchestrator:
         assert r.pool_size == 2
         assert r.report.count_allocated == 2
         assert r.report.count_phantom == 0
+
+    def test_portfolio_relative_rank_hook_reorders_candidates_before_selection(self):
+        candidates = (
+            _cand(pair="BTC/USDT", score=0.8, ce=0.05, cluster="btc_cluster"),
+            _cand(pair="ETH/USDT", score=0.6, ce=0.10, cluster="eth_cluster"),
+        )
+
+        def _hook(hook_input):
+            if hook_input.pair == "ETH/USDT":
+                return PortfolioRelativeRankAdjustmentOutcome(
+                    rank_delta=0.5,
+                    reason_codes=("ARTIFACT_PORTFOLIO_RANK_BOOST",),
+                    detail="artifact promoted ETH in relative rank",
+                )
+            return PortfolioRelativeRankAdjustmentOutcome()
+
+        result = run_portfolio_pipeline(
+            candidates,
+            self._config(),
+            relative_rank_hook=_hook,
+        )
+
+        assert result.selection is not None
+        assert tuple(entry.pair for entry in result.selection.selected) == ("ETH/USDT", "BTC/USDT")
+        assert result.selection.selected[0].rank == 1
+        assert result.selection.selected[1].rank == 2
+        assert result.report.allocations[0].pair == "ETH/USDT"
 
     def test_empty_candidates(self):
         r = run_portfolio_pipeline((), self._config())
@@ -710,6 +796,16 @@ class TestPortfolioOrchestrator:
         assert r.report.count_allocated == 0
         assert r.selection is not None
         assert len(r.selection.rejected) == 1
+
+    def test_unknown_cluster_rejected_in_pipeline(self):
+        """Unknown cluster candidate is rejected at selection, never capped to zero downstream."""
+        candidates = (_cand(pair="X", cluster="unknown"),)
+        r = run_portfolio_pipeline(candidates, self._config())
+        assert r.report.count_allocated == 0
+        assert r.selection is not None
+        assert len(r.selection.rejected) == 1
+        assert r.selection.rejected[0].verdict == SelectionVerdict.REJECTED_UNKNOWN_CLUSTER
+        assert r.report.count_phantom == 0
 
     def test_oversized_reduced_not_rejected(self):
         """P0-1: oversized candidate is reduced by cap, not rejected by selector."""
@@ -831,7 +927,14 @@ class TestPortfolioOrchestrator:
             _cand(pair="BTC/USDT", engine="engine_a", emitted_at=100.0, cluster="btc_cluster"),
         )
         config = self._config()
-        config = config.model_copy(update={"now_ts": 500.0, "max_signal_age_s": 60.0})
+        config = config.model_copy(
+            update={
+                "freshness_policy": build_enforced_candidate_pool_freshness(
+                    now_ts=500.0,
+                    max_signal_age_s=60.0,
+                )
+            }
+        )
         r = run_portfolio_pipeline(candidates, config)
         assert r.pool_size == 0
         assert len(r.pool_rejections) == 1

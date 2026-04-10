@@ -42,6 +42,9 @@ def test_meta_learning_exports_expected_symbols():
     assert {
         "TradeLearningInput",
         "DiagnosticResult",
+        "TradeLossAttribution",
+        "TradeLossAttributionReport",
+        "build_trade_loss_attribution_report",
         "LearningHypothesis",
         "ImprovementCandidate",
         "LearningChecklist",
@@ -69,6 +72,20 @@ def test_trade_learning_input_rejects_backtest_profile():
             source_version="v5.3.0",
             backtest_profile="paper_local",
         )
+
+
+def test_trade_learning_input_defaults_to_complete_profile():
+    trade_input = TradeLearningInput(
+        correlation_id="corr-default-profile",
+        dtr_ids=("dtr-1",),
+        pair="BTCUSDT",
+        engine_id=EngineId.A,
+        source_runtime_mode=RuntimeMode.SHADOW,
+        strategy_classification=StrategyClassification.A_VARIANT,
+        source_version="v5.3.0",
+    )
+
+    assert trade_input.profile == ProfileId.COMPLETE
 
 
 def test_learning_hypothesis_targets_local_replay_only():

@@ -23,6 +23,42 @@ from interface_contracts.feature_lock_contracts import (
 
 Float64 = float
 TO_CALIBRATE = "TO_CALIBRATE"
+MARKET_PHYSICS_CALIBRATION_PROFILE_ID = "market_physics.to_calibrate.v1"
+MARKET_PHYSICS_CALIBRATION_STATUS = TO_CALIBRATE
+SWEEP_SCORE_V1_WEIGHTS: dict[str, Float64] = {
+    "wick_ratio_capratio": 0.45,
+    "vol_burst_capratio": 0.35,
+    "reject_indicator_clip01": 0.20,
+}
+FRAGILITY_SCORE_V1_WEIGHTS: dict[str, Float64] = {
+    "base_fragility": 0.70,
+    "spread_regime_penalty": 0.20,
+    "book_resiliency_penalty": 0.10,
+}
+TOXICITY_SCORE_V1_WEIGHTS: dict[str, Float64] = {
+    "base_toxicity": 0.60,
+    "fragility_score": 0.20,
+    "spread_regime_penalty": 0.10,
+    "vol_jump_penalty": 0.10,
+}
+EXECUTION_SURVIVABILITY_SCORE_V1_WEIGHTS: dict[str, Float64] = {
+    "fragility_score": 0.45,
+    "toxicity_score": 0.35,
+    "spread_regime_penalty": 0.15,
+    "participation_penalty": 0.05,
+}
+MICRO_FRICTION_SCORE_V1_WEIGHTS: dict[str, Float64] = {
+    "spread_regime_penalty": 0.40,
+    "fragility_score": 0.25,
+    "toxicity_score": 0.25,
+    "participation_penalty": 0.10,
+}
+ENGINE_CONVICTION_PHYSICS_PENALTY_WEIGHTS: dict[str, Float64] = {
+    "fragility_penalty": 0.10,
+    "toxicity_penalty": 0.08,
+    "micro_friction_penalty": 0.07,
+}
+DELTA_CONFIRMATION_V1_PROFILE_ID = "delta_confirmation.to_calibrate.v1"
 
 
 def as_float64(value: SupportsFloat) -> Float64:
@@ -113,6 +149,58 @@ def delta_proxy_sign(
     return sign * v
 
 
+def delta_confirmation_v1(
+    delta_proxy_value: SupportsFloat,
+    reference_volume: SupportsFloat,
+    *,
+    epsilon: SupportsFloat = 1e-12,
+) -> Float64:
+    """Map a signed delta proxy back to a bounded [0, 1] confirmation score."""
+
+    proxy = require_finite_float64(delta_proxy_value, name="delta_proxy_value")
+    volume = require_finite_float64(reference_volume, name="reference_volume")
+    eps = require_finite_float64(epsilon, name="epsilon")
+    if eps <= 0.0:
+        raise ValueError("delta_confirmation_v1 requires epsilon > 0")
+    if volume <= 0.0:
+        raise ValueError("delta_confirmation_v1 requires reference_volume > 0")
+    signed_ratio = proxy / max(abs(volume), eps)
+    signed_ratio = max(-1.0, min(1.0, signed_ratio))
+    return clip01(0.5 + 0.5 * signed_ratio)
+
+
+def resolve_delta_confirmation(
+    *,
+    delta_confirmation: SupportsFloat | None = None,
+    delta_proxy_soft_value: SupportsFloat | None = None,
+    delta_proxy_sign_value: SupportsFloat | None = None,
+    reference_volume: SupportsFloat | None = None,
+) -> Float64:
+    """Resolve the governed delta confirmation used on the open runtime rail."""
+
+    if delta_confirmation is not None:
+        return clip01(delta_confirmation)
+    if delta_proxy_soft_value is not None:
+        if reference_volume is None:
+            raise ValueError(
+                "resolve_delta_confirmation requires reference_volume with delta_proxy_soft_value"
+            )
+        return delta_confirmation_v1(
+            delta_proxy_soft_value,
+            reference_volume,
+        )
+    if delta_proxy_sign_value is not None:
+        if reference_volume is None:
+            raise ValueError(
+                "resolve_delta_confirmation requires reference_volume with delta_proxy_sign_value"
+            )
+        return delta_confirmation_v1(
+            delta_proxy_sign_value,
+            reference_volume,
+        )
+    return 0.5
+
+
 def participation_ratio(
     order_size: SupportsFloat,
     mean_volume_1m: SupportsFloat,
@@ -162,9 +250,10 @@ def sweep_score_v1(
     """Canonical V1 sweep score fixed by the P2 patch."""
 
     return (
-        0.45 * capratio(wick_ratio, 3.0)
-        + 0.35 * capratio(vol_burst, 3.0)
-        + 0.20 * clip01(reject_indicator)
+        SWEEP_SCORE_V1_WEIGHTS["wick_ratio_capratio"] * capratio(wick_ratio, 3.0)
+        + SWEEP_SCORE_V1_WEIGHTS["vol_burst_capratio"] * capratio(vol_burst, 3.0)
+        + SWEEP_SCORE_V1_WEIGHTS["reject_indicator_clip01"]
+        * clip01(reject_indicator)
     )
 
 
@@ -179,7 +268,11 @@ def fragility_score_v1(
     fragility = clip01(base_fragility)
     spread = clip01(spread_regime_penalty)
     resiliency = clip01(book_resiliency_penalty)
-    return clip01(0.70 * fragility + 0.20 * spread + 0.10 * resiliency)
+    return clip01(
+        FRAGILITY_SCORE_V1_WEIGHTS["base_fragility"] * fragility
+        + FRAGILITY_SCORE_V1_WEIGHTS["spread_regime_penalty"] * spread
+        + FRAGILITY_SCORE_V1_WEIGHTS["book_resiliency_penalty"] * resiliency
+    )
 
 
 def toxicity_score_v1(
@@ -196,10 +289,10 @@ def toxicity_score_v1(
     spread = clip01(spread_regime_penalty)
     vol_jump = clip01(vol_jump_penalty)
     return clip01(
-        0.60 * toxicity
-        + 0.20 * fragility
-        + 0.10 * spread
-        + 0.10 * vol_jump
+        TOXICITY_SCORE_V1_WEIGHTS["base_toxicity"] * toxicity
+        + TOXICITY_SCORE_V1_WEIGHTS["fragility_score"] * fragility
+        + TOXICITY_SCORE_V1_WEIGHTS["spread_regime_penalty"] * spread
+        + TOXICITY_SCORE_V1_WEIGHTS["vol_jump_penalty"] * vol_jump
     )
 
 
@@ -217,10 +310,11 @@ def execution_survivability_score_v1(
     spread = clip01(spread_regime_penalty)
     participation = clip01(participation_penalty)
     risk_load = (
-        0.45 * fragility
-        + 0.35 * toxicity
-        + 0.15 * spread
-        + 0.05 * participation
+        EXECUTION_SURVIVABILITY_SCORE_V1_WEIGHTS["fragility_score"] * fragility
+        + EXECUTION_SURVIVABILITY_SCORE_V1_WEIGHTS["toxicity_score"] * toxicity
+        + EXECUTION_SURVIVABILITY_SCORE_V1_WEIGHTS["spread_regime_penalty"] * spread
+        + EXECUTION_SURVIVABILITY_SCORE_V1_WEIGHTS["participation_penalty"]
+        * participation
     )
     return clip01(1.0 - risk_load)
 
@@ -239,16 +333,24 @@ def micro_friction_score_v1(
     toxicity = clip01(toxicity_score)
     participation = clip01(participation_penalty)
     return clip01(
-        0.40 * spread
-        + 0.25 * fragility
-        + 0.25 * toxicity
-        + 0.10 * participation
+        MICRO_FRICTION_SCORE_V1_WEIGHTS["spread_regime_penalty"] * spread
+        + MICRO_FRICTION_SCORE_V1_WEIGHTS["fragility_score"] * fragility
+        + MICRO_FRICTION_SCORE_V1_WEIGHTS["toxicity_score"] * toxicity
+        + MICRO_FRICTION_SCORE_V1_WEIGHTS["participation_penalty"] * participation
     )
 
 
 __all__ = [
     "Float64",
     "TO_CALIBRATE",
+    "MARKET_PHYSICS_CALIBRATION_PROFILE_ID",
+    "MARKET_PHYSICS_CALIBRATION_STATUS",
+    "DELTA_CONFIRMATION_V1_PROFILE_ID",
+    "SWEEP_SCORE_V1_WEIGHTS",
+    "FRAGILITY_SCORE_V1_WEIGHTS",
+    "TOXICITY_SCORE_V1_WEIGHTS",
+    "EXECUTION_SURVIVABILITY_SCORE_V1_WEIGHTS",
+    "MICRO_FRICTION_SCORE_V1_WEIGHTS",
     "PhysicsFeatureFamily",
     "DeltaProxyVariant",
     "PHYSICS_FEATURE_ALIASES",
@@ -260,6 +362,8 @@ __all__ = [
     "capratio",
     "delta_proxy_soft",
     "delta_proxy_sign",
+    "delta_confirmation_v1",
+    "resolve_delta_confirmation",
     "participation_ratio",
     "void_score_discrete",
     "sweep_score_v1",

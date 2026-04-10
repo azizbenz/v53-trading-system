@@ -10,16 +10,23 @@
 
 Ce document couvre **Build-12** du plan officiel V5.3.
 
+## 0.0 Note de lecture active
+
+- le nom de fichier et le libellé `Micro-live Light` sont conservés pour continuité documentaire
+- la lecture gouvernée courante de Build-12 dans le repo actif est : `profil=COMPLETE`, `runtime_mode=MICRO_LIVE`
+- `Micro-live Light` reste le nom de phase lisible historique de ce rail gouverné
+- `LIGHT` reste une surface de compatibilité explicite ; il n'est plus la lecture gouvernée active de Build-12
+
 Build-12 a une mission unique :
 
-> valider la **V5.3 Light en micro-live**, c’est-à-dire avec du capital réel mais à taille ultra-prudente, afin de confronter le système à la vérité de l’exécution, des coûts, de la latence, de la réconciliation et de la discipline opératoire.
+> valider la **V5.3 en micro-live**, c’est-à-dire avec du capital réel mais à taille ultra-prudente, afin de confronter le système à la vérité de l’exécution, des coûts, de la latence, de la réconciliation et de la discipline opératoire.
 
 Le micro-live n’est pas une phase de performance.  
 C’est une phase de **vérité d’exécution**.
 
 Build-12 doit répondre à une question simple :
 
-> quand la V5.3 Light passe du shadow à l’argent réel, les hypothèses critiques restent-elles valides, ou bien les coûts, les fills, les divergences d’état et les contraintes de marché détruisent-ils l’économie du système ?
+> quand la V5.3 passe du shadow à l’argent réel sur le rail gouverné courant, les hypothèses critiques restent-elles valides, ou bien les coûts, les fills, les divergences d’état et les contraintes de marché détruisent-ils l’économie du système ?
 
 ## 0.1 Statut documentaire vs implémentation
 
@@ -40,7 +47,7 @@ Il ne doit pas être lu comme :
 - la preuve qu’un Micro-live partiel ou seulement gouverné suffit
 - une autorisation à sauter Build-10 ou Build-11
 - la preuve que Build-13 est ouvert
-- une validation implicite de `COMPLETE`
+- une validation implicite d’une extension du rollout au-delà du rail gouverné courant
 
 ## 0.2 Règle d’unification local / VPS
 
@@ -69,7 +76,7 @@ Le Micro-live Light existe pour tester simultanément :
 
 ## Relation avec le verdict post-Shadow
 
-Le Micro-live n’active que les composants ayant reçu le verdict `SHADOW_VALIDATED` à l’issue des 30 jours de `Shadow intégral` du profil `LIGHT`.
+Le Micro-live n’active que les composants ayant reçu le verdict `SHADOW_VALIDATED` à l’issue des 30 jours de `Shadow intégral` du rail gouverné courant.
 
 - L’activation intégrale en Shadow (A/B/C/D + Build-14 à 100%) **ne signifie pas activation Micro-live automatique** de tous ces composants
 - Seuls les composants dont la valeur a été démontrée pendant le Shadow passent en Micro-live
@@ -106,16 +113,16 @@ Build-12 est :
 Les conditions suivantes doivent être satisfaites :
 
 - Build-1 à Build-10 validés
-- Build-11 `profil=LIGHT`, `runtime_mode=SHADOW` validé avec verdict GO
-- profil Light verrouillé
-- UI Light verrouillée
+- Build-11 `profil=COMPLETE`, `runtime_mode=SHADOW` validé avec verdict GO
+- profil/runtime gouvernés verrouillés
+- UI opérateur verrouillée
 - exécution live réelle disponible
 - DTR / CRA / break-even / edge tracker actifs
 - budget micro-live défini explicitement
 
 ## Après Build-12
 Si Build-12 est validé, alors seulement :
-- Build-13 : Live-Light
+- Build-13 : live gouverné (libellé historique : `Live-Light`)
 
 ## 3.1 Relation avec LOCAL_REPLAY, artifacts et Build-9X
 
@@ -174,8 +181,8 @@ Build-12 ne peut pas commencer si une des conditions suivantes n’est pas satis
 # 6. Périmètre du Micro-live Light
 
 ## 6.1 Profil actif
-- état canonique : `profil=LIGHT`, `runtime_mode=MICRO_LIVE`
-- nom de phase lisible : `Micro-live Light`
+- état canonique : `profil=COMPLETE`, `runtime_mode=MICRO_LIVE`
+- nom de phase lisible historique : `Micro-live Light`
 - 6 paires maximum
 - coeur runtime attendu : moteurs A et B
 
@@ -204,12 +211,12 @@ Seulement les paires validées en `Shadow intégral`, en pratique :
 - portfolio minimal
 - meta minimal
 - monitoring
-- UI Light verrouillée
+- UI opérateur verrouillée
 - protocoles d’arrêt immédiat
 
 ## 6.5 Composants interdits
 - activation réelle non gouvernée de C/D
-- extension COMPLETE sans gates passées
+- extension du rollout au-delà du rail gouverné courant sans gates passées
 - overrides UI de caps
 - élargissement discrétionnaire du scope
 - augmentation de taille non planifiée
@@ -589,7 +596,7 @@ Le passage vers Build-13 n’est autorisé que si :
 - edge tracker prudent encore crédible
 
 ## 14.5 Opérations
-- UI Light verrouillée
+- UI opérateur verrouillée (surface historique : `Light UI`)
 - alerting actionnable
 - protocole d’arrêt éprouvé
 - pas de dépendance à des bricolages manuels cachés

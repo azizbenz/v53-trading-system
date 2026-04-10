@@ -2,7 +2,7 @@
 Build-8 / opportunity_selector / selection_resolver
 Produce the final selection and explicit relative rejections.
 
-IMPORTANT: This module only rejects on structural grounds (no cluster).
+IMPORTANT: This module only rejects on structural grounds (cluster mapping).
 Size/capacity constraints are NOT applied here — allocation_router
 will reduce oversized trades rather than reject them outright.
 """
@@ -28,6 +28,7 @@ from portfolio_minimal.opportunity_selector.eligibility_filter import (
 class SelectionVerdict(StrEnum):
     SELECTED = "selected"
     REJECTED_NO_CLUSTER = "rejected_no_cluster"
+    REJECTED_UNKNOWN_CLUSTER = "rejected_unknown_cluster"
 
 
 class SelectionEntry(BaseModel, frozen=True):
@@ -57,7 +58,7 @@ def resolve_selection(
 ) -> SelectionResult:
     """Select candidates that deserve capital.
 
-    Only structural rejection: no-cluster (fail-closed).
+    Only structural rejections: missing or unknown cluster mapping (fail-closed).
     ALL other candidates pass through to allocation_router,
     which will reduce sizes to fit budgets.
     """
@@ -79,7 +80,10 @@ def resolve_selection(
                 candidate=c,
             ))
         else:
-            selected_verdict = SelectionVerdict.REJECTED_NO_CLUSTER
+            if elig.verdict == EligibilityVerdict.REJECTED_UNKNOWN_CLUSTER:
+                selected_verdict = SelectionVerdict.REJECTED_UNKNOWN_CLUSTER
+            else:
+                selected_verdict = SelectionVerdict.REJECTED_NO_CLUSTER
             rejected.append(SelectionEntry(
                 pair=c.pair,
                 engine_id=c.engine_id,

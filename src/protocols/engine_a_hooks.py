@@ -1,10 +1,11 @@
-"""Typed skeleton for the canonical ENGINE_A_PRE_ENTRY_CONFIRMATION hook."""
+"""Bounded executor surface for the canonical ENGINE_A_PRE_ENTRY_CONFIRMATION hook."""
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from interface_contracts import HookId
+from engines.engine_a import EngineAPreEntryValidationInput, EngineAPreEntryValidationOutcome
+from interface_contracts import HookId, is_runtime_open_hook_id
 
 from .compiled_hook_plan_loader import (
     CompiledHookPlanLoadStatus,
@@ -13,29 +14,14 @@ from .compiled_hook_plan_loader import (
 
 
 HOOK_ID = HookId.ENGINE_A_PRE_ENTRY_CONFIRMATION
-RUNTIME_OPEN = False
+RUNTIME_OPEN = is_runtime_open_hook_id(HOOK_ID)
 
 
 class EngineAPreEntryHookPlanPayload(BaseModel, frozen=True):
-    """Minimal compiled payload shape for the unopened Engine A hook rail."""
+    """Typed compiled payload for the bounded Engine A pre-entry hook."""
 
-    reason_codes: tuple[str, ...] = ()
-    detail: str = ""
-
-
-class EngineAPreEntryHookInput(BaseModel, frozen=True):
-    """Minimal typed input kept intentionally narrow until the rail is opened."""
-
-    context_id: str = Field(..., min_length=1)
-    pair: str = ""
-    engine_id: str = ""
-
-
-class EngineAPreEntryHookOutcome(BaseModel, frozen=True):
-    """Placeholder typed outcome for the unopened Engine A hook rail."""
-
-    accepted: bool = True
-    reason_codes: tuple[str, ...] = ()
+    blocked: bool = False
+    block_reason_codes: tuple[str, ...] = ()
     detail: str = ""
 
 
@@ -54,13 +40,34 @@ def load_engine_a_pre_entry_hook_payload(
 
 
 def run_engine_a_pre_entry_hook(
-    hook_input: EngineAPreEntryHookInput,
+    hook_input: EngineAPreEntryValidationInput,
     hook_payload: EngineAPreEntryHookPlanPayload,
-) -> EngineAPreEntryHookOutcome:
-    """Keep the hook explicitly closed until the Engine A artifact rail is opened."""
+) -> EngineAPreEntryValidationOutcome:
+    """Run the bounded Engine A pre-entry hook with no dynamic code path."""
 
-    raise NotImplementedError(
-        "ENGINE_A_PRE_ENTRY_CONFIRMATION remains a typed skeleton until this hook rail is opened"
+    if not hook_payload.blocked:
+        detail = hook_payload.detail.strip()
+        if not detail:
+            detail = (
+                f"compiled Engine A pre-entry confirmation accepted {hook_input.pair} / "
+                f"{hook_input.engine_id}"
+            )
+        return EngineAPreEntryValidationOutcome(
+            accepted=True,
+            reason_codes=hook_payload.block_reason_codes,
+            detail=detail,
+        )
+
+    detail = hook_payload.detail.strip()
+    if not detail:
+        detail = (
+            f"compiled Engine A pre-entry confirmation blocked {hook_input.pair} / "
+            f"{hook_input.engine_id}"
+        )
+    return EngineAPreEntryValidationOutcome(
+        accepted=False,
+        reason_codes=hook_payload.block_reason_codes,
+        detail=detail,
     )
 
 
@@ -68,8 +75,6 @@ __all__ = [
     "HOOK_ID",
     "RUNTIME_OPEN",
     "EngineAPreEntryHookPlanPayload",
-    "EngineAPreEntryHookInput",
-    "EngineAPreEntryHookOutcome",
     "load_engine_a_pre_entry_hook_payload",
     "run_engine_a_pre_entry_hook",
 ]

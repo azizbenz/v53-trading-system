@@ -14,6 +14,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
+from data_backbone import resolve_delta_confirmation
 from engines.engine_a.structure_detector_a import (
     StructureInput,
     StructureVerdict,
@@ -32,6 +33,10 @@ from engines.engine_a.cost_feasibility_a import (
 from engines.engine_a.conviction_builder_a import (
     ConvictionInput,
     ConvictionLevel,
+    ENGINE_A_CONVICTION_CALIBRATION_STATUS,
+    ENGINE_A_CONVICTION_PROFILE_ID,
+    MARKET_PHYSICS_CALIBRATION_PROFILE_ID,
+    MARKET_PHYSICS_CALIBRATION_STATUS,
     TierSuggestion,
     build_conviction,
 )
@@ -68,6 +73,10 @@ class EngineALogEntry(BaseModel, frozen=True):
     holding_hours: float = 0.0
     reasons: tuple[str, ...] = ()
     scoring_version: str = ""
+    calibration_profile_id: str = ENGINE_A_CONVICTION_PROFILE_ID
+    calibration_status: str = ENGINE_A_CONVICTION_CALIBRATION_STATUS
+    physics_calibration_profile_id: str = MARKET_PHYSICS_CALIBRATION_PROFILE_ID
+    physics_calibration_status: str = MARKET_PHYSICS_CALIBRATION_STATUS
 
 
 class EngineAOutput(BaseModel, frozen=True):
@@ -89,6 +98,10 @@ class EngineAOutput(BaseModel, frozen=True):
     invalidation: InvalidationMap | None = None
     holding_hours: float = 0.0
     scoring_version: str = ""
+    calibration_profile_id: str = ENGINE_A_CONVICTION_PROFILE_ID
+    calibration_status: str = ENGINE_A_CONVICTION_CALIBRATION_STATUS
+    physics_calibration_profile_id: str = MARKET_PHYSICS_CALIBRATION_PROFILE_ID
+    physics_calibration_status: str = MARKET_PHYSICS_CALIBRATION_STATUS
     no_trade_reasons: tuple[NoTradeReason, ...] = ()
     structure_verdict: StructureVerdict = StructureVerdict.UNFAVORABLE
     context_verdict: ContextVerdict = ContextVerdict.FATAL
@@ -114,7 +127,10 @@ class EngineAInput(BaseModel, frozen=True):
     flow_coherence: float = 0.5
     flow_score: float = 0.0
     cost_preference_score: float = 0.0
-    delta_confirmation: float = 0.5
+    delta_confirmation: float | None = Field(default=None, ge=0.0, le=1.0)
+    delta_proxy_soft_value: float | None = None
+    delta_proxy_sign_value: float | None = None
+    delta_proxy_reference_volume: float | None = Field(default=None, gt=0.0)
     execution_fragility: float = 0.0
     market_toxicity: float = 0.0
     spread_regime_penalty: float = 0.0
@@ -131,6 +147,61 @@ class EngineAInput(BaseModel, frozen=True):
     atr: float = 0.0
     # Meta
     scoring_version: str = ""
+
+
+ENGINE_A_RUNNER_INPUT_DEFAULTS: dict[str, float | str | None] = {
+    "regime": "",
+    "regime_favorability": 0.5,
+    "regime_confidence": 0.5,
+    "pair_health": 0.5,
+    "data_freshness": 0.5,
+    "flow_coherence": 0.5,
+    "flow_score": 0.0,
+    "cost_preference_score": 0.0,
+    "delta_confirmation": None,
+    "delta_proxy_soft_value": None,
+    "delta_proxy_sign_value": None,
+    "delta_proxy_reference_volume": None,
+    "execution_fragility": 0.0,
+    "market_toxicity": 0.0,
+    "spread_regime_penalty": 0.0,
+    "competition_density": 0.5,
+    "expected_gain": 0.0,
+    "expected_cost": 0.0,
+    "candidate_size": 0.0,
+    "holding_period": 4.0,
+    "delta_safe": 0.0005,
+    "ce_min": 0.0001,
+    "entry_price": 0.0,
+    "atr": 0.0,
+    "scoring_version": "",
+}
+
+EngineAInput.model_fields["regime"].default = ENGINE_A_RUNNER_INPUT_DEFAULTS["regime"]
+EngineAInput.model_fields["regime_favorability"].default = ENGINE_A_RUNNER_INPUT_DEFAULTS["regime_favorability"]
+EngineAInput.model_fields["regime_confidence"].default = ENGINE_A_RUNNER_INPUT_DEFAULTS["regime_confidence"]
+EngineAInput.model_fields["pair_health"].default = ENGINE_A_RUNNER_INPUT_DEFAULTS["pair_health"]
+EngineAInput.model_fields["data_freshness"].default = ENGINE_A_RUNNER_INPUT_DEFAULTS["data_freshness"]
+EngineAInput.model_fields["flow_coherence"].default = ENGINE_A_RUNNER_INPUT_DEFAULTS["flow_coherence"]
+EngineAInput.model_fields["flow_score"].default = ENGINE_A_RUNNER_INPUT_DEFAULTS["flow_score"]
+EngineAInput.model_fields["cost_preference_score"].default = ENGINE_A_RUNNER_INPUT_DEFAULTS["cost_preference_score"]
+EngineAInput.model_fields["delta_confirmation"].default = ENGINE_A_RUNNER_INPUT_DEFAULTS["delta_confirmation"]
+EngineAInput.model_fields["delta_proxy_soft_value"].default = ENGINE_A_RUNNER_INPUT_DEFAULTS["delta_proxy_soft_value"]
+EngineAInput.model_fields["delta_proxy_sign_value"].default = ENGINE_A_RUNNER_INPUT_DEFAULTS["delta_proxy_sign_value"]
+EngineAInput.model_fields["delta_proxy_reference_volume"].default = ENGINE_A_RUNNER_INPUT_DEFAULTS["delta_proxy_reference_volume"]
+EngineAInput.model_fields["execution_fragility"].default = ENGINE_A_RUNNER_INPUT_DEFAULTS["execution_fragility"]
+EngineAInput.model_fields["market_toxicity"].default = ENGINE_A_RUNNER_INPUT_DEFAULTS["market_toxicity"]
+EngineAInput.model_fields["spread_regime_penalty"].default = ENGINE_A_RUNNER_INPUT_DEFAULTS["spread_regime_penalty"]
+EngineAInput.model_fields["competition_density"].default = ENGINE_A_RUNNER_INPUT_DEFAULTS["competition_density"]
+EngineAInput.model_fields["expected_gain"].default = ENGINE_A_RUNNER_INPUT_DEFAULTS["expected_gain"]
+EngineAInput.model_fields["expected_cost"].default = ENGINE_A_RUNNER_INPUT_DEFAULTS["expected_cost"]
+EngineAInput.model_fields["candidate_size"].default = ENGINE_A_RUNNER_INPUT_DEFAULTS["candidate_size"]
+EngineAInput.model_fields["holding_period"].default = ENGINE_A_RUNNER_INPUT_DEFAULTS["holding_period"]
+EngineAInput.model_fields["delta_safe"].default = ENGINE_A_RUNNER_INPUT_DEFAULTS["delta_safe"]
+EngineAInput.model_fields["ce_min"].default = ENGINE_A_RUNNER_INPUT_DEFAULTS["ce_min"]
+EngineAInput.model_fields["entry_price"].default = ENGINE_A_RUNNER_INPUT_DEFAULTS["entry_price"]
+EngineAInput.model_fields["atr"].default = ENGINE_A_RUNNER_INPUT_DEFAULTS["atr"]
+EngineAInput.model_fields["scoring_version"].default = ENGINE_A_RUNNER_INPUT_DEFAULTS["scoring_version"]
 
 
 def run_engine_a(inputs: EngineAInput) -> EngineAOutput:
@@ -276,13 +347,19 @@ def run_engine_a(inputs: EngineAInput) -> EngineAOutput:
         )
 
     # ── 4. Conviction building ──
+    delta_confirmation = resolve_delta_confirmation(
+        delta_confirmation=inputs.delta_confirmation,
+        delta_proxy_soft_value=inputs.delta_proxy_soft_value,
+        delta_proxy_sign_value=inputs.delta_proxy_sign_value,
+        reference_volume=inputs.delta_proxy_reference_volume,
+    )
     conviction = build_conviction(ConvictionInput(
         pair=inputs.pair,
         structure_score=structure.structure_score,
         context_score=context.context_score,
         flow_score=inputs.flow_score,
         cost_preference_score=inputs.cost_preference_score,
-        delta_confirmation=inputs.delta_confirmation,
+        delta_confirmation=delta_confirmation,
         execution_fragility=inputs.execution_fragility,
         market_toxicity=inputs.market_toxicity,
         spread_regime_penalty=inputs.spread_regime_penalty,

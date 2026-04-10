@@ -1131,6 +1131,7 @@ def run_shadow_validation(
         for reason in validation.import_transform_whitelist_reasons
     )
     if validation.import_signature_check_status in {
+        "signature_invalid",
         "trust_store_unavailable",
         "key_id_unknown",
         "key_revoked",

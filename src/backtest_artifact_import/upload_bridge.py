@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import date
-
 from backtest_artifact_import.contracts import (
     ArtifactImportDecision,
     ArtifactImportRequest,
@@ -66,7 +64,7 @@ def build_import_request_from_upload_request(
         expected_transform_ids=expected_transform_ids,
         lifecycle_policy=request.bundle.lifecycle_policy,
         training_end=request.bundle.training_end,
-        governance_reference_date=date.today(),
+        governance_reference_date=request.governance_reference_date,
         drift_score_threshold=request.bundle.drift_score_threshold,
         proof_summary=request.bundle.proof_summary,
         proof_required=True,

@@ -6,6 +6,8 @@ Invariant: every REST call is tracked. Quota exceeded = explicit rejection.
 
 from __future__ import annotations
 
+from collections import deque
+
 from pydantic import BaseModel, Field
 
 
@@ -23,7 +25,7 @@ class RateLimitGuard:
     def __init__(self, max_calls: int = 10, window_size_s: float = 60.0) -> None:
         self._max_calls = max_calls
         self._window_size = window_size_s
-        self._call_times: list[float] = []
+        self._call_times: deque[float] = deque()
 
     def can_call(self, now: float) -> bool:
         self._prune(now)
@@ -56,4 +58,5 @@ class RateLimitGuard:
 
     def _prune(self, now: float) -> None:
         cutoff = now - self._window_size
-        self._call_times = [t for t in self._call_times if t > cutoff]
+        while self._call_times and self._call_times[0] <= cutoff:
+            self._call_times.popleft()

@@ -71,6 +71,7 @@ def test_export_technical_dashboard_writes_availability_view():
         assert "@depth" in html
         assert "No liquidity data loaded yet." in html
         assert "stream.binance.com:9443/stream?streams=" in html
+        assert "Build-10" in html
         assert "Build-11 Shadow" in html
         assert "Build-12 Micro-live" in html
         assert "Build-13 Live" in html
@@ -99,6 +100,8 @@ def test_export_technical_dashboard_writes_demo_sidecars():
             artifacts.local_replay_evidence_json_path is not None
             and artifacts.local_replay_evidence_json_path.exists()
         )
+        assert artifacts.upload_request_json_path is not None and artifacts.upload_request_json_path.exists()
+        assert artifacts.upload_decision_json_path is not None and artifacts.upload_decision_json_path.exists()
         assert (
             artifacts.shadow_runtime_evidence_json_path is not None
             and artifacts.shadow_runtime_evidence_json_path.exists()
@@ -108,6 +111,12 @@ def test_export_technical_dashboard_writes_demo_sidecars():
         payload_json = artifacts.payload_json_path.read_text(encoding="utf-8")
         payload = json.loads(payload_json)
         observability_text = artifacts.observability_text_path.read_text(encoding="utf-8")
+        upload_request = json.loads(
+            artifacts.upload_request_json_path.read_text(encoding="utf-8")
+        )
+        upload_decision = json.loads(
+            artifacts.upload_decision_json_path.read_text(encoding="utf-8")
+        )
         local_replay_evidence = json.loads(
             artifacts.local_replay_evidence_json_path.read_text(encoding="utf-8")
         )
@@ -123,6 +132,7 @@ def test_export_technical_dashboard_writes_demo_sidecars():
         assert "api.binance.com/api/v3/klines" in html
         assert "bookTicker" in html
         assert "@depth" in html
+        assert "Build-10" in html
         assert "Build-11 Shadow" in html
         assert "Build-12 Micro-live" in html
         assert "Build-13 Live" in html
@@ -148,8 +158,14 @@ def test_export_technical_dashboard_writes_demo_sidecars():
         assert "v53_build14_reader_value" in observability_text
         assert 'reader="market_toxicity_snapshot"' in observability_text
         assert '"validation_status": "accepted"' in payload_json
-        assert '"signature_check_status": "not_provided"' in payload_json
+        assert '"feature_lineage_status": "ok"' in payload_json
+        assert '"transform_whitelist_status": "ok"' in payload_json
+        assert '"signature_check_status": "verified"' in payload_json
         assert '"run_state": "completed"' in payload_json
+        assert upload_request["upload_context"] == "LOCAL_LAB"
+        assert upload_request["dry_run"] is True
+        assert upload_decision["accepted"] is True
+        assert upload_decision["status"] == "DRY_RUN_OK"
         assert payload["engine_judgment"]["source_shadow_days_completed"] == 30
         assert payload["engine_judgment"]["source_shadow_required_days"] == 30
         assert payload["engine_judgment"]["cards"][0]["judgment_verdict"] == "promotable"

@@ -6,7 +6,7 @@ import monitoring
 import pytest
 from pydantic import ValidationError
 
-from interface_contracts import AlertCategory, AlertRecord, AlertSeverity, PairHealthLevel, ProfileId, RuntimeMode
+from interface_contracts import AlertCategory, AlertRecord, AlertSeverity, HookId, PairHealthLevel, ProfileId, RuntimeMode
 from meta import (
     build_break_even_report,
     build_cra_report,
@@ -37,6 +37,7 @@ from monitoring import (
     OperatorRuntimeEvent,
     OperatorRuntimeProjection,
     ReplayImportProjection,
+    RuntimeHookBridgeProjection,
     ShadowProjection,
     build_health_dashboard_payload,
     build_monitoring_alerts,
@@ -355,6 +356,32 @@ def test_health_and_technical_payloads_project_operator_runtime_state():
     assert technical_payload.micro_live.operator_safing_reason == "manual requalification requested"
 
 
+def test_technical_dashboard_payload_preserves_complete_governed_profile_and_runtime_mode():
+    dtr_summary, cra_report, break_even_report, edge_report = _sample_build9_reports()
+    snapshot = collect_monitoring_snapshot(
+        correlation_id="corr-complete-live",
+        profile=ProfileId.COMPLETE,
+        runtime_mode=RuntimeMode.LIVE,
+        timestamp_ms=1_700_000_123_789,
+        portfolio=collect_portfolio_metrics(
+            allocated_opportunities=1,
+            gross_capacity_used_pct=12.0,
+            loss_capacity_used_pct=3.0,
+            beta_utilization=0.2,
+            capital_deployed_usdt=650.0,
+            ce_net=0.0011,
+        ),
+        infra=collect_infra_metrics(),
+        meta=collect_meta_metrics(dtr_summary, cra_report, break_even_report, edge_report),
+    )
+
+    payload = build_technical_dashboard_payload(snapshot)
+
+    assert payload.profile == ProfileId.COMPLETE
+    assert payload.runtime_mode == RuntimeMode.LIVE
+    assert "governed" in payload.system.governed_extensions_detail.lower()
+
+
 def test_critical_alert_overrides_warning_only_flags():
     dtr_summary, cra_report, break_even_report, edge_report = _sample_build9_reports()
     snapshot = collect_monitoring_snapshot(
@@ -645,6 +672,8 @@ def test_technical_dashboard_payload_defaults_governed_sections_without_raw_prot
     assert payload.alerts.backlog_stale_status == "healthy"
     assert payload.execution_no_trade_bridge.status == "planned"
     assert payload.execution_no_trade_bridge.selection_status == "not_configured"
+    assert len(payload.runtime_hook_bridges) == 8
+    assert payload.runtime_hook_bridges[-1].hook_id == HookId.EXECUTION_NO_TRADE_FILTER
 
 
 def test_technical_dashboard_payload_elevates_headline_to_warning_from_build9x():
@@ -1253,6 +1282,58 @@ def test_technical_dashboard_payload_accepts_execution_no_trade_bridge_projectio
     assert payload.execution_no_trade_bridge.current_snapshot_id == "snap-2"
     assert payload.execution_no_trade_bridge.binding_present is True
     assert payload.execution_no_trade_bridge.error_type == "ValueError"
+    execution = next(
+        projection
+        for projection in payload.runtime_hook_bridges
+        if projection.hook_id == HookId.EXECUTION_NO_TRADE_FILTER
+    )
+    assert execution.current_snapshot_id == "snap-2"
+    assert execution.status == "warning"
+
+
+def test_technical_dashboard_payload_accepts_runtime_hook_bridge_projections():
+    dtr_summary, cra_report, break_even_report, edge_report = _sample_build9_reports()
+    snapshot = collect_monitoring_snapshot(
+        correlation_id="corr-hook-bridges",
+        profile=ProfileId.LIGHT,
+        runtime_mode=RuntimeMode.SHADOW,
+        timestamp_ms=1_700_000_000_000,
+        portfolio=collect_portfolio_metrics(
+            allocated_opportunities=1,
+            gross_capacity_used_pct=10.0,
+            loss_capacity_used_pct=2.0,
+            beta_utilization=0.1,
+            capital_deployed_usdt=500.0,
+            ce_net=0.0010,
+        ),
+        infra=collect_infra_metrics(),
+        meta=collect_meta_metrics(dtr_summary, cra_report, break_even_report, edge_report),
+    )
+
+    payload = build_technical_dashboard_payload(
+        snapshot,
+        runtime_hook_bridge_projections=(
+            RuntimeHookBridgeProjection(
+                hook_id=HookId.ENGINE_B_SWEEP_VALIDATION,
+                label="Engine B sweep",
+                status="warning",
+                configured=True,
+                selection_status="binding_only",
+                binding_present=True,
+                artifact_count=2,
+                detail="Engine B bridge published without compiled plan",
+            ),
+        ),
+    )
+
+    engine_b = next(
+        projection
+        for projection in payload.runtime_hook_bridges
+        if projection.hook_id == HookId.ENGINE_B_SWEEP_VALIDATION
+    )
+    assert engine_b.status == "warning"
+    assert engine_b.binding_present is True
+    assert engine_b.artifact_count == 2
 
 
 def test_technical_dashboard_payload_elevates_headline_to_warning_from_account_user_data():
@@ -1449,6 +1530,59 @@ def test_technical_dashboard_payload_elevates_headline_to_critical_from_executio
 
     assert payload.system.headline_status == "critical"
     assert payload.alerts.headline_status == "critical"
+
+
+def test_technical_dashboard_payload_elevates_headline_to_warning_from_runtime_hook_bridge():
+    dtr_summary, cra_report, break_even_report, edge_report = _sample_build9_reports()
+    snapshot = collect_monitoring_snapshot(
+        correlation_id="corr-tech-hook-warning",
+        profile=ProfileId.LIGHT,
+        runtime_mode=RuntimeMode.SHADOW,
+        timestamp_ms=1_700_000_000_000,
+        portfolio=collect_portfolio_metrics(
+            allocated_opportunities=1,
+            gross_capacity_used_pct=10.0,
+            loss_capacity_used_pct=2.0,
+            beta_utilization=0.1,
+            capital_deployed_usdt=500.0,
+            ce_net=0.0010,
+        ),
+        infra=collect_infra_metrics(),
+        meta=collect_meta_metrics(dtr_summary, cra_report, break_even_report, edge_report),
+    ).model_copy(
+        update={
+            "alerts": (),
+            "backlog_warning": False,
+            "stale_warning": False,
+            "loss_warning": False,
+        }
+    )
+    snapshot = snapshot.model_copy(
+        update={
+            "meta": snapshot.meta.model_copy(
+                update={
+                    "break_even_drift_alert": False,
+                    "edge_degraded_count": 0,
+                }
+            )
+        }
+    )
+
+    payload = build_technical_dashboard_payload(
+        snapshot,
+        runtime_hook_bridge_projections=(
+            RuntimeHookBridgeProjection(
+                hook_id=HookId.RISK_MICRO_FRICTION_PRECHECK,
+                label="Risk micro-friction",
+                status="warning",
+                configured=True,
+                selection_status="binding_only",
+            ),
+        ),
+    )
+
+    assert payload.system.headline_status == "warning"
+    assert payload.alerts.headline_status == "warning"
 
 
 def test_technical_dashboard_payload_defaults_build14_to_shadow_enabled_when_module_active():

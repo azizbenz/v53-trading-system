@@ -12,6 +12,9 @@ from .engine_d_runner import (
     run_engine_d,
 )
 from .engine_d_runtime import (
+    EngineDReentryValidationHook,
+    EngineDReentryValidationInput,
+    EngineDReentryValidationOutcome,
     EngineDRuntime,
     EngineDRuntimeInput,
     EngineDRuntimeResult,
@@ -29,6 +32,9 @@ __all__ = [
     "EngineDInvalidation",
     "EngineDLogEntry",
     "EngineDOutput",
+    "EngineDReentryValidationHook",
+    "EngineDReentryValidationInput",
+    "EngineDReentryValidationOutcome",
     "EngineDRuntime",
     "EngineDRuntimeInput",
     "EngineDRuntimeResult",

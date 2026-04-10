@@ -5,6 +5,9 @@ from .risk_runtime import (
     RiskCandidate,
     RiskEvaluation,
     RiskLimits,
+    RiskMicroFrictionPrecheckHook,
+    RiskMicroFrictionPrecheckInput,
+    RiskMicroFrictionPrecheckOutcome,
     RiskRuntime,
     RiskRuntimeAction,
 )
@@ -14,6 +17,9 @@ __all__ = [
     "RiskCandidate",
     "RiskEvaluation",
     "RiskLimits",
+    "RiskMicroFrictionPrecheckHook",
+    "RiskMicroFrictionPrecheckInput",
+    "RiskMicroFrictionPrecheckOutcome",
     "RiskRuntime",
     "RiskRuntimeAction",
 ]

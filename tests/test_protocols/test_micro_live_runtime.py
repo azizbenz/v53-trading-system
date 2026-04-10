@@ -114,7 +114,7 @@ def _shadow_payload(
     transform_whitelist_present: bool = True,
     transform_whitelist_status: str = "ok",
     transform_whitelist_reasons: tuple[str, ...] = (),
-    signature_check_status: str = "not_provided",
+    signature_check_status: str = "verified",
     signature_check_reasons: tuple[str, ...] = (),
     conflict_resolution_mode: str = "no_trade_then_strictest",
     conflict_hard_veto_action: str = "no_trade",

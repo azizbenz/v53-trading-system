@@ -6,6 +6,18 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
+from .context_resolver_d import build_engine_d_log_context, resolve_engine_d_context
+from .conviction_builder_d import build_conviction_d
+from .cost_feasibility_d import evaluate_cost_feasibility_d
+from .invalidation_mapper_d import build_invalidation_levels_d
+from .output_payload_builder_d import build_engine_d_output_payload
+from .signal_math_d import (
+    compute_context_score,
+    compute_history_score,
+    compute_marginal_value_score,
+    compute_reformation_score,
+)
+
 
 def _clamp(value: float) -> float:
     return max(0.0, min(1.0, value))
@@ -137,64 +149,40 @@ class EngineDInput(BaseModel, frozen=True):
     scoring_version: str = ""
 
 
-def _resolve_engine_d_context(inputs: EngineDInput) -> dict[str, float | str | bool]:
-    link_type = inputs.link_type.strip() or ("prior_trade" if inputs.origin_trade_id else "prior_context")
-    duplication_overlap_with_engine_a = _clamp(inputs.duplication_overlap_with_engine_a)
-    covered_share_by_engine_a = _clamp(
-        inputs.covered_share_by_engine_a
-        if inputs.covered_share_by_engine_a > 0.0
-        else duplication_overlap_with_engine_a
-    )
-    duplication_possible_with_engine_a = (
-        duplication_overlap_with_engine_a >= 0.65 or covered_share_by_engine_a >= 0.55
-    )
-    marginal_portfolio_gain = (
-        inputs.marginal_portfolio_gain
-        if inputs.marginal_portfolio_gain > 0.0
-        else max(0.0, inputs.candidate_size * (inputs.expected_gain - inputs.expected_cost))
-    )
-    concentration_risk = _clamp(0.60 * (1.0 - inputs.concentration_headroom) + 0.40 * inputs.reentry_lateness)
-    return {
-        "origin_context_id": inputs.origin_context_id or f"{inputs.pair}:prior_context",
-        "origin_trade_id": inputs.origin_trade_id,
-        "link_type": link_type,
-        "structure_reformed_detected": inputs.structure_reformed_detected,
-        "duplication_possible_with_engine_a": duplication_possible_with_engine_a,
-        "duplication_overlap_with_engine_a": duplication_overlap_with_engine_a,
-        "marginal_portfolio_gain": marginal_portfolio_gain,
-        "covered_share_by_engine_a": covered_share_by_engine_a,
-        "marginal_concentration": concentration_risk,
-    }
-
-
-def _engine_d_log_context(context: dict[str, float | str | bool]) -> dict[str, float | str | bool]:
-    return {
-        "origin_context_id": context["origin_context_id"],
-        "origin_trade_id": context["origin_trade_id"],
-        "link_type": context["link_type"],
-        "structure_reformed_detected": context["structure_reformed_detected"],
-        "duplication_possible_with_engine_a": context["duplication_possible_with_engine_a"],
-        "duplication_overlap_with_engine_a": context["duplication_overlap_with_engine_a"],
-        "marginal_portfolio_gain": context["marginal_portfolio_gain"],
-        "covered_share_by_engine_a": context["covered_share_by_engine_a"],
-        "marginal_concentration": context["marginal_concentration"],
-    }
-
-
 def run_engine_d(inputs: EngineDInput) -> EngineDOutput:
     logs: list[EngineDLogEntry] = []
     no_trade_reasons: list[NoTradeReasonD] = []
-    context = _resolve_engine_d_context(inputs)
+    context = resolve_engine_d_context(inputs)
 
-    history_score = _clamp(
-        0.55 * inputs.prior_trade_quality + 0.25 * inputs.pair_health + 0.20 * inputs.data_freshness
-    )
+    # BS-104 guard: entry_price=0 would cause Pydantic ValidationError
+    # when building EngineDInvalidation(stop_price=..., gt=0.0)
+    if inputs.entry_price <= 0.0:
+        no_trade_reasons.append(NoTradeReasonD.COST_INFEASIBLE)
+        logs.append(EngineDLogEntry(
+            event="engine_d_no_trade",
+            pair=inputs.pair,
+            regime=inputs.regime,
+            **build_engine_d_log_context(context),
+            reasons=("entry_price must be positive for re-entry invalidation",),
+        ))
+        return EngineDOutput(
+            pair=inputs.pair,
+            decision=EngineDDecision.NO_TRADE,
+            **build_engine_d_output_payload(
+                context=context,
+                scoring_version=inputs.scoring_version,
+                log_entries=tuple(logs),
+                no_trade_reasons=tuple(no_trade_reasons),
+            ),
+        )
+
+    history_score = compute_history_score(inputs)
     logs.append(
         EngineDLogEntry(
             event="engine_d_history_checked",
             pair=inputs.pair,
             regime=inputs.regime,
-            **_engine_d_log_context(context),
+            **build_engine_d_log_context(context),
             history_score=history_score,
             raw_score=history_score,
         )
@@ -206,7 +194,7 @@ def run_engine_d(inputs: EngineDInput) -> EngineDOutput:
                 event="engine_d_no_trade",
                 pair=inputs.pair,
                 regime=inputs.regime,
-                **_engine_d_log_context(context),
+                **build_engine_d_log_context(context),
                 history_score=history_score,
                 reasons=("prior context too weak for re-entry",),
             )
@@ -214,36 +202,23 @@ def run_engine_d(inputs: EngineDInput) -> EngineDOutput:
         return EngineDOutput(
             pair=inputs.pair,
             decision=EngineDDecision.NO_TRADE,
-            origin_context_id=context["origin_context_id"],
-            origin_trade_id=context["origin_trade_id"],
-            link_type=context["link_type"],
-            structure_reformed_detected=context["structure_reformed_detected"],
-            history_score=history_score,
-            marginal_concentration=context["marginal_concentration"],
-            duplication_possible_with_engine_a=context["duplication_possible_with_engine_a"],
-            duplication_overlap_with_engine_a=context["duplication_overlap_with_engine_a"],
-            marginal_portfolio_gain=context["marginal_portfolio_gain"],
-            covered_share_by_engine_a=context["covered_share_by_engine_a"],
-            no_trade_reasons=tuple(no_trade_reasons),
-            scoring_version=inputs.scoring_version,
-            log_entries=tuple(logs),
+            **build_engine_d_output_payload(
+                context=context,
+                scoring_version=inputs.scoring_version,
+                log_entries=tuple(logs),
+                history_score=history_score,
+                no_trade_reasons=tuple(no_trade_reasons),
+            ),
         )
 
-    context_score = _clamp(
-        0.35 * inputs.regime_favorability
-        + 0.25 * inputs.pair_health
-        + 0.20 * inputs.data_freshness
-        + 0.20 * inputs.flow_coherence
-    )
-    reformation_score = _clamp(
-        0.45 * inputs.reformation_quality + 0.30 * inputs.pullback_quality + 0.25 * context_score
-    )
+    context_score = compute_context_score(inputs)
+    reformation_score = compute_reformation_score(inputs, context_score=context_score)
     logs.append(
         EngineDLogEntry(
             event="engine_d_reformation_checked",
             pair=inputs.pair,
             regime=inputs.regime,
-            **_engine_d_log_context(context),
+            **build_engine_d_log_context(context),
             history_score=history_score,
             reformation_score=reformation_score,
             raw_score=reformation_score,
@@ -256,7 +231,7 @@ def run_engine_d(inputs: EngineDInput) -> EngineDOutput:
                 event="engine_d_no_trade",
                 pair=inputs.pair,
                 regime=inputs.regime,
-                **_engine_d_log_context(context),
+                **build_engine_d_log_context(context),
                 history_score=history_score,
                 reformation_score=reformation_score,
                 reasons=("reformation too weak for second chance entry",),
@@ -265,28 +240,17 @@ def run_engine_d(inputs: EngineDInput) -> EngineDOutput:
         return EngineDOutput(
             pair=inputs.pair,
             decision=EngineDDecision.NO_TRADE,
-            origin_context_id=context["origin_context_id"],
-            origin_trade_id=context["origin_trade_id"],
-            link_type=context["link_type"],
-            structure_reformed_detected=context["structure_reformed_detected"],
-            history_score=history_score,
-            reformation_score=reformation_score,
-            marginal_concentration=context["marginal_concentration"],
-            duplication_possible_with_engine_a=context["duplication_possible_with_engine_a"],
-            duplication_overlap_with_engine_a=context["duplication_overlap_with_engine_a"],
-            marginal_portfolio_gain=context["marginal_portfolio_gain"],
-            covered_share_by_engine_a=context["covered_share_by_engine_a"],
-            no_trade_reasons=tuple(no_trade_reasons),
-            scoring_version=inputs.scoring_version,
-            log_entries=tuple(logs),
+            **build_engine_d_output_payload(
+                context=context,
+                scoring_version=inputs.scoring_version,
+                log_entries=tuple(logs),
+                history_score=history_score,
+                reformation_score=reformation_score,
+                no_trade_reasons=tuple(no_trade_reasons),
+            ),
         )
 
-    marginal_value_score = _clamp(
-        0.35 * inputs.marginal_edge
-        + 0.30 * inputs.continuation_room
-        + 0.20 * inputs.concentration_headroom
-        + 0.15 * (1.0 - inputs.reentry_lateness)
-    )
+    marginal_value_score = compute_marginal_value_score(inputs)
     concentration_risk = context["marginal_concentration"]
     penalized_score = max(0.0, marginal_value_score - max(0.0, concentration_risk - 0.30))
     logs.append(
@@ -294,7 +258,7 @@ def run_engine_d(inputs: EngineDInput) -> EngineDOutput:
             event="engine_d_marginal_value_checked",
             pair=inputs.pair,
             regime=inputs.regime,
-            **_engine_d_log_context(context),
+            **build_engine_d_log_context(context),
             history_score=history_score,
             reformation_score=reformation_score,
             marginal_value_score=marginal_value_score,
@@ -310,7 +274,7 @@ def run_engine_d(inputs: EngineDInput) -> EngineDOutput:
                 event="engine_d_no_trade",
                 pair=inputs.pair,
                 regime=inputs.regime,
-                **_engine_d_log_context(context),
+                **build_engine_d_log_context(context),
                 marginal_value_score=marginal_value_score,
                 concentration_risk=concentration_risk,
                 reasons=("re-entry adds insufficient marginal value",),
@@ -319,22 +283,16 @@ def run_engine_d(inputs: EngineDInput) -> EngineDOutput:
         return EngineDOutput(
             pair=inputs.pair,
             decision=EngineDDecision.NO_TRADE,
-            origin_context_id=context["origin_context_id"],
-            origin_trade_id=context["origin_trade_id"],
-            link_type=context["link_type"],
-            structure_reformed_detected=context["structure_reformed_detected"],
-            history_score=history_score,
-            reformation_score=reformation_score,
-            marginal_value_score=marginal_value_score,
-            concentration_risk=concentration_risk,
-            marginal_concentration=context["marginal_concentration"],
-            duplication_possible_with_engine_a=context["duplication_possible_with_engine_a"],
-            duplication_overlap_with_engine_a=context["duplication_overlap_with_engine_a"],
-            marginal_portfolio_gain=context["marginal_portfolio_gain"],
-            covered_share_by_engine_a=context["covered_share_by_engine_a"],
-            no_trade_reasons=tuple(no_trade_reasons),
-            scoring_version=inputs.scoring_version,
-            log_entries=tuple(logs),
+            **build_engine_d_output_payload(
+                context=context,
+                scoring_version=inputs.scoring_version,
+                log_entries=tuple(logs),
+                history_score=history_score,
+                reformation_score=reformation_score,
+                marginal_value_score=marginal_value_score,
+                concentration_risk=concentration_risk,
+                no_trade_reasons=tuple(no_trade_reasons),
+            ),
         )
     if concentration_risk >= 0.64:
         no_trade_reasons.append(NoTradeReasonD.CONCENTRATION_BLOCKED)
@@ -343,7 +301,7 @@ def run_engine_d(inputs: EngineDInput) -> EngineDOutput:
                 event="engine_d_no_trade",
                 pair=inputs.pair,
                 regime=inputs.regime,
-                **_engine_d_log_context(context),
+                **build_engine_d_log_context(context),
                 marginal_value_score=marginal_value_score,
                 concentration_risk=concentration_risk,
                 reasons=("concentration or lateness risk too high",),
@@ -352,124 +310,112 @@ def run_engine_d(inputs: EngineDInput) -> EngineDOutput:
         return EngineDOutput(
             pair=inputs.pair,
             decision=EngineDDecision.NO_TRADE,
-            origin_context_id=context["origin_context_id"],
-            origin_trade_id=context["origin_trade_id"],
-            link_type=context["link_type"],
-            structure_reformed_detected=context["structure_reformed_detected"],
-            history_score=history_score,
-            reformation_score=reformation_score,
-            marginal_value_score=marginal_value_score,
-            concentration_risk=concentration_risk,
-            marginal_concentration=context["marginal_concentration"],
-            duplication_possible_with_engine_a=context["duplication_possible_with_engine_a"],
-            duplication_overlap_with_engine_a=context["duplication_overlap_with_engine_a"],
-            marginal_portfolio_gain=context["marginal_portfolio_gain"],
-            covered_share_by_engine_a=context["covered_share_by_engine_a"],
-            no_trade_reasons=tuple(no_trade_reasons),
-            scoring_version=inputs.scoring_version,
-            log_entries=tuple(logs),
+            **build_engine_d_output_payload(
+                context=context,
+                scoring_version=inputs.scoring_version,
+                log_entries=tuple(logs),
+                history_score=history_score,
+                reformation_score=reformation_score,
+                marginal_value_score=marginal_value_score,
+                concentration_risk=concentration_risk,
+                no_trade_reasons=tuple(no_trade_reasons),
+            ),
         )
 
-    ev_net = inputs.candidate_size * (inputs.expected_gain - inputs.expected_cost)
-    ce_expected = 0.0
-    if inputs.holding_period > 0:
-        ce_expected = (inputs.expected_gain - inputs.expected_cost) / inputs.holding_period
+    cost_metrics = evaluate_cost_feasibility_d(
+        expected_gain=inputs.expected_gain,
+        expected_cost=inputs.expected_cost,
+        candidate_size=inputs.candidate_size,
+        holding_period=inputs.holding_period,
+        delta_safe=inputs.delta_safe,
+        ce_min=inputs.ce_min,
+    )
     logs.append(
         EngineDLogEntry(
             event="engine_d_cost_checked",
             pair=inputs.pair,
             regime=inputs.regime,
-            **_engine_d_log_context(context),
-            expected_cost=inputs.expected_cost,
-            ce_expected=ce_expected,
-            ev_net=ev_net,
+            **build_engine_d_log_context(context),
+            expected_cost=cost_metrics.expected_cost,
+            ce_expected=cost_metrics.ce_expected,
+            ev_net=cost_metrics.ev_net,
         )
     )
-    if inputs.expected_gain <= inputs.expected_cost + inputs.delta_safe or ce_expected < inputs.ce_min:
+    if not cost_metrics.is_feasible:
         no_trade_reasons.append(NoTradeReasonD.COST_INFEASIBLE)
         logs.append(
             EngineDLogEntry(
                 event="engine_d_no_trade",
                 pair=inputs.pair,
                 regime=inputs.regime,
-                **_engine_d_log_context(context),
-                expected_cost=inputs.expected_cost,
-                ce_expected=ce_expected,
-                ev_net=ev_net,
+                **build_engine_d_log_context(context),
+                expected_cost=cost_metrics.expected_cost,
+                ce_expected=cost_metrics.ce_expected,
+                ev_net=cost_metrics.ev_net,
                 reasons=("re-entry edge does not survive costs",),
             )
         )
         return EngineDOutput(
             pair=inputs.pair,
             decision=EngineDDecision.NO_TRADE,
-            origin_context_id=context["origin_context_id"],
-            origin_trade_id=context["origin_trade_id"],
-            link_type=context["link_type"],
-            structure_reformed_detected=context["structure_reformed_detected"],
-            history_score=history_score,
-            reformation_score=reformation_score,
-            marginal_value_score=marginal_value_score,
-            concentration_risk=concentration_risk,
-            marginal_concentration=context["marginal_concentration"],
-            expected_cost=inputs.expected_cost,
-            ce_expected=ce_expected,
-            ev_net=ev_net,
-            duplication_possible_with_engine_a=context["duplication_possible_with_engine_a"],
-            duplication_overlap_with_engine_a=context["duplication_overlap_with_engine_a"],
-            marginal_portfolio_gain=context["marginal_portfolio_gain"],
-            covered_share_by_engine_a=context["covered_share_by_engine_a"],
-            no_trade_reasons=tuple(no_trade_reasons),
-            scoring_version=inputs.scoring_version,
-            log_entries=tuple(logs),
+            **build_engine_d_output_payload(
+                context=context,
+                scoring_version=inputs.scoring_version,
+                log_entries=tuple(logs),
+                history_score=history_score,
+                reformation_score=reformation_score,
+                marginal_value_score=marginal_value_score,
+                concentration_risk=concentration_risk,
+                expected_cost=cost_metrics.expected_cost,
+                ce_expected=cost_metrics.ce_expected,
+                ev_net=cost_metrics.ev_net,
+                no_trade_reasons=tuple(no_trade_reasons),
+            ),
         )
 
-    raw_score = _clamp(
-        0.30 * history_score
-        + 0.30 * reformation_score
-        + 0.25 * marginal_value_score
-        + 0.15 * min(1.0, max(0.0, ce_expected / max(inputs.ce_min, 1e-6)))
+    conviction_result = build_conviction_d(
+        history_score=history_score,
+        reformation_score=reformation_score,
+        marginal_value_score=marginal_value_score,
+        ce_expected=cost_metrics.ce_expected,
+        ce_min=inputs.ce_min,
+        concentration_risk=concentration_risk,
     )
-    conviction_score = max(0.0, raw_score - concentration_risk * 0.12)
-    if conviction_score >= 0.80:
-        conviction = ConvictionLevelD.HIGH
-        tier = TierSuggestionD.TIER_2
-    elif conviction_score >= 0.64:
-        conviction = ConvictionLevelD.MEDIUM
-        tier = TierSuggestionD.TIER_1
-    else:
-        conviction = ConvictionLevelD.LOW
-        tier = TierSuggestionD.TIER_1
+    conviction = ConvictionLevelD(conviction_result.conviction_name)
+    tier = TierSuggestionD(conviction_result.tier_name)
 
-    stop_price = inputs.reentry_anchor_price - max(inputs.atr * 0.30, inputs.entry_price * 0.0035)
-    if stop_price <= 0:
-        stop_price = inputs.entry_price * 0.987
-    target_price = inputs.entry_price + max(inputs.atr * 1.4, inputs.entry_price * max(inputs.expected_gain, 0.008))
+    invalidation_levels = build_invalidation_levels_d(
+        entry_price=inputs.entry_price,
+        reentry_anchor_price=inputs.reentry_anchor_price,
+        atr=inputs.atr,
+        expected_gain=inputs.expected_gain,
+    )
     invalidation = EngineDInvalidation(
-        stop_price=stop_price,
-        target_price=target_price,
-        risk_multiple=(target_price - inputs.entry_price) / max(inputs.entry_price - stop_price, 1e-6),
+        stop_price=invalidation_levels.stop_price,
+        target_price=invalidation_levels.target_price,
+        risk_multiple=invalidation_levels.risk_multiple,
     )
     block_scores = {
         "history": history_score,
         "reformation": reformation_score,
         "marginal_value": marginal_value_score,
-        "cost_preference": _clamp((inputs.expected_gain - inputs.expected_cost) / max(inputs.expected_gain, inputs.delta_safe)),
+        "cost_preference": cost_metrics.cost_preference_score,
     }
     logs.append(
         EngineDLogEntry(
             event="engine_d_emit",
             pair=inputs.pair,
             regime=inputs.regime,
-            **_engine_d_log_context(context),
-            raw_score=raw_score,
-            penalized_score=conviction_score,
+            **build_engine_d_log_context(context),
+            raw_score=conviction_result.raw_score,
+            penalized_score=conviction_result.conviction_score,
             history_score=history_score,
             reformation_score=reformation_score,
             marginal_value_score=marginal_value_score,
             concentration_risk=concentration_risk,
-            expected_cost=inputs.expected_cost,
-            ce_expected=ce_expected,
-            ev_net=ev_net,
+            expected_cost=cost_metrics.expected_cost,
+            ce_expected=cost_metrics.ce_expected,
+            ev_net=cost_metrics.ev_net,
             conviction=conviction.value,
             tier=tier.value,
             holding_hours=inputs.holding_period,
@@ -479,29 +425,23 @@ def run_engine_d(inputs: EngineDInput) -> EngineDOutput:
     return EngineDOutput(
         pair=inputs.pair,
         decision=EngineDDecision.EMIT,
-        raw_score=raw_score,
-        penalized_score=conviction_score,
-        block_scores=block_scores,
-        conviction=conviction,
-        tier_suggestion=tier,
-        origin_context_id=context["origin_context_id"],
-        origin_trade_id=context["origin_trade_id"],
-        link_type=context["link_type"],
-        structure_reformed_detected=context["structure_reformed_detected"],
-        history_score=history_score,
-        reformation_score=reformation_score,
-        marginal_value_score=marginal_value_score,
-        concentration_risk=concentration_risk,
-        marginal_concentration=context["marginal_concentration"],
-        expected_cost=inputs.expected_cost,
-        ce_expected=ce_expected,
-        ev_net=ev_net,
-        duplication_possible_with_engine_a=context["duplication_possible_with_engine_a"],
-        duplication_overlap_with_engine_a=context["duplication_overlap_with_engine_a"],
-        marginal_portfolio_gain=context["marginal_portfolio_gain"],
-        covered_share_by_engine_a=context["covered_share_by_engine_a"],
-        invalidation=invalidation,
-        holding_hours=inputs.holding_period,
-        scoring_version=inputs.scoring_version,
-        log_entries=tuple(logs),
+        **build_engine_d_output_payload(
+            context=context,
+            scoring_version=inputs.scoring_version,
+            log_entries=tuple(logs),
+            raw_score=conviction_result.raw_score,
+            penalized_score=conviction_result.conviction_score,
+            block_scores=block_scores,
+            conviction=conviction,
+            tier_suggestion=tier,
+            history_score=history_score,
+            reformation_score=reformation_score,
+            marginal_value_score=marginal_value_score,
+            concentration_risk=concentration_risk,
+            expected_cost=cost_metrics.expected_cost,
+            ce_expected=cost_metrics.ce_expected,
+            ev_net=cost_metrics.ev_net,
+            invalidation=invalidation,
+            holding_hours=inputs.holding_period,
+        ),
     )

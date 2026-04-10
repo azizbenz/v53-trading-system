@@ -1,24 +1,35 @@
 """Tests for engines.engine_b — Build-7 — Mean Reversion Intraday."""
 import pytest
+from data_backbone.market_physics_math import ENGINE_CONVICTION_PHYSICS_PENALTY_WEIGHTS
+from engines.engine_a.conviction_builder_a import ENGINE_A_CONVICTION_ADJUSTMENT_WEIGHTS
 
 from engines.engine_b.local_mean_estimator_b import (
+    ENGINE_B_LOCAL_MEAN_CALIBRATION_STATUS,
+    ENGINE_B_LOCAL_MEAN_PROFILE_ID,
     LocalMeanInput,
     LocalMeanResult,
     estimate_local_mean,
 )
 from engines.engine_b.excess_detector_b import (
+    ENGINE_B_EXCESS_CALIBRATION_STATUS,
+    ENGINE_B_EXCESS_PROFILE_ID,
     ExcessInput,
     ExcessVerdict,
     ExcessResult,
     detect_excess,
 )
 from engines.engine_b.anti_breakout_filter_b import (
+    ENGINE_B_BREAKOUT_FILTER_CALIBRATION_STATUS,
+    ENGINE_B_BREAKOUT_FILTER_PROFILE_ID,
     BreakoutInput,
     BreakoutVerdict,
     BreakoutResult,
     evaluate_breakout_risk,
 )
 from engines.engine_b.cost_feasibility_b import (
+    ENGINE_B_COST_CALIBRATION_STATUS,
+    ENGINE_B_COST_DEFAULTS,
+    ENGINE_B_COST_PROFILE_ID,
     CostInputB,
     CostVerdictB,
     CostResultB,
@@ -29,9 +40,18 @@ from engines.engine_b.conviction_builder_b import (
     ConvictionLevelB,
     TierSuggestionB,
     ConvictionResultB,
+    ENGINE_B_CONVICTION_INPUT_DEFAULTS,
+    ENGINE_B_CONVICTION_NORMALIZATION,
+    ENGINE_B_CONVICTION_PROFILE_ID,
+    ENGINE_B_CONVICTION_CALIBRATION_STATUS,
+    ENGINE_B_CONVICTION_ADJUSTMENT_WEIGHTS,
+    MARKET_PHYSICS_CALIBRATION_PROFILE_ID,
+    MARKET_PHYSICS_CALIBRATION_STATUS,
     build_conviction_b,
 )
 from engines.engine_b.invalidation_mapper_b import (
+    ENGINE_B_INVALIDATION_CALIBRATION_STATUS,
+    ENGINE_B_INVALIDATION_PROFILE_ID,
     InvalidationMapB,
     build_invalidation_b,
 )
@@ -42,6 +62,10 @@ from engines.engine_b.signal_reporter_b import (
     SignalStatsB,
 )
 from engines.engine_b.engine_b_runner import (
+    ENGINE_B_RUNNER_CONTEXT_COMPONENT_COUNT,
+    ENGINE_B_RUNNER_COST_RATIO_EPSILON,
+    ENGINE_B_RUNNER_INPUT_DEFAULTS,
+    ENGINE_B_RUNNER_WARNING_PENALTY_WEIGHT,
     EngineBInput,
     EngineBOutput,
     EngineBDecision,
@@ -86,6 +110,13 @@ class TestLocalMeanEstimator:
         ))
         with pytest.raises(Exception):
             result.z_score = 999.0
+
+    def test_local_mean_profile_is_explicitly_marked_to_calibrate(self):
+        result = estimate_local_mean(LocalMeanInput(
+            pair="BTCUSDT", current_price=99.0, local_mean=100.0, local_std=1.0,
+        ))
+        assert result.calibration_profile_id == ENGINE_B_LOCAL_MEAN_PROFILE_ID
+        assert result.calibration_status == ENGINE_B_LOCAL_MEAN_CALIBRATION_STATUS
 
 
 # ── excess_detector_b ──
@@ -140,6 +171,11 @@ class TestExcessDetector:
         base = detect_excess(ExcessInput(pair="BTCUSDT", z_score=-2.0, recent_expansion=0.0))
         penalized = detect_excess(ExcessInput(pair="BTCUSDT", z_score=-2.0, recent_expansion=1.0))
         assert penalized.excess_score < base.excess_score
+
+    def test_excess_profile_is_explicitly_marked_to_calibrate(self):
+        result = detect_excess(ExcessInput(pair="BTCUSDT", z_score=-2.0))
+        assert result.calibration_profile_id == ENGINE_B_EXCESS_PROFILE_ID
+        assert result.calibration_status == ENGINE_B_EXCESS_CALIBRATION_STATUS
 
 
 # ── anti_breakout_filter_b ──
@@ -201,6 +237,11 @@ class TestAntiBreakoutFilter:
         ))
         assert confirmed.breakout_score > base.breakout_score
 
+    def test_breakout_profile_is_explicitly_marked_to_calibrate(self):
+        result = evaluate_breakout_risk(BreakoutInput(pair="BTCUSDT"))
+        assert result.calibration_profile_id == ENGINE_B_BREAKOUT_FILTER_PROFILE_ID
+        assert result.calibration_status == ENGINE_B_BREAKOUT_FILTER_CALIBRATION_STATUS
+
 
 # ── cost_feasibility_b ──
 
@@ -245,6 +286,16 @@ class TestCostFeasibilityB:
         ))
         # edge = 0.003, CE = 0.003/2.0 = 0.0015
         assert result.ce_expected == pytest.approx(0.0015)
+
+    def test_cost_profile_is_explicitly_marked_to_calibrate(self):
+        result = check_cost_feasibility_b(CostInputB(
+            pair="BTCUSDT", expected_gain=0.003, expected_cost=0.001,
+            candidate_size=100.0, holding_period=2.0,
+        ))
+        assert result.calibration_profile_id == ENGINE_B_COST_PROFILE_ID
+        assert result.calibration_status == ENGINE_B_COST_CALIBRATION_STATUS
+        assert CostInputB.model_fields["delta_safe"].default == ENGINE_B_COST_DEFAULTS["delta_safe"]
+        assert CostInputB.model_fields["ce_min"].default == ENGINE_B_COST_DEFAULTS["ce_min"]
 
 
 # ── conviction_builder_b ──
@@ -294,13 +345,54 @@ class TestConvictionBuilderB:
         assert "context" in result.block_scores
         assert "cost_preference" in result.block_scores
 
+    def test_calibration_profiles_are_propagated(self):
+        result = build_conviction_b(ConvictionInputB(
+            pair="BTCUSDT", excess_score=0.5, structure_score=0.4,
+            context_score=0.3, cost_preference_score=0.2,
+        ))
+        assert result.calibration_profile_id == ENGINE_B_CONVICTION_PROFILE_ID
+        assert result.calibration_status == ENGINE_B_CONVICTION_CALIBRATION_STATUS
+        assert result.physics_calibration_profile_id == MARKET_PHYSICS_CALIBRATION_PROFILE_ID
+        assert result.physics_calibration_status == MARKET_PHYSICS_CALIBRATION_STATUS
+
+    def test_conviction_defaults_are_explicitly_governed(self):
+        assert ConvictionInputB.model_fields["sweep_score"].default == ENGINE_B_CONVICTION_INPUT_DEFAULTS["sweep_score"]
+        assert ConvictionInputB.model_fields["poc_reversion_score"].default == ENGINE_B_CONVICTION_INPUT_DEFAULTS["poc_reversion_score"]
+        assert ConvictionInputB.model_fields["false_breakout_score"].default == ENGINE_B_CONVICTION_INPUT_DEFAULTS["false_breakout_score"]
+        assert ENGINE_B_CONVICTION_NORMALIZATION["neutral_midpoint"] == 0.5
+
+    def test_false_breakout_default_is_neutral_not_optimistic(self):
+        implicit = build_conviction_b(ConvictionInputB(
+            pair="BTCUSDT", excess_score=0.7, structure_score=0.6,
+            context_score=0.5, cost_preference_score=0.5,
+        ))
+        explicit = build_conviction_b(ConvictionInputB(
+            pair="BTCUSDT", excess_score=0.7, structure_score=0.6,
+            context_score=0.5, cost_preference_score=0.5,
+            false_breakout_score=0.5,
+        ))
+
+        assert implicit.block_scores["false_breakout_score"] == pytest.approx(0.5)
+        assert implicit.raw_score == pytest.approx(explicit.raw_score)
+
+    def test_physics_penalty_weights_match_shared_governance_and_engine_a(self):
+        for key, value in ENGINE_CONVICTION_PHYSICS_PENALTY_WEIGHTS.items():
+            assert ENGINE_A_CONVICTION_ADJUSTMENT_WEIGHTS[key] == pytest.approx(value)
+            assert ENGINE_B_CONVICTION_ADJUSTMENT_WEIGHTS[key] == pytest.approx(value)
+
     def test_raw_score_formula(self):
-        """raw = 0.35·excess + 0.25·structure + 0.20·context + 0.20·cost_pref."""
+        """raw = legacy core score plus governed default physics adjustments."""
         result = build_conviction_b(ConvictionInputB(
             pair="BTCUSDT", excess_score=0.8, structure_score=0.6,
             context_score=0.4, cost_preference_score=0.2,
         ))
-        expected = 0.35 * 0.8 + 0.25 * 0.6 + 0.20 * 0.4 + 0.20 * 0.2
+        expected = (
+            0.35 * 0.8
+            + 0.25 * 0.6
+            + 0.20 * 0.4
+            + 0.20 * 0.2
+            - 0.10 * 0.5
+        )
         assert result.raw_score == pytest.approx(expected)
 
     def test_market_physics_inputs_shift_b_score(self):
@@ -383,6 +475,13 @@ class TestInvalidationMapperB:
         )
         assert inv.direction == "long"
 
+    def test_invalidation_profile_is_explicitly_marked_to_calibrate(self):
+        inv = build_invalidation_b(
+            pair="BTCUSDT", entry_price=98.0, local_mean=100.0, local_std=1.0,
+        )
+        assert inv.calibration_profile_id == ENGINE_B_INVALIDATION_PROFILE_ID
+        assert inv.calibration_status == ENGINE_B_INVALIDATION_CALIBRATION_STATUS
+
 
 # ── signal_reporter_b ──
 
@@ -446,6 +545,28 @@ def _emit_inputs(**overrides) -> EngineBInput:
     )
     defaults.update(overrides)
     return EngineBInput(**defaults)
+
+
+def test_engine_b_runner_defaults_are_explicitly_governed():
+    assert EngineBInput.model_fields["structure_is_range"].default == ENGINE_B_RUNNER_INPUT_DEFAULTS["structure_is_range"]
+    assert EngineBInput.model_fields["sweep_score"].default == ENGINE_B_RUNNER_INPUT_DEFAULTS["sweep_score"]
+    assert EngineBInput.model_fields["false_breakout_score"].default == ENGINE_B_RUNNER_INPUT_DEFAULTS["false_breakout_score"]
+    assert EngineBInput.model_fields["holding_period"].default == ENGINE_B_RUNNER_INPUT_DEFAULTS["holding_period"]
+    assert EngineBInput.model_fields["delta_safe"].default == ENGINE_B_RUNNER_INPUT_DEFAULTS["delta_safe"]
+
+
+def test_engine_b_runner_false_breakout_default_is_neutral():
+    implicit = run_engine_b(_emit_inputs())
+    explicit = run_engine_b(_emit_inputs(false_breakout_score=0.5))
+
+    assert implicit.block_scores["false_breakout_score"] == pytest.approx(0.5)
+    assert implicit.raw_score == pytest.approx(explicit.raw_score)
+
+
+def test_engine_b_runner_conventions_are_explicitly_governed():
+    assert ENGINE_B_RUNNER_CONTEXT_COMPONENT_COUNT == 4.0
+    assert ENGINE_B_RUNNER_COST_RATIO_EPSILON == 1e-9
+    assert ENGINE_B_RUNNER_WARNING_PENALTY_WEIGHT == 0.30
 
 
 class TestEngineBRunner:
@@ -609,9 +730,10 @@ class TestEngineBRunner:
         ))
 
         assert enriched_output.decision == EngineBDecision.EMIT
-        assert penalized_output.decision == EngineBDecision.EMIT
+        assert penalized_output.decision == EngineBDecision.NO_TRADE
         assert enriched_output.raw_score > base_output.raw_score
         assert penalized_output.raw_score < base_output.raw_score
+        assert penalized_output.conviction == ConvictionLevelB.NONE
         assert enriched_output.block_scores["sweep_score"] == pytest.approx(1.0)
         assert penalized_output.block_scores["market_toxicity"] == pytest.approx(1.0)
         assert "execution_survivability_score" in penalized_output.block_scores

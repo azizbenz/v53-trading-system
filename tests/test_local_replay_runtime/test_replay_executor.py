@@ -102,11 +102,19 @@ def test_execute_local_replay_export_builds_artifact_from_dtr_session():
                 ),
                 total_opportunities=4,
                 dtr_records=_records(),
-                feature_bridge_payload={"bridge_status": "ok"},
-                parity_diagnostics_payload={
-                    "parity_status": "ok",
-                    "decision_match_rate": 1.0,
+                feature_bridge_payload={
+                    "bridge_status": "ok",
+                    "dataset_id": "dataset-executor-1",
+                    "feature_set_version": "4.0.0",
+                    "transform_set_version": "4.0.0",
+                    "pairs": ["BTCUSDT", "ETHUSDT"],
+                    "engines": ["engine_a", "engine_b"],
                 },
+        parity_diagnostics_payload={
+            "parity_status": "ok",
+            "dataset_id": "dataset-executor-1",
+            "decision_match_rate": 1.0,
+        },
                 review_notes=("executor smoke",),
             ),
         )

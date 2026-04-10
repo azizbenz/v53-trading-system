@@ -135,6 +135,19 @@ class TestContradictionChecker:
         result = cc.check_bid_ask_cross("BTC", best_bid=49999.0, best_ask=50000.0, recv_time=100.0)
         assert result is None
 
+    def test_retention_is_bounded_while_total_counter_keeps_growing(self):
+        cc = ContradictionChecker(max_retained_contradictions=2)
+        cc.check_bid_ask_cross("BTC", best_bid=50001.0, best_ask=50000.0, recv_time=100.0)
+        cc.check_bid_ask_cross("BTC", best_bid=50002.0, best_ask=50000.0, recv_time=101.0)
+        cc.check_bid_ask_cross("BTC", best_bid=50003.0, best_ask=50000.0, recv_time=102.0)
+
+        retained = cc.get_contradictions()
+        assert cc.total_contradictions == 3
+        assert cc.retained_contradictions == 2
+        assert len(retained) == 2
+        assert retained[0].detail == "Bid 50002.0 > Ask 50000.0"
+        assert retained[1].detail == "Bid 50003.0 > Ask 50000.0"
+
 
 # --- Consistency Reporter ---
 

@@ -1,4 +1,4 @@
-"""Contracts for the locked Build-10 Light UI backend surface."""
+"""Contracts for the locked Build-10 operator UI backend surface."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ DashboardStatus = Literal["healthy", "warning", "critical", "info", "planned"]
 
 
 class OperatorActionType(StrEnum):
-    """Governed operator actions exposed or rejected by the Light UI."""
+    """Governed operator actions exposed or rejected by the locked operator UI."""
 
     VIEW_CRITICAL_SCREENS = "view_critical_screens"
     SUSPEND_PAIR = "suspend_pair"
@@ -34,7 +34,7 @@ class OperatorActionType(StrEnum):
 
 
 class OperatorEventType(StrEnum):
-    """Audit log event kinds emitted by the locked Light UI."""
+    """Audit log event kinds emitted by the locked operator UI."""
 
     ACTION_REQUESTED = "operator_action_requested"
     ACTION_ACCEPTED = "operator_action_accepted"
@@ -51,7 +51,7 @@ class NotificationDeliveryState(StrEnum):
 
 
 class DashboardCard(BaseModel, frozen=True):
-    """Single card displayed in the locked Light UI."""
+    """Single card displayed in the locked operator UI."""
 
     key: str = Field(..., min_length=1)
     label: str = Field(..., min_length=1)
@@ -79,7 +79,7 @@ class LockedControlSurface(BaseModel, frozen=True):
 
 
 class OperatorActionRequest(TimestampedModel):
-    """Governed operator request routed through the locked Light UI."""
+    """Governed operator request routed through the locked operator UI."""
 
     correlation_id: str = Field(..., min_length=1)
     profile: ProfileId
@@ -108,7 +108,7 @@ class OperatorActionLogEntry(TimestampedModel):
 
 
 class OperatorActionOutcome(BaseModel, frozen=True):
-    """Structured decision returned by the locked Light UI governance layer."""
+    """Structured decision returned by the locked operator UI governance layer."""
 
     accepted: bool
     resulting_state: str = ""
@@ -127,7 +127,7 @@ class OperatorNotificationContract(BaseModel, frozen=True):
 
 
 class OperatorNotificationRecord(TimestampedModel):
-    """Critical alert notification tracked by the locked Light UI runtime."""
+    """Critical alert notification tracked by the locked operator UI runtime."""
 
     correlation_id: str = Field(..., min_length=1)
     alert_id: str = Field(..., min_length=1)
@@ -139,8 +139,8 @@ class OperatorNotificationRecord(TimestampedModel):
     acknowledged_ms: int | None = Field(default=None, ge=0)
 
 
-class LightDashboardView(TimestampedModel):
-    """Final structured view consumed by the locked Light UI."""
+class LockedOperatorDashboardView(TimestampedModel):
+    """Final structured view consumed by the locked operator UI."""
 
     correlation_id: str = Field(..., min_length=1)
     profile: ProfileId
@@ -152,6 +152,9 @@ class LightDashboardView(TimestampedModel):
     notification_contract: OperatorNotificationContract = OperatorNotificationContract()
     pending_notifications: tuple[OperatorNotificationRecord, ...] = ()
     future_panels: tuple[str, ...] = ()
+
+
+LightDashboardView = LockedOperatorDashboardView
 
 
 __all__ = [
@@ -167,5 +170,6 @@ __all__ = [
     "OperatorNotificationContract",
     "NotificationDeliveryState",
     "OperatorNotificationRecord",
+    "LockedOperatorDashboardView",
     "LightDashboardView",
 ]

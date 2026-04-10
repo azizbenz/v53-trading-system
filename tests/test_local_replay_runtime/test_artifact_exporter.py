@@ -49,8 +49,19 @@ def _request() -> ReplayArtifactExportRequest:
             record_count=4096,
         ),
         review_export_markdown="# review\n",
-        feature_bridge_payload={"bridge": "ok", "pairs": ["BTCUSDT", "ETHUSDT"]},
-        parity_diagnostics_payload={"parity": "ok", "decision_match_rate": 1.0},
+        feature_bridge_payload={
+            "bridge": "ok",
+            "dataset_id": "dataset-exporter-1",
+            "feature_set_version": "3.0.0",
+            "transform_set_version": "3.0.0",
+            "pairs": ["BTCUSDT", "ETHUSDT"],
+            "engines": ["engine_a", "engine_b"],
+        },
+        parity_diagnostics_payload={
+            "parity": "ok",
+            "dataset_id": "dataset-exporter-1",
+            "decision_match_rate": 1.0,
+        },
         replay_metrics_payload={"ce_net": 0.0012, "drawdown_pct": 0.03},
         replay_dtr_records=(
             {"dtr_id": "dtr-1", "pair": "BTCUSDT", "decision": "selected"},

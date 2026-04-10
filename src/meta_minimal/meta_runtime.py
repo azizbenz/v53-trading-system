@@ -206,6 +206,63 @@ class MetaRuntime:
         )
 
 
+def build_meta_runtime_result_from_records(
+    records: tuple[DTRRecord, ...],
+    *,
+    total_opportunities: int | None = None,
+) -> MetaRuntimeResult:
+    """Rebuild the canonical Build-9 report set from governed DTR records."""
+
+    if not records:
+        return MetaRuntimeResult(status=MetaRuntimeStatus.EMPTY)
+
+    synthetic_seen = any(record.input_source == MetaInputSource.SYNTHETIC for record in records)
+    local_replay_seen = any(record.input_source == MetaInputSource.LOCAL_REPLAY for record in records)
+    incomplete_path_seen = any(not record.path_complete for record in records)
+
+    dtr_summary = build_dtr_summary(
+        records,
+        total_opportunities=len(records) if total_opportunities is None else total_opportunities,
+    )
+    cra_results, cra_alerts = _build_cra_results(records)
+    cra_report = build_cra_report(cra_results, cra_alerts)
+
+    break_even_records = _build_break_even_records(records)
+    break_even_views = build_views_by_engine_and_pair(break_even_records)
+    cost_distributions = _build_cost_distributions(break_even_records)
+    break_even_report = build_break_even_report(
+        break_even_views,
+        cost_distributions=cost_distributions,
+    )
+
+    edge_classifications = _build_edge_classifications(records)
+    edge_report = build_edge_report(edge_classifications)
+
+    warnings: list[str] = []
+    if synthetic_seen:
+        warnings.append("synthetic inputs detected: edge tracking excluded for those records")
+    if local_replay_seen:
+        warnings.append("local replay inputs detected: edge readings are indicative only")
+    if incomplete_path_seen:
+        warnings.append("incomplete decision path detected: DTR carries explicit path warnings")
+
+    status = MetaRuntimeStatus.READY
+    if synthetic_seen:
+        status = MetaRuntimeStatus.HAS_SYNTHETIC_INPUTS
+    elif local_replay_seen or incomplete_path_seen:
+        status = MetaRuntimeStatus.HAS_PATH_WARNINGS
+
+    return MetaRuntimeResult(
+        status=status,
+        records=records,
+        dtr_summary=dtr_summary,
+        cra_report=cra_report,
+        break_even_report=break_even_report,
+        edge_report=edge_report,
+        warnings=tuple(warnings),
+    )
+
+
 def _build_runtime_dtr(runtime_input: MetaRuntimeInput) -> DTRRecord:
     path_warnings = list(runtime_input.path_warnings)
     if not runtime_input.path_complete and not path_warnings:

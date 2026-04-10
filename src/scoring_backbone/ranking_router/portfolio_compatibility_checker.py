@@ -79,7 +79,15 @@ def check_portfolio_compatibility(
             reason=f"{pair}: no cluster mapping — fail-closed",
         )
 
-    cluster_remaining = portfolio.remaining_cluster_capacity.get(cluster_id, 0.0)
+    if cluster_id not in portfolio.remaining_cluster_capacity:
+        return CompatibilityResult(
+            engine_id=engine_id,
+            pair=pair,
+            verdict=CompatibilityVerdict.REJECTED_CLUSTER,
+            reason=f"{pair}: unknown cluster mapping '{cluster_id}' — fail-closed",
+        )
+
+    cluster_remaining = portfolio.remaining_cluster_capacity[cluster_id]
     if projected_size > cluster_remaining:
         return CompatibilityResult(
             engine_id=engine_id,

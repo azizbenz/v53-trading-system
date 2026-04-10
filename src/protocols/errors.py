@@ -51,6 +51,12 @@ class LiveLightBudgetError(LiveLightProtocolError):
     """Raised when a Live-Light execution request exceeds the governed budget."""
 
 
+LiveProtocolError = LiveLightProtocolError
+LiveInputError = LiveLightInputError
+LiveGateError = LiveLightGateError
+LiveBudgetError = LiveLightBudgetError
+
+
 __all__ = [
     "ShadowProtocolError",
     "ShadowInputError",
@@ -60,6 +66,10 @@ __all__ = [
     "MicroLiveInputError",
     "MicroLiveGateError",
     "MicroLiveBudgetError",
+    "LiveProtocolError",
+    "LiveInputError",
+    "LiveGateError",
+    "LiveBudgetError",
     "LiveLightProtocolError",
     "LiveLightInputError",
     "LiveLightGateError",

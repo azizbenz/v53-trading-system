@@ -100,8 +100,14 @@ class _Build1ModuleAdapter:
 def _build_resource_release_checker(
     before_fd_count: int | None,
     fd_count_provider: Any | None,
+    *,
+    max_total_fd_count: int | None,
 ) -> Any:
-    fd_leak_check = check_fd_leak(before_fd_count, fd_counter=fd_count_provider)
+    fd_leak_check = check_fd_leak(
+        before_fd_count,
+        fd_counter=fd_count_provider,
+        max_total_fd_count=max_total_fd_count,
+    )
 
     def _checker() -> bool:
         ok, _ = fd_leak_check()
@@ -169,6 +175,12 @@ def run_build1_smoke(
     config_map = {c.module_name: c for c in config_checks}
 
     module_reports: list[ModuleSmokeReport] = []
+    suite_fd_baseline = capture_fd_count(fd_count_provider)
+    suite_fd_ceiling = (
+        suite_fd_baseline + 5
+        if suite_fd_baseline is not None
+        else None
+    )
 
     for mod_name in BUILD1_MODULES:
         before_fd_count = capture_fd_count(fd_count_provider)
@@ -185,13 +197,18 @@ def run_build1_smoke(
             resource_release_checker=_build_resource_release_checker(
                 before_fd_count,
                 fd_count_provider,
+                max_total_fd_count=suite_fd_ceiling,
             ),
         )
 
         # 3. Per-module sanity checks
         sanity_checks: dict[str, Any] = {
             f"importable_{mod_name}": check_module_importable(mod_name),
-            "fd_leak": check_fd_leak(before_fd_count, fd_counter=fd_count_provider),
+            "fd_leak": check_fd_leak(
+                before_fd_count,
+                fd_counter=fd_count_provider,
+                max_total_fd_count=suite_fd_ceiling,
+            ),
         }
         # Add global checks to manifest_registry module
         if mod_name == "manifest_registry":

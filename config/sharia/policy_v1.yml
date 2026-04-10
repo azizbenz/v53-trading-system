@@ -1,0 +1,68 @@
+schema_version: sharia.policy.v1
+policy_version: sharia_policy_v1
+fiqh_reference: "Base AAOIFI + Mufti Taqi Usmani, annual third-party review required"
+allow_spot_only: true
+whitelisted_base_assets:
+  BTC:
+    reason: "Conservative approved list for spot trading under the active halal policy."
+    scholar_references: ["AAOIFI base", "Mufti Taqi Usmani base", "annual local review"]
+    last_review_date: 2026-04-09
+    review_period_days: 180
+  ETH:
+    reason: "Conservative approved list for spot trading under the active halal policy."
+    scholar_references: ["AAOIFI base", "Mufti Taqi Usmani base", "annual local review"]
+    last_review_date: 2026-04-09
+    review_period_days: 180
+  BNB:
+    reason: "Conservative approved list for spot trading under the active halal policy."
+    scholar_references: ["AAOIFI base", "Mufti Taqi Usmani base", "annual local review"]
+    last_review_date: 2026-04-09
+    review_period_days: 180
+  SOL:
+    reason: "Conservative approved list for spot trading under the active halal policy."
+    scholar_references: ["AAOIFI base", "Mufti Taqi Usmani base", "annual local review"]
+    last_review_date: 2026-04-09
+    review_period_days: 180
+  XRP:
+    reason: "Conservative approved list for spot trading under the active halal policy."
+    scholar_references: ["AAOIFI base", "Mufti Taqi Usmani base", "annual local review"]
+    last_review_date: 2026-04-09
+    review_period_days: 180
+  ADA:
+    reason: "Conservative approved list for spot trading under the active halal policy."
+    scholar_references: ["AAOIFI base", "Mufti Taqi Usmani base", "annual local review"]
+    last_review_date: 2026-04-09
+    review_period_days: 180
+  LINK:
+    reason: "Conservative approved list for spot trading under the active halal policy."
+    scholar_references: ["AAOIFI base", "Mufti Taqi Usmani base", "annual local review"]
+    last_review_date: 2026-04-09
+    review_period_days: 180
+  TRX:
+    reason: "Conservative approved list for spot trading under the active halal policy."
+    scholar_references: ["AAOIFI base", "Mufti Taqi Usmani base", "annual local review"]
+    last_review_date: 2026-04-09
+    review_period_days: 180
+  XLM:
+    reason: "Conservative approved list for spot trading under the active halal policy."
+    scholar_references: ["AAOIFI base", "Mufti Taqi Usmani base", "annual local review"]
+    last_review_date: 2026-04-09
+    review_period_days: 180
+  DOGE:
+    reason: "Conservative approved list for spot trading under the active halal policy."
+    scholar_references: ["AAOIFI base", "Mufti Taqi Usmani base", "annual local review"]
+    last_review_date: 2026-04-09
+    review_period_days: 180
+blacklisted_base_assets:
+  - AAVE
+  - COMP
+  - MKR
+  - FUN
+blacklisted_pairs: []
+stablecoin_policy:
+  accepted_quote_assets: ["USDT"]
+  rationale: "Use USDT as the operational quote asset and compute purification monthly."
+  scholar_reference: "Documented conservative policy under D-03"
+  review_date: 2026-04-09
+  purification_required: true
+  purification_frequency_days: 30

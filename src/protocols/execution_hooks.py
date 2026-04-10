@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from interface_contracts import HookId
+from interface_contracts import HookId, is_runtime_open_hook_id
 
 from .execution_no_trade_hook import (
     ExecutionNoTradeHookInput,
@@ -14,7 +14,7 @@ from .execution_no_trade_hook import (
 
 
 HOOK_ID = HookId.EXECUTION_NO_TRADE_FILTER
-RUNTIME_OPEN = True
+RUNTIME_OPEN = is_runtime_open_hook_id(HOOK_ID)
 
 ExecutionHookPlanPayload = ExecutionNoTradeHookPlanPayload
 ExecutionHookInput = ExecutionNoTradeHookInput

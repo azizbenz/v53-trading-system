@@ -1,6 +1,10 @@
 """Minimal real Build-11/12/13 protocol runtime surface."""
 
 from protocols.contracts import (
+    LiveDecision,
+    LiveExecutionIntent,
+    LiveInput,
+    LiveRunSummary,
     LiveLightDecision,
     LiveLightExecutionIntent,
     LiveLightInput,
@@ -32,6 +36,8 @@ from protocols.contracts import (
     ShadowValidationSet,
 )
 from protocols.enums import (
+    LiveRunState,
+    LiveVerdict,
     LiveLightRunState,
     LiveLightVerdict,
     MicroLiveRunState,
@@ -45,6 +51,10 @@ from protocols.enums import (
     ShadowVerdict,
 )
 from protocols.errors import (
+    LiveBudgetError,
+    LiveGateError,
+    LiveInputError,
+    LiveProtocolError,
     LiveLightBudgetError,
     LiveLightGateError,
     LiveLightInputError,
@@ -67,10 +77,14 @@ from protocols.micro_live_runtime import (
     run_micro_live_gate,
 )
 from protocols.live_light_dashboard import (
+    build_live_dashboard_section,
+    build_live_projection,
     build_live_light_dashboard_section,
     build_live_light_projection,
 )
 from protocols.live_light_runtime import (
+    build_live_input_from_micro_live,
+    run_live_gate,
     build_live_light_input_from_micro_live,
     run_live_light_gate,
 )
@@ -158,18 +172,108 @@ from protocols.execution_no_trade_hook import (
     load_execution_no_trade_hook_payload,
     run_execution_no_trade_hook,
 )
+from protocols.engine_b_hooks import (
+    EngineBSweepHookPlanPayload,
+    load_engine_b_sweep_hook_payload,
+    run_engine_b_sweep_hook,
+)
+from protocols.engine_a_hooks import (
+    EngineAPreEntryHookPlanPayload,
+    load_engine_a_pre_entry_hook_payload,
+    run_engine_a_pre_entry_hook,
+)
+from protocols.engine_c_hooks import (
+    EngineCVoidHookPlanPayload,
+    load_engine_c_void_hook_payload,
+    run_engine_c_void_hook,
+)
+from protocols.engine_d_hooks import (
+    EngineDReentryHookPlanPayload,
+    load_engine_d_reentry_hook_payload,
+    run_engine_d_reentry_hook,
+)
+from protocols.risk_hooks import (
+    RiskMicroFrictionHookPlanPayload,
+    load_risk_micro_friction_hook_payload,
+    run_risk_micro_friction_hook,
+)
+from protocols.scoring_hooks import (
+    ScoringSoftPenaltyHookPlanPayload,
+    load_scoring_soft_penalty_hook_payload,
+    run_scoring_soft_penalty_hook,
+)
+from protocols.portfolio_hooks import (
+    PortfolioRelativeRankHookPlanPayload,
+    load_portfolio_relative_rank_hook_payload,
+    run_portfolio_relative_rank_hook,
+)
+from protocols.engine_b_sweep_validation_bridge import EngineBSweepValidationBridge
+from protocols.engine_b_sweep_validation_bridge import (
+    EngineBSweepValidationBridgeStatus,
+    inspect_engine_b_sweep_validation_bridge,
+)
+from protocols.engine_a_pre_entry_confirmation_bridge import EngineAPreEntryConfirmationBridge
+from protocols.engine_a_pre_entry_confirmation_bridge import (
+    EngineAPreEntryConfirmationBridgeStatus,
+    inspect_engine_a_pre_entry_confirmation_bridge,
+)
+from protocols.engine_c_void_validation_bridge import EngineCVoidValidationBridge
+from protocols.engine_c_void_validation_bridge import (
+    EngineCVoidValidationBridgeStatus,
+    inspect_engine_c_void_validation_bridge,
+)
+from protocols.engine_d_reentry_validation_bridge import EngineDReentryValidationBridge
+from protocols.engine_d_reentry_validation_bridge import (
+    EngineDReentryValidationBridgeStatus,
+    inspect_engine_d_reentry_validation_bridge,
+)
+from protocols.risk_micro_friction_precheck_bridge import RiskMicroFrictionPrecheckBridge
+from protocols.risk_micro_friction_precheck_bridge import (
+    RiskMicroFrictionPrecheckBridgeStatus,
+    inspect_risk_micro_friction_precheck_bridge,
+)
+from protocols.scoring_soft_penalty_layer_bridge import ScoringSoftPenaltyLayerBridge
+from protocols.scoring_soft_penalty_layer_bridge import (
+    ScoringSoftPenaltyLayerBridgeStatus,
+    inspect_scoring_soft_penalty_layer_bridge,
+)
+from protocols.portfolio_relative_rank_adjustment_bridge import (
+    PortfolioRelativeRankAdjustmentBridge,
+)
+from protocols.portfolio_relative_rank_adjustment_bridge import (
+    PortfolioRelativeRankAdjustmentBridgeStatus,
+    inspect_portfolio_relative_rank_adjustment_bridge,
+)
 from protocols.execution_no_trade_filter_bridge import ExecutionNoTradeFilterBridge
 from protocols.execution_no_trade_filter_bridge import (
     ExecutionNoTradeFilterBridgeStatus,
     inspect_execution_no_trade_filter_bridge,
 )
 from protocols.execution_runtime_bootstrap import (
+    build_binance_execution_runtime,
     build_execution_runtime,
     inspect_execution_runtime_bootstrap,
 )
-from protocols.execution_runtime_dashboard import build_execution_no_trade_bridge_projection
+from protocols.execution_runtime_dashboard import (
+    build_execution_no_trade_bridge_projection,
+    build_runtime_hook_bridge_projections,
+)
 
 __all__ = [
+    "LiveInput",
+    "LiveDecision",
+    "LiveExecutionIntent",
+    "LiveRunSummary",
+    "LiveRunState",
+    "LiveVerdict",
+    "LiveProtocolError",
+    "LiveInputError",
+    "LiveGateError",
+    "LiveBudgetError",
+    "build_live_input_from_micro_live",
+    "run_live_gate",
+    "build_live_projection",
+    "build_live_dashboard_section",
     "LiveLightInput",
     "LiveLightDecision",
     "LiveLightExecutionIntent",
@@ -291,10 +395,54 @@ __all__ = [
     "ExecutionNoTradeHookOutcome",
     "load_execution_no_trade_hook_payload",
     "run_execution_no_trade_hook",
+    "EngineAPreEntryHookPlanPayload",
+    "load_engine_a_pre_entry_hook_payload",
+    "run_engine_a_pre_entry_hook",
+    "EngineBSweepHookPlanPayload",
+    "load_engine_b_sweep_hook_payload",
+    "run_engine_b_sweep_hook",
+    "EngineCVoidHookPlanPayload",
+    "load_engine_c_void_hook_payload",
+    "run_engine_c_void_hook",
+    "EngineDReentryHookPlanPayload",
+    "load_engine_d_reentry_hook_payload",
+    "run_engine_d_reentry_hook",
+    "RiskMicroFrictionHookPlanPayload",
+    "load_risk_micro_friction_hook_payload",
+    "run_risk_micro_friction_hook",
+    "ScoringSoftPenaltyHookPlanPayload",
+    "load_scoring_soft_penalty_hook_payload",
+    "run_scoring_soft_penalty_hook",
+    "PortfolioRelativeRankHookPlanPayload",
+    "load_portfolio_relative_rank_hook_payload",
+    "run_portfolio_relative_rank_hook",
+    "EngineAPreEntryConfirmationBridge",
+    "EngineAPreEntryConfirmationBridgeStatus",
+    "inspect_engine_a_pre_entry_confirmation_bridge",
+    "EngineBSweepValidationBridge",
+    "EngineBSweepValidationBridgeStatus",
+    "inspect_engine_b_sweep_validation_bridge",
+    "EngineCVoidValidationBridge",
+    "EngineCVoidValidationBridgeStatus",
+    "inspect_engine_c_void_validation_bridge",
+    "EngineDReentryValidationBridge",
+    "EngineDReentryValidationBridgeStatus",
+    "inspect_engine_d_reentry_validation_bridge",
+    "RiskMicroFrictionPrecheckBridge",
+    "RiskMicroFrictionPrecheckBridgeStatus",
+    "inspect_risk_micro_friction_precheck_bridge",
+    "ScoringSoftPenaltyLayerBridge",
+    "ScoringSoftPenaltyLayerBridgeStatus",
+    "inspect_scoring_soft_penalty_layer_bridge",
+    "PortfolioRelativeRankAdjustmentBridge",
+    "PortfolioRelativeRankAdjustmentBridgeStatus",
+    "inspect_portfolio_relative_rank_adjustment_bridge",
     "ExecutionNoTradeFilterBridge",
     "ExecutionNoTradeFilterBridgeStatus",
     "inspect_execution_no_trade_filter_bridge",
     "build_execution_runtime",
+    "build_binance_execution_runtime",
     "inspect_execution_runtime_bootstrap",
     "build_execution_no_trade_bridge_projection",
+    "build_runtime_hook_bridge_projections",
 ]

@@ -5,6 +5,47 @@ from local_replay_runtime.artifact_exporter import (
     ReplayArtifactExportResult,
     export_local_replay_artifact,
 )
+from local_replay_runtime.edge_gate_calibration import (
+    EdgeGateCalibrationConfig,
+    EdgeGateCalibrationError,
+    EdgeGateCalibrationInsufficientDataError,
+    EdgeGateCalibrationReport,
+    EdgeGateCalibrationValidationError,
+    EdgeGateThresholdCalibration,
+    build_edge_gate_calibration_artifact,
+    calibrate_edge_gate_thresholds,
+    write_edge_gate_calibration_artifact,
+)
+from local_replay_runtime.artifact_proof_summary_builder import (
+    LocalLabArtifactProofAssessment,
+    build_local_lab_artifact_proof_assessment,
+)
+from local_replay_runtime.artifact_ablation_study import (
+    LocalLabAblationStudy,
+    build_local_lab_ablation_study,
+    build_pending_local_lab_ablation_study,
+)
+from local_replay_runtime.artifact_release_candidate import (
+    LocalLabArtifactReleaseCandidate,
+    LocalLabArtifactReleaseScope,
+    LocalLabArtifactReleaseScopeSummary,
+    build_local_lab_artifact_release_candidate,
+    build_local_lab_artifact_release_scope_summary,
+)
+from local_replay_runtime.local_lab_scope_matrix import (
+    LocalLabScopeAnalysisMatrix,
+    LocalLabScopeAnalysisRow,
+    LocalLabScopeKey,
+    build_local_lab_scope_matrix,
+    build_local_lab_scope_slug,
+    discover_local_lab_scope_keys,
+)
+from local_replay_runtime.local_lab_recalibration_plan import (
+    LocalLabFailureModeAggregate,
+    LocalLabRecalibrationAction,
+    LocalLabRecalibrationPlan,
+    build_local_lab_recalibration_plan,
+)
 from local_replay_runtime.artifact_manifest import ArtifactManifest, SHARED_CORE_ID
 from local_replay_runtime.contracts import (
     LocalReplayRequest,
@@ -56,7 +97,7 @@ from local_replay_runtime.replay_clock import (
     ReplayClockTick,
     build_replay_clock,
 )
-from local_replay_runtime.replay_dtr_exporter import export_replay_dtr_records
+from local_replay_runtime.replay_dtr_exporter import export_replay_dtr_records, load_replay_dtr_records
 from local_replay_runtime.replay_executor import (
     ReplayExecutionInput,
     ReplayExecutionResult,
@@ -100,9 +141,17 @@ from local_replay_runtime.runtime_evidence import (
 )
 from local_replay_runtime.shadow_execution_simulator import (
     ParityTolerancePolicy,
+    ReplayParityDiagnosticsSummary,
     ShadowExecutionSimulatorConfig,
     build_parity_diagnostics_payload,
     simulate_shadow_compatible_dtrs,
+)
+from local_replay_runtime.walk_forward_review import (
+    WalkForwardHumanReview,
+    WalkForwardReviewStatus,
+    WalkForwardReviewSummary,
+    build_walk_forward_review_template,
+    summarize_walk_forward_review,
 )
 
 __all__ = [
@@ -111,11 +160,41 @@ __all__ = [
     "ReplayArtifactExportRequest",
     "ReplayArtifactExportResult",
     "export_local_replay_artifact",
+    "EdgeGateCalibrationConfig",
+    "EdgeGateCalibrationError",
+    "EdgeGateCalibrationInsufficientDataError",
+    "EdgeGateCalibrationReport",
+    "EdgeGateCalibrationValidationError",
+    "EdgeGateThresholdCalibration",
+    "build_edge_gate_calibration_artifact",
+    "calibrate_edge_gate_thresholds",
+    "write_edge_gate_calibration_artifact",
+    "LocalLabArtifactProofAssessment",
+    "build_local_lab_artifact_proof_assessment",
+    "LocalLabAblationStudy",
+    "build_local_lab_ablation_study",
+    "build_pending_local_lab_ablation_study",
+    "LocalLabArtifactReleaseCandidate",
+    "LocalLabArtifactReleaseScope",
+    "LocalLabArtifactReleaseScopeSummary",
+    "build_local_lab_artifact_release_candidate",
+    "build_local_lab_artifact_release_scope_summary",
+    "LocalLabScopeAnalysisMatrix",
+    "LocalLabScopeAnalysisRow",
+    "LocalLabScopeKey",
+    "build_local_lab_scope_matrix",
+    "build_local_lab_scope_slug",
+    "discover_local_lab_scope_keys",
+    "LocalLabFailureModeAggregate",
+    "LocalLabRecalibrationAction",
+    "LocalLabRecalibrationPlan",
+    "build_local_lab_recalibration_plan",
     "ReplayPairAggregate",
     "ReplayEngineAggregate",
     "ReplayMetricsSummary",
     "build_replay_metrics_summary",
     "export_replay_dtr_records",
+    "load_replay_dtr_records",
     "ReplayExecutionInput",
     "ReplayExecutionResult",
     "execute_local_replay_export",
@@ -162,9 +241,15 @@ __all__ = [
     "HistoricalReplayClock",
     "build_replay_clock",
     "ParityTolerancePolicy",
+    "ReplayParityDiagnosticsSummary",
     "ShadowExecutionSimulatorConfig",
     "simulate_shadow_compatible_dtrs",
     "build_parity_diagnostics_payload",
+    "WalkForwardHumanReview",
+    "WalkForwardReviewStatus",
+    "WalkForwardReviewSummary",
+    "build_walk_forward_review_template",
+    "summarize_walk_forward_review",
     "ReplayArtifactKind",
     "ReplayLifecycleState",
     "ArtifactActivationStage",

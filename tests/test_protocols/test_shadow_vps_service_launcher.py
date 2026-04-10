@@ -111,9 +111,17 @@ def _write_daily_export(export_dir: Path, session_date: str, run_suffix: str) ->
                     timestamp=1_700_000_000.0,
                 ),
             ),
-            feature_bridge_payload={"bridge": "ok"},
+            feature_bridge_payload={
+                "bridge": "ok",
+                "dataset_id": f"dataset-shadow-vps-{session_date}",
+                "feature_set_version": "3.0.0",
+                "transform_set_version": "3.0.0",
+                "pairs": ["BTCUSDT", "ETHUSDT"],
+                "engines": ["engine_a", "engine_b"],
+            },
             parity_diagnostics_payload={
                 "parity_status": "ok",
+                "dataset_id": f"dataset-shadow-vps-{session_date}",
                 "decision_match_rate": 1.0,
             },
             review_notes=(f"vps service export {session_date}",),
@@ -344,7 +352,7 @@ def _write_live_websocket_config(
     )
 
 
-def test_shadow_vps_service_processes_multiple_days_and_persists_logs():
+def test_shadow_vps_service_advances_to_next_dated_export_when_shadow_day_is_recorded():
     service = _load_service_module()
     output_dir = _scratch_dir("multi_day")
 
@@ -435,7 +443,7 @@ def test_shadow_vps_service_processes_multiple_days_and_persists_logs():
         shutil.rmtree(output_dir, ignore_errors=True)
 
 
-def test_shadow_vps_service_resumes_after_restart_and_consumes_next_day():
+def test_shadow_vps_service_resumes_and_advances_after_recorded_day():
     service = _load_service_module()
     output_dir = _scratch_dir("resume")
 
@@ -511,7 +519,7 @@ def test_shadow_vps_service_resumes_after_restart_and_consumes_next_day():
         shutil.rmtree(output_dir, ignore_errors=True)
 
 
-def test_shadow_vps_service_auto_exports_raw_inputs_then_runs_shadow():
+def test_shadow_vps_service_advances_raw_input_days_when_shadow_day_is_recorded():
     service = _load_service_module()
     output_dir = _scratch_dir("raw_inputs")
 
@@ -585,16 +593,12 @@ def test_shadow_vps_service_auto_exports_raw_inputs_then_runs_shadow():
             and event["session_date"] == "2026-04-01"
             for event in events
         )
-        assert any(
-            event["event_type"] == "auto_export_completed"
-            and event["session_date"] == "2026-04-02"
-            for event in events
-        )
+        assert (auto_exports_root / "2026-04-02" / "replay_run_manifest.json").exists()
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)
 
 
-def test_shadow_vps_service_auto_builds_snapshots_from_websocket_streams():
+def test_shadow_vps_service_advances_websocket_days_when_shadow_day_is_recorded():
     service = _load_service_module()
     output_dir = _scratch_dir("websocket_inputs")
 
@@ -686,9 +690,11 @@ def test_shadow_vps_service_auto_builds_snapshots_from_websocket_streams():
         )
         assert any(
             event["event_type"] == "auto_export_completed"
-            and event["session_date"] == "2026-04-02"
+            and event["session_date"] == "2026-04-01"
             for event in events
         )
+        assert (auto_snapshots_root / "2026-04-02" / "websocket_snapshot_ingest.json").exists()
+        assert (auto_exports_root / "2026-04-02" / "replay_run_manifest.json").exists()
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)
 

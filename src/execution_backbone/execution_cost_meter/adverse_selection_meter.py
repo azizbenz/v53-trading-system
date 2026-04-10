@@ -7,7 +7,37 @@ AS_i(Δ) = sign(side) · (Mid_{t+Δ} - P_exec) / P_exec
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+import math
+
+from pydantic import BaseModel, Field, model_validator
+
+
+class AdverseSelectionDelayPolicy(BaseModel, frozen=True):
+    """Typed delay policy for post-fill adverse selection measurement."""
+
+    policy_id: str = Field(..., min_length=1)
+    default_delay_s: float = Field(..., gt=0.0)
+    pair_delay_overrides_s: dict[str, float] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_delays(self) -> "AdverseSelectionDelayPolicy":
+        if not math.isfinite(self.default_delay_s):
+            raise ValueError("default_delay_s must be finite")
+        for pair, delay_s in self.pair_delay_overrides_s.items():
+            if not pair:
+                raise ValueError("pair_delay_overrides_s keys must be non-empty")
+            if not math.isfinite(delay_s) or delay_s <= 0.0:
+                raise ValueError("pair_delay_overrides_s values must be finite and > 0")
+        return self
+
+    def resolve_for_pair(self, pair: str) -> float:
+        return self.pair_delay_overrides_s.get(pair, self.default_delay_s)
+
+
+CANONICAL_ADVERSE_SELECTION_DELAY_POLICY = AdverseSelectionDelayPolicy(
+    policy_id="adverse_selection_delay_policy.v1",
+    default_delay_s=5.0,
+)
 
 
 class AdverseSelectionMeasurement(BaseModel, frozen=True):
@@ -20,6 +50,20 @@ class AdverseSelectionMeasurement(BaseModel, frozen=True):
     mid_after: float
     delay_s: float  # Δ — time after fill
     adverse_selection: float  # AS_i(Δ)
+
+
+def resolve_adverse_selection_delay_s(
+    *,
+    pair: str,
+    event_delay_s: float | None,
+    policy: AdverseSelectionDelayPolicy,
+) -> float:
+    """Resolve the measurement delay from explicit event data or typed policy."""
+    if event_delay_s is not None:
+        if not math.isfinite(event_delay_s) or event_delay_s <= 0.0:
+            raise ValueError("event_delay_s must be finite and > 0 when provided")
+        return event_delay_s
+    return policy.resolve_for_pair(pair)
 
 
 def compute_adverse_selection(

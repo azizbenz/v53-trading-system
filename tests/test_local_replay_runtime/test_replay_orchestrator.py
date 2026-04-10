@@ -6,9 +6,12 @@ import json
 import shutil
 from pathlib import Path
 
+import pytest
+
 from interface_contracts import (
     CANONICAL_FEATURE_SET_VERSION,
     CANONICAL_TRANSFORM_SET_VERSION,
+    ProfileId,
     StrategyClassification,
 )
 from local_replay_runtime import (
@@ -178,6 +181,7 @@ def test_orchestrator_slices_dataset_by_chunk_and_persists_slice_outputs():
         assert manifest["record_count"] == 2
         assert manifest["tick_count"] == 2
         assert manifest["tested_pairs"] == ["BTCUSDT", "ETHUSDT"]
+        assert manifest["profile_scope"] == ProfileId.COMPLETE.value
         assert manifest["feature_set_version"] == CANONICAL_FEATURE_SET_VERSION
         assert manifest["transform_set_version"] == CANONICAL_TRANSFORM_SET_VERSION
         assert session_config["chunk_count"] == 3
@@ -211,12 +215,12 @@ def test_orchestrator_resume_reuses_completed_export_without_new_dataset_inputs(
         resumed = orchestrate_local_replay_export(
             ReplayOrchestratorRequest(
                 output_dir=output_dir,
-                run_id="run-ignored-during-resume",
-                strategy_id="strategy-ignored",
-                strategy_version="a.v0",
+                run_id="run-orchestrator-resume-1",
+                strategy_id="strategy-resume-a",
+                strategy_version="a.v9.1",
                 strategy_classification=StrategyClassification.A_VARIANT,
-                lineage_version="a.v0.r1",
-                performance_mode="research_fast_mode",
+                lineage_version="a.v9.1.r1",
+                performance_mode="shadow_fidelity_mode",
                 resume=True,
             )
         )
@@ -227,6 +231,89 @@ def test_orchestrator_resume_reuses_completed_export_without_new_dataset_inputs(
         assert resumed.processed_dataset.record_count == 5
         assert resumed.processed_dataset.dataset_id == "dataset-orchestrator-1"
         assert (output_dir / "replay_run_manifest.json").read_text(encoding="utf-8") == original_manifest
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_orchestrator_resume_rejects_mismatched_completed_export_metadata():
+    output_dir = _scratch_dir("resume_export_mismatch")
+    shutil.rmtree(output_dir, ignore_errors=True)
+    output_dir.mkdir(parents=True, exist_ok=False)
+    try:
+        orchestrate_local_replay_export(
+            ReplayOrchestratorRequest(
+                output_dir=output_dir,
+                run_id="run-orchestrator-resume-mismatch-1",
+                strategy_id="strategy-resume-mismatch-a",
+                strategy_version="a.v9.2",
+                strategy_classification=StrategyClassification.A_VARIANT,
+                lineage_version="a.v9.2.r1",
+                performance_mode="shadow_fidelity_mode",
+                input_kind="historical_dataset",
+                dataset=_dataset(),
+            )
+        )
+
+        with pytest.raises(
+            ValueError,
+            match="LOCAL_REPLAY resume request does not match the persisted export",
+        ):
+            orchestrate_local_replay_export(
+                ReplayOrchestratorRequest(
+                    output_dir=output_dir,
+                    run_id="run-orchestrator-resume-mismatch-1",
+                    strategy_id="strategy-resume-mismatch-a",
+                    strategy_version="a.v9.2",
+                    strategy_classification=StrategyClassification.A_VARIANT,
+                    lineage_version="a.v9.2.r1",
+                    performance_mode="shadow_fidelity_mode",
+                    profile_scope=ProfileId.LIGHT,
+                    resume=True,
+                )
+            )
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_orchestrator_resume_backs_up_corrupted_session_config_metadata():
+    output_dir = _scratch_dir("resume_export_corrupted_metadata")
+    shutil.rmtree(output_dir, ignore_errors=True)
+    output_dir.mkdir(parents=True, exist_ok=False)
+    try:
+        orchestrate_local_replay_export(
+            ReplayOrchestratorRequest(
+                output_dir=output_dir,
+                run_id="run-orchestrator-corrupted-metadata-1",
+                strategy_id="strategy-corrupted-metadata-a",
+                strategy_version="a.v9.2",
+                strategy_classification=StrategyClassification.A_VARIANT,
+                lineage_version="a.v9.2.r1",
+                performance_mode="shadow_fidelity_mode",
+                input_kind="historical_dataset",
+                dataset=_dataset(),
+            )
+        )
+        session_config_path = output_dir / "replay_session_config.json"
+        session_config_path.write_text("{ invalid json", encoding="utf-8")
+
+        with pytest.raises(
+            ValueError,
+            match="LOCAL_REPLAY resume metadata is corrupted: replay_session_config.json",
+        ):
+            orchestrate_local_replay_export(
+                ReplayOrchestratorRequest(
+                    output_dir=output_dir,
+                    run_id="run-orchestrator-corrupted-metadata-1",
+                    strategy_id="strategy-corrupted-metadata-a",
+                    strategy_version="a.v9.2",
+                    strategy_classification=StrategyClassification.A_VARIANT,
+                    lineage_version="a.v9.2.r1",
+                    performance_mode="shadow_fidelity_mode",
+                    resume=True,
+                )
+            )
+
+        assert session_config_path.with_suffix(".corrupted").exists()
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)
 
@@ -266,6 +353,7 @@ def test_orchestrator_run_all_chunks_writes_chunk_dirs_and_root_aggregate():
         assert manifest["record_count"] == 5
         assert manifest["tick_count"] == 5
         assert manifest["tested_pairs"] == ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"]
+        assert manifest["profile_scope"] == ProfileId.COMPLETE.value
         assert session_bundle["aggregate_ready"] is True
         assert session_bundle["completed_chunk_indices"] == [1, 2, 3]
         assert len(session_bundle["chunk_artifacts"]) == 3
@@ -321,6 +409,55 @@ def test_orchestrator_run_all_chunks_resume_reuses_completed_session():
         assert resumed.completed_chunk_indices == (1, 2, 3)
         assert resumed.resumed_chunk_indices == (1, 2, 3)
         assert session_bundle["resumed_chunk_indices"] == [1, 2, 3]
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_orchestrator_run_all_chunks_resume_backs_up_corrupted_chunk_session():
+    output_dir = _scratch_dir("aggregate_resume_corrupted_chunk_session")
+    shutil.rmtree(output_dir, ignore_errors=True)
+    output_dir.mkdir(parents=True, exist_ok=False)
+    try:
+        orchestrate_local_replay_export(
+            ReplayOrchestratorRequest(
+                output_dir=output_dir,
+                run_id="run-orchestrator-corrupted-chunk-session-1",
+                strategy_id="strategy-corrupted-chunk-session-a",
+                strategy_version="a.v9.5",
+                strategy_classification=StrategyClassification.A_VARIANT,
+                lineage_version="a.v9.5.r1",
+                performance_mode="research_fast_mode",
+                input_kind="historical_dataset",
+                dataset=_dataset(),
+                chunk_count=3,
+                run_all_chunks=True,
+            )
+        )
+        chunk_session_path = output_dir / "replay_chunk_session.json"
+        chunk_session_path.write_text("{ invalid json", encoding="utf-8")
+
+        with pytest.raises(
+            ValueError,
+            match="LOCAL_REPLAY chunk session metadata is corrupted: replay_chunk_session.json",
+        ):
+            orchestrate_local_replay_export(
+                ReplayOrchestratorRequest(
+                    output_dir=output_dir,
+                    run_id="run-orchestrator-corrupted-chunk-session-1",
+                    strategy_id="strategy-corrupted-chunk-session-a",
+                    strategy_version="a.v9.5",
+                    strategy_classification=StrategyClassification.A_VARIANT,
+                    lineage_version="a.v9.5.r1",
+                    performance_mode="research_fast_mode",
+                    input_kind="historical_dataset",
+                    dataset=_dataset(),
+                    chunk_count=3,
+                    run_all_chunks=True,
+                    resume=True,
+                )
+            )
+
+        assert chunk_session_path.with_suffix(".corrupted").exists()
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)
 

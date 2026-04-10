@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from interface_contracts import PairHealthLevel, ProfileId, RuntimeMode
+from interface_contracts import HookId, PairHealthLevel, ProfileId, RuntimeMode
 from meta import (
     build_break_even_report,
     build_cra_report,
@@ -33,6 +33,7 @@ from monitoring import (
     MicroLiveProjection,
     OperatorRuntimeProjection,
     ReplayImportProjection,
+    RuntimeHookBridgeProjection,
     ShadowProjection,
     build_technical_dashboard_payload,
     collect_engine_metrics,
@@ -301,6 +302,7 @@ def test_technical_dashboard_view_exposes_system_meta_build9x_and_replay_section
 
     titles = {section.title for section in view.sections}
     assert titles == {
+        "Build-10",
         "System",
         "Portfolio",
         "Pairs",
@@ -316,10 +318,14 @@ def test_technical_dashboard_view_exposes_system_meta_build9x_and_replay_section
         "Build-12 Micro-live",
         "Build-13 Live",
         "Build-14 Enablers",
+        "Artifact Hooks",
         "Operator Controls",
         "Replay & Import",
         "Alerts",
     }
+    build10 = next(section for section in view.sections if section.title == "Build-10")
+    assert next(card for card in build10.cards if card.key == "build10_state").value == "implemented"
+    assert next(card for card in build10.cards if card.key == "build10_governed_rail").value == "light / shadow"
     system = next(section for section in view.sections if section.title == "System")
     assert any(card.key == "governed_extensions" and "9X=warning" in card.value for card in system.cards)
     assert any(card.key == "governed_extensions" and "micro=planned" in card.value for card in system.cards)
@@ -354,6 +360,7 @@ def test_technical_dashboard_view_exposes_system_meta_build9x_and_replay_section
     assert next(card for card in micro.cards if card.key == "micro_live_run_state").value == "not_run"
     assert next(card for card in live.cards if card.key == "live_light_run_state").value == "not_run"
     assert next(card for card in replay.cards if card.key == "conflict_policy").value == "no_trade_then_strictest"
+
     assert "veto=no_trade" in next(
         card for card in replay.cards if card.key == "conflict_policy"
     ).detail
@@ -420,6 +427,29 @@ def test_technical_dashboard_view_exposes_system_meta_build9x_and_replay_section
     assert next(card for card in replay.cards if card.key == "compatibility_policy").status == "healthy"
     assert next(card for card in replay.cards if card.key == "signature_policy").value == "trust_eligible"
     assert next(card for card in replay.cards if card.key == "signature_policy").status == "healthy"
+
+
+def test_technical_dashboard_view_reports_complete_live_governed_rail():
+    payload = build_technical_dashboard_payload(
+        _snapshot(
+            profile=ProfileId.COMPLETE,
+            runtime_mode=RuntimeMode.LIVE,
+        ),
+        active_modules=("monitoring", "ui", "protocols"),
+        active_engines=("engine_a", "engine_b"),
+    )
+
+    view = build_technical_dashboard_view(payload)
+
+    build10 = next(section for section in view.sections if section.title == "Build-10")
+    assert next(card for card in build10.cards if card.key == "build10_governed_rail").value == (
+        "complete / live"
+    )
+    system = next(section for section in view.sections if section.title == "System")
+    assert any(
+        card.key == "runtime_mode" and card.detail == "profile=complete"
+        for card in system.cards
+    )
 
 
 def test_technical_dashboard_view_handles_empty_governed_state_cleanly():
@@ -902,6 +932,8 @@ def test_technical_dashboard_view_projects_execution_no_trade_bridge_card():
                     "binding_present": True,
                     "loaded": False,
                     "compiled_plan_ref": "compiled/snap-2/execution_no_trade.json",
+                    "failure_mode": "fail_open_baseline_skip_artifact",
+                    "error_stage": "plan_selection",
                     "error_type": "ValueError",
                 }
             )
@@ -918,6 +950,51 @@ def test_technical_dashboard_view_projects_execution_no_trade_bridge_card():
     assert "snapshot=snap-2" in bridge.detail
     assert "lkg=snap-1" in bridge.detail
     assert "err=ValueError" in bridge.detail
+    assert "mode=fail_open_baseline_skip_artifact" in bridge.detail
+    assert "stage=plan_selection" in bridge.detail
+
+
+def test_technical_dashboard_view_projects_runtime_hook_bridge_section():
+    payload = build_technical_dashboard_payload(
+        _snapshot(),
+        runtime_hook_bridge_projections=(
+            RuntimeHookBridgeProjection(
+                hook_id=HookId.ENGINE_B_SWEEP_VALIDATION,
+                label="Engine B sweep",
+                status="warning",
+                configured=True,
+                selection_status="binding_only",
+                binding_present=True,
+                artifact_count=2,
+                action_kinds=("soft_reduce",),
+                detail="Compiled Engine B bridge binding published but plan not loaded",
+            ),
+            RuntimeHookBridgeProjection(
+                hook_id=HookId.RISK_MICRO_FRICTION_PRECHECK,
+                label="Risk micro-friction",
+                status="healthy",
+                configured=True,
+                selection_status="loaded",
+                loaded=True,
+                artifact_count=1,
+                action_kinds=("no_trade",),
+                detail="Compiled risk micro-friction bridge loaded from current snapshot",
+            ),
+        ),
+    )
+
+    view = build_technical_dashboard_view(payload)
+    hook_section = next(section for section in view.sections if section.title == "Artifact Hooks")
+    summary = next(card for card in hook_section.cards if card.key == "runtime_hook_bridges_summary")
+    engine_b = next(
+        card for card in hook_section.cards if card.key == "runtime_hook_bridge_engine_b_sweep_validation"
+    )
+
+    assert summary.value == "open=8 / configured=2 / loaded=1"
+    assert summary.status == "warning"
+    assert engine_b.value == "sel=binding_only / loaded=no"
+    assert "actions=soft_reduce" in engine_b.detail
+    assert "artifacts=2" in engine_b.detail
 
 
 def test_technical_dashboard_view_escalates_headline_from_execution_no_trade_bridge():
@@ -1130,6 +1207,27 @@ def test_technical_dashboard_view_exposes_operator_controls_for_current_runtime(
     )
     assert next(card for card in operator.cards if card.key == "operator_kill_path").value == "active"
     assert next(card for card in operator.cards if card.key == "operator_kill_path").status == "critical"
+
+
+def test_technical_dashboard_view_prefers_operator_last_error_in_alerts_section():
+    payload = build_technical_dashboard_payload(
+        _snapshot(),
+        active_modules=("protocols", "monitoring", "ui"),
+        active_engines=("engine_a",),
+        operator_runtime=OperatorRuntimeProjection(
+            event_count=1,
+            latest_event_type="screen_opened",
+            latest_event_message="screen opened: overview",
+            last_error="state_file_corrupted:JSONDecodeError:bad payload",
+        ),
+    )
+
+    view = build_technical_dashboard_view(payload)
+    alerts = next(section for section in view.sections if section.title == "Alerts")
+
+    assert next(card for card in alerts.cards if card.key == "operator_events").detail == (
+        "state_file_corrupted:JSONDecodeError:bad payload"
+    )
 
 
 def test_technical_dashboard_view_escalates_operator_controls_from_supervision_status():

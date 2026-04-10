@@ -22,6 +22,14 @@ coverage.xml
 
 # Local audit / scratch artifacts
 .codex_tmp/
+.codex_kill_switch_tests/
+.codex_pytest_calibration_run/
+.test_tmp/
+.tmp_pytest/
+engine_a_breaker_*/
+engine_b_breaker_*/
 v53_dag_*/
 v53_probe_*/
 V53_TRADING_SYSTEM_FILE_AUDIT_*.md
+entities.json
+mempalace.yaml

@@ -88,9 +88,17 @@ def _write_daily_export(export_dir: Path, session_date: str, run_suffix: str) ->
                     timestamp=1_700_000_000.0,
                 ),
             ),
-            feature_bridge_payload={"bridge": "ok"},
+            feature_bridge_payload={
+                "bridge": "ok",
+                "dataset_id": f"dataset-shadow-daily-{session_date}",
+                "feature_set_version": "3.0.0",
+                "transform_set_version": "3.0.0",
+                "pairs": ["BTCUSDT", "ETHUSDT"],
+                "engines": ["engine_a", "engine_b"],
+            },
             parity_diagnostics_payload={
                 "parity_status": "ok",
+                "dataset_id": f"dataset-shadow-daily-{session_date}",
                 "decision_match_rate": 1.0,
             },
             review_notes=(f"daily export {session_date}",),
@@ -98,7 +106,7 @@ def _write_daily_export(export_dir: Path, session_date: str, run_suffix: str) ->
     )
 
 
-def test_shadow_daily_orchestrator_launcher_consumes_next_dated_export_dir():
+def test_shadow_daily_orchestrator_launcher_advances_to_next_dated_export_when_shadow_day_is_recorded():
     launcher = _load_launcher_module()
     output_dir = _scratch_dir("launcher")
 
@@ -152,11 +160,12 @@ def test_shadow_daily_orchestrator_launcher_consumes_next_dated_export_dir():
             )
         )
 
-        completed_dates = [
-            record["session_date"] for record in state["completed_runs"]
-        ]
+        completed_dates = [record["session_date"] for record in state["completed_runs"]]
         assert completed_dates == ["2026-04-01", "2026-04-02"]
+        assert all(record["shadow_day_recorded"] is True for record in state["completed_runs"])
         assert last_run["session_date"] == "2026-04-02"
+        assert last_run["shadow_day_recorded"] is True
+        assert isinstance(last_run["consecutive_days"], int)
         assert last_run["consecutive_days"] == 2
         assert last_run["local_replay_evidence_ref"].endswith(
             "local_replay_shadow.local_replay_evidence.json"

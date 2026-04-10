@@ -48,11 +48,12 @@ La V5.3 reste :
 
 Lecture canonique des états :
 
-- `profil=LIGHT`, `runtime_mode=SHADOW` : Build-11 / `Shadow intégral`
-- `profil=LIGHT`, `runtime_mode=MICRO_LIVE` : Build-12
-- `profil=LIGHT`, `runtime_mode=LIVE` : Build-13 / `Live-Light`
-- `profil=COMPLETE`, `runtime_mode=SHADOW` : Shadow Complete
-- `profil=COMPLETE`, `runtime_mode=LIVE` : Live-Complete
+- `profil=LIGHT`, `runtime_mode=LOCAL_REPLAY` : surface locale de compatibilité et preuve contrainte
+- `profil=COMPLETE`, `runtime_mode=LOCAL_REPLAY` : baseline gouvernée des exports et reprises locales
+- `profil=COMPLETE`, `runtime_mode=SHADOW` : Build-11 actif
+- `profil=COMPLETE`, `runtime_mode=MICRO_LIVE` : Build-12 actif
+- `profil=COMPLETE`, `runtime_mode=LIVE` : Build-13 actif
+- `Shadow intégral`, `Micro-live Light` et `Live-Light` restent des labels historiques ou documentaires, pas la cible runtime gouvernée active
 
 Refus immédiat si l’on introduit :
 
@@ -334,7 +335,7 @@ Valider la **solution intégrale observée** sans risque capital. Le Shadow est 
 
 > **NON NÉGOCIABLE. Aucune dérogation.**
 
-### Shadow intégral (profil `LIGHT`) — Phase de vérité système
+### Shadow intégral (libellé historique ; profil gouverné courant `COMPLETE`) — Phase de vérité système
 - **30 jours calendaires consécutifs minimum** en mode SHADOW sur données réelles
 - Pipeline complet obligatoire : data → engine → scoring → portfolio → execution simulée
 - **A/B/C/D activés à 100%** : scorés, classés, arbitrés et observés
@@ -346,10 +347,10 @@ Valider la **solution intégrale observée** sans risque capital. Le Shadow est 
 - **Activation intégrale en Shadow ≠ promotion Live** : verdict composant par composant obligatoire
 
 ### Complete Shadow
-- **30 jours calendaires consécutifs minimum** en mode SHADOW après Light live stable
-- Complete tourne en parallèle de Light live
-- Non-régression Light obligatoire pendant les 30 jours
-- Si enrichissement Complete dégrade Light → désactivation + compteur à zéro
+- **30 jours calendaires consécutifs minimum** en mode SHADOW après la stabilité du rail gouverné courant
+- Complete tourne en parallèle du rail live gouverné actif
+- Non-régression du rail live actif obligatoire pendant les 30 jours
+- Si enrichissement Complete dégrade le rail live actif → désactivation + compteur à zéro
 - Rapport comparatif Light vs Complete obligatoire
 - **Aucune activation Live-Complete avant l’expiration**
 

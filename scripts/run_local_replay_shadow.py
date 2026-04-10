@@ -17,31 +17,34 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from backtest_artifact_import import (  # noqa: E402
-    ArtifactImportRequest,
     ArtifactPayloadRefBundle,
+    ArtifactUploadContext,
+    build_lab_fixture_signature_envelope,
+    build_artifact_upload_decision,
+    build_import_context_from_replay_plan,
+    build_import_context_from_export_dir,
     build_replay_import_projection,
+    build_upload_context_from_replay_import_context,
+    discover_local_replay_export,
     summarize_import_request,
     validate_import_request,
 )
 from complete_enablers import evaluate_build14_shadow_activation  # noqa: E402
-from engine_a import EngineAInput, EngineARuntime, EngineARuntimeInput, EngineARuntimeStatus  # noqa: E402
-from engine_b import EngineBInput, EngineBRuntime, EngineBRuntimeInput, EngineBRuntimeStatus  # noqa: E402
-from engine_c import EngineCInput, EngineCRuntime, EngineCRuntimeInput, EngineCRuntimeStatus  # noqa: E402
-from engine_d import EngineDInput, EngineDRuntime, EngineDRuntimeInput, EngineDRuntimeStatus  # noqa: E402
+from engines.engine_a import EngineAInput, EngineARuntime, EngineARuntimeInput, EngineARuntimeStatus  # noqa: E402
+from engines.engine_b import EngineBInput, EngineBRuntime, EngineBRuntimeInput, EngineBRuntimeStatus  # noqa: E402
+from engines.engine_c import EngineCInput, EngineCRuntime, EngineCRuntimeInput, EngineCRuntimeStatus  # noqa: E402
+from engines.engine_d import EngineDInput, EngineDRuntime, EngineDRuntimeInput, EngineDRuntimeStatus  # noqa: E402
 from interface_contracts import (  # noqa: E402
     ArtifactActivationStage,
-    CANONICAL_FEATURE_SET_VERSION,
-    CANONICAL_PHYSICS_FEATURE_DICTIONARY,
-    CANONICAL_TRANSFORM_SET_VERSION,
-    FeatureLineageLock,
-    FeatureLineageRecord,
+    ArtifactClass,
+    ArtifactLifecyclePolicy,
+    ArtifactLogicFormat,
+    ArtifactProofSummary,
+    ArtifactSignatureEnvelope,
     PairHealthLevel,
     ProfileId,
     RuntimeMode,
     StrategyClassification,
-    TransformWhitelistId,
-    TransformWhitelistLock,
-    canonical_transform_ids,
 )
 from local_replay_runtime import (  # noqa: E402
     LocalReplayEvidenceRecorder,
@@ -80,11 +83,13 @@ from monitoring import (  # noqa: E402
     collect_portfolio_metrics,
     derive_build14_observation_from_snapshot,
 )
+from risk_backbone.emergency_kill_switch.circuit_breaker import EmergencyCircuitBreaker  # noqa: E402
 from risk_backbone.risk_runtime import RiskLimits, RiskRuntime  # noqa: E402
 from protocols import (  # noqa: E402
     ShadowComponentAssessment,
     ShadowComponentKind,
     ShadowComponentVerdict,
+    ShadowDailyOrchestrator,
     ShadowDayCounter,
     ShadowProfile,
     ShadowSessionEntry,
@@ -92,9 +97,11 @@ from protocols import (  # noqa: E402
     ShadowRuntimeEvidenceRecorder,
     ShadowRuntimeEvidenceRecorderConfig,
     build_shadow_daily_metrics_summary,
+    build_runtime_hook_bridge_projections,
     build_shadow_input_from_payloads,
     run_shadow_validation,
 )
+from protocols.shadow_day_counter import ShadowDayRecord  # noqa: E402
 from scoring_backbone.penalty_aggregator.penalty_registry import (  # noqa: E402
     PenaltyDefinition,
     PenaltyRegistry,
@@ -102,6 +109,108 @@ from scoring_backbone.penalty_aggregator.penalty_registry import (  # noqa: E402
 )
 from scoring_backbone.ranking_router.portfolio_compatibility_checker import PortfolioState  # noqa: E402
 from scoring_backbone.scoring_runtime import ScoringRuntime  # noqa: E402
+
+
+_SHADOW_IMPORT_LIFECYCLE_POLICY = ArtifactLifecyclePolicy(
+    ttl_max_days=30,
+    rule_half_life_days=7,
+)
+_SHADOW_IMPORT_DRIFT_SCORE_THRESHOLD = 0.85
+_RECOVERED_SHADOW_RUN_ID = "recovered:shadow_session_registry"
+_RECOVERED_SHADOW_ARTIFACT_ID = "recovered:artifact"
+_RECOVERED_SHADOW_LINEAGE_VERSION = "recovered:lineage"
+
+
+def _shadow_upload_signature_envelope() -> ArtifactSignatureEnvelope:
+    return build_lab_fixture_signature_envelope()
+
+
+def _shadow_upload_proof_summary() -> ArtifactProofSummary:
+    return ArtifactProofSummary(
+        anti_cowardice_pass=True,
+        friction_regret_pass=True,
+        walk_forward_pass=True,
+        regime_segmentation_pass=True,
+        operational_burden_pass=True,
+        capital_efficiency_pass=True,
+        ablation_delta_net_pnl=0.12,
+        ablation_delta_ce=0.03,
+        friction_regret_value=0.01,
+        block_rate_delta=0.02,
+    )
+
+
+def _load_successful_shadow_day_records(
+    output_dir: Path,
+    *,
+    profile: ShadowProfile,
+) -> tuple[tuple[Path, ShadowDayRecord], ...]:
+    shadow_days_dir = output_dir / "shadow_days"
+    if not shadow_days_dir.is_dir():
+        return ()
+
+    loaded_records: list[tuple[Path, ShadowDayRecord]] = []
+    for path in sorted(shadow_days_dir.glob("local_replay_shadow.day_*.json")):
+        try:
+            record = ShadowDayRecord.model_validate_json(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            continue
+        if record.profile != profile or not record.passed_all_gates:
+            continue
+        loaded_records.append((path, record))
+    loaded_records.sort(key=lambda item: item[1].day_number)
+    return tuple(loaded_records)
+
+
+def _build_recovered_shadow_registry_entries(
+    records: tuple[tuple[Path, ShadowDayRecord], ...],
+) -> tuple[ShadowSessionEntry, ...]:
+    recovered_entries: list[ShadowSessionEntry] = []
+    for path, record in records:
+        recovered_entries.append(
+            ShadowSessionEntry(
+                session_date=record.date,
+                counter_day_number=record.day_number,
+                correlation_id=f"recovered:corr:{record.date}:{record.day_number:04d}",
+                run_id=_RECOVERED_SHADOW_RUN_ID,
+                artifact_id=_RECOVERED_SHADOW_ARTIFACT_ID,
+                lineage_version=_RECOVERED_SHADOW_LINEAGE_VERSION,
+                day_record_ref=str(path.resolve()),
+                export_dir_ref="",
+            )
+        )
+    return tuple(recovered_entries)
+
+
+def _recover_shadow_state_from_artifacts(
+    output_dir: Path,
+    *,
+    shadow_counter: ShadowDayCounter,
+    shadow_registry: ShadowSessionRegistry,
+) -> None:
+    recovered_records = _load_successful_shadow_day_records(
+        output_dir,
+        profile=ShadowProfile.COMPLETE,
+    )
+    if not recovered_records:
+        return
+
+    successful_records = tuple(record for _, record in recovered_records)
+    counter_state = shadow_counter.get_status()
+    registry_error = shadow_registry._state.last_error
+
+    if counter_state.last_error:
+        shadow_counter.recover_from_records(successful_records)
+        counter_state = shadow_counter.get_status()
+
+    if registry_error:
+        shadow_registry.recover_from_entries(
+            _build_recovered_shadow_registry_entries(recovered_records)
+        )
+    elif not shadow_registry.get_entries() and counter_state.consecutive_days > 0:
+        shadow_registry.recover_from_entries(
+            _build_recovered_shadow_registry_entries(recovered_records)
+        )
 
 
 @dataclass(frozen=True)
@@ -123,6 +232,8 @@ class LocalReplayShadowArtifacts:
     shadow_days_dir_path: Path
     shadow_session_summary_json_path: Path
     shadow_session_registry_json_path: Path
+    upload_request_json_path: Path | None = None
+    upload_decision_json_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -253,10 +364,17 @@ def _risk_summary(engine_result: object) -> str:
     return getattr(risk_evaluation, "explain_summary", "")
 
 
+def _shadow_circuit_breaker(engine_id: str) -> EmergencyCircuitBreaker:
+    state_dir = REPO_ROOT / "build" / "local_replay_shadow_breakers" / engine_id
+    state_dir.mkdir(parents=True, exist_ok=True)
+    return EmergencyCircuitBreaker(state_dir=state_dir)
+
+
 def _run_engine_shadow_evaluations() -> tuple[ShadowEngineRuntimeEvidence, ...]:
     engine_a_runtime = EngineARuntime(
         scoring_runtime=_shadow_scoring_runtime(),
         risk_runtime=_shadow_risk_runtime(),
+        circuit_breaker=_shadow_circuit_breaker("engine_a"),
     )
     engine_a_result = engine_a_runtime.evaluate(
         EngineARuntimeInput(
@@ -297,6 +415,7 @@ def _run_engine_shadow_evaluations() -> tuple[ShadowEngineRuntimeEvidence, ...]:
     engine_b_runtime = EngineBRuntime(
         scoring_runtime=_shadow_scoring_runtime(),
         risk_runtime=_shadow_risk_runtime(),
+        circuit_breaker=_shadow_circuit_breaker("engine_b"),
     )
     engine_b_result = engine_b_runtime.evaluate(
         EngineBRuntimeInput(
@@ -337,6 +456,7 @@ def _run_engine_shadow_evaluations() -> tuple[ShadowEngineRuntimeEvidence, ...]:
     engine_c_runtime = EngineCRuntime(
         scoring_runtime=_shadow_scoring_runtime(),
         risk_runtime=_shadow_risk_runtime(),
+        circuit_breaker=_shadow_circuit_breaker("engine_c"),
     )
     engine_c_result = engine_c_runtime.evaluate(
         EngineCRuntimeInput(
@@ -384,6 +504,7 @@ def _run_engine_shadow_evaluations() -> tuple[ShadowEngineRuntimeEvidence, ...]:
     engine_d_runtime = EngineDRuntime(
         scoring_runtime=_shadow_scoring_runtime(),
         risk_runtime=_shadow_risk_runtime(),
+        circuit_breaker=_shadow_circuit_breaker("engine_d"),
     )
     engine_d_result = engine_d_runtime.evaluate(
         EngineDRuntimeInput(
@@ -757,95 +878,6 @@ def _demo_payload_refs(correlation_id: str) -> ArtifactPayloadRefBundle:
     )
 
 
-def _discover_export_file(
-    export_dir: Path,
-    *,
-    label: str,
-    tokens: tuple[str, ...],
-    suffixes: tuple[str, ...],
-    canonical_names: tuple[str, ...] = (),
-) -> Path:
-    for canonical_name in canonical_names:
-        candidate = export_dir / canonical_name
-        if candidate.is_file():
-            return candidate.resolve()
-    candidates = []
-    for item in export_dir.iterdir():
-        if not item.is_file():
-            continue
-        lowered = item.name.lower()
-        if item.suffix.lower() not in suffixes:
-            continue
-        if any(token in lowered for token in tokens):
-            candidates.append(item)
-    if not candidates:
-        raise FileNotFoundError(
-            f"Missing governed export file for {label} in {export_dir}"
-        )
-    candidates.sort(key=lambda path: (len(path.name), path.name))
-    return candidates[0].resolve()
-
-
-def _payload_refs_from_export_dir(export_dir: Path) -> ArtifactPayloadRefBundle:
-    review_export = _discover_export_file(
-        export_dir,
-        label="review_export",
-        tokens=("review_export", "learning_review_export"),
-        suffixes=(".md", ".json", ".txt"),
-        canonical_names=("review_export.md",),
-    )
-    feature_bridge = _discover_export_file(
-        export_dir,
-        label="feature_bridge",
-        tokens=("feature_bridge",),
-        suffixes=(".json", ".jsonl", ".csv", ".parquet"),
-        canonical_names=("feature_bridge.json",),
-    )
-    parity_diagnostics = _discover_export_file(
-        export_dir,
-        label="parity_diagnostics",
-        tokens=("parity_diagnostics",),
-        suffixes=(".json", ".jsonl", ".txt", ".csv", ".parquet"),
-        canonical_names=("parity_diagnostics.json",),
-    )
-    replay_metrics = _discover_export_file(
-        export_dir,
-        label="replay_metrics",
-        tokens=("replay_metrics",),
-        suffixes=(".json", ".jsonl", ".txt", ".csv", ".parquet"),
-        canonical_names=("replay_metrics.json",),
-    )
-    replay_dtr = _discover_export_file(
-        export_dir,
-        label="replay_dtr",
-        tokens=("replay_dtr",),
-        suffixes=(".json", ".jsonl", ".csv", ".parquet"),
-        canonical_names=("replay_dtr.jsonl", "replay_dtr.json"),
-    )
-    return ArtifactPayloadRefBundle(
-        review_export_ref=str(review_export),
-        feature_bridge_ref=str(feature_bridge),
-        parity_diagnostics_ref=str(parity_diagnostics),
-        replay_metrics_ref=str(replay_metrics),
-        replay_dtr_ref=str(replay_dtr),
-    )
-
-
-def _run_manifest_from_export_dir(export_dir: Path) -> ReplayRunManifest | None:
-    candidates = []
-    for item in export_dir.iterdir():
-        if not item.is_file() or item.suffix.lower() != ".json":
-            continue
-        lowered = item.name.lower()
-        if "replay_run_manifest" in lowered or "run_manifest" in lowered:
-            candidates.append(item)
-    if not candidates:
-        return None
-    candidates.sort(key=lambda path: (len(path.name), path.name))
-    data = candidates[0].read_text(encoding="utf-8")
-    return ReplayRunManifest.model_validate_json(data)
-
-
 def _load_json_payload_from_ref(ref: str) -> dict | None:
     candidate = Path(ref)
     if not candidate.is_file():
@@ -862,62 +894,6 @@ def _build_replay_projection(import_summary) -> ReplayImportProjection:
     return build_replay_import_projection(import_summary)
 
 
-def _build_local_replay_feature_locks(
-    feature_bridge_ref: str,
-) -> tuple[
-    FeatureLineageLock,
-    TransformWhitelistLock,
-    tuple[str, ...],
-    tuple[TransformWhitelistId, ...],
-]:
-    feature_bridge_payload = _load_json_payload_from_ref(feature_bridge_ref) or {}
-    raw_feature_keys = tuple(
-        str(item)
-        for item in (
-            feature_bridge_payload.get("recognized_feature_keys")
-            or feature_bridge_payload.get("feature_keys")
-            or ()
-        )
-    )
-    feature_ids = tuple(
-        feature_id
-        for feature_id in raw_feature_keys
-        if feature_id in CANONICAL_PHYSICS_FEATURE_DICTIONARY
-    )
-
-    records = []
-    transform_ids: list[TransformWhitelistId] = []
-    for feature_id in feature_ids:
-        entry = CANONICAL_PHYSICS_FEATURE_DICTIONARY[feature_id]
-        records.append(
-            FeatureLineageRecord(
-                feature_id=feature_id,
-                family=entry.family,
-                source_inputs=("historical_prices",),
-                transform_ids=entry.default_transform_ids,
-                equation_id=entry.equation_id,
-                feature_set_version=CANONICAL_FEATURE_SET_VERSION,
-                transform_set_version=CANONICAL_TRANSFORM_SET_VERSION,
-            )
-        )
-        transform_ids.extend(entry.default_transform_ids)
-
-    unique_transform_ids = tuple(dict.fromkeys(transform_ids)) or canonical_transform_ids()
-    return (
-        FeatureLineageLock(
-            feature_set_version=CANONICAL_FEATURE_SET_VERSION,
-            transform_set_version=CANONICAL_TRANSFORM_SET_VERSION,
-            records=tuple(records),
-        ),
-        TransformWhitelistLock(
-            transform_set_version=CANONICAL_TRANSFORM_SET_VERSION,
-            allowed_transform_ids=unique_transform_ids,
-        ),
-        feature_ids,
-        unique_transform_ids,
-    )
-
-
 def _build_demo_payload(
     *,
     correlation_id: str,
@@ -926,6 +902,7 @@ def _build_demo_payload(
     cra_sterilization_rate: float,
     active_alert_count: int,
     queue_backlog: int,
+    output_dir: Path,
     replay_projection: ReplayImportProjection,
     engine_runtime_evidence: tuple[ShadowEngineRuntimeEvidence, ...] = (),
 ) -> object:
@@ -1042,6 +1019,9 @@ def _build_demo_payload(
             review_export_ready=True,
             review_export_ref="exports/local_replay_shadow_review.md",
         ),
+        runtime_hook_bridge_projections=build_runtime_hook_bridge_projections(
+            compiled_registry_state_dir=output_dir
+        ),
         replay_projection=replay_projection,
         build14_projection=build14_projection,
     )
@@ -1083,12 +1063,15 @@ def _next_shadow_day_timestamp_ms(
 def _resolve_base_session_date(
     *,
     requested_session_date: str | None,
+    governed_session_date: str | None,
     last_session_date: date | None,
     run_manifest: ReplayRunManifest | None,
     candidate_payload_timestamp_ms: int,
 ) -> date:
     if requested_session_date:
         return date.fromisoformat(requested_session_date)
+    if governed_session_date:
+        return date.fromisoformat(governed_session_date)
     if last_session_date is not None:
         return last_session_date + timedelta(days=1)
     if run_manifest is not None:
@@ -1097,6 +1080,25 @@ def _resolve_base_session_date(
         ).date()
     return datetime.fromtimestamp(
         candidate_payload_timestamp_ms / 1000.0, tz=timezone.utc
+    ).date()
+
+
+def _resolve_import_governance_reference_date(
+    *,
+    governed_session_date: str | None,
+    run_manifest: ReplayRunManifest | None,
+    fallback_timestamp_ms: int,
+) -> date:
+    if governed_session_date:
+        return date.fromisoformat(governed_session_date)
+    if run_manifest is not None:
+        return datetime.fromtimestamp(
+            run_manifest.end_timestamp_ms / 1000.0,
+            tz=timezone.utc,
+        ).date()
+    return datetime.fromtimestamp(
+        fallback_timestamp_ms / 1000.0,
+        tz=timezone.utc,
     ).date()
 
 
@@ -1112,11 +1114,27 @@ def export_local_replay_shadow_run(
     output_dir.mkdir(parents=True, exist_ok=True)
     shadow_days_dir_path = output_dir / "shadow_days"
     shadow_days_dir_path.mkdir(parents=True, exist_ok=True)
-    run_manifest = (
-        _run_manifest_from_export_dir(export_dir)
+    governed_slot = (
+        ShadowDailyOrchestrator(output_dir).build_slot_from_export_dir(export_dir)
         if export_dir is not None
         else None
     )
+    if (
+        export_dir is not None
+        and session_date is not None
+        and governed_slot is not None
+        and governed_slot.session_date != session_date
+    ):
+        raise ValueError(
+            "Explicit session_date does not match governed export metadata: "
+            f"{session_date} != {governed_slot.session_date}"
+        )
+    export_discovery = (
+        discover_local_replay_export(export_dir)
+        if export_dir is not None
+        else None
+    )
+    run_manifest = export_discovery.run_manifest if export_discovery is not None else None
     run_manifest_json_path: Path | None = None
     correlation_id = (
         run_manifest.run_id
@@ -1124,8 +1142,8 @@ def export_local_replay_shadow_run(
         else "corr-local-replay-shadow-demo"
     )
     payload_refs = (
-        _payload_refs_from_export_dir(export_dir)
-        if export_dir is not None
+        export_discovery.payload_bundle
+        if export_discovery is not None
         else _demo_payload_refs(correlation_id)
     )
     replay_metrics_payload = _load_json_payload_from_ref(payload_refs.replay_metrics_ref)
@@ -1136,109 +1154,89 @@ def export_local_replay_shadow_run(
             encoding="utf-8",
         )
 
-    replay_request = LocalReplayRequest(
-        correlation_id=correlation_id,
-        profile=ProfileId.COMPLETE,
-        runtime_mode=RuntimeMode.LOCAL_REPLAY,
-        strategy_classification=(
-            run_manifest.strategy_classification
-            if run_manifest is not None
-            else StrategyClassification.A_VARIANT
+    if run_manifest is not None:
+        dataset_ref = None
+        clock_ref = None
+    else:
+        dataset_ref = ReplayDatasetRef(
+            dataset_id="dataset-local-replay-shadow-demo",
+            pair_scope=("BTCUSDT", "ETHUSDT"),
+            record_count=2,
+        )
+        clock_ref = ReplayClockRef(
+            clock_id="clock-local-replay-shadow-demo",
+            mode="historical",
+            start_timestamp_ms=1_700_000_000_000,
+            end_timestamp_ms=1_700_000_060_000,
+            tick_count=60,
+        )
+    import_governance_reference_date = _resolve_import_governance_reference_date(
+        governed_session_date=(
+            governed_slot.session_date if governed_slot is not None else None
         ),
-        lineage_version=(
-            run_manifest.lineage_version
-            if run_manifest is not None
-            else "a.v1.0.r1"
-        ),
-        replay_reason=(
-            f"Governed local replay export {run_manifest.run_id}"
-            if run_manifest is not None
-            else "Governed local replay candidate prepared for Shadow validation."
-        ),
-    )
-    dataset_ref = ReplayDatasetRef(
-        dataset_id=(
-            run_manifest.dataset_manifest_id
-            if run_manifest is not None
-            else "dataset-local-replay-shadow-demo"
-        ),
-        pair_scope=(
-            run_manifest.tested_pairs
-            if run_manifest is not None
-            else ("BTCUSDT", "ETHUSDT")
-        ),
-        record_count=run_manifest.record_count if run_manifest is not None else 2,
-    )
-    clock_ref = ReplayClockRef(
-        clock_id=run_manifest.clock_id if run_manifest is not None else "clock-local-replay-shadow-demo",
-        mode=run_manifest.performance_mode if run_manifest is not None else "historical",
-        start_timestamp_ms=(
-            run_manifest.start_timestamp_ms
-            if run_manifest is not None
-            else 1_700_000_000_000
-        ),
-        end_timestamp_ms=(
+        run_manifest=run_manifest,
+        fallback_timestamp_ms=(
             run_manifest.end_timestamp_ms
             if run_manifest is not None
-            else 1_700_000_060_000
-        ),
-        tick_count=run_manifest.tick_count if run_manifest is not None else 60,
-    )
-    replay_plan = LocalReplayOrchestrator.prepare_bundle(
-        replay_request,
-        artifact_id=(
-            run_manifest.artifact_hash
-            if run_manifest is not None
-            else "artifact-local-replay-shadow-demo"
-        ),
-        strategy_version=(
-            run_manifest.strategy_version
-            if run_manifest is not None
-            else "a.v1.0"
-        ),
-        payload_refs=payload_refs.payload_refs,
-        dataset_ref=dataset_ref,
-        clock_ref=clock_ref,
-        candidate_ids=(
-            (f"candidate:{run_manifest.strategy_id}",)
-            if run_manifest is not None
-            else ("candidate:corr-local-replay-shadow-demo",)
-        ),
-        review_export_ref=payload_refs.review_export_ref,
-        feature_bridge_ref=payload_refs.feature_bridge_ref,
-        parity_diagnostics_ref=payload_refs.parity_diagnostics_ref,
-        replay_metrics_ref=payload_refs.replay_metrics_ref,
-        replay_dtr_ref=payload_refs.replay_dtr_ref,
-        notes=(
-            "Governed local replay export path for LOCAL_REPLAY -> VPS import -> SHADOW. "
-            + (
-                f"strategy_id={run_manifest.strategy_id} / "
-                f"feature_set={run_manifest.feature_set_version} / "
-                f"formula_set={run_manifest.formula_set_version} / "
-                f"scoring={run_manifest.scoring_version} / "
-                f"regime={run_manifest.regime_version} / "
-                f"risk={run_manifest.risk_policy_version} / "
-                f"cost={run_manifest.cost_model_version} / "
-                f"performance_mode={run_manifest.performance_mode} / "
-                f"artifact_schema={run_manifest.artifact_schema_version}"
-                if run_manifest is not None
-                else "demo metadata"
-            )
+            else clock_ref.end_timestamp_ms
         ),
     )
-    replay_plan = replay_plan.model_copy(
-        update={
-            "bundle": replay_plan.bundle.model_copy(
-                update={
-                    "manifest": replay_plan.bundle.manifest.model_copy(
-                        update={
-                            "activation_stage": ArtifactActivationStage.SHADOW_READY,
-                        }
-                    )
-                }
-            )
-        }
-    )
+    if export_dir is not None:
+        import_context = build_import_context_from_export_dir(
+            export_dir,
+            lifecycle_policy=_SHADOW_IMPORT_LIFECYCLE_POLICY,
+            training_end=import_governance_reference_date,
+            governance_reference_date=import_governance_reference_date,
+            drift_score_threshold=_SHADOW_IMPORT_DRIFT_SCORE_THRESHOLD,
+        )
+        replay_plan = import_context.replay_plan
+        import_request = import_context.import_request
+    else:
+        replay_request = LocalReplayRequest(
+            correlation_id=correlation_id,
+            profile=ProfileId.COMPLETE,
+            runtime_mode=RuntimeMode.LOCAL_REPLAY,
+            strategy_classification=StrategyClassification.A_VARIANT,
+            lineage_version="a.v1.0.r1",
+            replay_reason="Governed local replay candidate prepared for Shadow validation.",
+        )
+        replay_plan = LocalReplayOrchestrator.prepare_bundle(
+            replay_request,
+            artifact_id="artifact-local-replay-shadow-demo",
+            strategy_version="a.v1.0",
+            payload_refs=payload_refs.payload_refs,
+            dataset_ref=dataset_ref,
+            clock_ref=clock_ref,
+            candidate_ids=("candidate:corr-local-replay-shadow-demo",),
+            review_export_ref=payload_refs.review_export_ref,
+            feature_bridge_ref=payload_refs.feature_bridge_ref,
+            parity_diagnostics_ref=payload_refs.parity_diagnostics_ref,
+            replay_metrics_ref=payload_refs.replay_metrics_ref,
+            replay_dtr_ref=payload_refs.replay_dtr_ref,
+            notes="Governed local replay export path for LOCAL_REPLAY -> VPS import -> SHADOW. demo metadata",
+        )
+        replay_plan = replay_plan.model_copy(
+            update={
+                "bundle": replay_plan.bundle.model_copy(
+                    update={
+                        "manifest": replay_plan.bundle.manifest.model_copy(
+                            update={
+                                "activation_stage": ArtifactActivationStage.SHADOW_READY,
+                            }
+                        )
+                    }
+                )
+            }
+        )
+        import_context = build_import_context_from_replay_plan(
+            replay_plan,
+            payload_bundle=payload_refs,
+            lifecycle_policy=_SHADOW_IMPORT_LIFECYCLE_POLICY,
+            training_end=import_governance_reference_date,
+            governance_reference_date=import_governance_reference_date,
+            drift_score_threshold=_SHADOW_IMPORT_DRIFT_SCORE_THRESHOLD,
+        )
+        import_request = import_context.import_request
     replay_plan_json_path = output_dir / "local_replay_shadow.replay_plan.json"
     replay_plan_json_path.write_text(
         replay_plan.model_dump_json(indent=2),
@@ -1261,27 +1259,43 @@ def export_local_replay_shadow_run(
         encoding="utf-8",
     )
 
-    (
-        feature_lineage_lock,
-        transform_whitelist_lock,
-        expected_feature_ids,
-        expected_transform_ids,
-    ) = _build_local_replay_feature_locks(payload_refs.feature_bridge_ref)
-
-    import_request = ArtifactImportRequest(
-        manifest=replay_plan.bundle.manifest,
-        artifact_kind=replay_plan.bundle.artifact_kind,
-        payload_bundle=payload_refs,
-        payload_refs=replay_plan.bundle.payload_refs,
-        feature_lineage_lock=feature_lineage_lock,
-        feature_lineage_required=True,
-        expected_feature_ids=expected_feature_ids,
-        transform_whitelist_lock=transform_whitelist_lock,
-        transform_whitelist_required=True,
-        expected_transform_ids=expected_transform_ids,
+    upload_context = build_upload_context_from_replay_import_context(
+        import_context,
+        local_replay_evidence=local_replay_evidence,
+        signature_envelope=_shadow_upload_signature_envelope(),
+        uploaded_by="local_replay_shadow_runner",
+        upload_context=ArtifactUploadContext.LOCAL_LAB,
+        governance_reference_date=import_governance_reference_date,
+        artifact_class=ArtifactClass.DAMAGE_REDUCER,
+        artifact_scope=(
+            "shadow_runner:export_dir"
+            if export_dir is not None
+            else "shadow_runner:demo"
+        ),
+        lifecycle_policy=_SHADOW_IMPORT_LIFECYCLE_POLICY,
+        drift_score_threshold=_SHADOW_IMPORT_DRIFT_SCORE_THRESHOLD,
+        proof_summary=_shadow_upload_proof_summary(),
+        distilled_logic_format=ArtifactLogicFormat.THRESHOLD_JSON,
+        covariance_shrinkage_matrix_ref="matrix_ref:local_replay_shadow",
     )
+    upload_request = upload_context.upload_request
+    import_request = upload_context.import_request
     import_decision = validate_import_request(import_request)
-    import_summary = summarize_import_request(import_request, import_decision)
+    upload_decision = build_artifact_upload_decision(upload_request, import_decision)
+    upload_request_json_path = output_dir / "local_replay_shadow.upload_request.json"
+    upload_decision_json_path = output_dir / "local_replay_shadow.upload_decision.json"
+    upload_request_json_path.write_text(
+        upload_request.model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    upload_decision_json_path.write_text(
+        upload_decision.model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    import_summary = summarize_import_request(
+        import_request,
+        import_decision,
+    )
     import_summary_json_path = output_dir / "local_replay_shadow.import_summary.json"
     import_summary_json_path.write_text(
         import_summary.model_dump_json(indent=2),
@@ -1323,6 +1337,7 @@ def export_local_replay_shadow_run(
         cra_sterilization_rate=0.08,
         active_alert_count=0,
         queue_backlog=8,
+        output_dir=output_dir,
         replay_projection=replay_projection,
     )
     candidate_payload = _build_demo_payload(
@@ -1332,6 +1347,7 @@ def export_local_replay_shadow_run(
         cra_sterilization_rate=0.10,
         active_alert_count=1,
         queue_backlog=10,
+        output_dir=output_dir,
         replay_projection=replay_projection,
         engine_runtime_evidence=engine_runtime_evidence,
     )
@@ -1384,10 +1400,18 @@ def export_local_replay_shadow_run(
     )
     shadow_counter = ShadowDayCounter(state_dir=output_dir, profile=ShadowProfile.COMPLETE)
     shadow_registry = ShadowSessionRegistry(state_dir=output_dir)
+    _recover_shadow_state_from_artifacts(
+        output_dir,
+        shadow_counter=shadow_counter,
+        shadow_registry=shadow_registry,
+    )
     status_before_run = shadow_counter.get_status()
     starting_consecutive_days = status_before_run.consecutive_days
     base_session_date = _resolve_base_session_date(
         requested_session_date=session_date,
+        governed_session_date=(
+            governed_slot.session_date if governed_slot is not None else None
+        ),
         last_session_date=shadow_registry.last_session_date(),
         run_manifest=run_manifest,
         candidate_payload_timestamp_ms=candidate_payload.timestamp_ms,
@@ -1438,20 +1462,24 @@ def export_local_replay_shadow_run(
         )
         daily_record_paths.append(str(day_record_path))
         daily_session_dates.append(current_session_date.isoformat())
-        registry_entries.append(
-            ShadowSessionEntry(
-                session_date=current_session_date.isoformat(),
-                counter_day_number=shadow_day_record.day_number,
-                correlation_id=day_payload.correlation_id,
-                run_id=provisional_shadow_summary.run_id,
-                artifact_id=import_summary.artifact_id,
-                lineage_version=import_summary.lineage_version,
-                day_record_ref=str(day_record_path),
-                export_dir_ref=str(export_dir.resolve()) if export_dir is not None else "",
+        if shadow_day_record.passed_all_gates:
+            registry_entries.append(
+                ShadowSessionEntry(
+                    session_date=current_session_date.isoformat(),
+                    counter_day_number=shadow_day_record.day_number,
+                    correlation_id=day_payload.correlation_id,
+                    run_id=provisional_shadow_summary.run_id,
+                    artifact_id=import_summary.artifact_id,
+                    lineage_version=import_summary.lineage_version,
+                    day_record_ref=str(day_record_path),
+                    export_dir_ref=str(export_dir.resolve()) if export_dir is not None else "",
+                )
             )
-        )
     assert shadow_day_record is not None
-    shadow_registry.append_entries(tuple(registry_entries))
+    if registry_entries:
+        shadow_registry.append_entries(tuple(registry_entries))
+    else:
+        shadow_registry.ensure_persisted()
     shadow_day_record_json_path = output_dir / "local_replay_shadow.shadow_day_record.json"
     shadow_day_record_json_path.write_text(
         shadow_day_record.model_dump_json(indent=2),
@@ -1532,6 +1560,8 @@ def export_local_replay_shadow_run(
         shadow_days_dir_path=shadow_days_dir_path,
         shadow_session_summary_json_path=shadow_session_summary_json_path,
         shadow_session_registry_json_path=shadow_registry.state_path,
+        upload_request_json_path=upload_request_json_path,
+        upload_decision_json_path=upload_decision_json_path,
     )
 
 

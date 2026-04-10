@@ -153,12 +153,12 @@ Lire dans cet ordre :
 - `V5_3_BUILD7_SPECS_MOTEUR_B.md` : moteur B
 - `V5_3_BUILD8_SPECS_PORTFOLIO_MINIMAL.md` : portefeuille minimal
 - `V5_3_BUILD9_SPECS_META_MINIMAL.md` : meta minimal
-- `V5_3_BUILD10_SPECS_MONITORING_UI_LIGHT.md` : monitoring + UI Light
+- `V5_3_BUILD10_SPECS_MONITORING_UI_LIGHT.md` : monitoring + UI operateur verrouillee (`Light UI` = libelle historique)
 
 ## 4.4 Specs Build-11 a Build-17
-- `V5_3_BUILD11_SPEC_SHADOW_LIGHT.md` : protocole Shadow
-- `V5_3_BUILD12_SPEC_MICRO_LIVE_LIGHT.md` : protocole Micro-live
-- `V5_3_BUILD13_SPEC_LIVE_LIGHT.md` : protocole Live-Light
+- `V5_3_BUILD11_SPEC_SHADOW_LIGHT.md` : protocole Shadow gouverne (`Shadow Light` = libelle historique)
+- `V5_3_BUILD12_SPEC_MICRO_LIVE_LIGHT.md` : protocole Micro-live gouverne (`Micro-live Light` = libelle historique)
+- `V5_3_BUILD13_SPEC_LIVE_LIGHT.md` : protocole Live gouverne (`Live-Light` = libelle historique)
 - `V5_3_BUILD14_SPEC_COMPLETE_ENABLERS.md` : enablers Complete actifs en Shadow
 - `V5_3_BUILD15_SPECS_MOTEUR_C.md` : moteur C
 - `V5_3_BUILD16_SPECS_MOTEUR_D.md` : moteur D
@@ -362,7 +362,7 @@ Le reste vient ensuite selon les besoins.
 # 12. Ensemble documentaire de base à transmettre à un opérateur
 1. master final
 2. table UI
-3. protocole de phase courant (Shadow / Micro-live / Live-Light / Live-Complete)
+3. protocole de phase courant (Shadow / Micro-live / Live / Live-Complete, avec libelles historiques conserves dans certains noms de fichiers)
 4. merge gates
 
 ---

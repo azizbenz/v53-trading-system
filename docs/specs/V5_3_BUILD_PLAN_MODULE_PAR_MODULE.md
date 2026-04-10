@@ -38,18 +38,19 @@ Le plan s’appuie sur une seule V5.3 commune local + VPS :
 - deux profils métier uniquement : `LIGHT`, `COMPLETE`
 - quatre `runtime_mode` uniquement : `LOCAL_REPLAY`, `SHADOW`, `MICRO_LIVE`, `LIVE`
 - aucun `BACKTEST_PROFILE`
-- `Shadow intégral` désigne le Shadow du profil `LIGHT` avec A/B/C/D et
-  Build-14 activés à 100% en observation ; ce n'est pas le profil `COMPLETE`
+- `Shadow intégral` reste un libellé historique de phase ; dans le code
+  gouverné courant, Build-11/12/13 s'ouvrent en `profil=COMPLETE`
 - aucun fork local / VPS
 - pipeline officiel : `classification -> versioning -> shared core -> LOCAL_REPLAY -> export artifact -> import VPS -> candidature contrôlée`
 
 Matrice canonique des états :
 
-- `profil=LIGHT`, `runtime_mode=SHADOW` : Build-11 / `Shadow intégral`
-- `profil=LIGHT`, `runtime_mode=MICRO_LIVE` : Build-12
-- `profil=LIGHT`, `runtime_mode=LIVE` : Build-13 / `Live-Light`
-- `profil=COMPLETE`, `runtime_mode=SHADOW` : Shadow Complete
-- `profil=COMPLETE`, `runtime_mode=LIVE` : Live-Complete
+- `profil=LIGHT`, `runtime_mode=LOCAL_REPLAY` : surface locale de compatibilité et preuve contrainte
+- `profil=COMPLETE`, `runtime_mode=LOCAL_REPLAY` : baseline gouvernée des exports et reprises locales
+- `profil=COMPLETE`, `runtime_mode=SHADOW` : Build-11 actif
+- `profil=COMPLETE`, `runtime_mode=MICRO_LIVE` : Build-12 actif
+- `profil=COMPLETE`, `runtime_mode=LIVE` : Build-13 actif
+- `Shadow intégral`, `Micro-live Light` et `Live-Light` restent des labels historiques ou documentaires, pas la cible runtime gouvernée active
 
 ---
 
@@ -60,8 +61,8 @@ Matrice canonique des états :
 - aucun code sans tests
 - aucun merge sans audit croisé
 - aucun passage de phase sans critères go/no-go
-- aucune extension de rollout COMPLETE tant que le rollout LIGHT n’est pas
-  validé et que les gates d'extension ne sont pas passés
+- aucune extension de rollout au-delà du rail gouverné courant tant que les
+  gates Shadow / Micro-live / Live correspondantes ne sont pas validées
 
 ## 1.2 Pipeline IA officiel
 1. ChatGPT : spec du module  
@@ -89,9 +90,9 @@ Matrice canonique des états :
 | 9 | Meta Minimal | LIGHT rollout | P0 | DTR, CRA, break-even |
 | 9X | Meta Learning Governed Layer | documentaire | P1/P2 | diagnostics, hypothèses, replay bundles, sans effet live direct |
 | 10 | Monitoring + UI Light | LIGHT rollout | P0/P1 | supervision verrouillée du système complet |
-| 11 | Shadow Light (`Shadow intégral`) | LIGHT rollout | P0 | validation sans capital |
-| 12 | Micro-live Light | LIGHT rollout | P0 | coûts réels |
-| 13 | Live-Light | LIGHT rollout | P0 | premier rollout réel borné |
+| 11 | Shadow gouverné (`historique: Shadow intégral`) | runtime gouverné | P0 | validation sans capital |
+| 12 | Micro-live gouverné (`historique: Micro-live Light`) | runtime gouverné | P0 | coûts réels |
+| 13 | Live gouverné (`historique: Live-Light`) | runtime gouverné | P0 | premier rollout réel borné |
 | 14 | Complete Enablers | architecture complète | P1/P2 | enablers prod-safe et angles morts |
 | 15 | Moteur C | architecture complète | P1 | breakout continuation gouverné |
 | 16 | Moteur D | architecture complète | P1 | re-entry gouverné |
@@ -477,7 +478,7 @@ Ajouter une couche méta gouvernée qui produit :
 - metrics_collector
 - alert_manager
 - dashboards backend
-- UI Light verrouillée
+- UI opérateur verrouillée (surface historique : `Light UI`)
 
 ## Objectif
 Rendre le système gouvernable sans le rendre permissif.
@@ -507,15 +508,15 @@ Rendre le système gouvernable sans le rendre permissif.
 Valider la logique sans capital réel.
 
 ## État canonique
-- `profil=LIGHT`
+- `profil=COMPLETE`
 - `runtime_mode=SHADOW`
-- nom de phase lisible : `Shadow intégral`
+- nom de phase lisible historique : `Shadow intégral`
 
 ## HARD STATEMENT — Shadow intégral = phase de vérité système (30 jours)
-- La version Light doit trader en mode SHADOW pendant **30 jours calendaires consécutifs minimum**
+- Le rail gouverné courant doit trader en mode SHADOW pendant **30 jours calendaires consécutifs minimum**
 - Données réelles obligatoires (WebSocket ou replay réaliste)
 - Pipeline complet : data → engine → scoring → portfolio → execution simulée
-- **Build-14 et tous les enrichissements du rollout Light activés à 100% pendant le Shadow intégral**
+- **Build-14 et tous les enrichissements du rail gouverné courant activés à 100% pendant le Shadow intégral**
 - Moteurs A/B/C/D actifs, scorés, classés, arbitrés et observés
 - Build-14 enablers pleinement utilisés dans les décisions Shadow
 - DTR complet produit pendant les 30 jours
@@ -558,9 +559,9 @@ Valider la logique sans capital réel.
 Valider coûts réels, fills, stale rate, reconciliation.
 
 ## État canonique
-- `profil=LIGHT`
+- `profil=COMPLETE`
 - `runtime_mode=MICRO_LIVE`
-- nom de phase lisible : `Micro-live Light`
+- nom de phase lisible historique : `Micro-live Light`
 
 ## Prérequis
 - **Verdict post-Shadow rendu** : seuls les composants `SHADOW_VALIDATED` passent en Micro-live
@@ -598,9 +599,9 @@ Valider coûts réels, fills, stale rate, reconciliation.
 Première production réelle disciplinée.
 
 ## État canonique
-- `profil=LIGHT`
+- `profil=COMPLETE`
 - `runtime_mode=LIVE`
-- nom de phase lisible : `Live-Light`
+- nom de phase lisible historique : `Live-Light`
 
 ## Prérequis HARD
 - **HARD : 30 jours de Shadow intégral consécutifs atteints et rapport approuvé**
@@ -779,7 +780,7 @@ runtime sous budgets, gates et rollback.
 
 ## 21.8 Sortie Build-8/9/10
 - portefeuille Light gouvernable
-- UI Light verrouillée
+- UI opérateur verrouillée (surface historique : `Light UI`)
 
 ## 21.8 bis Sortie documentaire Build-9X
 - V2 gelée comme référence documentaire

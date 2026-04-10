@@ -1,10 +1,11 @@
-"""Typed skeleton for the canonical RISK_MICRO_FRICTION_PRECHECK hook."""
+"""Bounded executor surface for the canonical RISK_MICRO_FRICTION_PRECHECK hook."""
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from interface_contracts import HookId
+from risk_backbone import RiskMicroFrictionPrecheckInput, RiskMicroFrictionPrecheckOutcome
+from interface_contracts import HookId, is_runtime_open_hook_id
 
 from .compiled_hook_plan_loader import (
     CompiledHookPlanLoadStatus,
@@ -13,29 +14,14 @@ from .compiled_hook_plan_loader import (
 
 
 HOOK_ID = HookId.RISK_MICRO_FRICTION_PRECHECK
-RUNTIME_OPEN = False
+RUNTIME_OPEN = is_runtime_open_hook_id(HOOK_ID)
 
 
 class RiskMicroFrictionHookPlanPayload(BaseModel, frozen=True):
-    """Minimal compiled payload shape for the unopened risk hook rail."""
+    """Typed compiled payload for the bounded risk micro-friction hook."""
 
-    reason_codes: tuple[str, ...] = ()
-    detail: str = ""
-
-
-class RiskMicroFrictionHookInput(BaseModel, frozen=True):
-    """Minimal typed input kept intentionally narrow until the rail is opened."""
-
-    context_id: str = Field(..., min_length=1)
-    pair: str = ""
-    engine_id: str = ""
-
-
-class RiskMicroFrictionHookOutcome(BaseModel, frozen=True):
-    """Placeholder typed outcome for the unopened risk hook rail."""
-
-    accepted: bool = True
-    reason_codes: tuple[str, ...] = ()
+    blocked: bool = False
+    block_reason_codes: tuple[str, ...] = ()
     detail: str = ""
 
 
@@ -54,13 +40,34 @@ def load_risk_micro_friction_hook_payload(
 
 
 def run_risk_micro_friction_hook(
-    hook_input: RiskMicroFrictionHookInput,
+    hook_input: RiskMicroFrictionPrecheckInput,
     hook_payload: RiskMicroFrictionHookPlanPayload,
-) -> RiskMicroFrictionHookOutcome:
-    """Keep the hook explicitly closed until the risk artifact rail is opened."""
+) -> RiskMicroFrictionPrecheckOutcome:
+    """Run the bounded risk micro-friction hook with no dynamic code path."""
 
-    raise NotImplementedError(
-        "RISK_MICRO_FRICTION_PRECHECK remains a typed skeleton until this hook rail is opened"
+    if not hook_payload.blocked:
+        detail = hook_payload.detail.strip()
+        if not detail:
+            detail = (
+                f"compiled risk micro-friction precheck accepted {hook_input.pair} / "
+                f"{hook_input.engine_id}"
+            )
+        return RiskMicroFrictionPrecheckOutcome(
+            accepted=True,
+            reason_codes=hook_payload.block_reason_codes,
+            detail=detail,
+        )
+
+    detail = hook_payload.detail.strip()
+    if not detail:
+        detail = (
+            f"compiled risk micro-friction precheck blocked {hook_input.pair} / "
+            f"{hook_input.engine_id}"
+        )
+    return RiskMicroFrictionPrecheckOutcome(
+        accepted=False,
+        reason_codes=hook_payload.block_reason_codes,
+        detail=detail,
     )
 
 
@@ -68,8 +75,6 @@ __all__ = [
     "HOOK_ID",
     "RUNTIME_OPEN",
     "RiskMicroFrictionHookPlanPayload",
-    "RiskMicroFrictionHookInput",
-    "RiskMicroFrictionHookOutcome",
     "load_risk_micro_friction_hook_payload",
     "run_risk_micro_friction_hook",
 ]

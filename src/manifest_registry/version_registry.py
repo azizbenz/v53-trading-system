@@ -87,7 +87,7 @@ CHANGELOG: tuple[ManifestChange, ...] = (
         version="1.3.0",
         change_type=ChangeType.STATUS_CHANGED,
         module_name="ui",
-        description="Activated the locked Build-10 Light UI backend surface",
+        description="Activated the locked Build-10 operator UI backend surface (historical label: Light UI)",
     ),
     ManifestChange(
         version="1.4.0",

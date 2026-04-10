@@ -10,6 +10,19 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
+class FillReconciliationPolicy(BaseModel, frozen=True):
+    """Typed tolerance policy for fill reconciliation."""
+
+    policy_id: str = Field(..., min_length=1)
+    quantity_tolerance: float = Field(..., ge=0.0)
+
+
+CANONICAL_FILL_RECONCILIATION_POLICY = FillReconciliationPolicy(
+    policy_id="fill_reconciliation.tolerance.v1",
+    quantity_tolerance=1e-8,
+)
+
+
 class FillDivergence(BaseModel, frozen=True):
     """A divergence between local and remote fill data."""
 
@@ -23,6 +36,7 @@ class FillDivergence(BaseModel, frozen=True):
 class FillReconciliationResult(BaseModel, frozen=True):
     """Result of fill reconciliation."""
 
+    policy_id: str = Field(..., min_length=1)
     aligned: bool
     total_compared: int
     divergences: tuple[FillDivergence, ...] = ()
@@ -32,7 +46,7 @@ class FillReconciliationResult(BaseModel, frozen=True):
 def reconcile_fills(
     local_fills: dict[str, float],  # order_id -> filled_qty
     remote_fills: dict[str, float],  # order_id -> filled_qty
-    tolerance: float = 1e-8,
+    policy: FillReconciliationPolicy = CANONICAL_FILL_RECONCILIATION_POLICY,
 ) -> FillReconciliationResult:
     """Compare local vs remote fill quantities."""
     divergences: list[FillDivergence] = []
@@ -44,7 +58,7 @@ def reconcile_fills(
         remote_qty = remote_fills.get(oid, 0.0)
         diff = abs(local_qty - remote_qty)
 
-        if diff > tolerance:
+        if diff > policy.quantity_tolerance:
             divergences.append(FillDivergence(
                 order_id=oid,
                 local_filled_qty=local_qty,
@@ -55,6 +69,7 @@ def reconcile_fills(
             max_diff = max(max_diff, diff)
 
     return FillReconciliationResult(
+        policy_id=policy.policy_id,
         aligned=len(divergences) == 0,
         total_compared=len(all_ids),
         divergences=tuple(divergences),

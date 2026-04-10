@@ -7,8 +7,8 @@ from ui import (
     OperatorActionRequest,
     OperatorActionType,
     OperatorEventType,
-    build_light_allowed_actions,
-    evaluate_light_operator_action,
+    build_locked_operator_allowed_actions,
+    evaluate_locked_operator_action,
     record_screen_open,
 )
 
@@ -18,13 +18,14 @@ def _request(
     *,
     target: str = "",
     requested_pair_count: int = 0,
+    profile: ProfileId = ProfileId.LIGHT,
     runtime_mode: RuntimeMode = RuntimeMode.SHADOW,
     reason: str = "",
 ) -> OperatorActionRequest:
     return OperatorActionRequest(
         timestamp_ms=1_700_000_000_000,
         correlation_id="corr-operator",
-        profile=ProfileId.LIGHT,
+        profile=profile,
         runtime_mode=runtime_mode,
         action=action,
         target=target,
@@ -34,7 +35,7 @@ def _request(
 
 
 def test_allowed_action_surface_matches_light_spec():
-    assert build_light_allowed_actions(RuntimeMode.SHADOW) == (
+    assert build_locked_operator_allowed_actions(RuntimeMode.SHADOW) == (
         OperatorActionType.VIEW_CRITICAL_SCREENS,
         OperatorActionType.SUSPEND_PAIR,
         OperatorActionType.REQUEST_PAIR_RESUME,
@@ -46,7 +47,7 @@ def test_allowed_action_surface_matches_light_spec():
 
 
 def test_live_surface_exposes_manual_downgrade_actions():
-    assert build_light_allowed_actions(RuntimeMode.LIVE) == (
+    assert build_locked_operator_allowed_actions(RuntimeMode.LIVE) == (
         OperatorActionType.VIEW_CRITICAL_SCREENS,
         OperatorActionType.SUSPEND_PAIR,
         OperatorActionType.REQUEST_PAIR_RESUME,
@@ -60,7 +61,7 @@ def test_live_surface_exposes_manual_downgrade_actions():
 
 
 def test_authorized_pair_suspend_is_accepted_and_logged():
-    outcome = evaluate_light_operator_action(
+    outcome = evaluate_locked_operator_action(
         _request(OperatorActionType.SUSPEND_PAIR, target="BTCUSDT"),
         allowed_pairs=("BTCUSDT", "ETHUSDT"),
     )
@@ -73,8 +74,22 @@ def test_authorized_pair_suspend_is_accepted_and_logged():
     )
 
 
+def test_complete_profile_is_accepted_on_governed_operator_surface():
+    outcome = evaluate_locked_operator_action(
+        _request(
+            OperatorActionType.SUSPEND_PAIR,
+            target="BTCUSDT",
+            profile=ProfileId.COMPLETE,
+        ),
+        allowed_pairs=("BTCUSDT",),
+    )
+
+    assert outcome.accepted is True
+    assert outcome.resulting_state == "pair_suspended"
+
+
 def test_resume_requires_conditions_lifted_evidence():
-    outcome = evaluate_light_operator_action(
+    outcome = evaluate_locked_operator_action(
         _request(OperatorActionType.REQUEST_PAIR_RESUME, target="BTCUSDT"),
         resumable_pairs=(),
     )
@@ -86,7 +101,7 @@ def test_resume_requires_conditions_lifted_evidence():
 
 
 def test_engine_c_activation_is_explicitly_rejected():
-    outcome = evaluate_light_operator_action(
+    outcome = evaluate_locked_operator_action(
         _request(OperatorActionType.ACTIVATE_ENGINE, target="engine_c"),
     )
 
@@ -95,7 +110,7 @@ def test_engine_c_activation_is_explicitly_rejected():
 
 
 def test_activating_more_than_six_pairs_is_rejected():
-    outcome = evaluate_light_operator_action(
+    outcome = evaluate_locked_operator_action(
         _request(OperatorActionType.ACTIVATE_PAIRS, requested_pair_count=12),
     )
 
@@ -104,7 +119,7 @@ def test_activating_more_than_six_pairs_is_rejected():
 
 
 def test_acknowledging_visible_critical_alert_emits_dedicated_log_event():
-    outcome = evaluate_light_operator_action(
+    outcome = evaluate_locked_operator_action(
         _request(OperatorActionType.ACKNOWLEDGE_CRITICAL_ALERT, target="corr-operator:loss"),
         critical_alert_ids=("corr-operator:loss",),
     )
@@ -116,7 +131,7 @@ def test_acknowledging_visible_critical_alert_emits_dedicated_log_event():
 
 
 def test_manual_halt_requires_operator_reason():
-    outcome = evaluate_light_operator_action(
+    outcome = evaluate_locked_operator_action(
         _request(OperatorActionType.SET_HALTED),
     )
 
@@ -125,13 +140,13 @@ def test_manual_halt_requires_operator_reason():
 
 
 def test_live_downgrade_to_micro_live_requires_live_runtime_and_reason():
-    rejected = evaluate_light_operator_action(
+    rejected = evaluate_locked_operator_action(
         _request(
             OperatorActionType.DOWNGRADE_TO_MICRO_LIVE,
             runtime_mode=RuntimeMode.LIVE,
         ),
     )
-    accepted = evaluate_light_operator_action(
+    accepted = evaluate_locked_operator_action(
         _request(
             OperatorActionType.DOWNGRADE_TO_MICRO_LIVE,
             runtime_mode=RuntimeMode.LIVE,
@@ -146,7 +161,7 @@ def test_live_downgrade_to_micro_live_requires_live_runtime_and_reason():
 
 
 def test_micro_live_downgrade_to_shadow_is_rejected_from_shadow_runtime():
-    outcome = evaluate_light_operator_action(
+    outcome = evaluate_locked_operator_action(
         _request(
             OperatorActionType.DOWNGRADE_TO_SHADOW,
             runtime_mode=RuntimeMode.SHADOW,

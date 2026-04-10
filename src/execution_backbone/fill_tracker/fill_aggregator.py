@@ -90,6 +90,8 @@ class FillAggregator:
         total_notional_exact = sum_exact(
             multiply_exact(f.price, f.quantity) for f in fills
         )
+        if total_qty_exact == 0:
+            raise ValueError(f"aggregated fill quantity must be > 0 for order {order_id}")
         avg_price_exact = divide_exact_or_zero(total_notional_exact, total_qty_exact)
         total_fees_exact = sum_exact(f.fee for f in fills)
 
@@ -113,6 +115,15 @@ class FillAggregator:
 
     def get_fills_for_order(self, order_id: str) -> tuple[FillEvent, ...]:
         return tuple(self._fills.get(order_id, []))
+
+    def evict_order(self, order_id: str) -> None:
+        """Drop detailed fill history for one finalized order."""
+
+        fills = self._fills.pop(order_id, None)
+        if not fills:
+            return
+        for fill in fills:
+            self._seen_fill_ids.discard(fill.fill_id)
 
     @property
     def total_fills(self) -> int:

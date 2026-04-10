@@ -14,11 +14,16 @@ Ce document liste, build par build, ce qui est deja aligne, ce qui reste partiel
 > **NON NEGOCIABLE. Le code doit implementer et enforcer ces regles.**
 
 ```
-[TOUT CODE] -> Shadow 30j (solution complete) -> Verdict -> Micro-live -> Live-Light -> Complete Shadow 30j -> Complete Live
+[TOUT CODE] -> Shadow 30j (rail gouverne courant `COMPLETE`) -> Verdict -> Micro-live -> Live -> extension Complete si explicitement ouverte
 ```
 
+Lecture active 2026-04-08 :
+- le rail gouverne courant lu depuis le code est `COMPLETE -> SHADOW -> MICRO_LIVE -> LIVE`
+- les labels `Shadow Light`, `Micro-live Light` et `Live-Light` ci-dessous doivent etre lus comme des libelles historiques de phase
+- toute extension Complete plus large reste un chantier separe et non le rail gouverne courant
+
 - **Shadow = phase de verite systeme complete** : Build-14, moteurs C/D et tous les enrichissements activés à 100%
-- **Light Shadow 30 jours** : minimum obligatoire, interruption > 24h = compteur a zero
+- **Shadow 30 jours** : minimum obligatoire, interruption > 24h = compteur a zero
 - **Verdict post-Shadow** : chaque composant recoit `SHADOW_VALIDATED` ou `DORMANT`
 - **Complete Shadow 30 jours** : minimum obligatoire apres Light live stable, non-regression Light requise
 - Le code doit inclure un compteur de jours shadow et un mecanisme de blocage de promotion

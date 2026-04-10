@@ -44,6 +44,10 @@ from engines.engine_b.cost_feasibility_b import (
 from engines.engine_b.conviction_builder_b import (
     ConvictionInputB,
     ConvictionLevelB,
+    ENGINE_B_CONVICTION_CALIBRATION_STATUS,
+    ENGINE_B_CONVICTION_PROFILE_ID,
+    MARKET_PHYSICS_CALIBRATION_PROFILE_ID,
+    MARKET_PHYSICS_CALIBRATION_STATUS,
     TierSuggestionB,
     build_conviction_b,
 )
@@ -83,6 +87,10 @@ class EngineBLogEntry(BaseModel, frozen=True):
     holding_hours: float = 0.0
     reasons: tuple[str, ...] = ()
     scoring_version: str = ""
+    calibration_profile_id: str = ENGINE_B_CONVICTION_PROFILE_ID
+    calibration_status: str = ENGINE_B_CONVICTION_CALIBRATION_STATUS
+    physics_calibration_profile_id: str = MARKET_PHYSICS_CALIBRATION_PROFILE_ID
+    physics_calibration_status: str = MARKET_PHYSICS_CALIBRATION_STATUS
 
 
 class EngineBOutput(BaseModel, frozen=True):
@@ -110,6 +118,10 @@ class EngineBOutput(BaseModel, frozen=True):
     expected_holding_hours: float = 0.0
     invalidation: InvalidationMapB | None = None
     scoring_version: str = ""
+    calibration_profile_id: str = ENGINE_B_CONVICTION_PROFILE_ID
+    calibration_status: str = ENGINE_B_CONVICTION_CALIBRATION_STATUS
+    physics_calibration_profile_id: str = MARKET_PHYSICS_CALIBRATION_PROFILE_ID
+    physics_calibration_status: str = MARKET_PHYSICS_CALIBRATION_STATUS
     no_trade_reasons: tuple[NoTradeReasonB, ...] = ()
     excess_verdict: ExcessVerdict = ExcessVerdict.NO_EXCESS
     breakout_verdict: BreakoutVerdict = BreakoutVerdict.CLEAR
@@ -137,7 +149,7 @@ class EngineBInput(BaseModel, frozen=True):
     sweep_score: float = 0.5
     absorption_score: float = 0.5
     poc_reversion_score: float = 0.5
-    false_breakout_score: float = 0.0
+    false_breakout_score: float = 0.5
     execution_fragility: float = 0.0
     market_toxicity: float = 0.0
     spread_regime_penalty: float = 0.0
@@ -155,6 +167,66 @@ class EngineBInput(BaseModel, frozen=True):
     ce_min: float = 0.0002
     # Meta
     scoring_version: str = ""
+
+
+ENGINE_B_RUNNER_INPUT_DEFAULTS: dict[str, float | str] = {
+    "structure_is_range": 0.5,
+    "recent_expansion": 0.0,
+    "regime": "",
+    "regime_trend_strength": 0.0,
+    "volume_anomaly": 0.0,
+    "structural_break": 0.0,
+    "continuation_momentum": 0.0,
+    "microstructure_breakout_confirmation": 0.0,
+    "sweep_score": 0.5,
+    "absorption_score": 0.5,
+    "poc_reversion_score": 0.5,
+    "false_breakout_score": 0.5,
+    "execution_fragility": 0.0,
+    "market_toxicity": 0.0,
+    "spread_regime_penalty": 0.0,
+    "regime_favorability": 0.5,
+    "pair_health": 0.5,
+    "data_freshness": 0.5,
+    "flow_coherence": 0.5,
+    "expected_gain": 0.0,
+    "expected_cost": 0.0,
+    "candidate_size": 0.0,
+    "holding_period": 2.0,
+    "delta_safe": 0.0008,
+    "ce_min": 0.0002,
+    "scoring_version": "",
+}
+ENGINE_B_RUNNER_CONTEXT_COMPONENT_COUNT = 4.0
+ENGINE_B_RUNNER_COST_RATIO_EPSILON = 1e-9
+ENGINE_B_RUNNER_WARNING_PENALTY_WEIGHT = 0.30
+
+EngineBInput.model_fields["structure_is_range"].default = ENGINE_B_RUNNER_INPUT_DEFAULTS["structure_is_range"]
+EngineBInput.model_fields["recent_expansion"].default = ENGINE_B_RUNNER_INPUT_DEFAULTS["recent_expansion"]
+EngineBInput.model_fields["regime"].default = ENGINE_B_RUNNER_INPUT_DEFAULTS["regime"]
+EngineBInput.model_fields["regime_trend_strength"].default = ENGINE_B_RUNNER_INPUT_DEFAULTS["regime_trend_strength"]
+EngineBInput.model_fields["volume_anomaly"].default = ENGINE_B_RUNNER_INPUT_DEFAULTS["volume_anomaly"]
+EngineBInput.model_fields["structural_break"].default = ENGINE_B_RUNNER_INPUT_DEFAULTS["structural_break"]
+EngineBInput.model_fields["continuation_momentum"].default = ENGINE_B_RUNNER_INPUT_DEFAULTS["continuation_momentum"]
+EngineBInput.model_fields["microstructure_breakout_confirmation"].default = ENGINE_B_RUNNER_INPUT_DEFAULTS["microstructure_breakout_confirmation"]
+EngineBInput.model_fields["sweep_score"].default = ENGINE_B_RUNNER_INPUT_DEFAULTS["sweep_score"]
+EngineBInput.model_fields["absorption_score"].default = ENGINE_B_RUNNER_INPUT_DEFAULTS["absorption_score"]
+EngineBInput.model_fields["poc_reversion_score"].default = ENGINE_B_RUNNER_INPUT_DEFAULTS["poc_reversion_score"]
+EngineBInput.model_fields["false_breakout_score"].default = ENGINE_B_RUNNER_INPUT_DEFAULTS["false_breakout_score"]
+EngineBInput.model_fields["execution_fragility"].default = ENGINE_B_RUNNER_INPUT_DEFAULTS["execution_fragility"]
+EngineBInput.model_fields["market_toxicity"].default = ENGINE_B_RUNNER_INPUT_DEFAULTS["market_toxicity"]
+EngineBInput.model_fields["spread_regime_penalty"].default = ENGINE_B_RUNNER_INPUT_DEFAULTS["spread_regime_penalty"]
+EngineBInput.model_fields["regime_favorability"].default = ENGINE_B_RUNNER_INPUT_DEFAULTS["regime_favorability"]
+EngineBInput.model_fields["pair_health"].default = ENGINE_B_RUNNER_INPUT_DEFAULTS["pair_health"]
+EngineBInput.model_fields["data_freshness"].default = ENGINE_B_RUNNER_INPUT_DEFAULTS["data_freshness"]
+EngineBInput.model_fields["flow_coherence"].default = ENGINE_B_RUNNER_INPUT_DEFAULTS["flow_coherence"]
+EngineBInput.model_fields["expected_gain"].default = ENGINE_B_RUNNER_INPUT_DEFAULTS["expected_gain"]
+EngineBInput.model_fields["expected_cost"].default = ENGINE_B_RUNNER_INPUT_DEFAULTS["expected_cost"]
+EngineBInput.model_fields["candidate_size"].default = ENGINE_B_RUNNER_INPUT_DEFAULTS["candidate_size"]
+EngineBInput.model_fields["holding_period"].default = ENGINE_B_RUNNER_INPUT_DEFAULTS["holding_period"]
+EngineBInput.model_fields["delta_safe"].default = ENGINE_B_RUNNER_INPUT_DEFAULTS["delta_safe"]
+EngineBInput.model_fields["ce_min"].default = ENGINE_B_RUNNER_INPUT_DEFAULTS["ce_min"]
+EngineBInput.model_fields["scoring_version"].default = ENGINE_B_RUNNER_INPUT_DEFAULTS["scoring_version"]
 
 
 def run_engine_b(inputs: EngineBInput) -> EngineBOutput:
@@ -345,14 +417,17 @@ def run_engine_b(inputs: EngineBInput) -> EngineBOutput:
         + inputs.pair_health
         + inputs.data_freshness
         + inputs.flow_coherence
-    ) / 4.0
+    ) / ENGINE_B_RUNNER_CONTEXT_COMPONENT_COUNT
 
     conviction = build_conviction_b(ConvictionInputB(
         pair=inputs.pair,
         excess_score=excess.excess_score,
         structure_score=inputs.structure_is_range,
         context_score=context_score,
-        cost_preference_score=1.0 - min(inputs.expected_cost / max(inputs.expected_gain, 1e-9), 1.0),
+        cost_preference_score=1.0 - min(
+            inputs.expected_cost / max(inputs.expected_gain, ENGINE_B_RUNNER_COST_RATIO_EPSILON),
+            1.0,
+        ),
         sweep_score=inputs.sweep_score,
         absorption_score=inputs.absorption_score,
         poc_reversion_score=inputs.poc_reversion_score,
@@ -402,16 +477,18 @@ def run_engine_b(inputs: EngineBInput) -> EngineBOutput:
     # ── 5b. Breakout WARNING penalty ──
     # WARNING doesn't block, but must penalize the score explicitly.
     # Penalty proportional to breakout_score (already in [0, 1]).
-    _WARNING_PENALTY_WEIGHT = 0.30
     breakout_penalty = 0.0
     if breakout.verdict == BreakoutVerdict.WARNING:
-        breakout_penalty = _WARNING_PENALTY_WEIGHT * breakout.breakout_score
+        breakout_penalty = ENGINE_B_RUNNER_WARNING_PENALTY_WEIGHT * breakout.breakout_score
         logs.append(EngineBLogEntry(
             event="engine_b_breakout_penalty",
             pair=inputs.pair,
             raw_score=conviction.raw_score,
             penalized_score=conviction.raw_score - breakout_penalty,
-            reasons=(f"WARNING penalty: -{breakout_penalty:.4f} (weight={_WARNING_PENALTY_WEIGHT} x score={breakout.breakout_score:.3f})",),
+            reasons=(
+                f"WARNING penalty: -{breakout_penalty:.4f} "
+                f"(weight={ENGINE_B_RUNNER_WARNING_PENALTY_WEIGHT} x score={breakout.breakout_score:.3f})",
+            ),
         ))
 
     penalized = conviction.raw_score - breakout_penalty

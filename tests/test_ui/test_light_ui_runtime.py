@@ -6,8 +6,13 @@ import shutil
 from pathlib import Path
 
 from interface_contracts import AlertCategory, AlertRecord, AlertSeverity, ProfileId, RuntimeMode
-from ui import LightUIRuntime, LightUIRuntimeConfig, OperatorActionRequest, OperatorActionType
 from monitoring import HealthDashboardPayload
+from ui import (
+    LockedOperatorUiRuntime,
+    LockedOperatorUiRuntimeConfig,
+    OperatorActionRequest,
+    OperatorActionType,
+)
 
 
 def _payload() -> HealthDashboardPayload:
@@ -52,7 +57,7 @@ def _scratch_dir(name: str) -> Path:
 
 
 def test_light_ui_runtime_builds_view_with_pending_critical_notifications():
-    runtime = LightUIRuntime()
+    runtime = LockedOperatorUiRuntime()
 
     result = runtime.build_view(_payload(), alerts=(_critical_alert(),))
     alerts = next(section for section in result.view.sections if section.title == "Alerts & Events")
@@ -71,13 +76,13 @@ def test_light_ui_runtime_builds_view_with_pending_critical_notifications():
 
 def test_light_ui_runtime_persists_history_across_restart():
     state_dir = _scratch_dir("persist")
-    config = LightUIRuntimeConfig(
+    config = LockedOperatorUiRuntimeConfig(
         state_dir=state_dir,
         persist_history=True,
     )
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
-        runtime = LightUIRuntime(config=config)
+        runtime = LockedOperatorUiRuntime(config=config)
         runtime.build_view(_payload(), alerts=(_critical_alert(),))
         outcome = runtime.submit_action(
             OperatorActionRequest(
@@ -93,7 +98,7 @@ def test_light_ui_runtime_persists_history_across_restart():
 
         assert outcome.accepted is True
 
-        reloaded = LightUIRuntime(config=config)
+        reloaded = LockedOperatorUiRuntime(config=config)
         result = reloaded.build_view(_payload(), alerts=(_critical_alert(),))
 
         messages = tuple(entry.message for entry in result.view.event_log)
@@ -104,7 +109,7 @@ def test_light_ui_runtime_persists_history_across_restart():
 
 
 def test_light_ui_runtime_acknowledges_critical_alert_and_hides_pending_notification():
-    runtime = LightUIRuntime()
+    runtime = LockedOperatorUiRuntime()
     runtime.build_view(_payload(), alerts=(_critical_alert(),))
 
     outcome = runtime.submit_action(
@@ -129,7 +134,7 @@ def test_light_ui_runtime_acknowledges_critical_alert_and_hides_pending_notifica
 
 
 def test_light_ui_runtime_projects_rejections_into_monitoring_log_tail():
-    runtime = LightUIRuntime()
+    runtime = LockedOperatorUiRuntime()
     runtime.build_view(_payload(), alerts=(_critical_alert(),))
 
     outcome = runtime.submit_action(
@@ -154,7 +159,7 @@ def test_light_ui_runtime_projects_rejections_into_monitoring_log_tail():
 
 
 def test_light_ui_runtime_projects_latest_safing_request_from_accepted_manual_action():
-    runtime = LightUIRuntime()
+    runtime = LockedOperatorUiRuntime()
 
     outcome = runtime.submit_action(
         OperatorActionRequest(
@@ -173,3 +178,47 @@ def test_light_ui_runtime_projects_latest_safing_request_from_accepted_manual_ac
     assert projection.latest_safing_source_runtime_mode == "live"
     assert projection.latest_safing_target_runtime_mode == "micro_live"
     assert projection.latest_safing_reason == "execution drift requires step-down"
+
+
+def test_light_ui_runtime_corrupted_state_creates_backup_and_marks_last_error():
+    state_dir = _scratch_dir("corrupted-state")
+    config = LockedOperatorUiRuntimeConfig(
+        state_dir=state_dir,
+        persist_history=True,
+    )
+    shutil.rmtree(state_dir, ignore_errors=True)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    state_path = state_dir / config.state_filename
+    state_path.write_text("{ invalid json", encoding="utf-8")
+    try:
+        runtime = LockedOperatorUiRuntime(config=config)
+        projection = runtime.get_operator_projection()
+
+        assert state_path.with_suffix(".corrupted").exists()
+        assert "state_file_corrupted" in runtime.get_state().last_error
+        assert projection.last_error == runtime.get_state().last_error
+    finally:
+        shutil.rmtree(state_dir, ignore_errors=True)
+
+
+def test_light_ui_runtime_build_view_projects_last_error_from_recovered_state():
+    state_dir = _scratch_dir("corrupted-view")
+    config = LockedOperatorUiRuntimeConfig(
+        state_dir=state_dir,
+        persist_history=True,
+    )
+    shutil.rmtree(state_dir, ignore_errors=True)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    state_path = state_dir / config.state_filename
+    state_path.write_text("null", encoding="utf-8")
+    try:
+        runtime = LockedOperatorUiRuntime(config=config)
+        result = runtime.build_view(_payload(), alerts=(_critical_alert(),))
+        alerts = next(section for section in result.view.sections if section.title == "Alerts & Events")
+
+        assert any(
+            card.key == "operator_events" and "state_file_corrupted" in card.detail
+            for card in alerts.cards
+        )
+    finally:
+        shutil.rmtree(state_dir, ignore_errors=True)

@@ -657,3 +657,26 @@ def test_local_replay_evidence_recorder_persists_state_across_restart():
         assert evidence.artifact_id == "artifact-runtime-persist"
     finally:
         shutil.rmtree(state_dir, ignore_errors=True)
+
+
+def test_local_replay_evidence_recorder_backs_up_corrupted_state_and_marks_last_error():
+    state_dir = _scratch_dir("evidence_corrupted")
+    shutil.rmtree(state_dir, ignore_errors=True)
+    state_dir.mkdir(parents=True, exist_ok=False)
+    try:
+        state_path = state_dir / "local_replay_runtime_evidence.json"
+        state_path.write_text("null", encoding="utf-8")
+
+        recorder = LocalReplayEvidenceRecorder(
+            config=LocalReplayEvidenceRecorderConfig(
+                state_dir=state_dir,
+                persist_state=True,
+            )
+        )
+        state = recorder.build_state()
+
+        assert state_path.with_suffix(".corrupted").exists()
+        assert "state_file_corrupted" in state.last_error
+        assert state.artifact_id == ""
+    finally:
+        shutil.rmtree(state_dir, ignore_errors=True)

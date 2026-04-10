@@ -22,48 +22,48 @@ from risk_backbone.btc_factor_guard.beta_reporter import BetaReporter
 
 
 class TestPairBetaRegistry:
-    def test_default_beta(self):
+    def test_missing_beta_raises(self):
         reg = PairBetaRegistry()
-        pb = reg.get_beta("UNKNOWNUSDT")
-        assert pb.beta == pytest.approx(0.8)
-        assert pb.source == "default"
+        with pytest.raises(KeyError, match="missing explicit beta mapping for pair UNKNOWNUSDT"):
+            reg.get_beta("UNKNOWNUSDT")
 
     def test_set_and_get(self):
         reg = PairBetaRegistry()
-        reg.set_beta("BTCUSDT", 1.0, confidence=0.95)
+        reg.set_beta("BTCUSDT", 1.0, confidence=0.95, as_of_ts=100.0, regime_tag="neutral")
         pb = reg.get_beta("BTCUSDT")
         assert pb.beta == pytest.approx(1.0)
         assert pb.confidence == pytest.approx(0.95)
-
-    def test_default_confidence_for_unknown(self):
-        reg = PairBetaRegistry()
-        pb = reg.get_beta("UNKNOWNUSDT")
-        assert pb.confidence == pytest.approx(0.5)
+        assert pb.as_of_ts == pytest.approx(100.0)
+        assert pb.regime_tag == "neutral"
 
     def test_update_beta(self):
         reg = PairBetaRegistry()
-        reg.set_beta("BTCUSDT", 1.0, confidence=0.9)
-        reg.set_beta("BTCUSDT", 1.05, confidence=0.95)
+        reg.set_beta("BTCUSDT", 1.0, confidence=0.9, as_of_ts=100.0)
+        reg.set_beta("BTCUSDT", 1.05, confidence=0.95, as_of_ts=120.0)
         pb = reg.get_beta("BTCUSDT")
         assert pb.beta == pytest.approx(1.05)
+        assert pb.as_of_ts == pytest.approx(120.0)
 
     def test_has_explicit_beta(self):
         reg = PairBetaRegistry()
         assert reg.has_explicit_beta("BTCUSDT") is False
-        reg.set_beta("BTCUSDT", 1.0)
+        reg.set_beta("BTCUSDT", 1.0, as_of_ts=100.0)
         assert reg.has_explicit_beta("BTCUSDT") is True
 
     def test_get_all(self):
         reg = PairBetaRegistry()
-        reg.set_beta("BTCUSDT", 1.0)
-        reg.set_beta("ETHUSDT", 0.6)
+        reg.set_beta("BTCUSDT", 1.0, as_of_ts=100.0)
+        reg.set_beta("ETHUSDT", 0.6, as_of_ts=100.0)
         assert reg.count == 2
         assert len(reg.get_all()) == 2
 
-    def test_custom_default_beta(self):
-        reg = PairBetaRegistry(default_beta=0.5)
-        pb = reg.get_beta("UNKNOWNUSDT")
-        assert pb.beta == pytest.approx(0.5)
+    def test_is_fresh_requires_timestamp_and_ttl(self):
+        reg = PairBetaRegistry()
+        reg.set_beta("BTCUSDT", 1.0, as_of_ts=100.0)
+        reg.set_beta("ETHUSDT", 0.6)
+        assert reg.is_fresh("BTCUSDT", now=150.0, max_age_s=60.0) is True
+        assert reg.is_fresh("BTCUSDT", now=200.1, max_age_s=60.0) is False
+        assert reg.is_fresh("ETHUSDT", now=150.0, max_age_s=60.0) is False
 
 
 # ── portfolio_beta_calculator ──
@@ -95,13 +95,11 @@ class TestPortfolioBetaCalculator:
         result = calculate_portfolio_beta(positions=positions, betas=betas)
         assert result.beta_port == pytest.approx(0.9)
 
-    def test_missing_beta_uses_default_0_8(self):
-        """Pair with no beta entry uses default 0.8."""
+    def test_missing_beta_raises(self):
         positions = {"BTCUSDT": 500.0, "UNKNOWN": 500.0}
         betas = {"BTCUSDT": 1.0}
-        result = calculate_portfolio_beta(positions=positions, betas=betas)
-        # w_btc=0.5, w_unknown=0.5 → β = 0.5*1.0 + 0.5*0.8 = 0.9
-        assert result.beta_port == pytest.approx(0.9)
+        with pytest.raises(ValueError, match="requires explicit beta for pair UNKNOWN"):
+            calculate_portfolio_beta(positions=positions, betas=betas)
 
     def test_contributions(self):
         positions = {"BTCUSDT": 500.0, "ETHUSDT": 500.0}

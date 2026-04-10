@@ -115,7 +115,7 @@ def _payload(
     transform_whitelist_present: bool = True,
     transform_whitelist_status: str = "ok",
     transform_whitelist_reasons: tuple[str, ...] = (),
-    signature_check_status: str = "not_provided",
+    signature_check_status: str = "verified",
     signature_check_reasons: tuple[str, ...] = (),
     conflict_resolution_mode: str = "no_trade_then_strictest",
     conflict_hard_veto_action: str = "no_trade",
@@ -496,7 +496,7 @@ def test_build_shadow_input_from_payloads_maps_full_system_shadow_state():
     assert shadow_input.validation_set.import_transform_whitelist_required is True
     assert shadow_input.validation_set.import_transform_whitelist_present is True
     assert shadow_input.validation_set.import_transform_whitelist_status == "ok"
-    assert shadow_input.validation_set.import_signature_check_status == "not_provided"
+    assert shadow_input.validation_set.import_signature_check_status == "verified"
     assert shadow_input.validation_set.import_conflict_resolution_mode == "no_trade_then_strictest"
     assert shadow_input.validation_set.import_registry_atomicity_mode == "atomic_snapshot_swap"
     assert shadow_input.validation_set.import_registry_publish_requires_atomic_replace is True
@@ -1078,6 +1078,84 @@ def test_run_shadow_validation_blocks_rejected_import_policy_even_if_validation_
         in summary.decision.blocking_reasons
     )
     assert "import signature gate: KEY_ID_UNKNOWN" in summary.decision.blocking_reasons
+
+
+def test_run_shadow_validation_accepts_trust_eligible_signature_status():
+    baseline_payload = _payload(
+        correlation_id="corr-shadow-baseline",
+        ce_net=0.0012,
+        dtr_coverage=0.84,
+        cra_sterilization_rate=0.10,
+        break_even_scope_count=1,
+        edge_degraded_count=0,
+        active_alert_count=2,
+        queue_backlog=20,
+    )
+    candidate_payload = _payload(
+        correlation_id="corr-shadow-candidate",
+        ce_net=0.0010,
+        dtr_coverage=0.82,
+        cra_sterilization_rate=0.12,
+        break_even_scope_count=1,
+        edge_degraded_count=0,
+        active_alert_count=2,
+        queue_backlog=21,
+        review_export_ready=True,
+        signature_check_status="trust_eligible",
+    )
+
+    summary = run_shadow_validation(_build_shadow_input(baseline_payload, candidate_payload))
+
+    assert summary.decision.accepted is True
+
+
+def test_run_shadow_validation_blocks_signature_invalid_status():
+    baseline_payload = _payload(
+        correlation_id="corr-shadow-baseline",
+        ce_net=0.0012,
+        dtr_coverage=0.84,
+        cra_sterilization_rate=0.10,
+        break_even_scope_count=1,
+        edge_degraded_count=0,
+        active_alert_count=2,
+        queue_backlog=20,
+    )
+    candidate_payload = _payload(
+        correlation_id="corr-shadow-candidate",
+        ce_net=0.0010,
+        dtr_coverage=0.82,
+        cra_sterilization_rate=0.12,
+        break_even_scope_count=1,
+        edge_degraded_count=0,
+        active_alert_count=2,
+        queue_backlog=21,
+        review_export_ready=True,
+    )
+
+    shadow_input = _build_shadow_input(baseline_payload, candidate_payload)
+    shadow_input = shadow_input.model_copy(
+        update={
+            "validation_set": shadow_input.validation_set.model_copy(
+                update={
+                    "accepted_import": True,
+                    "import_validation_status": "accepted",
+                    "import_rejection_reasons": (),
+                    "import_signature_check_status": "signature_invalid",
+                    "import_signature_check_reasons": ("SIGNATURE_INVALID",),
+                }
+            )
+        }
+    )
+
+    summary = run_shadow_validation(shadow_input)
+
+    assert summary.decision.accepted is False
+    assert summary.decision.verdict == ShadowVerdict.BLOCKED
+    assert (
+        "candidate import signature policy rejected the artifact before Shadow"
+        in summary.decision.blocking_reasons
+    )
+    assert "import signature gate: SIGNATURE_INVALID" in summary.decision.blocking_reasons
 
 
 def test_run_shadow_validation_blocks_non_shadow_ready_or_non_active_import_state():

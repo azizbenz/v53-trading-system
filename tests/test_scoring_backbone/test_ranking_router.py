@@ -220,6 +220,24 @@ class TestPortfolioCompatibilityChecker:
         assert result.verdict == CompatibilityVerdict.REJECTED_CLUSTER
         assert "no cluster mapping" in result.reason
 
+    def test_rejected_unknown_cluster_id_is_not_masked_as_zero_capacity(self):
+        """Unknown cluster must fail closed as config/mapping absence, not as exhausted budget."""
+        portfolio = PortfolioState(
+            remaining_gross_capacity=1000.0,
+            remaining_loss_capacity=100.0,
+            remaining_beta_capacity=1.0,
+            remaining_cluster_capacity={"btc_majors": 500.0},
+        )
+        result = check_portfolio_compatibility(
+            "eng1", "SOLUSDT", projected_size=50.0,
+            projected_loss=5.0, projected_beta_impact=0.01,
+            cluster_id="sol_ecosystem", portfolio=portfolio,
+        )
+
+        assert result.verdict == CompatibilityVerdict.REJECTED_CLUSTER
+        assert "unknown cluster mapping" in result.reason
+        assert "0.00" not in result.reason
+
 
 # ── selection_resolver ──
 

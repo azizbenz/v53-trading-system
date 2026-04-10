@@ -16,6 +16,7 @@ from smoke_bootstrap_recovery.smoke_models import SmokeStatus, StateSanityResult
 
 # A sanity check is a callable that returns (passed: bool, detail: str)
 SanityCheck = Callable[[], tuple[bool, str]]
+FD_LEAK_DELTA_TOLERANCE = 5
 
 
 def capture_fd_count(fd_counter: Callable[[], int | None] | None = None) -> int | None:
@@ -174,11 +175,15 @@ def check_dag_clean() -> SanityCheck:
 def check_fd_leak(
     before_fd_count: int | None,
     fd_counter: Callable[[], int | None] | None = None,
+    *,
+    max_total_fd_count: int | None = None,
 ) -> SanityCheck:
     """GEM-19: verify no file descriptor leak after shutdown/restart cycle.
 
     Args:
         before_fd_count: FD count captured before the bootstrap cycle.
+        max_total_fd_count: Optional absolute FD ceiling used to catch
+            cumulative leaks across repeated cycles in the same process.
     """
     def _check() -> tuple[bool, str]:
         try:
@@ -190,8 +195,14 @@ def check_fd_leak(
                 return True, "FD leak check skipped (no /proc or psutil)"
 
             leaked = current - before_fd_count
-            if leaked > 5:  # tolerance for transient FDs
+            if leaked > FD_LEAK_DELTA_TOLERANCE:  # tolerance for transient FDs
                 return False, f"FD leak detected: {leaked} extra FDs ({before_fd_count} → {current})"
+            if max_total_fd_count is not None and current > max_total_fd_count:
+                return (
+                    False,
+                    f"FD leak detected: cumulative FD count {current} exceeds ceiling "
+                    f"{max_total_fd_count} ({before_fd_count} → {current})",
+                )
             return True, f"No FD leak ({before_fd_count} → {current})"
         except Exception as exc:
             return False, f"FD check error: {exc}"

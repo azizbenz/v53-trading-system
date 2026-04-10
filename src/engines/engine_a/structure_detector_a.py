@@ -13,6 +13,7 @@ from __future__ import annotations
 from enum import StrEnum
 
 from pydantic import BaseModel, Field
+from data_backbone import TO_CALIBRATE
 
 
 class StructureVerdict(StrEnum):
@@ -41,12 +42,24 @@ class StructureResult(BaseModel, frozen=True):
     direction_strength: float
     continuation_strength: float
     reason: str = ""
+    calibration_profile_id: str = "engine_a_structure.to_calibrate.v1"
+    calibration_status: str = TO_CALIBRATE
 
 
-# Thresholds
-_FAVORABLE_THRESHOLD = 0.6
-_MARGINAL_THRESHOLD = 0.3
-_MIN_DIRECTION = 0.2
+ENGINE_A_STRUCTURE_PROFILE_ID = "engine_a_structure.to_calibrate.v1"
+ENGINE_A_STRUCTURE_CALIBRATION_STATUS = TO_CALIBRATE
+ENGINE_A_STRUCTURE_WEIGHTS: dict[str, float] = {
+    "direction_strength": 0.30,
+    "continuation_strength": 0.25,
+    "structure_quality": 0.20,
+    "zone_proximity": 0.10,
+    "trend_stability": 0.15,
+}
+ENGINE_A_STRUCTURE_THRESHOLDS: dict[str, float] = {
+    "favorable": 0.60,
+    "marginal": 0.30,
+    "min_direction": 0.20,
+}
 
 
 def detect_structure(inputs: StructureInput) -> StructureResult:
@@ -58,25 +71,31 @@ def detect_structure(inputs: StructureInput) -> StructureResult:
     continuation_strength = inputs.continuation_score
 
     score = (
-        0.30 * direction_strength
-        + 0.25 * continuation_strength
-        + 0.20 * inputs.structure_quality
-        + 0.10 * inputs.zone_proximity
-        + 0.15 * inputs.trend_stability
+        ENGINE_A_STRUCTURE_WEIGHTS["direction_strength"] * direction_strength
+        + ENGINE_A_STRUCTURE_WEIGHTS["continuation_strength"] * continuation_strength
+        + ENGINE_A_STRUCTURE_WEIGHTS["structure_quality"] * inputs.structure_quality
+        + ENGINE_A_STRUCTURE_WEIGHTS["zone_proximity"] * inputs.zone_proximity
+        + ENGINE_A_STRUCTURE_WEIGHTS["trend_stability"] * inputs.trend_stability
     )
 
-    if direction_strength < _MIN_DIRECTION:
+    if direction_strength < ENGINE_A_STRUCTURE_THRESHOLDS["min_direction"]:
         verdict = StructureVerdict.UNFAVORABLE
-        reason = f"direction too weak: {direction_strength:.3f} < {_MIN_DIRECTION}"
-    elif score >= _FAVORABLE_THRESHOLD:
+        reason = (
+            "direction too weak: "
+            f"{direction_strength:.3f} < {ENGINE_A_STRUCTURE_THRESHOLDS['min_direction']}"
+        )
+    elif score >= ENGINE_A_STRUCTURE_THRESHOLDS["favorable"]:
         verdict = StructureVerdict.FAVORABLE
         reason = ""
-    elif score >= _MARGINAL_THRESHOLD:
+    elif score >= ENGINE_A_STRUCTURE_THRESHOLDS["marginal"]:
         verdict = StructureVerdict.MARGINAL
         reason = f"structure marginal: score {score:.3f}"
     else:
         verdict = StructureVerdict.UNFAVORABLE
-        reason = f"structure insufficient: score {score:.3f} < {_MARGINAL_THRESHOLD}"
+        reason = (
+            "structure insufficient: "
+            f"score {score:.3f} < {ENGINE_A_STRUCTURE_THRESHOLDS['marginal']}"
+        )
 
     return StructureResult(
         pair=inputs.pair,
@@ -85,4 +104,6 @@ def detect_structure(inputs: StructureInput) -> StructureResult:
         direction_strength=direction_strength,
         continuation_strength=continuation_strength,
         reason=reason,
+        calibration_profile_id=ENGINE_A_STRUCTURE_PROFILE_ID,
+        calibration_status=ENGINE_A_STRUCTURE_CALIBRATION_STATUS,
     )

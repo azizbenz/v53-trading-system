@@ -40,7 +40,7 @@ class TradeLearningInput(BaseModel, frozen=True):
     dtr_ids: tuple[str, ...] = ()
     pair: str = Field(..., min_length=1)
     engine_id: EngineId
-    profile: ProfileId = ProfileId.LIGHT
+    profile: ProfileId = ProfileId.COMPLETE
     source_runtime_mode: RuntimeMode
     strategy_classification: StrategyClassification
     source_version: str = Field(..., min_length=1)
@@ -90,6 +90,55 @@ class DiagnosticResult(BaseModel, frozen=True):
     structured_log_key: str = Field(..., min_length=1)
     manual_review_required: bool = True
     created_at: datetime = Field(default_factory=_utc_now)
+
+
+class TradeLossEvidence(BaseModel, frozen=True):
+    """Structured evidence attached to a per-trade loss attribution."""
+
+    source: str = Field(..., min_length=1)
+    reference: str = Field(..., min_length=1)
+    observation: str = Field(..., min_length=1)
+
+
+class TradeLossAttribution(BaseModel, frozen=True):
+    """Governed per-trade attribution explaining why a trade lost money."""
+
+    dtr_id: str = Field(..., min_length=1)
+    pair: str = Field(..., min_length=1)
+    engine_id: str = Field(..., min_length=1)
+    decision_state: str = Field(..., min_length=1)
+    attribution_status: str = Field(..., min_length=1)
+    gross_return: float = 0.0
+    realized_cost: float = 0.0
+    net_return_after_cost: float = 0.0
+    primary_failure_mode: str = Field(..., min_length=1)
+    why_losing: tuple[str, ...] = ()
+    preventive_action: str = ""
+    action_scope: str = ""
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    recommended_threshold_ids: tuple[str, ...] = ()
+    linked_diagnostic_categories: tuple[str, ...] = ()
+    evidence: tuple[TradeLossEvidence, ...] = ()
+    structured_log_key: str = Field(default="build9x.trade_loss_attribution", min_length=1)
+
+
+class TradeLossFailureModeSummary(BaseModel, frozen=True):
+    """Aggregated count of a specific loss failure mode."""
+
+    failure_mode: str = Field(..., min_length=1)
+    count: int = Field(..., ge=0)
+
+
+class TradeLossAttributionReport(BaseModel, frozen=True):
+    """Audit-ready Local IA Lab loss attribution sidecar."""
+
+    correlation_id: str = Field(..., min_length=1)
+    total_records: int = Field(..., ge=0)
+    executed_records: int = Field(..., ge=0)
+    losing_trade_count: int = Field(..., ge=0)
+    attribution_ready: bool = False
+    failure_modes: tuple[TradeLossFailureModeSummary, ...] = ()
+    attributions: tuple[TradeLossAttribution, ...] = ()
 
 
 class LearningCapacitySnapshot(BaseModel, frozen=True):
@@ -608,6 +657,10 @@ __all__ = [
     "TradeLearningInput",
     "DiagnosticEvidence",
     "DiagnosticResult",
+    "TradeLossEvidence",
+    "TradeLossAttribution",
+    "TradeLossFailureModeSummary",
+    "TradeLossAttributionReport",
     "LearningCapacitySnapshot",
     "LearningHypothesis",
     "ImprovementCandidate",
