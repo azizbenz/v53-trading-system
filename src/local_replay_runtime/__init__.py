@@ -46,6 +46,78 @@ from local_replay_runtime.local_lab_recalibration_plan import (
     LocalLabRecalibrationPlan,
     build_local_lab_recalibration_plan,
 )
+from local_replay_runtime.local_lab_calibration_methods_review import (
+    LocalLabCalibrationMethodsReview,
+    LocalLabCalibrationMethodsStatus,
+    build_local_lab_calibration_methods_review,
+)
+from local_replay_runtime.local_lab_execution_review import (
+    LocalLabExecutionReview,
+    LocalLabExecutionReviewStatus,
+    LocalLabExecutionTelemetry,
+    LocalLabExecutionThresholdReview,
+    build_local_lab_execution_review,
+)
+from local_replay_runtime.local_lab_execution_runtime_projection import (
+    LocalLabExecutionRuntimeConsumerProjection,
+    LocalLabExecutionRuntimeProjection,
+    LocalLabExecutionRuntimeProjectionStatus,
+    build_local_lab_execution_runtime_projection,
+)
+from local_replay_runtime.local_lab_multiple_testing_review import (
+    LocalLabMultipleTestingFamilyReview,
+    LocalLabMultipleTestingReview,
+    LocalLabMultipleTestingStatus,
+    build_hypothesis_test_family_review,
+    build_local_lab_multiple_testing_review,
+)
+from local_replay_runtime.local_lab_tail_risk_review import (
+    LocalLabTailRiskBreakerEstimate,
+    LocalLabTailRiskReview,
+    LocalLabTailRiskStatus,
+    build_local_lab_tail_risk_review,
+)
+from local_replay_runtime.local_lab_calibration_normalized_report import (
+    LocalLabCalibrationDataWindow,
+    LocalLabCalibrationOosReservation,
+    LocalLabCalibrationReproducibility,
+    LocalLabCalibrationThresholdReport,
+    LocalLabNormalizedCalibrationReport,
+    build_local_lab_calibration_normalized_report,
+)
+from local_replay_runtime.local_lab_loss_surrogate import (
+    LocalLabLossSurrogateModel,
+    LocalLabLossSurrogateRecordScore,
+    LocalLabLossSurrogateReport,
+    LocalLabLossSurrogateScopeScore,
+    build_local_lab_loss_surrogate_report,
+)
+from local_replay_runtime.local_lab_research_priority import (
+    LocalLabResearchPriorityFeatures,
+    LocalLabResearchPriorityReport,
+    LocalLabResearchPriorityScope,
+    LocalLabResearchPriorityWeights,
+    build_local_lab_research_priority_report,
+)
+from local_replay_runtime.local_lab_replay_candidate_queue import (
+    LocalLabReplayCandidate,
+    LocalLabReplayCandidateQueue,
+    build_local_lab_replay_candidate_queue,
+)
+from local_replay_runtime.local_lab_replay_ticket_index import (
+    LocalLabReplayTicket,
+    LocalLabReplayTicketIndex,
+    build_local_lab_replay_ticket_index,
+)
+from local_replay_runtime.local_lab_replay_dispatch_plan import (
+    LocalLabReplayDispatchItem,
+    LocalLabReplayDispatchPlan,
+    build_local_lab_replay_dispatch_plan,
+)
+from local_replay_runtime.local_lab_replay_workflow_manifest import (
+    LocalLabReplayWorkflowManifest,
+    build_local_lab_replay_workflow_manifest,
+)
 from local_replay_runtime.artifact_manifest import ArtifactManifest, SHARED_CORE_ID
 from local_replay_runtime.contracts import (
     LocalReplayRequest,
@@ -189,6 +261,54 @@ __all__ = [
     "LocalLabRecalibrationAction",
     "LocalLabRecalibrationPlan",
     "build_local_lab_recalibration_plan",
+    "LocalLabCalibrationMethodsReview",
+    "LocalLabCalibrationMethodsStatus",
+    "build_local_lab_calibration_methods_review",
+    "LocalLabExecutionReview",
+    "LocalLabExecutionReviewStatus",
+    "LocalLabExecutionTelemetry",
+    "LocalLabExecutionThresholdReview",
+    "LocalLabExecutionRuntimeConsumerProjection",
+    "LocalLabExecutionRuntimeProjection",
+    "LocalLabExecutionRuntimeProjectionStatus",
+    "build_local_lab_execution_review",
+    "build_local_lab_execution_runtime_projection",
+    "LocalLabMultipleTestingFamilyReview",
+    "LocalLabMultipleTestingReview",
+    "LocalLabMultipleTestingStatus",
+    "build_hypothesis_test_family_review",
+    "build_local_lab_multiple_testing_review",
+    "LocalLabTailRiskBreakerEstimate",
+    "LocalLabTailRiskReview",
+    "LocalLabTailRiskStatus",
+    "build_local_lab_tail_risk_review",
+    "LocalLabCalibrationDataWindow",
+    "LocalLabCalibrationOosReservation",
+    "LocalLabCalibrationReproducibility",
+    "LocalLabCalibrationThresholdReport",
+    "LocalLabNormalizedCalibrationReport",
+    "build_local_lab_calibration_normalized_report",
+    "LocalLabLossSurrogateModel",
+    "LocalLabLossSurrogateRecordScore",
+    "LocalLabLossSurrogateReport",
+    "LocalLabLossSurrogateScopeScore",
+    "build_local_lab_loss_surrogate_report",
+    "LocalLabResearchPriorityFeatures",
+    "LocalLabResearchPriorityReport",
+    "LocalLabResearchPriorityScope",
+    "LocalLabResearchPriorityWeights",
+    "build_local_lab_research_priority_report",
+    "LocalLabReplayCandidate",
+    "LocalLabReplayCandidateQueue",
+    "build_local_lab_replay_candidate_queue",
+    "LocalLabReplayTicket",
+    "LocalLabReplayTicketIndex",
+    "build_local_lab_replay_ticket_index",
+    "LocalLabReplayDispatchItem",
+    "LocalLabReplayDispatchPlan",
+    "build_local_lab_replay_dispatch_plan",
+    "LocalLabReplayWorkflowManifest",
+    "build_local_lab_replay_workflow_manifest",
     "ReplayPairAggregate",
     "ReplayEngineAggregate",
     "ReplayMetricsSummary",

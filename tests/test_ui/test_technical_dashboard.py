@@ -29,9 +29,11 @@ from monitoring import (
     EngineJudgmentCard,
     EngineJudgmentProjection,
     ExecutionNoTradeBridgeProjection,
+    ExecutionRuntimeProjectionBridgeProjection,
     LiveLightProjection,
     MicroLiveProjection,
     OperatorRuntimeProjection,
+    RegimeLiteSafingProjection,
     ReplayImportProjection,
     RuntimeHookBridgeProjection,
     ShadowProjection,
@@ -954,6 +956,43 @@ def test_technical_dashboard_view_projects_execution_no_trade_bridge_card():
     assert "stage=plan_selection" in bridge.detail
 
 
+def test_technical_dashboard_view_projects_execution_runtime_projection_bridge_card():
+    payload = build_technical_dashboard_payload(
+        _snapshot(),
+        active_modules=("protocols", "monitoring", "ui"),
+        active_engines=("engine_a", "engine_b"),
+        execution_runtime_projection_bridge_projection=ExecutionRuntimeProjectionBridgeProjection(
+            status="warning",
+            configured=True,
+            projection_found=True,
+            projection_loaded=True,
+            projection_status="partial",
+            projection_path="build/local_lab_execution_runtime_projection.json",
+            consumer_count=3,
+            ready_consumer_count=1,
+            partial_consumer_count=2,
+            blocked_consumer_count=0,
+            rate_limit_model_loaded=True,
+            spread_guard_model_loaded=False,
+            slippage_model_loaded=False,
+        ),
+    )
+
+    view = build_technical_dashboard_view(payload)
+    execution = next(section for section in view.sections if section.title == "Execution")
+    bridge = next(
+        card for card in execution.cards if card.key == "execution_runtime_projection_bridge"
+    )
+
+    assert bridge.status == "warning"
+    assert bridge.value == "proj=partial / loaded=yes / consumers=3"
+    assert "cfg=yes" in bridge.detail
+    assert "ready=1" in bridge.detail
+    assert "spread_guard=no" in bridge.detail
+    assert "slippage=no" in bridge.detail
+    assert "path=build/local_lab_execution_runtime_projection.json" in bridge.detail
+
+
 def test_technical_dashboard_view_projects_runtime_hook_bridge_section():
     payload = build_technical_dashboard_payload(
         _snapshot(),
@@ -992,6 +1031,7 @@ def test_technical_dashboard_view_projects_runtime_hook_bridge_section():
 
     assert summary.value == "open=8 / configured=2 / loaded=1"
     assert summary.status == "warning"
+    assert "runtime_projection=planned" in summary.detail
     assert engine_b.value == "sel=binding_only / loaded=no"
     assert "actions=soft_reduce" in engine_b.detail
     assert "artifacts=2" in engine_b.detail
@@ -1057,6 +1097,60 @@ def test_technical_dashboard_view_projects_shadow_summary_when_available():
             review_export_ready=False,
             import_artifact_id="artifact-shadow-1",
             import_lineage_version="a.v1.0.r1",
+            execution_telemetry_ref="E:/shadow/shadow_vps_service_execution_telemetry.json",
+            execution_telemetry_status="written",
+            telegram_alert_delivery_status="failed",
+            telegram_alert_delivery_event_type="shadow_day_failed",
+            telegram_alert_delivery_error="http_500",
+            execution_runtime_bootstrap_ref="E:/shadow/execution_runtime_bootstrap.summary.json",
+            execution_runtime_bootstrap_status="ready",
+            execution_runtime_bootstrap_source="live_websocket_config",
+            execution_runtime_gatekeeper_audit_ref="E:/shadow/artifacts/gatekeeper/audit.jsonl",
+            execution_runtime_gatekeeper_audit_source="cli",
+            execution_runtime_bootstrap_user_data_stream_enabled=False,
+            execution_runtime_bootstrap_reconciliation_boot_executed=True,
+            execution_runtime_bootstrap_reconciliation_boot_trading_blocked=False,
+            execution_runtime_bootstrap_reconciliation_boot_circuit_breaker_tripped=False,
+            execution_runtime_bootstrap_reconciliation_boot_detail="boot reconciliation aligned local and remote state",
+            execution_runtime_bootstrap_reconciliation_boot_recovery_action="none",
+            execution_runtime_bootstrap_reconciliation_boot_divergence_count=0,
+            execution_runtime_projection_ref="E:/shadow/local_lab_execution_runtime_projection.json",
+            execution_runtime_projection_source="cli",
+            regime_lite_assessment_ref="E:/shadow/regime_lite_assessment.json",
+            regime_lite_assessment_source="live_websocket_config",
+            regime_lite_safing_recommendation_ref="E:/shadow/regime_lite_safing_recommendation.json",
+            regime_lite_safing_recommendation_source="cli",
+            info_stress_assessment_ref="E:/shadow/info_stress_assessment.json",
+            info_stress_assessment_source="cli",
+            info_stress_governance_status="assessment_only",
+            info_stress_level="extreme",
+            info_stress_alert_count=3,
+            info_stress_entries_blocked=True,
+            info_stress_entries_blocked_until_ts=1700086400,
+            info_stress_reason_codes=("INFO_STRESS_SPREAD_EXPLOSION",),
+            info_stress_detail="info_stress reached EXTREME in shadow",
+            execution_runtime_projection_status="ready",
+            execution_runtime_projection_ready=True,
+            execution_runtime_projection_consumer_count=3,
+            execution_runtime_projection_ready_consumer_count=3,
+            execution_runtime_projection_partial_consumer_count=0,
+            execution_runtime_projection_blocked_consumer_count=0,
+            execution_runtime_projection_bridge_status="healthy",
+            execution_runtime_projection_bridge_loaded=True,
+            execution_runtime_projection_rate_limit_model_loaded=True,
+            execution_runtime_projection_spread_guard_model_loaded=True,
+            execution_runtime_projection_slippage_model_loaded=True,
+            regime_lite_safing=RegimeLiteSafingProjection(
+                status="critical",
+                severity="halt_recommended",
+                should_block_new_entries=True,
+                should_exit_all=True,
+                recommended_operator_action="set_halted",
+                operator_safing_request_action="set_halted",
+                operator_safing_request_source_runtime_mode="shadow",
+                detail="regime_lite reached EXTREME in shadow; recommend set_halted",
+                reason_codes=("RISK_REGIME_EXTREME_EXIT_ALL",),
+            ),
             blocking_reasons=("Build-9X review export must be ready before accepting Shadow",),
             manual_review_required=True,
         ),
@@ -1070,6 +1164,96 @@ def test_technical_dashboard_view_projects_shadow_summary_when_available():
     assert "shadow=warning" in governed.value
     assert next(card for card in shadow.cards if card.key == "shadow_verdict").value == "needs_review"
     assert next(card for card in shadow.cards if card.key == "shadow_divergences").status == "warning"
+    assert next(
+        card for card in shadow.cards if card.key == "shadow_execution_telemetry"
+    ).value == "written"
+    assert next(
+        card for card in shadow.cards if card.key == "shadow_execution_telemetry"
+    ).status == "healthy"
+    assert "shadow_vps_service_execution_telemetry.json" in next(
+        card for card in shadow.cards if card.key == "shadow_execution_telemetry"
+    ).detail
+    assert next(
+        card for card in shadow.cards if card.key == "shadow_telegram_alerts"
+    ).value == "failed"
+    assert next(
+        card for card in shadow.cards if card.key == "shadow_telegram_alerts"
+    ).status == "critical"
+    assert "event=shadow_day_failed" in next(
+        card for card in shadow.cards if card.key == "shadow_telegram_alerts"
+    ).detail
+    assert "error=http_500" in next(
+        card for card in shadow.cards if card.key == "shadow_telegram_alerts"
+    ).detail
+    assert next(
+        card for card in shadow.cards if card.key == "shadow_execution_bootstrap"
+    ).value == "ready@live_websocket_config"
+    assert next(
+        card for card in shadow.cards if card.key == "shadow_execution_bootstrap"
+    ).status == "healthy"
+    assert "gatekeeper_source=cli" in next(
+        card for card in shadow.cards if card.key == "shadow_execution_bootstrap"
+    ).detail
+    assert "divergences=0" in next(
+        card for card in shadow.cards if card.key == "shadow_execution_bootstrap"
+    ).detail
+    assert "execution_runtime_bootstrap.summary.json" in next(
+        card for card in shadow.cards if card.key == "shadow_execution_bootstrap"
+    ).detail
+    assert next(
+        card for card in shadow.cards if card.key == "shadow_execution_projection"
+    ).value == "ready@cli"
+    assert next(
+        card for card in shadow.cards if card.key == "shadow_execution_projection"
+    ).status == "healthy"
+    assert "spread_guard=yes" in next(
+        card for card in shadow.cards if card.key == "shadow_execution_projection"
+    ).detail
+    assert "local_lab_execution_runtime_projection.json" in next(
+        card for card in shadow.cards if card.key == "shadow_execution_projection"
+    ).detail
+    assert next(
+        card for card in shadow.cards if card.key == "shadow_regime_lite_safing"
+    ).value == "halt_recommended"
+    assert next(
+        card for card in shadow.cards if card.key == "shadow_regime_lite_safing"
+    ).status == "critical"
+    assert "block_entries=yes" in next(
+        card for card in shadow.cards if card.key == "shadow_regime_lite_safing"
+    ).detail
+    assert "assessment_source=live_websocket_config" in next(
+        card for card in shadow.cards if card.key == "shadow_regime_lite_safing"
+    ).detail
+    assert "safing_source=cli" in next(
+        card for card in shadow.cards if card.key == "shadow_regime_lite_safing"
+    ).detail
+    assert "regime_lite_assessment.json" in next(
+        card for card in shadow.cards if card.key == "shadow_regime_lite_safing"
+    ).detail
+    assert "regime_lite_safing_recommendation.json" in next(
+        card for card in shadow.cards if card.key == "shadow_regime_lite_safing"
+    ).detail
+    assert "exit_all=yes" in next(
+        card for card in shadow.cards if card.key == "shadow_regime_lite_safing"
+    ).detail
+    assert "RISK_REGIME_EXTREME_EXIT_ALL" in next(
+        card for card in shadow.cards if card.key == "shadow_regime_lite_safing"
+    ).detail
+    assert next(
+        card for card in shadow.cards if card.key == "shadow_info_stress"
+    ).value == "assessment_only@extreme"
+    assert next(
+        card for card in shadow.cards if card.key == "shadow_info_stress"
+    ).status == "warning"
+    assert "assessment_source=cli" in next(
+        card for card in shadow.cards if card.key == "shadow_info_stress"
+    ).detail
+    assert "info_stress_assessment.json" in next(
+        card for card in shadow.cards if card.key == "shadow_info_stress"
+    ).detail
+    assert "INFO_STRESS_SPREAD_EXPLOSION" in next(
+        card for card in shadow.cards if card.key == "shadow_info_stress"
+    ).detail
     assert next(card for card in shadow.cards if card.key == "shadow_blocking_reasons").detail == (
         "Build-9X review export must be ready before accepting Shadow"
     )

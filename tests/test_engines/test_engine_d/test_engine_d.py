@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from engine_d import EngineDDecision, EngineDInput, run_engine_d
+from engines.engine_d import EngineDDecision, EngineDInput, run_engine_d
 
 
 def _good_inputs(**overrides) -> EngineDInput:

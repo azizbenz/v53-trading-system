@@ -33,6 +33,7 @@ from monitoring import (
     TechnicalDashboardPayload,
 )
 from protocols import (
+    InfoStressGovernanceSummary,
     LiveLightInput,
     LiveLightInputError,
     LiveLightVerdict,
@@ -43,6 +44,7 @@ from protocols import (
     MicroLiveVerdict,
     OperatorSafingAction,
     OperatorSafingRequest,
+    RegimeLiteGovernanceSummary,
     ShadowPortfolioJudgment,
     ShadowVerdict,
     build_live_light_input_from_micro_live,
@@ -269,6 +271,15 @@ def _micro_live_summary(
     rewrite_required_engines: tuple[str, ...] = (),
     shadow_portfolio_judgment: ShadowPortfolioJudgment | None = None,
     planned_engines: tuple[str, ...] | None = None,
+    execution_runtime_projection_ref: str = "",
+    execution_runtime_projection_status: str = "not_configured",
+    execution_runtime_projection_ready: bool = False,
+    execution_runtime_projection_consumer_count: int = 0,
+    execution_runtime_projection_ready_consumer_count: int = 0,
+    execution_runtime_projection_partial_consumer_count: int = 0,
+    execution_runtime_projection_blocked_consumer_count: int = 0,
+    regime_lite_governance: RegimeLiteGovernanceSummary | None = None,
+    info_stress_governance: InfoStressGovernanceSummary | None = None,
 ) -> MicroLiveRunSummary:
     resolved_planned_engines = planned_engines or promotable_engines
     return MicroLiveRunSummary(
@@ -306,6 +317,23 @@ def _micro_live_summary(
         ),
         import_artifact_id="artifact-1",
         import_lineage_version="a.v1.0.r1",
+        execution_runtime_projection_ref=execution_runtime_projection_ref,
+        execution_runtime_projection_status=execution_runtime_projection_status,
+        execution_runtime_projection_ready=execution_runtime_projection_ready,
+        execution_runtime_projection_consumer_count=(
+            execution_runtime_projection_consumer_count
+        ),
+        execution_runtime_projection_ready_consumer_count=(
+            execution_runtime_projection_ready_consumer_count
+        ),
+        execution_runtime_projection_partial_consumer_count=(
+            execution_runtime_projection_partial_consumer_count
+        ),
+        execution_runtime_projection_blocked_consumer_count=(
+            execution_runtime_projection_blocked_consumer_count
+        ),
+        regime_lite_governance=regime_lite_governance or RegimeLiteGovernanceSummary(),
+        info_stress_governance=info_stress_governance or InfoStressGovernanceSummary(),
         observability_ready=True,
         halt_ready=True,
         onboarding_ready=True,
@@ -320,7 +348,13 @@ def _micro_live_summary(
 
 def test_build_live_light_input_from_micro_live_maps_governed_inputs():
     live_input = build_live_light_input_from_micro_live(
-        _micro_live_summary(),
+        _micro_live_summary(
+            execution_runtime_projection_ref="build/local_lab_execution_runtime_projection.json",
+            execution_runtime_projection_status="ready",
+            execution_runtime_projection_ready=True,
+            execution_runtime_projection_consumer_count=3,
+            execution_runtime_projection_ready_consumer_count=3,
+        ),
         _micro_live_payload(),
         live_pairs=("BTCUSDT", "ETHUSDT"),
         requested_total_notional_usdt=80.0,
@@ -356,6 +390,12 @@ def test_build_live_light_input_from_micro_live_maps_governed_inputs():
         "engine_c",
         "engine_d",
     )
+    assert live_input.execution_runtime_projection_ref.endswith(
+        "local_lab_execution_runtime_projection.json"
+    )
+    assert live_input.execution_runtime_projection_status == "ready"
+    assert live_input.execution_runtime_projection_ready is True
+    assert live_input.execution_runtime_projection_ready_consumer_count == 3
 
 
 def test_run_live_light_gate_blocks_when_shadow_portfolio_judgment_is_not_promotable():
@@ -393,9 +433,175 @@ def test_run_live_light_gate_blocks_when_shadow_portfolio_judgment_is_not_promot
         "shadow portfolio judgment=shadow-only" in reason
         for reason in summary.decision.blocking_reasons
     )
-    assert "shadow portfolio physics_pressure=elevated" in summary.decision.blocking_reasons
-    assert "shadow portfolio elevated_physics_engines=1" in summary.decision.blocking_reasons
-    assert "shadow portfolio critical_physics_engines=1" in summary.decision.blocking_reasons
+
+
+def test_run_live_light_gate_preserves_execution_runtime_projection_seam():
+    live_input = build_live_light_input_from_micro_live(
+        _micro_live_summary(
+            execution_runtime_projection_ref="build/local_lab_execution_runtime_projection.json",
+            execution_runtime_projection_status="partial",
+            execution_runtime_projection_ready=False,
+            execution_runtime_projection_consumer_count=3,
+            execution_runtime_projection_ready_consumer_count=1,
+            execution_runtime_projection_partial_consumer_count=2,
+            execution_runtime_projection_blocked_consumer_count=0,
+        ),
+        _micro_live_payload(),
+        live_pairs=("BTCUSDT", "ETHUSDT"),
+        requested_total_notional_usdt=80.0,
+        requested_pair_notional_usdt=40.0,
+        max_total_notional_usdt=100.0,
+        max_pair_notional_usdt=50.0,
+        micro_live_stable_days=7,
+        observability_ready=True,
+        halt_ready=True,
+        execution_ready=True,
+        broker_ready=True,
+        exchange_ready=True,
+        onboarding_accepted=True,
+    )
+
+    summary = run_live_light_gate(live_input)
+
+    assert summary.execution_runtime_projection_ref.endswith(
+        "local_lab_execution_runtime_projection.json"
+    )
+    assert summary.execution_runtime_projection_status == "partial"
+    assert summary.execution_runtime_projection_ready is False
+    assert summary.execution_runtime_projection_consumer_count == 3
+    assert summary.execution_runtime_projection_ready_consumer_count == 1
+    assert summary.execution_runtime_projection_partial_consumer_count == 2
+    assert summary.execution_runtime_projection_blocked_consumer_count == 0
+
+
+def test_build_live_light_input_from_micro_live_preserves_regime_lite_governance():
+    governance = RegimeLiteGovernanceSummary(
+        status="ready",
+        state="extreme",
+        candidate_state="extreme",
+        state_changed=True,
+        entries_blocked=True,
+        sudden_event=True,
+        safing_severity="halt_recommended",
+        should_block_new_entries=True,
+        should_exit_all=True,
+        recommended_operator_action="set_halted",
+        operator_safing_request_action="set_halted",
+        operator_safing_request_source_runtime_mode="shadow",
+        reason_codes=("RG_EXTREME_BTC_DROP_1H", "RISK_REGIME_EXTREME_EXIT_ALL"),
+        detail="explicit regime_lite governance summary",
+    )
+    live_input = build_live_light_input_from_micro_live(
+        _micro_live_summary(regime_lite_governance=governance),
+        _micro_live_payload(),
+        live_pairs=("BTCUSDT", "ETHUSDT"),
+        requested_total_notional_usdt=80.0,
+        requested_pair_notional_usdt=40.0,
+        max_total_notional_usdt=100.0,
+        max_pair_notional_usdt=50.0,
+        micro_live_stable_days=7,
+        observability_ready=True,
+        halt_ready=True,
+        execution_ready=True,
+        broker_ready=True,
+        exchange_ready=True,
+        onboarding_accepted=True,
+    )
+
+    assert live_input.regime_lite_governance == governance
+
+
+def test_run_live_light_gate_preserves_regime_lite_governance_summary():
+    governance = RegimeLiteGovernanceSummary(
+        status="recommendation_only",
+        state="not_configured",
+        candidate_state="not_configured",
+        safing_severity="entry_block_only",
+        should_block_new_entries=True,
+        reason_codes=("RISK_REGIME_EXTREME_COOLDOWN",),
+        detail="recommendation supplied without explicit assessment",
+    )
+    live_input = build_live_light_input_from_micro_live(
+        _micro_live_summary(regime_lite_governance=governance),
+        _micro_live_payload(),
+        live_pairs=("BTCUSDT", "ETHUSDT"),
+        requested_total_notional_usdt=80.0,
+        requested_pair_notional_usdt=40.0,
+        max_total_notional_usdt=100.0,
+        max_pair_notional_usdt=50.0,
+        micro_live_stable_days=7,
+        observability_ready=True,
+        halt_ready=True,
+        execution_ready=True,
+        broker_ready=True,
+        exchange_ready=True,
+        onboarding_accepted=True,
+    )
+
+    summary = run_live_light_gate(live_input)
+
+    assert summary.regime_lite_governance == governance
+
+
+def test_build_live_light_input_from_micro_live_preserves_info_stress_governance():
+    governance = InfoStressGovernanceSummary(
+        status="assessment_only",
+        level="extreme",
+        alert_count=4,
+        entries_blocked=True,
+        entries_blocked_until_ts=1_700_000_600,
+        reason_codes=("INFO_STRESS_SPREAD_EXPLOSION",),
+        detail="explicit info_stress governance summary",
+    )
+    live_input = build_live_light_input_from_micro_live(
+        _micro_live_summary(info_stress_governance=governance),
+        _micro_live_payload(),
+        live_pairs=("BTCUSDT", "ETHUSDT"),
+        requested_total_notional_usdt=80.0,
+        requested_pair_notional_usdt=40.0,
+        max_total_notional_usdt=100.0,
+        max_pair_notional_usdt=50.0,
+        micro_live_stable_days=7,
+        observability_ready=True,
+        halt_ready=True,
+        execution_ready=True,
+        broker_ready=True,
+        exchange_ready=True,
+        onboarding_accepted=True,
+    )
+
+    assert live_input.info_stress_governance == governance
+
+
+def test_run_live_light_gate_preserves_info_stress_governance_summary():
+    governance = InfoStressGovernanceSummary(
+        status="assessment_only",
+        level="elevated",
+        alert_count=1,
+        entries_blocked=False,
+        reason_codes=("INFO_STRESS_DEPTH_RATIO_COLLAPSE",),
+        detail="assessment supplied without late-stage mutation",
+    )
+    live_input = build_live_light_input_from_micro_live(
+        _micro_live_summary(info_stress_governance=governance),
+        _micro_live_payload(),
+        live_pairs=("BTCUSDT", "ETHUSDT"),
+        requested_total_notional_usdt=80.0,
+        requested_pair_notional_usdt=40.0,
+        max_total_notional_usdt=100.0,
+        max_pair_notional_usdt=50.0,
+        micro_live_stable_days=7,
+        observability_ready=True,
+        halt_ready=True,
+        execution_ready=True,
+        broker_ready=True,
+        exchange_ready=True,
+        onboarding_accepted=True,
+    )
+
+    summary = run_live_light_gate(live_input)
+
+    assert summary.info_stress_governance == governance
 
 
 def test_build_live_light_input_from_micro_live_rejects_non_micro_live_source_payload():

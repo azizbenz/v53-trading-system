@@ -419,6 +419,22 @@ def build_observability_export(payload: TechnicalDashboardPayload) -> Observabil
             labels=base_labels,
         ),
         _sample(
+            "v53_shadow_regime_lite_safing_status",
+            kind="state",
+            value=1.0,
+            labels={
+                **base_labels,
+                "status": payload.shadow.regime_lite_safing.status,
+                "severity": payload.shadow.regime_lite_safing.severity,
+                "recommended_action": (
+                    payload.shadow.regime_lite_safing.recommended_operator_action or "none"
+                ),
+                "request_action": (
+                    payload.shadow.regime_lite_safing.operator_safing_request_action or "none"
+                ),
+            },
+        ),
+        _sample(
             "v53_shadow_manual_review_required",
             kind="state",
             value=1.0 if payload.shadow.manual_review_required else 0.0,
@@ -605,6 +621,81 @@ def build_observability_export(payload: TechnicalDashboardPayload) -> Observabil
             kind="gauge",
             value=float(payload.execution_no_trade_bridge.artifact_count),
             unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_execution_runtime_projection_bridge_status",
+            kind="state",
+            value=1.0,
+            labels={
+                **base_labels,
+                "status": payload.execution_runtime_projection_bridge.status,
+                "projection_status": (
+                    payload.execution_runtime_projection_bridge.projection_status or "none"
+                ),
+            },
+        ),
+        _sample(
+            "v53_execution_runtime_projection_bridge_configured",
+            kind="state",
+            value=1.0 if payload.execution_runtime_projection_bridge.configured else 0.0,
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_execution_runtime_projection_bridge_found",
+            kind="state",
+            value=1.0 if payload.execution_runtime_projection_bridge.projection_found else 0.0,
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_execution_runtime_projection_bridge_loaded",
+            kind="state",
+            value=1.0 if payload.execution_runtime_projection_bridge.projection_loaded else 0.0,
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_execution_runtime_projection_bridge_ready_consumer_count",
+            kind="gauge",
+            value=float(payload.execution_runtime_projection_bridge.ready_consumer_count),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_execution_runtime_projection_bridge_partial_consumer_count",
+            kind="gauge",
+            value=float(payload.execution_runtime_projection_bridge.partial_consumer_count),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_execution_runtime_projection_bridge_blocked_consumer_count",
+            kind="gauge",
+            value=float(payload.execution_runtime_projection_bridge.blocked_consumer_count),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_execution_runtime_projection_bridge_rate_limit_model_loaded",
+            kind="state",
+            value=1.0
+            if payload.execution_runtime_projection_bridge.rate_limit_model_loaded
+            else 0.0,
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_execution_runtime_projection_bridge_spread_guard_model_loaded",
+            kind="state",
+            value=1.0
+            if payload.execution_runtime_projection_bridge.spread_guard_model_loaded
+            else 0.0,
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_execution_runtime_projection_bridge_slippage_model_loaded",
+            kind="state",
+            value=1.0
+            if payload.execution_runtime_projection_bridge.slippage_model_loaded
+            else 0.0,
             labels=base_labels,
         ),
         *_runtime_hook_bridge_samples(payload),

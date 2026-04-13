@@ -4,7 +4,7 @@ from local_replay_runtime import build_local_lab_artifact_release_candidate
 from local_replay_runtime.artifact_upload_bridge_candidate import (
     LocalLabArtifactUploadDryRunBridge,
 )
-from local_replay_runtime.local_lab_monitoring_projection import (
+from monitoring.local_lab_monitoring_projection import (
     build_local_lab_monitoring_projection,
 )
 from local_replay_runtime.local_lab_promotion_readiness import (
@@ -92,14 +92,28 @@ def test_local_lab_monitoring_projection_is_critical_when_core_outputs_are_missi
         scope_blocked_count=1,
         release_scope_ready_count=0,
         release_scope_blocked_count=1,
-        release_candidate=release_candidate,
-        dry_run_bridge=bridge,
-        promotion_readiness=promotion,
+        release_ready_for_shadow=release_candidate.ready_for_shadow_import,
+        release_status=release_candidate.release_status,
+        release_blocking_reasons=release_candidate.blocking_reasons,
+        artifact_proof_validation_reasons=release_candidate.artifact_proof_validation_reasons,
+        recalibration_blocking_reasons=release_candidate.recalibration_blocking_reasons,
+        bridge_status=bridge.bridge_status,
+        ready_for_shadow_import_dry_run=bridge.ready_for_shadow_import_dry_run,
+        bridge_blocking_reasons=bridge.blocking_reasons,
+        release_gate_status=bridge.release_gate_status,
+        release_gate_reasons=bridge.release_gate_reasons,
+        semantic_status=bridge.semantic_status,
+        promotion_readiness_status=promotion.readiness_status,
+        activation_stage=promotion.activation_stage.value,
+        normalized_promotion_state=promotion.normalized_promotion_state.value,
+        review_state=promotion.review_state.value,
     )
 
     assert projection.status == "critical"
     assert projection.promotion_readiness_status == "local_only"
     assert projection.detail == "Local IA Lab core analysis outputs are incomplete or missing."
+    assert projection.loss_surrogate_status == "not_evaluated"
+    assert projection.research_priority_status == "not_evaluated"
 
 
 def test_local_lab_monitoring_projection_warns_when_candidate_is_only_locally_ready():
@@ -127,13 +141,56 @@ def test_local_lab_monitoring_projection_warns_when_candidate_is_only_locally_re
         scope_blocked_count=0,
         release_scope_ready_count=2,
         release_scope_blocked_count=0,
-        release_candidate=release_candidate,
-        dry_run_bridge=bridge,
-        promotion_readiness=promotion,
+        release_ready_for_shadow=release_candidate.ready_for_shadow_import,
+        release_status=release_candidate.release_status,
+        release_blocking_reasons=release_candidate.blocking_reasons,
+        artifact_proof_validation_reasons=release_candidate.artifact_proof_validation_reasons,
+        recalibration_blocking_reasons=release_candidate.recalibration_blocking_reasons,
+        bridge_status=bridge.bridge_status,
+        ready_for_shadow_import_dry_run=bridge.ready_for_shadow_import_dry_run,
+        bridge_blocking_reasons=bridge.blocking_reasons,
+        release_gate_status=bridge.release_gate_status,
+        release_gate_reasons=bridge.release_gate_reasons,
+        semantic_status=bridge.semantic_status,
+        promotion_readiness_status=promotion.readiness_status,
+        activation_stage=promotion.activation_stage.value,
+        normalized_promotion_state=promotion.normalized_promotion_state.value,
+        review_state=promotion.review_state.value,
+        loss_surrogate_status="single_class_only",
+        loss_surrogate_ready=False,
+        loss_surrogate_scope_count=1,
+        loss_surrogate_top_scope_slug="",
+        loss_surrogate_top_probability=0.0,
+        execution_review_status="partial",
+        execution_review_ready=False,
+        execution_ready_threshold_count=0,
+        execution_partial_threshold_count=2,
+        execution_blocked_threshold_count=0,
+        local_lab_execution_review_path="E:/lab/local_lab_execution_review.json",
+        multiple_testing_review_status="ready",
+        multiple_testing_review_ready=True,
+        multiple_testing_correction_required=False,
+        multiple_testing_correction="not_required_interval_publication",
+        multiple_testing_family_count=2,
+        research_priority_status="ready",
+        research_priority_scope_count=1,
+        research_priority_top_scope_slug="btcusdt__engine_a",
+        research_priority_top_score=0.81,
+        local_lab_loss_surrogate_path="E:/lab/local_lab_loss_surrogate_report.json",
+        local_lab_research_priority_path="E:/lab/local_lab_research_priority.json",
     )
 
     assert projection.status == "warning"
     assert projection.promotion_readiness_status == "shadow_candidate_pending_dry_run"
+    assert projection.loss_surrogate_status == "single_class_only"
+    assert projection.execution_review_status == "partial"
+    assert projection.execution_review_ready is False
+    assert projection.execution_partial_threshold_count == 2
+    assert projection.multiple_testing_review_status == "ready"
+    assert projection.multiple_testing_review_ready is True
+    assert projection.research_priority_status == "ready"
+    assert projection.research_priority_scope_count == 1
+    assert projection.research_priority_top_scope_slug == "btcusdt__engine_a"
     assert projection.detail.startswith(
         "Local IA Lab release candidate is proof-backed locally"
     )
@@ -164,11 +221,25 @@ def test_local_lab_monitoring_projection_is_healthy_when_dry_run_is_ready():
         scope_blocked_count=0,
         release_scope_ready_count=2,
         release_scope_blocked_count=0,
-        release_candidate=release_candidate,
-        dry_run_bridge=bridge,
-        promotion_readiness=promotion,
+        release_ready_for_shadow=release_candidate.ready_for_shadow_import,
+        release_status=release_candidate.release_status,
+        release_blocking_reasons=release_candidate.blocking_reasons,
+        artifact_proof_validation_reasons=release_candidate.artifact_proof_validation_reasons,
+        recalibration_blocking_reasons=release_candidate.recalibration_blocking_reasons,
+        bridge_status=bridge.bridge_status,
+        ready_for_shadow_import_dry_run=bridge.ready_for_shadow_import_dry_run,
+        bridge_blocking_reasons=bridge.blocking_reasons,
+        release_gate_status=bridge.release_gate_status,
+        release_gate_reasons=bridge.release_gate_reasons,
+        semantic_status=bridge.semantic_status,
+        promotion_readiness_status=promotion.readiness_status,
+        activation_stage=promotion.activation_stage.value,
+        normalized_promotion_state=promotion.normalized_promotion_state.value,
+        review_state=promotion.review_state.value,
     )
 
     assert projection.status == "healthy"
     assert projection.promotion_readiness_status == "shadow_candidate_dry_run_ready"
+    assert projection.loss_surrogate_scope_count == 0
+    assert projection.research_priority_scope_count == 0
     assert projection.detail.startswith("Local IA Lab dry-run handoff is ready for SHADOW import review")

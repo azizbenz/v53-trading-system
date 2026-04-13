@@ -9,6 +9,7 @@ import local_replay_runtime
 import protocols
 from interface_contracts import ProfileId, PromotionState, ReviewState, RuntimeMode
 from protocols import (
+    InfoStressGovernanceSummary,
     LiveLightDecision,
     LiveLightExecutionIntent,
     LiveLightInput,
@@ -23,6 +24,7 @@ from protocols import (
     MicroLiveVerdict,
     OperatorSafingAction,
     OperatorSafingRequest,
+    RegimeLiteGovernanceSummary,
     ShadowComparison,
     ShadowBuild14Contribution,
     ShadowBuild14ReaderContribution,
@@ -104,8 +106,10 @@ def test_protocols_exports_expected_symbols():
         "run_micro_live_gate",
         "build_micro_live_projection",
         "build_micro_live_dashboard_section",
+        "InfoStressGovernanceSummary",
         "OperatorSafingAction",
         "OperatorSafingRequest",
+        "RegimeLiteGovernanceSummary",
         "ShadowTruthSet",
         "ShadowRuntimeEvidence",
         "ShadowValidationSet",

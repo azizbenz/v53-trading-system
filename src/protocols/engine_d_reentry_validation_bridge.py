@@ -6,12 +6,13 @@ import logging
 
 from pydantic import BaseModel
 
-from engines.engine_d import EngineDReentryValidationInput, EngineDReentryValidationOutcome
 from interface_contracts import (
     ArtifactActionKind,
     ArtifactRuntimeFailureMode,
     ArtifactRuntimeFailureStage,
     CANONICAL_ARTIFACT_RUNTIME_ERROR_POLICY,
+    EngineDReentryValidationInput,
+    EngineDReentryValidationOutcome,
     HookId,
 )
 

@@ -16,10 +16,12 @@ from monitoring import (
     Build14ReaderProjection,
     Build14Projection,
     Build9XProjection,
+    ExecutionRuntimeProjectionBridgeProjection,
     LiveLightProjection,
     MicroLiveProjection,
     OperatorRuntimeEvent,
     OperatorRuntimeProjection,
+    RegimeLiteSafingProjection,
     ReplayImportProjection,
     RuntimeHookBridgeProjection,
     ShadowProjection,
@@ -43,6 +45,8 @@ def _payload(
     build14_projection: Build14Projection | None = None,
     replay_projection: ReplayImportProjection | None = None,
     operator_runtime: OperatorRuntimeProjection | None = None,
+    execution_runtime_projection_bridge_projection: ExecutionRuntimeProjectionBridgeProjection
+    | None = None,
     runtime_hook_bridge_projections: tuple[RuntimeHookBridgeProjection, ...] | None = None,
     active_modules: tuple[str, ...] = (),
     active_engines: tuple[str, ...] = (),
@@ -171,6 +175,9 @@ def _payload(
         build14_projection=build14_projection,
         replay_projection=replay_projection,
         operator_runtime=operator_runtime,
+        execution_runtime_projection_bridge_projection=(
+            execution_runtime_projection_bridge_projection
+        ),
         runtime_hook_bridge_projections=runtime_hook_bridge_projections,
     )
 
@@ -637,6 +644,86 @@ def test_observability_export_projects_execution_no_trade_bridge_metrics():
     )
     assert any(
         sample.name == "v53_execution_no_trade_bridge_loaded" and sample.value == 0.0
+        for sample in export.samples
+    )
+
+
+def test_observability_export_projects_execution_runtime_projection_bridge_metrics():
+    payload = _payload(
+        execution_runtime_projection_bridge_projection=ExecutionRuntimeProjectionBridgeProjection(
+            status="warning",
+            configured=True,
+            projection_found=True,
+            projection_loaded=True,
+            projection_status="partial",
+            consumer_count=3,
+            ready_consumer_count=1,
+            partial_consumer_count=2,
+            blocked_consumer_count=0,
+            rate_limit_model_loaded=True,
+            spread_guard_model_loaded=False,
+            slippage_model_loaded=False,
+        )
+    )
+
+    export = build_observability_export(payload)
+
+    assert any(
+        sample.name == "v53_execution_runtime_projection_bridge_status"
+        and sample.labels["status"] == "warning"
+        and sample.labels["projection_status"] == "partial"
+        for sample in export.samples
+    )
+    assert any(
+        sample.name == "v53_execution_runtime_projection_bridge_configured"
+        and sample.value == 1.0
+        for sample in export.samples
+    )
+    assert any(
+        sample.name == "v53_execution_runtime_projection_bridge_ready_consumer_count"
+        and sample.value == 1.0
+        for sample in export.samples
+    )
+    assert any(
+        sample.name == "v53_execution_runtime_projection_bridge_spread_guard_model_loaded"
+        and sample.value == 0.0
+        for sample in export.samples
+    )
+    assert any(
+        sample.name == "v53_execution_runtime_projection_bridge_slippage_model_loaded"
+        and sample.value == 0.0
+        for sample in export.samples
+    )
+
+
+def test_observability_export_projects_shadow_regime_lite_safing_metric():
+    payload = _payload(
+        shadow_projection=ShadowProjection(
+            status="healthy",
+            run_state="completed",
+            verdict="accepted",
+            regime_lite_safing=RegimeLiteSafingProjection(
+                status="critical",
+                severity="halt_recommended",
+                should_block_new_entries=True,
+                should_exit_all=True,
+                recommended_operator_action="set_halted",
+                operator_safing_request_action="set_halted",
+                operator_safing_request_source_runtime_mode="shadow",
+                detail="regime_lite reached EXTREME in shadow",
+                reason_codes=("RISK_REGIME_EXTREME_EXIT_ALL",),
+            ),
+        )
+    )
+
+    export = build_observability_export(payload)
+
+    assert any(
+        sample.name == "v53_shadow_regime_lite_safing_status"
+        and sample.labels["status"] == "critical"
+        and sample.labels["severity"] == "halt_recommended"
+        and sample.labels["recommended_action"] == "set_halted"
+        and sample.labels["request_action"] == "set_halted"
         for sample in export.samples
     )
 

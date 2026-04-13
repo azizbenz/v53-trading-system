@@ -11,7 +11,7 @@ from uuid import uuid4
 
 import pytest
 
-from interface_contracts import ProfileId, StrategyClassification
+from interface_contracts import ProfileId, RuntimeMode, StrategyClassification
 from local_replay_runtime import (
     HistoricalReplayDataset,
     HistoricalReplayOpportunity,
@@ -24,6 +24,12 @@ from local_replay_runtime import (
 from meta_minimal.dtr_core.decision_state_encoder import DecisionState
 from meta_minimal.dtr_core.dtr_record_builder import build_dtr
 from protocols import ShadowDayCounter, ShadowProfile, ShadowSessionRegistry
+from regime_classifier import RegimeLiteAssessment, RegimeLiteState
+from risk_backbone import (
+    InfoStressAssessment,
+    InfoStressLevel,
+    build_regime_lite_safing_recommendation,
+)
 
 
 def _load_runner_module():
@@ -46,6 +52,164 @@ def _scratch_dir(label: str) -> Path:
     output_dir = base_dir / f"{label}_{uuid4().hex}"
     output_dir.mkdir(parents=True, exist_ok=False)
     return output_dir
+
+
+def _write_execution_runtime_projection(path: Path) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "correlation_id": "corr-exec-runtime",
+                "export_dir": "build/local_lab",
+                "run_id": "local-lab-run-1",
+                "projection_status": "ready",
+                "projection_ready": True,
+                "execution_review_status": "ready",
+                "execution_review_ready": True,
+                "consumer_count": 3,
+                "ready_consumer_count": 3,
+                "partial_consumer_count": 0,
+                "blocked_consumer_count": 0,
+                "blocking_reasons": [],
+                "caution_flags": ["THR-X05_ACCEPTED_EVENTS_ONLY"],
+                "consumers": [
+                    {
+                        "consumer_id": "rate_limiter",
+                        "consumer_interface": "quota_ratio_ceiling",
+                        "threshold_id": "THR-X03",
+                        "target_runtime_mode": "shadow",
+                        "projection_status": "ready",
+                        "projection_ready": True,
+                        "threshold_review_status": "ready",
+                        "threshold_fit_ready": True,
+                        "method": "quota_ratio_ceiling_v1",
+                        "unit": "quota_ratio",
+                        "projection_value": 0.8,
+                        "projection_value_semantics": "max_observed_quota_ratio_before_throttle",
+                        "hard_cap_human": 0.8,
+                        "hard_cap_binding": False,
+                        "blocking_reasons": [],
+                        "caution_flags": [],
+                    },
+                    {
+                        "consumer_id": "spread_guard",
+                        "consumer_interface": "spread_bps_ceiling",
+                        "threshold_id": "THR-X04",
+                        "target_runtime_mode": "shadow",
+                        "projection_status": "ready",
+                        "projection_ready": True,
+                        "threshold_review_status": "ready",
+                        "threshold_fit_ready": True,
+                        "method": "lognormal_mu_plus_2sigma_capped",
+                        "unit": "bps",
+                        "projection_value": 24.0,
+                        "projection_value_semantics": "max_observed_spread_bps_before_no_trade",
+                        "hard_cap_human": 50.0,
+                        "hard_cap_binding": False,
+                        "blocking_reasons": [],
+                        "caution_flags": [],
+                    },
+                    {
+                        "consumer_id": "slippage_model",
+                        "consumer_interface": "sqrt_size_slippage_predictor",
+                        "threshold_id": "THR-X05",
+                        "target_runtime_mode": "shadow",
+                        "projection_status": "ready",
+                        "projection_ready": True,
+                        "threshold_review_status": "ready",
+                        "threshold_fit_ready": True,
+                        "method": "size_slippage_huber_v1",
+                        "unit": "bps",
+                        "projection_value": 18.0,
+                        "projection_value_semantics": "reference_slippage_bps_at_q95_size",
+                        "reference_size": 4.0,
+                        "size_proxy": "final_size",
+                        "intercept_bps": 2.0,
+                        "sqrt_size_coefficient": 8.0,
+                        "r_squared": 0.55,
+                        "mean_absolute_error_bps": 1.5,
+                        "blocking_reasons": [],
+                        "caution_flags": ["THR-X05_ACCEPTED_EVENTS_ONLY"],
+                    },
+                ],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_regime_lite_assessment(path: Path) -> None:
+    assessment = RegimeLiteAssessment(
+        state=RegimeLiteState.EXTREME,
+        candidate_state=RegimeLiteState.EXTREME,
+        previous_state=RegimeLiteState.STRESSED,
+        state_changed=True,
+        state_entered_ts=1_700_000_000_000,
+        entries_blocked_until_ts=1_700_086_400_000,
+        entries_blocked=True,
+        sudden_event=True,
+        transition_path=(
+            RegimeLiteState.STRESSED,
+            RegimeLiteState.EXTREME,
+        ),
+        reason_codes=(
+            "RG_EXTREME_BTC_DROP_1H",
+            "RG_EXTREME_INTRADAY_DRAWDOWN",
+        ),
+        btc_realized_vol_24h=0.09,
+        btc_drop_1h=-0.08,
+        intraday_drawdown=0.12,
+        engine_return_dispersion=0.07,
+    )
+    path.write_text(assessment.model_dump_json(indent=2), encoding="utf-8")
+
+
+def _write_regime_lite_safing_recommendation(path: Path) -> None:
+    assessment = RegimeLiteAssessment(
+        state=RegimeLiteState.EXTREME,
+        candidate_state=RegimeLiteState.EXTREME,
+        previous_state=RegimeLiteState.STRESSED,
+        state_changed=True,
+        state_entered_ts=1_700_000_000_000,
+        entries_blocked_until_ts=1_700_086_400_000,
+        entries_blocked=True,
+        sudden_event=True,
+        transition_path=(
+            RegimeLiteState.STRESSED,
+            RegimeLiteState.EXTREME,
+        ),
+        reason_codes=(
+            "RG_EXTREME_BTC_DROP_1H",
+            "RG_EXTREME_INTRADAY_DRAWDOWN",
+        ),
+        btc_realized_vol_24h=0.09,
+        btc_drop_1h=-0.08,
+        intraday_drawdown=0.12,
+        engine_return_dispersion=0.07,
+    )
+    recommendation = build_regime_lite_safing_recommendation(
+        assessment,
+        source_runtime_mode=RuntimeMode.SHADOW,
+        timestamp_ms=1_700_000_000_000,
+    )
+    path.write_text(recommendation.model_dump_json(indent=2), encoding="utf-8")
+
+
+def _write_info_stress_assessment(path: Path) -> None:
+    assessment = InfoStressAssessment(
+        pair="BTCUSDT",
+        level=InfoStressLevel.EXTREME,
+        alert_count=3,
+        reason_codes=(
+            "INFO_STRESS_SPREAD_EXPLOSION",
+            "INFO_STRESS_DEPTH_RATIO_COLLAPSE",
+            "INFO_STRESS_CANCELLATION_SPIKE",
+        ),
+        entries_blocked=True,
+        entries_blocked_until_ts=1_700_086_400,
+        detail="info_stress reached EXTREME with 3 active anomaly signal(s)",
+    )
+    path.write_text(assessment.model_dump_json(indent=2), encoding="utf-8")
 
 
 def _real_exports_dir(*, profile_scope: ProfileId = ProfileId.COMPLETE) -> Path:
@@ -299,7 +463,7 @@ def test_export_local_replay_shadow_run_writes_governed_chain_sidecars():
         assert candidate_payload["replay_import"]["validation_status"] == "accepted"
         assert candidate_payload["replay_import"]["signature_check_status"] == "verified"
         assert candidate_payload["system"]["build14_status"] == "warning"
-        assert len(candidate_payload["build14"]["reader_projections"]) == 7
+        assert len(candidate_payload["build14"]["reader_projections"]) == 9
         reader_projections = {
             reader["reader_name"]: reader for reader in candidate_payload["build14"]["reader_projections"]
         }
@@ -308,6 +472,8 @@ def test_export_local_replay_shadow_run_writes_governed_chain_sidecars():
             "execution_fragility_score",
             "lob_deep_filter_vwa",
             "order_book_imbalance",
+            "micro_edge_exit_governor",
+            "micro_edge_entry_timing_layer",
             "false_breakout_model",
             "hurst_regime_classifier",
             "competition_monitor",
@@ -514,6 +680,172 @@ def test_runner_main_accepts_output_dir():
 
         assert exit_code == 0
         assert (output_dir / "local_replay_shadow.shadow_summary.json").exists()
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_export_local_replay_shadow_run_autoloads_execution_runtime_projection_bridge():
+    runner = _load_runner_module()
+    output_dir = _scratch_dir("runtime_projection")
+
+    try:
+        _write_execution_runtime_projection(
+            output_dir / "local_lab_execution_runtime_projection.json"
+        )
+
+        artifacts = runner.export_local_replay_shadow_run(output_dir)
+
+        candidate_payload = json.loads(
+            artifacts.candidate_payload_json_path.read_text(encoding="utf-8")
+        )
+        bridge = candidate_payload["execution_runtime_projection_bridge"]
+
+        assert bridge["status"] == "healthy"
+        assert bridge["projection_status"] == "ready"
+        assert bridge["configured"] is True
+        assert bridge["projection_found"] is True
+        assert bridge["projection_loaded"] is True
+        assert bridge["rate_limit_model_loaded"] is True
+        assert bridge["spread_guard_model_loaded"] is True
+        assert bridge["slippage_model_loaded"] is True
+        assert bridge["ready_consumer_count"] == 3
+        assert bridge["partial_consumer_count"] == 0
+        assert bridge["blocked_consumer_count"] == 0
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_runner_main_accepts_execution_runtime_projection_path():
+    runner = _load_runner_module()
+    output_dir = _scratch_dir("cli_runtime_projection")
+    projection_path = output_dir / "external_execution_runtime_projection.json"
+
+    try:
+        _write_execution_runtime_projection(projection_path)
+
+        exit_code = runner.main(
+            [
+                "--output-dir",
+                str(output_dir),
+                "--execution-runtime-projection-path",
+                str(projection_path),
+            ]
+        )
+
+        assert exit_code == 0
+        candidate_payload = json.loads(
+            (output_dir / "local_replay_shadow.candidate_payload.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert (
+            candidate_payload["execution_runtime_projection_bridge"]["projection_path"]
+            == str(projection_path)
+        )
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_export_local_replay_shadow_run_accepts_regime_lite_inputs():
+    runner = _load_runner_module()
+    output_dir = _scratch_dir("regime_lite_inputs")
+    assessment_path = output_dir / "regime_lite_assessment.json"
+    recommendation_path = output_dir / "regime_lite_safing_recommendation.json"
+
+    try:
+        _write_regime_lite_assessment(assessment_path)
+        _write_regime_lite_safing_recommendation(recommendation_path)
+
+        artifacts = runner.export_local_replay_shadow_run(
+            output_dir,
+            regime_lite_assessment_path=assessment_path,
+            regime_lite_safing_recommendation_path=recommendation_path,
+        )
+
+        shadow_summary = json.loads(
+            artifacts.shadow_summary_json_path.read_text(encoding="utf-8")
+        )
+        governance = shadow_summary["regime_lite_governance"]
+
+        assert governance["status"] == "ready"
+        assert governance["state"] == "extreme"
+        assert governance["entries_blocked"] is True
+        assert governance["safing_severity"] == "halt_recommended"
+        assert governance["should_exit_all"] is True
+        assert governance["recommended_operator_action"] == "set_halted"
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_export_local_replay_shadow_run_autoloads_regime_lite_inputs():
+    runner = _load_runner_module()
+    output_dir = _scratch_dir("regime_lite_autoload")
+
+    try:
+        _write_regime_lite_assessment(output_dir / "regime_lite_assessment.json")
+        _write_regime_lite_safing_recommendation(
+            output_dir / "regime_lite_safing_recommendation.json"
+        )
+
+        artifacts = runner.export_local_replay_shadow_run(output_dir)
+
+        shadow_summary = json.loads(
+            artifacts.shadow_summary_json_path.read_text(encoding="utf-8")
+        )
+        governance = shadow_summary["regime_lite_governance"]
+
+        assert governance["status"] == "ready"
+        assert governance["state"] == "extreme"
+        assert governance["safing_severity"] == "halt_recommended"
+        assert governance["should_exit_all"] is True
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_export_local_replay_shadow_run_accepts_info_stress_input():
+    runner = _load_runner_module()
+    output_dir = _scratch_dir("info_stress_input")
+    assessment_path = output_dir / "info_stress_assessment.json"
+
+    try:
+        _write_info_stress_assessment(assessment_path)
+
+        artifacts = runner.export_local_replay_shadow_run(
+            output_dir,
+            info_stress_assessment_path=assessment_path,
+        )
+
+        shadow_summary = json.loads(
+            artifacts.shadow_summary_json_path.read_text(encoding="utf-8")
+        )
+        governance = shadow_summary["info_stress_governance"]
+
+        assert governance["status"] == "assessment_only"
+        assert governance["level"] == "extreme"
+        assert governance["alert_count"] == 3
+        assert governance["entries_blocked"] is True
+        assert governance["entries_blocked_until_ts"] == 1_700_086_400
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_export_local_replay_shadow_run_autoloads_info_stress_input():
+    runner = _load_runner_module()
+    output_dir = _scratch_dir("info_stress_autoload")
+
+    try:
+        _write_info_stress_assessment(output_dir / "info_stress_assessment.json")
+
+        artifacts = runner.export_local_replay_shadow_run(output_dir)
+
+        shadow_summary = json.loads(
+            artifacts.shadow_summary_json_path.read_text(encoding="utf-8")
+        )
+        governance = shadow_summary["info_stress_governance"]
+
+        assert governance["status"] == "assessment_only"
+        assert governance["level"] == "extreme"
+        assert governance["entries_blocked"] is True
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)
 

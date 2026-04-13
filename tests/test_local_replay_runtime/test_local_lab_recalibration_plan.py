@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from interface_contracts import ArtifactProofSummary
 from local_replay_runtime import (
+    LocalLabLossSurrogateReport,
+    LocalLabLossSurrogateScopeScore,
     LocalLabScopeAnalysisMatrix,
     LocalLabScopeAnalysisRow,
     build_local_lab_recalibration_plan,
@@ -112,6 +114,7 @@ def test_build_local_lab_recalibration_plan_blocks_when_trace_coverage_or_scope_
                 artifact_ablation_study_path="E:/lab/scopes/ethusdt__engine_b/artifact_ablation_study.json",
                 artifact_proof_summary_path="E:/lab/scopes/ethusdt__engine_b/artifact_proof_summary.json",
                 artifact_proof_assessment_path="E:/lab/scopes/ethusdt__engine_b/artifact_proof_assessment.json",
+                calibration_methods_review_path="E:/lab/scopes/ethusdt__engine_b/local_lab_calibration_methods_review.json",
                 candidate_record_count=1,
                 baseline_record_count=1,
                 executed_records=1,
@@ -119,6 +122,8 @@ def test_build_local_lab_recalibration_plan_blocks_when_trace_coverage_or_scope_
                 artifact_ablation_ready=False,
                 artifact_proof_ready=False,
                 artifact_proof_validation_reasons=("PROOF_TRACE_COVERAGE_REQUIRED",),
+                calibration_methods_review_status="partial",
+                calibration_methods_review_ready=False,
                 proof_summary=_proof_summary(),
             ),
         ),
@@ -140,3 +145,68 @@ def test_build_local_lab_recalibration_plan_blocks_when_trace_coverage_or_scope_
     assert plan.action_count == 1
     assert plan.actions[0].action_type == "improve_trace_capture"
     assert plan.actions[0].blocking_reasons == ("TRACE_COVERAGE_BLOCKS_RECALIBRATION",)
+
+
+def test_build_local_lab_recalibration_plan_adds_surrogate_replay_action_when_trained():
+    report = TradeLossAttributionReport(
+        correlation_id="corr-surrogate",
+        total_records=2,
+        executed_records=2,
+        losing_trade_count=1,
+        attribution_ready=True,
+        attributions=(
+            TradeLossAttribution(
+                dtr_id="dtr-surrogate",
+                pair="BTCUSDT",
+                engine_id="engine_a",
+                decision_state="executed",
+                attribution_status="loss",
+                primary_failure_mode="edge_degraded",
+                action_scope="engine_a:BTCUSDT",
+                confidence=0.76,
+            ),
+        ),
+    )
+    surrogate = LocalLabLossSurrogateReport(
+        correlation_id="corr-surrogate",
+        export_dir="E:/lab/export_dir",
+        status="trained",
+        ready=True,
+        scope_count=1,
+        scored_scope_count=1,
+        executed_record_count=4,
+        trained_record_count=4,
+        loss_count=2,
+        non_loss_count=2,
+        highest_risk_scope_slug="btcusdt__engine_a",
+        highest_risk_probability=0.79,
+        scopes=(
+            LocalLabLossSurrogateScopeScore(
+                pair="BTCUSDT",
+                engine_id="engine_a",
+                scope_slug="btcusdt__engine_a",
+                executed_record_count=4,
+                loss_count=2,
+                actual_loss_rate=0.5,
+                mean_predicted_loss_probability=0.71,
+                top_risk_dtr_id="dtr-surrogate",
+                top_risk_probability=0.79,
+                risk_band="high_risk",
+            ),
+        ),
+    )
+
+    plan = build_local_lab_recalibration_plan(
+        correlation_id="corr-surrogate",
+        export_dir="E:/lab/export_dir",
+        loss_reports=(report,),
+        loss_surrogate_report=surrogate,
+    )
+
+    assert plan.calibration_candidate_ready is False
+    assert plan.loss_surrogate_status == "trained"
+    assert plan.loss_surrogate_ready is True
+    assert plan.surrogate_high_risk_scope_count == 1
+    assert plan.surrogate_top_scope_slug == "btcusdt__engine_a"
+    assert plan.surrogate_top_probability == 0.79
+    assert any(action.action_type == "replay_surrogate_high_risk_scope" for action in plan.actions)

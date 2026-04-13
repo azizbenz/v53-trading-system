@@ -116,6 +116,20 @@ def test_calibrate_edge_gate_thresholds_builds_conservative_report_and_artifact(
     assert report.cost_observation_count == 6
     assert e01.published_value >= 2.0
     assert e02.published_value >= 15.0
+    assert e01.method_version == "stationary_block_bootstrap_v1"
+    assert e01.bootstrap_block_length >= 1
+    assert e01.hard_cap_human == config.human_multiplier_floor
+    assert e01.hard_cap_satisfied is True
+    assert e01.hard_cap_binding is False
+    assert e02.method_version == "stationary_block_bootstrap_v1"
+    assert e02.bootstrap_block_length >= 1
+    assert e02.hard_cap_human == config.human_absolute_floor_bps
+    assert e02.hard_cap_satisfied is True
+    assert e02.hard_cap_binding is False
+    assert any(note.startswith("hard_cap_binding=") for note in e01.notes)
+    assert any(note.startswith("hard_cap_binding=") for note in e02.notes)
+    assert any(note.startswith("bootstrap_block_length=") for note in e01.notes)
+    assert any(note.startswith("bootstrap_block_length=") for note in e02.notes)
     assert artifact.thresholds[0].threshold_id == "THR-E01"
     assert artifact.thresholds[1].threshold_id == "THR-E02"
     assert artifact.thresholds[0].source_module == "src/scoring_backbone/fee_aware_edge_gate.py"

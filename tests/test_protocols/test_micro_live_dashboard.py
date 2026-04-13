@@ -49,6 +49,11 @@ def _summary() -> MicroLiveRunSummary:
         ),
         import_artifact_id="artifact-1",
         import_lineage_version="a.v1.0.r1",
+        execution_runtime_projection_ref="build/local_lab_execution_runtime_projection.json",
+        execution_runtime_projection_status="ready",
+        execution_runtime_projection_ready=True,
+        execution_runtime_projection_consumer_count=3,
+        execution_runtime_projection_ready_consumer_count=3,
         observability_ready=True,
         halt_ready=True,
         onboarding_ready=True,
@@ -63,6 +68,9 @@ def test_build_micro_live_projection_returns_normalized_monitoring_summary():
     assert projection.verdict == "allowed_to_probe"
     assert projection.approved_total_notional_usdt == 20.0
     assert projection.planned_pairs == ("BTCUSDT", "ETHUSDT")
+    assert projection.execution_runtime_projection_status == "ready"
+    assert projection.execution_runtime_projection_ready is True
+    assert projection.execution_runtime_projection_ready_consumer_count == 3
     assert projection.operator_safing_action == ""
 
 
@@ -81,8 +89,11 @@ def test_build_micro_live_dashboard_section_renders_expected_cards():
         "micro_live_blocking_reasons",
     }
     verdict = next(card for card in section.cards if card.key == "micro_live_verdict")
+    guardrails = next(card for card in section.cards if card.key == "micro_live_guardrails")
     assert verdict.value == "allowed_to_probe"
     assert verdict.status == "healthy"
+    assert "exec_proj=ready" in guardrails.detail
+    assert "ready=3" in guardrails.detail
 
 
 def test_build_micro_live_dashboard_section_surfaces_manual_safing_request():

@@ -6,6 +6,7 @@ from collections import Counter
 
 from pydantic import BaseModel, Field
 
+from local_replay_runtime.local_lab_loss_surrogate import LocalLabLossSurrogateReport
 from local_replay_runtime.local_lab_scope_matrix import LocalLabScopeAnalysisMatrix
 from meta_learning.contracts import TradeLossAttribution, TradeLossAttributionReport
 
@@ -43,6 +44,11 @@ class LocalLabRecalibrationPlan(BaseModel, frozen=True):
     losing_trade_count: int = Field(default=0, ge=0)
     dominant_failure_modes: tuple[LocalLabFailureModeAggregate, ...] = ()
     recommended_threshold_ids: tuple[str, ...] = ()
+    loss_surrogate_status: str = Field(default="not_evaluated", min_length=1)
+    loss_surrogate_ready: bool = False
+    surrogate_high_risk_scope_count: int = Field(default=0, ge=0)
+    surrogate_top_scope_slug: str = ""
+    surrogate_top_probability: float = Field(default=0.0, ge=0.0, le=1.0)
     action_count: int = Field(default=0, ge=0)
     calibration_candidate_ready: bool = False
     blocking_reasons: tuple[str, ...] = ()
@@ -55,6 +61,7 @@ def build_local_lab_recalibration_plan(
     export_dir: str,
     loss_reports: tuple[TradeLossAttributionReport, ...],
     scope_matrix: LocalLabScopeAnalysisMatrix | None = None,
+    loss_surrogate_report: LocalLabLossSurrogateReport | None = None,
 ) -> LocalLabRecalibrationPlan:
     """Build a bounded recalibration plan from governed Local IA Lab loss evidence."""
 
@@ -80,6 +87,23 @@ def build_local_lab_recalibration_plan(
                 for threshold_id in attribution.recommended_threshold_ids
             }
         )
+    )
+    surrogate_status = "not_evaluated" if loss_surrogate_report is None else loss_surrogate_report.status
+    surrogate_ready = False if loss_surrogate_report is None else loss_surrogate_report.ready
+    surrogate_high_risk_scopes = (
+        ()
+        if loss_surrogate_report is None
+        else tuple(
+            scope
+            for scope in loss_surrogate_report.scopes
+            if scope.risk_band in {"elevated_risk", "high_risk"}
+        )
+    )
+    surrogate_top_scope_slug = (
+        "" if loss_surrogate_report is None else loss_surrogate_report.highest_risk_scope_slug
+    )
+    surrogate_top_probability = (
+        0.0 if loss_surrogate_report is None else loss_surrogate_report.highest_risk_probability
     )
 
     blocking_reasons: list[str] = []
@@ -168,6 +192,28 @@ def build_local_lab_recalibration_plan(
                 blocking_reasons=("TRACE_COVERAGE_BLOCKS_RECALIBRATION",),
             )
         )
+    if surrogate_ready and surrogate_high_risk_scopes:
+        replay_blockers: list[str] = []
+        if "trace_coverage" in failure_mode_counts:
+            replay_blockers.append("TRACE_COVERAGE_BLOCKS_RECALIBRATION")
+        actions.append(
+            LocalLabRecalibrationAction(
+                action_type="replay_surrogate_high_risk_scope",
+                action_scope=(
+                    surrogate_top_scope_slug
+                    if len(surrogate_high_risk_scopes) == 1
+                    else "multi_scope"
+                ),
+                affected_scope_count=len({scope.scope_slug for scope in surrogate_high_risk_scopes}),
+                linked_failure_modes=("modeled_loss_risk",),
+                rationale=(
+                    "transparent_local_loss_surrogate_identified_elevated_loss_pressure",
+                    "run_bounded_replay_before_publishing_new_thresholds",
+                ),
+                confidence=round(surrogate_top_probability, 6),
+                blocking_reasons=tuple(dict.fromkeys(replay_blockers)),
+            )
+        )
 
     calibration_candidate_ready = (
         all_ready
@@ -193,6 +239,11 @@ def build_local_lab_recalibration_plan(
         losing_trade_count=sum(report.losing_trade_count for report in loss_reports),
         dominant_failure_modes=aggregates,
         recommended_threshold_ids=recommended_threshold_ids,
+        loss_surrogate_status=surrogate_status,
+        loss_surrogate_ready=surrogate_ready,
+        surrogate_high_risk_scope_count=len(surrogate_high_risk_scopes),
+        surrogate_top_scope_slug=surrogate_top_scope_slug,
+        surrogate_top_probability=surrogate_top_probability,
         action_count=len(actions),
         calibration_candidate_ready=calibration_candidate_ready,
         blocking_reasons=tuple(dict.fromkeys(blocking_reasons)),

@@ -7,6 +7,9 @@ from pathlib import Path
 import shutil
 from uuid import uuid4
 
+import pytest
+
+from interface_contracts.binance_contracts import BinanceServerTime
 from local_replay_runtime import load_historical_snapshot_batch
 from protocols import (
     BinanceSpotLiveWebSocketAdapter,
@@ -197,6 +200,116 @@ def test_capture_live_websocket_snapshot_batch_materializes_snapshot_batch():
         assert batch.event_count == 2
         assert batch.pair_scope == ("BTCUSDT",)
         assert batch.event_types == ("snapshot", "trade")
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_capture_live_websocket_snapshot_batch_writes_time_sync_offsets_sidecar():
+    output_dir = _scratch_dir("capture_time_sync")
+    try:
+        socket = _FakeSocket(
+            [
+                json.dumps({"result": None, "id": 1}),
+                json.dumps(
+                    {
+                        "stream": "btcusdt@trade",
+                        "data": {
+                            "e": "trade",
+                            "s": "BTCUSDT",
+                            "t": 101,
+                            "p": "43250.1",
+                            "q": "0.250",
+                            "m": False,
+                        },
+                    }
+                ),
+            ]
+        )
+        server_times = iter(
+            (
+                BinanceServerTime(server_time_ms=1_699_999_999_980),
+                BinanceServerTime(server_time_ms=1_699_999_999_975),
+                BinanceServerTime(server_time_ms=1_699_999_999_970),
+            )
+        )
+
+        async def _fake_server_time_reader() -> BinanceServerTime:
+            return next(server_times)
+
+        config = ShadowLiveWebSocketConfig(
+            endpoint="wss://stream.binance.com:9443/ws",
+            pairs=("BTCUSDT",),
+            stream_types=("trade",),
+            capture_frame_limit=1,
+            idle_poll_limit=2,
+            capture_timeout_s=5.0,
+            time_sync_probe_enabled=True,
+            time_sync_sample_count=3,
+            time_sync_rest_quota_max_calls_per_minute=120,
+            session_date_override="2026-04-04",
+        )
+
+        result = capture_live_websocket_snapshot_batch(
+            config,
+            output_dir=output_dir,
+            adapter_factory=lambda cfg: BinanceSpotLiveWebSocketAdapter(
+                cfg,
+                socket_factory=lambda endpoint, connect_timeout_s, recv_timeout_s: socket,
+                clock=lambda: 1_700_000_000.0,
+            ),
+            time_sync_server_time_reader=_fake_server_time_reader,
+            clock=lambda: 1_700_000_000.0,
+        )
+
+        time_sync_payload = json.loads(
+            Path(result.time_sync_offsets_path_ref).read_text(encoding="utf-8")
+        )
+
+        assert result.time_sync_sample_count == 3
+        assert result.time_sync_probe_error == ""
+        assert time_sync_payload["session_date"] == "2026-04-04"
+        assert time_sync_payload["sample_count"] == 3
+        assert time_sync_payload["time_sync_offsets_ms"] == [20.0, 25.0, 30.0]
+        assert time_sync_payload["rest_call_count"] == 3
+        assert time_sync_payload["probe_duration_s"] >= 0.0
+        assert time_sync_payload["rest_quota_window_s"] == 60.0
+        assert time_sync_payload["rest_quota_max_calls_per_minute"] == 120
+        assert time_sync_payload["observed_calls_per_minute"] is not None
+        assert time_sync_payload["observed_calls_per_minute"] > 0.0
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_capture_live_websocket_snapshot_batch_reports_endpoint_and_root_cause_on_connect_failure():
+    output_dir = _scratch_dir("capture_connect_failure")
+    try:
+        config = ShadowLiveWebSocketConfig(
+            endpoint="wss://stream.binance.com:9443/ws",
+            pairs=("BTCUSDT",),
+            stream_types=("trade",),
+            capture_frame_limit=1,
+            idle_poll_limit=2,
+            capture_timeout_s=5.0,
+        )
+
+        def _failing_socket_factory(
+            endpoint: str,
+            connect_timeout_s: float,
+            recv_timeout_s: float,
+        ) -> _FakeSocket:
+            raise OSError("connection refused")
+
+        with pytest.raises(RuntimeError, match="failed to connect to .*connection refused"):
+            capture_live_websocket_snapshot_batch(
+                config,
+                output_dir=output_dir,
+                adapter_factory=lambda cfg: BinanceSpotLiveWebSocketAdapter(
+                    cfg,
+                    socket_factory=_failing_socket_factory,
+                    clock=lambda: 1_700_000_000.0,
+                ),
+                clock=lambda: 1_700_000_000.0,
+            )
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)
 

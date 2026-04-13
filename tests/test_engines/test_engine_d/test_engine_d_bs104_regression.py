@@ -8,7 +8,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from engine_d import EngineDDecision, EngineDInput, run_engine_d
+from engines.engine_d import EngineDDecision, EngineDInput, run_engine_d
 from engines.engine_d.engine_d_runner import NoTradeReasonD
 
 

@@ -22,6 +22,7 @@ class TestCanonicalRuntimeSurface:
         "local_replay_runtime",
         "backtest_artifact_import",
         "protocols",
+        "alerting",
         "monitoring",
         "ui",
     ])

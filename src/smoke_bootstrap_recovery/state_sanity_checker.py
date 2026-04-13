@@ -9,9 +9,16 @@ Spec 7.9: no partially initialized state considered OK.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Callable
 
 from smoke_bootstrap_recovery.smoke_models import SmokeStatus, StateSanityResult
+from smoke_bootstrap_recovery.engineering_guardrails import (
+    format_engineering_guardrails_summary,
+    load_engineering_guardrails_baseline,
+    load_engineering_guardrails_policy,
+    run_engineering_guardrails,
+)
 
 
 # A sanity check is a callable that returns (passed: bool, detail: str)
@@ -206,6 +213,53 @@ def check_fd_leak(
             return True, f"No FD leak ({before_fd_count} → {current})"
         except Exception as exc:
             return False, f"FD check error: {exc}"
+
+    return _check
+
+
+def check_engineering_guardrails(
+    *,
+    repo_root: str | None = None,
+    policy_path: str | None = None,
+    baseline_path: str | None = None,
+) -> SanityCheck:
+    """Check repo-wide engineering guardrails against the accepted baseline."""
+
+    def _check() -> tuple[bool, str]:
+        resolved_repo_root = Path(repo_root) if repo_root else Path(__file__).resolve().parents[2]
+        resolved_policy_path = (
+            Path(policy_path)
+            if policy_path is not None
+            else resolved_repo_root / "config" / "engineering_guardrails_policy.json"
+        )
+        resolved_baseline_path = (
+            Path(baseline_path)
+            if baseline_path is not None
+            else resolved_repo_root / "config" / "engineering_guardrails_baseline.json"
+        )
+        if not resolved_policy_path.exists():
+            return False, f"engineering guardrails policy missing: {resolved_policy_path}"
+        if not resolved_baseline_path.exists():
+            return False, f"engineering guardrails baseline missing: {resolved_baseline_path}"
+
+        policy = load_engineering_guardrails_policy(resolved_policy_path)
+        accepted_fingerprints = load_engineering_guardrails_baseline(
+            resolved_baseline_path
+        )
+        report = run_engineering_guardrails(
+            repo_root=resolved_repo_root,
+            policy=policy,
+            policy_path=resolved_policy_path,
+            baseline_path=resolved_baseline_path,
+            accepted_fingerprints=accepted_fingerprints,
+        )
+        if report.passed:
+            return (
+                True,
+                "engineering guardrails clean against baseline "
+                f"(scanned={report.scanned_file_count}, total={report.total_violation_count})",
+            )
+        return False, format_engineering_guardrails_summary(report)
 
     return _check
 

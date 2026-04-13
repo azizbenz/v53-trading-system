@@ -28,6 +28,9 @@ from .meta_contracts import *
 from .numeric_contracts import *
 from .error_contracts import *
 from .operator_contracts import *
+from .build14_contracts import *
+from .engine_validation_contracts import *
+from .shadow_vps_service_contracts import *
 
 __all__ = [
     # domain_types — Enums
@@ -95,4 +98,16 @@ __all__ = [
     "ReconciliationError", "BootstrapError",
     # operator_contracts
     "OperatorSafingAction", "OperatorSafingRequest",
+    # build14_contracts
+    "Build14InfluenceMode", "Build14InfluenceAction", "Build14Severity",
+    "Build14SignalFamily", "Build14HardState", "Build14EnablerContract",
+    "Build14ObservationInput", "Build14EnablerSnapshot",
+    "Build14InfluenceSignal", "Build14InfluenceReport",
+    # engine_validation_contracts
+    "EngineCVoidValidationInput", "EngineCVoidValidationOutcome",
+    "EngineDReentryValidationInput", "EngineDReentryValidationOutcome",
+    # shadow_vps_service_contracts
+    "ShadowVpsServiceStatus", "ShadowVpsServiceState",
+    "ShadowVpsRuntimeEvidenceBundle", "ShadowVpsCampaignSummary",
+    "ShadowVpsServiceEvent",
 ]

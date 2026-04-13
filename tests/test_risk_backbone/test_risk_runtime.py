@@ -1,22 +1,47 @@
 """Runtime tests for risk_backbone Build-4."""
 
+from pathlib import Path
+import shutil
+from uuid import uuid4
+
 import pytest
 
 from risk_backbone import (
+    InfoStressMonitor,
+    InfoStressThresholds,
     PortfolioRiskSnapshot,
     RiskCandidate,
+    RiskDailyPnlPrecheckHook,
+    RiskDailyPnlPrecheckOutcome,
+    RiskInfoStressPrecheckHook,
+    RiskInfoStressPrecheckOutcome,
     RiskLimits,
+    RiskRegimePrecheckHook,
+    RiskRegimePrecheckOutcome,
     RiskMicroFrictionPrecheckHook,
     RiskMicroFrictionPrecheckOutcome,
     RiskRuntime,
     RiskRuntimeAction,
+    build_daily_pnl_breaker_entry_gate,
+    build_info_stress_entry_gate,
 )
 from risk_backbone.btc_factor_guard.pair_beta_registry import PairBetaRegistry
 from risk_backbone.correlation_cluster_guard.cluster_registry import ClusterRegistry
 from risk_backbone.exposure_budgeter.gross_exposure_calculator import Position
+from risk_backbone.loss_budgeter import DailyPnlBreaker, DailyPnlBreakerThresholds
 
 
 pytestmark = pytest.mark.build4
+
+
+@pytest.fixture
+def breaker_tmpdir() -> Path:
+    root = Path("build/pytest-risk-runtime-daily-breaker") / uuid4().hex
+    root.mkdir(parents=True, exist_ok=False)
+    try:
+        yield root
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
 
 
 def _limits() -> RiskLimits:
@@ -34,6 +59,9 @@ def _limits() -> RiskLimits:
 def _runtime(
     snapshot: PortfolioRiskSnapshot | None = None,
     *,
+    daily_pnl_precheck_hook: RiskDailyPnlPrecheckHook | None = None,
+    regime_precheck_hook: RiskRegimePrecheckHook | None = None,
+    info_stress_precheck_hook: RiskInfoStressPrecheckHook | None = None,
     micro_friction_precheck_hook: RiskMicroFrictionPrecheckHook | None = None,
 ) -> RiskRuntime:
     beta_registry = PairBetaRegistry()
@@ -46,6 +74,9 @@ def _runtime(
         pair_beta_registry=beta_registry,
         cluster_registry=ClusterRegistry(),
         snapshot=snapshot,
+        daily_pnl_precheck_hook=daily_pnl_precheck_hook,
+        regime_precheck_hook=regime_precheck_hook,
+        info_stress_precheck_hook=info_stress_precheck_hook,
         micro_friction_precheck_hook=micro_friction_precheck_hook,
     )
 
@@ -381,6 +412,183 @@ class TestRiskRuntime:
         assert evaluation.explainability.physics_pressure_state == "elevated"
         assert evaluation.explainability.blocked_guard_codes[-1] == "ARTIFACT_RISK_MICRO_FRICTION_BLOCK"
         assert evaluation.reasons == ("artifact veto on risk micro-friction precheck",)
+
+    def test_runtime_rejects_when_info_stress_precheck_hook_blocks(self):
+        def _block_info_stress(_hook_input):
+            return RiskInfoStressPrecheckOutcome(
+                accepted=False,
+                stress_level="extreme",
+                alert_count=4,
+                entries_blocked=True,
+                entries_blocked_until_ts=120,
+                reason_codes=("ARTIFACT_RISK_INFO_STRESS_BLOCK",),
+                detail="artifact veto on risk info-stress precheck",
+            )
+
+        runtime = _runtime(
+            PortfolioRiskSnapshot(
+                current_equity=1000.0,
+                session_peak_equity=1000.0,
+            ),
+            info_stress_precheck_hook=_block_info_stress,
+        )
+        evaluation = runtime.evaluate_candidate(
+            RiskCandidate(
+                pair="ETHUSDT",
+                engine_id="eng-a",
+                size=40.0,
+                planned_loss=5.0,
+            ),
+            now=60.35,
+        )
+
+        assert evaluation.action == RiskRuntimeAction.REJECT
+        assert evaluation.accepted is False
+        assert evaluation.dominant_reason_code == "ARTIFACT_RISK_INFO_STRESS_BLOCK"
+        assert evaluation.reason_details[-1].category == "info_stress"
+        assert evaluation.reason_details[-1].message == "artifact veto on risk info-stress precheck"
+        assert evaluation.explainability.blocked_guard_codes[-1] == "ARTIFACT_RISK_INFO_STRESS_BLOCK"
+        assert evaluation.reasons == ("artifact veto on risk info-stress precheck",)
+
+    def test_runtime_rejects_when_info_stress_entry_gate_reaches_extreme(self):
+        runtime = _runtime(
+            PortfolioRiskSnapshot(
+                current_equity=1000.0,
+                session_peak_equity=1000.0,
+            ),
+            info_stress_precheck_hook=build_info_stress_entry_gate(
+                InfoStressMonitor(thresholds=InfoStressThresholds(cooldown_s=120))
+            ),
+        )
+        evaluation = runtime.evaluate_candidate(
+            RiskCandidate(
+                pair="ETHUSDT",
+                engine_id="eng-a",
+                size=40.0,
+                planned_loss=5.0,
+                spread_bps=10.0,
+                reference_spread_bps=1.0,
+                depth_ratio=0.05,
+                order_cancellation_rate=0.85,
+                taker_imbalance=0.95,
+                micro_vol_divergence=4.0,
+            ),
+            now=61.5,
+        )
+
+        assert evaluation.action == RiskRuntimeAction.REJECT
+        assert evaluation.accepted is False
+        assert evaluation.reason_details[-1].category == "info_stress"
+        assert {
+            detail.code for detail in evaluation.reason_details if detail.category == "info_stress"
+        } == {
+            "INFO_STRESS_SPREAD_EXPLOSION",
+            "INFO_STRESS_DEPTH_RATIO_COLLAPSE",
+            "INFO_STRESS_CANCELLATION_SPIKE",
+            "INFO_STRESS_TAKER_IMBALANCE_SATURATED",
+            "INFO_STRESS_MICRO_VOL_DIVERGENCE",
+        }
+        assert "info_stress reached EXTREME" in evaluation.reason_details[-1].message
+
+    def test_runtime_rejects_when_regime_precheck_hook_blocks(self):
+        def _block_regime(_hook_input):
+            return RiskRegimePrecheckOutcome(
+                accepted=False,
+                reason_codes=("ARTIFACT_RISK_REGIME_BLOCK",),
+                detail="artifact veto on risk regime precheck",
+            )
+
+        runtime = _runtime(
+            PortfolioRiskSnapshot(
+                current_equity=1000.0,
+                session_peak_equity=1000.0,
+            ),
+            regime_precheck_hook=_block_regime,
+        )
+        evaluation = runtime.evaluate_candidate(
+            RiskCandidate(
+                pair="ETHUSDT",
+                engine_id="eng-a",
+                size=40.0,
+                planned_loss=5.0,
+            ),
+            now=60.25,
+        )
+
+        assert evaluation.action == RiskRuntimeAction.REJECT
+        assert evaluation.accepted is False
+        assert evaluation.dominant_reason_code == "ARTIFACT_RISK_REGIME_BLOCK"
+        assert evaluation.reason_details[-1].category == "regime_state"
+        assert evaluation.reason_details[-1].message == "artifact veto on risk regime precheck"
+        assert evaluation.explainability.blocked_guard_codes[-1] == "ARTIFACT_RISK_REGIME_BLOCK"
+        assert evaluation.reasons == ("artifact veto on risk regime precheck",)
+
+    def test_runtime_rejects_when_daily_pnl_precheck_hook_blocks(self):
+        def _block_daily(_hook_input):
+            return RiskDailyPnlPrecheckOutcome(
+                accepted=False,
+                verdict="shadow_recommended",
+                should_force_shadow=True,
+                reason_codes=("ARTIFACT_RISK_DAILY_PNL_BLOCK",),
+                detail="artifact veto on daily pnl breaker precheck",
+            )
+
+        runtime = _runtime(
+            PortfolioRiskSnapshot(
+                current_equity=1000.0,
+                session_peak_equity=1000.0,
+            ),
+            daily_pnl_precheck_hook=_block_daily,
+        )
+        evaluation = runtime.evaluate_candidate(
+            RiskCandidate(
+                pair="ETHUSDT",
+                engine_id="eng-a",
+                size=40.0,
+                planned_loss=5.0,
+            ),
+            now=60.125,
+        )
+
+        assert evaluation.action == RiskRuntimeAction.REJECT
+        assert evaluation.accepted is False
+        assert evaluation.dominant_reason_code == "ARTIFACT_RISK_DAILY_PNL_BLOCK"
+        assert evaluation.reason_details[-1].category == "daily_pnl_breaker"
+        assert evaluation.reason_details[-1].message == "artifact veto on daily pnl breaker precheck"
+        assert evaluation.explainability.blocked_guard_codes[-1] == "ARTIFACT_RISK_DAILY_PNL_BLOCK"
+        assert evaluation.reasons == ("artifact veto on daily pnl breaker precheck",)
+
+    def test_runtime_rejects_when_daily_pnl_breaker_entry_gate_breaches(
+        self,
+        breaker_tmpdir: Path,
+    ):
+        breaker = DailyPnlBreaker(state_dir=breaker_tmpdir)
+        runtime = _runtime(
+            PortfolioRiskSnapshot(
+                current_equity=970.0,
+                session_peak_equity=1000.0,
+            ),
+            daily_pnl_precheck_hook=build_daily_pnl_breaker_entry_gate(
+                breaker,
+                thresholds=DailyPnlBreakerThresholds(intraday_drawdown_breach_pct=0.02),
+            ),
+        )
+        evaluation = runtime.evaluate_candidate(
+            RiskCandidate(
+                pair="ETHUSDT",
+                engine_id="eng-a",
+                size=40.0,
+                planned_loss=5.0,
+            ),
+            now=1_712_880_000.0,
+        )
+
+        assert evaluation.action == RiskRuntimeAction.REJECT
+        assert evaluation.accepted is False
+        assert evaluation.reason_details[-1].category == "daily_pnl_breaker"
+        assert evaluation.reason_details[-1].code == "RISK_DAILY_BREAKER_BREACHED"
+        assert "shadow lock recorded" in evaluation.reason_details[-1].message
+        assert breaker.state.shadow_locked_session_date != ""
 
     def test_runtime_reduces_exposure_on_severe_execution_pressure(self):
         runtime = _runtime(

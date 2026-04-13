@@ -5,7 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from interface_contracts import HookId, RUNTIME_OPEN_HOOK_IDS
-from monitoring import ExecutionNoTradeBridgeProjection, RuntimeHookBridgeProjection
+from monitoring import (
+    ExecutionNoTradeBridgeProjection,
+    ExecutionRuntimeProjectionBridgeProjection,
+    RuntimeHookBridgeProjection,
+)
 
 from .compiled_artifact_registry_store import CompiledArtifactRegistryStore
 from .engine_a_pre_entry_confirmation_bridge import inspect_engine_a_pre_entry_confirmation_bridge
@@ -13,6 +17,7 @@ from .engine_b_sweep_validation_bridge import inspect_engine_b_sweep_validation_
 from .engine_c_void_validation_bridge import inspect_engine_c_void_validation_bridge
 from .engine_d_reentry_validation_bridge import inspect_engine_d_reentry_validation_bridge
 from .execution_runtime_bootstrap import inspect_execution_runtime_bootstrap
+from .execution_runtime_projection_bridge import inspect_execution_runtime_projection_bridge
 from .portfolio_relative_rank_adjustment_bridge import inspect_portfolio_relative_rank_adjustment_bridge
 from .risk_micro_friction_precheck_bridge import inspect_risk_micro_friction_precheck_bridge
 from .scoring_soft_penalty_layer_bridge import inspect_scoring_soft_penalty_layer_bridge
@@ -185,7 +190,69 @@ def build_execution_no_trade_bridge_projection(
     )
 
 
+def build_execution_runtime_projection_bridge_projection(
+    *,
+    execution_runtime_projection_path: str | Path | None = None,
+) -> ExecutionRuntimeProjectionBridgeProjection:
+    """Project the bounded Lab-to-runtime execution bridge into monitoring truth."""
+
+    status = inspect_execution_runtime_projection_bridge(
+        projection_path=execution_runtime_projection_path
+    )
+    if not status.configured:
+        projection_status = "planned"
+        detail = "Execution runtime projection bridge not configured"
+    elif status.error_type:
+        projection_status = "warning"
+        detail = status.error_detail.strip() or "Execution runtime projection bridge load failed"
+    elif not status.projection_found:
+        projection_status = "warning"
+        detail = "Execution runtime projection artifact path is configured but missing"
+    elif not status.projection_loaded:
+        projection_status = "warning"
+        detail = "Execution runtime projection artifact was found but not loaded"
+    elif status.blocked_consumer_count > 0 or status.projection_status == "blocked":
+        projection_status = "critical"
+        detail = "Execution runtime projection bridge has blocked runtime consumers"
+    elif (
+        status.partial_consumer_count > 0
+        or not status.rate_limit_model_loaded
+        or not status.spread_guard_model_loaded
+        or not status.slippage_model_loaded
+        or status.projection_status == "partial"
+    ):
+        projection_status = "warning"
+        detail = "Execution runtime projection bridge is only partially loadable"
+    else:
+        projection_status = "healthy"
+        detail = "Execution runtime projection bridge loaded bounded runtime consumers"
+    if status.blocking_reasons:
+        detail = f"{detail}: {', '.join(status.blocking_reasons)}"
+    elif status.caution_flags:
+        detail = f"{detail}: {', '.join(status.caution_flags)}"
+    return ExecutionRuntimeProjectionBridgeProjection(
+        status=projection_status,
+        configured=status.configured,
+        projection_found=status.projection_found,
+        projection_loaded=status.projection_loaded,
+        projection_status=status.projection_status,
+        projection_path=status.projection_path,
+        consumer_count=status.consumer_count,
+        ready_consumer_count=status.ready_consumer_count,
+        partial_consumer_count=status.partial_consumer_count,
+        blocked_consumer_count=status.blocked_consumer_count,
+        rate_limit_model_loaded=status.rate_limit_model_loaded,
+        spread_guard_model_loaded=status.spread_guard_model_loaded,
+        slippage_model_loaded=status.slippage_model_loaded,
+        caution_flags=status.caution_flags,
+        blocking_reasons=status.blocking_reasons,
+        error_type=status.error_type,
+        detail=detail,
+    )
+
+
 __all__ = [
     "build_execution_no_trade_bridge_projection",
+    "build_execution_runtime_projection_bridge_projection",
     "build_runtime_hook_bridge_projections",
 ]

@@ -103,7 +103,11 @@ class TestDAGLayerHierarchy:
         "dag_validator": 0,
         "contract_test_suite": 0,
         "smoke_bootstrap_recovery": 0,
+        "calibration_loader": 0,
         "data_backbone": 1,
+        "regime_classifier": 1,
+        "secrets_manager": 0,
+        "sharia_compliance": 2,
         "execution_backbone": 2,
         "risk_backbone": 2,
         "scoring_backbone": 3,
@@ -114,12 +118,16 @@ class TestDAGLayerHierarchy:
         "complete_enablers": 3,
         "portfolio": 5,
         "meta": 6,
+        "calibration_methods": 6,
+        "meta_learning": 6,
         "local_replay_runtime": 7,
+        "alerting": 7,
         "monitoring": 7,
         "backtest_artifact_import": 8,
-        "meta_learning": 8,
         "ui": 9,
+        "venue_adapters": 10,
         "protocols": 10,
+        "alerting": 7,
     }
 
     def test_no_upward_dependency(self):
@@ -131,3 +139,13 @@ class TestDAGLayerHierarchy:
                 assert dep_level <= src_level, (
                     f"Upward dep: {src}(L{src_level}) -> {dep}(L{dep_level})"
                 )
+
+    def test_regime_classifier_depends_only_on_contracts_and_data(self):
+        deps = get_allowed_dependencies("regime_classifier")
+        assert deps == frozenset(
+            {"interface_contracts", "data_backbone", "calibration_loader"}
+        )
+
+    def test_calibration_loader_is_shared_core_root(self):
+        deps = get_allowed_dependencies("calibration_loader")
+        assert deps == frozenset()

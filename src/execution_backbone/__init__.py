@@ -27,6 +27,34 @@ from .execution_runtime import (
     VenueOrderEvent,
     VenueOrderEventType,
 )
+from .gatekeeper import (
+    ExecutionGatekeeperAuditDecision,
+    ExecutionGatekeeperAuditEvent,
+    ExecutionGateName,
+    ExecutionGateRefusalDisposition,
+    ExecutionGateTrace,
+    ExecutionGateTraceVerdict,
+    ExecutionGatekeeper,
+    GatekeeperAuditLogger,
+    ExecutionPermit,
+    ExecutionRefusal,
+    ExecutionVenueNormalizationResult,
+)
+from .rate_limiter import (
+    ExecutionRateLimitDecision,
+    ExecutionRateLimitModel,
+    evaluate_execution_rate_limit,
+)
+from .spread_guard import (
+    ExecutionSpreadGuardDecision,
+    ExecutionSpreadGuardModel,
+    evaluate_execution_spread_guard,
+)
+from .slippage_model import (
+    ExecutionSlippageEstimate,
+    ExecutionSlippageModel,
+    predict_execution_slippage,
+)
 from .venue_constraints_provider import (
     BinanceExchangeInfoVenueConstraintProvider,
     VenueConstraintProvider,
@@ -37,8 +65,25 @@ __all__ = [
     "ExecutionNoTradeFilter",
     "ExecutionNoTradeFilterInput",
     "ExecutionNoTradeFilterOutcome",
+    "ExecutionGatekeeper",
+    "ExecutionGatekeeperAuditDecision",
+    "ExecutionGatekeeperAuditEvent",
+    "ExecutionGateName",
+    "ExecutionGateRefusalDisposition",
+    "ExecutionGateTrace",
+    "ExecutionGateTraceVerdict",
+    "GatekeeperAuditLogger",
+    "ExecutionPermit",
+    "ExecutionRefusal",
+    "ExecutionVenueNormalizationResult",
     "ExecutionOpportunity",
+    "ExecutionRateLimitDecision",
+    "ExecutionRateLimitModel",
     "ExecutionRuntime",
+    "ExecutionSpreadGuardDecision",
+    "ExecutionSpreadGuardModel",
+    "ExecutionSlippageEstimate",
+    "ExecutionSlippageModel",
     "ExecutionSubmission",
     "ExecutionSubmissionStatus",
     "ExecutionVenueAdapter",
@@ -51,7 +96,10 @@ __all__ = [
     "TimeoutSweepResult",
     "VenueOrderEvent",
     "VenueOrderEventType",
+    "evaluate_execution_rate_limit",
+    "evaluate_execution_spread_guard",
     "BinanceExchangeInfoVenueConstraintProvider",
+    "predict_execution_slippage",
     "VenueConstraintProvider",
     "parse_binance_exchange_info_payload",
 ]

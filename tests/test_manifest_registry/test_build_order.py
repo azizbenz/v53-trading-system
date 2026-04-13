@@ -33,15 +33,20 @@ class TestBuildOrderCoherent:
         stage_numbers = [s.stage for s in stages]
         assert stage_numbers == sorted(stage_numbers), "Stages must be in order"
 
-    def test_build1_has_5_modules(self):
+    def test_build1_has_6_modules(self):
         stage1 = get_build_stage(1)
         assert stage1 is not None
-        assert len(stage1.modules) == 5
+        assert len(stage1.modules) == 6
 
     def test_build1_first_module_is_interface_contracts(self):
         stage1 = get_build_stage(1)
         assert stage1 is not None
         assert stage1.modules[0] == "interface_contracts"
+
+    def test_build1_contains_calibration_loader(self):
+        stage1 = get_build_stage(1)
+        assert stage1 is not None
+        assert "calibration_loader" in stage1.modules
 
     def test_build12_exists(self):
         """Build-12 Micro-live Light must exist per V5.3 plan."""
@@ -56,11 +61,21 @@ class TestBuildOrderCoherent:
         assert "backtest_artifact_import" in stage10.modules
         assert "meta_learning" in stage10.modules
 
+    def test_build2_contains_regime_classifier(self):
+        stage2 = get_build_stage(2)
+        assert stage2 is not None
+        assert "regime_classifier" in stage2.modules
+
     def test_build13_exists(self):
         """Build-13 Live-Light must exist per V5.3 plan."""
         stage13 = get_build_stage(13)
         assert stage13 is not None
         assert stage13.name == "Live-Light"
+
+    def test_build11_contains_alerting(self):
+        stage11 = get_build_stage(11)
+        assert stage11 is not None
+        assert "alerting" in stage11.modules
 
     def test_build17_exists(self):
         """Build-17 UI Complete + Live-Complete must exist per V5.3 plan."""

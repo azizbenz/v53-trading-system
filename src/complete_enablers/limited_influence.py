@@ -20,6 +20,12 @@ from complete_enablers.false_breakout_model import build_false_breakout_snapshot
 from complete_enablers.hurst_regime_classifier import build_hurst_regime_snapshot
 from complete_enablers.lob_deep_filter_vwa import build_lob_deep_filter_vwa_snapshot
 from complete_enablers.market_toxicity_snapshot import build_market_toxicity_snapshot
+from complete_enablers.micro_edge_exit_governor import (
+    build_micro_edge_exit_governor_snapshot,
+)
+from complete_enablers.micro_edge_entry_timing_layer import (
+    build_micro_edge_entry_timing_snapshot,
+)
 from complete_enablers.order_book_imbalance import build_order_book_imbalance_snapshot
 
 
@@ -42,6 +48,8 @@ def _build_snapshots(
         build_execution_fragility_score(observation),
         build_lob_deep_filter_vwa_snapshot(observation),
         build_order_book_imbalance_snapshot(observation),
+        build_micro_edge_exit_governor_snapshot(observation),
+        build_micro_edge_entry_timing_snapshot(observation),
         build_false_breakout_snapshot(observation),
         build_hurst_regime_snapshot(observation),
         build_competition_monitor_snapshot(observation),

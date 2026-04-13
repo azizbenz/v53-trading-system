@@ -19,6 +19,7 @@ from protocols import (  # noqa: E402
     ShadowDailyExecutionRecord,
     ShadowDailyOrchestrator,
     ShadowDailyPlanSlot,
+    build_execution_runtime_projection_bridge_projection,
 )
 
 
@@ -82,6 +83,128 @@ def _resolve_slot(
     return orchestrator.next_demo_slot(start_date=session_date)
 
 
+def _read_execution_runtime_projection_summary(path: Path | None) -> dict[str, object]:
+    projection = build_execution_runtime_projection_bridge_projection(
+        execution_runtime_projection_path=path
+    )
+    projection_status = projection.projection_status
+    if not projection.configured:
+        projection_status = "not_configured"
+    elif not projection.projection_found and not projection_status:
+        projection_status = "invalid"
+    bridge_ready = (
+        projection.projection_loaded
+        and projection.projection_status == "ready"
+        and projection.partial_consumer_count == 0
+        and projection.blocked_consumer_count == 0
+        and projection.rate_limit_model_loaded
+        and projection.spread_guard_model_loaded
+        and projection.slippage_model_loaded
+    )
+    return {
+        "execution_runtime_projection_status": projection_status,
+        "execution_runtime_projection_ready": bridge_ready,
+        "execution_runtime_projection_consumer_count": projection.consumer_count,
+        "execution_runtime_projection_ready_consumer_count": (
+            projection.ready_consumer_count
+        ),
+        "execution_runtime_projection_partial_consumer_count": (
+            projection.partial_consumer_count
+        ),
+        "execution_runtime_projection_blocked_consumer_count": (
+            projection.blocked_consumer_count
+        ),
+        "execution_runtime_projection_bridge_status": projection.status,
+        "execution_runtime_projection_bridge_loaded": projection.projection_loaded,
+        "execution_runtime_projection_rate_limit_model_loaded": (
+            projection.rate_limit_model_loaded
+        ),
+        "execution_runtime_projection_spread_guard_model_loaded": (
+            projection.spread_guard_model_loaded
+        ),
+        "execution_runtime_projection_slippage_model_loaded": (
+            projection.slippage_model_loaded
+        ),
+    }
+
+
+def _read_regime_lite_governance_summary(
+    shadow_summary: dict[str, object],
+) -> dict[str, object]:
+    governance = shadow_summary.get("regime_lite_governance", {})
+    if not isinstance(governance, dict):
+        governance = {}
+    return {
+        "regime_lite_governance_status": str(
+            governance.get("status", "not_configured") or "not_configured"
+        ),
+        "regime_lite_state": str(
+            governance.get("state", "not_configured") or "not_configured"
+        ),
+        "regime_lite_candidate_state": str(
+            governance.get("candidate_state", "not_configured")
+            or "not_configured"
+        ),
+        "regime_lite_state_changed": bool(
+            governance.get("state_changed", False)
+        ),
+        "regime_lite_entries_blocked": bool(
+            governance.get("entries_blocked", False)
+        ),
+        "regime_lite_sudden_event": bool(governance.get("sudden_event", False)),
+        "regime_lite_safing_severity": str(
+            governance.get("safing_severity", "not_configured")
+            or "not_configured"
+        ),
+        "regime_lite_safing_should_block_new_entries": bool(
+            governance.get("should_block_new_entries", False)
+        ),
+        "regime_lite_safing_should_exit_all": bool(
+            governance.get("should_exit_all", False)
+        ),
+        "regime_lite_safing_recommended_operator_action": str(
+            governance.get("recommended_operator_action", "")
+        ),
+        "regime_lite_safing_operator_safing_request_action": str(
+            governance.get("operator_safing_request_action", "")
+        ),
+        "regime_lite_safing_operator_safing_request_source_runtime_mode": str(
+            governance.get("operator_safing_request_source_runtime_mode", "")
+        ),
+        "regime_lite_safing_reason_codes": tuple(
+            str(value) for value in governance.get("reason_codes", ())
+        ),
+        "regime_lite_safing_detail": str(governance.get("detail", "")),
+    }
+
+
+def _read_info_stress_governance_summary(
+    shadow_summary: dict[str, object],
+) -> dict[str, object]:
+    governance = shadow_summary.get("info_stress_governance", {})
+    if not isinstance(governance, dict):
+        governance = {}
+    return {
+        "info_stress_governance_status": str(
+            governance.get("status", "not_configured") or "not_configured"
+        ),
+        "info_stress_level": str(
+            governance.get("level", "not_configured") or "not_configured"
+        ),
+        "info_stress_alert_count": int(governance.get("alert_count", 0) or 0),
+        "info_stress_entries_blocked": bool(
+            governance.get("entries_blocked", False)
+        ),
+        "info_stress_entries_blocked_until_ts": int(
+            governance.get("entries_blocked_until_ts", 0) or 0
+        ),
+        "info_stress_reason_codes": tuple(
+            str(value) for value in governance.get("reason_codes", ())
+        ),
+        "info_stress_detail": str(governance.get("detail", "")),
+    }
+
+
 def orchestrate_one_shadow_day(
     output_dir: Path,
     *,
@@ -89,6 +212,10 @@ def orchestrate_one_shadow_day(
     exports_root: Path | None = None,
     export_dir: Path | None = None,
     session_date: str | None = None,
+    execution_runtime_projection_path: Path | None = None,
+    regime_lite_assessment_path: Path | None = None,
+    regime_lite_safing_recommendation_path: Path | None = None,
+    info_stress_assessment_path: Path | None = None,
 ) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     resolved_shadow_output_dir = shadow_output_dir or (output_dir / "shadow_session")
@@ -114,6 +241,12 @@ def orchestrate_one_shadow_day(
         export_dir=Path(slot.export_dir_ref) if slot.export_dir_ref else None,
         shadow_days=1,
         session_date=slot.session_date,
+        execution_runtime_projection_path=execution_runtime_projection_path,
+        regime_lite_assessment_path=regime_lite_assessment_path,
+        regime_lite_safing_recommendation_path=(
+            regime_lite_safing_recommendation_path
+        ),
+        info_stress_assessment_path=info_stress_assessment_path,
     )
     shadow_summary = json.loads(
         artifacts.shadow_summary_json_path.read_text(encoding="utf-8")
@@ -123,6 +256,15 @@ def orchestrate_one_shadow_day(
     )
     shadow_session_summary = json.loads(
         artifacts.shadow_session_summary_json_path.read_text(encoding="utf-8")
+    )
+    execution_runtime_projection_summary = _read_execution_runtime_projection_summary(
+        artifacts.execution_runtime_projection_json_path
+    )
+    regime_lite_governance_summary = _read_regime_lite_governance_summary(
+        shadow_summary
+    )
+    info_stress_governance_summary = _read_info_stress_governance_summary(
+        shadow_summary
     )
     record = ShadowDailyExecutionRecord(
         session_date=slot.session_date,
@@ -167,6 +309,14 @@ def orchestrate_one_shadow_day(
                 "shadow_session_registry_ref": str(
                     artifacts.shadow_session_registry_json_path.resolve()
                 ),
+                "execution_runtime_projection_ref": (
+                    str(artifacts.execution_runtime_projection_json_path.resolve())
+                    if artifacts.execution_runtime_projection_json_path is not None
+                    else ""
+                ),
+                **execution_runtime_projection_summary,
+                **regime_lite_governance_summary,
+                **info_stress_governance_summary,
                 "shadow_day_recorded": record.shadow_day_recorded,
                 "accepted": record.accepted,
                 "consecutive_days": record.consecutive_days,
@@ -231,6 +381,42 @@ def main(argv: list[str] | None = None) -> int:
             "dated subdirectory. With --export-dir it pins the governed session date."
         ),
     )
+    parser.add_argument(
+        "--execution-runtime-projection-path",
+        type=Path,
+        default=None,
+        help=(
+            "Optional Local IA Lab execution runtime projection artifact forwarded to "
+            "the governed local replay shadow runner."
+        ),
+    )
+    parser.add_argument(
+        "--regime-lite-assessment-path",
+        type=Path,
+        default=None,
+        help=(
+            "Optional typed regime_lite assessment JSON forwarded to the governed "
+            "local replay shadow runner."
+        ),
+    )
+    parser.add_argument(
+        "--regime-lite-safing-recommendation-path",
+        type=Path,
+        default=None,
+        help=(
+            "Optional typed regime_lite safing recommendation JSON forwarded to the "
+            "governed local replay shadow runner."
+        ),
+    )
+    parser.add_argument(
+        "--info-stress-assessment-path",
+        type=Path,
+        default=None,
+        help=(
+            "Optional typed info_stress assessment JSON forwarded to the governed "
+            "local replay shadow runner."
+        ),
+    )
     args = parser.parse_args(argv)
     if args.exports_root is not None and args.export_dir is not None:
         parser.error("--exports-root and --export-dir are mutually exclusive")
@@ -241,6 +427,12 @@ def main(argv: list[str] | None = None) -> int:
         exports_root=args.exports_root,
         export_dir=args.export_dir,
         session_date=args.session_date,
+        execution_runtime_projection_path=args.execution_runtime_projection_path,
+        regime_lite_assessment_path=args.regime_lite_assessment_path,
+        regime_lite_safing_recommendation_path=(
+            args.regime_lite_safing_recommendation_path
+        ),
+        info_stress_assessment_path=args.info_stress_assessment_path,
     )
 
 

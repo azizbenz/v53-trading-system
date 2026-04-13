@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from engines.engine_c import EngineCVoidValidationInput, EngineCVoidValidationOutcome
-from interface_contracts import HookId, is_runtime_open_hook_id
+from interface_contracts import (
+    EngineCVoidValidationInput,
+    EngineCVoidValidationOutcome,
+    HookId,
+    is_runtime_open_hook_id,
+)
 
 from .compiled_hook_plan_loader import (
     CompiledHookPlanLoadStatus,

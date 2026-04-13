@@ -5,10 +5,10 @@ from local_replay_runtime import build_local_lab_artifact_release_candidate
 from local_replay_runtime.artifact_upload_bridge_candidate import (
     LocalLabArtifactUploadDryRunBridge,
 )
-from local_replay_runtime.local_lab_monitoring_projection import (
+from monitoring.local_lab_monitoring_projection import (
     build_local_lab_monitoring_projection,
 )
-from local_replay_runtime.local_lab_observability import (
+from monitoring.local_lab_observability import (
     build_local_lab_observability_export,
 )
 from local_replay_runtime.local_lab_promotion_readiness import (
@@ -68,14 +68,46 @@ def _projection(*, dry_run_ready: bool):
         artifact_ablation_ready=True,
         artifact_proof_ready=True,
         edge_calibration_ready=True,
+        calibration_methods_stationarity_status="failed_threshold",
+        calibration_methods_stationarity_pass=False,
+        execution_review_status="partial",
+        execution_review_ready=False,
+        execution_ready_threshold_count=0,
+        execution_partial_threshold_count=2,
+        execution_blocked_threshold_count=0,
+        multiple_testing_review_status="ready",
+        multiple_testing_review_ready=True,
+        multiple_testing_correction_required=False,
+        multiple_testing_correction="not_required_interval_publication",
+        multiple_testing_family_count=2,
+        calibration_normalized_report_status="partial",
+        calibration_normalized_report_ready=False,
+        calibration_normalized_threshold_count=5,
+        tail_risk_review_status="partial",
+        tail_risk_review_ready=False,
+        tail_risk_ready_breaker_count=0,
+        tail_risk_partial_breaker_count=3,
+        tail_risk_blocked_breaker_count=0,
         scope_count=2,
         scope_ready_count=2,
         scope_blocked_count=0,
         release_scope_ready_count=2,
         release_scope_blocked_count=0,
-        release_candidate=release_candidate,
-        dry_run_bridge=bridge,
-        promotion_readiness=promotion,
+        release_ready_for_shadow=release_candidate.ready_for_shadow_import,
+        release_status=release_candidate.release_status,
+        release_blocking_reasons=release_candidate.blocking_reasons,
+        artifact_proof_validation_reasons=release_candidate.artifact_proof_validation_reasons,
+        recalibration_blocking_reasons=release_candidate.recalibration_blocking_reasons,
+        bridge_status=bridge.bridge_status,
+        ready_for_shadow_import_dry_run=bridge.ready_for_shadow_import_dry_run,
+        bridge_blocking_reasons=bridge.blocking_reasons,
+        release_gate_status=bridge.release_gate_status,
+        release_gate_reasons=bridge.release_gate_reasons,
+        semantic_status=bridge.semantic_status,
+        promotion_readiness_status=promotion.readiness_status,
+        activation_stage=promotion.activation_stage.value,
+        normalized_promotion_state=promotion.normalized_promotion_state.value,
+        review_state=promotion.review_state.value,
     )
 
 
@@ -95,6 +127,20 @@ def test_local_lab_observability_export_emits_metric_samples_and_text_payload():
     assert "v53_local_lab_monitoring_status" in sample_names
     assert "v53_local_lab_dry_run_ready_for_shadow" in sample_names
     assert "v53_local_lab_release_scope_ready_count" in sample_names
+    assert "v53_local_lab_loss_surrogate_ready" in sample_names
+    assert "v53_local_lab_loss_surrogate_top_probability" in sample_names
+    assert "v53_local_lab_research_priority_scope_count" in sample_names
+    assert "v53_local_lab_research_priority_top_score" in sample_names
+    assert "v53_local_lab_calibration_methods_stationarity_pass" in sample_names
+    assert "v53_local_lab_execution_review_ready" in sample_names
+    assert "v53_local_lab_execution_partial_threshold_count" in sample_names
+    assert "v53_local_lab_multiple_testing_review_ready" in sample_names
+    assert "v53_local_lab_multiple_testing_correction_required" in sample_names
+    assert "v53_local_lab_multiple_testing_family_count" in sample_names
+    assert "v53_local_lab_calibration_normalized_report_ready" in sample_names
+    assert "v53_local_lab_calibration_normalized_threshold_count" in sample_names
+    assert "v53_local_lab_tail_risk_review_ready" in sample_names
+    assert "v53_local_lab_tail_risk_partial_breaker_count" in sample_names
     assert export.text_payload.startswith("# V5.3 Local IA Lab observability export")
     assert 'profile="complete"' in export.text_payload
     assert 'runtime_mode="local_replay"' in export.text_payload

@@ -183,12 +183,15 @@ def main(argv: list[str] | None = None) -> int:
         config=config,
     )
     output_path = write_edge_gate_calibration_artifact(artifact, args.output_path)
+    report_path = output_path.with_suffix(".report.json")
+    atomic_write_json(report_path, report.model_dump(mode="json"), indent=2)
     input_summary_path = output_path.with_suffix(".input_summary.json")
     atomic_write_json(input_summary_path, input_summary.model_dump(mode="json"), indent=2)
 
     e01 = report.get_threshold(config.edge_multiplier_threshold_id)
     e02 = report.get_threshold(config.min_absolute_edge_threshold_id)
     print(f"EDGE calibration artifact written: {output_path}")
+    print(f"EDGE calibration report JSON: {report_path}")
     print(f"Governed input summary JSON: {input_summary_path}")
     print(
         "THR-E01="

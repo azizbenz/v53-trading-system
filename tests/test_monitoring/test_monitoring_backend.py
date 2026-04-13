@@ -32,10 +32,12 @@ from monitoring import (
     Build9XProjection,
     EngineJudgmentProjection,
     ExecutionNoTradeBridgeProjection,
+    ExecutionRuntimeProjectionBridgeProjection,
     LiveLightProjection,
     MicroLiveProjection,
     OperatorRuntimeEvent,
     OperatorRuntimeProjection,
+    RegimeLiteSafingProjection,
     ReplayImportProjection,
     RuntimeHookBridgeProjection,
     ShadowProjection,
@@ -728,7 +730,76 @@ def test_technical_dashboard_payload_elevates_headline_to_warning_from_build9x()
     )
 
     assert payload.system.headline_status == "warning"
-    assert payload.alerts.headline_status == "warning"
+
+
+def test_technical_dashboard_payload_elevates_headline_from_shadow_regime_lite_safing():
+    dtr_summary, cra_report, break_even_report, edge_report = _sample_build9_reports()
+    snapshot = collect_monitoring_snapshot(
+        correlation_id="corr-tech-regime-safing",
+        profile=ProfileId.LIGHT,
+        runtime_mode=RuntimeMode.SHADOW,
+        timestamp_ms=1_700_000_000_000,
+        portfolio=collect_portfolio_metrics(
+            allocated_opportunities=1,
+            gross_capacity_used_pct=10.0,
+            loss_capacity_used_pct=2.0,
+            beta_utilization=0.1,
+            capital_deployed_usdt=500.0,
+            ce_net=0.0010,
+        ),
+        infra=collect_infra_metrics(),
+        meta=collect_meta_metrics(dtr_summary, cra_report, break_even_report, edge_report),
+    ).model_copy(
+        update={
+            "alerts": (),
+            "backlog_warning": False,
+            "stale_warning": False,
+            "loss_warning": False,
+        }
+    )
+    snapshot = snapshot.model_copy(
+        update={
+            "meta": snapshot.meta.model_copy(
+                update={
+                    "dtr_coverage": 1.0,
+                    "cra_sterilization_rate": 0.0,
+                    "cra_alert_count": 0,
+                    "break_even_drift_alert": False,
+                    "break_even_drift_scopes": (),
+                    "edge_credible_count": 1,
+                    "edge_degraded_count": 0,
+                    "edge_surveillance_count": 0,
+                }
+            )
+        }
+    )
+
+    payload = build_technical_dashboard_payload(
+        snapshot,
+        active_modules=("monitoring", "ui", "protocols", "risk_backbone", "regime_classifier"),
+        active_engines=("engine_a",),
+        shadow_projection=ShadowProjection(
+            status="healthy",
+            run_state="completed",
+            verdict="accepted",
+            regime_lite_safing=RegimeLiteSafingProjection(
+                status="critical",
+                severity="halt_recommended",
+                should_block_new_entries=True,
+                should_exit_all=True,
+                recommended_operator_action="set_halted",
+                operator_safing_request_action="set_halted",
+                operator_safing_request_source_runtime_mode="shadow",
+                detail="regime_lite reached EXTREME in shadow; recommend set_halted",
+                reason_codes=("RISK_REGIME_EXTREME_EXIT_ALL",),
+            ),
+        ),
+    )
+
+    assert payload.system.headline_status == "critical"
+    assert payload.shadow.regime_lite_safing.severity == "halt_recommended"
+    assert payload.shadow.regime_lite_safing.should_exit_all is True
+    assert payload.alerts.headline_status == "critical"
 
 
 def test_technical_dashboard_payload_elevates_headline_to_critical_from_build9x():
@@ -1291,6 +1362,54 @@ def test_technical_dashboard_payload_accepts_execution_no_trade_bridge_projectio
     assert execution.status == "warning"
 
 
+def test_technical_dashboard_payload_accepts_execution_runtime_projection_bridge_projection():
+    dtr_summary, cra_report, break_even_report, edge_report = _sample_build9_reports()
+    snapshot = collect_monitoring_snapshot(
+        correlation_id="corr-exec-runtime-bridge",
+        profile=ProfileId.LIGHT,
+        runtime_mode=RuntimeMode.SHADOW,
+        timestamp_ms=1_700_000_000_000,
+        portfolio=collect_portfolio_metrics(
+            allocated_opportunities=1,
+            gross_capacity_used_pct=10.0,
+            loss_capacity_used_pct=2.0,
+            beta_utilization=0.1,
+            capital_deployed_usdt=500.0,
+            ce_net=0.0010,
+        ),
+        infra=collect_infra_metrics(),
+        meta=collect_meta_metrics(dtr_summary, cra_report, break_even_report, edge_report),
+    )
+
+    payload = build_technical_dashboard_payload(
+        snapshot,
+        active_modules=("protocols", "monitoring", "ui"),
+        execution_runtime_projection_bridge_projection=ExecutionRuntimeProjectionBridgeProjection(
+            status="warning",
+            configured=True,
+            projection_found=True,
+            projection_loaded=True,
+            projection_status="partial",
+            projection_path="build/local_lab_execution_runtime_projection.json",
+            consumer_count=3,
+            ready_consumer_count=1,
+            partial_consumer_count=2,
+            blocked_consumer_count=0,
+            rate_limit_model_loaded=True,
+            spread_guard_model_loaded=False,
+            slippage_model_loaded=False,
+            caution_flags=("THR-X05_ACCEPTED_EVENTS_ONLY",),
+            detail="Execution runtime projection bridge is only partially loadable",
+        ),
+    )
+
+    assert payload.execution_runtime_projection_bridge.status == "warning"
+    assert payload.execution_runtime_projection_bridge.projection_status == "partial"
+    assert payload.execution_runtime_projection_bridge.ready_consumer_count == 1
+    assert payload.execution_runtime_projection_bridge.spread_guard_model_loaded is False
+    assert payload.execution_runtime_projection_bridge.slippage_model_loaded is False
+
+
 def test_technical_dashboard_payload_accepts_runtime_hook_bridge_projections():
     dtr_summary, cra_report, break_even_report, edge_report = _sample_build9_reports()
     snapshot = collect_monitoring_snapshot(
@@ -1483,6 +1602,63 @@ def test_technical_dashboard_payload_elevates_headline_to_warning_from_execution
     assert payload.alerts.headline_status == "warning"
 
 
+def test_technical_dashboard_payload_elevates_headline_to_warning_from_execution_runtime_projection_bridge():
+    dtr_summary, cra_report, break_even_report, edge_report = _sample_build9_reports()
+    snapshot = collect_monitoring_snapshot(
+        correlation_id="corr-tech-exec-runtime-bridge-warning",
+        profile=ProfileId.LIGHT,
+        runtime_mode=RuntimeMode.SHADOW,
+        timestamp_ms=1_700_000_000_000,
+        portfolio=collect_portfolio_metrics(
+            allocated_opportunities=1,
+            gross_capacity_used_pct=10.0,
+            loss_capacity_used_pct=2.0,
+            beta_utilization=0.1,
+            capital_deployed_usdt=500.0,
+            ce_net=0.0010,
+        ),
+        infra=collect_infra_metrics(),
+        meta=collect_meta_metrics(dtr_summary, cra_report, break_even_report, edge_report),
+    ).model_copy(
+        update={
+            "alerts": (),
+            "backlog_warning": False,
+            "stale_warning": False,
+            "loss_warning": False,
+        }
+    )
+    snapshot = snapshot.model_copy(
+        update={
+            "meta": snapshot.meta.model_copy(
+                update={
+                    "break_even_drift_alert": False,
+                    "edge_degraded_count": 0,
+                }
+            )
+        }
+    )
+
+    payload = build_technical_dashboard_payload(
+        snapshot,
+        execution_runtime_projection_bridge_projection=ExecutionRuntimeProjectionBridgeProjection(
+            status="warning",
+            configured=True,
+            projection_found=True,
+            projection_loaded=True,
+            projection_status="partial",
+            consumer_count=3,
+            ready_consumer_count=1,
+            partial_consumer_count=2,
+            rate_limit_model_loaded=True,
+            spread_guard_model_loaded=False,
+            slippage_model_loaded=False,
+        ),
+    )
+
+    assert payload.system.headline_status == "warning"
+    assert payload.alerts.headline_status == "warning"
+
+
 def test_technical_dashboard_payload_elevates_headline_to_critical_from_execution_no_trade_bridge():
     dtr_summary, cra_report, break_even_report, edge_report = _sample_build9_reports()
     snapshot = collect_monitoring_snapshot(
@@ -1656,6 +1832,8 @@ def test_technical_dashboard_payload_accepts_shadow_projection_summary():
             review_export_ready=False,
             import_artifact_id="artifact-shadow-1",
             import_lineage_version="a.v1.0.r1",
+            execution_telemetry_ref="E:/shadow/shadow_vps_service_execution_telemetry.json",
+            execution_telemetry_status="written",
             blocking_reasons=("review export missing",),
             manual_review_required=True,
         ),
@@ -1664,6 +1842,10 @@ def test_technical_dashboard_payload_accepts_shadow_projection_summary():
     assert payload.system.shadow_status == "warning"
     assert payload.shadow.run_state == "completed"
     assert payload.shadow.validation_set_ref == "shadow_validation:v1"
+    assert payload.shadow.execution_telemetry_status == "written"
+    assert payload.shadow.execution_telemetry_ref.endswith(
+        "shadow_vps_service_execution_telemetry.json"
+    )
     assert payload.shadow.blocking_reasons == ("review export missing",)
 
 

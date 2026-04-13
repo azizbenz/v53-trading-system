@@ -1,5 +1,6 @@
 """Runtime tests for execution_backbone Build-3."""
 from datetime import datetime, timezone
+import json
 import logging
 from pathlib import Path
 import shutil
@@ -20,6 +21,10 @@ from execution_backbone.execution_runtime import (
     VenueOrderEvent,
     VenueOrderEventType,
 )
+from execution_backbone.gatekeeper import GatekeeperAuditLogger
+from execution_backbone.rate_limiter import ExecutionRateLimitModel
+from execution_backbone.spread_guard import ExecutionSpreadGuardModel
+from execution_backbone.slippage_model import ExecutionSlippageModel
 from execution_backbone.execution_cost_meter.adverse_selection_meter import (
     AdverseSelectionDelayPolicy,
 )
@@ -101,6 +106,16 @@ class FakeVenueConstraintProvider:
 @pytest.fixture
 def fee_aware_edge_tmpdir() -> Path:
     root = Path("build/pytest-execution-fee-aware-edge") / uuid4().hex
+    root.mkdir(parents=True, exist_ok=False)
+    try:
+        yield root
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+@pytest.fixture
+def gatekeeper_audit_tmpdir() -> Path:
+    root = Path("build/pytest-execution-gatekeeper-audit") / uuid4().hex
     root.mkdir(parents=True, exist_ok=False)
     try:
         yield root
@@ -273,6 +288,45 @@ class TestExecutionRuntime:
         assert reconciliation.position_result.aligned is True
         assert reconciliation.recovery_decision.action == RecoveryAction.NONE
 
+    def test_runtime_writes_gatekeeper_audit_for_submission(self, gatekeeper_audit_tmpdir: Path):
+        adapter = FakeExecutionVenue()
+        audit_path = gatekeeper_audit_tmpdir / "artifacts" / "gatekeeper" / "audit.jsonl"
+        runtime = ExecutionRuntime(
+            adapter,
+            gatekeeper_audit_logger=GatekeeperAuditLogger(audit_path),
+        )
+
+        submission = runtime.submit_opportunity(_opportunity(), now=100.0)
+
+        assert submission.status == ExecutionSubmissionStatus.SUBMITTED
+        lines = audit_path.read_text(encoding="utf-8").strip().splitlines()
+        assert len(lines) == 1
+        payload = json.loads(lines[0])
+        assert payload["decision"] == "submitted"
+        assert payload["order_id"] == submission.order_id
+        assert payload["pair"] == "BTCUSDT"
+
+    def test_runtime_writes_gatekeeper_audit_for_refusal(self, gatekeeper_audit_tmpdir: Path):
+        adapter = FakeExecutionVenue()
+        audit_path = gatekeeper_audit_tmpdir / "artifacts" / "gatekeeper" / "audit.jsonl"
+        runtime = ExecutionRuntime(
+            adapter,
+            gatekeeper_audit_logger=GatekeeperAuditLogger(audit_path),
+        )
+
+        submission = runtime.submit_opportunity(
+            _opportunity(expected_gain=0.0010, expected_cost=0.0050),
+            now=100.0,
+        )
+
+        assert submission.status == ExecutionSubmissionStatus.NO_TRADE
+        lines = audit_path.read_text(encoding="utf-8").strip().splitlines()
+        assert len(lines) == 1
+        payload = json.loads(lines[0])
+        assert payload["decision"] == "no_trade"
+        assert payload["gate_name"] == "order_type"
+        assert payload["no_trade_reason"] == NoTradeReason.COST_EXCEEDS_EDGE.value
+
     def test_runtime_reconciliation_ignores_terminal_orders_returned_by_remote(self):
         adapter = FakeExecutionVenue()
         runtime = ExecutionRuntime(adapter, max_recon_age_s=30.0)
@@ -397,6 +451,11 @@ class TestExecutionRuntime:
         assert submission.status == ExecutionSubmissionStatus.NO_TRADE
         assert submission.no_trade is not None
         assert submission.no_trade.reason == NoTradeReason.COST_EXCEEDS_EDGE
+        assert submission.no_trade.pair == "BTCUSDT"
+        assert submission.no_trade.engine_id == "engine_a"
+        assert tuple(step.gate_name.value for step in submission.gate_trace) == (
+            "order_type",
+        )
         assert len(adapter.submissions) == 0
 
     def test_runtime_blocks_trade_when_fee_aware_edge_gate_rejects(self, fee_aware_edge_tmpdir: Path):
@@ -442,6 +501,8 @@ class TestExecutionRuntime:
 
         assert submission.status == ExecutionSubmissionStatus.SUBMITTED
         assert submission.order_id == "ord-1"
+        assert submission.gate_trace
+        assert submission.gate_trace[-1].gate_name.value == "price_limit"
         assert len(adapter.submissions) == 1
 
     def test_runtime_blocks_submission_from_execution_no_trade_filter(self):
@@ -463,6 +524,154 @@ class TestExecutionRuntime:
         assert submission.no_trade is not None
         assert submission.no_trade.reason == NoTradeReason.HARD_BLOCKER
         assert submission.detail == "artifact veto at execution boundary"
+        assert len(adapter.submissions) == 0
+
+    def test_runtime_blocks_submission_from_rate_limit_model(self):
+        adapter = FakeExecutionVenue()
+        runtime = ExecutionRuntime(
+            adapter,
+            rate_limit_model=ExecutionRateLimitModel(
+                method="little_law_burst_margin_capped",
+                quota_ratio_ceiling=0.80,
+            ),
+        )
+
+        submission = runtime.submit_opportunity(
+            _opportunity(
+                intent_id="rate-limit-block",
+                metadata={"rest_quota_ratio_current": 0.85},
+            ),
+            now=12.2,
+        )
+
+        assert submission.status == ExecutionSubmissionStatus.NO_TRADE
+        assert submission.no_trade is not None
+        assert submission.no_trade.reason == NoTradeReason.HARD_BLOCKER
+        assert submission.no_trade.context["gate"] == "rate_limiter"
+        assert submission.no_trade.context["current_quota_ratio"] == pytest.approx(0.85)
+        assert len(adapter.submissions) == 0
+
+    def test_runtime_fails_open_when_rate_limit_model_has_no_live_telemetry(self):
+        adapter = FakeExecutionVenue()
+        runtime = ExecutionRuntime(
+            adapter,
+            rate_limit_model=ExecutionRateLimitModel(
+                method="little_law_burst_margin_capped",
+                quota_ratio_ceiling=0.80,
+            ),
+        )
+
+        submission = runtime.submit_opportunity(_opportunity(intent_id="rate-limit-open"), now=12.3)
+
+        assert submission.status == ExecutionSubmissionStatus.SUBMITTED
+        assert len(adapter.submissions) == 1
+
+    def test_runtime_blocks_submission_from_spread_guard_model(self):
+        adapter = FakeExecutionVenue()
+        runtime = ExecutionRuntime(
+            adapter,
+            spread_guard_model=ExecutionSpreadGuardModel(
+                method="lognormal_mu_plus_2sigma_capped",
+                max_spread_bps=12.0,
+            ),
+        )
+
+        submission = runtime.submit_opportunity(
+            _opportunity(
+                intent_id="spread-guard-block",
+                spread_bps=15.0,
+            ),
+            now=12.35,
+        )
+
+        assert submission.status == ExecutionSubmissionStatus.NO_TRADE
+        assert submission.no_trade is not None
+        assert submission.no_trade.reason == NoTradeReason.HARD_BLOCKER
+        assert submission.no_trade.context["gate"] == "spread_guard"
+        assert submission.no_trade.context["current_spread_bps"] == pytest.approx(15.0)
+        assert submission.no_trade.context["max_spread_bps"] == pytest.approx(12.0)
+        assert len(adapter.submissions) == 0
+
+    def test_runtime_fails_open_when_spread_guard_model_receives_invalid_spread(self):
+        adapter = FakeExecutionVenue()
+        runtime = ExecutionRuntime(
+            adapter,
+            spread_guard_model=ExecutionSpreadGuardModel(
+                method="lognormal_mu_plus_2sigma_capped",
+                max_spread_bps=12.0,
+            ),
+        )
+
+        submission = runtime.submit_opportunity(
+            _opportunity(
+                intent_id="spread-guard-open",
+                spread_bps=float("nan"),
+            ),
+            now=12.36,
+        )
+
+        assert submission.status == ExecutionSubmissionStatus.SUBMITTED
+        assert len(adapter.submissions) == 1
+
+    def test_runtime_augments_expected_cost_from_slippage_model(self):
+        adapter = FakeExecutionVenue()
+        runtime = ExecutionRuntime(
+            adapter,
+            slippage_model=ExecutionSlippageModel(
+                method="sqrt_size_huber_linear_v1",
+                size_proxy="final_size",
+                intercept_bps=1.0,
+                sqrt_size_coefficient=2.0,
+                r_squared=0.71,
+                mean_absolute_error_bps=0.6,
+                reference_size=9.0,
+                reference_prediction_bps=7.0,
+            ),
+        )
+
+        submission = runtime.submit_opportunity(
+            _opportunity(intent_id="slippage-augment", quantity=9.0),
+            now=12.4,
+        )
+
+        assert submission.status == ExecutionSubmissionStatus.SUBMITTED
+        assert submission.intent is not None
+        assert submission.intent.expected_cost == pytest.approx(0.0022)
+        assert (
+            submission.intent.metadata["execution_slippage_model"]["predicted_slippage_bps"]
+            == pytest.approx(7.0)
+        )
+        assert len(adapter.submissions) == 1
+
+    def test_runtime_slippage_model_can_flip_path_to_no_trade(self):
+        adapter = FakeExecutionVenue()
+        runtime = ExecutionRuntime(
+            adapter,
+            slippage_model=ExecutionSlippageModel(
+                method="sqrt_size_huber_linear_v1",
+                size_proxy="candidate_size",
+                intercept_bps=10.0,
+                sqrt_size_coefficient=10.0,
+                r_squared=0.83,
+                mean_absolute_error_bps=1.2,
+                reference_size=4.0,
+                reference_prediction_bps=30.0,
+            ),
+        )
+
+        submission = runtime.submit_opportunity(
+            _opportunity(
+                intent_id="slippage-no-trade",
+                quantity=4.0,
+                expected_gain=0.0030,
+                expected_cost=0.0005,
+            ),
+            now=12.45,
+        )
+
+        assert submission.status == ExecutionSubmissionStatus.NO_TRADE
+        assert submission.no_trade is not None
+        assert submission.no_trade.reason == NoTradeReason.COST_EXCEEDS_EDGE
         assert len(adapter.submissions) == 0
 
     def test_runtime_blocks_submission_from_sharia_trade_authorizer(self):

@@ -118,7 +118,7 @@ class TestBuildStageObligatoire:
 
     def test_get_modules_by_build(self):
         build1 = get_modules_by_build(1)
-        assert len(build1) == 5
+        assert len(build1) == 6
         for m in build1:
             assert m.build_stage == 1
 
@@ -156,7 +156,12 @@ class TestExpectedModules:
         "dag_validator",
         "contract_test_suite",
         "smoke_bootstrap_recovery",
+        "calibration_loader",
         "data_backbone",
+        "regime_classifier",
+        "secrets_manager",
+        "alerting",
+        "sharia_compliance",
         "execution_backbone",
         "risk_backbone",
         "scoring_backbone",
@@ -164,11 +169,13 @@ class TestExpectedModules:
         "engine_b",
         "portfolio",
         "meta",
+        "calibration_methods",
         "local_replay_runtime",
         "backtest_artifact_import",
         "meta_learning",
         "monitoring",
         "ui",
+        "venue_adapters",
         "protocols",
         "complete_enablers",
         "engine_c",

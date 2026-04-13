@@ -6,6 +6,7 @@ cluster concentration and drawdown protection.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from enum import StrEnum
 import math
 from typing import Protocol
@@ -68,6 +69,12 @@ class RiskCandidate(BaseModel, frozen=True):
     market_toxicity: float = 0.0
     spread_regime_penalty: float = 0.0
     participation_penalty: float = 0.0
+    spread_bps: float | None = Field(default=None, ge=0.0)
+    reference_spread_bps: float | None = Field(default=None, gt=0.0)
+    depth_ratio: float | None = Field(default=None, ge=0.0, le=1.0)
+    order_cancellation_rate: float | None = Field(default=None, ge=0.0, le=1.0)
+    taker_imbalance: float | None = Field(default=None, ge=-1.0, le=1.0)
+    micro_vol_divergence: float | None = Field(default=None, ge=0.0)
 
 
 class RiskReasonDetail(BaseModel, frozen=True):
@@ -140,6 +147,110 @@ class RiskMicroFrictionPrecheckHook(Protocol):
         self,
         hook_input: RiskMicroFrictionPrecheckInput,
     ) -> RiskMicroFrictionPrecheckOutcome:
+        ...
+
+
+class RiskDailyPnlPrecheckInput(BaseModel, frozen=True):
+    """Bounded typed input for the runtime-open daily PnL breaker precheck hook."""
+
+    context_id: str = Field(..., min_length=1)
+    pair: str = Field(..., min_length=1)
+    engine_id: str = Field(..., min_length=1)
+    size: float = 0.0
+    planned_loss: float | None = None
+    session_date: str = Field(..., min_length=1)
+    current_equity: float = Field(..., ge=0.0)
+    session_peak_equity: float = Field(..., gt=0.0)
+
+
+class RiskDailyPnlPrecheckOutcome(BaseModel, frozen=True):
+    """Deterministic outcome of the bounded daily PnL breaker precheck hook."""
+
+    accepted: bool = True
+    verdict: str = "accepted"
+    should_force_shadow: bool = False
+    reason_codes: tuple[str, ...] = ()
+    detail: str = ""
+
+
+class RiskDailyPnlPrecheckHook(Protocol):
+    """Bounded hook surface injected into the real Build-4 risk runtime rail."""
+
+    def __call__(
+        self,
+        hook_input: RiskDailyPnlPrecheckInput,
+    ) -> RiskDailyPnlPrecheckOutcome:
+        ...
+
+
+class RiskRegimePrecheckInput(BaseModel, frozen=True):
+    """Bounded typed input for the runtime-open regime precheck hook."""
+
+    context_id: str = Field(..., min_length=1)
+    pair: str = Field(..., min_length=1)
+    engine_id: str = Field(..., min_length=1)
+    size: float = 0.0
+    planned_loss: float | None = None
+    regime_state: str = Field(default="unknown", min_length=1)
+    entries_blocked: bool = False
+    entries_blocked_until_ts: int = Field(default=0, ge=0)
+    reason_codes: tuple[str, ...] = ()
+
+
+class RiskRegimePrecheckOutcome(BaseModel, frozen=True):
+    """Deterministic outcome of the bounded risk regime precheck hook."""
+
+    accepted: bool = True
+    reason_codes: tuple[str, ...] = ()
+    detail: str = ""
+
+
+class RiskRegimePrecheckHook(Protocol):
+    """Bounded hook surface injected into the real Build-4 risk runtime rail."""
+
+    def __call__(
+        self,
+        hook_input: RiskRegimePrecheckInput,
+    ) -> RiskRegimePrecheckOutcome:
+        ...
+
+
+class RiskInfoStressPrecheckInput(BaseModel, frozen=True):
+    """Bounded typed input for the runtime-open information-stress precheck hook."""
+
+    context_id: str = Field(..., min_length=1)
+    pair: str = Field(..., min_length=1)
+    engine_id: str = Field(..., min_length=1)
+    size: float = 0.0
+    planned_loss: float | None = None
+    now_ts: float = Field(..., gt=0.0)
+    spread_bps: float | None = Field(default=None, ge=0.0)
+    reference_spread_bps: float | None = Field(default=None, gt=0.0)
+    depth_ratio: float | None = Field(default=None, ge=0.0, le=1.0)
+    order_cancellation_rate: float | None = Field(default=None, ge=0.0, le=1.0)
+    taker_imbalance: float | None = Field(default=None, ge=-1.0, le=1.0)
+    micro_vol_divergence: float | None = Field(default=None, ge=0.0)
+
+
+class RiskInfoStressPrecheckOutcome(BaseModel, frozen=True):
+    """Deterministic outcome of the bounded information-stress precheck hook."""
+
+    accepted: bool = True
+    stress_level: str = "normal"
+    alert_count: int = Field(default=0, ge=0)
+    entries_blocked: bool = False
+    entries_blocked_until_ts: int = Field(default=0, ge=0)
+    reason_codes: tuple[str, ...] = ()
+    detail: str = ""
+
+
+class RiskInfoStressPrecheckHook(Protocol):
+    """Bounded hook surface injected into the real Build-4 risk runtime rail."""
+
+    def __call__(
+        self,
+        hook_input: RiskInfoStressPrecheckInput,
+    ) -> RiskInfoStressPrecheckOutcome:
         ...
 
 
@@ -383,6 +494,9 @@ class RiskRuntime:
         pair_beta_registry: PairBetaRegistry | None = None,
         cluster_registry: ClusterRegistry | None = None,
         snapshot: PortfolioRiskSnapshot | None = None,
+        daily_pnl_precheck_hook: RiskDailyPnlPrecheckHook | None = None,
+        regime_precheck_hook: RiskRegimePrecheckHook | None = None,
+        info_stress_precheck_hook: RiskInfoStressPrecheckHook | None = None,
         micro_friction_precheck_hook: RiskMicroFrictionPrecheckHook | None = None,
     ) -> None:
         self._limits = limits
@@ -404,6 +518,9 @@ class RiskRuntime:
         self._loss_reporter = LossReporter(loss_cap=limits.loss_cap)
         self._beta_reporter = BetaReporter(beta_cap=limits.beta_cap)
         self._cluster_reporter = ClusterReporter()
+        self._daily_pnl_precheck_hook = daily_pnl_precheck_hook
+        self._regime_precheck_hook = regime_precheck_hook
+        self._info_stress_precheck_hook = info_stress_precheck_hook
         self._micro_friction_precheck_hook = micro_friction_precheck_hook
         self._seed_reporters_from_snapshot()
 
@@ -594,6 +711,32 @@ class RiskRuntime:
             beta_mapping_stale_pairs=beta_mapping_stale_pairs,
         )
         dominant_reason_code = reason_details[0].code if reason_details else ""
+        daily_pnl_outcome = self._run_daily_pnl_precheck_hook(
+            candidate,
+            timestamp,
+            current_equity=current_equity,
+            session_peak_equity=session_peak_equity,
+        )
+        daily_pnl_reason_details: tuple[RiskReasonDetail, ...] = ()
+        if daily_pnl_outcome is not None and not daily_pnl_outcome.accepted:
+            daily_pnl_reason_codes = daily_pnl_outcome.reason_codes or (
+                "RISK_DAILY_PNL_BREAKER_BLOCK",
+            )
+            daily_pnl_detail = daily_pnl_outcome.detail.strip()
+            if not daily_pnl_detail:
+                daily_pnl_detail = (
+                    "compiled daily pnl breaker blocked "
+                    f"{candidate.pair} / {candidate.engine_id}"
+                )
+            daily_pnl_reason_details = tuple(
+                RiskReasonDetail(
+                    code=reason_code,
+                    category="daily_pnl_breaker",
+                    verdict=daily_pnl_outcome.verdict,
+                    message=daily_pnl_detail,
+                )
+                for reason_code in daily_pnl_reason_codes
+            )
 
         rejected_components = []
         if gross_result.verdict != GrossCapVerdict.ACCEPTED:
@@ -609,8 +752,11 @@ class RiskRuntime:
         for cluster_result in cluster_results:
             if cluster_result.verdict != ClusterCapVerdict.ACCEPTED:
                 rejected_components.append(cluster_result.reason)
+        if daily_pnl_reason_details:
+            rejected_components.append(daily_pnl_reason_details[0].message)
 
         if rejected_components:
+            blocked_reason_details = reason_details + daily_pnl_reason_details
             action = RiskRuntimeAction.REJECT
             self._record_refusals(
                 candidate,
@@ -621,7 +767,7 @@ class RiskRuntime:
             )
             explainability = _build_risk_explainability(
                 action=action,
-                reason_details=reason_details,
+                reason_details=blocked_reason_details,
                 drawdown_result=drawdown_result,
                 physics_scores=physics_scores,
             )
@@ -629,8 +775,58 @@ class RiskRuntime:
                 action=action,
                 accepted=False,
                 reasons=tuple(rejected_components),
-                reason_details=reason_details,
-                dominant_reason_code=dominant_reason_code,
+                reason_details=blocked_reason_details,
+                dominant_reason_code=(
+                    blocked_reason_details[0].code if blocked_reason_details else ""
+                ),
+                explain_summary=explainability.summary,
+                explainability=explainability,
+                gross_result=gross_result,
+                loss_result=loss_result,
+                beta_projection=beta_projection,
+                beta_result=beta_result,
+                cluster_results=cluster_results,
+                drawdown_result=drawdown_result,
+            )
+
+        hook_outcome = self._run_regime_precheck_hook(candidate, timestamp)
+        if hook_outcome is not None and not hook_outcome.accepted:
+            hook_reason_codes = hook_outcome.reason_codes or ("RISK_REGIME_PRECHECK_BLOCK",)
+            hook_detail = hook_outcome.detail.strip()
+            if not hook_detail:
+                hook_detail = (
+                    "compiled risk regime precheck blocked "
+                    f"{candidate.pair} / {candidate.engine_id}"
+                )
+            hook_reason_details = tuple(
+                RiskReasonDetail(
+                    code=reason_code,
+                    category="regime_state",
+                    verdict="rejected_regime_precheck",
+                    message=hook_detail,
+                )
+                for reason_code in hook_reason_codes
+            )
+            blocked_reason_details = reason_details + hook_reason_details
+            self._record_refusals(
+                candidate,
+                pair_beta,
+                cluster_results,
+                (hook_detail,),
+                timestamp,
+            )
+            explainability = _build_risk_explainability(
+                action=RiskRuntimeAction.REJECT,
+                reason_details=blocked_reason_details,
+                drawdown_result=drawdown_result,
+                physics_scores=physics_scores,
+            )
+            return RiskEvaluation(
+                action=RiskRuntimeAction.REJECT,
+                accepted=False,
+                reasons=(hook_detail,),
+                reason_details=blocked_reason_details,
+                dominant_reason_code=hook_reason_codes[0],
                 explain_summary=explainability.summary,
                 explainability=explainability,
                 gross_result=gross_result,
@@ -681,6 +877,56 @@ class RiskRuntime:
                 reasons=(reason,),
                 reason_details=reason_details,
                 dominant_reason_code=dominant_reason_code,
+                explain_summary=explainability.summary,
+                explainability=explainability,
+                gross_result=gross_result,
+                loss_result=loss_result,
+                beta_projection=beta_projection,
+                beta_result=beta_result,
+                cluster_results=cluster_results,
+                drawdown_result=drawdown_result,
+            )
+
+        info_stress_outcome = self._run_info_stress_precheck_hook(candidate, timestamp)
+        if info_stress_outcome is not None and not info_stress_outcome.accepted:
+            info_stress_reason_codes = info_stress_outcome.reason_codes or (
+                "RISK_INFO_STRESS_PRECHECK_BLOCK",
+            )
+            info_stress_detail = info_stress_outcome.detail.strip()
+            if not info_stress_detail:
+                info_stress_detail = (
+                    "compiled risk info-stress precheck blocked "
+                    f"{candidate.pair} / {candidate.engine_id}"
+                )
+            info_stress_reason_details = tuple(
+                RiskReasonDetail(
+                    code=reason_code,
+                    category="info_stress",
+                    verdict="rejected_info_stress_precheck",
+                    message=info_stress_detail,
+                )
+                for reason_code in info_stress_reason_codes
+            )
+            blocked_reason_details = reason_details + info_stress_reason_details
+            self._record_refusals(
+                candidate,
+                pair_beta,
+                cluster_results,
+                (info_stress_detail,),
+                timestamp,
+            )
+            explainability = _build_risk_explainability(
+                action=RiskRuntimeAction.REJECT,
+                reason_details=blocked_reason_details,
+                drawdown_result=drawdown_result,
+                physics_scores=physics_scores,
+            )
+            return RiskEvaluation(
+                action=RiskRuntimeAction.REJECT,
+                accepted=False,
+                reasons=(info_stress_detail,),
+                reason_details=blocked_reason_details,
+                dominant_reason_code=info_stress_reason_codes[0],
                 explain_summary=explainability.summary,
                 explainability=explainability,
                 gross_result=gross_result,
@@ -953,6 +1199,30 @@ class RiskRuntime:
                 timestamp=now,
             )
 
+    def _run_daily_pnl_precheck_hook(
+        self,
+        candidate: RiskCandidate,
+        now: float,
+        *,
+        current_equity: float,
+        session_peak_equity: float,
+    ) -> RiskDailyPnlPrecheckOutcome | None:
+        if self._daily_pnl_precheck_hook is None:
+            return None
+        session_date = datetime.fromtimestamp(now, tz=UTC).date().isoformat()
+        return self._daily_pnl_precheck_hook(
+            RiskDailyPnlPrecheckInput(
+                context_id=f"{candidate.pair}:{candidate.engine_id}:{now:.6f}",
+                pair=candidate.pair,
+                engine_id=candidate.engine_id,
+                size=candidate.size,
+                planned_loss=candidate.planned_loss,
+                session_date=session_date,
+                current_equity=current_equity,
+                session_peak_equity=session_peak_equity,
+            )
+        )
+
     def _run_micro_friction_precheck_hook(
         self,
         candidate: RiskCandidate,
@@ -973,6 +1243,47 @@ class RiskRuntime:
                 execution_survivability_score=physics_scores.execution_survivability_score,
                 micro_friction_score=physics_scores.micro_friction_score,
                 pressure_state=physics_scores.pressure_state,
+            )
+        )
+
+    def _run_info_stress_precheck_hook(
+        self,
+        candidate: RiskCandidate,
+        now: float,
+    ) -> RiskInfoStressPrecheckOutcome | None:
+        if self._info_stress_precheck_hook is None:
+            return None
+        return self._info_stress_precheck_hook(
+            RiskInfoStressPrecheckInput(
+                context_id=f"{candidate.pair}:{candidate.engine_id}:{now:.6f}",
+                pair=candidate.pair,
+                engine_id=candidate.engine_id,
+                size=candidate.size,
+                planned_loss=candidate.planned_loss,
+                now_ts=now,
+                spread_bps=candidate.spread_bps,
+                reference_spread_bps=candidate.reference_spread_bps,
+                depth_ratio=candidate.depth_ratio,
+                order_cancellation_rate=candidate.order_cancellation_rate,
+                taker_imbalance=candidate.taker_imbalance,
+                micro_vol_divergence=candidate.micro_vol_divergence,
+            )
+        )
+
+    def _run_regime_precheck_hook(
+        self,
+        candidate: RiskCandidate,
+        now: float,
+    ) -> RiskRegimePrecheckOutcome | None:
+        if self._regime_precheck_hook is None:
+            return None
+        return self._regime_precheck_hook(
+            RiskRegimePrecheckInput(
+                context_id=f"{candidate.pair}:{candidate.engine_id}:{now}",
+                pair=candidate.pair,
+                engine_id=candidate.engine_id,
+                size=candidate.size,
+                planned_loss=candidate.planned_loss,
             )
         )
 

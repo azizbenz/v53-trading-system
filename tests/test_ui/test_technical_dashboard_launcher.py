@@ -11,7 +11,7 @@ import sys
 from uuid import uuid4
 
 from interface_contracts import ProfileId, RuntimeMode
-from monitoring import MonitoringRuntime
+from monitoring import MonitoringRuntime, ShadowProjection
 from ui import LightUIRuntime, OperatorActionRequest, OperatorActionType
 
 
@@ -35,6 +35,90 @@ def _scratch_dir(label: str) -> Path:
     output_dir = base_dir / f"{label}_{uuid4().hex}"
     output_dir.mkdir(parents=True, exist_ok=False)
     return output_dir
+
+
+def _write_execution_runtime_projection(path: Path) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "correlation_id": "corr-exec-runtime",
+                "export_dir": "build/local_lab",
+                "run_id": "local-lab-run-1",
+                "projection_status": "ready",
+                "projection_ready": True,
+                "execution_review_status": "ready",
+                "execution_review_ready": True,
+                "consumer_count": 3,
+                "ready_consumer_count": 3,
+                "partial_consumer_count": 0,
+                "blocked_consumer_count": 0,
+                "blocking_reasons": [],
+                "caution_flags": ["THR-X05_ACCEPTED_EVENTS_ONLY"],
+                "consumers": [
+                    {
+                        "consumer_id": "rate_limiter",
+                        "consumer_interface": "quota_ratio_ceiling",
+                        "threshold_id": "THR-X03",
+                        "target_runtime_mode": "shadow",
+                        "projection_status": "ready",
+                        "projection_ready": True,
+                        "threshold_review_status": "ready",
+                        "threshold_fit_ready": True,
+                        "method": "quota_ratio_ceiling_v1",
+                        "unit": "quota_ratio",
+                        "projection_value": 0.8,
+                        "projection_value_semantics": "max_observed_quota_ratio_before_throttle",
+                        "hard_cap_human": 0.8,
+                        "hard_cap_binding": False,
+                        "blocking_reasons": [],
+                        "caution_flags": [],
+                    },
+                    {
+                        "consumer_id": "spread_guard",
+                        "consumer_interface": "spread_bps_ceiling",
+                        "threshold_id": "THR-X04",
+                        "target_runtime_mode": "shadow",
+                        "projection_status": "ready",
+                        "projection_ready": True,
+                        "threshold_review_status": "ready",
+                        "threshold_fit_ready": True,
+                        "method": "lognormal_mu_plus_2sigma_capped",
+                        "unit": "bps",
+                        "projection_value": 24.0,
+                        "projection_value_semantics": "max_observed_spread_bps_before_no_trade",
+                        "hard_cap_human": 50.0,
+                        "hard_cap_binding": False,
+                        "blocking_reasons": [],
+                        "caution_flags": [],
+                    },
+                    {
+                        "consumer_id": "slippage_model",
+                        "consumer_interface": "sqrt_size_slippage_predictor",
+                        "threshold_id": "THR-X05",
+                        "target_runtime_mode": "shadow",
+                        "projection_status": "ready",
+                        "projection_ready": True,
+                        "threshold_review_status": "ready",
+                        "threshold_fit_ready": True,
+                        "method": "size_slippage_huber_v1",
+                        "unit": "bps",
+                        "projection_value": 18.0,
+                        "projection_value_semantics": "reference_slippage_bps_at_q95_size",
+                        "reference_size": 4.0,
+                        "size_proxy": "final_size",
+                        "intercept_bps": 2.0,
+                        "sqrt_size_coefficient": 8.0,
+                        "r_squared": 0.55,
+                        "mean_absolute_error_bps": 1.5,
+                        "blocking_reasons": [],
+                        "caution_flags": ["THR-X05_ACCEPTED_EVENTS_ONLY"],
+                    },
+                ],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
 
 def test_export_technical_dashboard_writes_availability_view():
@@ -179,6 +263,128 @@ def test_export_technical_dashboard_writes_demo_sidecars():
         assert shadow_runtime_evidence["continuous_hours"] >= 24.0
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_export_technical_dashboard_demo_autoloads_execution_runtime_projection_bridge():
+    launcher = _load_launcher_module()
+    output_dir = _scratch_dir("demo_exec_runtime_projection")
+    _write_execution_runtime_projection(output_dir / "local_lab_execution_runtime_projection.json")
+
+    try:
+        artifacts = launcher.export_technical_dashboard(output_dir, demo=True)
+        payload = json.loads(artifacts.payload_json_path.read_text(encoding="utf-8"))
+
+        assert payload["execution_runtime_projection_bridge"]["status"] == "healthy"
+        assert payload["execution_runtime_projection_bridge"]["projection_status"] == "ready"
+        assert payload["execution_runtime_projection_bridge"]["rate_limit_model_loaded"] is True
+        assert payload["execution_runtime_projection_bridge"]["spread_guard_model_loaded"] is True
+        assert payload["execution_runtime_projection_bridge"]["slippage_model_loaded"] is True
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_apply_shadow_service_metadata_projects_execution_telemetry_status():
+    launcher = _load_launcher_module()
+    projection = ShadowProjection(
+        status="warning",
+        run_state="completed",
+        verdict="needs_review",
+    )
+
+    updated = launcher._apply_shadow_service_metadata(
+        projection,
+        {
+            "execution_telemetry_ref": "E:/shadow/shadow_vps_service_execution_telemetry.json",
+            "execution_telemetry_status": "skipped",
+            "telegram_alert_delivery_status": "failed",
+            "telegram_alert_delivery_event_type": "service_stopped",
+            "telegram_alert_delivery_error": "http_500",
+            "execution_runtime_bootstrap_ref": "E:/shadow/execution_runtime_bootstrap.summary.json",
+            "execution_runtime_bootstrap_status": "ready",
+            "execution_runtime_bootstrap_source": "live_websocket_config",
+            "execution_runtime_gatekeeper_audit_ref": "E:/shadow/artifacts/gatekeeper/audit.jsonl",
+            "execution_runtime_gatekeeper_audit_source": "cli",
+            "execution_runtime_bootstrap_user_data_stream_enabled": False,
+            "execution_runtime_bootstrap_reconciliation_boot_executed": True,
+            "execution_runtime_bootstrap_reconciliation_boot_trading_blocked": False,
+            "execution_runtime_bootstrap_reconciliation_boot_circuit_breaker_tripped": False,
+            "execution_runtime_bootstrap_reconciliation_boot_detail": "boot reconciliation aligned local and remote state",
+            "execution_runtime_bootstrap_reconciliation_boot_recovery_action": "none",
+            "execution_runtime_bootstrap_reconciliation_boot_divergence_count": 0,
+            "execution_runtime_projection_ref": "E:/shadow/local_lab_execution_runtime_projection.json",
+            "execution_runtime_projection_source": "cli",
+            "regime_lite_assessment_ref": "E:/shadow/regime_lite_assessment.json",
+            "regime_lite_assessment_source": "live_websocket_config",
+            "regime_lite_safing_recommendation_ref": (
+                "E:/shadow/regime_lite_safing_recommendation.json"
+            ),
+            "regime_lite_safing_recommendation_source": "cli",
+            "info_stress_assessment_ref": "E:/shadow/info_stress_assessment.json",
+            "info_stress_assessment_source": "cli",
+            "info_stress_governance_status": "assessment_only",
+            "info_stress_level": "extreme",
+            "info_stress_alert_count": 3,
+            "info_stress_entries_blocked": True,
+            "info_stress_entries_blocked_until_ts": 1700086400,
+            "info_stress_reason_codes": ["INFO_STRESS_SPREAD_EXPLOSION"],
+            "info_stress_detail": "info_stress reached EXTREME in shadow",
+            "execution_runtime_projection_status": "ready",
+            "execution_runtime_projection_ready": True,
+            "execution_runtime_projection_consumer_count": 3,
+            "execution_runtime_projection_ready_consumer_count": 3,
+            "execution_runtime_projection_partial_consumer_count": 0,
+            "execution_runtime_projection_blocked_consumer_count": 0,
+            "execution_runtime_projection_bridge_status": "healthy",
+            "execution_runtime_projection_bridge_loaded": True,
+            "execution_runtime_projection_rate_limit_model_loaded": True,
+            "execution_runtime_projection_spread_guard_model_loaded": True,
+            "execution_runtime_projection_slippage_model_loaded": True,
+            "regime_lite_safing_severity": "halt_recommended",
+            "regime_lite_safing_should_block_new_entries": True,
+            "regime_lite_safing_should_exit_all": True,
+            "regime_lite_safing_recommended_operator_action": "set_halted",
+            "regime_lite_safing_operator_safing_request_action": "set_halted",
+            "regime_lite_safing_operator_safing_request_source_runtime_mode": "shadow",
+            "regime_lite_safing_detail": "regime_lite reached EXTREME in shadow",
+            "regime_lite_safing_reason_codes": ["RISK_REGIME_EXTREME_EXIT_ALL"],
+        },
+    )
+
+    assert updated.execution_telemetry_status == "skipped"
+    assert updated.execution_telemetry_ref.endswith(
+        "shadow_vps_service_execution_telemetry.json"
+    )
+    assert updated.telegram_alert_delivery_status == "failed"
+    assert updated.telegram_alert_delivery_event_type == "service_stopped"
+    assert updated.telegram_alert_delivery_error == "http_500"
+    assert updated.execution_runtime_bootstrap_status == "ready"
+    assert updated.execution_runtime_bootstrap_source == "live_websocket_config"
+    assert updated.execution_runtime_gatekeeper_audit_source == "cli"
+    assert updated.execution_runtime_bootstrap_reconciliation_boot_executed is True
+    assert (
+        updated.execution_runtime_bootstrap_reconciliation_boot_divergence_count == 0
+    )
+    assert updated.execution_runtime_projection_status == "ready"
+    assert updated.execution_runtime_projection_source == "cli"
+    assert updated.execution_runtime_projection_bridge_status == "healthy"
+    assert updated.execution_runtime_projection_bridge_loaded is True
+    assert updated.execution_runtime_projection_spread_guard_model_loaded is True
+    assert updated.regime_lite_assessment_ref.endswith("regime_lite_assessment.json")
+    assert updated.regime_lite_assessment_source == "live_websocket_config"
+    assert updated.regime_lite_safing_recommendation_ref.endswith(
+        "regime_lite_safing_recommendation.json"
+    )
+    assert updated.regime_lite_safing_recommendation_source == "cli"
+    assert updated.regime_lite_safing.severity == "halt_recommended"
+    assert updated.regime_lite_safing.status == "critical"
+    assert updated.regime_lite_safing.should_exit_all is True
+    assert updated.regime_lite_safing.operator_safing_request_action == "set_halted"
+    assert updated.info_stress_assessment_ref.endswith("info_stress_assessment.json")
+    assert updated.info_stress_assessment_source == "cli"
+    assert updated.info_stress_governance_status == "assessment_only"
+    assert updated.info_stress_level == "extreme"
+    assert updated.info_stress_alert_count == 3
+    assert updated.info_stress_entries_blocked is True
 
 
 def test_load_artifact_import_summary_backfills_legacy_source_profile():

@@ -7,6 +7,7 @@ from typing import TypeVar
 
 from pydantic import BaseModel, ValidationError
 
+from monitoring.local_lab_monitoring_bundle_manifest import LocalLabMonitoringBundleManifest
 from monitoring.contracts import (
     LocalLabMonitoringBackendPayload,
     LocalLabMonitoringIngestionSummary,
@@ -20,6 +21,7 @@ class LocalLabMonitoringBundle(BaseModel, frozen=True):
     """Validated Local IA Lab monitoring bundle loaded from one output directory."""
 
     bundle_dir: Path
+    manifest: LocalLabMonitoringBundleManifest
     backend_payload: LocalLabMonitoringBackendPayload
     observability_export: ObservabilityExport
     ingestion_summary: LocalLabMonitoringIngestionSummary
@@ -36,12 +38,38 @@ def _load_model(path: Path, *, label: str, model_type: type[_ModelT]) -> _ModelT
         ) from exc
 
 
+def _resolve_bundle_ref(bundle_dir: Path, ref: str) -> Path:
+    path = Path(ref)
+    if path.is_absolute():
+        return path.resolve()
+    if path.exists():
+        return path.resolve()
+    return (bundle_dir / path).resolve()
+
+
 def _require_aligned_bundle(
     *,
+    manifest: LocalLabMonitoringBundleManifest,
     backend_payload: LocalLabMonitoringBackendPayload,
     observability_export: ObservabilityExport,
     ingestion_summary: LocalLabMonitoringIngestionSummary,
 ) -> None:
+    if manifest.correlation_id != backend_payload.correlation_id:
+        raise ValueError(
+            "Local IA Lab monitoring bundle requires matching correlation_id across manifest and backend payload"
+        )
+    if manifest.profile != backend_payload.profile.value:
+        raise ValueError(
+            "Local IA Lab monitoring bundle requires matching profile across manifest and backend payload"
+        )
+    if manifest.runtime_mode != backend_payload.runtime_mode.value:
+        raise ValueError(
+            "Local IA Lab monitoring bundle requires matching runtime_mode across manifest and backend payload"
+        )
+    if manifest.timestamp_ms != backend_payload.timestamp_ms:
+        raise ValueError(
+            "Local IA Lab monitoring bundle requires matching timestamp_ms across manifest and backend payload"
+        )
     if observability_export.correlation_id != backend_payload.correlation_id:
         raise ValueError(
             "Local IA Lab monitoring bundle requires matching correlation_id across backend payload and observability export"
@@ -80,28 +108,35 @@ def load_local_lab_monitoring_bundle(bundle_dir: Path) -> LocalLabMonitoringBund
     """Load and validate the Local IA Lab monitoring trio from one bundle directory."""
 
     resolved_dir = bundle_dir.resolve()
+    manifest = _load_model(
+        resolved_dir / "local_lab_monitoring_bundle_manifest.json",
+        label="manifest",
+        model_type=LocalLabMonitoringBundleManifest,
+    )
     backend_payload = _load_model(
-        resolved_dir / "local_lab_monitoring_backend_payload.json",
+        _resolve_bundle_ref(resolved_dir, manifest.backend_payload_path),
         label="backend_payload",
         model_type=LocalLabMonitoringBackendPayload,
     )
     observability_export = _load_model(
-        resolved_dir / "local_lab_observability_export.json",
+        _resolve_bundle_ref(resolved_dir, manifest.observability_export_path),
         label="observability_export",
         model_type=ObservabilityExport,
     )
     ingestion_summary = _load_model(
-        resolved_dir / "local_lab_monitoring_ingestion_summary.json",
+        _resolve_bundle_ref(resolved_dir, manifest.ingestion_summary_path),
         label="ingestion_summary",
         model_type=LocalLabMonitoringIngestionSummary,
     )
     _require_aligned_bundle(
+        manifest=manifest,
         backend_payload=backend_payload,
         observability_export=observability_export,
         ingestion_summary=ingestion_summary,
     )
     return LocalLabMonitoringBundle(
         bundle_dir=resolved_dir,
+        manifest=manifest,
         backend_payload=backend_payload,
         observability_export=observability_export,
         ingestion_summary=ingestion_summary,

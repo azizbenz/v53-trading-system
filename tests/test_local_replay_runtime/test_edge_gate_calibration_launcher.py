@@ -174,11 +174,14 @@ def test_run_edge_gate_calibration_generates_signed_yaml_artifact():
 
         payload = yaml.safe_load(output_path.read_text(encoding="utf-8"))
         artifact = CalibrationArtifact.model_validate(payload)
+        report = json.loads(output_path.with_suffix(".report.json").read_text(encoding="utf-8"))
 
         assert exit_code == 0
         assert artifact.thresholds[0].threshold_id == "THR-E01"
         assert artifact.thresholds[1].threshold_id == "THR-E02"
         assert artifact.signature.signed_by == "operator.aziz"
+        assert report["thresholds"][0]["threshold_id"] == "THR-E01"
+        assert report["thresholds"][0]["method_version"] == "stationary_block_bootstrap_v1"
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
@@ -304,9 +307,11 @@ def test_run_edge_gate_calibration_can_consume_governed_export_dir():
         payload = yaml.safe_load(output_path.read_text(encoding="utf-8"))
         artifact = CalibrationArtifact.model_validate(payload)
         input_summary = json.loads(output_path.with_suffix(".input_summary.json").read_text(encoding="utf-8"))
+        report = json.loads(output_path.with_suffix(".report.json").read_text(encoding="utf-8"))
 
         assert exit_code == 0
         assert artifact.thresholds[0].threshold_id == "THR-E01"
+        assert report["thresholds"][1]["threshold_id"] == "THR-E02"
         assert input_summary["source_kind"] == "export_dir"
         assert input_summary["run_id"] == "run-edge-01"
         assert input_summary["dataset_manifest_id"] == "dataset-edge-01"

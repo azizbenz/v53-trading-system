@@ -548,6 +548,9 @@ def build_micro_live_input_from_shadow(
 
     _validate_shadow_source_payload_scope(shadow_payload)
     _validate_shadow_import_consistency(shadow_summary, shadow_payload)
+    execution_runtime_projection_bridge = (
+        shadow_payload.execution_runtime_projection_bridge
+    )
     if shadow_summary.shadow_days_completed < shadow_summary.shadow_required_days:
         raise MicroLiveInputError(
             "Build-12 Micro-live requires a completed 30-day Shadow"
@@ -695,6 +698,33 @@ def build_micro_live_input_from_shadow(
         onboarding_review_state=onboarding_review_state,
         onboarding_reasons=onboarding_reasons,
         review_export_ready=shadow_summary.review_export_ready,
+        execution_runtime_projection_ref=(
+            execution_runtime_projection_bridge.projection_path
+        ),
+        execution_runtime_projection_status=(
+            execution_runtime_projection_bridge.projection_status
+            or "not_configured"
+        ),
+        execution_runtime_projection_ready=(
+            execution_runtime_projection_bridge.projection_loaded
+            and execution_runtime_projection_bridge.projection_status == "ready"
+            and execution_runtime_projection_bridge.partial_consumer_count == 0
+            and execution_runtime_projection_bridge.blocked_consumer_count == 0
+        ),
+        execution_runtime_projection_consumer_count=(
+            execution_runtime_projection_bridge.consumer_count
+        ),
+        execution_runtime_projection_ready_consumer_count=(
+            execution_runtime_projection_bridge.ready_consumer_count
+        ),
+        execution_runtime_projection_partial_consumer_count=(
+            execution_runtime_projection_bridge.partial_consumer_count
+        ),
+        execution_runtime_projection_blocked_consumer_count=(
+            execution_runtime_projection_bridge.blocked_consumer_count
+        ),
+        regime_lite_governance=shadow_summary.regime_lite_governance,
+        info_stress_governance=shadow_summary.info_stress_governance,
         observability_ready=observability_ready,
         halt_ready=halt_ready,
         operator_safing_request=operator_safing_request,
@@ -1053,6 +1083,29 @@ def run_micro_live_gate(
         execution_plan=execution_plan,
         import_artifact_id=micro_live_input.import_artifact_id,
         import_lineage_version=micro_live_input.import_lineage_version,
+        execution_runtime_projection_ref=(
+            micro_live_input.execution_runtime_projection_ref
+        ),
+        execution_runtime_projection_status=(
+            micro_live_input.execution_runtime_projection_status
+        ),
+        execution_runtime_projection_ready=(
+            micro_live_input.execution_runtime_projection_ready
+        ),
+        execution_runtime_projection_consumer_count=(
+            micro_live_input.execution_runtime_projection_consumer_count
+        ),
+        execution_runtime_projection_ready_consumer_count=(
+            micro_live_input.execution_runtime_projection_ready_consumer_count
+        ),
+        execution_runtime_projection_partial_consumer_count=(
+            micro_live_input.execution_runtime_projection_partial_consumer_count
+        ),
+        execution_runtime_projection_blocked_consumer_count=(
+            micro_live_input.execution_runtime_projection_blocked_consumer_count
+        ),
+        regime_lite_governance=micro_live_input.regime_lite_governance,
+        info_stress_governance=micro_live_input.info_stress_governance,
         observability_ready=micro_live_input.observability_ready,
         halt_ready=micro_live_input.halt_ready,
         onboarding_ready=micro_live_input.onboarding_accepted,

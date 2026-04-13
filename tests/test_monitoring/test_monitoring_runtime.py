@@ -15,6 +15,7 @@ from meta_minimal.dtr_core.dtr_record_builder import build_dtr
 from meta_minimal.edge_tracker_prudent_minimal.edge_status_classifier import EdgeClassification, EdgeStatus
 from monitoring import (
     ExecutionNoTradeBridgeProjection,
+    ExecutionRuntimeProjectionBridgeProjection,
     MonitoringRuntime,
     MonitoringRuntimeConfig,
     RuntimeHookBridgeProjection,
@@ -549,6 +550,56 @@ def test_monitoring_runtime_accepts_execution_no_trade_bridge_projection():
     assert any(
         card.key == "execution_no_trade_bridge"
         and card.value == "sel=binding_only / loaded=no"
+        for card in execution_section.cards
+    )
+
+
+def test_monitoring_runtime_accepts_execution_runtime_projection_bridge_projection():
+    runtime = MonitoringRuntime()
+
+    result = runtime.evaluate(
+        correlation_id="corr-runtime-exec-runtime-bridge",
+        profile=ProfileId.LIGHT,
+        runtime_mode=RuntimeMode.SHADOW,
+        timestamp_ms=1_700_000_002_250,
+        portfolio=collect_portfolio_metrics(
+            allocated_opportunities=1,
+            gross_capacity_used_pct=10.0,
+            loss_capacity_used_pct=2.0,
+            beta_utilization=0.1,
+            capital_deployed_usdt=250.0,
+            ce_net=0.001,
+        ),
+        infra=collect_infra_metrics(queue_backlog=5),
+        meta=_meta_metrics(),
+        active_modules=("monitoring", "ui", "protocols"),
+        active_engines=("engine_a", "engine_b"),
+        execution_runtime_projection_bridge_projection=ExecutionRuntimeProjectionBridgeProjection(
+            status="warning",
+            configured=True,
+            projection_found=True,
+            projection_loaded=True,
+            projection_status="partial",
+            projection_path="build/local_lab_execution_runtime_projection.json",
+            consumer_count=3,
+            ready_consumer_count=1,
+            partial_consumer_count=2,
+            blocked_consumer_count=0,
+            rate_limit_model_loaded=True,
+            spread_guard_model_loaded=False,
+            slippage_model_loaded=False,
+            detail="Execution runtime projection bridge is only partially loadable",
+        ),
+    )
+
+    assert result.technical_payload.execution_runtime_projection_bridge.status == "warning"
+    assert result.technical_payload.execution_runtime_projection_bridge.projection_status == "partial"
+    execution_section = next(
+        section for section in result.technical_view.sections if section.title == "Execution"
+    )
+    assert any(
+        card.key == "execution_runtime_projection_bridge"
+        and card.value == "proj=partial / loaded=yes / consumers=3"
         for card in execution_section.cards
     )
 

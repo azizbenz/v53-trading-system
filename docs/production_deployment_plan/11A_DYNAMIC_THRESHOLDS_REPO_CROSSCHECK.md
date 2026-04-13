@@ -44,10 +44,10 @@ Verdict:
 | `THR-R03` | `src/risk_backbone/loss_budgeter/monthly_breaker.py` | `partial` | famille `loss_budgeter` presente; wrapper mensuel absent | `P1-3` |
 | `THR-R04` | `src/risk_backbone/exposure_budgeter/position_cap.py` | `partial` | `src/risk_backbone/exposure_budgeter/` existe; `position_cap_guard.py` existe; `position_cap.py` est absent | risk calibration integration later |
 | `THR-R05` | `src/risk_backbone/exposure_budgeter/concurrent_cap.py` | `partial` | `exposure_budgeter` existe; module exact absent | risk calibration integration later |
-| `THR-RG01` | `src/regime_classifier/regime_lite.py` | `partial` | aucun package `src/regime_classifier/`, mais les engines et runtimes consomment deja un champ `regime` | `P1-1` |
-| `THR-RG02` | `src/regime_classifier/regime_lite.py` | `partial` | meme constat que `THR-RG01` | `P1-1` |
-| `THR-RG03` | `src/regime_classifier/regime_lite.py` | `partial` | meme constat que `THR-RG01` | `P1-1` |
-| `THR-RG04` | `src/regime_classifier/regime_lite.py` | `partial` | meme constat que `THR-RG01` | `P1-1` |
+| `THR-RG01` | `src/regime_classifier/regime_lite.py` | `exists` | package `src/regime_classifier/` now exists with typed 3-state helper and documented threshold loader; live hooks still pending | `P1-1` runtime/risk wiring later |
+| `THR-RG02` | `src/regime_classifier/regime_lite.py` | `exists` | same typed helper now carries explicit direct-EXTREME trigger for 1h BTC drop; governed hooks still pending | `P1-1` runtime/risk wiring later |
+| `THR-RG03` | `src/regime_classifier/regime_lite.py` | `exists` | same typed helper now carries bounded downgrade hysteresis state memory; provider/runtime wiring still pending | `P1-1` runtime/risk wiring later |
+| `THR-RG04` | `src/regime_classifier/regime_lite.py` | `exists` | same typed helper now carries EXTREME cooldown window for entry blocking; risk kill/entry hooks still pending | `P1-1` runtime/risk wiring later |
 | `THR-X01` | `src/venue_adapters/binance_spot/time_sync.py` | `exists` | `src/venue_adapters/binance_spot/time_sync.py` existe et resout deja `THR-X01` via `calibration_loader` et `config/binance_adapter.yml` | `T1 / P0-1.A` |
 | `THR-X02` | `src/venue_adapters/binance_spot/ws_client.py` | `exists` | `src/venue_adapters/binance_spot/ws_client.py`, `orderbook_manager.py`, le provider REST explicite de `depth snapshot`, et `resolve_websocket_gap_threshold_s()` existent | `T3 / P0-1.B` |
 | `THR-X03` | `src/venue_adapters/binance_spot/rate_limiter.py` | `future target` | famille venue adapter absente | `T1/T3 / P0-1` |
@@ -126,3 +126,18 @@ Le prochain slice coherent est `W2`:
 - aucun seuil hardcode en fallback
 
 Le but de `W2` est de preparer la consommation des seuils dynamiques dans le shared core, avec ownership deja arbitre par `12_LOCAL_LAB_VS_VPS_SEPARATION.md`.
+
+---
+
+## 7. Update 2026-04-12
+
+- `W2` is no longer hypothetical in the repo:
+  - `src/calibration_loader/` exists
+  - `calibration_loader` is now also registered in the canonical manifest/build-order/dependency registry
+- `REGIME` has moved forward materially:
+  - `src/regime_classifier/regime_lite.py` now resolves the documented `THR-RG01..04` seam through `calibration_loader`
+  - the first bounded governed risk consumer exists via `src/risk_backbone/regime_lite_entry_gate.py`
+  - an explicit governed `EXTREME -> safing recommendation` seam now exists via `src/risk_backbone/regime_lite_safing.py`
+- consequence:
+  - the remaining `REGIME` backlog is no longer "create the package"
+  - it is now mostly operated/runtime wiring plus proof on real Shadow/Micro-live/VPS rails

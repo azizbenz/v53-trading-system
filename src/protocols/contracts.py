@@ -493,6 +493,65 @@ class ShadowDecision(BaseModel, frozen=True):
     manual_review_required: bool = True
 
 
+class RegimeLiteGovernanceSummary(BaseModel, frozen=True):
+    """Protocol-local summary of explicit regime_lite governance truth."""
+
+    status: Literal[
+        "not_configured",
+        "assessment_only",
+        "recommendation_only",
+        "ready",
+    ] = "not_configured"
+    state: str = "not_configured"
+    candidate_state: str = "not_configured"
+    state_changed: bool = False
+    entries_blocked: bool = False
+    sudden_event: bool = False
+    safing_severity: str = "not_configured"
+    should_block_new_entries: bool = False
+    should_exit_all: bool = False
+    recommended_operator_action: str = ""
+    operator_safing_request_action: str = ""
+    operator_safing_request_source_runtime_mode: str = ""
+    reason_codes: tuple[str, ...] = ()
+    detail: str = ""
+
+
+class InfoStressGovernanceSummary(BaseModel, frozen=True):
+    """Protocol-local summary of explicit info_stress governance truth."""
+
+    status: Literal[
+        "not_configured",
+        "assessment_only",
+    ] = "not_configured"
+    level: str = "not_configured"
+    alert_count: int = Field(default=0, ge=0)
+    entries_blocked: bool = False
+    entries_blocked_until_ts: int = Field(default=0, ge=0)
+    reason_codes: tuple[str, ...] = ()
+    detail: str = ""
+
+
+class DailyPnlBreakerGovernanceSummary(BaseModel, frozen=True):
+    """Protocol-local summary of explicit daily PnL breaker governance truth."""
+
+    status: Literal[
+        "not_configured",
+        "assessment_only",
+    ] = "not_configured"
+    verdict: str = "not_configured"
+    should_force_shadow: bool = False
+    circuit_breaker_tripped: bool = False
+    circuit_breaker_reason: str = ""
+    drawdown_pct: float = Field(default=0.0, ge=0.0)
+    threshold_pct: float = Field(default=0.0, ge=0.0)
+    shadow_locked_session_date: str = ""
+    state_corrupted: bool = False
+    state_last_reason: str = ""
+    detail: str = ""
+    reason_codes: tuple[str, ...] = ()
+
+
 class ShadowRunSummary(BaseModel, frozen=True):
     """Deterministic output of the minimal Build-11 Shadow runtime."""
 
@@ -528,6 +587,15 @@ class ShadowRunSummary(BaseModel, frozen=True):
     inter_engine_comparison_ready: bool = False
     build14_contribution_ready: bool = False
     component_assessments: tuple[ShadowComponentAssessment, ...] = ()
+    regime_lite_governance: RegimeLiteGovernanceSummary = (
+        RegimeLiteGovernanceSummary()
+    )
+    info_stress_governance: InfoStressGovernanceSummary = (
+        InfoStressGovernanceSummary()
+    )
+    daily_pnl_breaker_governance: DailyPnlBreakerGovernanceSummary = (
+        DailyPnlBreakerGovernanceSummary()
+    )
 
     @property
     def blocking_comparison_count(self) -> int:
@@ -971,6 +1039,19 @@ class MicroLiveInput(BaseModel, frozen=True):
     onboarding_review_state: ReviewState = ReviewState.PENDING
     onboarding_reasons: tuple[str, ...] = ()
     review_export_ready: bool = False
+    execution_runtime_projection_ref: str = ""
+    execution_runtime_projection_status: str = "not_configured"
+    execution_runtime_projection_ready: bool = False
+    execution_runtime_projection_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_ready_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_partial_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_blocked_consumer_count: int = Field(default=0, ge=0)
+    regime_lite_governance: RegimeLiteGovernanceSummary = (
+        RegimeLiteGovernanceSummary()
+    )
+    info_stress_governance: InfoStressGovernanceSummary = (
+        InfoStressGovernanceSummary()
+    )
     observability_ready: bool = False
     halt_ready: bool = False
     operator_safing_request: OperatorSafingRequest | None = None
@@ -1337,6 +1418,19 @@ class MicroLiveRunSummary(BaseModel, frozen=True):
     execution_plan: MicroLiveExecutionPlan
     import_artifact_id: str = Field(..., min_length=1)
     import_lineage_version: str = Field(..., min_length=1)
+    execution_runtime_projection_ref: str = ""
+    execution_runtime_projection_status: str = "not_configured"
+    execution_runtime_projection_ready: bool = False
+    execution_runtime_projection_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_ready_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_partial_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_blocked_consumer_count: int = Field(default=0, ge=0)
+    regime_lite_governance: RegimeLiteGovernanceSummary = (
+        RegimeLiteGovernanceSummary()
+    )
+    info_stress_governance: InfoStressGovernanceSummary = (
+        InfoStressGovernanceSummary()
+    )
     observability_ready: bool = False
     halt_ready: bool = False
     onboarding_ready: bool = False
@@ -1433,6 +1527,19 @@ class LiveLightInput(BaseModel, frozen=True):
     onboarding_review_state: ReviewState = ReviewState.PENDING
     onboarding_reasons: tuple[str, ...] = ()
     review_export_ready: bool = False
+    execution_runtime_projection_ref: str = ""
+    execution_runtime_projection_status: str = "not_configured"
+    execution_runtime_projection_ready: bool = False
+    execution_runtime_projection_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_ready_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_partial_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_blocked_consumer_count: int = Field(default=0, ge=0)
+    regime_lite_governance: RegimeLiteGovernanceSummary = (
+        RegimeLiteGovernanceSummary()
+    )
+    info_stress_governance: InfoStressGovernanceSummary = (
+        InfoStressGovernanceSummary()
+    )
     observability_ready: bool = False
     halt_ready: bool = False
     operator_safing_request: OperatorSafingRequest | None = None
@@ -1828,6 +1935,19 @@ class LiveLightRunSummary(BaseModel, frozen=True):
     execution_intent: LiveLightExecutionIntent
     import_artifact_id: str = Field(..., min_length=1)
     import_lineage_version: str = Field(..., min_length=1)
+    execution_runtime_projection_ref: str = ""
+    execution_runtime_projection_status: str = "not_configured"
+    execution_runtime_projection_ready: bool = False
+    execution_runtime_projection_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_ready_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_partial_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_blocked_consumer_count: int = Field(default=0, ge=0)
+    regime_lite_governance: RegimeLiteGovernanceSummary = (
+        RegimeLiteGovernanceSummary()
+    )
+    info_stress_governance: InfoStressGovernanceSummary = (
+        InfoStressGovernanceSummary()
+    )
     observability_ready: bool = False
     halt_ready: bool = False
     operator_safing_request: OperatorSafingRequest | None = None
@@ -1875,6 +1995,9 @@ __all__ = [
     "ShadowInput",
     "ShadowComparison",
     "ShadowDecision",
+    "RegimeLiteGovernanceSummary",
+    "InfoStressGovernanceSummary",
+    "DailyPnlBreakerGovernanceSummary",
     "ShadowRunSummary",
     "ShadowEngineReport",
     "ShadowBuild14Contribution",

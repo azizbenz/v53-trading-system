@@ -9,7 +9,7 @@ from datetime import date
 from pathlib import Path
 import sys
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -20,13 +20,43 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from backtest_artifact_import.export_dir_bridge import discover_local_replay_export  # noqa: E402
+from backtest_artifact_import.local_lab_upload_bridge_candidate import (  # noqa: E402
+    build_local_lab_artifact_upload_dry_run_bridge,
+    build_local_lab_release_gate_summary,
+    build_local_lab_source_artifact_summary,
+)
 from interface_contracts import ArtifactClass  # noqa: E402
 from interface_contracts.atomic_io import atomic_write_json  # noqa: E402
 from monitoring.local_lab_ingestion import (  # noqa: E402
     build_local_lab_monitoring_ingestion_summary,
 )
+from monitoring.local_lab_monitoring_bundle_manifest import (  # noqa: E402
+    build_local_lab_monitoring_bundle_manifest,
+)
+from monitoring.local_lab_monitoring_projection import (  # noqa: E402
+    build_local_lab_monitoring_projection,
+)
+from monitoring.local_lab_observability import (  # noqa: E402
+    build_local_lab_observability_export,
+)
+from monitoring.local_lab_monitoring_backend import (  # noqa: E402
+    build_local_lab_monitoring_backend_payload,
+)
 from monitoring.observability_io import write_observability_text_payload  # noqa: E402
 from local_replay_runtime import (  # noqa: E402
+    EdgeGateCalibrationConfig,
+    EdgeGateCalibrationReport,
+    build_local_lab_loss_surrogate_report,
+    build_local_lab_calibration_methods_review,
+    build_local_lab_calibration_normalized_report,
+    build_local_lab_execution_review,
+    build_local_lab_execution_runtime_projection,
+    build_local_lab_multiple_testing_review,
+    build_local_lab_tail_risk_review,
+    build_local_lab_replay_candidate_queue,
+    build_local_lab_replay_dispatch_plan,
+    build_local_lab_replay_ticket_index,
+    build_local_lab_replay_workflow_manifest,
     LocalLabScopeAnalysisMatrix,
     LocalLabScopeAnalysisRow,
     WalkForwardHumanReview,
@@ -35,6 +65,7 @@ from local_replay_runtime import (  # noqa: E402
     build_local_lab_artifact_release_candidate,
     build_local_lab_artifact_release_scope_summary,
     build_local_lab_recalibration_plan,
+    build_local_lab_research_priority_report,
     build_local_lab_scope_matrix,
     build_pending_local_lab_ablation_study,
     build_walk_forward_review_template,
@@ -42,23 +73,13 @@ from local_replay_runtime import (  # noqa: E402
     discover_local_lab_scope_keys,
     load_replay_dtr_records,
     summarize_walk_forward_review,
+    LocalLabExecutionTelemetry,
 )
-from local_replay_runtime.artifact_upload_bridge_candidate import (  # noqa: E402
-    build_local_lab_release_gate_summary,
-    build_local_lab_source_artifact_summary,
-    build_local_lab_artifact_upload_dry_run_bridge,
+from local_replay_runtime.local_lab_execution_telemetry_artifact import (  # noqa: E402
+    load_local_lab_execution_telemetry_artifact,
 )
 from local_replay_runtime.local_lab_promotion_readiness import (  # noqa: E402
     build_local_lab_promotion_readiness_summary,
-)
-from local_replay_runtime.local_lab_monitoring_projection import (  # noqa: E402
-    build_local_lab_monitoring_projection,
-)
-from local_replay_runtime.local_lab_observability import (  # noqa: E402
-    build_local_lab_observability_export,
-)
-from local_replay_runtime.local_lab_monitoring_backend import (  # noqa: E402
-    build_local_lab_monitoring_backend_payload,
 )
 from meta_learning.contracts import TradeLossAttributionReport  # noqa: E402
 from meta_minimal.meta_runtime import MetaRuntimeResult  # noqa: E402
@@ -111,6 +132,19 @@ class LocalLabAnalysisBundleSummary(BaseModel, frozen=True):
     local_lab_observability_text_path: str | None = None
     local_lab_monitoring_backend_payload_path: str | None = None
     local_lab_monitoring_ingestion_summary_path: str | None = None
+    local_lab_monitoring_bundle_manifest_path: str | None = None
+    local_lab_loss_surrogate_path: str | None = None
+    local_lab_calibration_methods_review_path: str | None = None
+    local_lab_execution_review_path: str | None = None
+    local_lab_execution_runtime_projection_path: str | None = None
+    local_lab_multiple_testing_review_path: str | None = None
+    local_lab_tail_risk_review_path: str | None = None
+    local_lab_calibration_normalized_report_path: str | None = None
+    local_lab_research_priority_path: str | None = None
+    local_lab_replay_candidate_queue_path: str | None = None
+    local_lab_replay_ticket_index_path: str | None = None
+    local_lab_replay_dispatch_plan_path: str | None = None
+    local_lab_replay_workflow_manifest_path: str | None = None
     artifact_upload_request_path: str | None = None
     artifact_import_request_path: str | None = None
     artifact_import_decision_path: str | None = None
@@ -139,6 +173,57 @@ class LocalLabAnalysisBundleSummary(BaseModel, frozen=True):
     local_lab_observability_sample_count: int = Field(default=0, ge=0)
     local_lab_monitoring_backend_status: str = Field(default="planned", min_length=1)
     local_lab_monitoring_ingestion_ready: bool = False
+    loss_surrogate_status: str = Field(default="not_evaluated", min_length=1)
+    loss_surrogate_ready: bool = False
+    loss_surrogate_scope_count: int = Field(default=0, ge=0)
+    loss_surrogate_top_scope_slug: str = ""
+    loss_surrogate_top_probability: float = Field(default=0.0, ge=0.0, le=1.0)
+    calibration_methods_review_status: str = Field(default="not_evaluated", min_length=1)
+    calibration_methods_review_ready: bool = False
+    calibration_methods_dsr_pass: bool | None = None
+    calibration_methods_walk_forward_plan_ready: bool = False
+    calibration_methods_stationarity_status: str = Field(default="not_evaluated", min_length=1)
+    calibration_methods_stationarity_pass: bool | None = None
+    execution_review_status: str = Field(default="not_evaluated", min_length=1)
+    execution_review_ready: bool = False
+    execution_ready_threshold_count: int = Field(default=0, ge=0)
+    execution_partial_threshold_count: int = Field(default=0, ge=0)
+    execution_blocked_threshold_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_status: str = Field(default="not_evaluated", min_length=1)
+    execution_runtime_projection_ready: bool = False
+    execution_runtime_projection_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_ready_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_partial_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_blocked_consumer_count: int = Field(default=0, ge=0)
+    multiple_testing_review_status: str = Field(default="not_evaluated", min_length=1)
+    multiple_testing_review_ready: bool = False
+    multiple_testing_correction_required: bool = False
+    multiple_testing_correction: str = Field(default="not_evaluated", min_length=1)
+    multiple_testing_family_count: int = Field(default=0, ge=0)
+    calibration_normalized_report_status: str = Field(default="not_evaluated", min_length=1)
+    calibration_normalized_report_ready: bool = False
+    calibration_normalized_threshold_count: int = Field(default=0, ge=0)
+    tail_risk_review_status: str = Field(default="not_evaluated", min_length=1)
+    tail_risk_review_ready: bool = False
+    tail_risk_ready_breaker_count: int = Field(default=0, ge=0)
+    tail_risk_partial_breaker_count: int = Field(default=0, ge=0)
+    tail_risk_blocked_breaker_count: int = Field(default=0, ge=0)
+    research_priority_status: str = Field(default="not_evaluated", min_length=1)
+    research_priority_scope_count: int = Field(default=0, ge=0)
+    research_priority_top_scope_slug: str = ""
+    research_priority_top_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    replay_candidate_queue_status: str = Field(default="not_evaluated", min_length=1)
+    replay_candidate_count: int = Field(default=0, ge=0)
+    replay_candidate_ready_count: int = Field(default=0, ge=0)
+    replay_candidate_top_scope_slug: str = ""
+    replay_ticket_index_status: str = Field(default="not_evaluated", min_length=1)
+    replay_ticket_count: int = Field(default=0, ge=0)
+    replay_ticket_ready_count: int = Field(default=0, ge=0)
+    replay_ticket_top_scope_slug: str = ""
+    replay_dispatch_plan_status: str = Field(default="not_evaluated", min_length=1)
+    replay_dispatch_ready_count: int = Field(default=0, ge=0)
+    replay_dispatch_blocked_count: int = Field(default=0, ge=0)
+    replay_dispatch_top_ticket_id: str = ""
     recalibration_candidate_ready: bool = False
     recalibration_blocking_reasons: tuple[str, ...] = ()
     recalibration_action_count: int = Field(default=0, ge=0)
@@ -183,6 +268,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Root directory for the chained Local IA Lab outputs",
     )
     parser.add_argument("--state-dir", help="Optional append-only state dir for meta_learning persistence")
+    parser.add_argument(
+        "--execution-telemetry-path",
+        help=(
+            "Optional Local IA Lab execution telemetry JSON carrying THR-X01/THR-X02 "
+            "observation series. When omitted, the execution review remains explicit "
+            "'missing_telemetry'."
+        ),
+    )
     parser.add_argument(
         "--walk-forward-review-path",
         help=(
@@ -251,6 +344,19 @@ def _parse_iso_date(value: str | None) -> date | None:
     return date.fromisoformat(value)
 
 
+def _load_execution_telemetry(
+    telemetry_path: Path,
+    *,
+    correlation_id: str,
+) -> LocalLabExecutionTelemetry:
+    payload = telemetry_path.read_text(encoding="utf-8")
+    try:
+        return LocalLabExecutionTelemetry.model_validate_json(payload)
+    except ValidationError:
+        artifact = load_local_lab_execution_telemetry_artifact(telemetry_path)
+        return artifact.bind_to_review(correlation_id=correlation_id)
+
+
 def _filter_records(
     records: tuple,
     *,
@@ -269,6 +375,104 @@ def _scope_correlation_id(base_correlation_id: str, *, pair: str, engine_id: str
     return f"{base_correlation_id}:{build_local_lab_scope_slug(pair, engine_id)}"
 
 
+def _write_cli_output(lines: tuple[str, ...]) -> None:
+    sys.stdout.write("\n".join(lines))
+    sys.stdout.write("\n")
+
+
+def _emit_local_lab_analysis_bundle_output(
+    *,
+    summary_path: Path,
+    review_output_dir_value: str | None,
+    scope_matrix_path_value: str | None,
+    artifact_ablation_study_path_value: str | None,
+    artifact_proof_summary_path_value: str | None,
+    artifact_proof_assessment_path_value: str | None,
+    artifact_release_candidate_path_value: str | None,
+    local_lab_recalibration_plan_path_value: str | None,
+    artifact_import_dry_run_bridge_path_value: str | None,
+    artifact_promotion_readiness_summary_path_value: str | None,
+    local_lab_monitoring_projection_path_value: str | None,
+    local_lab_observability_export_path_value: str | None,
+    local_lab_observability_text_path_value: str | None,
+    local_lab_monitoring_backend_payload_path_value: str | None,
+    local_lab_monitoring_ingestion_summary_path_value: str | None,
+    local_lab_monitoring_bundle_manifest_path_value: str | None,
+    local_lab_loss_surrogate_path_value: str | None,
+    local_lab_execution_review_path_value: str | None,
+    local_lab_execution_runtime_projection_path_value: str | None,
+    local_lab_multiple_testing_review_path_value: str | None,
+    local_lab_calibration_normalized_report_path_value: str | None,
+    local_lab_tail_risk_review_path_value: str | None,
+    local_lab_research_priority_path_value: str | None,
+    local_lab_replay_candidate_queue_path_value: str | None,
+    local_lab_replay_ticket_index_path_value: str | None,
+    local_lab_replay_dispatch_plan_path_value: str | None,
+    local_lab_replay_workflow_manifest_path_value: str | None,
+    edge_output_path: Path,
+) -> None:
+    output_lines = [f"Local IA Lab analysis summary JSON: {summary_path}"]
+    optional_lines = (
+        ("Post-trade review dir", review_output_dir_value),
+        ("Local IA Lab scope matrix JSON", scope_matrix_path_value),
+        ("Artifact ablation study JSON", artifact_ablation_study_path_value),
+        ("Artifact proof summary JSON", artifact_proof_summary_path_value),
+        ("Artifact proof assessment JSON", artifact_proof_assessment_path_value),
+        ("Artifact release candidate JSON", artifact_release_candidate_path_value),
+        ("Local IA Lab recalibration plan JSON", local_lab_recalibration_plan_path_value),
+        ("Artifact import dry-run bridge JSON", artifact_import_dry_run_bridge_path_value),
+        (
+            "Artifact promotion readiness summary JSON",
+            artifact_promotion_readiness_summary_path_value,
+        ),
+        ("Local IA Lab monitoring projection JSON", local_lab_monitoring_projection_path_value),
+        ("Local IA Lab observability export JSON", local_lab_observability_export_path_value),
+        ("Local IA Lab observability text export", local_lab_observability_text_path_value),
+        (
+            "Local IA Lab monitoring backend payload JSON",
+            local_lab_monitoring_backend_payload_path_value,
+        ),
+        (
+            "Local IA Lab monitoring ingestion summary JSON",
+            local_lab_monitoring_ingestion_summary_path_value,
+        ),
+        (
+            "Local IA Lab monitoring bundle manifest JSON",
+            local_lab_monitoring_bundle_manifest_path_value,
+        ),
+        ("Local IA Lab loss surrogate JSON", local_lab_loss_surrogate_path_value),
+        ("Local IA Lab execution review JSON", local_lab_execution_review_path_value),
+        (
+            "Local IA Lab execution runtime projection JSON",
+            local_lab_execution_runtime_projection_path_value,
+        ),
+        (
+            "Local IA Lab multiple-testing review JSON",
+            local_lab_multiple_testing_review_path_value,
+        ),
+        (
+            "Local IA Lab calibration normalized report JSON",
+            local_lab_calibration_normalized_report_path_value,
+        ),
+        ("Local IA Lab tail risk review JSON", local_lab_tail_risk_review_path_value),
+        ("Local IA Lab research priority JSON", local_lab_research_priority_path_value),
+        ("Local IA Lab replay candidate queue JSON", local_lab_replay_candidate_queue_path_value),
+        ("Local IA Lab replay ticket index JSON", local_lab_replay_ticket_index_path_value),
+        ("Local IA Lab replay dispatch plan JSON", local_lab_replay_dispatch_plan_path_value),
+        (
+            "Local IA Lab replay workflow manifest JSON",
+            local_lab_replay_workflow_manifest_path_value,
+        ),
+        ("EDGE calibration artifact", str(edge_output_path)),
+    )
+    output_lines.extend(
+        f"{label}: {value}"
+        for label, value in optional_lines
+        if value is not None
+    )
+    _write_cli_output(tuple(output_lines))
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     discovery = discover_local_replay_export(Path(args.export_dir))
@@ -279,6 +483,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.baseline_export_dir:
         baseline_discovery = discover_local_replay_export(Path(args.baseline_export_dir))
         baseline_records = load_replay_dtr_records(baseline_discovery.payload_bundle.replay_dtr_ref)
+    execution_telemetry = None
+    if args.execution_telemetry_path:
+        execution_telemetry = _load_execution_telemetry(
+            Path(args.execution_telemetry_path),
+            correlation_id=args.correlation_id,
+        )
 
     scope_keys = discover_local_lab_scope_keys(
         candidate_records,
@@ -311,6 +521,19 @@ def main(argv: list[str] | None = None) -> int:
     local_lab_observability_text_path_value: str | None = None
     local_lab_monitoring_backend_payload_path_value: str | None = None
     local_lab_monitoring_ingestion_summary_path_value: str | None = None
+    local_lab_monitoring_bundle_manifest_path_value: str | None = None
+    local_lab_loss_surrogate_path_value: str | None = None
+    local_lab_calibration_methods_review_path_value: str | None = None
+    local_lab_execution_review_path_value: str | None = None
+    local_lab_execution_runtime_projection_path_value: str | None = None
+    local_lab_multiple_testing_review_path_value: str | None = None
+    local_lab_tail_risk_review_path_value: str | None = None
+    local_lab_calibration_normalized_report_path_value: str | None = None
+    local_lab_research_priority_path_value: str | None = None
+    local_lab_replay_candidate_queue_path_value: str | None = None
+    local_lab_replay_ticket_index_path_value: str | None = None
+    local_lab_replay_dispatch_plan_path_value: str | None = None
+    local_lab_replay_workflow_manifest_path_value: str | None = None
     artifact_upload_request_path_value: str | None = None
     artifact_import_request_path_value: str | None = None
     artifact_import_decision_path_value: str | None = None
@@ -338,12 +561,33 @@ def main(argv: list[str] | None = None) -> int:
     local_lab_monitoring_ingestion_summary_path = (
         output_root / "local_lab_monitoring_ingestion_summary.json"
     )
+    local_lab_monitoring_bundle_manifest_path = (
+        output_root / "local_lab_monitoring_bundle_manifest.json"
+    )
+    local_lab_loss_surrogate_path = output_root / "local_lab_loss_surrogate_report.json"
+    local_lab_calibration_methods_review_path = output_root / "local_lab_calibration_methods_review.json"
+    local_lab_execution_review_path = output_root / "local_lab_execution_review.json"
+    local_lab_execution_runtime_projection_path = (
+        output_root / "local_lab_execution_runtime_projection.json"
+    )
+    local_lab_multiple_testing_review_path = output_root / "local_lab_multiple_testing_review.json"
+    local_lab_tail_risk_review_path = output_root / "local_lab_tail_risk_review.json"
+    local_lab_calibration_normalized_report_path = (
+        output_root / "local_lab_calibration_normalized_report.json"
+    )
+    local_lab_research_priority_path = output_root / "local_lab_research_priority.json"
+    local_lab_replay_candidate_queue_path = output_root / "local_lab_replay_candidate_queue.json"
+    local_lab_replay_ticket_index_path = output_root / "local_lab_replay_ticket_index.json"
+    local_lab_replay_dispatch_plan_path = output_root / "local_lab_replay_dispatch_plan.json"
+    local_lab_replay_workflow_manifest_path = output_root / "local_lab_replay_workflow_manifest.json"
+    local_lab_monitoring_bundle_manifest_path_value = str(local_lab_monitoring_bundle_manifest_path)
     artifact_upload_request_path = output_root / "artifact_upload_request.dry_run.json"
     artifact_import_request_path = output_root / "artifact_import_request.dry_run.json"
     artifact_import_decision_path = output_root / "artifact_import_decision.dry_run.json"
     artifact_upload_decision_path = output_root / "artifact_upload_decision.dry_run.json"
     scope_matrix_path = output_root / "local_lab_scope_matrix.json"
     edge_input_summary_path = edge_output_path.with_suffix(".input_summary.json")
+    edge_report_path = edge_output_path.with_suffix(".report.json")
 
     walk_forward_template = build_walk_forward_review_template(
         correlation_id=args.correlation_id,
@@ -390,6 +634,36 @@ def main(argv: list[str] | None = None) -> int:
     artifact_proof_validation_reasons: tuple[str, ...] = ()
     artifact_proof_summary_for_bridge = None
     recalibration_loss_reports: list[TradeLossAttributionReport] = []
+    calibration_methods_review_status = "not_evaluated"
+    calibration_methods_review_ready = False
+    calibration_methods_dsr_pass: bool | None = None
+    calibration_methods_walk_forward_plan_ready = False
+    calibration_methods_stationarity_status = "not_evaluated"
+    calibration_methods_stationarity_pass: bool | None = None
+    execution_review_status = "not_evaluated"
+    execution_review_ready = False
+    execution_ready_threshold_count = 0
+    execution_partial_threshold_count = 0
+    execution_blocked_threshold_count = 0
+    execution_runtime_projection_status = "not_evaluated"
+    execution_runtime_projection_ready = False
+    execution_runtime_projection_consumer_count = 0
+    execution_runtime_projection_ready_consumer_count = 0
+    execution_runtime_projection_partial_consumer_count = 0
+    execution_runtime_projection_blocked_consumer_count = 0
+    multiple_testing_review_status = "not_evaluated"
+    multiple_testing_review_ready = False
+    multiple_testing_correction_required = False
+    multiple_testing_correction = "not_evaluated"
+    multiple_testing_family_count = 0
+    calibration_normalized_report_status = "not_evaluated"
+    calibration_normalized_report_ready = False
+    calibration_normalized_threshold_count = 0
+    tail_risk_review_status = "not_evaluated"
+    tail_risk_review_ready = False
+    tail_risk_ready_breaker_count = 0
+    tail_risk_partial_breaker_count = 0
+    tail_risk_blocked_breaker_count = 0
     summary_selected_pair = args.pair
     summary_selected_engine_id = args.engine_id
     scope_count = 0
@@ -399,6 +673,10 @@ def main(argv: list[str] | None = None) -> int:
     release_scope_blocked_count = 0
     scope_matrix_path_value: str | None = None
     scope_matrix: LocalLabScopeAnalysisMatrix | None = None
+    top_level_calibration_methods_review = None
+    meta_runtime_result: MetaRuntimeResult | None = None
+    trade_loss_attribution: TradeLossAttributionReport | None = None
+    artifact_ablation_study = None
 
     if multi_scope_mode:
         scope_rows: list[LocalLabScopeAnalysisRow] = []
@@ -460,6 +738,7 @@ def main(argv: list[str] | None = None) -> int:
             scope_artifact_ablation_study_path = scope_root / "artifact_ablation_study.json"
             scope_artifact_proof_summary_path = scope_root / "artifact_proof_summary.json"
             scope_artifact_proof_assessment_path = scope_root / "artifact_proof_assessment.json"
+            scope_calibration_methods_review_path = scope_root / "local_lab_calibration_methods_review.json"
 
             scope_review_bundle = _load_json(scope_review_bundle_path)
             scope_meta_runtime_result = MetaRuntimeResult.model_validate(_load_json(scope_meta_runtime_path))
@@ -468,6 +747,17 @@ def main(argv: list[str] | None = None) -> int:
             )
             recalibration_loss_reports.append(scope_trade_loss_attribution)
             _load_json(scope_review_input_summary_path)
+            scope_calibration_methods_review = build_local_lab_calibration_methods_review(
+                correlation_id=scope_correlation_id,
+                export_dir=str(discovery.export_dir),
+                run_id=discovery.run_manifest.run_id,
+                records=scope_candidate_records,
+            )
+            atomic_write_json(
+                scope_calibration_methods_review_path,
+                scope_calibration_methods_review.model_dump(mode="json"),
+                indent=2,
+            )
 
             if baseline_discovery is not None:
                 scope_ablation_study = build_local_lab_ablation_study(
@@ -506,6 +796,7 @@ def main(argv: list[str] | None = None) -> int:
                 trade_loss_attribution=scope_trade_loss_attribution,
                 walk_forward_review=walk_forward_review_summary,
                 ablation_study=scope_ablation_study,
+                calibration_methods_review=scope_calibration_methods_review,
             )
             atomic_write_json(
                 scope_artifact_proof_summary_path,
@@ -529,6 +820,7 @@ def main(argv: list[str] | None = None) -> int:
                     artifact_ablation_study_path=str(scope_artifact_ablation_study_path),
                     artifact_proof_summary_path=str(scope_artifact_proof_summary_path),
                     artifact_proof_assessment_path=str(scope_artifact_proof_assessment_path),
+                    calibration_methods_review_path=str(scope_calibration_methods_review_path),
                     candidate_record_count=len(scope_candidate_records),
                     baseline_record_count=len(scope_baseline_records),
                     executed_records=scope_trade_loss_attribution.executed_records,
@@ -536,6 +828,8 @@ def main(argv: list[str] | None = None) -> int:
                     artifact_ablation_ready=scope_ablation_study.study_ready,
                     artifact_proof_ready=scope_artifact_proof_assessment.ready_for_vps_import,
                     artifact_proof_validation_reasons=scope_artifact_proof_assessment.validation_reasons,
+                    calibration_methods_review_status=scope_calibration_methods_review.review_status.value,
+                    calibration_methods_review_ready=scope_calibration_methods_review.review_ready,
                     caution_flags=tuple(
                         dict.fromkeys(
                             list(scope_ablation_study.caution_flags)
@@ -613,6 +907,19 @@ def main(argv: list[str] | None = None) -> int:
         )
         recalibration_loss_reports.append(trade_loss_attribution)
         meta_runtime_result = MetaRuntimeResult.model_validate(_load_json(meta_runtime_path))
+        local_lab_calibration_methods_review = build_local_lab_calibration_methods_review(
+            correlation_id=args.correlation_id,
+            export_dir=str(discovery.export_dir),
+            run_id=discovery.run_manifest.run_id,
+            records=candidate_records,
+        )
+        atomic_write_json(
+            local_lab_calibration_methods_review_path,
+            local_lab_calibration_methods_review.model_dump(mode="json"),
+            indent=2,
+        )
+        local_lab_calibration_methods_review_path_value = str(local_lab_calibration_methods_review_path)
+        top_level_calibration_methods_review = local_lab_calibration_methods_review
 
         if baseline_discovery is not None:
             artifact_ablation_study = build_local_lab_ablation_study(
@@ -651,6 +958,7 @@ def main(argv: list[str] | None = None) -> int:
             trade_loss_attribution=trade_loss_attribution,
             walk_forward_review=walk_forward_review_summary,
             ablation_study=artifact_ablation_study,
+            calibration_methods_review=local_lab_calibration_methods_review,
         )
         atomic_write_json(
             artifact_proof_summary_path,
@@ -677,6 +985,20 @@ def main(argv: list[str] | None = None) -> int:
         artifact_proof_ready = artifact_proof_assessment.ready_for_vps_import
         artifact_proof_validation_reasons = artifact_proof_assessment.validation_reasons
         artifact_proof_summary_for_bridge = artifact_proof_assessment.proof_summary
+        calibration_methods_review_status = (
+            local_lab_calibration_methods_review.review_status.value
+        )
+        calibration_methods_review_ready = local_lab_calibration_methods_review.review_ready
+        calibration_methods_dsr_pass = local_lab_calibration_methods_review.dsr_pass
+        calibration_methods_walk_forward_plan_ready = (
+            local_lab_calibration_methods_review.walk_forward_plan_ready
+        )
+        calibration_methods_stationarity_status = (
+            local_lab_calibration_methods_review.stationarity_status
+        )
+        calibration_methods_stationarity_pass = (
+            local_lab_calibration_methods_review.stationarity_pass
+        )
         summary_selected_pair = review_input_summary.get("selected_pair")
         summary_selected_engine_id = review_input_summary.get("selected_engine_id")
 
@@ -694,6 +1016,7 @@ def main(argv: list[str] | None = None) -> int:
                     artifact_ablation_study_path=str(artifact_ablation_study_path),
                     artifact_proof_summary_path=str(artifact_proof_summary_path),
                     artifact_proof_assessment_path=str(artifact_proof_assessment_path),
+                    calibration_methods_review_path=str(local_lab_calibration_methods_review_path),
                     candidate_record_count=len(
                         _filter_records(
                             candidate_records,
@@ -713,6 +1036,8 @@ def main(argv: list[str] | None = None) -> int:
                     artifact_ablation_ready=artifact_ablation_study.study_ready,
                     artifact_proof_ready=artifact_proof_assessment.ready_for_vps_import,
                     artifact_proof_validation_reasons=artifact_proof_assessment.validation_reasons,
+                    calibration_methods_review_status=local_lab_calibration_methods_review.review_status.value,
+                    calibration_methods_review_ready=local_lab_calibration_methods_review.review_ready,
                     caution_flags=tuple(
                         dict.fromkeys(
                             list(artifact_ablation_study.caution_flags)
@@ -736,11 +1061,115 @@ def main(argv: list[str] | None = None) -> int:
             scope_ready_count = scope_matrix.ready_scope_count
             scope_blocked_count = scope_matrix.blocked_scope_count
 
+    local_lab_loss_surrogate = build_local_lab_loss_surrogate_report(
+        correlation_id=args.correlation_id,
+        export_dir=str(discovery.export_dir),
+        records=candidate_records,
+        scope_matrix=scope_matrix,
+        selected_pair=summary_selected_pair,
+        selected_engine_id=summary_selected_engine_id,
+    )
+    atomic_write_json(
+        local_lab_loss_surrogate_path,
+        local_lab_loss_surrogate.model_dump(mode="json"),
+        indent=2,
+    )
+    local_lab_loss_surrogate_path_value = str(local_lab_loss_surrogate_path)
+    if multi_scope_mode:
+        aggregate_calibration_methods_review = build_local_lab_calibration_methods_review(
+            correlation_id=args.correlation_id,
+            export_dir=str(discovery.export_dir),
+            run_id=discovery.run_manifest.run_id,
+            records=candidate_records,
+        )
+        atomic_write_json(
+            local_lab_calibration_methods_review_path,
+            aggregate_calibration_methods_review.model_dump(mode="json"),
+            indent=2,
+        )
+        local_lab_calibration_methods_review_path_value = str(local_lab_calibration_methods_review_path)
+        calibration_methods_review_status = aggregate_calibration_methods_review.review_status.value
+        calibration_methods_review_ready = aggregate_calibration_methods_review.review_ready
+        calibration_methods_dsr_pass = aggregate_calibration_methods_review.dsr_pass
+        calibration_methods_walk_forward_plan_ready = (
+            aggregate_calibration_methods_review.walk_forward_plan_ready
+        )
+        calibration_methods_stationarity_status = (
+            aggregate_calibration_methods_review.stationarity_status
+        )
+        calibration_methods_stationarity_pass = (
+            aggregate_calibration_methods_review.stationarity_pass
+        )
+        top_level_calibration_methods_review = aggregate_calibration_methods_review
+    local_lab_execution_review = build_local_lab_execution_review(
+        correlation_id=args.correlation_id,
+        export_dir=str(discovery.export_dir),
+        run_id=discovery.run_manifest.run_id,
+        telemetry=execution_telemetry,
+    )
+    atomic_write_json(
+        local_lab_execution_review_path,
+        local_lab_execution_review.model_dump(mode="json"),
+        indent=2,
+    )
+    local_lab_execution_review_path_value = str(local_lab_execution_review_path)
+    execution_review_status = local_lab_execution_review.review_status.value
+    execution_review_ready = local_lab_execution_review.review_ready
+    execution_ready_threshold_count = local_lab_execution_review.ready_threshold_count
+    execution_partial_threshold_count = local_lab_execution_review.partial_threshold_count
+    execution_blocked_threshold_count = local_lab_execution_review.blocked_threshold_count
+    local_lab_execution_runtime_projection = build_local_lab_execution_runtime_projection(
+        local_lab_execution_review
+    )
+    atomic_write_json(
+        local_lab_execution_runtime_projection_path,
+        local_lab_execution_runtime_projection.model_dump(mode="json"),
+        indent=2,
+    )
+    local_lab_execution_runtime_projection_path_value = str(
+        local_lab_execution_runtime_projection_path
+    )
+    execution_runtime_projection_status = (
+        local_lab_execution_runtime_projection.projection_status.value
+    )
+    execution_runtime_projection_ready = local_lab_execution_runtime_projection.projection_ready
+    execution_runtime_projection_consumer_count = (
+        local_lab_execution_runtime_projection.consumer_count
+    )
+    execution_runtime_projection_ready_consumer_count = (
+        local_lab_execution_runtime_projection.ready_consumer_count
+    )
+    execution_runtime_projection_partial_consumer_count = (
+        local_lab_execution_runtime_projection.partial_consumer_count
+    )
+    execution_runtime_projection_blocked_consumer_count = (
+        local_lab_execution_runtime_projection.blocked_consumer_count
+    )
+
+    local_lab_tail_risk_review = build_local_lab_tail_risk_review(
+        correlation_id=args.correlation_id,
+        export_dir=str(discovery.export_dir),
+        run_id=discovery.run_manifest.run_id,
+        records=candidate_records,
+    )
+    atomic_write_json(
+        local_lab_tail_risk_review_path,
+        local_lab_tail_risk_review.model_dump(mode="json"),
+        indent=2,
+    )
+    local_lab_tail_risk_review_path_value = str(local_lab_tail_risk_review_path)
+    tail_risk_review_status = local_lab_tail_risk_review.review_status.value
+    tail_risk_review_ready = local_lab_tail_risk_review.review_ready
+    tail_risk_ready_breaker_count = local_lab_tail_risk_review.ready_breaker_count
+    tail_risk_partial_breaker_count = local_lab_tail_risk_review.partial_breaker_count
+    tail_risk_blocked_breaker_count = local_lab_tail_risk_review.blocked_breaker_count
+
     local_lab_recalibration_plan = build_local_lab_recalibration_plan(
         correlation_id=args.correlation_id,
         export_dir=str(discovery.export_dir),
         loss_reports=tuple(recalibration_loss_reports),
         scope_matrix=scope_matrix,
+        loss_surrogate_report=local_lab_loss_surrogate,
     )
     atomic_write_json(
         local_lab_recalibration_plan_path,
@@ -774,6 +1203,98 @@ def main(argv: list[str] | None = None) -> int:
     if edge_exit_code != 0:
         return edge_exit_code
     edge_input_summary = _load_json(edge_input_summary_path)
+    edge_report = EdgeGateCalibrationReport.model_validate_json(
+        edge_report_path.read_text(encoding="utf-8")
+    )
+    edge_config = EdgeGateCalibrationConfig(
+        artifact_id=args.artifact_id,
+        calibration_version=args.calibration_version,
+        bootstrap_samples=args.bootstrap_samples,
+        min_positive_trades=args.min_positive_trades,
+        min_cost_observations=args.min_cost_observations,
+        rng_seed=args.rng_seed,
+    )
+    local_lab_multiple_testing_review = build_local_lab_multiple_testing_review(
+        correlation_id=args.correlation_id,
+        export_dir=str(discovery.export_dir),
+        run_id=discovery.run_manifest.run_id,
+        edge_report=edge_report,
+        tail_risk_review=local_lab_tail_risk_review,
+    )
+    atomic_write_json(
+        local_lab_multiple_testing_review_path,
+        local_lab_multiple_testing_review.model_dump(mode="json"),
+        indent=2,
+    )
+    local_lab_multiple_testing_review_path_value = str(local_lab_multiple_testing_review_path)
+    multiple_testing_review_status = local_lab_multiple_testing_review.review_status.value
+    multiple_testing_review_ready = local_lab_multiple_testing_review.review_ready
+    multiple_testing_correction_required = local_lab_multiple_testing_review.correction_required
+    multiple_testing_correction = local_lab_multiple_testing_review.multi_test_correction
+    multiple_testing_family_count = local_lab_multiple_testing_review.family_count
+    if (
+        meta_runtime_result is not None
+        and trade_loss_attribution is not None
+        and artifact_ablation_study is not None
+        and top_level_calibration_methods_review is not None
+    ):
+        artifact_proof_assessment = build_local_lab_artifact_proof_assessment(
+            correlation_id=args.correlation_id,
+            export_dir=str(discovery.export_dir),
+            run_id=discovery.run_manifest.run_id,
+            meta_result=meta_runtime_result,
+            trade_loss_attribution=trade_loss_attribution,
+            walk_forward_review=walk_forward_review_summary,
+            ablation_study=artifact_ablation_study,
+            calibration_methods_review=top_level_calibration_methods_review,
+            execution_runtime_projection=local_lab_execution_runtime_projection,
+            multiple_testing_review=local_lab_multiple_testing_review,
+        )
+        atomic_write_json(
+            artifact_proof_summary_path,
+            artifact_proof_assessment.proof_summary.model_dump(mode="json"),
+            indent=2,
+        )
+        atomic_write_json(
+            artifact_proof_assessment_path,
+            artifact_proof_assessment.model_dump(mode="json"),
+            indent=2,
+        )
+        artifact_proof_summary_path_value = str(artifact_proof_summary_path)
+        artifact_proof_assessment_path_value = str(artifact_proof_assessment_path)
+        artifact_ablation_ready = artifact_ablation_study.study_ready
+        artifact_proof_ready = artifact_proof_assessment.ready_for_vps_import
+        artifact_proof_validation_reasons = artifact_proof_assessment.validation_reasons
+        artifact_proof_summary_for_bridge = artifact_proof_assessment.proof_summary
+    if top_level_calibration_methods_review is not None:
+        local_lab_calibration_normalized_report = build_local_lab_calibration_normalized_report(
+            correlation_id=args.correlation_id,
+            export_dir=str(discovery.export_dir),
+            run_id=discovery.run_manifest.run_id,
+            records=candidate_records,
+            edge_report=edge_report,
+            edge_config=edge_config,
+            calibration_methods_review=top_level_calibration_methods_review,
+            multiple_testing_review=local_lab_multiple_testing_review,
+            tail_risk_review=local_lab_tail_risk_review,
+        )
+        atomic_write_json(
+            local_lab_calibration_normalized_report_path,
+            local_lab_calibration_normalized_report.model_dump(mode="json"),
+            indent=2,
+        )
+        local_lab_calibration_normalized_report_path_value = str(
+            local_lab_calibration_normalized_report_path
+        )
+        calibration_normalized_report_status = (
+            local_lab_calibration_normalized_report.review_status
+        )
+        calibration_normalized_report_ready = (
+            local_lab_calibration_normalized_report.review_ready
+        )
+        calibration_normalized_threshold_count = (
+            local_lab_calibration_normalized_report.threshold_count
+        )
 
     artifact_release_candidate = build_local_lab_artifact_release_candidate(
         correlation_id=args.correlation_id,
@@ -790,6 +1311,29 @@ def main(argv: list[str] | None = None) -> int:
         recalibration_blocking_reasons=local_lab_recalibration_plan.blocking_reasons,
         artifact_proof_ready=artifact_proof_ready,
         artifact_proof_validation_reasons=artifact_proof_validation_reasons,
+        local_lab_calibration_methods_review_path=local_lab_calibration_methods_review_path_value,
+        calibration_methods_review_status=calibration_methods_review_status,
+        calibration_methods_review_ready=calibration_methods_review_ready,
+        calibration_methods_dsr_pass=calibration_methods_dsr_pass,
+        calibration_methods_walk_forward_plan_ready=calibration_methods_walk_forward_plan_ready,
+        local_lab_execution_runtime_projection_path=(
+            local_lab_execution_runtime_projection_path_value
+        ),
+        execution_runtime_projection_status=execution_runtime_projection_status,
+        execution_runtime_projection_ready=execution_runtime_projection_ready,
+        execution_runtime_projection_consumer_count=execution_runtime_projection_consumer_count,
+        execution_runtime_projection_ready_consumer_count=(
+            execution_runtime_projection_ready_consumer_count
+        ),
+        execution_runtime_projection_partial_consumer_count=(
+            execution_runtime_projection_partial_consumer_count
+        ),
+        execution_runtime_projection_blocked_consumer_count=(
+            execution_runtime_projection_blocked_consumer_count
+        ),
+        execution_runtime_projection_blocking_reasons=(
+            local_lab_execution_runtime_projection.blocking_reasons
+        ),
         artifact_proof_summary_path=artifact_proof_summary_path_value,
         artifact_proof_assessment_path=artifact_proof_assessment_path_value,
         scope_matrix_path=scope_matrix_path_value,
@@ -958,6 +1502,76 @@ def main(argv: list[str] | None = None) -> int:
     artifact_promotion_readiness_summary_path_value = str(
         artifact_promotion_readiness_summary_path
     )
+    local_lab_research_priority = build_local_lab_research_priority_report(
+        correlation_id=args.correlation_id,
+        export_dir=str(discovery.export_dir),
+        loss_reports=tuple(recalibration_loss_reports),
+        scope_matrix=scope_matrix,
+        selected_pair=summary_selected_pair,
+        selected_engine_id=summary_selected_engine_id,
+        artifact_proof_ready=artifact_proof_ready,
+        artifact_proof_validation_reasons=artifact_proof_validation_reasons,
+        release_ready_for_shadow=artifact_release_candidate.ready_for_shadow_import,
+        release_blocking_reasons=artifact_release_candidate.blocking_reasons,
+        loss_surrogate_report=local_lab_loss_surrogate,
+    )
+    atomic_write_json(
+        local_lab_research_priority_path,
+        local_lab_research_priority.model_dump(mode="json"),
+        indent=2,
+    )
+    local_lab_research_priority_path_value = str(local_lab_research_priority_path)
+    local_lab_replay_candidate_queue = build_local_lab_replay_candidate_queue(
+        correlation_id=args.correlation_id,
+        export_dir=str(discovery.export_dir),
+        research_priority_report=local_lab_research_priority,
+        recalibration_plan=local_lab_recalibration_plan,
+    )
+    atomic_write_json(
+        local_lab_replay_candidate_queue_path,
+        local_lab_replay_candidate_queue.model_dump(mode="json"),
+        indent=2,
+    )
+    local_lab_replay_candidate_queue_path_value = str(local_lab_replay_candidate_queue_path)
+    local_lab_replay_ticket_index = build_local_lab_replay_ticket_index(
+        correlation_id=args.correlation_id,
+        export_dir=str(discovery.export_dir),
+        profile=discovery.run_manifest.profile_scope,
+        lineage_version=discovery.run_manifest.lineage_version,
+        replay_candidate_queue=local_lab_replay_candidate_queue,
+        strategy_classification=args.strategy_classification,
+    )
+    atomic_write_json(
+        local_lab_replay_ticket_index_path,
+        local_lab_replay_ticket_index.model_dump(mode="json"),
+        indent=2,
+    )
+    local_lab_replay_ticket_index_path_value = str(local_lab_replay_ticket_index_path)
+    local_lab_replay_dispatch_plan = build_local_lab_replay_dispatch_plan(
+        correlation_id=args.correlation_id,
+        export_dir=str(discovery.export_dir),
+        replay_ticket_index=local_lab_replay_ticket_index,
+    )
+    atomic_write_json(
+        local_lab_replay_dispatch_plan_path,
+        local_lab_replay_dispatch_plan.model_dump(mode="json"),
+        indent=2,
+    )
+    local_lab_replay_dispatch_plan_path_value = str(local_lab_replay_dispatch_plan_path)
+    local_lab_replay_workflow_manifest = build_local_lab_replay_workflow_manifest(
+        replay_candidate_queue=local_lab_replay_candidate_queue,
+        replay_candidate_queue_path=local_lab_replay_candidate_queue_path_value,
+        replay_ticket_index=local_lab_replay_ticket_index,
+        replay_ticket_index_path=local_lab_replay_ticket_index_path_value,
+        replay_dispatch_plan=local_lab_replay_dispatch_plan,
+        replay_dispatch_plan_path=local_lab_replay_dispatch_plan_path_value,
+    )
+    atomic_write_json(
+        local_lab_replay_workflow_manifest_path,
+        local_lab_replay_workflow_manifest.model_dump(mode="json"),
+        indent=2,
+    )
+    local_lab_replay_workflow_manifest_path_value = str(local_lab_replay_workflow_manifest_path)
     local_lab_monitoring_projection = build_local_lab_monitoring_projection(
         correlation_id=args.correlation_id,
         run_id=discovery.run_manifest.run_id,
@@ -977,13 +1591,93 @@ def main(argv: list[str] | None = None) -> int:
         scope_blocked_count=scope_blocked_count,
         release_scope_ready_count=release_scope_ready_count,
         release_scope_blocked_count=release_scope_blocked_count,
-        release_candidate=artifact_release_candidate,
-        dry_run_bridge=artifact_upload_bridge_candidate,
-        promotion_readiness=promotion_readiness_summary,
+        release_ready_for_shadow=artifact_release_candidate.ready_for_shadow_import,
+        release_status=artifact_release_candidate.release_status,
+        release_blocking_reasons=artifact_release_candidate.blocking_reasons,
+        artifact_proof_validation_reasons=(
+            artifact_release_candidate.artifact_proof_validation_reasons
+        ),
+        recalibration_blocking_reasons=(
+            artifact_release_candidate.recalibration_blocking_reasons
+        ),
+        bridge_status=artifact_upload_bridge_candidate.bridge_status,
+        ready_for_shadow_import_dry_run=(
+            artifact_upload_bridge_candidate.ready_for_shadow_import_dry_run
+        ),
+        bridge_blocking_reasons=artifact_upload_bridge_candidate.blocking_reasons,
+        release_gate_status=artifact_upload_bridge_candidate.release_gate_status,
+        release_gate_reasons=artifact_upload_bridge_candidate.release_gate_reasons,
+        semantic_status=artifact_upload_bridge_candidate.semantic_status,
+        promotion_readiness_status=promotion_readiness_summary.readiness_status,
+        activation_stage=promotion_readiness_summary.activation_stage.value,
+        normalized_promotion_state=promotion_readiness_summary.normalized_promotion_state.value,
+        review_state=promotion_readiness_summary.review_state.value,
+        loss_surrogate_status=local_lab_loss_surrogate.status,
+        loss_surrogate_ready=local_lab_loss_surrogate.ready,
+        loss_surrogate_scope_count=local_lab_loss_surrogate.scope_count,
+        loss_surrogate_top_scope_slug=local_lab_loss_surrogate.highest_risk_scope_slug,
+        loss_surrogate_top_probability=local_lab_loss_surrogate.highest_risk_probability,
+        calibration_methods_review_status=calibration_methods_review_status,
+        calibration_methods_review_ready=calibration_methods_review_ready,
+        calibration_methods_dsr_pass=calibration_methods_dsr_pass,
+        calibration_methods_walk_forward_plan_ready=calibration_methods_walk_forward_plan_ready,
+        calibration_methods_stationarity_status=calibration_methods_stationarity_status,
+        calibration_methods_stationarity_pass=calibration_methods_stationarity_pass,
+        execution_review_status=execution_review_status,
+        execution_review_ready=execution_review_ready,
+        execution_ready_threshold_count=execution_ready_threshold_count,
+        execution_partial_threshold_count=execution_partial_threshold_count,
+        execution_blocked_threshold_count=execution_blocked_threshold_count,
+        multiple_testing_review_status=multiple_testing_review_status,
+        multiple_testing_review_ready=multiple_testing_review_ready,
+        multiple_testing_correction_required=multiple_testing_correction_required,
+        multiple_testing_correction=multiple_testing_correction,
+        multiple_testing_family_count=multiple_testing_family_count,
+        tail_risk_review_status=tail_risk_review_status,
+        tail_risk_review_ready=tail_risk_review_ready,
+        tail_risk_ready_breaker_count=tail_risk_ready_breaker_count,
+        tail_risk_partial_breaker_count=tail_risk_partial_breaker_count,
+        tail_risk_blocked_breaker_count=tail_risk_blocked_breaker_count,
+        research_priority_status=local_lab_research_priority.status,
+        research_priority_scope_count=local_lab_research_priority.priority_scope_count,
+        research_priority_top_scope_slug=local_lab_research_priority.highest_priority_scope_slug,
+        research_priority_top_score=local_lab_research_priority.highest_priority_score,
+        replay_candidate_queue_status=local_lab_replay_candidate_queue.status,
+        replay_candidate_count=local_lab_replay_candidate_queue.candidate_count,
+        replay_candidate_ready_count=local_lab_replay_candidate_queue.ready_candidate_count,
+        replay_candidate_top_scope_slug=local_lab_replay_candidate_queue.top_scope_slug,
+        replay_ticket_index_status=local_lab_replay_ticket_index.status,
+        replay_ticket_count=local_lab_replay_ticket_index.ticket_count,
+        replay_ticket_ready_count=local_lab_replay_ticket_index.ready_ticket_count,
+        replay_ticket_top_scope_slug=local_lab_replay_ticket_index.top_scope_slug,
+        replay_dispatch_plan_status=local_lab_replay_dispatch_plan.status,
+        replay_dispatch_ready_count=local_lab_replay_dispatch_plan.ready_dispatch_count,
+        replay_dispatch_blocked_count=local_lab_replay_dispatch_plan.blocked_dispatch_count,
+        replay_dispatch_top_ticket_id=local_lab_replay_dispatch_plan.top_ticket_id,
         scope_matrix_path=scope_matrix_path_value,
         artifact_release_candidate_path=artifact_release_candidate_path_value,
         artifact_import_dry_run_bridge_path=artifact_import_dry_run_bridge_path_value,
         artifact_promotion_readiness_summary_path=artifact_promotion_readiness_summary_path_value,
+        local_lab_loss_surrogate_path=local_lab_loss_surrogate_path_value,
+        local_lab_calibration_methods_review_path=local_lab_calibration_methods_review_path_value,
+        local_lab_execution_review_path=local_lab_execution_review_path_value,
+        local_lab_execution_runtime_projection_path=(
+            local_lab_execution_runtime_projection_path_value
+        ),
+        local_lab_multiple_testing_review_path=local_lab_multiple_testing_review_path_value,
+        local_lab_tail_risk_review_path=local_lab_tail_risk_review_path_value,
+        calibration_normalized_report_status=calibration_normalized_report_status,
+        calibration_normalized_report_ready=calibration_normalized_report_ready,
+        calibration_normalized_threshold_count=calibration_normalized_threshold_count,
+        local_lab_calibration_normalized_report_path=(
+            local_lab_calibration_normalized_report_path_value
+        ),
+        local_lab_research_priority_path=local_lab_research_priority_path_value,
+        local_lab_replay_candidate_queue_path=local_lab_replay_candidate_queue_path_value,
+        local_lab_replay_ticket_index_path=local_lab_replay_ticket_index_path_value,
+        local_lab_replay_dispatch_plan_path=local_lab_replay_dispatch_plan_path_value,
+        local_lab_replay_workflow_manifest_path=local_lab_replay_workflow_manifest_path_value,
+        local_lab_monitoring_bundle_manifest_path=local_lab_monitoring_bundle_manifest_path_value,
     )
     atomic_write_json(
         local_lab_monitoring_projection_path,
@@ -1024,6 +1718,7 @@ def main(argv: list[str] | None = None) -> int:
         observability_export=local_lab_observability_export,
         backend_payload_ref=local_lab_monitoring_backend_payload_path_value,
         observability_export_ref=local_lab_observability_export_path_value,
+        monitoring_bundle_manifest_ref=str(local_lab_monitoring_bundle_manifest_path),
     )
     atomic_write_json(
         local_lab_monitoring_ingestion_summary_path,
@@ -1033,6 +1728,22 @@ def main(argv: list[str] | None = None) -> int:
     local_lab_monitoring_ingestion_summary_path_value = str(
         local_lab_monitoring_ingestion_summary_path
     )
+    local_lab_monitoring_bundle_manifest = build_local_lab_monitoring_bundle_manifest(
+        backend_payload=local_lab_monitoring_backend_payload,
+        backend_payload_path=local_lab_monitoring_backend_payload_path_value,
+        observability_export=local_lab_observability_export,
+        observability_export_path=local_lab_observability_export_path_value,
+        ingestion_summary=local_lab_monitoring_ingestion_summary,
+        ingestion_summary_path=local_lab_monitoring_ingestion_summary_path_value,
+        replay_workflow_manifest_path=local_lab_replay_workflow_manifest_path_value or "",
+        replay_workflow_manifest_status=local_lab_replay_workflow_manifest.replay_dispatch_plan_status,
+    )
+    atomic_write_json(
+        local_lab_monitoring_bundle_manifest_path,
+        local_lab_monitoring_bundle_manifest.model_dump(mode="json"),
+        indent=2,
+    )
+    local_lab_monitoring_bundle_manifest_path_value = str(local_lab_monitoring_bundle_manifest_path)
 
     summary = LocalLabAnalysisBundleSummary(
         correlation_id=args.correlation_id,
@@ -1077,6 +1788,23 @@ def main(argv: list[str] | None = None) -> int:
         local_lab_observability_text_path=local_lab_observability_text_path_value,
         local_lab_monitoring_backend_payload_path=local_lab_monitoring_backend_payload_path_value,
         local_lab_monitoring_ingestion_summary_path=local_lab_monitoring_ingestion_summary_path_value,
+        local_lab_monitoring_bundle_manifest_path=local_lab_monitoring_bundle_manifest_path_value,
+        local_lab_loss_surrogate_path=local_lab_loss_surrogate_path_value,
+        local_lab_calibration_methods_review_path=local_lab_calibration_methods_review_path_value,
+        local_lab_execution_review_path=local_lab_execution_review_path_value,
+        local_lab_execution_runtime_projection_path=(
+            local_lab_execution_runtime_projection_path_value
+        ),
+        local_lab_multiple_testing_review_path=local_lab_multiple_testing_review_path_value,
+        local_lab_tail_risk_review_path=local_lab_tail_risk_review_path_value,
+        local_lab_calibration_normalized_report_path=(
+            local_lab_calibration_normalized_report_path_value
+        ),
+        local_lab_research_priority_path=local_lab_research_priority_path_value,
+        local_lab_replay_candidate_queue_path=local_lab_replay_candidate_queue_path_value,
+        local_lab_replay_ticket_index_path=local_lab_replay_ticket_index_path_value,
+        local_lab_replay_dispatch_plan_path=local_lab_replay_dispatch_plan_path_value,
+        local_lab_replay_workflow_manifest_path=local_lab_replay_workflow_manifest_path_value,
         artifact_upload_request_path=artifact_upload_request_path_value,
         artifact_import_request_path=artifact_import_request_path_value,
         artifact_import_decision_path=artifact_import_decision_path_value,
@@ -1109,6 +1837,63 @@ def main(argv: list[str] | None = None) -> int:
         local_lab_observability_sample_count=len(local_lab_observability_export.samples),
         local_lab_monitoring_backend_status=local_lab_monitoring_backend_payload.status,
         local_lab_monitoring_ingestion_ready=local_lab_monitoring_ingestion_summary.ingestion_ready,
+        loss_surrogate_status=local_lab_loss_surrogate.status,
+        loss_surrogate_ready=local_lab_loss_surrogate.ready,
+        loss_surrogate_scope_count=local_lab_loss_surrogate.scope_count,
+        loss_surrogate_top_scope_slug=local_lab_loss_surrogate.highest_risk_scope_slug,
+        loss_surrogate_top_probability=local_lab_loss_surrogate.highest_risk_probability,
+        calibration_methods_review_status=calibration_methods_review_status,
+        calibration_methods_review_ready=calibration_methods_review_ready,
+        calibration_methods_dsr_pass=calibration_methods_dsr_pass,
+        calibration_methods_walk_forward_plan_ready=calibration_methods_walk_forward_plan_ready,
+        calibration_methods_stationarity_status=calibration_methods_stationarity_status,
+        calibration_methods_stationarity_pass=calibration_methods_stationarity_pass,
+        execution_review_status=execution_review_status,
+        execution_review_ready=execution_review_ready,
+        execution_ready_threshold_count=execution_ready_threshold_count,
+        execution_partial_threshold_count=execution_partial_threshold_count,
+        execution_blocked_threshold_count=execution_blocked_threshold_count,
+        execution_runtime_projection_status=execution_runtime_projection_status,
+        execution_runtime_projection_ready=execution_runtime_projection_ready,
+        execution_runtime_projection_consumer_count=execution_runtime_projection_consumer_count,
+        execution_runtime_projection_ready_consumer_count=(
+            execution_runtime_projection_ready_consumer_count
+        ),
+        execution_runtime_projection_partial_consumer_count=(
+            execution_runtime_projection_partial_consumer_count
+        ),
+        execution_runtime_projection_blocked_consumer_count=(
+            execution_runtime_projection_blocked_consumer_count
+        ),
+        multiple_testing_review_status=multiple_testing_review_status,
+        multiple_testing_review_ready=multiple_testing_review_ready,
+        multiple_testing_correction_required=multiple_testing_correction_required,
+        multiple_testing_correction=multiple_testing_correction,
+        multiple_testing_family_count=multiple_testing_family_count,
+        calibration_normalized_report_status=calibration_normalized_report_status,
+        calibration_normalized_report_ready=calibration_normalized_report_ready,
+        calibration_normalized_threshold_count=calibration_normalized_threshold_count,
+        tail_risk_review_status=tail_risk_review_status,
+        tail_risk_review_ready=tail_risk_review_ready,
+        tail_risk_ready_breaker_count=tail_risk_ready_breaker_count,
+        tail_risk_partial_breaker_count=tail_risk_partial_breaker_count,
+        tail_risk_blocked_breaker_count=tail_risk_blocked_breaker_count,
+        research_priority_status=local_lab_research_priority.status,
+        research_priority_scope_count=local_lab_research_priority.priority_scope_count,
+        research_priority_top_scope_slug=local_lab_research_priority.highest_priority_scope_slug,
+        research_priority_top_score=local_lab_research_priority.highest_priority_score,
+        replay_candidate_queue_status=local_lab_replay_candidate_queue.status,
+        replay_candidate_count=local_lab_replay_candidate_queue.candidate_count,
+        replay_candidate_ready_count=local_lab_replay_candidate_queue.ready_candidate_count,
+        replay_candidate_top_scope_slug=local_lab_replay_candidate_queue.top_scope_slug,
+        replay_ticket_index_status=local_lab_replay_ticket_index.status,
+        replay_ticket_count=local_lab_replay_ticket_index.ticket_count,
+        replay_ticket_ready_count=local_lab_replay_ticket_index.ready_ticket_count,
+        replay_ticket_top_scope_slug=local_lab_replay_ticket_index.top_scope_slug,
+        replay_dispatch_plan_status=local_lab_replay_dispatch_plan.status,
+        replay_dispatch_ready_count=local_lab_replay_dispatch_plan.ready_dispatch_count,
+        replay_dispatch_blocked_count=local_lab_replay_dispatch_plan.blocked_dispatch_count,
+        replay_dispatch_top_ticket_id=local_lab_replay_dispatch_plan.top_ticket_id,
         recalibration_candidate_ready=local_lab_recalibration_plan.calibration_candidate_ready,
         recalibration_blocking_reasons=local_lab_recalibration_plan.blocking_reasons,
         recalibration_action_count=local_lab_recalibration_plan.action_count,
@@ -1124,28 +1909,54 @@ def main(argv: list[str] | None = None) -> int:
         edge_calibration_ready=edge_input_summary.get("record_count", 0) > 0,
     )
     atomic_write_json(summary_path, summary.model_dump(mode="json"), indent=2)
-
-    print(f"Local IA Lab analysis summary JSON: {summary_path}")
-    if review_output_dir_value is not None:
-        print(f"Post-trade review dir: {review_output_dir_value}")
-    if scope_matrix_path_value is not None:
-        print(f"Local IA Lab scope matrix JSON: {scope_matrix_path_value}")
-    if artifact_ablation_study_path_value is not None:
-        print(f"Artifact ablation study JSON: {artifact_ablation_study_path_value}")
-    if artifact_proof_summary_path_value is not None:
-        print(f"Artifact proof summary JSON: {artifact_proof_summary_path_value}")
-    if artifact_proof_assessment_path_value is not None:
-        print(f"Artifact proof assessment JSON: {artifact_proof_assessment_path_value}")
-    print(f"Artifact release candidate JSON: {artifact_release_candidate_path_value}")
-    print(f"Local IA Lab recalibration plan JSON: {local_lab_recalibration_plan_path_value}")
-    print(f"Artifact import dry-run bridge JSON: {artifact_import_dry_run_bridge_path_value}")
-    print(f"Artifact promotion readiness summary JSON: {artifact_promotion_readiness_summary_path_value}")
-    print(f"Local IA Lab monitoring projection JSON: {local_lab_monitoring_projection_path_value}")
-    print(f"Local IA Lab observability export JSON: {local_lab_observability_export_path_value}")
-    print(f"Local IA Lab observability text export: {local_lab_observability_text_path_value}")
-    print(f"Local IA Lab monitoring backend payload JSON: {local_lab_monitoring_backend_payload_path_value}")
-    print(f"Local IA Lab monitoring ingestion summary JSON: {local_lab_monitoring_ingestion_summary_path_value}")
-    print(f"EDGE calibration artifact: {edge_output_path}")
+    _emit_local_lab_analysis_bundle_output(
+        summary_path=summary_path,
+        review_output_dir_value=review_output_dir_value,
+        scope_matrix_path_value=scope_matrix_path_value,
+        artifact_ablation_study_path_value=artifact_ablation_study_path_value,
+        artifact_proof_summary_path_value=artifact_proof_summary_path_value,
+        artifact_proof_assessment_path_value=artifact_proof_assessment_path_value,
+        artifact_release_candidate_path_value=artifact_release_candidate_path_value,
+        local_lab_recalibration_plan_path_value=local_lab_recalibration_plan_path_value,
+        artifact_import_dry_run_bridge_path_value=artifact_import_dry_run_bridge_path_value,
+        artifact_promotion_readiness_summary_path_value=(
+            artifact_promotion_readiness_summary_path_value
+        ),
+        local_lab_monitoring_projection_path_value=local_lab_monitoring_projection_path_value,
+        local_lab_observability_export_path_value=local_lab_observability_export_path_value,
+        local_lab_observability_text_path_value=local_lab_observability_text_path_value,
+        local_lab_monitoring_backend_payload_path_value=(
+            local_lab_monitoring_backend_payload_path_value
+        ),
+        local_lab_monitoring_ingestion_summary_path_value=(
+            local_lab_monitoring_ingestion_summary_path_value
+        ),
+        local_lab_monitoring_bundle_manifest_path_value=(
+            local_lab_monitoring_bundle_manifest_path_value
+        ),
+        local_lab_loss_surrogate_path_value=local_lab_loss_surrogate_path_value,
+        local_lab_execution_review_path_value=local_lab_execution_review_path_value,
+        local_lab_execution_runtime_projection_path_value=(
+            local_lab_execution_runtime_projection_path_value
+        ),
+        local_lab_multiple_testing_review_path_value=(
+            local_lab_multiple_testing_review_path_value
+        ),
+        local_lab_calibration_normalized_report_path_value=(
+            local_lab_calibration_normalized_report_path_value
+        ),
+        local_lab_tail_risk_review_path_value=local_lab_tail_risk_review_path_value,
+        local_lab_research_priority_path_value=local_lab_research_priority_path_value,
+        local_lab_replay_candidate_queue_path_value=(
+            local_lab_replay_candidate_queue_path_value
+        ),
+        local_lab_replay_ticket_index_path_value=local_lab_replay_ticket_index_path_value,
+        local_lab_replay_dispatch_plan_path_value=local_lab_replay_dispatch_plan_path_value,
+        local_lab_replay_workflow_manifest_path_value=(
+            local_lab_replay_workflow_manifest_path_value
+        ),
+        edge_output_path=edge_output_path,
+    )
     return 0
 
 

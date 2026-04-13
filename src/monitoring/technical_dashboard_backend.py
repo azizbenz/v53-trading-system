@@ -11,11 +11,13 @@ from monitoring.contracts import (
     Build9XProjection,
     EngineJudgmentProjection,
     ExecutionNoTradeBridgeProjection,
+    ExecutionRuntimeProjectionBridgeProjection,
     LiveProjection,
     LiveLightProjection,
     MicroLiveProjection,
     MonitoringSnapshot,
     OperatorRuntimeProjection,
+    RegimeLiteSafingProjection,
     RuntimeHookBridgeProjection,
     ReplayImportProjection,
     ShadowProjection,
@@ -105,6 +107,7 @@ def _default_replay_projection(*, active_modules: tuple[str, ...]) -> ReplayImpo
 
 def _default_shadow_projection(*, active_modules: tuple[str, ...]) -> ShadowProjection:
     module_active = "protocols" in active_modules
+    regime_lite_active = bool({"risk_backbone", "regime_classifier"} & set(active_modules))
     return ShadowProjection(
         status="info" if module_active else "planned",
         run_state="not_run",
@@ -122,6 +125,15 @@ def _default_shadow_projection(*, active_modules: tuple[str, ...]) -> ShadowProj
         import_lineage_version="n/a",
         blocking_reasons=(),
         manual_review_required=False,
+        regime_lite_safing=RegimeLiteSafingProjection(
+            status="info" if regime_lite_active else "planned",
+            severity="not_configured",
+            detail=(
+                "regime_lite safing recommendation seam is available but not configured"
+                if regime_lite_active
+                else "regime_lite safing recommendation seam is not materialized"
+            ),
+        ),
     )
 
 
@@ -234,6 +246,22 @@ def _default_execution_no_trade_bridge_projection(
             "Compiled execution no-trade bridge is available but not configured"
             if module_active
             else "Compiled execution no-trade bridge is not materialized"
+        ),
+    )
+
+
+def _default_execution_runtime_projection_bridge_projection(
+    *,
+    active_modules: tuple[str, ...],
+) -> ExecutionRuntimeProjectionBridgeProjection:
+    module_active = "protocols" in active_modules
+    return ExecutionRuntimeProjectionBridgeProjection(
+        status="info" if module_active else "planned",
+        configured=False,
+        detail=(
+            "Execution runtime projection bridge is available but not configured"
+            if module_active
+            else "Execution runtime projection bridge is not materialized"
         ),
     )
 
@@ -476,6 +504,37 @@ def _elevate_headline_status_from_execution_no_trade_bridge(
     return headline_status
 
 
+def _elevate_headline_status_from_execution_runtime_projection_bridge(
+    headline_status: str,
+    *,
+    execution_runtime_projection_bridge: ExecutionRuntimeProjectionBridgeProjection,
+) -> str:
+    if execution_runtime_projection_bridge.status == "critical":
+        return "critical"
+    if (
+        execution_runtime_projection_bridge.status == "warning"
+        and headline_status == "healthy"
+    ):
+        return "warning"
+    return headline_status
+
+
+def _elevate_headline_status_from_shadow_regime_lite_safing(
+    headline_status: str,
+    *,
+    shadow: ShadowProjection,
+) -> str:
+    regime_safing = shadow.regime_lite_safing
+    if regime_safing.status == "critical" or regime_safing.severity == "halt_recommended":
+        return "critical"
+    if (
+        regime_safing.status == "warning"
+        or regime_safing.severity == "entry_block_only"
+    ) and headline_status == "healthy":
+        return "warning"
+    return headline_status
+
+
 def _elevate_headline_status_from_runtime_hook_bridges(
     headline_status: str,
     *,
@@ -628,6 +687,8 @@ def build_technical_dashboard_payload(
     build14_projection: Build14Projection | None = None,
     account_user_data_projection: AccountUserDataProjection | None = None,
     execution_no_trade_bridge_projection: ExecutionNoTradeBridgeProjection | None = None,
+    execution_runtime_projection_bridge_projection: ExecutionRuntimeProjectionBridgeProjection
+    | None = None,
     runtime_hook_bridge_projections: tuple[RuntimeHookBridgeProjection, ...] | None = None,
     replay_projection: ReplayImportProjection | None = None,
     operator_runtime: OperatorRuntimeProjection | None = None,
@@ -656,6 +717,10 @@ def build_technical_dashboard_payload(
         engine_judgment=engine_judgment,
     )
     shadow = shadow_projection or _default_shadow_projection(active_modules=active_modules)
+    headline_status = _elevate_headline_status_from_shadow_regime_lite_safing(
+        headline_status,
+        shadow=shadow,
+    )
     micro_live = _apply_operator_safing_to_micro_live_projection(
         micro_live_projection or _default_micro_live_projection(active_modules=active_modules),
         operator_runtime=operator_runtime,
@@ -693,6 +758,12 @@ def build_technical_dashboard_payload(
         execution_no_trade_bridge = _default_execution_no_trade_bridge_projection(
             active_modules=active_modules
         )
+    execution_runtime_projection_bridge = (
+        execution_runtime_projection_bridge_projection
+        or _default_execution_runtime_projection_bridge_projection(
+            active_modules=active_modules
+        )
+    )
     runtime_hook_bridges = _normalize_runtime_hook_bridge_projections(
         active_modules=active_modules,
         execution_no_trade_bridge=execution_no_trade_bridge,
@@ -702,6 +773,10 @@ def build_technical_dashboard_payload(
     headline_status = _elevate_headline_status_from_execution_no_trade_bridge(
         headline_status,
         execution_no_trade_bridge=execution_no_trade_bridge,
+    )
+    headline_status = _elevate_headline_status_from_execution_runtime_projection_bridge(
+        headline_status,
+        execution_runtime_projection_bridge=execution_runtime_projection_bridge,
     )
     headline_status = _elevate_headline_status_from_runtime_hook_bridges(
         headline_status,
@@ -762,6 +837,7 @@ def build_technical_dashboard_payload(
         build14=build14,
         account_user_data=account_user_data,
         execution_no_trade_bridge=execution_no_trade_bridge,
+        execution_runtime_projection_bridge=execution_runtime_projection_bridge,
         runtime_hook_bridges=runtime_hook_bridges,
         replay_import=replay_import,
         alerts=_build_alert_projection(

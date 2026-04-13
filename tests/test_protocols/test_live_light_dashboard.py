@@ -52,6 +52,11 @@ def _summary() -> LiveLightRunSummary:
         ),
         import_artifact_id="artifact-1",
         import_lineage_version="a.v1.0.r1",
+        execution_runtime_projection_ref="build/local_lab_execution_runtime_projection.json",
+        execution_runtime_projection_status="ready",
+        execution_runtime_projection_ready=True,
+        execution_runtime_projection_consumer_count=3,
+        execution_runtime_projection_ready_consumer_count=3,
         observability_ready=True,
         halt_ready=True,
         execution_ready=True,
@@ -76,6 +81,9 @@ def test_build_live_light_projection_returns_normalized_monitoring_summary():
     assert projection.verdict == "allowed_to_execute_small"
     assert projection.approved_total_notional_usdt == 80.0
     assert projection.planned_pairs == ("BTCUSDT", "ETHUSDT")
+    assert projection.execution_runtime_projection_status == "ready"
+    assert projection.execution_runtime_projection_ready is True
+    assert projection.execution_runtime_projection_ready_consumer_count == 3
     assert projection.build14_action == "downgrade_confidence"
     assert projection.build14_recommended_budget_factor == 0.85
     assert projection.operator_safing_action == ""
@@ -97,9 +105,12 @@ def test_build_live_light_dashboard_section_renders_expected_cards():
     }
     verdict = next(card for card in section.cards if card.key == "live_light_verdict")
     budget = next(card for card in section.cards if card.key == "live_light_budget")
+    readiness = next(card for card in section.cards if card.key == "live_light_readiness")
     assert verdict.value == "allowed_to_execute_small"
     assert verdict.status == "healthy"
     assert "build14=downgrade_confidence@0.85" in budget.detail
+    assert "exec_proj=ready" in readiness.detail
+    assert "ready=3" in readiness.detail
 
 
 def test_build_live_light_dashboard_section_surfaces_manual_safing_request():

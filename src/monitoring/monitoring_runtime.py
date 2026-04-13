@@ -23,6 +23,7 @@ from monitoring.contracts import (
     Build9XProjection,
     EngineMetrics,
     ExecutionNoTradeBridgeProjection,
+    ExecutionRuntimeProjectionBridgeProjection,
     HealthDashboardPayload,
     InfraMetrics,
     LiveProjection,
@@ -136,6 +137,8 @@ class MonitoringRuntime:
         live_light_projection: LiveLightProjection | None = None,
         build14_projection: Build14Projection | None = None,
         execution_no_trade_bridge_projection: ExecutionNoTradeBridgeProjection | None = None,
+        execution_runtime_projection_bridge_projection: ExecutionRuntimeProjectionBridgeProjection
+        | None = None,
         runtime_hook_bridge_projections: tuple[RuntimeHookBridgeProjection, ...] | None = None,
         replay_projection: ReplayImportProjection | None = None,
     ) -> MonitoringRuntimeResult:
@@ -207,6 +210,9 @@ class MonitoringRuntime:
             live_projection=resolved_live_projection,
             build14_projection=build14_projection,
             execution_no_trade_bridge_projection=execution_no_trade_bridge_projection,
+            execution_runtime_projection_bridge_projection=(
+                execution_runtime_projection_bridge_projection
+            ),
             runtime_hook_bridge_projections=runtime_hook_bridge_projections,
             replay_projection=replay_projection,
             operator_runtime=operator_runtime,

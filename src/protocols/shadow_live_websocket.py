@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -9,10 +10,11 @@ import os
 import time
 from datetime import date
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Awaitable, Callable, Protocol
 
 from data_backbone.websocket_gateway.connection_manager import ConnectionState
 from data_backbone.websocket_gateway.runtime_gateway import AdapterMessage, WebSocketGatewayAdapter, WebSocketGatewayRuntime
+from interface_contracts.binance_contracts import BinanceServerTime
 from protocols.shadow_vps_service import (
     ShadowLiveUserDataCaptureSummary,
     ShadowLiveWebSocketCaptureResult,
@@ -23,6 +25,7 @@ from protocols.shadow_websocket_ingest import (
     build_snapshot_batch_from_observed_websocket_messages,
 )
 from interface_contracts.atomic_io import atomic_write_json, atomic_write_text
+from venue_adapters.binance_spot.rest_client import BinanceRestClient
 
 
 class NativeWebSocketClient(Protocol):
@@ -42,6 +45,7 @@ class NativeWebSocketClient(Protocol):
 
 
 SocketFactory = Callable[[str, float, float], NativeWebSocketClient]
+ServerTimeReader = Callable[[], Awaitable[BinanceServerTime]]
 
 
 def _is_timeout_exception(exc: BaseException) -> bool:
@@ -468,12 +472,86 @@ def _route_hint_payload(
     return payload
 
 
+async def _collect_time_sync_offsets_ms(
+    config: ShadowLiveWebSocketConfig,
+    *,
+    clock_ms: Callable[[], int],
+    server_time_reader: ServerTimeReader | None = None,
+) -> tuple[float, ...]:
+    async def _sample(reader: ServerTimeReader) -> tuple[float, ...]:
+        offsets_ms: list[float] = []
+        for index in range(config.time_sync_sample_count):
+            server_time = await reader()
+            offsets_ms.append(float(clock_ms() - server_time.server_time_ms))
+            if (
+                config.time_sync_sample_pause_s > 0.0
+                and index + 1 < config.time_sync_sample_count
+            ):
+                await asyncio.sleep(config.time_sync_sample_pause_s)
+        return tuple(offsets_ms)
+
+    if server_time_reader is not None:
+        return await _sample(server_time_reader)
+    async with BinanceRestClient(
+        base_url=config.time_sync_rest_base_url,
+        timeout_s=config.time_sync_rest_timeout_s,
+    ) as client:
+        return await _sample(client.get_server_time)
+
+
+def _write_time_sync_offsets_sidecar(
+    config: ShadowLiveWebSocketConfig,
+    *,
+    output_dir: Path,
+    session_date: str,
+    clock_ms: Callable[[], int],
+    server_time_reader: ServerTimeReader | None = None,
+) -> tuple[str, int, str]:
+    if not config.time_sync_probe_enabled:
+        return "", 0, ""
+    started_at = time.perf_counter()
+    try:
+        offsets_ms = asyncio.run(
+            _collect_time_sync_offsets_ms(
+                config,
+                clock_ms=clock_ms,
+                server_time_reader=server_time_reader,
+            )
+        )
+    except Exception as exc:
+        return "", 0, f"{type(exc).__name__}: {exc}"
+    if not offsets_ms:
+        return "", 0, "TIME_SYNC_PROBE_EMPTY"
+    probe_duration_s = max(0.0, time.perf_counter() - started_at)
+    observed_calls_per_minute = (
+        (len(offsets_ms) / probe_duration_s) * 60.0 if probe_duration_s > 0.0 else None
+    )
+    path = output_dir / "live_time_sync_offsets.json"
+    atomic_write_json(
+        path,
+        {
+            "session_date": session_date,
+            "time_sync_offsets_ms": list(offsets_ms),
+            "sample_count": len(offsets_ms),
+            "source": "shadow_vps_live_time_sync_probe",
+            "rest_base_url": config.time_sync_rest_base_url,
+            "rest_call_count": len(offsets_ms),
+            "probe_duration_s": probe_duration_s,
+            "rest_quota_window_s": 60.0,
+            "rest_quota_max_calls_per_minute": config.time_sync_rest_quota_max_calls_per_minute,
+            "observed_calls_per_minute": observed_calls_per_minute,
+        },
+    )
+    return str(path.resolve()), len(offsets_ms), ""
+
+
 def capture_live_websocket_snapshot_batch(
     config: ShadowLiveWebSocketConfig,
     *,
     output_dir: Path,
     adapter_factory: Callable[[ShadowLiveWebSocketConfig], WebSocketGatewayAdapter] | None = None,
     user_data_socket_factory: SocketFactory | None = None,
+    time_sync_server_time_reader: ServerTimeReader | None = None,
     clock: Callable[[], float] = time.time,
 ) -> ShadowLiveWebSocketCaptureResult:
     """Capture a bounded native live websocket window and materialize a snapshot batch."""
@@ -494,7 +572,15 @@ def capture_live_websocket_snapshot_batch(
             runtime.subscribe(pair, stream_type, endpoint)
     status = runtime.connect(endpoint, now=clock())
     if status.state != ConnectionState.CONNECTED:
-        raise RuntimeError("Native live_websocket adapter failed to connect")
+        if status.error_message:
+            raise RuntimeError(
+                f"Native live_websocket adapter failed to connect to {endpoint}: "
+                f"{status.error_message}"
+            )
+        raise RuntimeError(
+            f"Native live_websocket adapter failed to connect to {endpoint} "
+            f"(state={status.state.value})"
+        )
 
     observed_messages: list[ObservedWebSocketMessage] = []
     idle_polls = 0
@@ -538,6 +624,15 @@ def capture_live_websocket_snapshot_batch(
         summary_path=summary_path,
         source="shadow_vps_live_websocket",
     )
+    time_sync_offsets_path_ref, time_sync_sample_count, time_sync_probe_error = (
+        _write_time_sync_offsets_sidecar(
+            config,
+            output_dir=output_dir,
+            session_date=session_date,
+            clock_ms=lambda: int(round(clock() * 1000.0)),
+            server_time_reader=time_sync_server_time_reader,
+        )
+    )
     user_data_summary: ShadowLiveUserDataCaptureSummary | None = None
     if config.user_data_stream_enabled:
         user_data_summary = capture_live_user_data_stream(
@@ -557,6 +652,9 @@ def capture_live_websocket_snapshot_batch(
         rejected_message_count=build_result.rejected_message_count,
         pair_scope=build_result.pair_scope,
         event_types=build_result.event_types,
+        time_sync_offsets_path_ref=time_sync_offsets_path_ref,
+        time_sync_sample_count=time_sync_sample_count,
+        time_sync_probe_error=time_sync_probe_error,
         user_data_summary_path_ref=(
             user_data_summary.summary_path_ref if user_data_summary is not None else ""
         ),

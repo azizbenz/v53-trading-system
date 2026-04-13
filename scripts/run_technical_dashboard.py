@@ -105,6 +105,7 @@ from protocols import (  # noqa: E402
     ShadowRunSummary,
     ShadowRuntimeEvidenceRecorder,
     ShadowRuntimeEvidenceRecorderConfig,
+    build_execution_runtime_projection_bridge_projection,
     build_live_light_input_from_micro_live,
     build_live_light_projection,
     build_micro_live_input_from_shadow,
@@ -132,6 +133,19 @@ class DashboardArtifacts:
     shadow_runtime_evidence_json_path: Path | None = None
     upload_request_json_path: Path | None = None
     upload_decision_json_path: Path | None = None
+
+
+def _resolve_execution_runtime_projection_path(
+    *,
+    output_dir: Path,
+    explicit_path: Path | None,
+) -> Path | None:
+    if explicit_path is not None:
+        return explicit_path
+    candidate = output_dir / "local_lab_execution_runtime_projection.json"
+    if candidate.is_file():
+        return candidate
+    return None
 
 
 _DASHBOARD_IMPORT_LIFECYCLE_POLICY = ArtifactLifecyclePolicy(
@@ -493,6 +507,310 @@ def _build_live_artifact_account_user_data_projection(
     )
 
 
+def _apply_shadow_service_metadata(
+    shadow_projection: ShadowProjection,
+    campaign_summary: dict,
+) -> ShadowProjection:
+    """Project service-owned Shadow sidecars into the Build-10 Shadow summary."""
+
+    regime_lite_safing_severity = str(
+        campaign_summary.get("regime_lite_safing_severity", "not_configured")
+        or "not_configured"
+    )
+    if regime_lite_safing_severity == "halt_recommended":
+        regime_lite_safing_status = "critical"
+    elif regime_lite_safing_severity == "entry_block_only":
+        regime_lite_safing_status = "warning"
+    elif regime_lite_safing_severity == "none":
+        regime_lite_safing_status = "healthy"
+    elif regime_lite_safing_severity == "not_configured":
+        regime_lite_safing_status = "planned"
+    else:
+        regime_lite_safing_status = "info"
+    execution_telemetry_ref = str(campaign_summary.get("execution_telemetry_ref", ""))
+    execution_telemetry_status = str(
+        campaign_summary.get("execution_telemetry_status", "not_configured")
+        or "not_configured"
+    )
+    telegram_alert_delivery_status = str(
+        campaign_summary.get("telegram_alert_delivery_status", "not_configured")
+        or "not_configured"
+    )
+    telegram_alert_delivery_event_type = str(
+        campaign_summary.get("telegram_alert_delivery_event_type", "")
+    )
+    telegram_alert_delivery_error = str(
+        campaign_summary.get("telegram_alert_delivery_error", "")
+    )
+    execution_runtime_bootstrap_ref = str(
+        campaign_summary.get("execution_runtime_bootstrap_ref", "")
+    )
+    execution_runtime_bootstrap_status = str(
+        campaign_summary.get("execution_runtime_bootstrap_status", "not_configured")
+        or "not_configured"
+    )
+    execution_runtime_bootstrap_source = str(
+        campaign_summary.get("execution_runtime_bootstrap_source", "not_configured")
+        or "not_configured"
+    )
+    execution_runtime_gatekeeper_audit_ref = str(
+        campaign_summary.get("execution_runtime_gatekeeper_audit_ref", "")
+    )
+    execution_runtime_gatekeeper_audit_source = str(
+        campaign_summary.get(
+            "execution_runtime_gatekeeper_audit_source",
+            "not_configured",
+        )
+        or "not_configured"
+    )
+    execution_runtime_projection_ref = str(
+        campaign_summary.get("execution_runtime_projection_ref", "")
+    )
+    execution_runtime_projection_source = str(
+        campaign_summary.get("execution_runtime_projection_source", "not_configured")
+        or "not_configured"
+    )
+    regime_lite_assessment_ref = str(
+        campaign_summary.get("regime_lite_assessment_ref", "")
+    )
+    regime_lite_assessment_source = str(
+        campaign_summary.get("regime_lite_assessment_source", "not_configured")
+        or "not_configured"
+    )
+    regime_lite_safing_recommendation_ref = str(
+        campaign_summary.get("regime_lite_safing_recommendation_ref", "")
+    )
+    regime_lite_safing_recommendation_source = str(
+        campaign_summary.get(
+            "regime_lite_safing_recommendation_source",
+            "not_configured",
+        )
+        or "not_configured"
+    )
+    info_stress_assessment_ref = str(
+        campaign_summary.get("info_stress_assessment_ref", "")
+    )
+    info_stress_assessment_source = str(
+        campaign_summary.get("info_stress_assessment_source", "not_configured")
+        or "not_configured"
+    )
+    info_stress_governance_status = str(
+        campaign_summary.get("info_stress_governance_status", "not_configured")
+        or "not_configured"
+    )
+    info_stress_level = str(
+        campaign_summary.get("info_stress_level", "not_configured")
+        or "not_configured"
+    )
+    execution_runtime_projection_status = str(
+        campaign_summary.get("execution_runtime_projection_status", "not_configured")
+        or "not_configured"
+    )
+    return shadow_projection.model_copy(
+        update={
+            "execution_telemetry_ref": execution_telemetry_ref,
+            "execution_telemetry_status": execution_telemetry_status,
+            "telegram_alert_delivery_status": telegram_alert_delivery_status,
+            "telegram_alert_delivery_event_type": telegram_alert_delivery_event_type,
+            "telegram_alert_delivery_error": telegram_alert_delivery_error,
+            "execution_runtime_bootstrap_ref": execution_runtime_bootstrap_ref,
+            "execution_runtime_bootstrap_status": (
+                execution_runtime_bootstrap_status
+            ),
+            "execution_runtime_bootstrap_source": (
+                execution_runtime_bootstrap_source
+            ),
+            "execution_runtime_gatekeeper_audit_ref": (
+                execution_runtime_gatekeeper_audit_ref
+            ),
+            "execution_runtime_gatekeeper_audit_source": (
+                execution_runtime_gatekeeper_audit_source
+            ),
+            "execution_runtime_bootstrap_user_data_stream_enabled": bool(
+                campaign_summary.get(
+                    "execution_runtime_bootstrap_user_data_stream_enabled",
+                    False,
+                )
+            ),
+            "execution_runtime_bootstrap_reconciliation_boot_executed": bool(
+                campaign_summary.get(
+                    "execution_runtime_bootstrap_reconciliation_boot_executed",
+                    False,
+                )
+            ),
+            "execution_runtime_bootstrap_reconciliation_boot_trading_blocked": bool(
+                campaign_summary.get(
+                    "execution_runtime_bootstrap_reconciliation_boot_trading_blocked",
+                    False,
+                )
+            ),
+            "execution_runtime_bootstrap_reconciliation_boot_circuit_breaker_tripped": bool(
+                campaign_summary.get(
+                    "execution_runtime_bootstrap_reconciliation_boot_circuit_breaker_tripped",
+                    False,
+                )
+            ),
+            "execution_runtime_bootstrap_reconciliation_boot_detail": str(
+                campaign_summary.get(
+                    "execution_runtime_bootstrap_reconciliation_boot_detail",
+                    "",
+                )
+            ),
+            "execution_runtime_bootstrap_reconciliation_boot_recovery_action": str(
+                campaign_summary.get(
+                    "execution_runtime_bootstrap_reconciliation_boot_recovery_action",
+                    "",
+                )
+            ),
+            "execution_runtime_bootstrap_reconciliation_boot_divergence_count": int(
+                campaign_summary.get(
+                    "execution_runtime_bootstrap_reconciliation_boot_divergence_count",
+                    0,
+                )
+            ),
+            "execution_runtime_projection_ref": execution_runtime_projection_ref,
+            "execution_runtime_projection_source": (
+                execution_runtime_projection_source
+            ),
+            "regime_lite_assessment_ref": regime_lite_assessment_ref,
+            "regime_lite_assessment_source": regime_lite_assessment_source,
+            "regime_lite_safing_recommendation_ref": (
+                regime_lite_safing_recommendation_ref
+            ),
+            "regime_lite_safing_recommendation_source": (
+                regime_lite_safing_recommendation_source
+            ),
+            "info_stress_assessment_ref": info_stress_assessment_ref,
+            "info_stress_assessment_source": info_stress_assessment_source,
+            "info_stress_governance_status": info_stress_governance_status,
+            "info_stress_level": info_stress_level,
+            "info_stress_alert_count": int(
+                campaign_summary.get("info_stress_alert_count", 0)
+            ),
+            "info_stress_entries_blocked": bool(
+                campaign_summary.get("info_stress_entries_blocked", False)
+            ),
+            "info_stress_entries_blocked_until_ts": int(
+                campaign_summary.get("info_stress_entries_blocked_until_ts", 0)
+            ),
+            "info_stress_reason_codes": tuple(
+                str(value)
+                for value in campaign_summary.get("info_stress_reason_codes", ())
+            ),
+            "info_stress_detail": str(
+                campaign_summary.get("info_stress_detail", "")
+            ),
+            "execution_runtime_projection_status": (
+                execution_runtime_projection_status
+            ),
+            "execution_runtime_projection_ready": bool(
+                campaign_summary.get("execution_runtime_projection_ready", False)
+            ),
+            "execution_runtime_projection_consumer_count": int(
+                campaign_summary.get(
+                    "execution_runtime_projection_consumer_count",
+                    0,
+                )
+            ),
+            "execution_runtime_projection_ready_consumer_count": int(
+                campaign_summary.get(
+                    "execution_runtime_projection_ready_consumer_count",
+                    0,
+                )
+            ),
+            "execution_runtime_projection_partial_consumer_count": int(
+                campaign_summary.get(
+                    "execution_runtime_projection_partial_consumer_count",
+                    0,
+                )
+            ),
+            "execution_runtime_projection_blocked_consumer_count": int(
+                campaign_summary.get(
+                    "execution_runtime_projection_blocked_consumer_count",
+                    0,
+                )
+            ),
+            "execution_runtime_projection_bridge_status": str(
+                campaign_summary.get(
+                    "execution_runtime_projection_bridge_status",
+                    "planned",
+                )
+                or "planned"
+            ),
+            "execution_runtime_projection_bridge_loaded": bool(
+                campaign_summary.get(
+                    "execution_runtime_projection_bridge_loaded",
+                    False,
+                )
+            ),
+            "execution_runtime_projection_rate_limit_model_loaded": bool(
+                campaign_summary.get(
+                    "execution_runtime_projection_rate_limit_model_loaded",
+                    False,
+                )
+            ),
+            "execution_runtime_projection_spread_guard_model_loaded": bool(
+                campaign_summary.get(
+                    "execution_runtime_projection_spread_guard_model_loaded",
+                    False,
+                )
+            ),
+            "execution_runtime_projection_slippage_model_loaded": bool(
+                campaign_summary.get(
+                    "execution_runtime_projection_slippage_model_loaded",
+                    False,
+                )
+            ),
+            "regime_lite_safing": shadow_projection.regime_lite_safing.model_copy(
+                update={
+                    "status": regime_lite_safing_status,
+                    "severity": regime_lite_safing_severity,
+                    "should_block_new_entries": bool(
+                        campaign_summary.get(
+                            "regime_lite_safing_should_block_new_entries",
+                            False,
+                        )
+                    ),
+                    "should_exit_all": bool(
+                        campaign_summary.get(
+                            "regime_lite_safing_should_exit_all",
+                            False,
+                        )
+                    ),
+                    "recommended_operator_action": str(
+                        campaign_summary.get(
+                            "regime_lite_safing_recommended_operator_action",
+                            "",
+                        )
+                    ),
+                    "operator_safing_request_action": str(
+                        campaign_summary.get(
+                            "regime_lite_safing_operator_safing_request_action",
+                            "",
+                        )
+                    ),
+                    "operator_safing_request_source_runtime_mode": str(
+                        campaign_summary.get(
+                            "regime_lite_safing_operator_safing_request_source_runtime_mode",
+                            "",
+                        )
+                    ),
+                    "detail": str(
+                        campaign_summary.get("regime_lite_safing_detail", "")
+                    ),
+                    "reason_codes": tuple(
+                        str(value)
+                        for value in campaign_summary.get(
+                            "regime_lite_safing_reason_codes",
+                            (),
+                        )
+                    ),
+                }
+            ),
+        }
+    )
+
+
 def _load_local_runtime_payload(
     root: Path,
 ) -> tuple[TechnicalDashboardPayload, str] | None:
@@ -532,7 +850,10 @@ def _load_local_runtime_payload(
         if shadow_report_path is not None and shadow_report_path.exists()
         else None
     )
-    shadow_projection = build_shadow_projection(shadow_summary)
+    shadow_projection = _apply_shadow_service_metadata(
+        build_shadow_projection(shadow_summary),
+        campaign_summary,
+    )
     engine_judgment_projection = _build_engine_judgment_projection(
         payload=payload,
         shadow_summary=shadow_summary,
@@ -1896,6 +2217,7 @@ def export_technical_dashboard(
     monitoring_runtime=None,
     prefer_local_runtime_artifacts: bool = True,
     local_runtime_root: Path | None = None,
+    execution_runtime_projection_path: Path | None = None,
 ) -> DashboardArtifacts:
     """Export the local technical supervision interface to a static HTML file."""
 
@@ -1926,6 +2248,19 @@ def export_technical_dashboard(
     )
 
     if demo:
+        resolved_execution_runtime_projection_path = (
+            _resolve_execution_runtime_projection_path(
+                output_dir=output_dir,
+                explicit_path=execution_runtime_projection_path,
+            )
+        )
+        execution_runtime_projection_bridge_projection = (
+            build_execution_runtime_projection_bridge_projection(
+                execution_runtime_projection_path=resolved_execution_runtime_projection_path
+            )
+            if resolved_execution_runtime_projection_path is not None
+            else None
+        )
         snapshot, dtr_records, dtr_summary, cra_report, break_even_report, edge_report = _build_demo_snapshot()
         bundle, build9x_projection = _build_demo_build9x_projection(
             dtr_records,
@@ -1958,6 +2293,9 @@ def export_technical_dashboard(
             active_modules=active_modules,
             active_engines=active_engines,
             build9x_projection=build9x_projection,
+            execution_runtime_projection_bridge_projection=(
+                execution_runtime_projection_bridge_projection
+            ),
             runtime_hook_bridge_projections=runtime_hook_bridge_projections,
             replay_projection=replay_projection,
         )
@@ -1980,6 +2318,9 @@ def export_technical_dashboard(
             build9x_projection=build9x_projection,
             shadow_projection=shadow_projection,
             micro_live_projection=micro_live_projection,
+            execution_runtime_projection_bridge_projection=(
+                execution_runtime_projection_bridge_projection
+            ),
             runtime_hook_bridge_projections=runtime_hook_bridge_projections,
             replay_projection=replay_projection,
         )
@@ -2003,6 +2344,9 @@ def export_technical_dashboard(
             micro_live_projection=micro_live_projection,
             live_light_projection=live_light_projection,
             build14_projection=build14_projection,
+            execution_runtime_projection_bridge_projection=(
+                execution_runtime_projection_bridge_projection
+            ),
             runtime_hook_bridge_projections=runtime_hook_bridge_projections,
             replay_projection=replay_projection,
         )
@@ -2134,6 +2478,15 @@ def main(argv: list[str] | None = None) -> int:
         default=REPO_ROOT / "build" / "build11_live_websocket_campaign",
         help="Root directory for local runtime artifacts used to hydrate the dashboard outside demo mode.",
     )
+    parser.add_argument(
+        "--execution-runtime-projection-path",
+        type=Path,
+        default=None,
+        help=(
+            "Optional Local IA Lab execution runtime projection artifact used to surface "
+            "the bounded THR-X03/X05 consumer bridge in demo mode."
+        ),
+    )
     args = parser.parse_args(argv)
 
     artifacts = export_technical_dashboard(
@@ -2141,6 +2494,7 @@ def main(argv: list[str] | None = None) -> int:
         demo=args.demo,
         prefer_local_runtime_artifacts=not args.availability_only,
         local_runtime_root=args.local_runtime_root,
+        execution_runtime_projection_path=args.execution_runtime_projection_path,
     )
     print(f"Technical dashboard HTML: {artifacts.html_path}")
     if artifacts.payload_json_path is not None:

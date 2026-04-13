@@ -30,6 +30,7 @@ class LocalLabScopeAnalysisRow(BaseModel, frozen=True):
     artifact_ablation_study_path: str = Field(..., min_length=1)
     artifact_proof_summary_path: str = Field(..., min_length=1)
     artifact_proof_assessment_path: str = Field(..., min_length=1)
+    calibration_methods_review_path: str = Field(..., min_length=1)
     candidate_record_count: int = Field(default=0, ge=0)
     baseline_record_count: int = Field(default=0, ge=0)
     executed_records: int = Field(default=0, ge=0)
@@ -37,6 +38,8 @@ class LocalLabScopeAnalysisRow(BaseModel, frozen=True):
     artifact_ablation_ready: bool = False
     artifact_proof_ready: bool = False
     artifact_proof_validation_reasons: tuple[str, ...] = ()
+    calibration_methods_review_status: str = Field(default="not_evaluated", min_length=1)
+    calibration_methods_review_ready: bool = False
     release_ready: bool = False
     release_blocking_reasons: tuple[str, ...] = ()
     release_scope_summary_path: str | None = None

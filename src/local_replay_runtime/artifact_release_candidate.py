@@ -19,8 +19,11 @@ class LocalLabArtifactReleaseScope(BaseModel, frozen=True):
     trade_loss_attribution_path: str | None = None
     artifact_proof_summary_path: str | None = None
     artifact_proof_assessment_path: str | None = None
+    calibration_methods_review_path: str | None = None
     executed_records: int = Field(default=0, ge=0)
     losing_trade_count: int = Field(default=0, ge=0)
+    calibration_methods_review_status: str = Field(default="not_evaluated", min_length=1)
+    calibration_methods_review_ready: bool = False
     release_scope_summary_path: str | None = None
     release_ready: bool = False
     blocking_reasons: tuple[str, ...] = ()
@@ -43,8 +46,11 @@ class LocalLabArtifactReleaseScopeSummary(BaseModel, frozen=True):
     trade_loss_attribution_path: str | None = None
     artifact_proof_summary_path: str | None = None
     artifact_proof_assessment_path: str | None = None
+    calibration_methods_review_path: str | None = None
     executed_records: int = Field(default=0, ge=0)
     losing_trade_count: int = Field(default=0, ge=0)
+    calibration_methods_review_status: str = Field(default="not_evaluated", min_length=1)
+    calibration_methods_review_ready: bool = False
     scope_release_ready: bool = False
     scope_blocking_reasons: tuple[str, ...] = ()
     shared_release_gate_summary_path: str | None = None
@@ -66,12 +72,25 @@ class LocalLabArtifactReleaseCandidate(BaseModel, frozen=True):
     local_lab_recalibration_plan_path: str | None = None
     artifact_proof_summary_path: str | None = None
     artifact_proof_assessment_path: str | None = None
+    local_lab_calibration_methods_review_path: str | None = None
+    local_lab_execution_runtime_projection_path: str | None = None
     scope_matrix_path: str | None = None
     target_runtime_mode: RuntimeMode = RuntimeMode.SHADOW
     release_status: str = Field(..., min_length=1)
     ready_for_shadow_import: bool = False
     artifact_proof_ready: bool = False
     artifact_proof_validation_reasons: tuple[str, ...] = ()
+    calibration_methods_review_status: str = Field(default="not_evaluated", min_length=1)
+    calibration_methods_review_ready: bool = False
+    calibration_methods_dsr_pass: bool | None = None
+    calibration_methods_walk_forward_plan_ready: bool = False
+    execution_runtime_projection_status: str = Field(default="not_evaluated", min_length=1)
+    execution_runtime_projection_ready: bool = False
+    execution_runtime_projection_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_ready_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_partial_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_blocked_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_blocking_reasons: tuple[str, ...] = ()
     recalibration_candidate_ready: bool = False
     recalibration_blocking_reasons: tuple[str, ...] = ()
     scope_count: int = Field(default=0, ge=0)
@@ -97,6 +116,19 @@ def build_local_lab_artifact_release_candidate(
     recalibration_blocking_reasons: tuple[str, ...],
     artifact_proof_ready: bool,
     artifact_proof_validation_reasons: tuple[str, ...],
+    local_lab_calibration_methods_review_path: str | None = None,
+    calibration_methods_review_status: str = "not_evaluated",
+    calibration_methods_review_ready: bool = False,
+    calibration_methods_dsr_pass: bool | None = None,
+    calibration_methods_walk_forward_plan_ready: bool = False,
+    local_lab_execution_runtime_projection_path: str | None = None,
+    execution_runtime_projection_status: str = "not_evaluated",
+    execution_runtime_projection_ready: bool = False,
+    execution_runtime_projection_consumer_count: int = 0,
+    execution_runtime_projection_ready_consumer_count: int = 0,
+    execution_runtime_projection_partial_consumer_count: int = 0,
+    execution_runtime_projection_blocked_consumer_count: int = 0,
+    execution_runtime_projection_blocking_reasons: tuple[str, ...] = (),
     artifact_proof_summary_path: str | None = None,
     artifact_proof_assessment_path: str | None = None,
     scope_matrix_path: str | None = None,
@@ -130,8 +162,11 @@ def build_local_lab_artifact_release_candidate(
                 trade_loss_attribution_path=scope.trade_loss_attribution_path,
                 artifact_proof_summary_path=scope.artifact_proof_summary_path,
                 artifact_proof_assessment_path=scope.artifact_proof_assessment_path,
+                calibration_methods_review_path=scope.calibration_methods_review_path,
                 executed_records=scope.executed_records,
                 losing_trade_count=scope.losing_trade_count,
+                calibration_methods_review_status=scope.calibration_methods_review_status,
+                calibration_methods_review_ready=scope.calibration_methods_review_ready,
                 release_ready=scope.artifact_proof_ready,
                 blocking_reasons=scope.artifact_proof_validation_reasons,
             )
@@ -156,12 +191,33 @@ def build_local_lab_artifact_release_candidate(
         local_lab_recalibration_plan_path=local_lab_recalibration_plan_path,
         artifact_proof_summary_path=artifact_proof_summary_path,
         artifact_proof_assessment_path=artifact_proof_assessment_path,
+        local_lab_calibration_methods_review_path=local_lab_calibration_methods_review_path,
+        local_lab_execution_runtime_projection_path=local_lab_execution_runtime_projection_path,
         scope_matrix_path=scope_matrix_path,
         target_runtime_mode=RuntimeMode.SHADOW,
         release_status=release_status,
         ready_for_shadow_import=ready_for_shadow_import,
         artifact_proof_ready=artifact_proof_ready,
         artifact_proof_validation_reasons=artifact_proof_validation_reasons,
+        calibration_methods_review_status=calibration_methods_review_status,
+        calibration_methods_review_ready=calibration_methods_review_ready,
+        calibration_methods_dsr_pass=calibration_methods_dsr_pass,
+        calibration_methods_walk_forward_plan_ready=calibration_methods_walk_forward_plan_ready,
+        execution_runtime_projection_status=execution_runtime_projection_status,
+        execution_runtime_projection_ready=execution_runtime_projection_ready,
+        execution_runtime_projection_consumer_count=execution_runtime_projection_consumer_count,
+        execution_runtime_projection_ready_consumer_count=(
+            execution_runtime_projection_ready_consumer_count
+        ),
+        execution_runtime_projection_partial_consumer_count=(
+            execution_runtime_projection_partial_consumer_count
+        ),
+        execution_runtime_projection_blocked_consumer_count=(
+            execution_runtime_projection_blocked_consumer_count
+        ),
+        execution_runtime_projection_blocking_reasons=(
+            execution_runtime_projection_blocking_reasons
+        ),
         recalibration_candidate_ready=recalibration_candidate_ready,
         recalibration_blocking_reasons=recalibration_blocking_reasons,
         scope_count=scope_count,
@@ -197,8 +253,11 @@ def build_local_lab_artifact_release_scope_summary(
         trade_loss_attribution_path=scope.trade_loss_attribution_path,
         artifact_proof_summary_path=scope.artifact_proof_summary_path,
         artifact_proof_assessment_path=scope.artifact_proof_assessment_path,
+        calibration_methods_review_path=scope.calibration_methods_review_path,
         executed_records=scope.executed_records,
         losing_trade_count=scope.losing_trade_count,
+        calibration_methods_review_status=scope.calibration_methods_review_status,
+        calibration_methods_review_ready=scope.calibration_methods_review_ready,
         scope_release_ready=scope.release_ready,
         scope_blocking_reasons=scope.blocking_reasons,
         shared_release_gate_summary_path=shared_release_gate_summary_path,

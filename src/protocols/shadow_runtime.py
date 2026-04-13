@@ -12,6 +12,9 @@ from interface_contracts import ProfileId, PromotionState, ReviewState, RuntimeM
 from local_replay_runtime import LocalReplayRuntimeEvidence
 from monitoring import TechnicalDashboardPayload
 from protocols.contracts import (
+    DailyPnlBreakerGovernanceSummary,
+    InfoStressGovernanceSummary,
+    RegimeLiteGovernanceSummary,
     ShadowComparison,
     ShadowComponentAssessment,
     ShadowEngineJudgment,
@@ -33,6 +36,9 @@ from protocols.enums import (
     ShadowVerdict,
 )
 from protocols.errors import ShadowInputError
+from regime_classifier import RegimeLiteAssessment
+from risk_backbone import InfoStressAssessment, RegimeLiteSafingRecommendation
+from risk_backbone.loss_budgeter import DailyPnlBreakerAssessment
 
 
 _REQUIRED_SHADOW_ENGINES = frozenset(
@@ -1008,6 +1014,10 @@ def run_shadow_validation(
     shadow_input: ShadowInput,
     *,
     run_id: str | None = None,
+    regime_lite_assessment: RegimeLiteAssessment | None = None,
+    regime_lite_safing_recommendation: RegimeLiteSafingRecommendation | None = None,
+    info_stress_assessment: InfoStressAssessment | None = None,
+    daily_pnl_breaker_assessment: DailyPnlBreakerAssessment | None = None,
 ) -> ShadowRunSummary:
     """Run the minimal real Build-11 Shadow gating logic."""
 
@@ -1031,6 +1041,16 @@ def run_shadow_validation(
         and validation.runtime_config_loaded
         and validation.runtime_shadow_dtr_persisted
         and validation.runtime_continuous_hours >= 24.0
+    )
+    regime_lite_governance = _build_regime_lite_governance_summary(
+        regime_lite_assessment=regime_lite_assessment,
+        regime_lite_safing_recommendation=regime_lite_safing_recommendation,
+    )
+    info_stress_governance = _build_info_stress_governance_summary(
+        info_stress_assessment=info_stress_assessment,
+    )
+    daily_pnl_breaker_governance = _build_daily_pnl_breaker_governance_summary(
+        daily_pnl_breaker_assessment=daily_pnl_breaker_assessment,
     )
 
     if not validation.accepted_import:
@@ -1407,6 +1427,159 @@ def run_shadow_validation(
         inter_engine_comparison_ready=validation.inter_engine_comparison_ready,
         build14_contribution_ready=validation.build14_contribution_ready,
         component_assessments=validation.component_assessments,
+        regime_lite_governance=regime_lite_governance,
+        info_stress_governance=info_stress_governance,
+        daily_pnl_breaker_governance=daily_pnl_breaker_governance,
+    )
+
+
+def _build_regime_lite_governance_summary(
+    *,
+    regime_lite_assessment: RegimeLiteAssessment | None,
+    regime_lite_safing_recommendation: RegimeLiteSafingRecommendation | None,
+) -> RegimeLiteGovernanceSummary:
+    if regime_lite_assessment is None and regime_lite_safing_recommendation is None:
+        return RegimeLiteGovernanceSummary()
+
+    if regime_lite_assessment is not None and regime_lite_safing_recommendation is not None:
+        status = "ready"
+    elif regime_lite_assessment is not None:
+        status = "assessment_only"
+    else:
+        status = "recommendation_only"
+
+    assessment_reason_codes = (
+        regime_lite_assessment.reason_codes if regime_lite_assessment is not None else ()
+    )
+    safing_reason_codes = (
+        regime_lite_safing_recommendation.reason_codes
+        if regime_lite_safing_recommendation is not None
+        else ()
+    )
+    operator_safing_request = (
+        regime_lite_safing_recommendation.operator_safing_request
+        if regime_lite_safing_recommendation is not None
+        else None
+    )
+    return RegimeLiteGovernanceSummary(
+        status=status,
+        state=(
+            regime_lite_assessment.state.value
+            if regime_lite_assessment is not None
+            else "not_configured"
+        ),
+        candidate_state=(
+            regime_lite_assessment.candidate_state.value
+            if regime_lite_assessment is not None
+            else "not_configured"
+        ),
+        state_changed=(
+            regime_lite_assessment.state_changed
+            if regime_lite_assessment is not None
+            else False
+        ),
+        entries_blocked=(
+            regime_lite_assessment.entries_blocked
+            if regime_lite_assessment is not None
+            else False
+        ),
+        sudden_event=(
+            regime_lite_assessment.sudden_event
+            if regime_lite_assessment is not None
+            else False
+        ),
+        safing_severity=(
+            regime_lite_safing_recommendation.severity.value
+            if regime_lite_safing_recommendation is not None
+            else "not_configured"
+        ),
+        should_block_new_entries=(
+            regime_lite_safing_recommendation.should_block_new_entries
+            if regime_lite_safing_recommendation is not None
+            else (
+                regime_lite_assessment.entries_blocked
+                if regime_lite_assessment is not None
+                else False
+            )
+        ),
+        should_exit_all=(
+            regime_lite_safing_recommendation.should_exit_all
+            if regime_lite_safing_recommendation is not None
+            else False
+        ),
+        recommended_operator_action=(
+            regime_lite_safing_recommendation.recommended_operator_action.value
+            if (
+                regime_lite_safing_recommendation is not None
+                and regime_lite_safing_recommendation.recommended_operator_action is not None
+            )
+            else ""
+        ),
+        operator_safing_request_action=(
+            operator_safing_request.action.value
+            if operator_safing_request is not None
+            else ""
+        ),
+        operator_safing_request_source_runtime_mode=(
+            operator_safing_request.source_runtime_mode.value
+            if operator_safing_request is not None
+            else ""
+        ),
+        reason_codes=tuple(
+            dict.fromkeys(assessment_reason_codes + safing_reason_codes)
+        ),
+        detail=(
+            regime_lite_safing_recommendation.detail
+            if regime_lite_safing_recommendation is not None
+            else (
+                "regime_lite assessment supplied without explicit safing recommendation"
+                if regime_lite_assessment is not None
+                else "regime_lite safing recommendation supplied without explicit assessment"
+            )
+        ),
+    )
+
+
+def _build_info_stress_governance_summary(
+    *,
+    info_stress_assessment: InfoStressAssessment | None,
+) -> InfoStressGovernanceSummary:
+    if info_stress_assessment is None:
+        return InfoStressGovernanceSummary()
+
+    return InfoStressGovernanceSummary(
+        status="assessment_only",
+        level=info_stress_assessment.level.value,
+        alert_count=info_stress_assessment.alert_count,
+        entries_blocked=info_stress_assessment.entries_blocked,
+        entries_blocked_until_ts=info_stress_assessment.entries_blocked_until_ts,
+        reason_codes=info_stress_assessment.reason_codes,
+        detail=info_stress_assessment.detail,
+    )
+
+
+def _build_daily_pnl_breaker_governance_summary(
+    *,
+    daily_pnl_breaker_assessment: DailyPnlBreakerAssessment | None,
+) -> DailyPnlBreakerGovernanceSummary:
+    if daily_pnl_breaker_assessment is None:
+        return DailyPnlBreakerGovernanceSummary()
+
+    return DailyPnlBreakerGovernanceSummary(
+        status="assessment_only",
+        verdict=daily_pnl_breaker_assessment.verdict.value,
+        should_force_shadow=daily_pnl_breaker_assessment.should_force_shadow,
+        circuit_breaker_tripped=daily_pnl_breaker_assessment.circuit_breaker_tripped,
+        circuit_breaker_reason=daily_pnl_breaker_assessment.circuit_breaker_reason,
+        drawdown_pct=daily_pnl_breaker_assessment.drawdown_pct,
+        threshold_pct=daily_pnl_breaker_assessment.threshold_pct,
+        shadow_locked_session_date=(
+            daily_pnl_breaker_assessment.state.shadow_locked_session_date
+        ),
+        state_corrupted=daily_pnl_breaker_assessment.state.state_corrupted,
+        state_last_reason=daily_pnl_breaker_assessment.state.last_reason,
+        detail=daily_pnl_breaker_assessment.detail,
+        reason_codes=daily_pnl_breaker_assessment.reason_codes,
     )
 
 

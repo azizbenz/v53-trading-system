@@ -9,6 +9,15 @@ from meta_learning.contracts import TradeLossAttributionReport
 from meta_minimal.meta_runtime import MetaRuntimeResult
 
 from local_replay_runtime.artifact_ablation_study import LocalLabAblationStudy
+from local_replay_runtime.local_lab_calibration_methods_review import (
+    LocalLabCalibrationMethodsReview,
+)
+from local_replay_runtime.local_lab_execution_runtime_projection import (
+    LocalLabExecutionRuntimeProjection,
+)
+from local_replay_runtime.local_lab_multiple_testing_review import (
+    LocalLabMultipleTestingReview,
+)
 from local_replay_runtime.walk_forward_review import WalkForwardReviewSummary
 
 
@@ -31,6 +40,27 @@ class LocalLabArtifactProofAssessment(BaseModel, frozen=True):
     friction_regret_ratio: float = Field(default=0.0, ge=0.0)
     observed_block_rate_proxy: float = Field(default=0.0, ge=0.0)
     capital_efficiency_ratio: float | None = None
+    calibration_methods_review_status: str = Field(default="not_evaluated", min_length=1)
+    calibration_methods_review_ready: bool = False
+    calibration_methods_blocking_reasons: tuple[str, ...] = ()
+    calibration_methods_dsr_pass: bool | None = None
+    calibration_methods_dsr_value: float | None = None
+    calibration_methods_walk_forward_plan_ready: bool = False
+    calibration_methods_stationarity_pass: bool | None = None
+    calibration_methods_stationarity_status: str = Field(default="not_evaluated", min_length=1)
+    execution_runtime_projection_status: str = Field(default="not_evaluated", min_length=1)
+    execution_runtime_projection_ready: bool = False
+    execution_runtime_projection_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_ready_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_partial_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_blocked_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_blocking_reasons: tuple[str, ...] = ()
+    multiple_testing_review_status: str = Field(default="not_evaluated", min_length=1)
+    multiple_testing_review_ready: bool = False
+    multiple_testing_correction_required: bool = False
+    multiple_testing_correction: str = Field(default="not_evaluated", min_length=1)
+    multiple_testing_family_count: int = Field(default=0, ge=0)
+    multiple_testing_blocking_reasons: tuple[str, ...] = ()
 
 
 def _build_friction_regret_ratio(meta_result: MetaRuntimeResult) -> tuple[float, tuple[str, ...]]:
@@ -72,6 +102,9 @@ def build_local_lab_artifact_proof_assessment(
     trade_loss_attribution: TradeLossAttributionReport,
     walk_forward_review: WalkForwardReviewSummary,
     ablation_study: LocalLabAblationStudy | None = None,
+    calibration_methods_review: LocalLabCalibrationMethodsReview | None = None,
+    execution_runtime_projection: LocalLabExecutionRuntimeProjection | None = None,
+    multiple_testing_review: LocalLabMultipleTestingReview | None = None,
 ) -> LocalLabArtifactProofAssessment:
     """Build a conservative canonical proof summary from current Local IA Lab evidence."""
 
@@ -161,7 +194,98 @@ def build_local_lab_artifact_proof_assessment(
     if has_unclassified_loss:
         caution_flags.append("UNCLASSIFIED_LOSS_PRESENT")
 
-    validation_reasons = validate_artifact_proof_summary(proof_summary)
+    validation_reasons = list(validate_artifact_proof_summary(proof_summary))
+    calibration_methods_review_status = "not_evaluated"
+    calibration_methods_review_ready = False
+    calibration_methods_blocking_reasons: tuple[str, ...] = ()
+    calibration_methods_dsr_pass: bool | None = None
+    calibration_methods_dsr_value: float | None = None
+    calibration_methods_walk_forward_plan_ready = False
+    calibration_methods_stationarity_pass: bool | None = None
+    calibration_methods_stationarity_status = "not_evaluated"
+    if calibration_methods_review is None:
+        pending_dimensions.append("CALIBRATION_METHODS_REVIEW")
+        caution_flags.append("CALIBRATION_METHODS_REVIEW_MISSING")
+    else:
+        calibration_methods_review_status = calibration_methods_review.review_status.value
+        calibration_methods_review_ready = calibration_methods_review.review_ready
+        calibration_methods_blocking_reasons = calibration_methods_review.blocking_reasons
+        calibration_methods_dsr_pass = calibration_methods_review.dsr_pass
+        calibration_methods_dsr_value = (
+            None
+            if calibration_methods_review.dsr_result is None
+            else calibration_methods_review.dsr_result.dsr
+        )
+        calibration_methods_stationarity_pass = calibration_methods_review.stationarity_pass
+        calibration_methods_stationarity_status = calibration_methods_review.stationarity_status
+        calibration_methods_walk_forward_plan_ready = (
+            calibration_methods_review.walk_forward_plan_ready
+        )
+        caution_flags.extend(calibration_methods_review.caution_flags)
+        if not calibration_methods_review.walk_forward_plan_ready:
+            pending_dimensions.append("CALIBRATION_METHODS_WALK_FORWARD_GEOMETRY")
+        if calibration_methods_review.stationarity_ready is False:
+            pending_dimensions.append("CALIBRATION_METHODS_STATIONARITY")
+        if calibration_methods_review.dsr_ready is False:
+            pending_dimensions.append("CALIBRATION_METHODS_DSR")
+        if "CALIBRATION_METHODS_DSR_BELOW_FLOOR" in calibration_methods_review.blocking_reasons:
+            validation_reasons.append("LOCAL_LAB_DSR_REQUIRED")
+        if "CALIBRATION_METHODS_DSR_INVALID" in calibration_methods_review.blocking_reasons:
+            validation_reasons.append("LOCAL_LAB_DSR_INVALID")
+        if "CALIBRATION_METHODS_STATIONARITY_FAILED" in calibration_methods_review.blocking_reasons:
+            validation_reasons.append("LOCAL_LAB_STATIONARITY_REQUIRED")
+        if "CALIBRATION_METHODS_STATIONARITY_INVALID" in calibration_methods_review.blocking_reasons:
+            validation_reasons.append("LOCAL_LAB_STATIONARITY_INVALID")
+        if "CALIBRATION_METHODS_WALK_FORWARD_PLAN_INVALID" in calibration_methods_review.blocking_reasons:
+            validation_reasons.append("LOCAL_LAB_WALK_FORWARD_PLAN_INVALID")
+
+    execution_runtime_projection_status = "not_evaluated"
+    execution_runtime_projection_ready = False
+    execution_runtime_projection_consumer_count = 0
+    execution_runtime_projection_ready_consumer_count = 0
+    execution_runtime_projection_partial_consumer_count = 0
+    execution_runtime_projection_blocked_consumer_count = 0
+    execution_runtime_projection_blocking_reasons: tuple[str, ...] = ()
+    if execution_runtime_projection is not None:
+        execution_runtime_projection_status = execution_runtime_projection.projection_status.value
+        execution_runtime_projection_ready = execution_runtime_projection.projection_ready
+        execution_runtime_projection_consumer_count = execution_runtime_projection.consumer_count
+        execution_runtime_projection_ready_consumer_count = (
+            execution_runtime_projection.ready_consumer_count
+        )
+        execution_runtime_projection_partial_consumer_count = (
+            execution_runtime_projection.partial_consumer_count
+        )
+        execution_runtime_projection_blocked_consumer_count = (
+            execution_runtime_projection.blocked_consumer_count
+        )
+        execution_runtime_projection_blocking_reasons = (
+            execution_runtime_projection.blocking_reasons
+        )
+        caution_flags.extend(execution_runtime_projection.caution_flags)
+
+    multiple_testing_review_status = "not_evaluated"
+    multiple_testing_review_ready = False
+    multiple_testing_correction_required = False
+    multiple_testing_correction = "not_evaluated"
+    multiple_testing_family_count = 0
+    multiple_testing_blocking_reasons: tuple[str, ...] = ()
+    if multiple_testing_review is None:
+        caution_flags.append("MULTI_TEST_REVIEW_MISSING")
+    else:
+        multiple_testing_review_status = multiple_testing_review.review_status.value
+        multiple_testing_review_ready = multiple_testing_review.review_ready
+        multiple_testing_correction_required = multiple_testing_review.correction_required
+        multiple_testing_correction = multiple_testing_review.multi_test_correction
+        multiple_testing_family_count = multiple_testing_review.family_count
+        multiple_testing_blocking_reasons = multiple_testing_review.blocking_reasons
+        caution_flags.extend(multiple_testing_review.caution_flags)
+        if multiple_testing_review.review_status.value == "partial":
+            pending_dimensions.append("MULTI_TEST_CORRECTION")
+        if "MULTI_TEST_CORRECTION_INVALID" in multiple_testing_review.blocking_reasons:
+            validation_reasons.append("LOCAL_LAB_MULTI_TEST_CORRECTION_INVALID")
+        if "MULTI_TEST_CORRECTION_REQUIRED" in multiple_testing_review.blocking_reasons:
+            validation_reasons.append("LOCAL_LAB_MULTI_TEST_CORRECTION_REQUIRED")
 
     return LocalLabArtifactProofAssessment(
         correlation_id=correlation_id,
@@ -169,7 +293,7 @@ def build_local_lab_artifact_proof_assessment(
         run_id=run_id,
         proof_summary=proof_summary,
         ready_for_vps_import=not validation_reasons,
-        validation_reasons=validation_reasons,
+        validation_reasons=tuple(dict.fromkeys(validation_reasons)),
         pending_dimensions=tuple(dict.fromkeys(pending_dimensions)),
         caution_flags=tuple(dict.fromkeys(caution_flags)),
         dtr_coverage=dtr_coverage,
@@ -180,6 +304,35 @@ def build_local_lab_artifact_proof_assessment(
         friction_regret_ratio=friction_regret_ratio,
         observed_block_rate_proxy=observed_block_rate_proxy,
         capital_efficiency_ratio=capital_efficiency_ratio,
+        calibration_methods_review_status=calibration_methods_review_status,
+        calibration_methods_review_ready=calibration_methods_review_ready,
+        calibration_methods_blocking_reasons=calibration_methods_blocking_reasons,
+        calibration_methods_dsr_pass=calibration_methods_dsr_pass,
+        calibration_methods_dsr_value=calibration_methods_dsr_value,
+        calibration_methods_walk_forward_plan_ready=calibration_methods_walk_forward_plan_ready,
+        calibration_methods_stationarity_pass=calibration_methods_stationarity_pass,
+        calibration_methods_stationarity_status=calibration_methods_stationarity_status,
+        execution_runtime_projection_status=execution_runtime_projection_status,
+        execution_runtime_projection_ready=execution_runtime_projection_ready,
+        execution_runtime_projection_consumer_count=execution_runtime_projection_consumer_count,
+        execution_runtime_projection_ready_consumer_count=(
+            execution_runtime_projection_ready_consumer_count
+        ),
+        execution_runtime_projection_partial_consumer_count=(
+            execution_runtime_projection_partial_consumer_count
+        ),
+        execution_runtime_projection_blocked_consumer_count=(
+            execution_runtime_projection_blocked_consumer_count
+        ),
+        execution_runtime_projection_blocking_reasons=(
+            execution_runtime_projection_blocking_reasons
+        ),
+        multiple_testing_review_status=multiple_testing_review_status,
+        multiple_testing_review_ready=multiple_testing_review_ready,
+        multiple_testing_correction_required=multiple_testing_correction_required,
+        multiple_testing_correction=multiple_testing_correction,
+        multiple_testing_family_count=multiple_testing_family_count,
+        multiple_testing_blocking_reasons=multiple_testing_blocking_reasons,
     )
 
 

@@ -9,6 +9,7 @@ import shutil
 import httpx
 import yaml
 
+from calibration_loader import CalibrationArtifact
 from execution_backbone import (
     ExecutionOpportunity,
     ExecutionSubmissionStatus,
@@ -17,13 +18,19 @@ from execution_backbone import (
     VenueOrderEvent,
     VenueOrderEventType,
 )
+from execution_backbone.reconciliation_layer.scheduler import (
+    ReconciliationSchedulerCalibrationConfig,
+)
 from execution_backbone.order_decider.intent_builder import VenueConstraintSnapshot
 from interface_contracts import ArtifactActionKind, HookId
 from interface_contracts.atomic_io import atomic_write_json
 from interface_contracts.binance_contracts import BinanceCredentials
 from local_replay_runtime import (
     EdgeGateCalibrationConfig,
+    LocalLabExecutionTelemetry,
     build_edge_gate_calibration_artifact,
+    build_local_lab_execution_review,
+    build_local_lab_execution_runtime_projection,
     calibrate_edge_gate_thresholds,
 )
 from meta_minimal.dtr_core.decision_state_encoder import DecisionState
@@ -32,7 +39,9 @@ from protocols import (
     CompiledArtifactHookBinding,
     CompiledArtifactRegistrySnapshot,
     CompiledArtifactRegistryStore,
+    build_binance_execution_runtime_bootstrap_bundle,
     build_binance_execution_runtime,
+    build_execution_runtime_bootstrap_bundle,
     build_execution_runtime,
     inspect_execution_runtime_bootstrap,
 )
@@ -163,6 +172,61 @@ def _publish_execution_no_trade_snapshot(
     return store
 
 
+def _write_ready_execution_runtime_projection(path: Path) -> None:
+    projection = build_local_lab_execution_runtime_projection(
+        build_local_lab_execution_review(
+            correlation_id="corr-1",
+            export_dir="E:/lab/export",
+            run_id="run-1",
+            telemetry=LocalLabExecutionTelemetry(
+                correlation_id="corr-1",
+                export_dir="E:/lab/export",
+                run_id="run-1",
+                quota_call_counts=(45, 48, 42, 46),
+                quota_probe_durations_s=(60.0, 60.0, 60.0, 60.0),
+                quota_limit_calls_per_minute_values=(100, 120),
+                quota_calls_per_minute_observed=(45.0, 48.0, 42.0, 46.0),
+                quota_observation_days=31.0,
+                spread_bps=(6.0, 8.0, 9.0, 12.0),
+                spread_observation_days=31.0,
+                slippage_bps=(2.0, 2.8, 3.4, 4.0),
+                slippage_observation_days=31.0,
+                final_sizes=(1.0, 4.0, 9.0, 16.0),
+            ),
+        )
+    )
+    atomic_write_json(path, projection.model_dump(mode="json"), indent=2)
+
+
+def _write_reconciliation_scheduler_artifact(root: Path, *, interval_s: int | float = 1800) -> None:
+    version_dir = root / "v1"
+    version_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "artifact_id": "thr-i04-artifact",
+        "version": "v1",
+        "produced_by": "local_ia_lab",
+        "generated_at": "2026-04-12T12:00:00Z",
+        "thresholds": (
+            {
+                "threshold_id": "THR-I04",
+                "value": interval_s,
+                "source_module": "src/execution_backbone/reconciliation_layer/scheduler.py",
+                "calibration_artifact": "config/calibration/v1/infra.yml",
+            },
+        ),
+        "signature": {
+            "signed_by": "operator.aziz",
+            "signed_at": "2026-04-12T12:05:00Z",
+        },
+    }
+    artifact = CalibrationArtifact.model_validate(payload)
+    payload["signature"]["payload_hash_sha256"] = artifact.payload_hash_sha256()
+    (version_dir / "infra.yml").write_text(
+        yaml.safe_dump(payload, sort_keys=False),
+        encoding="utf-8",
+    )
+
+
 class _FakeSocket:
     def __init__(self, messages) -> None:
         self._messages = list(messages)
@@ -184,6 +248,28 @@ class _FakeSocket:
 
     def close(self) -> None:
         return None
+
+
+def _mock_binance_remote_state_request(request: httpx.Request) -> httpx.Response:
+    if request.url.path == "/api/v3/openOrders":
+        return httpx.Response(200, json=[])
+    if request.url.path == "/api/v3/account":
+        return httpx.Response(
+            200,
+            json={
+                "makerCommission": 10,
+                "takerCommission": 10,
+                "buyerCommission": 0,
+                "sellerCommission": 0,
+                "canTrade": True,
+                "canWithdraw": True,
+                "canDeposit": True,
+                "accountType": "SPOT",
+                "updateTime": 1_710_000_000_000,
+                "balances": [],
+            },
+        )
+    return httpx.Response(404, json={"code": -1, "msg": "unexpected path"})
 
 
 def test_build_execution_runtime_without_registry_state_dir_keeps_baseline_submission():
@@ -280,6 +366,102 @@ def test_build_execution_runtime_with_empty_registry_state_dir_fails_open():
 
         assert submission.status == ExecutionSubmissionStatus.SUBMITTED
         assert len(adapter.submissions) == 1
+    finally:
+        shutil.rmtree(state_dir, ignore_errors=True)
+
+
+def test_build_execution_runtime_can_load_lab_execution_runtime_projection():
+    state_dir = Path("build/test_protocols_execution_runtime_projection_bootstrap")
+    shutil.rmtree(state_dir, ignore_errors=True)
+    try:
+        projection_path = state_dir / "local_lab_execution_runtime_projection.json"
+        _write_ready_execution_runtime_projection(projection_path)
+        adapter = FakeExecutionVenue()
+        runtime = build_execution_runtime(
+            adapter,
+            execution_runtime_projection_path=projection_path,
+        )
+
+        submission = runtime.submit_opportunity(
+            _opportunity().model_copy(
+                update={
+                    "quantity": 9.0,
+                    "metadata": {"rest_quota_ratio_current": 0.85},
+                }
+            ),
+            now=12.1,
+        )
+
+        assert submission.status == ExecutionSubmissionStatus.NO_TRADE
+        assert submission.no_trade is not None
+        assert submission.no_trade.context["gate"] == "rate_limiter"
+        assert len(adapter.submissions) == 0
+    finally:
+        shutil.rmtree(state_dir, ignore_errors=True)
+
+
+def test_build_execution_runtime_bootstrap_bundle_can_run_boot_reconciliation():
+    adapter = FakeExecutionVenue()
+
+    bundle = build_execution_runtime_bootstrap_bundle(
+        adapter,
+        reconciliation_boot_now=1_700_000_000.5,
+    )
+
+    assert bundle.reconciliation_scheduler is not None
+    assert bundle.reconciliation_boot_result is not None
+    assert bundle.reconciliation_boot_result.executed is True
+    assert bundle.reconciliation_boot_result.trading_blocked is False
+    assert bundle.reconciliation_boot_result.interval_s == 3600.0
+    assert bundle.reconciliation_scheduler.state.next_due_ts == 1_700_003_600.5
+
+
+def test_build_execution_runtime_bootstrap_bundle_can_load_governed_thr_i04():
+    state_dir = Path("build/test_protocols_execution_runtime_reconciliation_bootstrap")
+    shutil.rmtree(state_dir, ignore_errors=True)
+    try:
+        _write_reconciliation_scheduler_artifact(state_dir, interval_s=1800)
+        adapter = FakeExecutionVenue()
+        bundle = build_execution_runtime_bootstrap_bundle(
+            adapter,
+            reconciliation_scheduler_calibration_config=(
+                ReconciliationSchedulerCalibrationConfig(
+                    calibration_root=str(state_dir),
+                    calibration_version="v1",
+                )
+            ),
+            reconciliation_boot_now=1_700_000_001.0,
+        )
+
+        assert bundle.reconciliation_scheduler is not None
+        assert bundle.reconciliation_boot_result is not None
+        assert bundle.reconciliation_boot_result.executed is True
+        assert bundle.reconciliation_boot_result.interval_s == 1800.0
+        assert bundle.reconciliation_scheduler.state.next_due_ts == 1_700_001_801.0
+    finally:
+        shutil.rmtree(state_dir, ignore_errors=True)
+
+
+def test_build_execution_runtime_bootstrap_bundle_accepts_gatekeeper_audit_path():
+    state_dir = Path("build/test_protocols_execution_runtime_gatekeeper_audit")
+    shutil.rmtree(state_dir, ignore_errors=True)
+    try:
+        adapter = FakeExecutionVenue()
+        audit_path = state_dir / "artifacts" / "gatekeeper" / "audit.jsonl"
+
+        bundle = build_execution_runtime_bootstrap_bundle(
+            adapter,
+            gatekeeper_audit_path=audit_path,
+        )
+
+        submission = bundle.runtime.submit_opportunity(_opportunity(), now=100.0)
+
+        assert submission.status == ExecutionSubmissionStatus.SUBMITTED
+        lines = audit_path.read_text(encoding="utf-8").strip().splitlines()
+        assert len(lines) == 1
+        payload = json.loads(lines[0])
+        assert payload["decision"] == "submitted"
+        assert payload["pair"] == "BTCUSDT"
     finally:
         shutil.rmtree(state_dir, ignore_errors=True)
 
@@ -384,3 +566,69 @@ def test_build_binance_execution_runtime_can_enable_fee_aware_edge_gate_from_ada
     finally:
         asyncio.run(http_client.aclose())
         shutil.rmtree(state_dir, ignore_errors=True)
+
+
+def test_build_binance_execution_runtime_bootstrap_bundle_exposes_boot_reconciliation():
+    fake_socket = _FakeSocket(
+        [
+            json.dumps(
+                {
+                    "id": "v53-user-data-subscribe",
+                    "status": 200,
+                    "result": {"subscriptionId": 7},
+                }
+            ),
+            json.dumps(
+                {
+                    "subscriptionId": 7,
+                    "event": {
+                        "e": "executionReport",
+                        "E": 1_710_000_008_000,
+                        "s": "BTCUSDT",
+                        "c": "v53_engine_a_intent-1",
+                        "S": "BUY",
+                        "o": "LIMIT",
+                        "f": "GTC",
+                        "q": "0.25000000",
+                        "p": "50000.10000000",
+                        "x": "NEW",
+                        "X": "NEW",
+                        "i": 123463,
+                        "l": "0.00000000",
+                        "z": "0.00000000",
+                        "L": "0.00000000",
+                        "n": "0",
+                        "N": None,
+                        "t": -1,
+                        "r": "NONE",
+                    },
+                }
+            ),
+        ]
+    )
+    http_client = httpx.AsyncClient(
+        base_url="https://testnet.binance.vision",
+        transport=httpx.MockTransport(_mock_binance_remote_state_request),
+    )
+    try:
+        bundle = build_binance_execution_runtime_bootstrap_bundle(
+            credentials=BinanceCredentials(
+                api_key="test-api-key",
+                secret_key="test-api-secret",
+                label="testnet",
+            ),
+            config=BinanceAdapterConfig(rest_base_url="https://testnet.binance.vision"),
+            http_client=http_client,
+            user_data_stream_enabled=True,
+            user_data_socket_factory=lambda endpoint, connect_timeout_s, recv_timeout_s: fake_socket,
+            clock_ms=lambda: 1_710_000_000_000,
+            reconciliation_boot_now=1_710_000_000.5,
+        )
+
+        assert bundle.reconciliation_scheduler is not None
+        assert bundle.reconciliation_boot_result is not None
+        assert bundle.reconciliation_boot_result.executed is True
+        assert bundle.reconciliation_boot_result.trading_blocked is False
+        assert bundle.runtime._adapter.poll_order_events()[0].event_type == VenueOrderEventType.ACK
+    finally:
+        asyncio.run(http_client.aclose())

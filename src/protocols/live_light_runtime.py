@@ -7,10 +7,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from complete_enablers.contracts import Build14InfluenceReport, Build14InfluenceSignal
 from pydantic import ValidationError
 
-from interface_contracts import ALL_PAIRS, PromotionState, ProfileId, ReviewState, RuntimeMode
+from interface_contracts import (
+    ALL_PAIRS,
+    Build14InfluenceReport,
+    Build14InfluenceSignal,
+    PromotionState,
+    ProfileId,
+    ReviewState,
+    RuntimeMode,
+)
 from monitoring import TechnicalDashboardPayload
 from protocols.contracts import (
     LiveLightDecision,
@@ -825,6 +832,29 @@ def build_live_light_input_from_micro_live(
         onboarding_review_state=onboarding_review_state,
         onboarding_reasons=onboarding_reasons,
         review_export_ready=micro_live_payload.shadow.review_export_ready,
+        execution_runtime_projection_ref=(
+            micro_live_summary.execution_runtime_projection_ref
+        ),
+        execution_runtime_projection_status=(
+            micro_live_summary.execution_runtime_projection_status
+        ),
+        execution_runtime_projection_ready=(
+            micro_live_summary.execution_runtime_projection_ready
+        ),
+        execution_runtime_projection_consumer_count=(
+            micro_live_summary.execution_runtime_projection_consumer_count
+        ),
+        execution_runtime_projection_ready_consumer_count=(
+            micro_live_summary.execution_runtime_projection_ready_consumer_count
+        ),
+        execution_runtime_projection_partial_consumer_count=(
+            micro_live_summary.execution_runtime_projection_partial_consumer_count
+        ),
+        execution_runtime_projection_blocked_consumer_count=(
+            micro_live_summary.execution_runtime_projection_blocked_consumer_count
+        ),
+        regime_lite_governance=micro_live_summary.regime_lite_governance,
+        info_stress_governance=micro_live_summary.info_stress_governance,
         observability_ready=observability_ready,
         halt_ready=halt_ready,
         operator_safing_request=operator_safing_request,
@@ -1293,6 +1323,29 @@ def run_live_light_gate(
         execution_intent=execution_intent,
         import_artifact_id=live_light_input.import_artifact_id,
         import_lineage_version=live_light_input.import_lineage_version,
+        execution_runtime_projection_ref=(
+            live_light_input.execution_runtime_projection_ref
+        ),
+        execution_runtime_projection_status=(
+            live_light_input.execution_runtime_projection_status
+        ),
+        execution_runtime_projection_ready=(
+            live_light_input.execution_runtime_projection_ready
+        ),
+        execution_runtime_projection_consumer_count=(
+            live_light_input.execution_runtime_projection_consumer_count
+        ),
+        execution_runtime_projection_ready_consumer_count=(
+            live_light_input.execution_runtime_projection_ready_consumer_count
+        ),
+        execution_runtime_projection_partial_consumer_count=(
+            live_light_input.execution_runtime_projection_partial_consumer_count
+        ),
+        execution_runtime_projection_blocked_consumer_count=(
+            live_light_input.execution_runtime_projection_blocked_consumer_count
+        ),
+        regime_lite_governance=live_light_input.regime_lite_governance,
+        info_stress_governance=live_light_input.info_stress_governance,
         observability_ready=live_light_input.observability_ready,
         halt_ready=live_light_input.halt_ready,
         operator_safing_request=live_light_input.operator_safing_request,

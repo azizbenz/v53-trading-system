@@ -2,57 +2,19 @@
 
 from __future__ import annotations
 
-from datetime import date
 import json
-import time
-from enum import StrEnum
 from pathlib import Path
 
 from pydantic import BaseModel, Field, model_validator
 
+from interface_contracts.shadow_vps_service_contracts import (
+    ShadowVpsCampaignSummary,
+    ShadowVpsRuntimeEvidenceBundle,
+    ShadowVpsServiceEvent,
+    ShadowVpsServiceState,
+    ShadowVpsServiceStatus,
+)
 from interface_contracts.atomic_io import atomic_write_json
-
-
-class ShadowVpsServiceStatus(StrEnum):
-    """Runtime status for the autonomous VPS Shadow service."""
-
-    IDLE = "idle"
-    RUNNING = "running"
-    DEGRADED = "degraded"
-    STOPPED = "stopped"
-
-
-class ShadowVpsServiceState(BaseModel):
-    """Persisted state for the autonomous VPS Shadow service."""
-
-    service_status: ShadowVpsServiceStatus = ShadowVpsServiceStatus.IDLE
-    started_at: float | None = None
-    last_heartbeat_at: float | None = None
-    loop_count: int = Field(default=0, ge=0)
-    success_count: int = Field(default=0, ge=0)
-    idle_count: int = Field(default=0, ge=0)
-    failure_count: int = Field(default=0, ge=0)
-    resumed: bool = False
-    last_selected_session_date: str = ""
-    last_completed_session_date: str = ""
-    last_raw_input_dir_ref: str = ""
-    last_websocket_input_dir_ref: str = ""
-    last_live_capture_dir_ref: str = ""
-    last_live_capture_snapshot_batch_ref: str = ""
-    last_live_capture_summary_ref: str = ""
-    last_live_user_data_summary_ref: str = ""
-    last_auto_snapshot_dir_ref: str = ""
-    last_auto_export_dir_ref: str = ""
-    last_export_dir_ref: str = ""
-    last_local_replay_evidence_ref: str = ""
-    last_shadow_runtime_evidence_ref: str = ""
-    last_runtime_evidence_bundle_ref: str = ""
-    last_shadow_report_ref: str = ""
-    last_shadow_session_summary_ref: str = ""
-    last_shadow_session_registry_ref: str = ""
-    last_orchestrator_state_ref: str = ""
-    last_campaign_summary_ref: str = ""
-    last_error: str = ""
 
 
 class ShadowVpsRawInputConfig(BaseModel, frozen=True):
@@ -108,6 +70,23 @@ class ShadowLiveWebSocketConfig(BaseModel, frozen=True):
     capture_timeout_s: float = Field(default=15.0, gt=0.0)
     capture_frame_limit: int = Field(default=50, ge=1)
     idle_poll_limit: int = Field(default=20, ge=1)
+    time_sync_probe_enabled: bool = False
+    time_sync_rest_base_url: str = Field(
+        default="https://api.binance.com",
+        min_length=1,
+    )
+    time_sync_rest_timeout_s: float = Field(default=5.0, gt=0.0)
+    time_sync_sample_count: int = Field(default=3, ge=1, le=32)
+    time_sync_sample_pause_s: float = Field(default=0.0, ge=0.0, le=5.0)
+    time_sync_rest_quota_max_calls_per_minute: int | None = Field(default=None, ge=1)
+    execution_runtime_bootstrap_enabled: bool = False
+    execution_runtime_gatekeeper_audit_path_ref: str = ""
+    execution_runtime_projection_path_ref: str = ""
+    regime_lite_assessment_path_ref: str = ""
+    regime_lite_safing_recommendation_path_ref: str = ""
+    info_stress_assessment_path_ref: str = ""
+    telegram_alert_config_path_ref: str = ""
+    telegram_alert_key_path_ref: str = ""
     user_data_stream_enabled: bool = False
     user_data_endpoint: str = Field(
         default="wss://ws-api.binance.com:443/ws-api/v3",
@@ -153,114 +132,15 @@ class ShadowLiveWebSocketCaptureResult(BaseModel, frozen=True):
     rejected_message_count: int = Field(default=0, ge=0)
     pair_scope: tuple[str, ...] = ()
     event_types: tuple[str, ...] = ()
+    time_sync_offsets_path_ref: str = ""
+    time_sync_sample_count: int = Field(default=0, ge=0)
+    time_sync_probe_error: str = ""
     user_data_summary_path_ref: str = ""
     user_data_events_path_ref: str = ""
     user_data_authenticated: bool = False
     user_data_subscription_id: int | None = Field(default=None, ge=0)
     user_data_event_count: int = Field(default=0, ge=0)
     user_data_event_types: tuple[str, ...] = ()
-
-
-class ShadowVpsRuntimeEvidenceBundle(BaseModel, frozen=True):
-    """Durable proof chain emitted by the autonomous VPS Shadow service."""
-
-    session_date: str = Field(..., min_length=10)
-    acquisition_mode: str = Field(..., min_length=1)
-    raw_input_dir_ref: str = ""
-    websocket_input_dir_ref: str = ""
-    live_capture_dir_ref: str = ""
-    live_capture_snapshot_batch_ref: str = ""
-    live_capture_summary_ref: str = ""
-    live_capture_emitted_message_count: int = Field(default=0, ge=0)
-    live_capture_accepted_message_count: int = Field(default=0, ge=0)
-    live_capture_ignored_message_count: int = Field(default=0, ge=0)
-    live_capture_rejected_message_count: int = Field(default=0, ge=0)
-    live_capture_pair_scope: tuple[str, ...] = ()
-    live_capture_event_types: tuple[str, ...] = ()
-    live_user_data_summary_ref: str = ""
-    live_user_data_events_ref: str = ""
-    live_user_data_authenticated: bool = False
-    live_user_data_subscription_id: int | None = Field(default=None, ge=0)
-    live_user_data_event_count: int = Field(default=0, ge=0)
-    live_user_data_event_types: tuple[str, ...] = ()
-    auto_snapshot_dir_ref: str = ""
-    auto_export_dir_ref: str = ""
-    export_dir_ref: str = ""
-    local_replay_evidence_ref: str = ""
-    shadow_runtime_evidence_ref: str = ""
-    shadow_summary_ref: str = ""
-    shadow_report_ref: str = ""
-    shadow_session_summary_ref: str = ""
-    shadow_session_registry_ref: str = ""
-    orchestrator_state_ref: str = ""
-    runtime_data_source: str = "unknown"
-    runtime_evidence_summary: str = "No real runtime evidence recorded"
-    accepted: bool = False
-    consecutive_days: int = Field(default=0, ge=0)
-    remaining_days: int = Field(default=0, ge=0)
-
-    @model_validator(mode="after")
-    def validate_session_date(self) -> "ShadowVpsRuntimeEvidenceBundle":
-        date.fromisoformat(self.session_date)
-        return self
-
-
-class ShadowVpsCampaignSummary(BaseModel, frozen=True):
-    """Current cumulative Build-11 VPS campaign status for operator review."""
-
-    service_status: ShadowVpsServiceStatus
-    loop_count: int = Field(default=0, ge=0)
-    success_count: int = Field(default=0, ge=0)
-    idle_count: int = Field(default=0, ge=0)
-    failure_count: int = Field(default=0, ge=0)
-    resumed: bool = False
-    last_selected_session_date: str = ""
-    last_completed_session_date: str = ""
-    acquisition_mode: str = ""
-    accepted: bool = False
-    consecutive_days: int = Field(default=0, ge=0)
-    remaining_days: int = Field(default=0, ge=0)
-    promotion_gate_passed: bool = False
-    runtime_data_source: str = "unknown"
-    runtime_evidence_summary: str = "No real runtime evidence recorded"
-    live_capture_summary_ref: str = ""
-    live_capture_emitted_message_count: int = Field(default=0, ge=0)
-    live_capture_accepted_message_count: int = Field(default=0, ge=0)
-    live_capture_ignored_message_count: int = Field(default=0, ge=0)
-    live_capture_rejected_message_count: int = Field(default=0, ge=0)
-    live_capture_pair_scope: tuple[str, ...] = ()
-    live_capture_event_types: tuple[str, ...] = ()
-    live_user_data_summary_ref: str = ""
-    live_user_data_authenticated: bool = False
-    live_user_data_subscription_id: int | None = Field(default=None, ge=0)
-    live_user_data_event_count: int = Field(default=0, ge=0)
-    live_user_data_event_types: tuple[str, ...] = ()
-    runtime_evidence_bundle_ref: str = ""
-    shadow_report_ref: str = ""
-    shadow_session_summary_ref: str = ""
-    shadow_session_registry_ref: str = ""
-    orchestrator_state_ref: str = ""
-
-
-class ShadowVpsServiceEvent(BaseModel, frozen=True):
-    """Single structured event emitted by the autonomous VPS Shadow service."""
-
-    event_type: str = Field(..., min_length=1)
-    timestamp: float = Field(default_factory=time.time)
-    message: str = Field(..., min_length=1)
-    session_date: str = ""
-    export_dir_ref: str = ""
-    accepted: bool | None = None
-    consecutive_days: int | None = Field(default=None, ge=0)
-    remaining_days: int | None = Field(default=None, ge=0)
-    live_capture_summary_ref: str = ""
-    emitted_message_count: int | None = Field(default=None, ge=0)
-    accepted_message_count: int | None = Field(default=None, ge=0)
-    ignored_message_count: int | None = Field(default=None, ge=0)
-    rejected_message_count: int | None = Field(default=None, ge=0)
-    pair_scope: tuple[str, ...] = ()
-    event_types: tuple[str, ...] = ()
-    error: str = ""
 
 
 class ShadowVpsServiceStore:

@@ -27,14 +27,43 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
         "dag_validator",
         "contract_test_suite",
     }),
+    "calibration_loader": frozenset(),
+    "secrets_manager": frozenset({"interface_contracts"}),
+    "alerting": frozenset({"interface_contracts", "secrets_manager"}),
     # Build-2: Data Backbone
     "data_backbone": frozenset({"interface_contracts", "manifest_registry"}),
+    "regime_classifier": frozenset({
+        "interface_contracts",
+        "data_backbone",
+        "calibration_loader",
+    }),
+    "sharia_compliance": frozenset({
+        "interface_contracts",
+        "calibration_loader",
+    }),
     # Build-3: Execution Backbone
-    "execution_backbone": frozenset({"interface_contracts", "data_backbone"}),
+    "execution_backbone": frozenset({
+        "interface_contracts",
+        "data_backbone",
+        "calibration_loader",
+        "sharia_compliance",
+    }),
     # Build-4: Risk Backbone
-    "risk_backbone": frozenset({"interface_contracts", "data_backbone"}),
+    "risk_backbone": frozenset({
+        "interface_contracts",
+        "data_backbone",
+        "regime_classifier",
+        "calibration_loader",
+        "execution_backbone",
+    }),
     # Build-5: Scoring Backbone
-    "scoring_backbone": frozenset({"interface_contracts", "risk_backbone"}),
+    "scoring_backbone": frozenset({
+        "interface_contracts",
+        "risk_backbone",
+        "calibration_loader",
+        "data_backbone",
+        "execution_backbone",
+    }),
     # Build-6: Engine A
     "engine_a": frozenset({
         "interface_contracts",
@@ -64,15 +93,23 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
         "engine_a",
         "engine_b",
     }),
+    "calibration_methods": frozenset(),
     # Stage-10 scaffolding: LOCAL_REPLAY / artifact import / Build-9X
     "local_replay_runtime": frozenset({
         "interface_contracts",
         "manifest_registry",
         "meta",
+        "calibration_loader",
+        "calibration_methods",
+        "data_backbone",
+        "meta_learning",
     }),
     "backtest_artifact_import": frozenset({
         "interface_contracts",
         "local_replay_runtime",
+        "calibration_loader",
+        "meta",
+        "monitoring",
     }),
     "meta_learning": frozenset({
         "interface_contracts",
@@ -96,7 +133,10 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
     # Build-11/12/13: Protocols
     "protocols": frozenset({
         "interface_contracts",
+        "alerting",
         "data_backbone",
+        "engine_a",
+        "engine_b",
         "execution_backbone",
         "risk_backbone",
         "scoring_backbone",
@@ -105,6 +145,16 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
         "monitoring",
         "ui",
         "local_replay_runtime",
+        "regime_classifier",
+        "venue_adapters",
+    }),
+    "venue_adapters": frozenset({
+        "interface_contracts",
+        "calibration_loader",
+        "data_backbone",
+        "execution_backbone",
+        "secrets_manager",
+        "sharia_compliance",
     }),
     # Build-14: Complete Enablers
     "complete_enablers": frozenset({

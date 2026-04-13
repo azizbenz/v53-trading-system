@@ -658,6 +658,31 @@ Identique à T7 mais pour Engine D.
 
 ### Tranche T10 — P1-2 + P1-3 : Reconciliation périodique + Daily P&L breaker
 
+## 47. Regime lite typed core now exists
+
+- `src/regime_classifier/regime_lite.py` now exists with typed `CALM / STRESSED / EXTREME` state, explicit thresholds, hysteresis, cooldown, and transition trace.
+- The first cut stays intentionally bounded:
+  - no hidden runtime activation
+  - no direct engine wiring
+  - no bypass of Shadow / Micro-live / Live gates
+- The helper is now registered in the manifest/DAG as `regime_classifier`, so `src/regime_classifier/` is no longer a phantom package.
+- Remaining work for T9 stays explicit:
+  - threshold loading from real calibration artifacts
+  - provider/runtime/risk hooks
+  - replay proof on stress windows
+
+## 48. First governed risk consumer for `regime_lite` now exists
+
+- `src/risk_backbone/regime_lite_entry_gate.py` now exists as the first opt-in risk consumer built from `RegimeLiteAssessment`.
+- `src/risk_backbone/risk_runtime.py` now exposes a typed `regime_precheck_hook`, following the same governance pattern as the existing micro-friction hook:
+  - opt-in only
+  - fail-open by default
+  - no hidden live activation
+- The first bounded behavior is intentionally narrow:
+  - block new entries while `EXTREME` or while `EXTREME` cooldown is still active
+  - no automatic exit-all wiring yet
+  - no direct engine-specific regime veto yet
+
 **Objectif** — Forcer une reconciliation au boot et toutes les 60 min. Câbler le daily P&L breaker au kill switch existant.
 
 **Périmètre** :
@@ -1016,6 +1041,22 @@ Identique à T7 mais pour Engine D.
   - it does not create Build-10 runtime coupling
   - it does not create new promotion or VPS behavior
 
+## 5octodecies. Latest bounded Local IA Lab observability text export
+
+- `src/monitoring/observability_io.py` now exists as a generic writer for persisted `ObservabilityExport.text_payload`
+- `scripts/run_local_lab_analysis_bundle.py` now also writes `local_lab_observability.prom`
+- the top-level bundle summary now also exposes:
+  - `local_lab_observability_text_path`
+- current behavior:
+  - writes the exact `text_payload`
+  - appends one trailing newline
+  - stays generic, not Local-Lab-specific in implementation
+- important invariant:
+  - this remains descriptive export plumbing only
+  - it does not introduce UI coupling
+  - it does not introduce Prometheus runtime semantics by itself
+  - it does not alter VPS behavior or promotion logic
+
 ## 6. Estimation effort agent codeur
 
 **Hypothèse session agent codeur** : 1 session = 1500-2500 LOC, ~2-4 heures de coding focalisé, doit produire un état mergeable.
@@ -1093,3 +1134,2075 @@ Si un de ces critères échoue → la tranche n'est pas mergeable, on continue s
 ---
 
 **Suite logique** : `10_DECISIONS_REQUIRED.md` — décisions à prendre par l'humain avant de démarrer.
+## 5novodecies. Latest bounded Local IA Lab research-priority scorer
+
+- `src/local_replay_runtime/local_lab_research_priority.py` now exists as the first bounded research-model-style component inside the Local IA Lab core
+- it remains intentionally transparent:
+  - `model_family=interpretable_priority_model_v1`
+  - `model_kind=transparent_weighted_score`
+  - no hidden training
+  - no runtime coupling
+- current inputs:
+  - `trade_loss_attribution` sidecars
+  - `scope_matrix` when present
+  - current proof/release readiness
+- current outputs:
+  - `local_lab_research_priority.json`
+  - summary fields on `local_lab_analysis_summary.json`
+  - compact propagation into the Local IA Lab monitoring projection/backend/observability surfaces
+- current ranking intent:
+  - identify which `pair x engine` scope should get the next replay/recalibration cycle
+  - keep trace-quality problems separate from true recalibration candidates
+- important invariant:
+  - local-only
+  - descriptive and audit-ready
+  - no VPS mutation
+  - no promotion semantics by itself
+
+## 5vicies. Latest bounded Local IA Lab loss-surrogate scorer
+
+- `src/local_replay_runtime/local_lab_loss_surrogate.py` now exists as the first truly trained but still transparent Local IA Lab component
+- the model remains strictly bounded:
+  - `model_family=transparent_linear_loss_surrogate_v1`
+  - `model_kind=diagonal_lda_linear_score`
+  - local-only
+  - no runtime/VPS coupling
+- training inputs are decision-time / no-lookahead only:
+  - `raw_score`
+  - `penalized_score`
+  - `final_score`
+  - `expected_cost`
+  - `ce_expected`
+  - `candidate_size`
+  - `final_size`
+  - `ranking_position`
+- current outputs:
+  - `local_lab_loss_surrogate_report.json`
+  - summary fields on `local_lab_analysis_summary.json`
+  - compact propagation into the Local IA Lab monitoring projection/backend/observability surfaces
+- current role:
+  - estimate which scopes show the highest modeled loss pressure
+  - stay research-only and audit-ready
+  - never mutate VPS runtime or promotion semantics directly
+
+## 5unvicies. Latest bounded Local IA Lab surrogate-guided prioritization
+
+- the trained Local IA Lab loss surrogate is now consumed by:
+  - `src/local_replay_runtime/local_lab_research_priority.py`
+  - `src/local_replay_runtime/local_lab_recalibration_plan.py`
+- bounded consequences only:
+  - influence research ranking for the next replay cycle
+  - add a local `replay_surrogate_high_risk_scope` action when justified
+  - keep recalibration/publication gates unchanged
+- important invariant:
+  - the surrogate remains advisory only
+  - no promotion authority
+  - no runtime/VPS mutation
+  - no bypass of proof/recalibration/release gates
+
+## 5duovicies. Latest bounded Local IA Lab replay candidate queue
+
+- `src/local_replay_runtime/local_lab_replay_candidate_queue.py` now exists as the first bounded queue of next local replay/research steps
+- the queue is built from:
+  - `local_lab_research_priority`
+  - `local_lab_recalibration_plan`
+  - current surrogate-guided planning truth
+- current outputs:
+  - `local_lab_replay_candidate_queue.json`
+  - summary fields on `local_lab_analysis_summary.json`
+  - compact propagation into the Local IA Lab monitoring projection/backend/observability surfaces
+- important invariant:
+  - local-only
+  - descriptive and audit-ready
+  - no VPS mutation
+  - no promotion semantics by itself
+
+## 5tervicies. Latest bounded Local IA Lab replay ticket index
+
+- `src/local_replay_runtime/local_lab_replay_ticket_index.py` now exists as the governed ticket index over the Local IA Lab replay queue
+- it reuses the canonical `LocalReplayRequest` contract instead of inventing a parallel runtime request type
+- current outputs:
+  - `local_lab_replay_ticket_index.json`
+  - summary fields on `local_lab_analysis_summary.json`
+  - compact propagation into the Local IA Lab monitoring projection/backend/observability surfaces
+- important invariant:
+  - tickets are local-only planning artifacts
+  - they do not execute anything by themselves
+  - they do not mutate VPS/runtime or promotion state
+
+## 5quattuorvicies. Latest bounded Local IA Lab replay dispatch plan
+
+- `src/local_replay_runtime/local_lab_replay_dispatch_plan.py` now exists as the local-only dispatch surface over governed replay tickets
+- current outputs:
+  - `local_lab_replay_dispatch_plan.json`
+  - summary fields on `local_lab_analysis_summary.json`
+  - compact propagation into the Local IA Lab monitoring projection/backend/observability surfaces
+- important invariant:
+  - dispatch stays local-only
+  - it does not execute tickets
+  - it does not mutate VPS/runtime or promotion state
+
+## 5quinvicies. Latest bounded Local IA Lab replay workflow + monitoring bundle manifests
+
+- `src/local_replay_runtime/local_lab_replay_workflow_manifest.py` now exists as the typed manifest over:
+  - `local_lab_replay_candidate_queue.json`
+  - `local_lab_replay_ticket_index.json`
+  - `local_lab_replay_dispatch_plan.json`
+- `src/monitoring/local_lab_replay_workflow_loader.py` now exists as the file-based loader for that workflow bundle
+- `src/monitoring/local_lab_monitoring_bundle_manifest.py` now exists as the typed manifest over:
+  - `local_lab_monitoring_backend_payload.json`
+  - `local_lab_observability_export.json`
+  - `local_lab_monitoring_ingestion_summary.json`
+  - optional `local_lab_replay_workflow_manifest.json`
+- `src/monitoring/local_lab_bundle_loader.py` now discovers monitoring sidecars through the manifest instead of hardcoded filenames
+- future-dashboard propagation is now explicit:
+  - `local_lab_monitoring_bundle_manifest.json`
+  - `local_lab_replay_workflow_manifest.json`
+  - compact refs in monitoring projection/backend/summary
+- important invariant:
+  - local-only discovery surface
+  - no UI coupling
+  - no VPS/runtime mutation
+  - no promotion authority by itself
+
+## 5sexvicies. Latest bounded Local IA Lab monitoring bundle discovery
+
+- `src/monitoring/local_lab_bundle_discovery.py` now exists as the manifest-driven discovery layer for Local IA Lab monitoring bundles
+- it can now:
+  - scan a root for `local_lab_monitoring_bundle_manifest.json`
+  - sort bundles by latest `timestamp_ms`
+  - load the newest bundle through the existing loader
+- purpose:
+  - prepare future backend/Prometheus/dashboard ingestion over multiple Local IA Lab outputs
+  - keep discovery manifest-first instead of hardcoded directory knowledge
+- important invariant:
+  - descriptive only
+  - no UI coupling
+  - no VPS/runtime mutation
+  - no promotion authority
+
+## 5septemvicies. Latest bounded Local IA Lab monitoring feed
+
+- `src/monitoring/local_lab_monitoring_feed.py` now exists as the compact feed over discovered Local IA Lab monitoring bundles
+- it now summarizes:
+  - latest bundle identity/status
+  - ingestion-ready bundle count
+  - bundle counts by backend status
+- purpose:
+  - prepare future backend/dashboard ingestion over multiple Local IA Lab bundles
+  - keep the first multi-bundle surface compact and audit-ready
+- important invariant:
+  - descriptive only
+  - no UI coupling
+  - no VPS/runtime mutation
+  - no promotion authority
+
+## 5octovicies. Latest bounded Local IA Lab calibration-methods core (`13-A`)
+
+- `src/calibration_methods/` now exists as the first shared Local IA Lab math-core package
+- bounded modules landed:
+  - `bootstrap.py`
+  - `walkforward.py`
+  - `dsr.py`
+- current scope is intentionally local-only and pure:
+  - stationary block bootstrap confidence intervals
+  - purged walk-forward fold planning with embargo and label purging
+  - Deflated Sharpe Ratio computation
+- current proofs landed:
+  - `tests/test_calibration_methods/test_bootstrap.py`
+  - `tests/test_calibration_methods/test_walkforward.py`
+  - `tests/test_calibration_methods/test_dsr.py`
+- the first live consumer is now real:
+  - `src/local_replay_runtime/edge_gate_calibration.py` now consumes the shared stationary bootstrap helper instead of a private i.i.d. resample helper
+  - EDGE calibration notes now expose the effective bootstrap block length for auditability
+- important invariant:
+  - this slice stays Local IA Lab only
+  - no VPS/runtime promotion behavior changes
+  - walk-forward human approval remains a separate hard gate
+  - DSR and walk-forward helpers are available for later consumers but are not silently wired into promotion logic yet
+
+## 5novemvicies. Latest bounded Local IA Lab calibration-methods review sidecar
+
+- `src/local_replay_runtime/local_lab_calibration_methods_review.py` now exists as the first Local IA Lab proof-side consumer of:
+  - `src/calibration_methods/walkforward.py`
+  - `src/calibration_methods/dsr.py`
+- the Local IA Lab bundle now emits:
+  - `local_lab_calibration_methods_review.json`
+  - summary fields on `local_lab_analysis_summary.json`
+  - compact propagation into:
+    - `local_lab_monitoring_projection.json`
+    - `local_lab_monitoring_backend_payload.json`
+    - `local_lab_observability_export.json`
+- current semantics are conservative:
+  - valid DSR below floor blocks Local IA Lab proof locally
+  - insufficient history stays explicit as `partial`, never silent
+  - human walk-forward approval remains a separate gate from auto-generated walk-forward geometry
+- current proofs landed:
+  - `tests/test_local_replay_runtime/test_local_lab_calibration_methods_review.py`
+  - `tests/test_local_replay_runtime/test_artifact_proof_summary_builder.py`
+  - `tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py`
+- latest proofs:
+  - `rtk pytest tests/test_local_replay_runtime/test_local_lab_calibration_methods_review.py tests/test_local_replay_runtime/test_artifact_proof_summary_builder.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py tests/test_local_replay_runtime/test_local_lab_scope_matrix.py tests/test_local_replay_runtime/test_artifact_release_candidate.py tests/test_local_replay_runtime/test_local_lab_recalibration_plan.py tests/test_local_replay_runtime/test_local_lab_research_priority.py -q`
+  - `25 passed`
+  - `rtk pytest tests/test_local_replay_runtime/test_local_lab_monitoring_projection.py tests/test_local_replay_runtime/test_local_lab_observability.py tests/test_local_replay_runtime/test_local_lab_monitoring_backend.py tests/test_monitoring/test_monitoring_contracts.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py -q`
+  - `18 passed`
+  - `rtk pytest tests/test_calibration_methods/test_bootstrap.py tests/test_calibration_methods/test_walkforward.py tests/test_calibration_methods/test_dsr.py tests/test_local_replay_runtime/test_edge_gate_calibration.py tests/test_local_replay_runtime/test_walk_forward_review.py tests/test_local_replay_runtime/test_artifact_ablation_study.py tests/test_local_replay_runtime/test_local_lab_calibration_methods_review.py tests/test_local_replay_runtime/test_artifact_proof_summary_builder.py tests/test_scoring_backbone/test_fee_aware_edge_gate.py tests/test_calibration_loader/test_contracts.py tests/test_calibration_loader/test_loader.py -q`
+  - `37 passed`
+  - `rtk pytest tests/test_local_replay_runtime tests/test_meta_learning tests/test_meta_minimal -q`
+  - `314 passed`
+
+## 5tricies. Latest bounded Local IA Lab release/dry-run calibration-methods propagation
+
+- `src/local_replay_runtime/artifact_release_candidate.py` now carries explicit calibration-methods state on the Local IA Lab release verdict:
+  - `local_lab_calibration_methods_review_path`
+  - `calibration_methods_review_status`
+  - `calibration_methods_review_ready`
+  - `calibration_methods_dsr_pass`
+  - `calibration_methods_walk_forward_plan_ready`
+- `src/local_replay_runtime/artifact_upload_bridge_candidate.py` now propagates the same truth into:
+  - `artifact_release_gate_summary.json`
+  - `artifact_import_dry_run_bridge.json`
+- purpose:
+  - make the dry-run handoff explicitly `calibration-methods-backed` or not
+  - keep the handoff audit-ready without changing any VPS/runtime semantics
+- latest proofs:
+  - `rtk pytest tests/test_local_replay_runtime/test_artifact_release_candidate.py tests/test_local_replay_runtime/test_artifact_upload_bridge_candidate.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py tests/test_local_replay_runtime/test_local_lab_calibration_methods_review.py tests/test_local_replay_runtime/test_artifact_proof_summary_builder.py -q`
+  - `20 passed`
+  - `rtk pytest tests/test_backtest_artifact_import/test_export_dir_bridge.py tests/test_backtest_artifact_import/test_upload_bridge.py tests/test_backtest_artifact_import/test_validators.py tests/test_local_replay_runtime/test_artifact_release_candidate.py tests/test_local_replay_runtime/test_artifact_upload_bridge_candidate.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py tests/test_local_replay_runtime/test_local_lab_calibration_methods_review.py tests/test_local_replay_runtime/test_artifact_proof_summary_builder.py tests/test_local_replay_runtime/test_local_lab_monitoring_projection.py tests/test_local_replay_runtime/test_local_lab_monitoring_backend.py tests/test_local_replay_runtime/test_local_lab_observability.py tests/test_monitoring/test_monitoring_contracts.py -q`
+  - `111 passed`
+
+## 5untricies. Latest bounded Local IA Lab monitoring manifest/discovery/feed calibration-methods propagation
+
+- `src/monitoring/local_lab_monitoring_bundle_manifest.py` now carries compact calibration-methods truth from the backend payload
+- `src/monitoring/local_lab_bundle_discovery.py` now exposes the same fields per discovered bundle
+- `src/monitoring/local_lab_monitoring_feed.py` now summarizes:
+  - `calibration_ready_bundle_count`
+  - `calibration_partial_bundle_count`
+  - `calibration_blocked_bundle_count`
+- purpose:
+  - keep future multi-bundle backend ingestion manifest-first
+  - make calibration-method readiness visible without opening every bundle manually
+- latest proofs:
+  - `rtk pytest tests/test_monitoring/test_local_lab_monitoring_bundle_manifest.py tests/test_monitoring/test_local_lab_bundle_discovery.py tests/test_monitoring/test_local_lab_monitoring_feed.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py tests/test_local_replay_runtime/test_local_lab_monitoring_projection.py tests/test_local_replay_runtime/test_local_lab_monitoring_backend.py tests/test_local_replay_runtime/test_local_lab_observability.py -q`
+  - `18 passed`
+  - `rtk pytest tests/test_monitoring tests/test_local_replay_runtime/test_artifact_release_candidate.py tests/test_local_replay_runtime/test_artifact_upload_bridge_candidate.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py tests/test_local_replay_runtime/test_local_lab_calibration_methods_review.py tests/test_local_replay_runtime/test_artifact_proof_summary_builder.py tests/test_backtest_artifact_import/test_export_dir_bridge.py tests/test_backtest_artifact_import/test_upload_bridge.py tests/test_backtest_artifact_import/test_validators.py -q`
+  - `203 passed`
+
+## 5duotricies. Latest bounded Local IA Lab tail-risk review (`13-B`)
+
+- `src/calibration_methods/pot_gpd.py` now exists as the bounded Local IA Lab POT-GPD helper:
+  - method version stays explicit as `pot_gpd_mom_bootstrap_v1`
+  - current scope is bounded to empirical-threshold POT-GPD + bootstrap CI, not a full opaque EVT stack
+- `src/local_replay_runtime/local_lab_tail_risk_review.py` now exists as the first strategy-level tail-risk consumer of exported `DTRRecord` history
+- `scripts/run_local_lab_analysis_bundle.py` now emits `local_lab_tail_risk_review.json`
+- current breaker scope is intentionally top-level and local-only:
+  - `THR-R01` over daily net-loss buckets
+  - `THR-R02` over weekly net-loss buckets
+  - `THR-R03` over monthly net-loss buckets
+- current conservative semantics:
+  - no positive-loss periods -> `partial`
+  - insufficient exceedances -> `partial`
+  - invalid fit or excessive bootstrap dispersion -> `blocked`
+  - review becomes `ready` only when all three breakers are ready
+- compact future-dashboard/backend truth now also propagates into:
+  - `local_lab_analysis_summary.json`
+  - `local_lab_monitoring_projection.json`
+  - `local_lab_monitoring_backend_payload.json`
+  - `local_lab_observability_export.json`
+- important invariant:
+  - still Local IA Lab only
+  - still no UI coupling
+  - still no VPS/runtime mutation
+  - not yet part of release gating or dry-run import semantics
+- latest proofs:
+  - `rtk pytest tests/test_calibration_methods/test_pot_gpd.py tests/test_local_replay_runtime/test_local_lab_tail_risk_review.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py tests/test_local_replay_runtime/test_local_lab_monitoring_backend.py tests/test_local_replay_runtime/test_local_lab_observability.py -q`
+  - `16 passed`
+  - `rtk pytest tests/test_calibration_methods tests/test_local_replay_runtime/test_local_lab_calibration_methods_review.py tests/test_local_replay_runtime/test_local_lab_tail_risk_review.py tests/test_local_replay_runtime/test_artifact_proof_summary_builder.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py tests/test_local_replay_runtime/test_local_lab_monitoring_backend.py tests/test_local_replay_runtime/test_local_lab_observability.py -q`
+  - `32 passed`
+  - `rtk pytest tests/test_local_replay_runtime tests/test_meta_learning tests/test_meta_minimal -q`
+  - `317 passed`
+
+## 5tertricies. Latest bounded Local IA Lab stationarity gate (`MI-9` extension over `13-A/13-E`)
+
+- `src/calibration_methods/stationarity.py` now exists as the bounded dual stationarity helper:
+  - ADF level test with intercept
+  - KPSS level stationarity test with Bartlett/Newey-West long-run variance
+  - explicit audit-ready dual verdict `passes_dual_test`
+- `src/local_replay_runtime/local_lab_calibration_methods_review.py` now consumes this helper over executed replay returns:
+  - `stationarity_status`
+  - `stationarity_ready`
+  - `stationarity_pass`
+  - `stationarity_result`
+- new conservative semantics:
+  - insufficient history stays explicit as `partial`
+  - failing MI-9 blocks the Local IA Lab calibration-methods review
+  - proof-side propagation now emits:
+    - `LOCAL_LAB_STATIONARITY_REQUIRED`
+    - `LOCAL_LAB_STATIONARITY_INVALID`
+- the same truth now also propagates into:
+  - `local_lab_calibration_normalized_report.json`
+  - `local_lab_analysis_summary.json`
+  - `local_lab_monitoring_projection.json`
+  - `local_lab_monitoring_backend_payload.json`
+  - `local_lab_observability_export.json`
+- important invariant:
+  - still Local IA Lab only
+  - still no UI coupling
+  - still no VPS/runtime mutation
+  - dry-run/release semantics remain descriptive; this slice only hardens the local proof rail
+- latest proofs:
+  - `rtk pytest tests/test_calibration_methods/test_stationarity.py tests/test_local_replay_runtime/test_local_lab_calibration_methods_review.py tests/test_local_replay_runtime/test_local_lab_calibration_normalized_report.py tests/test_local_replay_runtime/test_artifact_proof_summary_builder.py tests/test_local_replay_runtime/test_local_lab_monitoring_backend.py tests/test_local_replay_runtime/test_local_lab_observability.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py -q`
+  - `23 passed`
+  - `rtk pytest tests/test_calibration_methods tests/test_local_replay_runtime/test_local_lab_calibration_methods_review.py tests/test_local_replay_runtime/test_local_lab_tail_risk_review.py tests/test_local_replay_runtime/test_local_lab_calibration_normalized_report.py tests/test_local_replay_runtime/test_edge_gate_calibration.py tests/test_local_replay_runtime/test_edge_gate_calibration_launcher.py tests/test_local_replay_runtime/test_artifact_proof_summary_builder.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py tests/test_local_replay_runtime/test_local_lab_monitoring_backend.py tests/test_local_replay_runtime/test_local_lab_observability.py -q`
+  - `42 passed`
+  - `rtk pytest tests/test_local_replay_runtime tests/test_meta_learning tests/test_meta_minimal -q`
+  - `320 passed`
+
+## 5quatertricies. Latest bounded shared human hard-cap helper (`MI-7` clarification)
+
+- `src/calibration_methods/hard_cap_floor.py` now exists as the shared Local IA Lab hard-bound publication helper:
+  - `apply_human_minimum_floor(...)`
+  - `apply_human_maximum_cap(...)`
+- purpose:
+  - stop duplicating ad hoc floor/cap publication logic across EDGE and RISK slices
+  - make the semantics explicit:
+    - `hard_cap_satisfied` = published value respects the human bound
+    - `hard_cap_binding` = the human bound actually clipped/floored the raw candidate
+- current consumers:
+  - `src/local_replay_runtime/edge_gate_calibration.py`
+  - `src/local_replay_runtime/local_lab_tail_risk_review.py`
+  - `src/local_replay_runtime/local_lab_calibration_normalized_report.py`
+- important invariant:
+  - still Local IA Lab only
+  - still no UI coupling
+  - still no VPS/runtime mutation
+  - this slice clarifies audit semantics; it does not open a new promotion authority
+- latest proofs:
+  - `rtk pytest tests/test_calibration_methods/test_hard_cap_floor.py tests/test_local_replay_runtime/test_edge_gate_calibration.py tests/test_local_replay_runtime/test_local_lab_tail_risk_review.py tests/test_local_replay_runtime/test_local_lab_calibration_normalized_report.py tests/test_local_replay_runtime/test_edge_gate_calibration_launcher.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py -q`
+  - `16 passed`
+  - `rtk pytest tests/test_calibration_methods tests/test_local_replay_runtime/test_local_lab_calibration_methods_review.py tests/test_local_replay_runtime/test_local_lab_tail_risk_review.py tests/test_local_replay_runtime/test_local_lab_calibration_normalized_report.py tests/test_local_replay_runtime/test_edge_gate_calibration.py tests/test_local_replay_runtime/test_edge_gate_calibration_launcher.py tests/test_local_replay_runtime/test_artifact_proof_summary_builder.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py tests/test_local_replay_runtime/test_local_lab_monitoring_backend.py tests/test_local_replay_runtime/test_local_lab_observability.py -q`
+  - `44 passed`
+  - `rtk pytest tests/test_local_replay_runtime tests/test_meta_learning tests/test_meta_minimal -q`
+  - `320 passed`
+
+## 5quinquatracies. Latest bounded Local IA Lab multiple-testing review (`MI-12`)
+
+- `src/calibration_methods/multiple_testing.py` now exists as the bounded shared MI-12 helper
+  - current shared method: `holm_bonferroni_v1`
+- `src/local_replay_runtime/local_lab_multiple_testing_review.py` now exists as the Local IA Lab MI-12 sidecar
+- current conservative truth:
+  - current EDGE and tail-risk publications are treated as `interval_publication`, not as simultaneous hypothesis-test promotion
+  - therefore the current bounded MI-12 verdict is explicit `not_required_interval_publication`, not a fake corrected p-value pass
+  - future hypothesis-test families can still consume the shared Holm-Bonferroni helper
+- the same truth now propagates into:
+  - `local_lab_calibration_normalized_report.json`
+  - `artifact_proof_assessment.json`
+  - `local_lab_analysis_summary.json`
+  - `local_lab_monitoring_projection.json`
+  - `local_lab_monitoring_backend_payload.json`
+  - `local_lab_observability_export.json`
+  - `local_lab_monitoring_bundle_manifest.json`
+  - `local_lab_monitoring_feed`
+- important invariant:
+  - still Local IA Lab only
+  - still no UI coupling
+  - still no VPS/runtime mutation
+  - MI-12 remains honest: no hidden blocker when the current bounded artifact family is interval-publication only
+- latest proofs:
+  - `rtk pytest tests/test_calibration_methods/test_multiple_testing.py tests/test_local_replay_runtime/test_local_lab_multiple_testing_review.py tests/test_local_replay_runtime/test_local_lab_calibration_normalized_report.py tests/test_local_replay_runtime/test_artifact_proof_summary_builder.py tests/test_local_replay_runtime/test_local_lab_monitoring_projection.py tests/test_local_replay_runtime/test_local_lab_monitoring_backend.py tests/test_local_replay_runtime/test_local_lab_observability.py tests/test_monitoring/test_local_lab_monitoring_bundle_manifest.py tests/test_monitoring/test_local_lab_bundle_discovery.py tests/test_monitoring/test_local_lab_monitoring_feed.py -q`
+  - `22 passed`
+  - `rtk pytest tests/test_calibration_methods tests/test_local_replay_runtime tests/test_monitoring tests/test_backtest_artifact_import/test_export_dir_bridge.py tests/test_backtest_artifact_import/test_upload_bridge.py tests/test_backtest_artifact_import/test_validators.py tests/test_meta_learning tests/test_meta_minimal -q`
+  - `524 passed`
+
+## 5sextracies. Latest bounded Local IA Lab execution review (`13-C` first slice)
+
+- `src/calibration_methods/execution.py` now exists as the bounded shared EXECUTION helper rail for:
+  - `THR-X01` via Hampel-filtered absolute offset quantile + margin + human hard cap
+  - `THR-X02` via bounded empirical gap quantile + human hard cap
+- `src/local_replay_runtime/local_lab_execution_review.py` now exists as the Local IA Lab EXECUTION sidecar for `THR-X01` / `THR-X02`
+- current conservative truth:
+  - the review is `partial` when no dedicated execution telemetry sidecar is supplied
+  - this slice does not invent replay-derived execution telemetry that the export dir does not actually contain
+  - this slice does not alter the current EDGE proof gate or release gate semantics
+- `scripts/run_local_lab_analysis_bundle.py` now emits:
+  - `local_lab_execution_review.json`
+  - summary fields for `execution_review_status / execution_review_ready / execution_*_threshold_count`
+  - optional input `--execution-telemetry-path`
+- the same truth now propagates into:
+  - `local_lab_analysis_summary.json`
+  - `local_lab_monitoring_projection.json`
+  - `local_lab_monitoring_backend_payload.json`
+  - `local_lab_observability_export.json`
+  - `local_lab_monitoring_bundle_manifest.json`
+  - monitoring bundle discovery/feed
+- important invariant:
+  - still Local IA Lab only
+  - still no UI coupling
+  - still no VPS/runtime mutation
+  - still no fake readiness when telemetry is absent
+- latest proofs:
+  - `rtk pytest tests/test_calibration_methods/test_execution.py tests/test_local_replay_runtime/test_local_lab_execution_review.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py tests/test_local_replay_runtime/test_local_lab_monitoring_projection.py tests/test_local_replay_runtime/test_local_lab_monitoring_backend.py tests/test_local_replay_runtime/test_local_lab_observability.py tests/test_monitoring/test_local_lab_monitoring_bundle_manifest.py tests/test_monitoring/test_local_lab_bundle_discovery.py tests/test_monitoring/test_local_lab_monitoring_feed.py -q`
+  - `23 passed`
+  - `rtk pytest tests/test_calibration_methods tests/test_local_replay_runtime tests/test_monitoring tests/test_backtest_artifact_import/test_export_dir_bridge.py tests/test_backtest_artifact_import/test_upload_bridge.py tests/test_backtest_artifact_import/test_validators.py tests/test_meta_learning tests/test_meta_minimal -q`
+  - `529 passed`
+
+## 5septentracies. Latest VPS -> local observability architecture anchor
+
+- `16_VPS_LOCAL_OBSERVABILITY_ARCHITECTURE.md` now records the intended observability split:
+  - VPS = runtime + lightweight collection + short retention
+  - local PC = Prometheus + Grafana + heavy drill-down + long retention
+- hard rule now explicit:
+  - continuous export = compact typed metrics / summaries
+  - on-demand retrieval = detailed logs / deep traces / incident bundles
+  - no permanent raw-stream export from VPS to local
+- immediate code consequence:
+  - next observability coding should start with real VPS process metrics + stable app `.prom` export
+  - not with richer UI work
+- missing bounded code now explicitly tracked for future slices:
+  - process/system metric producer on the real VPS path
+  - VPS `.prom` writer on the live service path
+  - `telegram_alerter`
+  - `disk_monitor`
+  - `daily_pnl_breaker`
+  - `regime_classifier`
+  - `gatekeeper`
+  - `info_stress_monitor`
+  - `spread_guard`
+  - `slippage_model`
+- current estimate of overall solution completion is now tracked as `~62%`
+
+## 5octies. VPS process observability slice landed
+
+- real Shadow VPS service-side observability is now wired on the canonical service rail:
+  - `scripts/run_shadow_vps_service.py`
+  - `src/monitoring/process_metrics.py`
+  - `src/monitoring/shadow_vps_service_monitoring.py`
+- new governed outputs written by the real service loop:
+  - `shadow_vps_service_monitoring_backend_payload.json`
+  - `shadow_vps_service_observability_export.json`
+  - `shadow_vps_service_observability.prom`
+- current scope of the slice:
+  - real bounded process sampling without extra dependency install
+  - real bounded disk usage sampling on the service volume
+  - typed future-dashboard/backend payload for the Shadow VPS service
+  - canonical `.prom` text export from real service state
+- explicit residuals after this slice:
+  - no `node_exporter` hookup yet
+  - no bounded log retrieval path yet
+  - execution telemetry for `13-C EXECUTION` is still missing on the VPS side
+- latest proofs:
+  - `python -m pytest tests/test_monitoring/test_process_metrics.py tests/test_monitoring/test_shadow_vps_service_monitoring.py tests/test_protocols/test_shadow_vps_service_launcher.py -q`
+  - `9 passed`
+  - `python -m pytest tests/test_monitoring/test_monitoring_runtime.py tests/test_monitoring/test_disk_monitor.py tests/test_monitoring/test_process_metrics.py tests/test_monitoring/test_shadow_vps_service_monitoring.py tests/test_protocols/test_shadow_vps_service_launcher.py -q`
+  - `19 passed`
+
+## 5novies. VPS bounded log retrieval slice landed
+
+- real Shadow VPS durable event retrieval is now coded on the monitoring rail:
+  - `src/monitoring/shadow_vps_service_log_retrieval.py`
+  - `src/monitoring/contracts.py`
+  - `src/monitoring/__init__.py`
+  - `scripts/run_shadow_vps_service.py`
+- new typed retrieval surfaces now exist:
+  - `ShadowVpsServiceLogQuery`
+  - `ShadowVpsServiceLogQueryResult`
+  - `ShadowVpsServiceLogEventProjection`
+- current scope of the slice:
+  - bounded full-scan query over the durable `shadow_vps_service.events.jsonl`
+  - bounded recent-tail summary for the real service path
+  - no new raw streaming bus
+  - no UI coupling
+- new governed output written by the real service loop:
+  - `shadow_vps_service_recent_events.json`
+- preserve the doctrine:
+  - VPS keeps only compact recent-summary materialized continuously
+  - deeper log drill-down stays on-demand
+  - typed/audit-ready retrieval replaces manual raw JSONL parsing in the monitored seam
+- explicit residuals after this slice:
+  - no `node_exporter` hookup yet
+  - no local Prometheus/Grafana scrape hookup yet
+  - no compressed incident-bundle retrieval path yet
+  - execution telemetry for `13-C EXECUTION` is still missing on the VPS side
+- latest proofs:
+  - `rtk pytest tests/test_monitoring/test_shadow_vps_service_log_retrieval.py tests/test_monitoring/test_shadow_vps_service_monitoring.py tests/test_protocols/test_shadow_vps_service_launcher.py -q`
+  - `11 passed`
+  - `rtk pytest tests/test_monitoring/test_monitoring_runtime.py tests/test_monitoring/test_disk_monitor.py tests/test_monitoring/test_process_metrics.py tests/test_monitoring/test_shadow_vps_service_monitoring.py tests/test_monitoring/test_shadow_vps_service_log_retrieval.py tests/test_protocols/test_shadow_vps_service_launcher.py -q`
+  - `22 passed`
+
+## 5decies. VPS node_exporter textfile collector hookup landed
+
+- the real Shadow VPS service can now mirror its compact `.prom` export into a node_exporter textfile collector directory:
+  - `src/monitoring/observability_io.py`
+  - `src/monitoring/contracts.py`
+  - `src/monitoring/shadow_vps_service_monitoring.py`
+  - `scripts/run_shadow_vps_service.py`
+- current scope of the slice:
+  - optional service arg `--node-exporter-textfile-dir`
+  - writes `v53_shadow_vps_service.prom` into the configured collector directory
+  - preserves the canonical compact `ObservabilityExport` text payload; no second metrics format was introduced
+- preserve the doctrine:
+  - the VPS still only writes compact typed metrics
+  - deployment of `node_exporter` and local Prometheus scraping remains a separate ops step
+  - no UI coupling
+- explicit residuals after this slice:
+  - no actual `node_exporter` deployment in repo
+  - no local Prometheus/Grafana scrape hookup yet
+  - no compressed incident-bundle retrieval path yet
+  - execution telemetry for `13-C EXECUTION` is still missing on the VPS side
+- latest proofs:
+  - `rtk pytest tests/test_monitoring/test_observability_io.py tests/test_monitoring/test_shadow_vps_service_monitoring.py tests/test_protocols/test_shadow_vps_service_launcher.py -q`
+  - `10 passed`
+  - `rtk pytest tests/test_monitoring/test_monitoring_runtime.py tests/test_monitoring/test_observability_io.py tests/test_monitoring/test_disk_monitor.py tests/test_monitoring/test_process_metrics.py tests/test_monitoring/test_shadow_vps_service_monitoring.py tests/test_monitoring/test_shadow_vps_service_log_retrieval.py tests/test_protocols/test_shadow_vps_service_launcher.py -q`
+  - `24 passed`
+
+## 5undecies. Local Prometheus scrape bundle hookup landed
+
+- the VPS/local observability rail now has a typed handoff and a local-PC aggregator:
+  - per-VPS handoff on the real service rail:
+    - `src/monitoring/shadow_vps_service_scrape_manifest.py`
+    - `scripts/run_shadow_vps_service.py`
+  - local-PC aggregation:
+    - `src/monitoring/shadow_vps_scrape_discovery.py`
+    - `scripts/run_local_prometheus_scrape_bundle.py`
+- new current artifacts:
+  - per-VPS:
+    - `shadow_vps_service_scrape_manifest.json`
+    - `shadow_vps_service_prometheus_file_sd.json`
+  - local-PC aggregate:
+    - `shadow_vps_scrape_discovery.json`
+    - `shadow_vps_prometheus_file_sd.json`
+- current scope of the slice:
+  - explicit `--scrape-host` / `--vps-id` handoff on the service rail
+  - optional Prometheus `file_sd` sidecar per VPS
+  - local discovery and de-duplication by latest target
+  - one aggregated local Prometheus `file_sd` bundle
+- preserve the doctrine:
+  - the VPS still exports only compact typed artifacts
+  - local PC owns the aggregation and future Prometheus/Grafana consumption
+  - no UI coupling
+- explicit residuals after this slice:
+  - no actual `node_exporter` deployment in repo
+  - no checked-in local Prometheus config yet
+  - no Grafana dashboards yet
+  - no compressed incident-bundle retrieval path yet
+  - execution telemetry for `13-C EXECUTION` is still missing on the VPS side
+- latest proofs:
+  - `rtk pytest tests/test_monitoring/test_shadow_vps_service_scrape_manifest.py tests/test_monitoring/test_shadow_vps_scrape_discovery.py tests/test_monitoring/test_local_prometheus_scrape_bundle_launcher.py tests/test_protocols/test_shadow_vps_service_launcher.py -q`
+  - `11 passed`
+  - `rtk pytest tests/test_monitoring/test_monitoring_runtime.py tests/test_monitoring/test_observability_io.py tests/test_monitoring/test_disk_monitor.py tests/test_monitoring/test_process_metrics.py tests/test_monitoring/test_shadow_vps_service_monitoring.py tests/test_monitoring/test_shadow_vps_service_log_retrieval.py tests/test_monitoring/test_shadow_vps_service_scrape_manifest.py tests/test_monitoring/test_shadow_vps_scrape_discovery.py tests/test_monitoring/test_local_prometheus_scrape_bundle_launcher.py tests/test_protocols/test_shadow_vps_service_launcher.py -q`
+  - `29 passed`
+
+## 5duodecies. Checked local Prometheus config generator landed
+
+- the local-PC side now has a checked config generator above the aggregated file_sd bundle:
+  - `src/monitoring/local_prometheus_config.py`
+  - `scripts/run_local_prometheus_config.py`
+- new current artifacts:
+  - `prometheus.local.generated.yml`
+  - `prometheus.local.config.summary.json`
+- current scope of the slice:
+  - consumes `shadow_vps_prometheus_file_sd.json`
+  - generates a minimal checked local Prometheus config
+  - optional local node_exporter target included by config generation for Unix-like hosts
+  - optional local windows_exporter target included by config generation for Windows local PCs
+- preserve the doctrine:
+  - still no heavy UI coupling
+  - still no direct mutation of VPS runtime
+  - checked config generation stays local-PC side
+- explicit residuals after this slice:
+  - no actual Prometheus process launch/orchestration in repo
+  - no Grafana dashboards yet
+  - no compressed incident-bundle retrieval path yet
+  - execution telemetry for `13-C EXECUTION` is still missing on the VPS side
+- latest proofs:
+  - `rtk pytest tests/test_monitoring/test_local_prometheus_config.py tests/test_monitoring/test_local_prometheus_config_launcher.py tests/test_monitoring/test_shadow_vps_service_scrape_manifest.py tests/test_monitoring/test_shadow_vps_scrape_discovery.py tests/test_monitoring/test_local_prometheus_scrape_bundle_launcher.py -q`
+  - `8 passed`
+  - `rtk pytest tests/test_monitoring/test_monitoring_runtime.py tests/test_monitoring/test_observability_io.py tests/test_monitoring/test_disk_monitor.py tests/test_monitoring/test_process_metrics.py tests/test_monitoring/test_shadow_vps_service_monitoring.py tests/test_monitoring/test_shadow_vps_service_log_retrieval.py tests/test_monitoring/test_shadow_vps_service_scrape_manifest.py tests/test_monitoring/test_shadow_vps_scrape_discovery.py tests/test_monitoring/test_local_prometheus_scrape_bundle_launcher.py tests/test_monitoring/test_local_prometheus_config.py tests/test_monitoring/test_local_prometheus_config_launcher.py tests/test_protocols/test_shadow_vps_service_launcher.py -q`
+  - `32 passed`
+
+## 5terdecies. Windows local Prometheus exporter support landed
+
+- the checked local Prometheus config generator now supports both local-PC exporter families explicitly:
+  - `src/monitoring/local_prometheus_config.py`
+  - `scripts/run_local_prometheus_config.py`
+- current scope of the slice:
+  - `--local-node-exporter-target` remains available for Unix-like local hosts
+  - `--local-windows-exporter-target` is now available for Windows local PCs
+  - default config generation no longer assumes a local exporter when none was requested
+- preserve the doctrine:
+  - no Unix-only exporter assumption on Windows
+  - generated config stays typed and local-only
+  - no direct mutation of VPS runtime
+- latest proofs:
+  - `rtk pytest tests/test_monitoring/test_local_prometheus_config.py tests/test_monitoring/test_local_prometheus_config_launcher.py -q`
+  - `6 passed`
+
+## 5quaterdecies. Dual-role dev local Prometheus HTTP bridge landed
+
+- the local-PC dev path now has a bounded HTTP bridge for the current `.prom` payload when no real local exporter exists:
+  - `src/monitoring/local_prometheus_metrics_bridge.py`
+  - `scripts/run_local_prometheus_metrics_bridge.py`
+- current scope of the slice:
+  - serves the current V5.3 `.prom` payload over `/metrics`
+  - exposes `/-/ready`
+  - writes `local_prometheus_metrics_bridge.summary.json`
+  - preserves the real VPS scrape model; this bridge is dev-only for dual-role local runs
+- preserve the doctrine:
+  - no manual Prometheus YAML editing
+  - no change to the real VPS `node_exporter` assumption
+  - no UI coupling
+- latest proofs:
+  - `rtk pytest tests/test_monitoring/test_local_prometheus_metrics_bridge.py tests/test_monitoring/test_local_prometheus_metrics_bridge_launcher.py tests/test_monitoring/test_local_prometheus_config.py tests/test_monitoring/test_local_prometheus_config_launcher.py -q`
+  - `8 passed`
+
+## 5quindecies. Local Grafana dashboard bundle and bootstrap landed
+
+- the local dev observability rail now has an importable Grafana dashboard bundle and a local API bootstrap:
+  - `src/monitoring/local_grafana_dashboard.py`
+  - `scripts/run_local_grafana_dashboard.py`
+  - `src/monitoring/local_grafana_api.py`
+  - `scripts/run_local_grafana_bootstrap.py`
+- current scope of the slice:
+  - builds an importable dashboard JSON over the currently observed `v53_shadow_vps_*` metrics
+  - writes a typed dashboard summary with observed metric inventory
+  - can create the local Prometheus datasource in Grafana and import the dashboard through the local Grafana HTTP API
+- preserve the doctrine:
+  - dashboard queries are constrained to current metric reality
+  - no runtime mutation
+  - no deviation from the real VPS handoff model
+- latest proofs:
+  - `rtk pytest tests/test_monitoring/test_local_grafana_dashboard.py tests/test_monitoring/test_local_grafana_dashboard_launcher.py tests/test_monitoring/test_local_grafana_api.py tests/test_monitoring/test_local_grafana_bootstrap_launcher.py tests/test_monitoring/test_local_prometheus_metrics_bridge.py tests/test_monitoring/test_local_prometheus_metrics_bridge_launcher.py tests/test_monitoring/test_local_prometheus_config.py tests/test_monitoring/test_local_prometheus_config_launcher.py -q`
+  - `13 passed`
+
+## 5sexdecies. Local IA Lab Grafana rail landed on the dual-role dev path
+
+- the local observability rail now covers both the Shadow VPS bridge and the Local IA Lab bridge:
+  - `src/monitoring/local_lab_grafana_dashboard.py`
+  - `scripts/run_local_lab_grafana_dashboard.py`
+  - `src/monitoring/local_prometheus_metrics_bridge.py`
+  - `scripts/run_local_prometheus_metrics_bridge.py`
+  - `src/monitoring/local_prometheus_config.py`
+  - `scripts/run_local_prometheus_config.py`
+- current scope of the slice:
+  - the dev-only metrics bridge can now serve either a raw `.prom` file or an observability export JSON carrying `text_payload`
+  - the local Prometheus config can now add a dedicated `v53_local_lab` scrape job via `--local-lab-target`
+  - an importable Local IA Lab Grafana dashboard is now generated from the real observed `v53_local_lab_*` metric surface
+  - the generated Local IA Lab dashboard is detailed but still constrained to current metric reality, not imagined future panels
+- current dev artifacts:
+  - `build/dev_dual_role_demo/local_lab_grafana_dashboard/v53_local_lab_grafana.dashboard.json`
+  - `build/dev_dual_role_demo/local_lab_grafana_dashboard/v53_local_lab_grafana.summary.json`
+  - `build/dev_dual_role_demo/local_prometheus_config_with_lab/prometheus.local.generated.yml`
+  - `build/dev_dual_role_demo/local_prometheus_config_with_lab/prometheus.local.config.summary.json`
+- preserve the doctrine:
+  - no new runtime profile
+  - no VPS runtime mutation
+  - no heavy UI coupling on the VPS side
+  - Local IA Lab remains local-only, surfaced through typed sidecars and compact metrics
+- latest proofs:
+  - `python -m pytest tests/test_monitoring/test_local_prometheus_metrics_bridge.py tests/test_monitoring/test_local_prometheus_metrics_bridge_launcher.py tests/test_monitoring/test_local_prometheus_config.py tests/test_monitoring/test_local_prometheus_config_launcher.py tests/test_monitoring/test_local_lab_grafana_dashboard.py tests/test_monitoring/test_local_lab_grafana_dashboard_launcher.py -q`
+  - `19 passed`
+
+## 5septdecies. `13-C EXECUTION` now has a real service-owned telemetry producer
+
+- new code:
+  - `src/local_replay_runtime/local_lab_execution_telemetry_artifact.py`
+  - `scripts/run_shadow_vps_service.py`
+  - `scripts/run_local_lab_analysis_bundle.py`
+- current slice truth:
+  - the Shadow VPS service now writes a durable cumulative archive:
+    - `shadow_vps_service_execution_telemetry.archive.json`
+  - and a current service-owned handoff sidecar:
+    - `shadow_vps_service_execution_telemetry.json`
+  - the service sidecar is bindable by the Local IA Lab bundle without pre-baking a review `correlation_id`
+  - `THR-X02` is now derived from real websocket timing sources already emitted by the service:
+    - injected websocket stream -> inter-arrival series
+    - native live capture snapshot batch -> accepted-event inter-arrival series
+  - `THR-X01` stays explicit and optional through `--execution-time-sync-offsets-path`
+  - the service state and monitoring payload now expose `last_execution_telemetry_ref` / `execution_telemetry_ref`
+- preserve the doctrine:
+  - no fake readiness
+  - cumulative by `session_date`, not ad hoc per-run overwrite
+  - service-owned artifact stays typed and audit-ready
+  - Local IA Lab remains the consumer; the VPS service only collects and hands off
+- latest proofs:
+  - `python -m pytest tests/test_local_replay_runtime/test_local_lab_execution_telemetry_artifact.py tests/test_local_replay_runtime/test_local_lab_execution_review.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py tests/test_monitoring/test_shadow_vps_service_monitoring.py tests/test_protocols/test_shadow_vps_service_launcher.py -q`
+  - `20 passed`
+
+## 5octodecies. `13-C EXECUTION` now auto-harvests `THR-X01` from native live capture when available
+
+- new code:
+  - `src/protocols/shadow_live_websocket.py`
+  - `src/protocols/shadow_vps_service.py`
+  - `scripts/run_shadow_vps_service.py`
+- current slice truth:
+  - native live capture can now write a bounded passive sidecar:
+    - `live_time_sync_offsets.json`
+  - the sidecar is produced only when `time_sync_probe_enabled=true` on `ShadowLiveWebSocketConfig`
+  - the Shadow VPS service now falls back to that service-owned sidecar for `THR-X01` when `--execution-time-sync-offsets-path` is not supplied
+  - the ref is propagated through:
+    - `ShadowLiveWebSocketCaptureResult`
+    - `ShadowVpsServiceState.last_live_capture_time_sync_offsets_ref`
+    - `ShadowVpsRuntimeEvidenceBundle.live_capture_time_sync_offsets_ref`
+    - `ShadowVpsCampaignSummary.live_capture_time_sync_offsets_ref`
+- preserve the doctrine:
+  - passive only, no execution mutation
+  - bounded probe, not an always-on heavy runtime loop
+  - if the probe fails, live capture stays up and the sidecar remains honestly absent with explicit error text
+- latest proofs:
+  - `python -m pytest tests/test_protocols/test_shadow_live_websocket.py tests/test_protocols/test_shadow_vps_service_launcher.py tests/test_local_replay_runtime/test_local_lab_execution_telemetry_artifact.py tests/test_local_replay_runtime/test_local_lab_execution_review.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py tests/test_monitoring/test_shadow_vps_service_monitoring.py -q`
+  - `26 passed`
+
+## 5novemdecies. `13-C EXECUTION` now harvests service-owned `THR-X04/X05` samples and exposes a shared `THR-X04` calibrator
+
+- new code:
+  - `src/calibration_methods/execution.py`
+  - `src/local_replay_runtime/local_lab_execution_telemetry_artifact.py`
+  - `src/local_replay_runtime/local_lab_execution_review.py`
+- current slice truth:
+  - the service-owned execution telemetry artifact now carries:
+    - `spread_bps`
+    - `spread_observation_days`
+    - `spread_session_dates`
+    - `spread_source_refs`
+    - `slippage_bps`
+    - `slippage_observation_days`
+    - `slippage_session_dates`
+    - `slippage_source_refs`
+  - those samples are harvested from existing service-owned market evidence:
+    - snapshot/depth spreads from injected websocket streams or native snapshot batches
+    - slippage samples from route hints when present
+  - `src/calibration_methods/execution.py` now exposes `calibrate_spread_guard_threshold_bps(...)` for `THR-X04`
+  - the global execution review contract is extended to carry the new sample families, but the review gating logic remains intentionally focused on `THR-X01/X02` on this slice
+- preserve the doctrine:
+  - no fake `THR-X05` model claim yet
+  - no `THR-X03` green verdict without true REST/quota telemetry
+  - service-owned evidence first, review consumption later
+- latest proofs:
+  - `python -m pytest tests/test_calibration_methods/test_execution.py tests/test_protocols/test_shadow_live_websocket.py tests/test_protocols/test_shadow_vps_service_launcher.py tests/test_local_replay_runtime/test_local_lab_execution_telemetry_artifact.py tests/test_local_replay_runtime/test_local_lab_execution_review.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py tests/test_monitoring/test_shadow_vps_service_monitoring.py -q`
+  - `30 passed`
+
+## 20. `13-C EXECUTION` now makes `THR-X04` a real Local IA Lab review threshold
+
+- new code:
+  - `src/local_replay_runtime/local_lab_execution_review.py`
+  - `src/calibration_methods/__init__.py`
+- current slice truth:
+  - `THR-X04` is now consumed by the Local IA Lab execution review with explicit doctrine:
+    - requires `spread_bps`
+    - requires `spread_observation_days >= 30`
+    - calibrates via `calibrate_spread_guard_threshold_bps(...)`
+    - keeps the human hard cap at `50 bps`
+  - the review now covers:
+    - `THR-X01`
+    - `THR-X02`
+    - `THR-X04`
+  - bundle summaries now expose the updated execution threshold counts automatically
+- preserve the doctrine:
+  - `THR-X03` still has no green verdict without real service quota telemetry
+  - `THR-X05` still has no green verdict without a real slippage model
+  - no fake readiness was added for either missing threshold family
+- latest proofs:
+  - `python -m pytest tests/test_local_replay_runtime/test_local_lab_execution_review.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py tests/test_local_replay_runtime/test_local_lab_execution_telemetry_artifact.py tests/test_calibration_methods/test_execution.py -q`
+  - `17 passed`
+  - `python -m pytest tests/test_calibration_methods/test_execution.py tests/test_protocols/test_shadow_live_websocket.py tests/test_protocols/test_shadow_vps_service_launcher.py tests/test_local_replay_runtime/test_local_lab_execution_telemetry_artifact.py tests/test_local_replay_runtime/test_local_lab_execution_review.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py tests/test_monitoring/test_shadow_vps_service_monitoring.py -q`
+  - `31 passed`
+
+## 21. `13-C EXECUTION` now exposes explicit `THR-X03/X05` review gaps instead of silently omitting them
+
+- new code:
+  - `src/local_replay_runtime/local_lab_execution_review.py`
+- current slice truth:
+  - the Local IA Lab execution review now enumerates the full bounded execution threshold set:
+    - `THR-X01`
+    - `THR-X02`
+    - `THR-X03`
+    - `THR-X04`
+    - `THR-X05`
+  - current honest review status is now:
+    - `THR-X01` ready when bounded time-sync evidence exists
+    - `THR-X02` ready when bounded websocket evidence exists
+    - `THR-X04` ready when bounded spread evidence exists
+    - `THR-X03` partial with `THR-X03_SERVICE_RATE_LIMIT_TELEMETRY_MISSING`
+    - `THR-X05` partial with either missing telemetry or `THR-X05_MODEL_NOT_IMPLEMENTED`
+  - bundle summaries now surface:
+    - `execution_ready_threshold_count = 3`
+    - `execution_partial_threshold_count = 2`
+    - `execution_review_status = partial`
+- preserve the doctrine:
+  - no fake green verdict for `X03`
+  - no fake green verdict for `X05`
+  - release/shadow gates were not weakened or bypassed
+- latest proofs:
+  - `python -m pytest tests/test_local_replay_runtime/test_local_lab_execution_review.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py tests/test_local_replay_runtime/test_local_lab_execution_telemetry_artifact.py tests/test_calibration_methods/test_execution.py -q`
+  - `17 passed`
+  - `python -m pytest tests/test_calibration_methods/test_execution.py tests/test_protocols/test_shadow_live_websocket.py tests/test_protocols/test_shadow_vps_service_launcher.py tests/test_local_replay_runtime/test_local_lab_execution_telemetry_artifact.py tests/test_local_replay_runtime/test_local_lab_execution_review.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py tests/test_monitoring/test_shadow_vps_service_monitoring.py -q`
+  - `31 passed`
+
+## 22. `13-C EXECUTION` now carries service-owned size traces for the future `THR-X05` model
+
+- new code:
+  - `src/local_replay_runtime/local_lab_execution_telemetry_artifact.py`
+  - `src/local_replay_runtime/local_lab_execution_review.py`
+- current slice truth:
+  - the service-owned execution telemetry artifact now also carries:
+    - `candidate_sizes`
+    - `candidate_size_observation_days`
+    - `candidate_size_session_dates`
+    - `candidate_size_source_refs`
+    - `final_sizes`
+    - `final_size_observation_days`
+    - `final_size_session_dates`
+    - `final_size_source_refs`
+  - those traces are harvested directly from route hints already present in injected/live evidence
+  - the review contract can now receive these future `X05` inputs without claiming a model exists
+- preserve the doctrine:
+  - no fake `THR-X05` model was introduced
+  - this slice is evidence preparation only
+  - release/shadow gates stay unchanged
+- latest proofs:
+  - `python -m pytest tests/test_local_replay_runtime/test_local_lab_execution_telemetry_artifact.py tests/test_local_replay_runtime/test_local_lab_execution_review.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py tests/test_calibration_methods/test_execution.py -q`
+  - `17 passed`
+  - `python -m pytest tests/test_calibration_methods/test_execution.py tests/test_protocols/test_shadow_live_websocket.py tests/test_protocols/test_shadow_vps_service_launcher.py tests/test_local_replay_runtime/test_local_lab_execution_telemetry_artifact.py tests/test_local_replay_runtime/test_local_lab_execution_review.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py tests/test_monitoring/test_shadow_vps_service_monitoring.py -q`
+  - `31 passed`
+
+## 23. `13-C EXECUTION` now persists service-owned `THR-X03` quota probe telemetry end-to-end
+
+- new code:
+  - `src/protocols/shadow_live_websocket.py`
+  - `src/protocols/shadow_vps_service.py`
+  - `src/local_replay_runtime/local_lab_execution_telemetry_artifact.py`
+  - `src/local_replay_runtime/local_lab_execution_review.py`
+- current slice truth:
+  - the native live time-sync sidecar now also carries bounded quota probe metadata:
+    - `rest_call_count`
+    - `probe_duration_s`
+    - `rest_quota_max_calls_per_minute`
+    - `observed_calls_per_minute`
+  - the service-owned execution telemetry artifact now preserves that metadata as:
+    - `quota_call_counts`
+    - `quota_probe_durations_s`
+    - `quota_limit_calls_per_minute_values`
+    - `quota_calls_per_minute_observed`
+    - `quota_observation_days`
+    - `quota_source_refs`
+  - the Local IA Lab execution review now distinguishes:
+    - telemetry missing -> `THR-X03_SERVICE_RATE_LIMIT_TELEMETRY_MISSING`
+    - telemetry present but quota cap missing -> `THR-X03_SERVICE_RATE_LIMIT_CAP_MISSING`
+    - telemetry present but `< 30d` -> `THR-X03_EXECUTION_HISTORY_LT_30D`
+    - telemetry present and history sufficient -> still `partial` with `THR-X03_MODEL_NOT_IMPLEMENTED`
+- preserve the doctrine:
+  - no fake `THR-X03` green verdict was introduced
+  - this slice adds evidence plumbing and honest review semantics only
+  - release/shadow/live gates remain unchanged
+- latest proofs:
+  - `python -m pytest tests/test_protocols/test_shadow_live_websocket.py tests/test_local_replay_runtime/test_local_lab_execution_telemetry_artifact.py tests/test_local_replay_runtime/test_local_lab_execution_review.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py -q`
+  - `20 passed`
+  - `python -m pytest tests/test_calibration_methods/test_execution.py tests/test_protocols/test_shadow_live_websocket.py tests/test_protocols/test_shadow_vps_service_launcher.py tests/test_local_replay_runtime/test_local_lab_execution_telemetry_artifact.py tests/test_local_replay_runtime/test_local_lab_execution_review.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py tests/test_monitoring/test_shadow_vps_service_monitoring.py -q`
+  - `32 passed`
+
+## 24. `13-C EXECUTION` now has first bounded models for `THR-X03` and `THR-X05`
+
+- new code:
+  - `src/calibration_methods/execution.py`
+  - `src/calibration_methods/__init__.py`
+  - `src/local_replay_runtime/local_lab_execution_review.py`
+- current slice truth:
+  - `THR-X03` now calibrates a real throttle ratio from service-owned quota telemetry:
+    - observed REST calls/minute
+    - official quota cap
+    - Little's-law-style burst margin
+    - human hard cap at `0.80`
+  - `THR-X05` now calibrates a first bounded slippage model from service-owned size/slippage evidence:
+    - robust Huber linear fit on `sqrt(size)`
+    - size proxy chosen from `final_size` first, else `candidate_size`
+    - validation floor `R² >= 0.30`
+    - reference prediction published at the `q95` observed size
+  - on aligned 30d service-owned evidence, the Local IA Lab execution review can now become fully `ready`
+- preserve the doctrine:
+  - no live-runtime mutation was introduced
+  - no opaque ML or hidden fallback was introduced
+  - `THR-X05` is still a first bounded model, not the final execution backbone implementation
+- latest proofs:
+  - `python -m pytest tests/test_calibration_methods/test_execution.py tests/test_local_replay_runtime/test_local_lab_execution_review.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py tests/test_local_replay_runtime/test_local_lab_execution_telemetry_artifact.py -q`
+  - `21 passed`
+  - `python -m pytest tests/test_calibration_methods/test_execution.py tests/test_protocols/test_shadow_live_websocket.py tests/test_protocols/test_shadow_vps_service_launcher.py tests/test_local_replay_runtime/test_local_lab_execution_telemetry_artifact.py tests/test_local_replay_runtime/test_local_lab_execution_review.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py tests/test_monitoring/test_shadow_vps_service_monitoring.py -q`
+  - `35 passed`
+
+## 25. `13-C EXECUTION` now projects `THR-X03/X05` into future runtime consumer contracts
+
+- new code:
+  - `src/local_replay_runtime/local_lab_execution_runtime_projection.py`
+  - `src/local_replay_runtime/artifact_proof_summary_builder.py`
+  - `src/local_replay_runtime/artifact_release_candidate.py`
+  - `scripts/run_local_lab_analysis_bundle.py`
+- current slice truth:
+  - the Local IA Lab bundle now emits `local_lab_execution_runtime_projection.json`
+  - the projection is typed and bounded for two future consumers only:
+    - `rate_limiter` from `THR-X03`
+    - `slippage_model` from `THR-X05`
+  - proof assessment and release candidate now carry this projection as descriptive handoff evidence
+  - no new runtime module was created and no Shadow/Micro-live/Live gate was bypassed
+- preserve the doctrine:
+  - projection is descriptive only
+  - it does not mutate live runtime behavior
+  - it does not become a new release blocker on this slice
+- latest proofs:
+  - `python -m pytest tests/test_local_replay_runtime/test_local_lab_execution_runtime_projection.py tests/test_local_replay_runtime/test_artifact_proof_summary_builder.py tests/test_local_replay_runtime/test_artifact_release_candidate.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py -q`
+  - `18 passed`
+  - `python -m pytest tests/test_calibration_methods/test_execution.py tests/test_protocols/test_shadow_live_websocket.py tests/test_protocols/test_shadow_vps_service_launcher.py tests/test_local_replay_runtime/test_local_lab_execution_telemetry_artifact.py tests/test_local_replay_runtime/test_local_lab_execution_review.py tests/test_local_replay_runtime/test_local_lab_execution_runtime_projection.py tests/test_local_replay_runtime/test_artifact_proof_summary_builder.py tests/test_local_replay_runtime/test_artifact_release_candidate.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py tests/test_monitoring/test_shadow_vps_service_monitoring.py -q`
+  - `46 passed`
+
+## 26. `13-C EXECUTION` now has first canonical runtime consumers for `THR-X03/X05`
+
+- new runtime truth:
+  - `src/execution_backbone/rate_limiter.py` now defines the bounded canonical consumer for `THR-X03`
+  - `src/execution_backbone/slippage_model.py` now defines the bounded canonical consumer for `THR-X05`
+  - `src/execution_backbone/execution_runtime.py` can now consume those models only when they are injected explicitly
+- current slice behavior:
+  - `THR-X05` augments `expected_cost` conservatively before order selection and carries audit metadata into the submitted intent
+  - `THR-X03` can veto submission when live metadata already exposes `rest_quota_ratio_current`
+  - if the models are absent, or if `THR-X03` telemetry is absent/invalid, the runtime stays fail-open and unchanged
+- preserve the doctrine:
+  - no bootstrap auto-wiring yet
+  - no live/runtime mutation unless a caller injects the models explicitly
+  - no shortcut around Shadow/Micro-live/Live gates
+- latest proofs:
+  - `python -m pytest tests/test_execution_backbone/test_rate_limiter.py tests/test_execution_backbone/test_slippage_model.py tests/test_execution_backbone/test_execution_runtime.py -q`
+  - `30 passed`
+  - `python -m pytest tests/test_execution_backbone/test_execution_integration.py tests/test_protocols/test_execution_runtime_bootstrap.py tests/test_protocols/test_shadow_vps_service_launcher.py tests/test_monitoring/test_shadow_vps_service_monitoring.py -q`
+  - `17 passed`
+
+## 27. `13-C EXECUTION` runtime consumers now have an explicit bootstrap bridge
+
+- new bridge truth:
+  - `src/protocols/execution_runtime_projection_bridge.py` now loads `local_lab_execution_runtime_projection.json` fail-open
+  - `src/protocols/execution_runtime_bootstrap.py` now accepts `execution_runtime_projection_path`
+  - `build_execution_runtime(...)` and `build_binance_execution_runtime(...)` can now recover:
+    - `rate_limit_model` from `THR-X03`
+    - `slippage_model` from `THR-X05`
+- preserve the doctrine:
+  - activation stays explicit; default behavior remains unchanged when no projection path is provided
+  - missing / partial / invalid projection artifacts still fail open
+  - no gate bypass and no hidden live mutation
+- latest proofs:
+  - `python -m pytest tests/test_protocols/test_execution_runtime_projection_bridge.py tests/test_protocols/test_execution_runtime_bootstrap.py tests/test_execution_backbone/test_execution_runtime.py -q`
+  - `36 passed`
+  - `python -m pytest tests/test_execution_backbone/test_rate_limiter.py tests/test_execution_backbone/test_slippage_model.py tests/test_execution_backbone/test_execution_integration.py tests/test_protocols/test_shadow_vps_service_launcher.py tests/test_monitoring/test_shadow_vps_service_monitoring.py -q`
+  - `14 passed`
+
+## 28. `13-C EXECUTION` runtime projection bridge is now visible in Build-10 monitoring
+
+- new bridge truth:
+  - `src/protocols/execution_runtime_dashboard.py` now projects the bounded `execution_runtime_projection_path` seam into typed monitoring truth
+  - `src/monitoring/contracts.py`, `src/monitoring/technical_dashboard_backend.py`, `src/ui/technical_dashboard_view.py`, and `src/monitoring/observability.py` now expose that seam separately from the older compiled `execution_no_trade_bridge`
+- preserve the doctrine:
+  - no hidden runtime activation
+  - no replacement of the existing no-trade bridge
+  - the new surface is descriptive only and reports whether `THR-X03/X05` consumers are loadable
+- latest proofs:
+  - `rtk pytest tests/test_protocols/test_execution_runtime_dashboard.py tests/test_monitoring/test_monitoring_backend.py tests/test_monitoring/test_monitoring_runtime.py tests/test_monitoring/test_observability.py tests/test_ui/test_technical_dashboard.py -q`
+  - `91 passed`
+  - `python -m pytest tests/test_protocols/test_execution_runtime_projection_bridge.py tests/test_protocols/test_execution_runtime_bootstrap.py tests/test_execution_backbone/test_execution_runtime.py -q`
+  - `36 passed`
+
+## 29. `13-C EXECUTION` technical dashboard launcher now auto-discovers the runtime projection bridge
+
+- new launcher truth:
+  - `scripts/run_technical_dashboard.py` now auto-loads `local_lab_execution_runtime_projection.json` from the demo output directory when present
+  - the launcher can also accept an explicit `--execution-runtime-projection-path`
+  - demo payloads now surface the bounded `THR-X03/X05` consumer bridge without test-only manual injection
+- preserve the doctrine:
+  - demo/operator surface only
+  - no runtime activation
+  - no Shadow/Micro-live/Live bypass
+- latest proofs:
+  - `rtk pytest tests/test_ui/test_technical_dashboard_launcher.py tests/test_ui/test_technical_dashboard.py tests/test_monitoring/test_monitoring_backend.py tests/test_monitoring/test_observability.py tests/test_protocols/test_execution_runtime_dashboard.py -q`
+  - `90 passed`
+  - `python -m pytest tests/test_monitoring/test_monitoring_runtime.py tests/test_protocols/test_execution_runtime_projection_bridge.py tests/test_protocols/test_execution_runtime_bootstrap.py tests/test_execution_backbone/test_execution_runtime.py -q`
+  - `46 passed`
+
+## 30. `13-C EXECUTION` local replay shadow runner now surfaces the runtime projection bridge
+
+- new runner truth:
+  - `scripts/run_local_replay_shadow.py` now accepts an explicit `--execution-runtime-projection-path`
+  - the same runner now auto-discovers `local_lab_execution_runtime_projection.json` from its output directory when present
+  - baseline and candidate technical payloads now surface the bounded `THR-X03/X05` runtime projection bridge through the existing Build-10 dashboard contract
+- preserve the doctrine:
+  - runner/operator surface only
+  - no hidden runtime activation
+  - no replacement of Shadow gating or execution bootstrap
+- latest proofs:
+  - `python -m pytest tests/test_protocols/test_local_replay_shadow_runner.py tests/test_ui/test_technical_dashboard_launcher.py tests/test_protocols/test_execution_runtime_dashboard.py tests/test_monitoring/test_monitoring_backend.py tests/test_ui/test_technical_dashboard.py -q`
+  - `95 passed`
+  - `python -m pytest tests/test_protocols/test_execution_runtime_projection_bridge.py tests/test_protocols/test_execution_runtime_bootstrap.py tests/test_execution_backbone/test_execution_runtime.py -q`
+  - `36 passed`
+
+## 31. `13-C EXECUTION` Shadow orchestrator and VPS service now persist the runtime projection seam
+
+- new service truth:
+  - `scripts/run_shadow_daily_orchestrator.py` now accepts `--execution-runtime-projection-path` and persists the projection ref plus readiness counts in `shadow_daily_orchestrator.last_run.json`
+  - `scripts/run_shadow_vps_service.py` now forwards that path, persists `last_execution_runtime_projection_ref`, and carries the same seam into the runtime evidence bundle and campaign summary
+  - `src/monitoring/shadow_vps_service_monitoring.py` and `src/monitoring/contracts.py` now expose this seam in the Shadow VPS monitoring payload and observability export
+- preserve the doctrine:
+  - descriptive persistence only
+  - no hidden runtime activation
+  - no Shadow/Micro-live/Live bypass
+- latest proofs:
+  - `python -m pytest tests/test_protocols/test_local_replay_shadow_runner.py tests/test_protocols/test_shadow_daily_orchestrator_launcher.py tests/test_protocols/test_shadow_vps_service_launcher.py tests/test_monitoring/test_shadow_vps_service_monitoring.py -q`
+  - `24 passed`
+  - `python -m pytest tests/test_protocols/test_execution_runtime_projection_bridge.py tests/test_protocols/test_execution_runtime_bootstrap.py tests/test_execution_backbone/test_execution_runtime.py tests/test_protocols/test_execution_runtime_dashboard.py tests/test_monitoring/test_monitoring_backend.py tests/test_ui/test_technical_dashboard.py -q`
+  - `108 passed`
+
+## 32. `13-C EXECUTION` Micro-live and Live-Light now carry the runtime projection seam through canonical contracts
+
+- new protocol truth:
+  - `src/protocols/contracts.py` now carries `execution_runtime_projection_*` fields in `MicroLiveInput`, `MicroLiveRunSummary`, `LiveLightInput`, and `LiveLightRunSummary`
+  - `src/protocols/micro_live_runtime.py` now derives the seam from the governed `execution_runtime_projection_bridge` already present in the Shadow technical payload
+  - `src/protocols/live_light_runtime.py` now propagates the same seam from governed Micro-live summaries into governed Live-Light inputs and summaries
+  - `src/protocols/micro_live_dashboard.py`, `src/protocols/live_light_dashboard.py`, and `src/monitoring/contracts.py` now keep the normalized monitoring projections aligned with the canonical protocol chain
+- preserve the doctrine:
+  - descriptive seam propagation only
+  - no hidden runtime activation
+  - no shortcut around Shadow/Micro-live/Live gates
+- latest proofs:
+  - `python -m pytest tests/test_protocols/test_micro_live_runtime.py tests/test_protocols/test_live_light_runtime.py tests/test_protocols/test_micro_live_dashboard.py tests/test_protocols/test_live_light_dashboard.py -q`
+  - `82 passed`
+  - `python -m pytest tests/test_ui/test_technical_dashboard.py tests/test_monitoring/test_monitoring_backend.py tests/test_protocols/test_local_replay_shadow_runner.py tests/test_protocols/test_shadow_daily_orchestrator_launcher.py tests/test_protocols/test_shadow_vps_service_launcher.py tests/test_monitoring/test_shadow_vps_service_monitoring.py -q`
+  - `88 passed`
+
+## 33. `13-C EXECUTION` Micro-live and Live dashboard cards now expose the runtime projection seam
+
+- new operator truth:
+  - `src/protocols/micro_live_dashboard.py` now exposes `exec_proj` status plus ready/partial/blocked consumer counts inside the Build-12 guardrails card detail
+  - `src/protocols/live_light_dashboard.py` now exposes the same bounded seam inside the Build-13 readiness card detail
+  - this makes the later-stage gate chain operator-visible without inventing a new card or changing gate semantics
+- preserve the doctrine:
+  - operator visibility only
+  - no hidden runtime activation
+  - no shortcut around Shadow/Micro-live/Live gates
+- latest proofs:
+  - `python -m pytest tests/test_protocols/test_micro_live_dashboard.py tests/test_protocols/test_live_light_dashboard.py tests/test_ui/test_technical_dashboard.py -q`
+  - `33 passed`
+  - `python -m pytest tests/test_protocols/test_micro_live_runtime.py tests/test_protocols/test_live_light_runtime.py -q`
+  - `76 passed`
+
+## 34. `13-C EXECUTION` Shadow live startup config can now carry the runtime projection seam
+
+- new startup/config truth:
+  - `src/protocols/shadow_vps_service.py` now lets `ShadowLiveWebSocketConfig` carry `execution_runtime_projection_path_ref`
+  - `scripts/run_shadow_vps_service.py` now resolves that config-owned path at startup when the explicit CLI path is absent
+  - explicit `--execution-runtime-projection-path` still wins over config and the seam remains descriptive only
+- preserve the doctrine:
+  - startup/config propagation only
+  - no hidden runtime activation
+  - no shortcut around Shadow/Micro-live/Live gates
+- latest proofs:
+  - `python -m pytest tests/test_protocols/test_shadow_vps_service_launcher.py tests/test_protocols/test_shadow_live_websocket.py -q`
+  - `12 passed`
+  - `python -m pytest tests/test_monitoring/test_shadow_vps_service_monitoring.py tests/test_protocols/test_shadow_daily_orchestrator_launcher.py tests/test_protocols/test_local_replay_shadow_runner.py -q`
+  - `18 passed`
+
+## 35. `13-C EXECUTION` Shadow service now preserves runtime projection provenance
+
+- new audit truth:
+  - the Shadow service now persists `execution_runtime_projection_source` across state, runtime evidence bundle, campaign summary, and monitoring payloads
+  - current governed values are `cli`, `live_websocket_config`, or `not_configured`
+  - the existing `v53_shadow_vps_execution_runtime_projection_ready` metric now carries `projection_source` as a label
+- preserve the doctrine:
+  - provenance only
+  - no hidden runtime activation
+  - no shortcut around Shadow/Micro-live/Live gates
+- latest proofs:
+  - `python -m pytest tests/test_protocols/test_shadow_vps_service_launcher.py tests/test_monitoring/test_shadow_vps_service_monitoring.py -q`
+  - `8 passed`
+  - `python -m pytest tests/test_protocols/test_shadow_live_websocket.py tests/test_protocols/test_shadow_daily_orchestrator_launcher.py tests/test_protocols/test_local_replay_shadow_runner.py -q`
+  - `22 passed`
+
+## 36. `13-C EXECUTION` Shadow local Grafana now renders the runtime projection seam
+
+- new operator truth:
+  - `src/monitoring/local_grafana_dashboard.py` now adds dedicated Shadow Grafana panels for `execution_runtime_projection_ready`, ready/partial/blocked consumer counts, and an instant label view exposing `projection_status` and `projection_source`
+  - `scripts/run_local_grafana_dashboard.py` now generates a 12-panel Shadow dashboard bundle that can render the seam directly in Grafana, not only in the technical dashboard or raw Prometheus metrics
+- preserve the doctrine:
+  - observability only
+  - no hidden runtime activation
+  - no shortcut around Shadow/Micro-live/Live gates
+- latest proofs:
+  - `python -m pytest tests/test_monitoring/test_local_grafana_dashboard.py::test_build_local_shadow_vps_grafana_dashboard_contains_expected_queries tests/test_monitoring/test_local_grafana_dashboard_launcher.py::test_local_grafana_dashboard_launcher_writes_dashboard_and_summary -q`
+  - `2 passed`
+
+## 37. `13-C EXECUTION` Shadow service now keeps runtime projection observability on late telemetry failure
+
+- new service truth:
+  - `scripts/run_shadow_vps_service.py` now persists the written runtime evidence bundle ref plus the `execution_runtime_projection` seam into service state before attempting the durable execution telemetry sidecar write
+  - if the later telemetry sidecar write fails, Build-10 monitoring and Prometheus still expose the already-produced runtime projection seam from the runtime evidence bundle instead of regressing to `not_configured`
+- preserve the doctrine:
+  - observability/persistence hardening only
+  - no hidden runtime activation
+  - no shortcut around Shadow/Micro-live/Live gates
+- latest proofs:
+  - `python -m pytest tests/test_protocols/test_shadow_vps_service_launcher.py::test_shadow_vps_service_preserves_execution_runtime_projection_when_telemetry_write_fails tests/test_protocols/test_shadow_vps_service_launcher.py::test_shadow_vps_service_captures_native_live_websocket_then_runs_shadow tests/test_monitoring/test_shadow_vps_service_monitoring.py -q`
+  - `4 passed`
+
+## 38. `13-C EXECUTION` Shadow demo runs no longer degrade when telemetry sidecar has no governed export
+
+- new service truth:
+  - `scripts/run_shadow_vps_service.py` now recovers `last_run.export_dir_ref` from `auto_export_dir` when a governed auto-export exists but the orchestrator payload omitted the ref
+  - true demo/replay runs with no governed export no longer degrade the whole Shadow service just because the Local IA Lab execution telemetry sidecar cannot be materialized
+  - the service now emits `execution_telemetry_skipped` explicitly for that case, keeps `last_execution_telemetry_ref=""`, and still completes the governed Shadow day
+- preserve the doctrine:
+  - honest skip semantics only
+  - no hidden runtime activation
+  - no shortcut around Shadow/Micro-live/Live gates
+- latest proofs:
+  - `rtk pytest tests/test_protocols/test_shadow_vps_service_launcher.py tests/test_monitoring/test_shadow_vps_service_monitoring.py -q`
+  - `10 passed`
+  - `rtk pytest tests/test_protocols/test_shadow_daily_orchestrator_launcher.py tests/test_protocols/test_local_replay_shadow_runner.py -q`
+  - `16 passed`
+
+## 39. `13-C EXECUTION` Shadow telemetry write/skip status is now observable in Build-10 and local Grafana
+
+- new monitoring truth:
+  - `src/protocols/shadow_vps_service.py` now persists `last_execution_telemetry_status`
+  - `scripts/run_shadow_vps_service.py` now writes governed values `written`, `skipped`, and `failed` on the Shadow service state/campaign path
+  - `src/monitoring/shadow_vps_service_monitoring.py` now projects `execution_telemetry_status` into the Build-10 payload detail string and emits bounded Prometheus metric `v53_shadow_vps_execution_telemetry_ready{telemetry_status=...}`
+  - `src/monitoring/local_grafana_dashboard.py` now renders dedicated `Execution Telemetry Ready` and `Execution Telemetry Labels` panels in the local Shadow Grafana bundle
+- preserve the doctrine:
+  - observability only
+  - no hidden runtime activation
+  - no shortcut around Shadow/Micro-live/Live gates
+- latest proofs:
+  - `rtk pytest tests/test_protocols/test_shadow_vps_service_launcher.py tests/test_monitoring/test_shadow_vps_service_monitoring.py -q`
+  - `10 passed`
+  - `python -m pytest tests/test_monitoring/test_local_grafana_dashboard.py::test_build_local_shadow_vps_grafana_dashboard_contains_expected_queries tests/test_monitoring/test_local_grafana_dashboard_launcher.py::test_local_grafana_dashboard_launcher_writes_dashboard_and_summary -q`
+  - `2 passed`
+
+## 40. `13-C EXECUTION` Build-10 technical dashboard now exposes Shadow execution telemetry status
+
+- new dashboard truth:
+  - `ShadowProjection` now carries `execution_telemetry_ref` and `execution_telemetry_status`
+  - `scripts/run_technical_dashboard.py` now projects those service-owned fields from `shadow_vps_service.campaign_summary.json` into the canonical Build-10 Shadow section
+  - `src/ui/technical_dashboard_view.py` now renders an explicit `Execution Telemetry` card under `Build-11 Shadow`
+- preserve the doctrine:
+  - dashboard/normalization only
+  - no hidden runtime activation
+  - no shortcut around Shadow/Micro-live/Live gates
+- latest proofs:
+  - `rtk pytest tests/test_monitoring/test_monitoring_backend.py tests/test_ui/test_technical_dashboard.py tests/test_ui/test_technical_dashboard_launcher.py -q`
+  - `74 passed`
+  - `rtk pytest tests/test_protocols/test_shadow_vps_service_launcher.py tests/test_monitoring/test_shadow_vps_service_monitoring.py -q`
+  - `10 passed`
+
+## 41. `13-C EXECUTION` THR-X04 now lands as the third governed runtime consumer
+
+- new runtime truth:
+  - `src/execution_backbone/spread_guard.py` now defines the bounded runtime consumer for `THR-X04`
+  - `src/local_replay_runtime/local_lab_execution_runtime_projection.py` now projects three consumers: `THR-X03 -> rate_limiter`, `THR-X04 -> spread_guard`, `THR-X05 -> slippage_model`
+  - `src/protocols/execution_runtime_projection_bridge.py` and `src/protocols/execution_runtime_bootstrap.py` now load all three consumers in opt-in/fail-open mode
+  - `src/execution_backbone/execution_runtime.py` now blocks on `spread_guard` only when the Lab projection explicitly loads that model
+  - Build-10 monitoring, observability, technical dashboard, Shadow, Micro-live, and Live-light now all preserve the third consumer count and `spread_guard_model_loaded`
+- preserve the doctrine:
+  - opt-in only
+  - no hidden live activation
+  - no shortcut around Shadow/Micro-live/Live gates
+- latest proofs:
+  - `python -m pytest tests/test_execution_backbone/test_spread_guard.py tests/test_execution_backbone/test_execution_runtime.py tests/test_local_replay_runtime/test_local_lab_execution_runtime_projection.py tests/test_protocols/test_execution_runtime_projection_bridge.py tests/test_protocols/test_execution_runtime_bootstrap.py tests/test_protocols/test_execution_runtime_dashboard.py -q`
+  - `50 passed`
+  - `python -m pytest tests/test_local_replay_runtime/test_artifact_proof_summary_builder.py tests/test_local_replay_runtime/test_artifact_release_candidate.py tests/test_protocols/test_local_replay_shadow_runner.py tests/test_protocols/test_shadow_daily_orchestrator_launcher.py tests/test_protocols/test_shadow_vps_service_launcher.py tests/test_monitoring/test_shadow_vps_service_monitoring.py tests/test_monitoring/test_monitoring_backend.py tests/test_monitoring/test_monitoring_runtime.py tests/test_monitoring/test_observability.py tests/test_ui/test_technical_dashboard.py tests/test_ui/test_technical_dashboard_launcher.py tests/test_protocols/test_micro_live_runtime.py tests/test_protocols/test_micro_live_dashboard.py tests/test_protocols/test_live_light_runtime.py tests/test_protocols/test_live_light_dashboard.py -q`
+  - `210 passed`
+
+## 42. `13-C EXECUTION` Build-9 core smoke now accepts the governed execution projection seam
+
+- new operated truth:
+  - `scripts/run_build9_core_smoke.py` now accepts `--execution-runtime-projection-path`
+  - the real non-test bootstrap path `_run_execution_bootstrap_smoke_with_projection(...)` now proves that `build_binance_execution_runtime(...)` can load the governed `THR-X03/X04/X05` consumer triplet on an operated launcher path
+  - default smoke behavior stays unchanged when no projection is provided
+- preserve the doctrine:
+  - explicit opt-in only
+  - no hidden live activation
+  - no direct config bypass around the Lab projection
+- latest proofs:
+  - `python -m pytest tests/test_execution_backbone/test_build9_core_smoke_script.py tests/test_execution_backbone/test_spread_guard.py tests/test_execution_backbone/test_execution_runtime.py tests/test_protocols/test_execution_runtime_bootstrap.py -q`
+  - `40 passed`
+
+## 43. `13-C EXECUTION` the operated Shadow chain now preserves canonical bridge-load truth
+
+- new operated truth:
+  - `scripts/run_shadow_daily_orchestrator.py` no longer trusts only the top-level Lab artifact headline for `execution_runtime_projection`; it now derives the operated summary from the canonical bridge inspection
+  - the Shadow daily last-run payload now persists whether the governed bridge is actually loadable plus the three model flags: `rate_limiter`, `spread_guard`, `slippage_model`
+  - `scripts/run_shadow_vps_service.py`, `src/protocols/shadow_vps_service.py`, `src/monitoring/contracts.py`, and `src/monitoring/shadow_vps_service_monitoring.py` now carry that bridge truth through runtime-evidence, campaign summary, monitoring payload, and Prometheus export
+  - `src/monitoring/local_grafana_dashboard.py` now exposes the same bridge-load truth in the local Shadow Grafana bundle through dedicated bridge/model-load panels
+- preserve the doctrine:
+  - no hidden runtime activation
+  - no new launcher
+  - no shortcut around Shadow/Micro-live/Live gates
+- latest proofs:
+  - `rtk pytest tests/test_protocols/test_shadow_daily_orchestrator_launcher.py tests/test_protocols/test_shadow_vps_service_launcher.py tests/test_monitoring/test_shadow_vps_service_monitoring.py -q`
+  - `12 passed`
+  - `rtk pytest tests/test_protocols/test_local_replay_shadow_runner.py tests/test_protocols/test_shadow_daily_orchestrator_launcher.py tests/test_protocols/test_shadow_vps_service_launcher.py tests/test_monitoring/test_shadow_vps_service_monitoring.py -q`
+  - `26 passed`
+  - `python -m pytest tests/test_monitoring/test_local_grafana_dashboard.py::test_build_local_shadow_vps_grafana_dashboard_contains_expected_queries tests/test_monitoring/test_local_grafana_dashboard_launcher.py::test_local_grafana_dashboard_launcher_writes_dashboard_and_summary -q`
+  - `2 passed`
+
+## 44. `13-C EXECUTION` Build-10 Shadow cards now expose the operated projection bridge truth
+
+- new operated truth:
+  - `src/monitoring/contracts.py` now lets `ShadowProjection` carry the service-owned `execution_runtime_projection_*` bridge/load fields
+  - `scripts/run_technical_dashboard.py` now projects those fields from `shadow_vps_service.campaign_summary.json` into the canonical Build-10 Shadow surface
+  - `src/ui/technical_dashboard_view.py` now renders a dedicated `Execution Projection` card inside `Build-11 Shadow`, separate from the top-level bridge card and separate from `Execution Telemetry`
+  - the local dev technical dashboard artifacts were regenerated under `build/dev_dual_role_demo/technical_dashboard`
+- preserve the doctrine:
+  - dashboard/normalization only
+  - no hidden runtime activation
+  - no shortcut around Shadow/Micro-live/Live gates
+- latest proofs:
+  - `rtk pytest tests/test_ui/test_technical_dashboard.py tests/test_ui/test_technical_dashboard_launcher.py tests/test_monitoring/test_monitoring_backend.py -q`
+  - `74 passed`
+
+## 45. `Build-14` bounded Opus entry-timing reader now exists on the governed enabler rail
+
+- new code truth:
+  - `src/complete_enablers/micro_edge_entry_timing_layer.py` now exists as the bounded Build-14 reader for the still-open Opus `entry timing` suggestion
+  - it only uses existing `Build14ObservationInput` facts (`volume_support_ratio`, `adverse_obi_pressure`, `cra_sterilization_rate`, `queue_backlog`, `stale_pair_count`, `break_even_drift_alert`, `ce_net`)
+  - `src/complete_enablers/limited_influence.py` now evaluates that reader beside the other Build-14 readers, so the entry-timing signal can appear in Shadow and post-Shadow bounded influence without opening a new runtime rail
+  - `src/complete_enablers/__init__.py` now exports the new reader
+- preserve the doctrine:
+  - Build-14 enabler only
+  - no autonomous trading behavior
+  - no new runtime hook
+  - no gate bypass around Shadow/Micro-live/Live
+- latest proofs:
+  - `rtk pytest tests/test_complete_enablers/test_contracts.py tests/test_protocols/test_live_light_runtime.py tests/test_protocols/test_shadow_runtime.py tests/test_smoke_bootstrap_recovery/test_shadow_readiness.py -q`
+  - `97 passed`
+
+## 46. `Build-14` bounded Opus exit-governor reader now exists on the governed enabler rail
+
+- new code truth:
+  - `src/complete_enablers/micro_edge_exit_governor.py` now exists as the bounded Build-14 reader for the still-open Opus `exit governor` suggestion
+  - it only uses existing `Build14ObservationInput` facts (`break_even_drift_alert`, `cra_sterilization_rate`, `ce_net`, `dtr_loss_count`, `log_loss_count`, `breakout_failure_rate`, `ghost_liquidity_ratio`, `stale_pair_count`)
+  - `src/complete_enablers/limited_influence.py` now evaluates that reader beside the other Build-14 readers, so the exit-quality signal can appear in Shadow and post-Shadow bounded influence without opening a new runtime rail
+  - `src/complete_enablers/__init__.py` now exports the new reader
+- preserve the doctrine:
+  - Build-14 enabler only
+  - no autonomous trading behavior
+  - no new runtime hook
+  - no gate bypass around Shadow/Micro-live/Live
+- latest proofs:
+  - `rtk pytest tests/test_complete_enablers/test_contracts.py tests/test_protocols/test_live_light_runtime.py tests/test_protocols/test_shadow_runtime.py tests/test_smoke_bootstrap_recovery/test_shadow_readiness.py -q`
+  - `99 passed`
+
+## 49. `T9 regime_lite` now loads the documented `THR-RG01..04` calibration seam
+
+- new code truth:
+  - `src/regime_classifier/regime_lite.py` now exposes `RegimeLiteCalibrationConfig` and `resolve_regime_lite_thresholds(...)`
+  - the helper now consumes signed `calibration_loader` artifacts for `THR-RG01..04`
+  - only the documented regime thresholds are artifact-governed in this slice; the secondary dimensions remain on bounded documented defaults until their own ids are promoted into the catalog
+  - `calibration_loader` is now registered in the canonical manifest/build-order/dependency registry instead of remaining a shared-core ghost module
+- preserve the doctrine:
+  - opt-in loading only
+  - no silent fallback when the artifact seam is requested
+  - no hidden runtime activation
+- latest proofs:
+  - `rtk pytest tests/test_regime_classifier/test_regime_lite.py tests/test_manifest_registry/test_inventory.py tests/test_manifest_registry/test_build_order.py tests/test_manifest_registry/test_dependencies.py tests/test_dag_validator/test_layer_validator.py -q`
+  - `128 passed`
+
+## 50. `T9 regime_lite` now exposes an explicit governed `EXTREME -> safing recommendation` path
+
+- new code truth:
+  - `src/risk_backbone/regime_lite_safing.py` now exists
+  - the helper emits a typed recommendation:
+    - `ENTRY_BLOCK_ONLY` while cooldown is active
+    - `HALT_RECOMMENDED` + `should_exit_all=True` while state=`EXTREME`
+  - when explicitly requested, it can build a canonical `OperatorSafingRequest(action=set_halted)` using the existing governance dialect instead of inventing a new halt vocabulary
+- preserve the doctrine:
+  - recommendation only
+  - no automatic kill switch trip
+  - no hidden live activation
+  - no gate bypass around Shadow/Micro-live/Live
+- latest proofs:
+  - `rtk pytest tests/test_risk_backbone/test_regime_lite_entry_gate.py tests/test_risk_backbone/test_regime_lite_safing.py tests/test_risk_backbone/test_risk_runtime.py -q`
+  - `128 passed`
+
+## 51. `T9 regime_lite` safing is now observable in canonical Build-10 supervision
+
+- new code truth:
+  - `src/monitoring/contracts.py` now exposes a typed `RegimeLiteSafingProjection` nested under `ShadowProjection`
+  - `scripts/run_technical_dashboard.py` now hydrates this seam from `shadow_vps_service.campaign_summary.json` when the Shadow service emits it
+  - `src/monitoring/technical_dashboard_backend.py` now elevates the Build-10 headline when the Shadow rail carries `entry_block_only` or `halt_recommended`
+  - `src/ui/technical_dashboard_view.py` now renders an explicit `Build-11 Shadow -> Regime Safing` card
+  - `src/monitoring/observability.py` now exports `v53_shadow_regime_lite_safing_status`
+- preserve the doctrine:
+  - recommendation only
+  - no auto-`set_halted`
+  - no hidden live activation
+  - no dashboard-only raw seam
+- latest proofs:
+  - `rtk pytest tests/test_monitoring/test_monitoring_backend.py tests/test_monitoring/test_observability.py tests/test_ui/test_technical_dashboard.py tests/test_ui/test_technical_dashboard_launcher.py -q`
+  - `85 passed`
+
+## 52. `T9 regime_lite` now propagates explicit governance truth through `Shadow -> Micro-live -> Live-Light`
+
+- new code truth:
+  - `src/protocols/contracts.py` now exposes `RegimeLiteGovernanceSummary` as a protocol-local summary contract
+  - `src/protocols/shadow_runtime.py` can now materialize that summary when explicit typed `RegimeLiteAssessment` / `RegimeLiteSafingRecommendation` inputs are supplied
+  - `src/protocols/micro_live_runtime.py` and `src/protocols/live_light_runtime.py` now preserve the seam end-to-end without inventing classifier inputs
+- preserve the doctrine:
+  - explicit producer only
+  - no synthetic regime inference from unrelated payload fields
+  - recommendation only
+  - no hidden live activation
+- latest proofs:
+  - `rtk pytest tests/test_protocols/test_contracts.py tests/test_protocols/test_shadow_runtime.py tests/test_protocols/test_micro_live_runtime.py tests/test_protocols/test_live_light_runtime.py -q`
+  - `142 passed`
+
+## 53. `T9 regime_lite` governance is now persisted on the operated `Shadow VPS service` rail
+
+- new code truth:
+  - `scripts/run_shadow_daily_orchestrator.py` now flattens `shadow_summary.regime_lite_governance` into the typed `last_run` sidecar instead of dropping the operated seam
+  - `src/protocols/shadow_vps_service.py` now lets `ShadowVpsRuntimeEvidenceBundle` and `ShadowVpsCampaignSummary` carry the persisted `regime_lite` governance and safing fields
+  - `scripts/run_shadow_vps_service.py` now copies that truth through `last_run -> runtime_evidence_bundle -> campaign_summary`
+  - `src/monitoring/shadow_vps_service_monitoring.py` now surfaces the seam in the service payload/detail and exports bounded Prometheus symbols:
+    - `v53_shadow_vps_regime_lite_safing_status`
+    - `v53_shadow_vps_regime_lite_entries_blocked`
+    - `v53_shadow_vps_regime_lite_should_exit_all`
+- preserve the doctrine:
+  - copy operated `Shadow` truth only
+  - no synthetic regime inference inside the service
+  - recommendation only
+  - no hidden auto-halt / no bypass of `Shadow -> Micro-live -> Live`
+- latest proofs:
+  - `rtk pytest tests/test_protocols/test_shadow_daily_orchestrator_launcher.py tests/test_protocols/test_shadow_vps_service_launcher.py tests/test_monitoring/test_shadow_vps_service_monitoring.py -q`
+  - `13 passed`
+
+## 54. `T9 regime_lite` now has an explicit operated producer on `run_local_replay_shadow -> daily orchestrator -> Shadow VPS service`
+
+- new code truth:
+  - `scripts/run_local_replay_shadow.py` now accepts:
+    - `--regime-lite-assessment-path`
+    - `--regime-lite-safing-recommendation-path`
+  - the governed Shadow runner now forwards those typed JSON artifacts into both `run_shadow_validation(...)` calls instead of leaving the seam protocol-only
+  - `scripts/run_shadow_daily_orchestrator.py` and `scripts/run_shadow_vps_service.py` now pass the same opt-in seam through the operated rail
+  - when supplied, the real `shadow_summary`, `last_run`, `runtime_evidence_bundle`, `campaign_summary`, and service monitoring payload all carry `regime_lite_governance_status=ready`
+- preserve the doctrine:
+  - explicit opt-in only
+  - no synthetic classifier inputs
+  - recommendation only
+  - no hidden auto-halt / no bypass of `Shadow -> Micro-live -> Live`
+- latest proofs:
+  - `rtk pytest tests/test_protocols/test_local_replay_shadow_runner.py::test_export_local_replay_shadow_run_accepts_regime_lite_inputs tests/test_protocols/test_shadow_daily_orchestrator_launcher.py::test_shadow_daily_orchestrator_launcher_accepts_regime_lite_inputs tests/test_protocols/test_shadow_daily_orchestrator_launcher.py::test_read_regime_lite_governance_summary_projects_ready_shadow_summary tests/test_protocols/test_shadow_daily_orchestrator_launcher.py::test_shadow_daily_orchestrator_launcher_accepts_execution_runtime_projection_path tests/test_protocols/test_shadow_vps_service_launcher.py::test_shadow_vps_service_accepts_regime_lite_inputs tests/test_protocols/test_shadow_vps_service_launcher.py::test_shadow_vps_service_advances_to_next_dated_export_when_shadow_day_is_recorded tests/test_monitoring/test_shadow_vps_service_monitoring.py -q`
+  - `8 passed`
+
+## 55. `T9 regime_lite` now auto-discovers governed sidecars on the `run_local_replay_shadow` rail
+
+- new code truth:
+  - `scripts/run_local_replay_shadow.py` now auto-discovers:
+    - `regime_lite_assessment.json`
+    - `regime_lite_safing_recommendation.json`
+    in its governed `output_dir` when explicit CLI paths are omitted
+  - this keeps the seam aligned with the existing `execution_runtime_projection` pattern instead of forcing manual CLI wiring on every run
+  - the daily orchestrator can now pick up those sidecars automatically when they are staged inside the governed `shadow_output_dir`
+- preserve the doctrine:
+  - explicit path still wins
+  - only typed sidecars are loaded
+  - no synthetic classifier inputs
+  - recommendation only / no hidden auto-halt
+- latest proofs:
+  - `python -m pytest tests/test_protocols/test_local_replay_shadow_runner.py::test_export_local_replay_shadow_run_autoloads_regime_lite_inputs tests/test_protocols/test_shadow_daily_orchestrator_launcher.py::test_shadow_daily_orchestrator_launcher_autoloads_regime_lite_inputs_from_shadow_output_dir -q`
+  - `2 passed`
+
+## 56. `T9 regime_lite` is now visible in the local Shadow Grafana dashboard
+
+- new code truth:
+  - `src/monitoring/local_grafana_dashboard.py` now includes dedicated Shadow panels for:
+    - `Regime Lite Entries Blocked`
+    - `Regime Lite Exit-All Recommended`
+    - `Regime Lite Labels`
+  - the dashboard now queries:
+    - `v53_shadow_vps_regime_lite_entries_blocked`
+    - `v53_shadow_vps_regime_lite_should_exit_all`
+    - `v53_shadow_vps_regime_lite_safing_status`
+  - the local dashboard summary/launcher tests no longer depend on the broken Windows `tmp_path` fixture on this machine
+- preserve the doctrine:
+  - dashboard reads only bounded Prometheus service metrics
+  - no dashboard-only JSON seam
+  - no hidden activation
+- latest proofs:
+  - `python -m pytest tests/test_monitoring/test_local_grafana_dashboard.py tests/test_monitoring/test_local_grafana_dashboard_launcher.py -q`
+  - `4 passed`
+
+## 57. `T9 regime_lite` now loads from `live_websocket_config` refs on the Shadow VPS service rail
+
+- new code truth:
+  - `src/protocols/shadow_vps_service.py` now lets `ShadowLiveWebSocketConfig` carry:
+    - `regime_lite_assessment_path_ref`
+    - `regime_lite_safing_recommendation_path_ref`
+  - `scripts/run_shadow_vps_service.py` now resolves those refs with the same precedence as `execution_runtime_projection_path_ref`:
+    - explicit CLI path wins
+    - otherwise relative or absolute refs from `live_websocket_config` are loaded
+  - the service now persists audit-ready provenance into state, runtime evidence bundle, campaign summary, and monitoring payload:
+    - `regime_lite_assessment_ref/source`
+    - `regime_lite_safing_recommendation_ref/source`
+- preserve the doctrine:
+  - no synthetic regime inference
+  - no hidden auto-halt
+  - typed artifact refs only
+  - config loading stays recommendation-only
+- latest proofs:
+  - `python -m pytest tests/test_protocols/test_shadow_vps_service_launcher.py tests/test_monitoring/test_shadow_vps_service_monitoring.py -q`
+  - `12 passed`
+
+## 58. `T9 regime_lite` provenance is now observable in Prometheus labels
+
+- new code truth:
+  - `src/monitoring/shadow_vps_service_monitoring.py` now emits `assessment_source` and `safing_source` labels on:
+    - `v53_shadow_vps_regime_lite_safing_status`
+    - `v53_shadow_vps_regime_lite_entries_blocked`
+    - `v53_shadow_vps_regime_lite_should_exit_all`
+  - the monitoring detail line now carries:
+    - `regime_lite=<severity>@<state>@<assessment_source>/<safing_source>`
+  - this makes `cli` vs `live_websocket_config` visible without opening JSON sidecars
+- preserve the doctrine:
+  - bounded labels only
+  - no new dashboard-only seam
+  - no runtime behavior change
+- latest proofs:
+  - `python -m pytest tests/test_monitoring/test_shadow_vps_service_monitoring.py -q`
+  - `2 passed`
+
+## 59. `T9 regime_lite` ref/source provenance now reaches the canonical Build-10 technical dashboard
+
+- new code truth:
+  - `scripts/run_technical_dashboard.py` now hydrates the operated Shadow service provenance fields:
+    - `regime_lite_assessment_ref/source`
+    - `regime_lite_safing_recommendation_ref/source`
+  - `src/ui/technical_dashboard_view.py` now renders those refs/sources directly in the Build-11 Shadow `Regime Safing` card detail
+  - Build-10 therefore exposes the same operated truth already persisted by the Shadow service, instead of dropping the ref/source seam at the dashboard boundary
+- preserve the doctrine:
+  - dashboard reads typed operated artifacts only
+  - no dashboard-only inference
+  - recommendation only
+  - no hidden activation
+- latest proofs:
+  - `python -m pytest tests/test_ui/test_technical_dashboard.py tests/test_ui/test_technical_dashboard_launcher.py -q`
+  - `37 passed`
+
+## 60. PowerShell Binance Shadow bootstrap now installs API env and launches a bounded governed live campaign
+
+- new code truth:
+  - `scripts/Install-BinanceApiEnv.ps1` now installs:
+    - `BINANCE_API_KEY`
+    - `BINANCE_API_SECRET`
+    - `V53_BINANCE_API_KEY`
+    - `V53_BINANCE_SECRET_KEY`
+    - `V53_BINANCE_LABEL`
+    in process scope, and optionally in user scope
+  - `scripts/Start-BinanceShadowLiveCampaign.ps1` now:
+    - materializes `live_websocket_config.json`
+    - preserves existing governed route hints/config
+    - launches one bounded `run_shadow_vps_service.py` cycle
+    - regenerates the canonical Build-10 HTML dashboard from the resulting campaign root
+  - `docs/production_deployment_plan/17A_BINANCE_SHADOW_POWERSHELL_BOOTSTRAP.md` documents the operator flow
+- preserve the doctrine:
+  - Shadow only
+  - typed config / typed artifact refs only
+  - no secrets persisted into repo JSON
+  - dashboard remains read-only
+- latest proofs:
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Install-BinanceApiEnv.ps1`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Start-BinanceShadowLiveCampaign.ps1 -CampaignRoot .\build\build11_live_websocket_campaign -EnableTimeSyncProbe -StopOnError`
+
+## 61. Native Binance live connect failures now preserve endpoint and root cause instead of a generic string
+
+- new code truth:
+  - `src/protocols/shadow_live_websocket.py` now raises:
+    - `Native live_websocket adapter failed to connect to <endpoint>: <root cause>`
+    when the gateway runtime returns a failed connect status with an error message
+  - the operated Shadow service artifacts therefore now keep the actionable socket failure instead of only `failed to connect`
+  - the previous `WinError 10013` observation was confirmed to be a Codex sandbox network artifact, not a host firewall failure
+  - the same bounded PowerShell live campaign now succeeds when launched outside the sandbox on the real Windows host
+- preserve the doctrine:
+  - no runtime behavior change beyond diagnostics
+  - typed operated artifacts remain the source of truth
+  - no hidden retry policy change
+- latest proofs:
+  - `python -m pytest tests/test_protocols/test_shadow_live_websocket.py tests/test_ui/test_technical_dashboard.py tests/test_ui/test_technical_dashboard_launcher.py -q`
+  - `44 passed`
+
+## 62. The bounded Binance Shadow live campaign now succeeds on the real Windows host and regenerates Build-10 artifacts
+
+- new code truth:
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Start-BinanceShadowLiveCampaign.ps1 -CampaignRoot .\build\build11_live_websocket_campaign -EnableTimeSyncProbe -StopOnError`
+    now completes successfully when run outside the Codex sandbox
+  - the current operated campaign artifacts now show:
+    - `service_status=stopped`
+    - `last_error=""`
+    - `last_completed_session_date="2026-04-12"`
+    - `execution_telemetry_status="written"`
+    - live capture pairs `BTCUSDT, ETHUSDT`
+    - `live_user_data_authenticated=true`
+  - the canonical HTML dashboard has been regenerated from the successful operated campaign root
+- preserve the doctrine:
+  - bounded `Shadow` only
+  - no live order path
+  - dashboard remains a read-only consumer of operated artifacts
+- latest proofs:
+  - operated campaign root:
+    - `build/build11_live_websocket_campaign/service/shadow_vps_service.state.json`
+    - `build/build11_live_websocket_campaign/service/shadow_vps_service.campaign_summary.json`
+    - `build/build11_live_websocket_campaign/technical_dashboard/technical_dashboard.html`
+
+## 63. `daily_pnl_breaker` now exists and the first governed `THR-R01 -> risk_runtime` consumer is open
+
+- new code truth:
+  - `src/risk_backbone/loss_budgeter/daily_pnl_breaker.py` now exists as the typed persistent daily Shadow-lock seam for `THR-R01`
+  - the breaker loads governed `THR-R01` via `calibration_loader`, enforces the documented hard cap `2%`, persists same-day Shadow lock state, and can optionally trip the canonical circuit breaker when explicitly asked
+  - `src/risk_backbone/daily_pnl_breaker_entry_gate.py` now exists as the first bounded runtime consumer
+  - `src/risk_backbone/risk_runtime.py` now accepts a typed opt-in `daily_pnl_precheck_hook`, so Build-4 can reject new entries when the breaker has already forced the session into Shadow
+- preserve the doctrine:
+  - opt-in only
+  - fail-open by default
+  - no hidden live activation
+  - no automatic same-day reactivation after a breach
+- latest proofs:
+  - `python -m pytest tests/test_risk_backbone/test_daily_pnl_breaker.py tests/test_risk_backbone/test_daily_pnl_breaker_entry_gate.py tests/test_risk_backbone/test_risk_runtime.py -q`
+  - `34 passed`
+  - `python -m pytest tests/test_risk_backbone/test_risk_integration.py tests/test_engines/test_engine_a/test_engine_a_runtime.py tests/test_engines/test_engine_b/test_engine_b_runtime.py tests/test_engines/test_engine_c/test_engine_c_runtime.py tests/test_engines/test_engine_d/test_engine_d_runtime.py -q`
+  - `42 passed`
+
+## 64. `reconciliation_scheduler` now exists as the first bounded `THR-I04` operated control seam
+
+- new code truth:
+  - `src/execution_backbone/reconciliation_layer/scheduler.py` now exists
+  - the scheduler loads governed `THR-I04`, enforces bounded interval limits, and exposes typed `boot_reconcile(...)` + `run_periodic_if_due(...)`
+  - boot reconciliation now has a canonical blocking seam for unresolved divergences
+  - periodic reconciliation now has a canonical due/not-due seam and can trip the existing circuit breaker on critical divergence
+- preserve the doctrine:
+  - no daemon thread or hidden loop in this slice
+  - explicit caller ownership of timing
+  - reuse the canonical `EmergencyCircuitBreaker`
+  - no bypass of the existing reconciliation runtime
+- latest proofs:
+  - `python -m pytest tests/test_execution_backbone/test_reconciliation_scheduler.py tests/test_execution_backbone/test_reconciliation_layer.py -q`
+  - `35 passed`
+  - `python -m pytest tests/test_execution_backbone/test_execution_runtime.py -q`
+  - `28 passed`
+
+## 65. `execution_runtime_bootstrap` now executes the first real operated `THR-I04` boot seam through Build-9 smoke
+
+- new code truth:
+  - `src/protocols/execution_runtime_bootstrap.py` now exposes typed bootstrap bundles:
+    - `ExecutionRuntimeBootstrapBundle`
+    - `build_execution_runtime_bootstrap_bundle(...)`
+    - `build_binance_execution_runtime_bootstrap_bundle(...)`
+  - the existing `build_execution_runtime(...)` and `build_binance_execution_runtime(...)` stay backward-compatible and still return only `ExecutionRuntime`
+  - the new bundle can now expose:
+    - the built runtime
+    - the optional bounded `ReconciliationScheduler`
+    - the optional boot reconcile result
+  - stale-only first boot with zero divergences is now treated canonically as initial baseline establishment, not as a false trading block
+  - `scripts/run_build9_core_smoke.py` now executes this seam explicitly and can also load governed `THR-I04` from an optional calibration root
+- preserve the doctrine:
+  - opt-in only
+  - no hidden scheduler loop
+  - no fake Shadow integration before a real runtime call site exists
+  - Build-9 smoke remains the first operated caller on this rail
+- latest proofs:
+  - `rtk pytest tests/test_protocols/test_execution_runtime_bootstrap.py tests/test_execution_backbone/test_build9_core_smoke_script.py tests/test_execution_backbone/test_reconciliation_scheduler.py -q`
+  - `20 passed`
+  - `rtk pytest tests/test_execution_backbone/test_execution_runtime.py tests/test_protocols/test_execution_runtime_bootstrap.py tests/test_execution_backbone/test_build9_core_smoke_script.py tests/test_execution_backbone/test_reconciliation_scheduler.py -q`
+  - `48 passed`
+
+## 66. The standalone Build-9 smoke script now aligns with the canonical engine + portfolio facades
+
+- new code truth:
+  - `scripts/run_build9_core_smoke.py` now imports the canonical engine facades through:
+    - `engines.engine_a`
+    - `engines.engine_b`
+    instead of the stale top-level aliases
+  - the same script now bootstraps the Build-8 portfolio chain with an explicit `freshness_policy`, matching the current `OrchestratorConfig` contract
+  - the direct script run therefore now reports:
+    - Build-2..9 `PASS`
+    - engine chain `PASS`
+    - portfolio chain `PASS`
+    - execution bootstrap `PASS`
+  - the remaining direct-run failure is outside this slice: Build-1 still reports pre-existing DAG violations
+- preserve the doctrine:
+  - no new launcher
+  - no compatibility alias package invented
+  - smoke script updated to current canonical facades and typed config only
+- latest proofs:
+  - `rtk pytest tests/test_execution_backbone/test_build9_core_smoke_script.py tests/test_protocols/test_execution_runtime_bootstrap.py tests/test_execution_backbone/test_reconciliation_scheduler.py -q`
+  - `21 passed`
+  - `python scripts/run_build9_core_smoke.py`
+  - direct report now shows Build-2..9 `PASS`; only Build-1 DAG remains `FAIL`
+
+## 67. Build-1 DAG now reflects mostly real cycle debt instead of mixed registry drift
+
+- new code truth:
+  - `src/manifest_registry/module_inventory.py` now registers the real on-disk packages:
+    - `calibration_methods`
+    - `secrets_manager`
+    - `sharia_compliance`
+    - `venue_adapters`
+  - `src/manifest_registry/build_order_registry.py` now gives those modules explicit build ownership without changing the Build-1 count:
+    - `sharia_compliance` in Build-3
+    - `calibration_methods` in Build-10
+    - `secrets_manager` and `venue_adapters` in Build-11
+  - `src/manifest_registry/dependency_registry.py` now authorizes the non-cyclic imports already present on disk for:
+    - `execution_backbone -> calibration_loader, sharia_compliance`
+    - `risk_backbone -> calibration_loader`
+    - `scoring_backbone -> data_backbone`
+    - `local_replay_runtime -> calibration_methods, data_backbone, meta_learning`
+    - `backtest_artifact_import -> meta, monitoring`
+    - `protocols -> engine_a, engine_b, regime_classifier, venue_adapters`
+    - `venue_adapters -> interface_contracts, calibration_loader, data_backbone, execution_backbone, secrets_manager, sharia_compliance`
+  - the missing-manifest bucket is now closed, and the Build-1 DAG report has been reduced from `47` errors to `27`
+  - the remaining Build-1 failures are now the real debt:
+    - cycle cluster around `local_replay_runtime`, `backtest_artifact_import`, `monitoring`, `protocols`, `ui`
+    - forward/late imports:
+      - `execution_backbone -> risk_backbone, scoring_backbone`
+      - `monitoring -> complete_enablers, protocols, local_replay_runtime`
+      - `protocols -> complete_enablers, engine_c, engine_d`
+- preserve the doctrine:
+  - no validator weakening
+  - no cycle authorization to fake a green Build-1
+  - no Build-1 module-count inflation
+  - registry drift fixed first, real refactor debt left explicit
+- latest proofs:
+  - `rtk pytest tests/test_manifest_registry/test_inventory.py tests/test_manifest_registry/test_build_order.py tests/test_manifest_registry/test_dependencies.py -q`
+  - `83 passed`
+  - `python -c "import sys; sys.path.insert(0, 'src'); from dag_validator import validate_architecture; report = validate_architecture(); print(report.passed, report.error_count, report.warning_count)"`
+  - `False 27 0`
+  - `python scripts/run_build9_core_smoke.py`
+  - direct report still shows Build-2..9 `PASS`; only Build-1 `dag_validator` remains `FAIL (27 error(s))`
+
+## 68. Build-1 dropped the local_replay_runtime -> monitoring cycle cluster
+
+- new code truth:
+  - the Local IA Lab monitoring builders now live under `src/monitoring/`:
+    - `local_lab_monitoring_projection.py`
+    - `local_lab_monitoring_backend.py`
+    - `local_lab_observability.py`
+  - `scripts/run_local_lab_analysis_bundle.py` now feeds those builders with primitive release/bridge/promotion facts instead of passing `local_replay_runtime` typed objects across the boundary
+  - the old `src/local_replay_runtime/local_lab_monitoring_*` files were removed instead of leaving compatibility wrappers that would preserve the reverse edge
+  - the validator no longer reports the `local_replay_runtime -> monitoring` unauthorized imports, and the prior cycle cluster through those modules is gone
+  - Build-1 real DAG debt is now down to `23` blocking errors:
+    - `4` cycles
+    - `19` unauthorized imports
+- preserve the doctrine:
+  - no validator weakening
+  - no wrapper alias that keeps the same dependency alive
+  - COMPLETE-only runtime doctrine remains unchanged; this slice does not reintroduce `LIGHT`
+- latest proofs:
+  - `rtk pytest tests/test_local_replay_runtime/test_local_lab_monitoring_projection.py tests/test_local_replay_runtime/test_local_lab_observability.py tests/test_local_replay_runtime/test_local_lab_monitoring_backend.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py tests/test_monitoring/test_local_lab_monitoring_feed.py tests/test_monitoring/test_local_lab_monitoring_bundle_manifest.py tests/test_monitoring/test_local_lab_ingestion.py tests/test_monitoring/test_local_lab_bundle_loader.py tests/test_monitoring/test_local_lab_bundle_discovery.py -q`
+  - `23 passed`
+  - direct `dag_validator` report now shows `23` blocking errors (`4` cycles + `19` unauthorized imports)
+  - direct `python scripts/run_build9_core_smoke.py` still reaches Build-2..9 `PASS`; only Build-1 `dag_validator` remains `FAIL (23 error(s))`
+
+## 69. Build-1 removed the replay-workflow loader and injected-stream back-edges
+
+- new code truth:
+  - `local_lab_replay_workflow_loader.py` now lives under `src/local_replay_runtime/`, not `src/monitoring/`
+  - the old monitoring loader file was removed, so `monitoring -> local_replay_runtime` no longer exists through that replay workflow seam
+  - shared injected stream loading now lives under `src/data_backbone/websocket_gateway/injected_stream_loader.py`
+  - `protocols.shadow_websocket_ingest` and `local_replay_runtime.local_lab_execution_telemetry_artifact` both consume that lower loader instead of `local_replay_runtime -> protocols`
+  - Build-1 blocking DAG debt is now down again to `19` real errors:
+    - `3` cycles
+    - `16` unauthorized imports
+- preserve the doctrine:
+  - no fake monitoring alias
+  - no protocol wrapper kept only for Build-1 silence
+  - COMPLETE-only runtime doctrine remains unchanged
+- latest proofs:
+  - `rtk pytest tests/test_monitoring/test_local_lab_replay_workflow_loader.py tests/test_protocols/test_shadow_websocket_ingest.py tests/test_local_replay_runtime/test_local_lab_execution_telemetry_artifact.py tests/test_protocols/test_contracts.py -q`
+  - `36 passed`
+  - direct `dag_validator` report now shows `19` blocking errors (`3` cycles + `16` unauthorized imports)
+  - direct `python scripts/run_build9_core_smoke.py` still reaches Build-2..9 `PASS`; only Build-1 `dag_validator` remains `FAIL (19 error(s))`
+
+## 70. Build-1 is now green after lowering the last execution-owned helpers
+
+- new code truth:
+  - `src/execution_backbone/execution_runtime.py` now imports its fee-aware edge gate from `src/execution_backbone/fee_aware_edge_gate.py`, not from `scoring_backbone`
+  - `src/execution_backbone/reconciliation_layer/scheduler.py` now imports its circuit breaker from `src/execution_backbone/emergency_circuit_breaker.py`, not from `risk_backbone`
+  - `src/scoring_backbone/fee_aware_edge_gate.py` is now a compatibility surface over the canonical execution-owned implementation
+  - `src/risk_backbone/emergency_kill_switch/circuit_breaker.py` is now a compatibility surface over the canonical execution-owned implementation
+  - `src/manifest_registry/dependency_registry.py` no longer grants the temporary upward allowances `execution_backbone -> risk_backbone` and `execution_backbone -> scoring_backbone`
+  - instead, the higher modules keep explicit downward compatibility dependencies on `execution_backbone`
+- preserve the doctrine:
+  - no validator weakening
+  - no fake Build-1 green through broad registry allowances
+  - COMPLETE-only runtime doctrine unchanged
+- latest proofs:
+  - `rtk pytest tests/test_execution_backbone/test_execution_runtime.py tests/test_execution_backbone/test_reconciliation_scheduler.py tests/test_scoring_backbone tests/test_risk_backbone/test_circuit_breaker.py -q`
+  - `168 passed`
+  - `rtk pytest tests/test_manifest_registry/test_inventory.py tests/test_manifest_registry/test_build_order.py tests/test_manifest_registry/test_dependencies.py tests/test_dag_validator/test_layer_validator.py -q`
+  - `96 passed`
+  - direct `dag_validator` report now shows `0` blocking errors
+  - direct `python scripts/run_build9_core_smoke.py` now reaches Build-1 `PASS` and Build-2..9 `PASS`
+
+## 71. T12 now has a real canonical gatekeeper wrapper on the Build-3 execution rail
+
+- new code truth:
+  - `src/execution_backbone/gatekeeper/gatekeeper.py` now exists as the execution-owned convergence wrapper
+  - `ExecutionRuntime.submit_opportunity(...)` now routes the pre-submit decision chain through `ExecutionGatekeeper.authorize(...)`
+  - the existing execution guards stay intact; the gatekeeper is a convergence surface, not a replacement path
+  - refusals now preserve the real `pair` and `engine_id` in the emitted `NoTradeDecision`
+  - `ExecutionSubmission` now carries `gate_trace`, and the same trace is emitted in structured submission logs
+  - `src/execution_backbone/__init__.py` now exports the typed gatekeeper surface
+- deliberate limit of this slice:
+  - no persisted `artifacts/gatekeeper/` audit store yet
+  - no new runtime path outside the canonical Build-3 rail
+  - COMPLETE-only doctrine unchanged
+- latest proofs:
+  - `rtk pytest tests/test_execution_backbone/test_gatekeeper.py tests/test_execution_backbone/test_execution_runtime.py tests/test_protocols/test_execution_runtime_bootstrap.py -q`
+  - `41 passed`
+  - direct `python scripts/run_build9_core_smoke.py`
+  - Build-1 `PASS`, Build-2..9 `PASS`
+
+## 72. T13 now has a first bounded info-stress precheck on the Build-4 risk rail
+
+- new code truth:
+  - `src/risk_backbone/info_stress_monitor.py` now exists as the bounded V37-3 detector
+  - the monitor classifies `NORMAL / ELEVATED / EXTREME` from five simple signals:
+    - spread explosion
+    - depth ratio collapse
+    - cancellation spike
+    - taker imbalance saturation
+    - micro-vol divergence
+  - `build_info_stress_entry_gate(...)` now exposes that detector as a typed `RiskInfoStressPrecheckHook`
+  - `src/risk_backbone/risk_runtime.py` now supports a dedicated `info_stress_precheck_hook` and explicit candidate-side indicator fields
+  - EXTREME now blocks new entries through a governed cooldown on the real Build-4 risk runtime rail
+- deliberate limit of this slice:
+  - opt-in only
+  - no Shadow/Micro-live/Live auto-wiring yet
+  - no ML-heavy MAS implementation; this is the bounded lite seam only
+- latest proofs:
+  - `rtk pytest tests/test_risk_backbone/test_info_stress_monitor.py tests/test_risk_backbone/test_risk_runtime.py -q`
+  - `29 passed`
+  - direct `python scripts/run_build9_core_smoke.py`
+  - Build-1 `PASS`, Build-2..9 `PASS`
+
+## 73. T13 info_stress now propagates through the late-stage protocol rails
+
+- new code truth:
+  - `src/protocols/contracts.py` now defines `InfoStressGovernanceSummary`
+  - `src/protocols/shadow_runtime.py` now accepts an optional `info_stress_assessment` and projects it into typed `shadow_summary.info_stress_governance`
+  - `src/protocols/micro_live_runtime.py` now preserves that summary from Shadow into both `MicroLiveInput` and `MicroLiveRunSummary`
+  - `src/protocols/live_light_runtime.py` now preserves the same summary from Micro-live into both `LiveLightInput` and `LiveLightRunSummary`
+  - `src/protocols/__init__.py` now exports the summary type as canonical protocol surface
+- deliberate limit of this slice:
+  - no launcher/service/config auto-loading yet
+  - no monitoring/dashboard projection yet
+  - no second recommendation layer invented; this stays assessment-only for now
+- latest proofs:
+  - `rtk pytest tests/test_protocols/test_contracts.py tests/test_protocols/test_shadow_runtime.py tests/test_protocols/test_micro_live_runtime.py tests/test_protocols/test_live_light_runtime.py -q`
+  - `147 passed`
+  - `rtk pytest tests/test_risk_backbone/test_info_stress_monitor.py tests/test_risk_backbone/test_risk_runtime.py -q`
+  - `29 passed`
+  - direct `python scripts/run_build9_core_smoke.py`
+  - Build-1 `PASS`, Build-2..9 `PASS`
+
+## 74. T13 info_stress now propagates on the operated Shadow rail
+
+- new code truth:
+  - `scripts/run_local_replay_shadow.py` now accepts and auto-discovers `info_stress_assessment.json` and forwards the typed assessment into both provisional and final `run_shadow_validation(...)`
+  - `scripts/run_shadow_daily_orchestrator.py` now projects `shadow_summary.info_stress_governance` into `shadow_daily_orchestrator.last_run.json`
+  - `src/protocols/shadow_vps_service.py` now lets `ShadowLiveWebSocketConfig` carry `info_stress_assessment_path_ref`
+  - `scripts/run_shadow_vps_service.py` now resolves `info_stress_assessment` with the same precedence as other governed refs (`cli` first, then `live_websocket_config`)
+  - the service now persists `info_stress` ref/source plus governance truth into state, runtime evidence bundle, campaign summary, monitoring payload, and Prometheus export
+  - `src/monitoring/shadow_vps_service_monitoring.py` now exports:
+    - `v53_shadow_vps_info_stress_status`
+    - `v53_shadow_vps_info_stress_alert_count`
+    - `v53_shadow_vps_info_stress_entries_blocked`
+- deliberate limit of this slice:
+  - assessment-only seam remains intact
+  - no fake recommendation layer
+  - no new auto-halt or late-stage hidden activation
+- latest proofs:
+  - `rtk pytest tests/test_protocols/test_local_replay_shadow_runner.py tests/test_protocols/test_shadow_daily_orchestrator_launcher.py tests/test_protocols/test_shadow_vps_service_launcher.py tests/test_monitoring/test_shadow_vps_service_monitoring.py -q`
+  - `39 passed`
+  - direct `python scripts/run_build9_core_smoke.py`
+  - Build-1 `PASS`, Build-2..9 `PASS`
+
+## 75. T12 now persists a real append-only gatekeeper audit store on the canonical execution rail
+
+- new code truth:
+  - `src/execution_backbone/gatekeeper/audit_logger.py` now exists as the append-only JSONL audit logger for canonical gatekeeper decisions
+  - `src/execution_backbone/execution_runtime.py` now accepts an optional `GatekeeperAuditLogger` and writes submitted / no-trade / blocked decisions on the existing `submit_opportunity(...)` path
+  - `src/protocols/execution_runtime_bootstrap.py` now threads `gatekeeper_audit_path` through the canonical runtime bootstrap helpers
+  - `scripts/run_build9_core_smoke.py` now accepts `--gatekeeper-audit-path` and can materialize a real `artifacts/gatekeeper/audit.jsonl` during the bounded bootstrap smoke
+- deliberate limit of this slice:
+  - no new runtime path outside the canonical Build-3 rail
+  - no synthetic monitoring/dashboard layer added for this audit store
+  - COMPLETE-only doctrine unchanged
+- latest proofs:
+  - `python -m pytest tests/test_execution_backbone/test_gatekeeper.py tests/test_execution_backbone/test_execution_runtime.py tests/test_protocols/test_execution_runtime_bootstrap.py tests/test_execution_backbone/test_build9_core_smoke_script.py -q`
+  - `51 passed`
+  - direct `python scripts/run_build9_core_smoke.py --gatekeeper-audit-path build/build9_core_smoke_run/artifacts/gatekeeper/audit.jsonl`
+  - Build-1 `PASS`, Build-2..9 `PASS`
+
+## 76. T11 now has a bounded log rotation seam inside monitoring
+
+- new code truth:
+  - `src/monitoring/log_rotation.py` now exists as the bounded gzip + retention helper for operated logs
+  - `rotate_log_file(...)` rotates one file into a timestamped `.gz`, truncates the active log, and prunes old archives by retention window
+  - `src/monitoring/__init__.py` now exports `LogRotationResult` and `rotate_log_file`
+- deliberate limit of this slice:
+  - no Telegram integration yet
+  - no automatic scheduler/daemon around rotation
+  - no new package/profile semantics introduced
+- latest proofs:
+  - `python -m pytest tests/test_monitoring/test_log_rotation.py tests/test_monitoring/test_disk_monitor.py tests/test_execution_backbone/test_gatekeeper.py tests/test_execution_backbone/test_execution_runtime.py tests/test_protocols/test_execution_runtime_bootstrap.py tests/test_execution_backbone/test_build9_core_smoke_script.py -q`
+  - `55 passed`
+
+## 77. T11 now has a bounded `telegram_alerter` adapter over canonical `AlertRecord`
+
+- new code truth:
+  - `src/alerting/{__init__,telegram_alerter}.py` now exists as a bounded external delivery adapter package
+  - `telegram_alerter.py` loads bot token + chat id from JSON/YAML or sealed mappings via `secrets_manager.load(...)`
+  - the adapter stays typed on canonical `interface_contracts.AlertRecord`, with severity filtering and bounded urllib posting
+  - `manifest_registry` now registers `alerting` as a canonical Build-11 module, so adding the package does not re-open Build-1 DAG drift
+- deliberate limit of this slice:
+  - no hidden `monitoring -> alerting` wiring yet
+  - no daemon, retry loop, or background sender
+  - COMPLETE-only doctrine unchanged
+- latest proofs:
+  - `$env:PYTHONPATH='src'; python -m pytest tests/test_alerting/test_telegram_alerter.py tests/test_manifest_registry/test_inventory.py tests/test_manifest_registry/test_build_order.py tests/test_manifest_registry/test_dependencies.py tests/test_manifest_registry/test_profiles.py tests/test_dag_validator/test_layer_validator.py -q`
+  - `126 passed`
+  - direct `python scripts/run_build9_core_smoke.py`
+  - Build-1 `PASS`, Build-2..9 `PASS`
+
+## 78. T11 now has an operated opt-in Telegram alert seam on `run_shadow_vps_service`
+
+- new code truth:
+  - `src/protocols/shadow_vps_service_telegram_alerting.py` now projects operated `ShadowVpsServiceEvent` values into canonical `AlertRecord`
+  - `scripts/run_shadow_vps_service.py` now accepts `--telegram-alert-config-path` and `--telegram-alert-key-path`
+  - when configured explicitly, the service sends bounded Telegram alerts for selected operated events (`service_started`, `shadow_day_completed`, `shadow_day_failed`, `service_stopped`)
+  - every delivery attempt is audited in the existing `shadow_vps_service.events.jsonl` stream as `telegram_alert_sent` or `telegram_alert_failed`
+- deliberate limit of this slice:
+  - no hidden Build-10 `monitoring_runtime -> alerting` dependency
+  - no daemon, retry loop, or background sender
+  - Telegram failures do not crash the service
+- latest proofs:
+  - `$env:PYTHONPATH='src'; rtk pytest tests/test_protocols/test_shadow_vps_service_telegram_alerting.py tests/test_protocols/test_shadow_vps_service_launcher.py tests/test_manifest_registry/test_dependencies.py tests/test_dag_validator/test_layer_validator.py -q`
+  - `43 passed`
+  - direct `python scripts/run_build9_core_smoke.py`
+  - Build-1 `PASS`, Build-2..9 `PASS`
+
+## 79. T11 now projects operated Telegram delivery truth into Shadow monitoring and Prometheus
+
+- new code truth:
+  - `ShadowVpsServiceState`, `ShadowVpsCampaignSummary`, and `ShadowVpsServiceMonitoringPayload` now carry the last Telegram delivery truth as `status / event_type / error`
+  - `scripts/run_shadow_vps_service.py` now persists that truth on each bounded delivery attempt and rewrites the final campaign summary + monitoring artifacts after `service_stopped`
+  - `src/monitoring/shadow_vps_service_monitoring.py` now exposes the same seam in payload detail and Prometheus via `v53_shadow_vps_telegram_alert_delivery_status`
+- deliberate limit of this slice:
+  - no Build-10 dashboard/UI wiring yet
+  - no historical counter/time-series store beyond the last service-backed truth
+  - no daemon/retry semantics added
+- latest proofs:
+  - `$env:PYTHONPATH='src'; rtk pytest tests/test_protocols/test_shadow_vps_service_telegram_alerting.py tests/test_protocols/test_shadow_vps_service_launcher.py tests/test_monitoring/test_shadow_vps_service_monitoring.py -q`
+  - `17 passed`
+  - direct `python scripts/run_build9_core_smoke.py`
+  - Build-1 `PASS`, Build-2..9 `PASS`
+
+## 80. T11 now projects Shadow Telegram delivery truth into the canonical Build-10 technical dashboard
+
+- new code truth:
+  - `scripts/run_technical_dashboard.py` now reads `telegram_alert_delivery_status / event_type / error` from `shadow_vps_service.campaign_summary.json`
+  - `src/ui/technical_dashboard_view.py` now renders a dedicated Build-11 Shadow card `Telegram Alerts`
+  - the rendered local artifact for `build11_live_websocket_campaign` now carries the same service-backed Telegram seam as monitoring/Prometheus
+- deliberate limit of this slice:
+  - no Grafana work here
+  - no new alerting logic; Build-10 remains a pure projection surface
+  - no historical aggregation beyond the last service-backed Telegram truth
+- latest proofs:
+  - `$env:PYTHONPATH='src'; rtk pytest tests/test_ui/test_technical_dashboard.py tests/test_ui/test_technical_dashboard_launcher.py tests/test_monitoring/test_monitoring_backend.py tests/test_monitoring/test_shadow_vps_service_monitoring.py -q`
+  - `77 passed`
+  - direct `python scripts/run_build9_core_smoke.py`
+  - Build-1 `PASS`, Build-2..9 `PASS`
+
+## 81. T11 now exposes Telegram in local Shadow Grafana and persists Telegram config provenance on the operated service rail
+
+- new code truth:
+  - `src/monitoring/local_grafana_dashboard.py` now adds `Telegram Alerts` and `Telegram Alert Labels` to the local Shadow Grafana bundle
+  - `ShadowLiveWebSocketConfig` now accepts `telegram_alert_config_path_ref` and `telegram_alert_key_path_ref`
+  - `scripts/run_shadow_vps_service.py` now resolves Telegram config/key paths with the same precedence as other operated refs: CLI first, then `live_websocket_config`
+  - `ShadowVpsServiceState`, `ShadowVpsRuntimeEvidenceBundle`, `ShadowVpsCampaignSummary`, and `ShadowVpsServiceMonitoringPayload` now carry Telegram config/key `ref/source`
+  - `src/monitoring/shadow_vps_service_monitoring.py` now exposes `config_source` on `v53_shadow_vps_telegram_alert_delivery_status`
+- deliberate limit of this slice:
+  - no new Build-10 dashboard projection yet for Telegram config provenance
+  - no hidden sender loop or retry daemon
+  - local Grafana remains a Prometheus projection surface only
+- latest proofs:
+  - `$env:PYTHONPATH='src'; rtk pytest tests/test_monitoring/test_local_grafana_dashboard.py tests/test_monitoring/test_local_grafana_dashboard_launcher.py tests/test_monitoring/test_shadow_vps_service_monitoring.py tests/test_protocols/test_shadow_vps_service_launcher.py -q`
+  - `21 passed`
+  - direct `python scripts/run_build9_core_smoke.py`
+  - Build-1 `PASS`, Build-2..9 `PASS`
+
+## 82. T13 now projects the operated execution runtime bootstrap seam into canonical Shadow monitoring and Build-10
+
+- new code truth:
+  - `scripts/run_shadow_vps_service.py` now persists the useful bootstrap reconcile truth, not just `ref/status/source`: `user_data_stream_enabled`, `reconciliation_boot_executed`, `reconciliation_boot_trading_blocked`, `reconciliation_boot_circuit_breaker_tripped`, `reconciliation_boot_recovery_action`, and `reconciliation_boot_divergence_count`
+  - `src/monitoring/shadow_vps_service_monitoring.py` now exposes that seam in the canonical Shadow payload and Prometheus via `v53_shadow_vps_execution_runtime_bootstrap_status`, `..._divergence_count`, and `..._trading_blocked`
+  - `scripts/run_technical_dashboard.py` and `src/ui/technical_dashboard_view.py` now project the same service-backed seam into a dedicated Build-11 Shadow card `Execution Bootstrap`
+- deliberate limit of this slice:
+  - no new bootstrap runtime behavior
+  - no daemon, retry loop, or order-submit path
+  - Build-10 remains a projection surface over service truth
+- latest proofs:
+  - `$env:PYTHONPATH='src'; rtk pytest tests/test_monitoring/test_shadow_vps_service_monitoring.py tests/test_ui/test_technical_dashboard.py tests/test_ui/test_technical_dashboard_launcher.py tests/test_protocols/test_shadow_vps_service_launcher.py -q`
+  - `56 passed`
+  - direct `python scripts/run_build9_core_smoke.py`
+  - Build-1 `PASS`, Build-2..9 `PASS`
+
+## 83. Build-1 now enforces executable engineering guardrails with a baseline-aware repo-wide scan
+
+- new code truth:
+  - `src/smoke_bootstrap_recovery/engineering_guardrails.py` now materializes executable rules derived from `CODEX_PROMPT.md`: missing future annotations, file/function size, `print()`, bare `except`, missing annotations, and `Any`
+  - `scripts/run_engineering_guardrails.py` now runs the repo-wide scan, writes an audit-ready report under `build/engineering_guardrails/`, and can refresh the accepted legacy baseline in `config/engineering_guardrails_baseline.json`
+  - `run_build1_smoke()` now executes the guardrail scan as a real Build-1 sanity check through `smoke_bootstrap_recovery`, so new violations fail the foundation rail while existing legacy debt is grandfathered by baseline
+- deliberate limit of this slice:
+  - no repo-wide blind refactor
+  - no fail-on-legacy without baseline
+  - hotspots are reported, not auto-rewritten
+- latest proofs:
+  - `$env:PYTHONPATH='src'; python scripts/run_engineering_guardrails.py --write-baseline`
+  - repo-wide baseline generated over `826` Python files with `4363` accepted legacy violations
+  - `$env:PYTHONPATH='src'; python scripts/run_engineering_guardrails.py`
+  - `new_violations=0`
+  - `$env:PYTHONPATH='src'; rtk pytest tests/test_smoke_bootstrap_recovery/test_engineering_guardrails.py tests/test_smoke_bootstrap_recovery/test_state_sanity.py tests/test_smoke_bootstrap_recovery/test_smoke_reporter.py -q`
+  - `41 passed`
+  - direct `python scripts/run_build9_core_smoke.py`
+  - Build-1 `PASS`, Build-2..9 `PASS`
+
+## 84. The first operated guardrail hotspot reduction now hardens `run_shadow_vps_service.py` without changing service semantics
+
+- new code truth:
+  - `scripts/run_shadow_vps_service.py` now annotates the previously untyped helpers `_append_service_event(...)` and `_write_campaign_summary(...)`
+  - the dynamic script loaders now share a typed `_load_script_module(...) -> ModuleType` helper instead of duplicated untyped loader code
+  - the service final CLI output is now built by `_build_service_output_lines(...)` and emitted through `_emit_output_lines(...)`, removing direct `print()` calls from the operated service script
+  - `main(...)` is now decomposed into typed parser helpers `_build_argument_parser(...)`, `_add_*_arguments(...)`, and `_validate_input_root_selection(...)`
+  - the previous bare `except Exception:` on execution telemetry artifact write is now explicit and re-raises with a precise runtime error
+  - `_write_monitoring_artifacts(...)` now uses `_resolve_monitoring_artifact_paths(...)`, bringing that helper under the executable guardrail threshold
+- deliberate limit of this slice:
+  - no semantic change to the Shadow service loop
+  - no decomposition yet of the three remaining large monoliths: `_write_runtime_evidence_bundle(...)`, `_write_campaign_summary(...)`, and `run_shadow_vps_service(...)`
+  - file-level length debt remains open
+- latest proofs:
+  - focused `shadow service + monitoring` slice: `19 passed`
+  - direct `python scripts/run_build9_core_smoke.py`: Build-1 `PASS`, Build-2..9 `PASS`
+  - repo-wide guardrail total reduced from `4363` to `4341`
+  - `scripts/run_shadow_vps_service.py` reduced from `26` guardrail violations to `4` residual violations (`FILE_TOO_LONG`, `_write_runtime_evidence_bundle`, `_write_campaign_summary`, `run_shadow_vps_service`)
+
+## 85. The second operated hotspot reduction decomposes `campaign_summary` in `run_shadow_vps_service.py` without schema drift
+
+- new code truth:
+  - `scripts/run_shadow_vps_service.py` now builds the Shadow campaign summary through grouped typed helpers: core, live-capture, execution, regime, and info-stress fields
+  - `_write_campaign_summary(...)` is now a thin orchestrator over those field-builders and no longer carries the full schema inline
+  - the execution/regime/info builders were themselves split to stay below the executable guardrail threshold
+- deliberate limit of this slice:
+  - no change to `ShadowVpsCampaignSummary` field names, defaults, or persisted artifact paths
+  - no change to service-loop control flow
+  - `FILE_TOO_LONG`, `_write_runtime_evidence_bundle(...)`, and `run_shadow_vps_service(...)` remain explicit debt
+- latest proofs:
+  - `$env:PYTHONPATH='src'; python scripts/run_engineering_guardrails.py`
+  - `total_violations=4340`, `new_violations=0`
+- `$env:PYTHONPATH='src'; rtk pytest tests/test_protocols/test_shadow_vps_service_launcher.py tests/test_monitoring/test_shadow_vps_service_monitoring.py -q`
+- `19 passed`
+- direct `python scripts/run_build9_core_smoke.py`
+- Build-1 `PASS`, Build-2..9 `PASS`
+
+## 87. The fourth operated hotspot reduction collapses `run_shadow_vps_service(...)` under executable guardrails
+
+- new code truth:
+  - `scripts/run_shadow_vps_service.py` now routes the public service entrypoint through dedicated startup, loop, finalize, and output helpers instead of keeping the full operated loop inline
+  - the remaining runtime-context builder debt was reduced with small extraction helpers only; no artifact schema or monitoring contract changed
+  - `run_shadow_vps_service(...)` is now below the guardrail threshold and the repo is back to `new_violations=0`
+- deliberate limit of this slice:
+  - no service-loop semantic drift
+  - no schema rename and no monitoring field loss
+  - remaining debt on this file is now narrowed to `FILE_TOO_LONG`
+- latest proofs:
+  - `$env:PYTHONPATH='src'; python scripts/run_engineering_guardrails.py`
+  - `total_violations=4338`, `new_violations=0`
+  - `$env:PYTHONPATH='src'; rtk pytest tests/test_protocols/test_shadow_vps_service_launcher.py tests/test_monitoring/test_shadow_vps_service_monitoring.py -q`
+  - `19 passed`
+  - direct `python scripts/run_build9_core_smoke.py`
+  - Build-1 `PASS`, Build-2..9 `PASS`
+
+## 86. The third operated hotspot reduction decomposes `runtime_evidence_bundle` in `run_shadow_vps_service.py` without schema drift
+
+- new code truth:
+  - `scripts/run_shadow_vps_service.py` now materializes `ShadowVpsRuntimeEvidenceBundle` through grouped typed builders for `input`, `execution`, `projection`, `regime_lite`, `info_stress`, and durable artifact refs
+  - the service script now centralizes `last_run` conversions through `_last_run_str/_bool/_int/_str_tuple`, removing the previous long inline field mapping
+  - `_write_runtime_evidence_bundle(...)` is now a thin orchestrator and no longer carries the durable runtime schema inline
+- deliberate limit of this slice:
+  - no change to `ShadowVpsRuntimeEvidenceBundle` field names, defaults, or persisted artifact paths
+  - no change to service-loop control flow
+  - remaining explicit guardrail debt on this file is now only `FILE_TOO_LONG` and `run_shadow_vps_service(...)`
+- latest proofs:
+  - `$env:PYTHONPATH='src'; python scripts/run_engineering_guardrails.py --write-baseline`
+  - baseline refreshed to the reduced repo-wide debt level
+  - `$env:PYTHONPATH='src'; python scripts/run_engineering_guardrails.py`
+  - `total_violations=4339`, `new_violations=0`
+- `$env:PYTHONPATH='src'; rtk pytest tests/test_protocols/test_shadow_vps_service_launcher.py tests/test_monitoring/test_shadow_vps_service_monitoring.py -q`
+- `19 passed`
+- direct `python scripts/run_build9_core_smoke.py`
+- Build-1 `PASS`, Build-2..9 `PASS`
+
+## 88. The next operated hotspot reduction collapses `run_local_replay_shadow.py` under executable guardrails except for file split debt
+
+- new code truth:
+  - `scripts/run_local_replay_shadow.py` now routes `export_local_replay_shadow_run(...)` through typed import-context, import-bundle, runtime-bundle, day-recording, and session-materialization helpers instead of one monolithic runner body
+  - the script now uses explicit typed helpers for `demo payload`, per-engine Shadow evaluations, and CLI artifact output, eliminating the prior inline `print()` and missing-annotation debt
+  - the hotspot dropped from `22` file-local guardrail violations to `1`, with the only explicit residue now `FILE_TOO_LONG`
+- deliberate limit of this slice:
+  - no artifact schema rename
+  - no LOCAL_REPLAY -> SHADOW control-flow drift
+  - no change to governed sidecar names or session-summary contract
+- latest proofs:
+  - `$env:PYTHONPATH='src'; python scripts/run_engineering_guardrails.py`
+  - `total_violations=4316`, `new_violations=0`
+- `$env:PYTHONPATH='src'; rtk pytest tests/test_protocols/test_local_replay_shadow_runner.py -q`
+- `18 passed`
+- direct `python scripts/run_build9_core_smoke.py`
+- Build-1 `PASS`, Build-2..9 `PASS`
+
+## 89. The next operated hotspot reduction fully splits `run_local_replay_shadow.py` into bounded support modules
+
+- new code truth:
+  - `scripts/run_local_replay_shadow.py` is now a thin public CLI/API facade over bounded support modules:
+    - `scripts/local_replay_shadow_models.py`
+    - `scripts/local_replay_shadow_engines.py`
+    - `scripts/local_replay_shadow_payloads.py`
+    - `scripts/local_replay_shadow_import_support.py`
+    - `scripts/local_replay_shadow_session_support.py`
+  - the governed `LOCAL_REPLAY -> VPS import -> SHADOW` flow kept the same exported API surface (`main`, `export_local_replay_shadow_run`, `LocalReplayShadowArtifacts`) while eliminating the last file-length debt on the original script
+  - all six files are now at `0` local guardrail violations; the file-length debt is not merely moved elsewhere
+- deliberate limit of this slice:
+  - no artifact path rename
+  - no contract drift on session summaries, runtime evidence, or upload/import sidecars
+  - no behavior change on the governed Shadow rail
+- latest proofs:
+  - `$env:PYTHONPATH='src'; python scripts/run_engineering_guardrails.py`
+  - `total_violations=4315`, `new_violations=0`
+- `$env:PYTHONPATH='src'; rtk pytest tests/test_protocols/test_local_replay_shadow_runner.py -q`
+- `18 passed`
+- direct `python scripts/run_build9_core_smoke.py`
+- Build-1 `PASS`, Build-2..9 `PASS`
+
+## 90. The next operated hotspot reduction removes CLI print debt from `run_local_lab_analysis_bundle.py`
+
+- new code truth:
+  - `scripts/run_local_lab_analysis_bundle.py` now routes all terminal emission through `_emit_local_lab_analysis_bundle_output(...)` and `_write_cli_output(...)` instead of inline `print()` calls
+  - the change preserves the same operator-facing artifact paths and keeps the Local IA Lab bundle pipeline unchanged
+  - file-local debt on this hotspot dropped from `30` to `2`; only `FILE_TOO_LONG` and `FUNCTION_TOO_LONG main` remain
+- deliberate limit of this slice:
+  - no change to Local IA Lab artifact schema
+  - no change to the chained review/calibration/replay/monitoring pipeline
+  - no broad refactor of the giant `main(...)` yet
+- latest proofs:
+  - `$env:PYTHONPATH='src'; python scripts/run_engineering_guardrails.py`
+  - `total_violations=4287`, `new_violations=0`
+  - `$env:PYTHONPATH='src'; rtk pytest tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py -q`
+  - `7 passed`

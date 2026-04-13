@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections import deque
 from enum import StrEnum
 import logging
+import math
 from typing import Protocol
 
 from pydantic import BaseModel, Field
@@ -24,7 +25,7 @@ from interface_contracts import (
     quantize_down_to_step,
     quantize_up_to_step,
 )
-from scoring_backbone.fee_aware_edge_gate import (
+from .fee_aware_edge_gate import (
     FeeAwareEdgeDecision,
     FeeAwareEdgeGateConfig,
     evaluate_fee_aware_edge,
@@ -44,6 +45,16 @@ from .fill_tracker.fill_reporter import FillReporter, FillStats
 from .fill_tracker.latency_meter import LatencyMeter, LatencyStats
 from .fill_tracker.order_state_tracker import OrderState, OrderStateTracker, TERMINAL_STATES
 from .fill_tracker.order_terminal_state_resolver import TerminalResolution, resolve_terminal
+from .gatekeeper import (
+    ExecutionGateName,
+    ExecutionGateRefusalDisposition,
+    ExecutionGateTrace,
+    ExecutionGatekeeper,
+    GatekeeperAuditLogger,
+    ExecutionPermit,
+    ExecutionRefusal,
+    ExecutionVenueNormalizationResult,
+)
 from .order_decider.decision_reporter import DecisionReporter, DecisionStats
 from .order_decider.execution_guard import BlockReason, GuardResult, GuardVerdict, check_execution_guards
 from .order_decider.intent_builder import (
@@ -56,11 +67,26 @@ from .order_decider.intent_builder import (
 )
 from .order_decider.order_type_selector import select_order_type
 from .order_decider.timeout_policy_selector import select_timeout_policy
+from .rate_limiter import (
+    ExecutionRateLimitDecision,
+    ExecutionRateLimitModel,
+    evaluate_execution_rate_limit,
+)
+from .spread_guard import (
+    ExecutionSpreadGuardDecision,
+    ExecutionSpreadGuardModel,
+    evaluate_execution_spread_guard,
+)
 from .reconciliation_layer.divergence_classifier import DivergenceClassification, classify_all, classify_divergence
 from .reconciliation_layer.fill_reconciler import FillReconciliationResult, reconcile_fills
 from .reconciliation_layer.order_reconciler import OrderReconciliationResult, reconcile_orders
 from .reconciliation_layer.position_reconciler import PositionReconciliationResult, reconcile_positions
 from .reconciliation_layer.recovery_trigger import RecoveryDecision, RecoveryTrigger
+from .slippage_model import (
+    ExecutionSlippageEstimate,
+    ExecutionSlippageModel,
+    predict_execution_slippage,
+)
 from .venue_constraints_provider import VenueConstraintProvider
 
 
@@ -179,6 +205,7 @@ class ExecutionSubmission(BaseModel, frozen=True):
     no_trade: NoTradeDecision | None = None
     guard: GuardResult | None = None
     detail: str = ""
+    gate_trace: tuple[ExecutionGateTrace, ...] = ()
 
 
 class TimeoutSweepResult(BaseModel, frozen=True):
@@ -293,6 +320,10 @@ class ExecutionRuntime:
         execution_no_trade_filter: ExecutionNoTradeFilter | None = None,
         sharia_trade_authorizer: ShariaTradeAuthorizer | None = None,
         fee_aware_edge_gate_config: FeeAwareEdgeGateConfig | None = None,
+        rate_limit_model: ExecutionRateLimitModel | None = None,
+        spread_guard_model: ExecutionSpreadGuardModel | None = None,
+        slippage_model: ExecutionSlippageModel | None = None,
+        gatekeeper_audit_logger: GatekeeperAuditLogger | None = None,
     ) -> None:
         if terminal_order_retention <= 0:
             raise ValueError("terminal_order_retention must be > 0")
@@ -304,6 +335,10 @@ class ExecutionRuntime:
         self._execution_no_trade_filter = execution_no_trade_filter
         self._sharia_trade_authorizer = sharia_trade_authorizer
         self._fee_aware_edge_gate_config = fee_aware_edge_gate_config
+        self._rate_limit_model = rate_limit_model
+        self._spread_guard_model = spread_guard_model
+        self._slippage_model = slippage_model
+        self._gatekeeper_audit_logger = gatekeeper_audit_logger
         self._decision_reporter = DecisionReporter()
         self._state_tracker = OrderStateTracker()
         self._fill_aggregator = FillAggregator()
@@ -320,273 +355,51 @@ class ExecutionRuntime:
         self._local_positions: dict[str, float] = {}
         self._terminal_orders: dict[str, _TerminalOrderSnapshot] = {}
         self._terminal_order_sequence: deque[str] = deque()
+        self._gatekeeper = ExecutionGatekeeper(
+            resolve_spread_guard=self._run_spread_guard,
+            resolve_fee_aware_edge=self._run_fee_aware_edge_gate,
+            authorize_sharia=self._run_sharia_trade_authorizer,
+            resolve_rate_limit=self._run_rate_limit_guard,
+            resolve_venue_constraints=self._resolve_venue_constraints,
+            normalize_venue_order_fields=self._normalize_venue_order_fields,
+            resolve_max_spread_for_market=self._resolve_max_spread_for_market,
+            evaluate_execution_no_trade_filter=self._run_execution_no_trade_filter,
+        )
 
     def submit_opportunity(self, opportunity: ExecutionOpportunity, now: float) -> ExecutionSubmission:
         """Turn an execution opportunity into a real submitted order or an explicit no-trade."""
-        decision = select_order_type(
-            expected_gain=opportunity.expected_gain,
-            expected_cost=opportunity.expected_cost,
-            safety_margin=opportunity.safety_margin,
-            spread_bps=opportunity.spread_bps,
-        )
-        if decision.order_type == OrderType.NO_TRADE:
-            reason = NoTradeReason.COST_EXCEEDS_EDGE if decision.net_expected <= 0 else NoTradeReason.HARD_BLOCKER
-            no_trade = NoTradeDecision(
-                pair=opportunity.pair,
-                engine_id=opportunity.engine_id,
-                reason=reason,
-                detail=decision.reason,
-                expected_cost=opportunity.expected_cost,
-                expected_gain=opportunity.expected_gain,
-                score=opportunity.score,
+        opportunity = self._apply_runtime_slippage_model(opportunity)
+        authorization = self._gatekeeper.authorize(opportunity)
+        if isinstance(authorization, ExecutionRefusal):
+            self._decision_reporter.record_no_trade(authorization.no_trade, timestamp=now)
+            self._log_gatekeeper_refusal(authorization, opportunity, now)
+            self._record_gatekeeper_refusal_audit(
+                refusal=authorization,
+                opportunity=opportunity,
+                now=now,
             )
-            self._decision_reporter.record_no_trade(no_trade, timestamp=now)
-            logger.warning(
-                "execution_submission_no_trade",
-                extra={
-                    "intent_id": opportunity.intent_id,
-                    "pair": opportunity.pair,
-                    "engine_id": opportunity.engine_id,
-                    "reason": no_trade.reason.value,
-                    "timestamp": now,
-                },
+            status = (
+                ExecutionSubmissionStatus.BLOCKED
+                if authorization.disposition == ExecutionGateRefusalDisposition.BLOCKED
+                else ExecutionSubmissionStatus.NO_TRADE
             )
             return ExecutionSubmission(
-                status=ExecutionSubmissionStatus.NO_TRADE,
-                no_trade=no_trade,
-                detail=decision.reason,
+                status=status,
+                no_trade=authorization.no_trade,
+                guard=authorization.guard,
+                detail=authorization.detail,
+                gate_trace=authorization.trace,
             )
-
-        edge_gate_decision = self._run_fee_aware_edge_gate(opportunity)
-        if edge_gate_decision is not None and not edge_gate_decision.allowed:
-            fee_aware_context = self._build_fee_aware_edge_no_trade_context(edge_gate_decision)
-            no_trade = NoTradeDecision(
-                pair=opportunity.pair,
-                engine_id=opportunity.engine_id,
-                reason=NoTradeReason.COST_EXCEEDS_EDGE,
-                detail=edge_gate_decision.detail,
-                expected_cost=opportunity.expected_cost,
-                expected_gain=opportunity.expected_gain,
-                score=opportunity.score,
-                context=fee_aware_context,
-            )
-            self._decision_reporter.record_no_trade(no_trade, timestamp=now)
-            logger.warning(
-                "execution_submission_fee_aware_edge_blocked",
-                extra={
-                    "intent_id": opportunity.intent_id,
-                    "pair": opportunity.pair,
-                    "engine_id": opportunity.engine_id,
-                    "reason_code": edge_gate_decision.reason_code,
-                    "expected_edge_bps": edge_gate_decision.expected_edge_bps,
-                    "expected_cost_bps": edge_gate_decision.expected_cost_bps,
-                    "threshold_bps": edge_gate_decision.threshold_bps,
-                    "edge_multiplier": edge_gate_decision.edge_multiplier,
-                    "min_absolute_edge_bps": edge_gate_decision.min_absolute_edge_bps,
-                    "timestamp": now,
-                },
-            )
-            return ExecutionSubmission(
-                status=ExecutionSubmissionStatus.NO_TRADE,
-                no_trade=no_trade,
-                detail=edge_gate_decision.detail,
-            )
-
-        sharia_decision = self._run_sharia_trade_authorizer(opportunity)
-        if sharia_decision is not None and not sharia_decision.allowed:
-            detail = sharia_decision.detail.strip() or sharia_decision.reason_code
-            no_trade = NoTradeDecision(
-                pair=opportunity.pair,
-                engine_id=opportunity.engine_id,
-                reason=NoTradeReason.SHARIA_BLOCKED,
-                detail=detail,
-                expected_cost=opportunity.expected_cost,
-                expected_gain=opportunity.expected_gain,
-                score=opportunity.score,
-            )
-            self._decision_reporter.record_no_trade(no_trade, timestamp=now)
-            logger.warning(
-                "execution_submission_sharia_blocked",
-                extra={
-                    "intent_id": opportunity.intent_id,
-                    "pair": opportunity.pair,
-                    "engine_id": opportunity.engine_id,
-                    "reason_code": sharia_decision.reason_code,
-                    "timestamp": now,
-                },
-            )
-            return ExecutionSubmission(
-                status=ExecutionSubmissionStatus.NO_TRADE,
-                no_trade=no_trade,
-                detail=detail,
-            )
-
-        guard = check_execution_guards(
-            pair_suspended=opportunity.pair_suspended,
-            pair_health_score=opportunity.pair_health_score,
-            pair_health_min=opportunity.pair_health_min,
-            risk_budget_available=opportunity.risk_budget_available,
-            infrastructure_ok=opportunity.infrastructure_ok,
-            data_stale=opportunity.data_stale,
-            expected_cost=opportunity.expected_cost,
-            max_acceptable_cost=opportunity.max_acceptable_cost,
-        )
-        if guard.verdict == GuardVerdict.BLOCK:
-            no_trade = NoTradeDecision(
-                pair=opportunity.pair,
-                engine_id=opportunity.engine_id,
-                reason=self._map_guard_reason(guard),
-                detail=guard.detail,
-                expected_cost=opportunity.expected_cost,
-                expected_gain=opportunity.expected_gain,
-                score=opportunity.score,
-            )
-            self._decision_reporter.record_no_trade(no_trade, timestamp=now)
-            logger.warning(
-                "execution_submission_blocked",
-                extra={
-                    "intent_id": opportunity.intent_id,
-                    "pair": opportunity.pair,
-                    "engine_id": opportunity.engine_id,
-                    "blocks": tuple(block.value for block in guard.blocks),
-                    "timestamp": now,
-                },
-            )
-            return ExecutionSubmission(
-                status=ExecutionSubmissionStatus.BLOCKED,
-                no_trade=no_trade,
-                guard=guard,
-                detail=guard.detail,
-            )
-
-        price_limit = opportunity.price_limit
-        if decision.order_type == OrderType.LIMIT and price_limit is None:
-            price_limit = opportunity.reference_price
-        if decision.order_type == OrderType.LIMIT and price_limit is None:
-            no_trade = NoTradeDecision(
-                pair=opportunity.pair,
-                engine_id=opportunity.engine_id,
-                reason=NoTradeReason.HARD_BLOCKER,
-                detail="limit order selected without a usable price limit",
-                expected_cost=opportunity.expected_cost,
-                expected_gain=opportunity.expected_gain,
-                score=opportunity.score,
-            )
-            self._decision_reporter.record_no_trade(no_trade, timestamp=now)
-            logger.warning(
-                "execution_submission_invalid_limit",
-                extra={
-                    "intent_id": opportunity.intent_id,
-                    "pair": opportunity.pair,
-                    "engine_id": opportunity.engine_id,
-                    "timestamp": now,
-                },
-            )
-            return ExecutionSubmission(
-                status=ExecutionSubmissionStatus.NO_TRADE,
-                no_trade=no_trade,
-                detail=no_trade.detail,
-            )
-
-        resolved_constraints = self._resolve_venue_constraints(opportunity)
-        quantity = opportunity.quantity
-        quantity_exact = ""
-        price_limit_exact: str | None = None
-        if resolved_constraints is not None:
-            normalization = self._normalize_venue_order_fields(
-                quantity=opportunity.quantity,
-                side=opportunity.side,
-                order_type=decision.order_type,
-                price_limit=price_limit,
-                reference_price=opportunity.reference_price,
-                constraints=resolved_constraints,
-            )
-            if normalization.error_detail is not None:
-                no_trade = NoTradeDecision(
-                    pair=opportunity.pair,
-                    engine_id=opportunity.engine_id,
-                    reason=NoTradeReason.VENUE_CONSTRAINTS,
-                    detail=normalization.error_detail,
-                    expected_cost=opportunity.expected_cost,
-                    expected_gain=opportunity.expected_gain,
-                    score=opportunity.score,
-                )
-                self._decision_reporter.record_no_trade(no_trade, timestamp=now)
-                logger.warning(
-                    "execution_submission_venue_constraints",
-                    extra={
-                        "intent_id": opportunity.intent_id,
-                        "pair": opportunity.pair,
-                        "engine_id": opportunity.engine_id,
-                        "detail": normalization.error_detail,
-                        "timestamp": now,
-                    },
-                )
-                return ExecutionSubmission(
-                    status=ExecutionSubmissionStatus.NO_TRADE,
-                    no_trade=no_trade,
-                    detail=no_trade.detail,
-                )
-            quantity = normalization.quantity
-            quantity_exact = normalization.quantity_exact
-            price_limit = normalization.price_limit
-            price_limit_exact = normalization.price_limit_exact
-
-        timeout_policy = select_timeout_policy(decision.order_type)
-        intent = build_intent(
-            intent_id=opportunity.intent_id,
-            pair=opportunity.pair,
-            engine_id=opportunity.engine_id,
-            side=opportunity.side,
-            order_type=decision.order_type,
-            quantity=quantity,
-            quantity_exact=quantity_exact,
-            expected_cost=opportunity.expected_cost,
-            expected_gain=opportunity.expected_gain,
-            score=opportunity.score,
-            justification=opportunity.justification or decision.reason,
-            price_limit=price_limit,
-            price_limit_exact=price_limit_exact,
-            timeout_s=timeout_policy.timeout_s,
-            profile=opportunity.profile,
-            venue_constraints=resolved_constraints,
-        )
-        hook_outcome = self._run_execution_no_trade_filter(opportunity)
-        if hook_outcome is not None and hook_outcome.blocked:
-            detail = hook_outcome.detail.strip()
-            if not detail:
-                detail = (
-                    f"execution no-trade filter blocked {opportunity.pair} / "
-                    f"{opportunity.engine_id}"
-                )
-            no_trade = NoTradeDecision(
-                pair=opportunity.pair,
-                engine_id=opportunity.engine_id,
-                reason=NoTradeReason.HARD_BLOCKER,
-                detail=detail,
-                expected_cost=opportunity.expected_cost,
-                expected_gain=opportunity.expected_gain,
-                score=opportunity.score,
-            )
-            self._decision_reporter.record_no_trade(no_trade, timestamp=now)
-            logger.warning(
-                "execution_submission_filtered",
-                extra={
-                    "intent_id": opportunity.intent_id,
-                    "pair": opportunity.pair,
-                    "engine_id": opportunity.engine_id,
-                    "block_reason_codes": hook_outcome.block_reason_codes,
-                    "timestamp": now,
-                },
-            )
-            return ExecutionSubmission(
-                status=ExecutionSubmissionStatus.NO_TRADE,
-                no_trade=no_trade,
-                detail=detail,
-            )
+        intent = authorization.intent
         receipt = self._adapter.submit_order(intent, now)
         self._register_live_order(receipt.order_id, intent, receipt.submitted_at)
         self._decision_reporter.record_trade(intent, timestamp=now)
+        self._record_gatekeeper_submission_audit(
+            permit=authorization,
+            opportunity=opportunity,
+            order_id=receipt.order_id,
+            now=now,
+        )
         logger.info(
             "execution_submission_submitted",
             extra={
@@ -595,6 +408,7 @@ class ExecutionRuntime:
                 "pair": intent.pair,
                 "engine_id": intent.engine_id,
                 "order_type": intent.order_type.value,
+                "gate_trace": tuple(step.model_dump(mode="json") for step in authorization.trace),
                 "timestamp": now,
             },
         )
@@ -602,7 +416,8 @@ class ExecutionRuntime:
             status=ExecutionSubmissionStatus.SUBMITTED,
             order_id=receipt.order_id,
             intent=intent,
-            detail=decision.reason,
+            detail=authorization.detail,
+            gate_trace=authorization.trace,
         )
 
     def replace_order(
@@ -972,6 +787,64 @@ class ExecutionRuntime:
         )
         return self._execution_no_trade_filter(hook_input)
 
+    def _run_rate_limit_guard(
+        self,
+        opportunity: ExecutionOpportunity,
+    ) -> ExecutionRateLimitDecision | None:
+        if self._rate_limit_model is None:
+            return None
+        raw_value = opportunity.metadata.get("rest_quota_ratio_current")
+        if raw_value is None:
+            return None
+        try:
+            current_quota_ratio = float(raw_value)
+        except (TypeError, ValueError):
+            logger.warning(
+                "execution_rate_limit_telemetry_invalid",
+                extra={
+                    "intent_id": opportunity.intent_id,
+                    "pair": opportunity.pair,
+                    "engine_id": opportunity.engine_id,
+                },
+            )
+            return None
+        if not math.isfinite(current_quota_ratio) or current_quota_ratio < 0.0:
+            logger.warning(
+                "execution_rate_limit_telemetry_invalid",
+                extra={
+                    "intent_id": opportunity.intent_id,
+                    "pair": opportunity.pair,
+                    "engine_id": opportunity.engine_id,
+                },
+            )
+            return None
+        return evaluate_execution_rate_limit(
+            self._rate_limit_model,
+            current_quota_ratio=current_quota_ratio,
+        )
+
+    def _run_spread_guard(
+        self,
+        opportunity: ExecutionOpportunity,
+    ) -> ExecutionSpreadGuardDecision | None:
+        if self._spread_guard_model is None:
+            return None
+        current_spread_bps = opportunity.spread_bps
+        if not math.isfinite(current_spread_bps) or current_spread_bps < 0.0:
+            logger.warning(
+                "execution_spread_guard_telemetry_invalid",
+                extra={
+                    "intent_id": opportunity.intent_id,
+                    "pair": opportunity.pair,
+                    "engine_id": opportunity.engine_id,
+                },
+            )
+            return None
+        return evaluate_execution_spread_guard(
+            self._spread_guard_model,
+            current_spread_bps=current_spread_bps,
+        )
+
     def _run_fee_aware_edge_gate(
         self,
         opportunity: ExecutionOpportunity,
@@ -984,19 +857,146 @@ class ExecutionRuntime:
             config=self._fee_aware_edge_gate_config,
         )
 
-    @staticmethod
-    def _build_fee_aware_edge_no_trade_context(
-        decision: FeeAwareEdgeDecision,
-    ) -> dict[str, str | float | int | bool]:
-        return {
-            "gate": "fee_aware_edge",
-            "reason_code": decision.reason_code,
-            "expected_edge_bps": decision.expected_edge_bps,
-            "expected_cost_bps": decision.expected_cost_bps,
-            "threshold_bps": decision.threshold_bps,
-            "edge_multiplier": decision.edge_multiplier,
-            "min_absolute_edge_bps": decision.min_absolute_edge_bps,
+    def _log_gatekeeper_refusal(
+        self,
+        refusal: ExecutionRefusal,
+        opportunity: ExecutionOpportunity,
+        now: float,
+    ) -> None:
+        extra = {
+            "intent_id": opportunity.intent_id,
+            "pair": opportunity.pair,
+            "engine_id": opportunity.engine_id,
+            "gate_trace": tuple(step.model_dump(mode="json") for step in refusal.trace),
+            "timestamp": now,
         }
+        context = refusal.no_trade.context
+        if refusal.gate_name == ExecutionGateName.SPREAD_GUARD:
+            logger.warning(
+                "execution_submission_spread_guard_blocked",
+                extra={
+                    **extra,
+                    "current_spread_bps": context.get("current_spread_bps"),
+                    "max_spread_bps": context.get("max_spread_bps"),
+                },
+            )
+            return
+        if refusal.gate_name == ExecutionGateName.ORDER_TYPE:
+            logger.warning(
+                "execution_submission_no_trade",
+                extra={
+                    **extra,
+                    "reason": refusal.no_trade.reason.value,
+                },
+            )
+            return
+        if refusal.gate_name == ExecutionGateName.FEE_AWARE_EDGE:
+            logger.warning(
+                "execution_submission_fee_aware_edge_blocked",
+                extra={
+                    **extra,
+                    "reason_code": context.get("reason_code", ""),
+                    "expected_edge_bps": context.get("expected_edge_bps"),
+                    "expected_cost_bps": context.get("expected_cost_bps"),
+                    "threshold_bps": context.get("threshold_bps"),
+                    "edge_multiplier": context.get("edge_multiplier"),
+                    "min_absolute_edge_bps": context.get("min_absolute_edge_bps"),
+                },
+            )
+            return
+        if refusal.gate_name == ExecutionGateName.SHARIA:
+            logger.warning(
+                "execution_submission_sharia_blocked",
+                extra={
+                    **extra,
+                    "reason_code": context.get("reason_code", ""),
+                },
+            )
+            return
+        if refusal.gate_name == ExecutionGateName.RATE_LIMITER:
+            logger.warning(
+                "execution_submission_rate_limited",
+                extra={
+                    **extra,
+                    "current_quota_ratio": context.get("current_quota_ratio"),
+                    "quota_ratio_ceiling": context.get("quota_ratio_ceiling"),
+                },
+            )
+            return
+        if refusal.gate_name == ExecutionGateName.EXECUTION_GUARD:
+            logger.warning(
+                "execution_submission_blocked",
+                extra={
+                    **extra,
+                    "blocks": (
+                        tuple(block.value for block in refusal.guard.blocks)
+                        if refusal.guard is not None
+                        else ()
+                    ),
+                },
+            )
+            return
+        if refusal.gate_name == ExecutionGateName.PRICE_LIMIT:
+            logger.warning("execution_submission_invalid_limit", extra=extra)
+            return
+        if refusal.gate_name == ExecutionGateName.VENUE_CONSTRAINTS:
+            logger.warning(
+                "execution_submission_venue_constraints",
+                extra={
+                    **extra,
+                    "detail": refusal.detail,
+                },
+            )
+            return
+        if refusal.gate_name == ExecutionGateName.EXECUTION_NO_TRADE_FILTER:
+            logger.warning(
+                "execution_submission_filtered",
+                extra={
+                    **extra,
+                    "block_reason_codes": refusal.reason_codes,
+                },
+            )
+            return
+        logger.warning(
+            "execution_submission_gatekeeper_refused",
+            extra={
+                **extra,
+                "gate_name": refusal.gate_name.value,
+                "detail": refusal.detail,
+            },
+        )
+
+    def _record_gatekeeper_refusal_audit(
+        self,
+        *,
+        refusal: ExecutionRefusal,
+        opportunity: ExecutionOpportunity,
+        now: float,
+    ) -> None:
+        if self._gatekeeper_audit_logger is None:
+            return
+        self._gatekeeper_audit_logger.record_refusal(
+            opportunity=opportunity,
+            refusal=refusal,
+            timestamp_s=now,
+        )
+
+    def _record_gatekeeper_submission_audit(
+        self,
+        *,
+        permit: ExecutionPermit,
+        opportunity: ExecutionOpportunity,
+        order_id: str,
+        now: float,
+    ) -> None:
+        if self._gatekeeper_audit_logger is None:
+            return
+        self._gatekeeper_audit_logger.record_submission(
+            opportunity=opportunity,
+            permit=permit,
+            order_id=order_id,
+            timestamp_s=now,
+        )
 
     def _run_sharia_trade_authorizer(
         self,
@@ -1014,6 +1014,58 @@ class ExecutionRuntime:
                 metadata=dict(opportunity.metadata),
             )
         )
+
+    def _apply_runtime_slippage_model(
+        self,
+        opportunity: ExecutionOpportunity,
+    ) -> ExecutionOpportunity:
+        if self._slippage_model is None:
+            return opportunity
+        try:
+            estimate = predict_execution_slippage(
+                self._slippage_model,
+                size_value=opportunity.quantity,
+            )
+        except ValueError:
+            logger.warning(
+                "execution_slippage_model_invalid",
+                extra={
+                    "intent_id": opportunity.intent_id,
+                    "pair": opportunity.pair,
+                    "engine_id": opportunity.engine_id,
+                },
+            )
+            return opportunity
+        updated_metadata = dict(opportunity.metadata)
+        updated_metadata["execution_slippage_model"] = self._build_slippage_metadata_payload(
+            estimate
+        )
+        return opportunity.model_copy(
+            update={
+                "expected_cost": opportunity.expected_cost + estimate.cost_addition,
+                "metadata": updated_metadata,
+            }
+        )
+
+    def _resolve_max_spread_for_market(
+        self,
+        opportunity: ExecutionOpportunity,
+    ) -> float:
+        if self._spread_guard_model is None:
+            return 10.0
+        return self._spread_guard_model.max_spread_bps
+
+    @staticmethod
+    def _build_slippage_metadata_payload(
+        estimate: ExecutionSlippageEstimate,
+    ) -> dict[str, str | float]:
+        return {
+            "threshold_id": estimate.source_threshold_id,
+            "size_proxy": estimate.size_proxy,
+            "size_value": estimate.size_value,
+            "predicted_slippage_bps": estimate.predicted_slippage_bps,
+            "cost_addition": estimate.cost_addition,
+        }
 
     def _resolve_adverse_selection_delay_s(
         self,
@@ -1109,7 +1161,7 @@ class ExecutionRuntime:
         price_limit: float | None,
         reference_price: float | None,
         constraints: VenueConstraintSnapshot,
-    ) -> "_NormalizedVenueOrderFields":
+    ) -> ExecutionVenueNormalizationResult:
         quantity_decimal = execution_decimal(quantity, name="quantity")
         quantity_decimal = (
             quantize_down_to_step(quantity_decimal, constraints.step_size)
@@ -1117,7 +1169,7 @@ class ExecutionRuntime:
             else quantity_decimal
         )
         if quantity_decimal <= 0:
-            return _NormalizedVenueOrderFields(
+            return ExecutionVenueNormalizationResult(
                 quantity=0.0,
                 quantity_exact="0",
                 error_detail="venue constraints reduce quantity to zero",
@@ -1142,7 +1194,7 @@ class ExecutionRuntime:
                 else quantize_up_to_step(price_limit, constraints.tick_size)
             )
             if normalized_price_decimal <= 0:
-                return _NormalizedVenueOrderFields(
+                return ExecutionVenueNormalizationResult(
                     quantity=0.0,
                     quantity_exact="0",
                     error_detail="venue constraints reduce price limit to zero",
@@ -1157,7 +1209,7 @@ class ExecutionRuntime:
 
         if constraints.min_notional is not None:
             if price_anchor_decimal is None:
-                return _NormalizedVenueOrderFields(
+                return ExecutionVenueNormalizationResult(
                     quantity=0.0,
                     quantity_exact="0",
                     error_detail="min_notional requires a usable price anchor",
@@ -1166,13 +1218,13 @@ class ExecutionRuntime:
             if normalized_notional < execution_decimal(
                 constraints.min_notional, name="min_notional"
             ):
-                return _NormalizedVenueOrderFields(
+                return ExecutionVenueNormalizationResult(
                     quantity=0.0,
                     quantity_exact="0",
                     error_detail="normalized order violates venue min_notional",
                 )
 
-        return _NormalizedVenueOrderFields(
+        return ExecutionVenueNormalizationResult(
             quantity=decimal_to_float64(
                 quantity_decimal,
                 max_abs_loss=constraints.step_size,
@@ -1184,11 +1236,3 @@ class ExecutionRuntime:
             price_limit=normalized_price_limit,
             price_limit_exact=price_limit_exact,
         )
-
-
-class _NormalizedVenueOrderFields(BaseModel, frozen=True):
-    quantity: float
-    quantity_exact: str
-    price_limit: float | None = None
-    price_limit_exact: str | None = None
-    error_detail: str | None = None

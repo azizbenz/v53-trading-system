@@ -41,19 +41,20 @@ BUILD_STAGES: tuple[BuildStage, ...] = (
             "dag_validator",
             "contract_test_suite",
             "smoke_bootstrap_recovery",
+            "calibration_loader",
         ),
     ),
     BuildStage(
         stage=2,
         name="Data Backbone",
         description="Ingestion WS, normalisation, qualite data, sante paire",
-        modules=("data_backbone",),
+        modules=("data_backbone", "regime_classifier"),
     ),
     BuildStage(
         stage=3,
         name="Execution Backbone",
         description="Execution, couts reels, reconciliation",
-        modules=("execution_backbone",),
+        modules=("sharia_compliance", "execution_backbone"),
     ),
     BuildStage(
         stage=4,
@@ -96,6 +97,7 @@ BUILD_STAGES: tuple[BuildStage, ...] = (
         name="Monitoring + UI Light",
         description="Supervision operateur verrouillee (libelle historique: UI Light) + Build-9X gouverne + scaffolds replay/import minimaux",
         modules=(
+            "calibration_methods",
             "local_replay_runtime",
             "backtest_artifact_import",
             "meta_learning",
@@ -107,7 +109,7 @@ BUILD_STAGES: tuple[BuildStage, ...] = (
         stage=11,
         name="Shadow Light",
         description="Validation Shadow gouvernee sur le rail runtime actif COMPLETE, sans capital; Build-12 Micro-live puis Build-13 Live-Light ouvrent ensuite dans le meme module",
-        modules=("protocols",),
+        modules=("secrets_manager", "alerting", "venue_adapters", "protocols"),
     ),
     BuildStage(
         stage=12,

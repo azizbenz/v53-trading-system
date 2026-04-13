@@ -21,7 +21,9 @@ from complete_enablers import (
     build_false_breakout_snapshot,
     build_hurst_regime_snapshot,
     build_lob_deep_filter_vwa_snapshot,
+    build_micro_edge_exit_governor_snapshot,
     build_market_toxicity_snapshot,
+    build_micro_edge_entry_timing_snapshot,
     build_order_book_imbalance_snapshot,
     evaluate_build14_limited_influence,
     evaluate_build14_shadow_activation,
@@ -40,6 +42,8 @@ def test_complete_enablers_exports_expected_symbols():
         "Build14SignalFamily",
         "build_competition_monitor_snapshot",
         "build_market_toxicity_snapshot",
+        "build_micro_edge_exit_governor_snapshot",
+        "build_micro_edge_entry_timing_snapshot",
         "build_execution_fragility_score",
         "build_false_breakout_snapshot",
         "build_hurst_regime_snapshot",
@@ -207,6 +211,58 @@ def test_order_book_imbalance_snapshot_is_traceable_and_shadow_enabled():
     assert snapshot.status in {Build14Severity.ELEVATED, Build14Severity.CRITICAL}
     assert snapshot.structured_log_key == "build14.shadow_enabled.order_book_imbalance"
     assert "adverse_obi_pressure=0.85" in snapshot.detail
+
+
+def test_micro_edge_entry_timing_snapshot_is_traceable_and_shadow_enabled():
+    snapshot = build_micro_edge_entry_timing_snapshot(
+        Build14ObservationInput(
+            correlation_id="corr-14timing",
+            dtr_coverage=0.90,
+            cra_sterilization_rate=0.22,
+            cra_alert_count=1,
+            break_even_drift_alert=True,
+            edge_degraded_count=1,
+            queue_backlog=70,
+            stale_pair_count=1,
+            dtr_loss_count=0,
+            log_loss_count=0,
+            ce_net=0.0001,
+            volume_support_ratio=0.18,
+            adverse_obi_pressure=0.78,
+        )
+    )
+
+    assert snapshot.signal_family == Build14SignalFamily.MICROSTRUCTURE
+    assert snapshot.hard_state == Build14HardState.SHADOW_ENABLED
+    assert snapshot.status in {Build14Severity.ELEVATED, Build14Severity.CRITICAL}
+    assert snapshot.structured_log_key == "build14.shadow_enabled.micro_edge_entry_timing_layer"
+    assert "volume_support_ratio=0.18" in snapshot.detail
+
+
+def test_micro_edge_exit_governor_snapshot_is_traceable_and_shadow_enabled():
+    snapshot = build_micro_edge_exit_governor_snapshot(
+        Build14ObservationInput(
+            correlation_id="corr-14exit",
+            dtr_coverage=0.88,
+            cra_sterilization_rate=0.24,
+            cra_alert_count=1,
+            break_even_drift_alert=True,
+            edge_degraded_count=1,
+            queue_backlog=12,
+            stale_pair_count=1,
+            dtr_loss_count=1,
+            log_loss_count=0,
+            ce_net=-0.0002,
+            breakout_failure_rate=0.72,
+            ghost_liquidity_ratio=0.55,
+        )
+    )
+
+    assert snapshot.signal_family == Build14SignalFamily.MICROSTRUCTURE
+    assert snapshot.hard_state == Build14HardState.SHADOW_ENABLED
+    assert snapshot.status in {Build14Severity.ELEVATED, Build14Severity.CRITICAL}
+    assert snapshot.structured_log_key == "build14.shadow_enabled.micro_edge_exit_governor"
+    assert "breakout_failure_rate=0.72" in snapshot.detail
 
 
 def test_hurst_regime_snapshot_is_traceable_and_shadow_enabled():
@@ -387,6 +443,60 @@ def test_build14_limited_influence_uses_lob_and_obi_reason_codes_when_microstruc
     assert any(snapshot.reader_name == "order_book_imbalance" for snapshot in report.snapshots)
     assert any(reason_code.startswith("lob_deep_filter_vwa_") for reason_code in report.signal.reason_codes)
     assert any(reason_code.startswith("order_book_imbalance_") for reason_code in report.signal.reason_codes)
+    assert report.signal.influence_mode == Build14InfluenceMode.LIMITED_INFLUENCE
+
+
+def test_build14_limited_influence_uses_entry_timing_reason_codes_when_entry_quality_collapses():
+    report = evaluate_build14_limited_influence(
+        Build14ObservationInput(
+            correlation_id="corr-14timing-live",
+            dtr_coverage=0.90,
+            cra_sterilization_rate=0.28,
+            cra_alert_count=1,
+            break_even_drift_alert=True,
+            edge_degraded_count=1,
+            queue_backlog=72,
+            stale_pair_count=1,
+            dtr_loss_count=0,
+            log_loss_count=0,
+            ce_net=0.0002,
+            volume_support_ratio=0.12,
+            adverse_obi_pressure=0.76,
+        )
+    )
+
+    assert any(snapshot.reader_name == "micro_edge_entry_timing_layer" for snapshot in report.snapshots)
+    assert any(
+        reason_code.startswith("micro_edge_entry_timing_layer_")
+        for reason_code in report.signal.reason_codes
+    )
+    assert report.signal.influence_mode == Build14InfluenceMode.LIMITED_INFLUENCE
+
+
+def test_build14_limited_influence_uses_exit_governor_reason_codes_when_exit_quality_collapses():
+    report = evaluate_build14_limited_influence(
+        Build14ObservationInput(
+            correlation_id="corr-14exit-live",
+            dtr_coverage=0.89,
+            cra_sterilization_rate=0.26,
+            cra_alert_count=1,
+            break_even_drift_alert=True,
+            edge_degraded_count=1,
+            queue_backlog=14,
+            stale_pair_count=1,
+            dtr_loss_count=1,
+            log_loss_count=0,
+            ce_net=-0.0002,
+            breakout_failure_rate=0.74,
+            ghost_liquidity_ratio=0.60,
+        )
+    )
+
+    assert any(snapshot.reader_name == "micro_edge_exit_governor" for snapshot in report.snapshots)
+    assert any(
+        reason_code.startswith("micro_edge_exit_governor_")
+        for reason_code in report.signal.reason_codes
+    )
     assert report.signal.influence_mode == Build14InfluenceMode.LIMITED_INFLUENCE
 
 

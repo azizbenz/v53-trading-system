@@ -11,6 +11,7 @@ from monitoring import (
     Build9XProjection,
     EngineJudgmentCard,
     EngineJudgmentProjection,
+    ExecutionRuntimeProjectionBridgeProjection,
     MicroLiveProjection,
     PortfolioMetrics,
     ReplayImportProjection,
@@ -20,11 +21,13 @@ from monitoring import (
     collect_engine_metrics,
 )
 from protocols import (
+    InfoStressGovernanceSummary,
     MicroLiveInput,
     MicroLiveInputError,
     MicroLiveVerdict,
     OperatorSafingAction,
     OperatorSafingRequest,
+    RegimeLiteGovernanceSummary,
     ShadowComparison,
     ShadowComponentAssessment,
     ShadowComponentHardState,
@@ -134,6 +137,7 @@ def _shadow_payload(
     replay_lineage_version: str | None = None,
     replay_rejection_reasons: tuple[str, ...] = (),
     engine_judgment_cards: tuple[EngineJudgmentCard, ...] | None = None,
+    execution_runtime_projection_bridge: ExecutionRuntimeProjectionBridgeProjection | None = None,
 ) -> TechnicalDashboardPayload:
     resolved_engine_judgment_cards = engine_judgment_cards
     if resolved_engine_judgment_cards is None:
@@ -241,6 +245,10 @@ def _shadow_payload(
             manual_review_required=False,
         ),
         micro_live=MicroLiveProjection(),
+        execution_runtime_projection_bridge=(
+            execution_runtime_projection_bridge
+            or ExecutionRuntimeProjectionBridgeProjection()
+        ),
         replay_import=ReplayImportProjection(
             status="healthy" if validation_status == "accepted" else "warning",
             artifact_id=replay_artifact_id or artifact_id,
@@ -315,6 +323,8 @@ def _shadow_summary(
     inter_engine_comparison_ready: bool = True,
     build14_contribution_ready: bool = True,
     component_assessments: tuple[ShadowComponentAssessment, ...] | None = None,
+    regime_lite_governance: RegimeLiteGovernanceSummary | None = None,
+    info_stress_governance: InfoStressGovernanceSummary | None = None,
 ) -> ShadowRunSummary:
     return ShadowRunSummary(
         run_id="shadow-run-1",
@@ -362,13 +372,31 @@ def _shadow_summary(
         inter_engine_comparison_ready=inter_engine_comparison_ready,
         build14_contribution_ready=build14_contribution_ready,
         component_assessments=component_assessments or _shadow_component_assessments(),
+        regime_lite_governance=regime_lite_governance or RegimeLiteGovernanceSummary(),
+        info_stress_governance=info_stress_governance or InfoStressGovernanceSummary(),
     )
 
 
 def test_build_micro_live_input_from_shadow_maps_governed_inputs():
     micro_input = build_micro_live_input_from_shadow(
         _shadow_summary(),
-        _shadow_payload(),
+        _shadow_payload(
+            execution_runtime_projection_bridge=ExecutionRuntimeProjectionBridgeProjection(
+                status="healthy",
+                configured=True,
+                projection_found=True,
+                projection_loaded=True,
+                projection_status="ready",
+                projection_path="build/local_lab_execution_runtime_projection.json",
+                consumer_count=3,
+                ready_consumer_count=3,
+                partial_consumer_count=0,
+                blocked_consumer_count=0,
+                rate_limit_model_loaded=True,
+                spread_guard_model_loaded=True,
+                slippage_model_loaded=True,
+            )
+        ),
         probe_pairs=("BTCUSDT", "ETHUSDT"),
         requested_total_notional_usdt=20.0,
         requested_pair_notional_usdt=10.0,
@@ -406,6 +434,13 @@ def test_build_micro_live_input_from_shadow_maps_governed_inputs():
         "engine_c",
         "engine_d",
     )
+    assert micro_input.execution_runtime_projection_ref.endswith(
+        "local_lab_execution_runtime_projection.json"
+    )
+    assert micro_input.execution_runtime_projection_status == "ready"
+    assert micro_input.execution_runtime_projection_ready is True
+    assert micro_input.execution_runtime_projection_consumer_count == 3
+    assert micro_input.execution_runtime_projection_ready_consumer_count == 3
 
 
 def test_build_micro_live_input_from_shadow_filters_to_shadow_validated_light_engines():
@@ -439,6 +474,165 @@ def test_build_micro_live_input_from_shadow_filters_to_shadow_validated_light_en
     assert "engine_b" in micro_input.shadow_dormant_components
     assert "engine_c" in micro_input.shadow_dormant_components
     assert "engine_d" in micro_input.shadow_dormant_components
+
+
+def test_run_micro_live_gate_preserves_execution_runtime_projection_seam():
+    micro_input = build_micro_live_input_from_shadow(
+        _shadow_summary(),
+        _shadow_payload(
+            execution_runtime_projection_bridge=ExecutionRuntimeProjectionBridgeProjection(
+                status="warning",
+                configured=True,
+                projection_found=True,
+                projection_loaded=True,
+                projection_status="partial",
+                projection_path="build/local_lab_execution_runtime_projection.json",
+                consumer_count=3,
+                ready_consumer_count=1,
+                partial_consumer_count=2,
+                blocked_consumer_count=0,
+                rate_limit_model_loaded=True,
+                spread_guard_model_loaded=False,
+                slippage_model_loaded=False,
+            )
+        ),
+        probe_pairs=("BTCUSDT", "ETHUSDT"),
+        requested_total_notional_usdt=20.0,
+        requested_pair_notional_usdt=10.0,
+        max_total_notional_usdt=25.0,
+        max_pair_notional_usdt=12.5,
+        observability_ready=True,
+        halt_ready=True,
+        onboarding_accepted=True,
+    )
+
+    summary = run_micro_live_gate(micro_input)
+
+    assert summary.execution_runtime_projection_ref.endswith(
+        "local_lab_execution_runtime_projection.json"
+    )
+    assert summary.execution_runtime_projection_status == "partial"
+    assert summary.execution_runtime_projection_ready is False
+    assert summary.execution_runtime_projection_consumer_count == 3
+    assert summary.execution_runtime_projection_ready_consumer_count == 1
+    assert summary.execution_runtime_projection_partial_consumer_count == 2
+    assert summary.execution_runtime_projection_blocked_consumer_count == 0
+
+
+def test_build_micro_live_input_from_shadow_preserves_regime_lite_governance():
+    governance = RegimeLiteGovernanceSummary(
+        status="ready",
+        state="extreme",
+        candidate_state="extreme",
+        state_changed=True,
+        entries_blocked=True,
+        sudden_event=True,
+        safing_severity="halt_recommended",
+        should_block_new_entries=True,
+        should_exit_all=True,
+        recommended_operator_action="set_halted",
+        operator_safing_request_action="set_halted",
+        operator_safing_request_source_runtime_mode="shadow",
+        reason_codes=("RG_EXTREME_BTC_DROP_1H", "RISK_REGIME_EXTREME_EXIT_ALL"),
+        detail="explicit regime_lite governance summary",
+    )
+    micro_input = build_micro_live_input_from_shadow(
+        _shadow_summary(regime_lite_governance=governance),
+        _shadow_payload(),
+        probe_pairs=("BTCUSDT",),
+        requested_total_notional_usdt=20.0,
+        requested_pair_notional_usdt=10.0,
+        max_total_notional_usdt=25.0,
+        max_pair_notional_usdt=12.5,
+        observability_ready=True,
+        halt_ready=True,
+        onboarding_accepted=True,
+    )
+
+    assert micro_input.regime_lite_governance == governance
+
+
+def test_run_micro_live_gate_preserves_regime_lite_governance_summary():
+    governance = RegimeLiteGovernanceSummary(
+        status="assessment_only",
+        state="stressed",
+        candidate_state="extreme",
+        entries_blocked=True,
+        sudden_event=True,
+        safing_severity="not_configured",
+        should_block_new_entries=True,
+        reason_codes=("RG_EXTREME_BTC_DROP_1H",),
+        detail="assessment supplied without explicit recommendation",
+    )
+    micro_input = build_micro_live_input_from_shadow(
+        _shadow_summary(regime_lite_governance=governance),
+        _shadow_payload(),
+        probe_pairs=("BTCUSDT", "ETHUSDT"),
+        requested_total_notional_usdt=20.0,
+        requested_pair_notional_usdt=10.0,
+        max_total_notional_usdt=25.0,
+        max_pair_notional_usdt=12.5,
+        observability_ready=True,
+        halt_ready=True,
+        onboarding_accepted=True,
+    )
+
+    summary = run_micro_live_gate(micro_input)
+
+    assert summary.regime_lite_governance == governance
+
+
+def test_build_micro_live_input_from_shadow_preserves_info_stress_governance():
+    governance = InfoStressGovernanceSummary(
+        status="assessment_only",
+        level="extreme",
+        alert_count=4,
+        entries_blocked=True,
+        entries_blocked_until_ts=1_700_000_600,
+        reason_codes=("INFO_STRESS_SPREAD_EXPLOSION",),
+        detail="explicit info_stress governance summary",
+    )
+    micro_input = build_micro_live_input_from_shadow(
+        _shadow_summary(info_stress_governance=governance),
+        _shadow_payload(),
+        probe_pairs=("BTCUSDT",),
+        requested_total_notional_usdt=20.0,
+        requested_pair_notional_usdt=10.0,
+        max_total_notional_usdt=25.0,
+        max_pair_notional_usdt=12.5,
+        observability_ready=True,
+        halt_ready=True,
+        onboarding_accepted=True,
+    )
+
+    assert micro_input.info_stress_governance == governance
+
+
+def test_run_micro_live_gate_preserves_info_stress_governance_summary():
+    governance = InfoStressGovernanceSummary(
+        status="assessment_only",
+        level="elevated",
+        alert_count=1,
+        entries_blocked=False,
+        reason_codes=("INFO_STRESS_DEPTH_RATIO_COLLAPSE",),
+        detail="assessment supplied without late-stage mutation",
+    )
+    micro_input = build_micro_live_input_from_shadow(
+        _shadow_summary(info_stress_governance=governance),
+        _shadow_payload(),
+        probe_pairs=("BTCUSDT", "ETHUSDT"),
+        requested_total_notional_usdt=20.0,
+        requested_pair_notional_usdt=10.0,
+        max_total_notional_usdt=25.0,
+        max_pair_notional_usdt=12.5,
+        observability_ready=True,
+        halt_ready=True,
+        onboarding_accepted=True,
+    )
+
+    summary = run_micro_live_gate(micro_input)
+
+    assert summary.info_stress_governance == governance
 
 
 def test_build_micro_live_input_from_shadow_rejects_non_shadow_source_payload():

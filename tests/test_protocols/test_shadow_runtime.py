@@ -17,6 +17,7 @@ from monitoring import (
     collect_engine_metrics,
 )
 from protocols import (
+    InfoStressGovernanceSummary,
     ShadowBuild14Contribution,
     ShadowComponentAssessment,
     ShadowComponentHardState,
@@ -35,6 +36,12 @@ from protocols import (
     build_shadow_input_from_payloads,
     derive_shadow_engine_judgment_summary,
     run_shadow_validation,
+)
+from regime_classifier import RegimeLiteAssessment, RegimeLiteState
+from risk_backbone import (
+    InfoStressAssessment,
+    InfoStressLevel,
+    build_regime_lite_safing_recommendation,
 )
 
 
@@ -643,6 +650,127 @@ def test_run_shadow_validation_accepts_dormant_components_once_verdicts_are_rend
     assert summary.decision.verdict == ShadowVerdict.ACCEPTED
     assert summary.shadow_validated_component_count == 7
     assert summary.dormant_component_count == 2
+
+
+def test_run_shadow_validation_projects_explicit_regime_lite_governance_summary():
+    baseline_payload = _payload(
+        correlation_id="corr-shadow-baseline",
+        ce_net=0.0012,
+        dtr_coverage=0.84,
+        cra_sterilization_rate=0.10,
+        break_even_scope_count=1,
+        edge_degraded_count=0,
+        active_alert_count=2,
+        queue_backlog=20,
+    )
+    candidate_payload = _payload(
+        correlation_id="corr-shadow-candidate",
+        ce_net=0.0010,
+        dtr_coverage=0.82,
+        cra_sterilization_rate=0.12,
+        break_even_scope_count=1,
+        edge_degraded_count=0,
+        active_alert_count=2,
+        queue_backlog=22,
+        review_export_ready=True,
+    )
+    assessment = RegimeLiteAssessment(
+        state=RegimeLiteState.EXTREME,
+        candidate_state=RegimeLiteState.EXTREME,
+        previous_state=RegimeLiteState.STRESSED,
+        state_changed=True,
+        state_entered_ts=1_700_000_000_000,
+        entries_blocked_until_ts=1_700_086_400_000,
+        entries_blocked=True,
+        sudden_event=True,
+        transition_path=(RegimeLiteState.STRESSED, RegimeLiteState.EXTREME),
+        reason_codes=("RG_EXTREME_BTC_DROP_1H",),
+        btc_realized_vol_24h=0.09,
+        btc_drop_1h=-0.06,
+        intraday_drawdown=0.02,
+        engine_return_dispersion=0.04,
+    )
+    recommendation = build_regime_lite_safing_recommendation(
+        assessment,
+        source_runtime_mode=RuntimeMode.SHADOW,
+        timestamp_ms=1_700_000_000_000,
+    )
+
+    summary = run_shadow_validation(
+        _build_shadow_input(baseline_payload, candidate_payload),
+        regime_lite_assessment=assessment,
+        regime_lite_safing_recommendation=recommendation,
+    )
+
+    assert summary.regime_lite_governance.status == "ready"
+    assert summary.regime_lite_governance.state == "extreme"
+    assert summary.regime_lite_governance.candidate_state == "extreme"
+    assert summary.regime_lite_governance.entries_blocked is True
+    assert summary.regime_lite_governance.sudden_event is True
+    assert summary.regime_lite_governance.safing_severity == "halt_recommended"
+    assert summary.regime_lite_governance.should_block_new_entries is True
+    assert summary.regime_lite_governance.should_exit_all is True
+    assert summary.regime_lite_governance.recommended_operator_action == "set_halted"
+    assert summary.regime_lite_governance.operator_safing_request_action == "set_halted"
+    assert (
+        summary.regime_lite_governance.operator_safing_request_source_runtime_mode
+        == "shadow"
+    )
+    assert "RISK_REGIME_EXTREME_EXIT_ALL" in summary.regime_lite_governance.reason_codes
+
+
+def test_run_shadow_validation_projects_info_stress_governance_summary():
+    baseline_payload = _payload(
+        correlation_id="corr-shadow-baseline",
+        ce_net=0.0012,
+        dtr_coverage=0.84,
+        cra_sterilization_rate=0.10,
+        break_even_scope_count=1,
+        edge_degraded_count=0,
+        active_alert_count=2,
+        queue_backlog=20,
+    )
+    candidate_payload = _payload(
+        correlation_id="corr-shadow-candidate",
+        ce_net=0.0010,
+        dtr_coverage=0.82,
+        cra_sterilization_rate=0.12,
+        break_even_scope_count=1,
+        edge_degraded_count=0,
+        active_alert_count=2,
+        queue_backlog=22,
+        review_export_ready=True,
+    )
+    assessment = InfoStressAssessment(
+        pair="BTCUSDT",
+        level=InfoStressLevel.EXTREME,
+        alert_count=4,
+        reason_codes=(
+            "INFO_STRESS_SPREAD_EXPLOSION",
+            "INFO_STRESS_CANCELLATION_SPIKE",
+        ),
+        entries_blocked=True,
+        entries_blocked_until_ts=1_700_000_600,
+        detail="info_stress reached EXTREME and activated entry cooldown",
+    )
+
+    summary = run_shadow_validation(
+        _build_shadow_input(baseline_payload, candidate_payload),
+        info_stress_assessment=assessment,
+    )
+
+    assert summary.info_stress_governance == InfoStressGovernanceSummary(
+        status="assessment_only",
+        level="extreme",
+        alert_count=4,
+        entries_blocked=True,
+        entries_blocked_until_ts=1_700_000_600,
+        reason_codes=(
+            "INFO_STRESS_SPREAD_EXPLOSION",
+            "INFO_STRESS_CANCELLATION_SPIKE",
+        ),
+        detail="info_stress reached EXTREME and activated entry cooldown",
+    )
 
 
 def test_run_shadow_validation_requires_review_export_when_build9x_signals_exist():

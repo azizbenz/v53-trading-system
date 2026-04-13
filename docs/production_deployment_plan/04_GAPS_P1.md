@@ -7,15 +7,17 @@
 
 ## Vue d'ensemble
 
-| # | Manque | Sévérité | LOC estimées | Sessions Opus |
-|---|---|---|---|---|
-| P1-1 | Regime awareness lite (3 états) | Élevé | 400-600 | 0.5 |
-| P1-2 | Reconciliation périodique + au boot | Élevé | 200-300 | 0.25 |
-| P1-3 | Daily P&L circuit breaker câblé | Élevé | 100-200 | 0.25 |
-| P1-4 | Alerting externe (Telegram/email) | Élevé | 200-300 | 0.25 |
-| P1-5 | Disk monitor + log rotation | Moyen | 150-250 | 0.25 |
+> **Rappel gabarit MD Opus** (`00_README.md` § 0) : chaque chantier P1 ci-dessous devrait, au moment de sa prise en charge par l'agent codeur, être vérifié contre le gabarit standardisé (objectif / périmètre / invariants / modules / interfaces / ce qu'il ne faut pas faire / critères d'acceptation / ordre / preuves). Le repo gagne contre le MD.
 
-**Total P1** : ~1050-1650 LOC, **~1.5 sessions Opus**.
+| # | Manque | Sévérité | LOC estimées | Tranches code (agent codeur) |
+|---|---|---|---|---|
+| P1-1 | Regime awareness lite (3 états) | Élevé | 400-600 | T9 |
+| P1-2 | Reconciliation périodique + au boot | Élevé | 200-300 | T10 |
+| P1-3 | Daily P&L circuit breaker câblé | Élevé | 100-200 | T10 |
+| P1-4 | Alerting externe (Telegram/email) | Élevé | 200-300 | T11 |
+| P1-5 | Disk monitor + log rotation | Moyen | 150-250 | T11 |
+
+**Total P1** : ~1050-1650 LOC, **~3 tranches code** (T9, T10, T11 — voir `09_CODING_SLICES_FOR_IMPLEMENTING_AGENT.md`).
 
 ---
 

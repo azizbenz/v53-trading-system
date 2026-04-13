@@ -6,13 +6,14 @@ import pytest
 
 from interface_contracts import ProfileId, RuntimeMode
 from interface_contracts.atomic_io import atomic_write_json
-from local_replay_runtime.local_lab_monitoring_backend import (
+from monitoring.local_lab_monitoring_backend import (
     build_local_lab_monitoring_backend_payload,
 )
-from local_replay_runtime.local_lab_monitoring_projection import LocalLabMonitoringProjection
-from local_replay_runtime.local_lab_observability import build_local_lab_observability_export
+from monitoring.local_lab_monitoring_projection import LocalLabMonitoringProjection
+from monitoring.local_lab_observability import build_local_lab_observability_export
 from monitoring.local_lab_bundle_loader import load_local_lab_monitoring_bundle
 from monitoring.local_lab_ingestion import build_local_lab_monitoring_ingestion_summary
+from monitoring.local_lab_monitoring_bundle_manifest import build_local_lab_monitoring_bundle_manifest
 
 
 def _scratch_dir(name: str) -> Path:
@@ -92,6 +93,19 @@ def _write_bundle(output_dir: Path) -> None:
     atomic_write_json(
         output_dir / "local_lab_monitoring_ingestion_summary.json",
         ingestion_summary.model_dump(mode="json"),
+        indent=2,
+    )
+    manifest = build_local_lab_monitoring_bundle_manifest(
+        backend_payload=backend_payload,
+        backend_payload_path=str(output_dir / "local_lab_monitoring_backend_payload.json"),
+        observability_export=observability,
+        observability_export_path=str(output_dir / "local_lab_observability_export.json"),
+        ingestion_summary=ingestion_summary,
+        ingestion_summary_path=str(output_dir / "local_lab_monitoring_ingestion_summary.json"),
+    )
+    atomic_write_json(
+        output_dir / "local_lab_monitoring_bundle_manifest.json",
+        manifest.model_dump(mode="json"),
         indent=2,
     )
 

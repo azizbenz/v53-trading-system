@@ -258,6 +258,19 @@ Do not build a live bidirectional Local IA Lab / VPS synchronization layer in th
   - through `ArtifactPayloadRefBundle.supplementary_refs`
 - this is the current truthful answer to:
   - how the Lab artifact relates to the current VPS import packet
+
+---
+
+## 7ter. Latest execution ingestion closure
+
+The Local IA Lab execution-ingestion rail now goes beyond evidence transport and supports first bounded execution models on service-owned telemetry:
+- `THR-X03` from quota probe telemetry + official quota cap
+- `THR-X05` from service-owned `size/slippage` traces
+
+Current truthful boundary:
+- the bounded models exist on the Lab side
+- the evidence remains service-owned and typed
+- this still does not authorize any automatic VPS-side recalibration or live mutation
   - how future tooling can inspect that relation without inventing a new rail
 
 ## 7ter. Latest bounded recalibration planning refinement
@@ -427,6 +440,16 @@ Do not build a live bidirectional Local IA Lab / VPS synchronization layer in th
   - it does not import anything into VPS
   - it does not couple the Local IA Lab bundle to Build-10 runtime orchestration
 
+## 7sexdecies. Latest bounded Local IA Lab observability text export
+
+- the same Local IA Lab chain now also emits `local_lab_observability.prom`
+- this file is derived directly from the standard `ObservabilityExport.text_payload`
+- it is the first scrape-friendly text export over the Local IA Lab monitoring truth
+- important invariant:
+  - it stays descriptive only
+  - it does not create a new runtime
+  - it does not change any governed handoff or promotion semantics
+
 ## 7. Acceptance criteria
 
 - [x] the current repo truth is mapped, not guessed
@@ -435,3 +458,349 @@ Do not build a live bidirectional Local IA Lab / VPS synchronization layer in th
 - [x] strategy/review bundle ingestion is identified
 - [x] governed replay sidecar ingestion is identified
 - [x] the missing live bidirectional loop is stated explicitly
+
+## 7septdecies. Latest bounded Local IA Lab research-priority scorer
+
+- the same Local IA Lab chain now also emits `local_lab_research_priority.json`
+- this sidecar is built from governed Local IA Lab evidence already produced by the chain:
+  - per-trade loss attribution
+  - scope matrix when available
+  - proof/release readiness
+- its purpose is bounded:
+  - rank which `pair x engine` scope deserves the next replay/recalibration cycle
+  - separate `trace_capture` work from true recalibration work
+  - expose a future-monitoring-ready summary without creating UI coupling
+- important invariant:
+  - this is not a runtime model
+  - this does not mutate VPS behavior
+  - this does not create promotion authority
+
+## 7octodecies. Latest bounded Local IA Lab loss-surrogate scorer
+
+- the same Local IA Lab chain now also emits `local_lab_loss_surrogate_report.json`
+- this sidecar is the first truly trained but still transparent Local IA Lab model:
+  - `model_family=transparent_linear_loss_surrogate_v1`
+  - `model_kind=diagonal_lda_linear_score`
+  - local-only only
+  - research-only only
+- training inputs remain no-lookahead and decision-time only:
+  - `raw_score`
+  - `penalized_score`
+  - `final_score`
+  - `expected_cost`
+  - `ce_expected`
+  - `candidate_size`
+  - `final_size`
+  - `ranking_position`
+- its purpose is bounded:
+  - estimate which scopes currently carry the highest modeled loss pressure
+  - surface a compact future-monitoring-ready signal
+  - not replace detailed per-trade attribution or proof sidecars
+- important invariant:
+  - this is not a VPS/runtime model
+  - this does not mutate promotion state
+  - this does not authorize artifact import by itself
+
+## 7novodecies. Latest bounded Local IA Lab surrogate-guided planning
+
+- the same Local IA Lab chain now also feeds the trained loss surrogate into:
+  - `local_lab_research_priority`
+  - `local_lab_recalibration_plan`
+- the integration stays bounded:
+  - it can elevate research priority for a scope
+  - it can add a local replay recommendation for a high-risk scope
+  - it cannot by itself authorize recalibration publication or VPS import
+- important invariant:
+  - the surrogate remains advisory only
+  - proof/release/promotion semantics stay governed elsewhere
+  - no VPS/runtime coupling is introduced
+
+## 7vicies. Latest bounded Local IA Lab replay candidate queue
+
+- the same Local IA Lab chain now also emits `local_lab_replay_candidate_queue.json`
+- this queue is derived from current local-only planning truth:
+  - research priority
+  - recalibration plan
+  - surrogate-guided evidence already emitted by the bundle
+- its purpose is bounded:
+  - identify the next replay/research scopes the Lab should process
+  - keep blocked work visible (`trace_capture`, `human_scope_review`, `manual_loss_review`)
+  - expose a compact future-monitoring-ready workflow surface without UI coupling
+- important invariant:
+  - this is not a runtime scheduler
+  - this does not mutate VPS behavior
+  - this does not create promotion authority
+
+## 7unvicies. Latest bounded Local IA Lab replay ticket index
+
+- the same Local IA Lab chain now also emits `local_lab_replay_ticket_index.json`
+- this index is derived from the local replay candidate queue and reuses the canonical `LocalReplayRequest` contract
+- its purpose is bounded:
+  - prepare governed local replay tickets for future automation or operator review
+  - keep blocked tickets explicit when the queue is not truly replay-ready
+  - expose a compact future-monitoring-ready work surface without UI coupling
+- important invariant:
+  - this is not an execution surface
+  - this does not mutate VPS behavior
+  - this does not create promotion authority
+
+## 7duovicies. Latest bounded Local IA Lab replay dispatch plan
+
+- the same Local IA Lab chain now also emits `local_lab_replay_dispatch_plan.json`
+- this plan is derived from the governed replay ticket index and stays explicitly non-executing
+- its purpose is bounded:
+  - separate ready local replay work from blocked local replay work
+  - prepare a future automation/loader surface without running anything
+  - expose a compact future-monitoring-ready dispatch truth without UI coupling
+- important invariant:
+  - this is not an execution surface
+  - this does not mutate VPS behavior
+  - this does not create promotion authority
+
+## 7tervicies. Latest bounded Local IA Lab workflow/monitoring discovery manifests
+
+- the same Local IA Lab chain now also emits `local_lab_replay_workflow_manifest.json`
+- this manifest binds together the current local replay workflow sidecars:
+  - replay candidate queue
+  - replay ticket index
+  - replay dispatch plan
+- on the monitoring side, the chain now also emits `local_lab_monitoring_bundle_manifest.json`
+- this manifest binds together the current monitoring ingestion sidecars:
+  - monitoring backend payload
+  - observability export
+  - monitoring ingestion summary
+  - optional replay workflow manifest ref
+- purpose:
+  - future backend/Prometheus/dashboard ingestion should discover one manifest first, not hardcode sidecar names
+  - keep the bundle self-describing and audit-ready
+- important invariant:
+  - local-only discovery surface
+  - no UI coupling
+  - no VPS/runtime mutation
+  - no promotion authority
+
+## 7quattuorvicies. Latest bounded Local IA Lab monitoring bundle discovery
+
+- `src/monitoring/local_lab_bundle_discovery.py` now exists as the next bounded backend step over the monitoring bundle manifest
+- purpose:
+  - scan a root for Local IA Lab monitoring bundle manifests
+  - order bundles by latest governed timestamp
+  - load the latest valid monitoring bundle without hardcoded directory knowledge
+- important invariant:
+  - still local/backend only
+  - still no UI coupling
+  - still no VPS/runtime mutation
+  - still no promotion authority
+
+## 7quinvicies. Latest bounded Local IA Lab monitoring feed
+
+- `src/monitoring/local_lab_monitoring_feed.py` now exists over discovered monitoring bundles
+- purpose:
+  - summarize latest bundle truth plus bundle counts by backend status/ingestion readiness
+  - prepare the first compact multi-bundle backend surface without opening every bundle in detail
+- important invariant:
+  - still local/backend only
+  - still no UI coupling
+  - still no VPS/runtime mutation
+  - still no promotion authority
+
+## 7sexvicies. Latest bounded Local IA Lab calibration-methods review
+
+- the same Local IA Lab chain now also emits `local_lab_calibration_methods_review.json`
+- this review is the first direct proof-side consumer of the shared calibration-methods core:
+  - purged walk-forward geometry
+  - Deflated Sharpe Ratio
+- its purpose is bounded:
+  - make Local IA Lab calibration-method evidence explicit on the proof rail
+  - keep insufficient history visible as `partial`
+  - block local proof when DSR is truly computed and fails floor
+- the same truth now also propagates into:
+  - `local_lab_analysis_summary.json`
+  - `local_lab_monitoring_projection.json`
+  - `local_lab_monitoring_backend_payload.json`
+  - `local_lab_observability_export.json`
+- important invariant:
+  - still local-only
+  - still no UI coupling
+  - still no VPS/runtime mutation
+  - human walk-forward approval remains a separate hard gate
+
+## 7septemvicies. Latest bounded Local IA Lab release/dry-run calibration-methods propagation
+
+- the same Local IA Lab chain now also carries calibration-methods truth into:
+  - `artifact_release_candidate.json`
+  - `artifact_release_gate_summary.json`
+  - `artifact_import_dry_run_bridge.json`
+- purpose:
+  - make the handoff explicitly say whether the candidate is calibration-methods-backed
+  - keep proof-backed vs calibration-backed truth readable before any future VPS import
+- important invariant:
+  - still local-only
+  - still no UI coupling
+  - still no VPS/runtime mutation
+
+## 7octovicies. Latest bounded Local IA Lab monitoring manifest/discovery/feed calibration-methods propagation
+
+- the monitoring bundle manifest now carries compact calibration-methods truth
+- discovery and compact feed now propagate it across multiple Local IA Lab bundles
+- purpose:
+  - let future backend ingestion count ready vs partial vs blocked calibration-methods bundles without opening every sidecar manually
+  - keep discovery manifest-first and audit-ready
+- important invariant:
+  - still local/backend only
+  - still no UI coupling
+  - still no VPS/runtime mutation
+
+## 7novemvicies. Latest bounded Local IA Lab tail-risk review
+
+- the same Local IA Lab chain now also consumes exported governed `DTRRecord` history for strategy-level tail-risk evidence
+- `src/calibration_methods/pot_gpd.py` now provides the bounded POT-GPD helper used by:
+  - `src/local_replay_runtime/local_lab_tail_risk_review.py`
+- `scripts/run_local_lab_analysis_bundle.py` now emits `local_lab_tail_risk_review.json`
+- current scope is intentionally top-level, not pair-engine scope:
+  - daily breaker `THR-R01`
+  - weekly breaker `THR-R02`
+  - monthly breaker `THR-R03`
+- purpose:
+  - make exported replay/post-trade history usable for bounded EVT-style Local IA Lab review
+  - expose compact future-dashboard/backend truth without changing release semantics
+- important invariant:
+  - still local-only
+  - still no UI coupling
+  - still no VPS/runtime mutation
+  - not yet a release gate by itself
+
+## 7tricies. Latest bounded Local IA Lab stationarity gate
+
+- the same Local IA Lab chain now also emits explicit MI-9 evidence from `src/calibration_methods/stationarity.py`
+- `local_lab_calibration_methods_review.json` now carries:
+  - `stationarity_status`
+  - `stationarity_ready`
+  - `stationarity_pass`
+  - dual ADF + KPSS result
+- purpose:
+  - make no-lookahead calibration evidence stricter before any artifact is considered locally proof-backed
+  - keep insufficient history explicit as `partial`
+  - block local proof when stationarity truly fails, not only when DSR fails
+- compact future-dashboard/backend truth now also propagates into:
+  - `local_lab_calibration_normalized_report.json`
+  - `local_lab_analysis_summary.json`
+  - `local_lab_monitoring_projection.json`
+  - `local_lab_monitoring_backend_payload.json`
+  - `local_lab_observability_export.json`
+- important invariant:
+  - still local-only
+  - still no UI coupling
+  - still no VPS/runtime mutation
+
+## 7untricies. Latest bounded shared human hard-cap helper
+
+- the same Local IA Lab chain now also uses `src/calibration_methods/hard_cap_floor.py`
+- purpose:
+  - centralize conservative publication against human floors/caps
+  - keep audit semantics explicit with:
+    - `hard_cap_satisfied`
+    - `hard_cap_binding`
+- current bounded consumers:
+  - `edge_gate_calibration`
+  - `local_lab_tail_risk_review`
+  - `local_lab_calibration_normalized_report`
+- important invariant:
+  - still local-only
+  - still no UI coupling
+  - still no VPS/runtime mutation
+
+## 7duotricies. Latest bounded Local IA Lab multiple-testing review
+
+- the same Local IA Lab chain now also emits explicit MI-12 evidence from:
+  - `src/calibration_methods/multiple_testing.py`
+  - `src/local_replay_runtime/local_lab_multiple_testing_review.py`
+- current truth:
+  - the bounded Local IA Lab calibration families are still conservative interval-publication outputs
+  - therefore MI-12 is currently explicit `not_required_interval_publication`, not a fake p-value correction pass
+  - future hypothesis-test families can still consume the shared Holm-Bonferroni helper when real comparable p-values exist
+- this same truth now also propagates into:
+  - normalized calibration report
+  - proof assessment
+  - Local IA Lab analysis summary
+  - monitoring/backend/observability bundle sidecars
+- important invariant:
+  - still local-only
+  - still no UI coupling
+  - still no VPS/runtime mutation
+
+## 7tertricies. Latest bounded Local IA Lab execution review
+
+- the same Local IA Lab chain now also emits explicit EXECUTION evidence from:
+  - `src/calibration_methods/execution.py`
+  - `src/local_replay_runtime/local_lab_execution_review.py`
+- current truth:
+  - `THR-X01` and `THR-X02` can now be reviewed locally when dedicated execution telemetry is provided
+  - the default bundle remains explicit `partial` when no execution telemetry sidecar exists
+  - no replay export sidecar is silently reinterpreted as venue telemetry
+- this same truth now also propagates into:
+  - analysis summary
+  - monitoring projection/backend/observability
+  - monitoring bundle manifest/discovery/feed
+- important invariant:
+  - still local-only
+  - still no UI coupling
+  - still no VPS/runtime mutation
+  - not yet a proof or release gate by itself
+
+## 7quatertricies. Latest execution runtime projection handoff
+
+- the same Local IA Lab chain now also emits typed future-runtime handoff evidence from:
+  - `src/local_replay_runtime/local_lab_execution_runtime_projection.py`
+- current truth:
+  - `THR-X03` is now projected into a future `rate_limiter` contract
+  - `THR-X05` is now projected into a future `slippage_model` contract
+  - the projection is service-owned/review-owned handoff metadata only; it is not a runtime mutation
+- this same truth now also propagates into:
+  - artifact proof assessment
+  - artifact release candidate
+  - top-level Local IA Lab analysis summary
+- important invariant:
+  - still local-only
+  - still no UI coupling
+  - still no VPS/runtime mutation
+  - still no gate bypass
+
+## 7quinquetricies. Latest canonical runtime consumer seam
+
+- new current truth:
+  - the future-runtime handoff is no longer projection-only
+  - `src/execution_backbone/rate_limiter.py` and `src/execution_backbone/slippage_model.py` now exist as bounded canonical consumers for:
+    - `THR-X03 -> rate_limiter`
+    - `THR-X05 -> slippage_model`
+- current bounded behavior:
+  - `ExecutionRuntime` only consumes them when they are injected explicitly
+  - `THR-X05` is applied conservatively as extra expected-cost friction with audit metadata
+  - `THR-X03` remains fail-open unless live metadata already provides `rest_quota_ratio_current`
+- invariant preserved:
+  - still no automatic VPS bootstrap wiring
+  - still no gate bypass
+  - still no hidden runtime activation
+
+## 7sexquinquagies. Latest runtime projection bootstrap bridge
+
+- new current truth:
+  - `execution_runtime_projection_bridge.py` now loads the Lab-side runtime projection artifact fail-open
+  - `execution_runtime_bootstrap.py` now accepts `execution_runtime_projection_path`
+  - the canonical runtime can therefore recover `THR-X03/X05` consumers from the same handoff JSON, without manual constructor assembly
+- invariant preserved:
+  - still explicit opt-in only
+  - still no bootstrap activation unless the path is provided
+  - still no gate bypass
+
+## 7septsexquinquagies. Latest Build-10 visibility for the runtime projection bridge
+
+- new current truth:
+  - Build-10 now exposes the Local IA Lab `execution_runtime_projection_path` seam as a typed monitoring/dashboard/observability surface
+  - this surface is separate from the older compiled `execution_no_trade_bridge`, so the operator can distinguish:
+    - bounded compiled hook status
+    - bounded `THR-X03/X05` runtime-consumer loadability
+- invariant preserved:
+  - still no hidden runtime activation
+  - still descriptive only; no gate or runtime behavior is changed by monitoring projection
+  - still no gate bypass

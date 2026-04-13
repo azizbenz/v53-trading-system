@@ -167,6 +167,11 @@ The following facts are directly confirmed by the current code and must be treat
   - a shared-core dynamic threshold calibration layer now exists in the repo
   - it supports signed calibration artifact parsing, version-scoped loading, duplicate `threshold_id` rejection, and explicit failures on missing / invalid / unsigned artifacts
   - current truth: it is not yet consumed by runtime modules; it is a prepared shared core, not a completed threshold migration
+- `src/calibration_methods/bootstrap.py`, `src/calibration_methods/walkforward.py`, and `src/calibration_methods/dsr.py`
+  - the first shared Local IA Lab calibration-methods core now exists in the repo
+  - current truth: stationary bootstrap, purged walk-forward geometry, and DSR are now available as pure typed helpers
+  - current truth: `edge_gate_calibration.py` already consumes the shared stationary bootstrap helper
+  - honest residual: the new walk-forward and DSR helpers are not yet promoted into release/promotion gates; they remain local math primitives for the next slices
 - `src/local_replay_runtime/edge_gate_calibration.py` and `src/scoring_backbone/fee_aware_edge_gate.py`
   - the first Local IA Lab EDGE calibration producer now exists in the repo
   - `THR-E01` and `THR-E02` can now be calibrated from replay `DTRRecord` evidence and exported as a shared `CalibrationArtifact`
@@ -1389,3 +1394,1710 @@ Current rule:
   - `10 passed`
   - `rtk pytest tests/test_backtest_artifact_import tests/test_local_replay_runtime tests/test_meta_learning tests/test_meta_minimal tests/test_monitoring/test_local_lab_bundle_loader.py tests/test_monitoring/test_local_lab_ingestion.py tests/test_monitoring/test_monitoring_contracts.py -q`
   - `402 passed`
+
+## Latest Local IA Lab observability text export
+
+- `run_local_lab_analysis_bundle.py` now also emits `local_lab_observability.prom`
+- this file is written through the generic helper `src/monitoring/observability_io.py`
+- it remains descriptive only:
+  - no UI coupling
+  - no new runtime semantics
+  - no VPS mutation
+  - no promotion behavior
+- latest proofs:
+  - `rtk pytest tests/test_monitoring/test_observability_io.py tests/test_monitoring/test_local_lab_bundle_loader.py tests/test_monitoring/test_local_lab_ingestion.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py -q`
+  - `11 passed`
+  - `rtk pytest tests/test_backtest_artifact_import tests/test_local_replay_runtime tests/test_meta_learning tests/test_meta_minimal tests/test_monitoring/test_observability_io.py tests/test_monitoring/test_local_lab_bundle_loader.py tests/test_monitoring/test_local_lab_ingestion.py tests/test_monitoring/test_monitoring_contracts.py -q`
+  - `403 passed`
+
+## Latest Local IA Lab research-priority scorer
+
+- `src/local_replay_runtime/local_lab_research_priority.py` now exists as the first bounded research-model-style component in the Local IA Lab core
+- `run_local_lab_analysis_bundle.py` now emits `local_lab_research_priority.json`
+- the same bundle now also propagates compact research-priority fields into:
+  - `local_lab_analysis_summary.json`
+  - `local_lab_monitoring_projection.json`
+  - `local_lab_monitoring_backend_payload.json`
+  - `local_lab_observability_export.json`
+- this scorer stays transparent and local-only:
+  - no hidden training
+  - no VPS runtime coupling
+  - no promotion semantics
+- latest proofs:
+  - `python -m pytest tests/test_local_replay_runtime/test_local_lab_research_priority.py tests/test_local_replay_runtime/test_local_lab_monitoring_projection.py tests/test_local_replay_runtime/test_local_lab_monitoring_backend.py tests/test_local_replay_runtime/test_local_lab_observability.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py -q`
+  - `15 passed`
+  - `python -m pytest tests/test_backtest_artifact_import tests/test_local_replay_runtime tests/test_meta_learning tests/test_meta_minimal tests/test_monitoring -q`
+  - `493 passed`
+
+## Latest Local IA Lab loss-surrogate scorer
+
+- `src/local_replay_runtime/local_lab_loss_surrogate.py` now exists as the first truly trained but still transparent Local IA Lab component
+- `scripts/run_local_lab_analysis_bundle.py` now emits `local_lab_loss_surrogate_report.json`
+- the analysis summary now also carries:
+  - `local_lab_loss_surrogate_path`
+  - `loss_surrogate_status`
+  - `loss_surrogate_ready`
+  - `loss_surrogate_scope_count`
+  - `loss_surrogate_top_scope_slug`
+  - `loss_surrogate_top_probability`
+- compact loss-surrogate fields also propagate into:
+  - `local_lab_monitoring_projection.json`
+  - `local_lab_monitoring_backend_payload.json`
+  - `local_lab_observability_export.json`
+- important invariant:
+  - transparent trained local-only model
+  - no-lookahead decision-time inputs only
+  - no VPS mutation
+  - no promotion semantics
+- latest proofs:
+  - `python -m pytest tests/test_local_replay_runtime/test_local_lab_loss_surrogate.py tests/test_local_replay_runtime/test_local_lab_monitoring_projection.py tests/test_local_replay_runtime/test_local_lab_monitoring_backend.py tests/test_local_replay_runtime/test_local_lab_observability.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py -q`
+  - `15 passed`
+  - `python -m pytest tests/test_backtest_artifact_import tests/test_local_replay_runtime tests/test_meta_learning tests/test_meta_minimal tests/test_monitoring -q`
+  - `495 passed`
+
+## Latest Local IA Lab surrogate-guided planning
+
+- the trained Local IA Lab loss surrogate now also feeds:
+  - `src/local_replay_runtime/local_lab_research_priority.py`
+  - `src/local_replay_runtime/local_lab_recalibration_plan.py`
+- current bounded behavior:
+  - research ranking can now use surrogate risk as an advisory feature
+  - the recalibration plan can now emit `replay_surrogate_high_risk_scope`
+  - proof/release/promotion gates remain unchanged
+- important invariant:
+  - surrogate remains advisory only
+  - no VPS mutation
+  - no promotion semantics
+- latest proofs:
+  - `python -m pytest tests/test_local_replay_runtime/test_local_lab_research_priority.py tests/test_local_replay_runtime/test_local_lab_recalibration_plan.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py tests/test_local_replay_runtime/test_local_lab_monitoring_projection.py tests/test_local_replay_runtime/test_local_lab_monitoring_backend.py tests/test_local_replay_runtime/test_local_lab_observability.py -q`
+  - `19 passed`
+  - `python -m pytest tests/test_backtest_artifact_import tests/test_local_replay_runtime tests/test_meta_learning tests/test_meta_minimal tests/test_monitoring -q`
+  - `497 passed`
+
+## Latest Local IA Lab replay candidate queue
+
+- `src/local_replay_runtime/local_lab_replay_candidate_queue.py` now exists as the first bounded queue of next local replay/research steps
+- `scripts/run_local_lab_analysis_bundle.py` now emits `local_lab_replay_candidate_queue.json`
+- the analysis summary now also carries:
+  - `local_lab_replay_candidate_queue_path`
+  - `replay_candidate_queue_status`
+  - `replay_candidate_count`
+  - `replay_candidate_ready_count`
+  - `replay_candidate_top_scope_slug`
+- compact replay-queue fields also propagate into:
+  - `local_lab_monitoring_projection.json`
+  - `local_lab_monitoring_backend_payload.json`
+  - `local_lab_observability_export.json`
+- important invariant:
+  - local-only workflow surface
+  - no VPS mutation
+  - no promotion semantics
+- latest proofs:
+  - `python -m pytest tests/test_local_replay_runtime/test_local_lab_replay_candidate_queue.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py tests/test_local_replay_runtime/test_local_lab_monitoring_projection.py tests/test_local_replay_runtime/test_local_lab_monitoring_backend.py tests/test_local_replay_runtime/test_local_lab_observability.py -q`
+  - `15 passed`
+  - `python -m pytest tests/test_backtest_artifact_import tests/test_local_replay_runtime tests/test_meta_learning tests/test_meta_minimal tests/test_monitoring -q`
+  - `499 passed`
+
+## Latest Local IA Lab replay ticket index
+
+- `src/local_replay_runtime/local_lab_replay_ticket_index.py` now exists as the governed ticket index over the Local IA Lab replay queue
+- `scripts/run_local_lab_analysis_bundle.py` now emits `local_lab_replay_ticket_index.json`
+- the analysis summary now also carries:
+  - `local_lab_replay_ticket_index_path`
+  - `replay_ticket_index_status`
+  - `replay_ticket_count`
+  - `replay_ticket_ready_count`
+  - `replay_ticket_top_scope_slug`
+- compact replay-ticket fields also propagate into:
+  - `local_lab_monitoring_projection.json`
+  - `local_lab_monitoring_backend_payload.json`
+  - `local_lab_observability_export.json`
+- important invariant:
+  - local-only governed planning artifact
+  - no VPS mutation
+  - no promotion semantics
+- latest proofs:
+  - `python -m pytest tests/test_local_replay_runtime/test_local_lab_replay_ticket_index.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py tests/test_local_replay_runtime/test_local_lab_monitoring_projection.py tests/test_local_replay_runtime/test_local_lab_monitoring_backend.py tests/test_local_replay_runtime/test_local_lab_observability.py -q`
+  - `15 passed`
+  - `python -m pytest tests/test_backtest_artifact_import tests/test_local_replay_runtime tests/test_meta_learning tests/test_meta_minimal tests/test_monitoring -q`
+  - `501 passed`
+
+## Latest Local IA Lab replay dispatch plan
+
+- `src/local_replay_runtime/local_lab_replay_dispatch_plan.py` now exists as the local-only dispatch surface over governed replay tickets
+- `scripts/run_local_lab_analysis_bundle.py` now emits `local_lab_replay_dispatch_plan.json`
+- the analysis summary now also carries:
+  - `local_lab_replay_dispatch_plan_path`
+  - `replay_dispatch_plan_status`
+  - `replay_dispatch_ready_count`
+  - `replay_dispatch_blocked_count`
+  - `replay_dispatch_top_ticket_id`
+- compact replay-dispatch fields also propagate into:
+  - `local_lab_monitoring_projection.json`
+  - `local_lab_monitoring_backend_payload.json`
+  - `local_lab_observability_export.json`
+- important invariant:
+  - local-only non-executing dispatch surface
+  - no VPS mutation
+  - no promotion semantics
+- latest proofs:
+  - `python -m pytest tests/test_local_replay_runtime/test_local_lab_replay_dispatch_plan.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py tests/test_local_replay_runtime/test_local_lab_monitoring_projection.py tests/test_local_replay_runtime/test_local_lab_monitoring_backend.py tests/test_local_replay_runtime/test_local_lab_observability.py -q`
+  - `15 passed`
+  - `python -m pytest tests/test_backtest_artifact_import tests/test_local_replay_runtime tests/test_meta_learning tests/test_meta_minimal tests/test_monitoring -q`
+  - `503 passed`
+
+## Latest Local IA Lab workflow/monitoring manifests
+
+- `src/local_replay_runtime/local_lab_replay_workflow_manifest.py` now exists and `scripts/run_local_lab_analysis_bundle.py` now emits `local_lab_replay_workflow_manifest.json`
+- `src/monitoring/local_lab_replay_workflow_loader.py` now exists as the file-based loader for that workflow bundle
+- `src/monitoring/local_lab_monitoring_bundle_manifest.py` now exists and `scripts/run_local_lab_analysis_bundle.py` now emits `local_lab_monitoring_bundle_manifest.json`
+- `src/monitoring/local_lab_bundle_loader.py` now discovers monitoring sidecars through the manifest instead of hardcoded filenames
+- compact future-dashboard refs now also propagate for:
+  - `local_lab_replay_workflow_manifest.json`
+  - `local_lab_monitoring_bundle_manifest.json`
+- important invariant:
+  - local-only discovery/monitoring surface
+  - no UI coupling
+  - no VPS/runtime mutation
+  - no promotion authority
+- latest proofs:
+  - `python -m pytest tests/test_monitoring/test_local_lab_monitoring_bundle_manifest.py tests/test_monitoring/test_local_lab_bundle_loader.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py tests/test_local_replay_runtime/test_local_lab_monitoring_projection.py tests/test_local_replay_runtime/test_local_lab_monitoring_backend.py tests/test_monitoring/test_local_lab_ingestion.py -q`
+  - `16 passed`
+  - `python -m pytest tests/test_monitoring tests/test_local_replay_runtime/test_artifact_ablation_study.py tests/test_local_replay_runtime/test_artifact_proof_summary_builder.py tests/test_local_replay_runtime/test_artifact_release_candidate.py tests/test_local_replay_runtime/test_artifact_upload_bridge_candidate.py tests/test_local_replay_runtime/test_edge_gate_calibration_launcher.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py tests/test_local_replay_runtime/test_local_lab_loss_surrogate.py tests/test_local_replay_runtime/test_local_lab_monitoring_backend.py tests/test_local_replay_runtime/test_local_lab_monitoring_projection.py tests/test_local_replay_runtime/test_local_lab_observability.py tests/test_local_replay_runtime/test_local_lab_promotion_readiness.py tests/test_local_replay_runtime/test_local_lab_recalibration_plan.py tests/test_local_replay_runtime/test_local_lab_replay_candidate_queue.py tests/test_local_replay_runtime/test_local_lab_replay_dispatch_plan.py tests/test_local_replay_runtime/test_local_lab_replay_ticket_index.py tests/test_local_replay_runtime/test_local_lab_replay_workflow_manifest.py tests/test_local_replay_runtime/test_local_lab_research_priority.py tests/test_local_replay_runtime/test_local_lab_scope_matrix.py tests/test_local_replay_runtime/test_walk_forward_review.py tests/test_meta_learning/test_local_lab_post_trade_review_launcher.py tests/test_meta_learning/test_trade_loss_attribution.py tests/test_meta_minimal/test_meta_runtime.py -q`
+  - `162 passed`
+  - note: the older full broad sweep over all `tests/test_local_replay_runtime` still has unrelated Windows build-path cleanup noise in legacy replay/export tests, outside this slice
+
+## Latest Local IA Lab monitoring bundle discovery
+
+- `src/monitoring/local_lab_bundle_discovery.py` now exists as the manifest-driven discovery layer over multiple Local IA Lab monitoring bundles
+- current capabilities:
+  - discover bundles by `local_lab_monitoring_bundle_manifest.json`
+  - sort by latest governed `timestamp_ms`
+  - load the newest valid bundle through the existing loader
+- important invariant:
+  - local/backend only
+  - no UI coupling
+  - no VPS/runtime mutation
+  - no promotion authority
+- latest proofs:
+  - `python -m pytest tests/test_monitoring/test_local_lab_bundle_discovery.py tests/test_monitoring/test_local_lab_bundle_loader.py tests/test_monitoring/test_local_lab_monitoring_bundle_manifest.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py tests/test_local_replay_runtime/test_local_lab_monitoring_projection.py tests/test_local_replay_runtime/test_local_lab_monitoring_backend.py tests/test_monitoring/test_local_lab_ingestion.py -q`
+  - `18 passed`
+  - rail-specific Local IA Lab + monitoring cross-check:
+  - `164 passed`
+
+## Latest Local IA Lab monitoring feed
+
+- `src/monitoring/local_lab_monitoring_feed.py` now exists as the first compact feed over discovered Local IA Lab monitoring bundles
+- current capabilities:
+  - summarize latest bundle identity/status
+  - count ingestion-ready bundles
+  - count bundles by backend status
+- important invariant:
+  - local/backend only
+  - no UI coupling
+  - no VPS/runtime mutation
+  - no promotion authority
+- latest proofs:
+  - `python -m pytest tests/test_monitoring/test_local_lab_monitoring_feed.py tests/test_monitoring/test_local_lab_bundle_discovery.py tests/test_monitoring/test_local_lab_bundle_loader.py tests/test_monitoring/test_local_lab_monitoring_bundle_manifest.py tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py tests/test_local_replay_runtime/test_local_lab_monitoring_projection.py tests/test_local_replay_runtime/test_local_lab_monitoring_backend.py tests/test_monitoring/test_local_lab_ingestion.py -q`
+  - `20 passed`
+  - rail-specific Local IA Lab + monitoring cross-check:
+  - `166 passed`
+
+## Latest Local IA Lab calibration-methods review sidecar
+
+- `src/local_replay_runtime/local_lab_calibration_methods_review.py` now exists as the first proof-side consumer of the shared Local IA Lab math-core:
+  - purged walk-forward geometry from `src/calibration_methods/walkforward.py`
+  - DSR from `src/calibration_methods/dsr.py`
+- `scripts/run_local_lab_analysis_bundle.py` now emits `local_lab_calibration_methods_review.json`
+- the same truth now propagates into:
+  - `local_lab_analysis_summary.json`
+  - `local_lab_monitoring_projection.json`
+  - `local_lab_monitoring_backend_payload.json`
+  - `local_lab_observability_export.json`
+- current conservative semantics:
+  - DSR below floor blocks Local IA Lab proof locally
+  - insufficient history stays explicit as `partial`
+  - walk-forward geometry remains distinct from human walk-forward approval
+- latest proofs:
+  - targeted proof rail: `25 passed`
+  - monitoring/backend propagation: `18 passed`
+  - calibration/proof cross-check: `37 passed`
+  - broad `local_replay_runtime + meta_learning + meta_minimal`: `314 passed`
+
+## Latest Local IA Lab release/dry-run calibration-methods propagation
+
+- the Local IA Lab release candidate now carries explicit calibration-methods state
+- the same truth now propagates into:
+  - `artifact_release_gate_summary.json`
+  - `artifact_import_dry_run_bridge.json`
+- important invariant:
+  - still Local IA Lab only
+  - still no VPS/runtime mutation
+  - this is descriptive handoff truth, not a new promotion authority
+- latest proofs:
+  - targeted release/dry-run rail: `20 passed`
+  - `backtest_artifact_import + local_lab + monitoring` cross-check: `111 passed`
+
+## Latest Local IA Lab monitoring feed calibration-methods propagation
+
+- the monitoring bundle manifest, discovery layer, and compact feed now also carry calibration-methods readiness
+- future backend discovery can now count:
+  - calibration-ready bundles
+  - calibration-partial bundles
+  - calibration-blocked bundles
+- latest proofs:
+  - targeted monitoring/backend rail: `18 passed`
+  - monitoring + local handoff cross-check: `203 passed`
+
+## Latest Local IA Lab tail-risk review (`13-B`)
+
+- `src/calibration_methods/pot_gpd.py` now exists as the bounded Local IA Lab POT-GPD helper
+- `src/local_replay_runtime/local_lab_tail_risk_review.py` now consumes governed `DTRRecord` history and emits strategy-level breaker evidence for:
+  - `THR-R01` daily net-loss buckets
+  - `THR-R02` weekly net-loss buckets
+  - `THR-R03` monthly net-loss buckets
+- `scripts/run_local_lab_analysis_bundle.py` now emits `local_lab_tail_risk_review.json`
+- the same compact truth now also propagates into:
+  - `local_lab_analysis_summary.json`
+  - `local_lab_monitoring_projection.json`
+  - `local_lab_monitoring_backend_payload.json`
+  - `local_lab_observability_export.json`
+- important invariant:
+  - still Local IA Lab only
+  - still no UI coupling
+  - still no VPS/runtime mutation
+  - not yet wired into release or dry-run handoff semantics
+- latest proofs:
+  - targeted tail-risk rail: `16 passed`
+  - calibration/tail-risk cross-check: `32 passed`
+  - broad `local_replay_runtime + meta_learning + meta_minimal`: `317 passed`
+
+## Latest Local IA Lab stationarity gate (`MI-9`)
+
+- `src/calibration_methods/stationarity.py` now exists as the bounded dual ADF + KPSS helper
+- `src/local_replay_runtime/local_lab_calibration_methods_review.py` now consumes it over executed replay returns
+- current conservative truth:
+  - insufficient history stays `partial`
+  - MI-9 failure blocks the local calibration-methods review
+  - proof-side blockers now include:
+    - `LOCAL_LAB_STATIONARITY_REQUIRED`
+    - `LOCAL_LAB_STATIONARITY_INVALID`
+- compact truth now also propagates into:
+  - `local_lab_calibration_normalized_report.json`
+  - `local_lab_analysis_summary.json`
+  - `local_lab_monitoring_projection.json`
+  - `local_lab_monitoring_backend_payload.json`
+  - `local_lab_observability_export.json`
+- important invariant:
+  - still Local IA Lab only
+  - no UI coupling
+  - no VPS/runtime mutation
+- latest proofs:
+  - targeted stationarity rail: `23 passed`
+  - calibration/proof cross-check: `42 passed`
+  - broad `local_replay_runtime + meta_learning + meta_minimal`: `320 passed`
+
+## Latest shared human hard-cap helper (`MI-7`)
+
+- `src/calibration_methods/hard_cap_floor.py` now exists as the shared Local IA Lab floor/cap publication helper
+- current consumers:
+  - `src/local_replay_runtime/edge_gate_calibration.py`
+  - `src/local_replay_runtime/local_lab_tail_risk_review.py`
+  - `src/local_replay_runtime/local_lab_calibration_normalized_report.py`
+- current audit semantics:
+  - `hard_cap_satisfied` now means the published value respects the human bound
+  - `hard_cap_binding` now makes explicit when the human floor/cap actually clipped the raw candidate
+- important invariant:
+  - still Local IA Lab only
+  - no UI coupling
+  - no VPS/runtime mutation
+- latest proofs:
+  - targeted hard-cap rail: `16 passed`
+  - calibration/local cross-check: `44 passed`
+  - broad `local_replay_runtime + meta_learning + meta_minimal`: `320 passed`
+
+## Latest Local IA Lab multiple-testing review (`MI-12`)
+
+- `src/calibration_methods/multiple_testing.py` now exists as the bounded shared Holm-Bonferroni helper
+- `src/local_replay_runtime/local_lab_multiple_testing_review.py` now exists as the Local IA Lab MI-12 sidecar
+- current truth:
+  - current EDGE and tail-risk publications are still interval-publication artifacts
+  - the bounded MI-12 verdict is therefore explicit `not_required_interval_publication`
+  - this removes fake `not_evaluated` semantics without inventing a false corrected p-value pass
+- the same truth now propagates into:
+  - `local_lab_calibration_normalized_report.json`
+  - `artifact_proof_assessment.json`
+  - `local_lab_analysis_summary.json`
+  - `local_lab_monitoring_projection.json`
+  - `local_lab_monitoring_backend_payload.json`
+  - `local_lab_observability_export.json`
+  - monitoring bundle manifest/discovery/feed
+- latest proofs:
+  - targeted MI-12 rail: `22 passed`
+  - broad `calibration_methods + local_replay_runtime + monitoring + backtest_artifact_import + meta_learning + meta_minimal`: `524 passed`
+
+## Latest Local IA Lab execution review (`13-C` first slice)
+
+- `src/calibration_methods/execution.py` now exists as the bounded EXECUTION helper rail
+- `src/local_replay_runtime/local_lab_execution_review.py` now emits explicit Local IA Lab truth for:
+  - `THR-X01`
+  - `THR-X02`
+- current conservative semantics:
+  - missing execution telemetry stays explicit `partial`
+  - the bundle never fabricates venue telemetry from replay exports
+  - this slice does not alter the current EDGE proof/release rail
+- compact truth now also propagates into:
+  - `local_lab_analysis_summary.json`
+  - `local_lab_monitoring_projection.json`
+  - `local_lab_monitoring_backend_payload.json`
+  - `local_lab_observability_export.json`
+  - monitoring bundle manifest/discovery/feed
+- latest proofs:
+  - targeted execution rail: `23 passed`
+  - broad `calibration_methods + local_replay_runtime + monitoring + backtest_artifact_import + meta_learning + meta_minimal`: `529 passed`
+
+## Latest VPS -> local observability architecture reminder
+
+- planning anchor:
+  - `docs/production_deployment_plan/16_VPS_LOCAL_OBSERVABILITY_ARCHITECTURE.md`
+- preserve the intended split:
+  - VPS = runtime + lightweight collection + short retention
+  - local PC = Prometheus + Grafana + heavy monitoring / drill-down / long retention
+- preserve the transport doctrine:
+  - continuous = compact summaries and typed metrics
+  - on-demand = detailed logs and deep traces
+  - never = permanent raw full-stream export that can saturate the VPS
+- current code truth:
+  - `src/monitoring/contracts.py` already provides `ObservabilityExport`, `TechnicalDashboardPayload`, `HealthDashboardPayload`, and `LocalLabMonitoringBackendPayload`
+  - Local IA Lab already emits `.prom`
+  - VPS observability contracts/exporters exist, but the real process/system producers are still not fully wired on the live service path
+- immediate observability next steps:
+  1. `node_exporter` / scrape hookup on the VPS
+  2. local Prometheus/Grafana hookup
+  3. compressed incident-bundle retrieval for detailed drill-down
+  4. richer UI only after the backend/export rail is stable
+- explicit missing code still open:
+  - `src/regime_classifier/`
+  - `src/risk_backbone/loss_budgeter/daily_pnl_breaker.py`
+  - `src/alerting/telegram_alerter.py`
+  - `src/execution_backbone/gatekeeper/gatekeeper.py`
+  - `src/risk_backbone/info_stress_monitor.py`
+  - `src/execution_backbone/spread_guard.py`
+  - `src/execution_backbone/slippage_model.py`
+- estimated total solution progress:
+  - `~62%` overall
+  - estimate only, not a measured KPI
+
+## Latest VPS Shadow service observability slice
+
+- landed on the real service path, not on the dashboard scripts:
+  - `scripts/run_shadow_vps_service.py`
+  - `src/monitoring/process_metrics.py`
+  - `src/monitoring/shadow_vps_service_monitoring.py`
+- the Shadow VPS service now emits:
+  - `shadow_vps_service_monitoring_backend_payload.json`
+  - `shadow_vps_service_observability_export.json`
+  - `shadow_vps_service_observability.prom`
+- and now includes:
+  - real bounded process metrics
+  - real bounded disk usage for the service volume
+- preserve the invariant:
+  - VPS remains lightweight
+  - heavy monitoring stays local
+  - the service exports compact summaries, not raw heavy streams
+- latest proofs:
+  - focused service observability slice: `9 passed`
+  - wider monitoring + launcher cross-check: `19 passed`
+- explicit residuals:
+  - no `node_exporter` / Prometheus scrape hookup yet
+  - no compressed incident-bundle pull path yet
+  - `13-C EXECUTION` still needs real execution telemetry
+
+## Latest VPS bounded log retrieval slice
+
+- real bounded log retrieval is now coded on the canonical monitoring/service rail:
+  - `src/monitoring/shadow_vps_service_log_retrieval.py`
+  - `src/monitoring/contracts.py`
+  - `scripts/run_shadow_vps_service.py`
+- current scope:
+  - bounded full-scan query over durable `shadow_vps_service.events.jsonl`
+  - bounded recent-tail summary written by the real service loop
+  - typed results for future local drill-down without creating a heavy always-on stream
+- new governed output:
+  - `shadow_vps_service_recent_events.json`
+- preserve the doctrine:
+  - continuous export stays compact
+  - detailed retrieval stays on-demand
+  - no UI coupling
+- latest proofs:
+  - targeted retrieval slice: `11 passed`
+  - wider monitoring/service cross-check: `22 passed`
+- next observability order:
+  1. `node_exporter` deployment / scrape hookup
+  2. local Prometheus/Grafana hookup
+  3. compressed incident-bundle retrieval
+  4. real execution telemetry for `13-C EXECUTION`
+
+## Latest VPS node_exporter textfile collector hookup
+
+- real Shadow VPS service-side collector mirroring is now coded:
+  - `scripts/run_shadow_vps_service.py`
+  - `src/monitoring/observability_io.py`
+  - `src/monitoring/shadow_vps_service_monitoring.py`
+- current scope:
+  - optional `--node-exporter-textfile-dir`
+  - mirrors the compact service `.prom` export into `v53_shadow_vps_service.prom`
+  - keeps the same canonical metrics payload; no alternate metrics format
+- preserve the doctrine:
+  - exporter remains lightweight on the VPS
+  - `node_exporter` deployment and local scraping remain separate next steps
+  - no UI coupling
+- latest proofs:
+  - targeted collector slice: `10 passed`
+  - wider monitoring/service cross-check: `24 passed`
+
+## Latest local Prometheus scrape bundle hookup
+
+- the observability rail now covers both sides:
+  - per-VPS handoff from the real service rail:
+    - `shadow_vps_service_scrape_manifest.json`
+    - `shadow_vps_service_prometheus_file_sd.json`
+  - local-PC aggregation:
+    - `scripts/run_local_prometheus_scrape_bundle.py`
+    - `shadow_vps_scrape_discovery.json`
+    - `shadow_vps_prometheus_file_sd.json`
+- current truth:
+  - a real service run can now emit a typed scrape handoff when `--scrape-host` is provided
+  - local PC can aggregate multiple pulled VPS manifests into one Prometheus `file_sd` bundle
+  - aggregation de-duplicates by latest target
+- preserve the doctrine:
+  - compact typed handoff only from the VPS
+  - heavy Prometheus/Grafana consumption stays local
+  - no UI coupling
+- latest proofs:
+  - targeted scrape-manifest/aggregate slice: `11 passed`
+  - wider monitoring/service cross-check: `29 passed`
+- next observability order:
+  1. actual `node_exporter` deployment / scrape validation
+  2. Grafana dashboards on top of the stable payloads
+  3. compressed incident-bundle retrieval
+  4. real execution telemetry for `13-C EXECUTION`
+
+## Latest checked local Prometheus config generator
+
+- local-PC config generation is now coded:
+  - `src/monitoring/local_prometheus_config.py`
+  - `scripts/run_local_prometheus_config.py`
+- current artifacts:
+  - `prometheus.local.generated.yml`
+  - `prometheus.local.config.summary.json`
+- current truth:
+  - the generated config consumes the aggregated `shadow_vps_prometheus_file_sd.json`
+  - optional local node_exporter target can be included for Unix-like local hosts
+  - optional local windows_exporter target can be included for Windows local PCs
+  - this is a checked generator only; it does not start Prometheus itself
+- latest proofs:
+  - targeted config slice: `8 passed`
+  - wider monitoring/service cross-check: `32 passed`
+
+## Latest Windows local Prometheus exporter support
+
+- the local Prometheus config generator now supports Windows local PCs explicitly:
+  - `src/monitoring/local_prometheus_config.py`
+  - `scripts/run_local_prometheus_config.py`
+- current truth:
+  - `--local-windows-exporter-target` can now be passed to materialize a `v53_local_windows` scrape job
+  - `--local-node-exporter-target` is now clearly optional and Unix-like only
+  - default config generation no longer assumes a local exporter implicitly
+- latest proofs:
+  - targeted Windows exporter config slice: `6 passed`
+
+## Latest dual-role dev Prometheus HTTP bridge
+
+- the local dual-role dev path now has a dev-only HTTP bridge for the current `.prom` payload:
+  - `src/monitoring/local_prometheus_metrics_bridge.py`
+  - `scripts/run_local_prometheus_metrics_bridge.py`
+- current truth:
+  - it serves the generated V5.3 `.prom` payload over `/metrics`
+  - it exposes `/-/ready`
+  - it writes `local_prometheus_metrics_bridge.summary.json`
+  - it exists to make local Windows/dev visualization work before the real VPS `node_exporter` path is deployed
+- latest proofs:
+  - targeted dev bridge slice: `8 passed`
+
+## Latest local Grafana dashboard bundle and bootstrap
+
+- the local dual-role dev path now has a Grafana dashboard bundle and local bootstrap helpers:
+  - `src/monitoring/local_grafana_dashboard.py`
+  - `scripts/run_local_grafana_dashboard.py`
+  - `src/monitoring/local_grafana_api.py`
+  - `scripts/run_local_grafana_bootstrap.py`
+- current truth:
+  - the generated dashboard is constrained to the currently observed `v53_shadow_vps_*` metric set
+  - the bundle writes both dashboard JSON and typed summary JSON
+  - the local bootstrap can create the Prometheus datasource and import the dashboard through Grafana HTTP API
+- latest proofs:
+  - targeted dashboard/bootstrap slice: `13 passed`
+
+## Latest Local IA Lab Grafana rail on the dual-role dev box
+
+- the local dual-role dev path now has a second dashboard rail for `Local IA Lab`, not only `Shadow VPS`:
+  - `src/monitoring/local_lab_grafana_dashboard.py`
+  - `scripts/run_local_lab_grafana_dashboard.py`
+- current truth:
+  - the new dashboard is generated from the real observed `v53_local_lab_*` metric inventory
+  - the dev-only metrics bridge can now serve either a raw `.prom` file or a Local IA Lab observability export JSON with `text_payload`
+  - the checked local Prometheus config can now include a dedicated `v53_local_lab` scrape job through `--local-lab-target`
+  - current demo artifacts already exist under:
+    - `build/dev_dual_role_demo/local_lab_grafana_dashboard/`
+    - `build/dev_dual_role_demo/local_prometheus_config_with_lab/`
+- current dashboard truth:
+  - `uid = v53-local-lab`
+  - `panel_count = 16`
+  - `observed_metric_count = 44`
+- latest proofs:
+  - targeted Local IA Lab monitoring/dashboard slice: `19 passed`
+
+## Latest `13-C EXECUTION` service-owned telemetry rail
+
+- the Shadow VPS service now emits a typed execution telemetry handoff for Local IA Lab:
+  - `shadow_vps_service_execution_telemetry.archive.json`
+  - `shadow_vps_service_execution_telemetry.json`
+- current truth:
+  - the service cumulatively stores websocket timing evidence by `session_date`
+  - `THR-X02` can now be fed from real service-owned websocket timing sources
+  - the Local IA Lab bundle can now accept either:
+    - a review-owned `LocalLabExecutionTelemetry`
+    - or the new service-owned execution telemetry artifact, then bind it to the review `correlation_id`
+  - `THR-X01` remains honest/optional via `--execution-time-sync-offsets-path`
+  - service state now carries `last_execution_telemetry_ref`
+  - `ShadowVpsServiceMonitoringPayload` now exposes `execution_telemetry_ref`
+- latest proofs:
+  - targeted execution telemetry + bundle + service slice: `20 passed`
+
+## Latest `13-C EXECUTION` THR-X01 live-capture fallback
+
+- native live capture can now materialize a bounded passive time-sync sidecar:
+  - `live_time_sync_offsets.json`
+- current truth:
+  - the sidecar is emitted by `src/protocols/shadow_live_websocket.py` when `time_sync_probe_enabled=true`
+  - `scripts/run_shadow_vps_service.py` now auto-consumes that sidecar for `THR-X01` if `--execution-time-sync-offsets-path` is absent
+  - the ref is now visible in service/runtime handoff through:
+    - `last_live_capture_time_sync_offsets_ref`
+    - `live_capture_time_sync_offsets_ref`
+  - replay/websocket-injected days remain honestly partial for `THR-X01`
+- latest proofs:
+  - targeted live-capture/service/bundle slice: `26 passed`
+
+## Latest `13-C EXECUTION` THR-X04/X05 sample harvesting
+
+- the service-owned execution telemetry artifact now also carries execution-surface samples:
+  - `spread_bps`
+  - `slippage_bps`
+- current truth:
+  - spreads are harvested from existing snapshot/depth evidence
+  - slippage samples are harvested from existing route-hint metadata when present
+  - `src/calibration_methods/execution.py` now exposes a shared bounded `THR-X04` calibrator
+  - the execution review contract now carries the new sample families, but review gating is still intentionally limited to `THR-X01/X02` on this slice
+- latest proofs:
+  - targeted `13-C EXECUTION` cross-check: `30 passed`
+
+## Latest `13-C EXECUTION` THR-X04 review consumption
+
+- current truth:
+  - `src/local_replay_runtime/local_lab_execution_review.py` now consumes `THR-X04` for real
+  - `THR-X04` is `ready` only when:
+    - `spread_bps` samples are present
+    - `spread_observation_days >= 30`
+    - the bounded lognormal calibrator succeeds
+  - the Local IA Lab execution review now covers:
+    - `THR-X01`
+    - `THR-X02`
+    - `THR-X04`
+  - bundle-level counts changed accordingly from `2` to `3` execution thresholds
+- preserve the doctrine:
+  - `THR-X03` remains explicitly not-ready until real service quota telemetry exists
+  - `THR-X05` remains explicitly not-ready until a real slippage model exists
+- latest proofs:
+  - targeted execution review/bundle slice: `17 passed`
+  - broader execution/protocols/monitoring cross-check: `31 passed`
+
+## Latest `13-C EXECUTION` explicit X03/X05 gap surfacing
+
+- current truth:
+  - the execution review no longer silently omits `THR-X03` and `THR-X05`
+  - it now exposes the full bounded set:
+    - `THR-X01`
+    - `THR-X02`
+    - `THR-X03`
+    - `THR-X04`
+    - `THR-X05`
+  - the honest current outcome is:
+    - `3` ready thresholds: `X01/X02/X04`
+    - `2` partial thresholds: `X03/X05`
+    - global execution review status: `partial`
+- preserve the doctrine:
+  - `X03` is partial because service quota telemetry is still missing
+  - `X05` is partial because no real slippage model has been implemented yet
+- latest proofs:
+  - targeted execution review/bundle slice: `17 passed`
+  - broader execution/protocols/monitoring cross-check: `31 passed`
+
+## Latest `13-C EXECUTION` X05 input trace enrichment
+
+- current truth:
+  - the service-owned execution telemetry artifact now also carries:
+    - `candidate_sizes`
+    - `final_sizes`
+  - those samples are extracted from existing route hints in injected/live evidence
+  - the Local IA Lab review contract can now receive future `X05` size traces without inventing a slippage model
+- preserve the doctrine:
+  - this is evidence-only
+  - `X05` remains partial until a real model exists
+- latest proofs:
+  - targeted execution telemetry/review/bundle slice: `17 passed`
+  - broader execution/protocols/monitoring cross-check: `31 passed`
+
+## Latest `13-C EXECUTION` `THR-X03` quota telemetry plumbing
+
+- current truth:
+  - the native live time-sync sidecar now also writes bounded quota probe metadata:
+    - `rest_call_count`
+    - `probe_duration_s`
+    - `rest_quota_max_calls_per_minute`
+    - `observed_calls_per_minute`
+  - `src/local_replay_runtime/local_lab_execution_telemetry_artifact.py` now preserves those values into the service-owned execution telemetry artifact
+  - `src/local_replay_runtime/local_lab_execution_review.py` now distinguishes honest `X03` partial states:
+    - telemetry missing
+    - quota cap missing
+    - history `< 30d`
+    - model not implemented
+- preserve the doctrine:
+  - `X03` is still not ready
+  - this slice only removes silent ambiguity around why it is partial
+- latest proofs:
+  - targeted execution/protocol slice: `20 passed`
+  - broader execution/protocols/monitoring cross-check: `32 passed`
+
+## Latest `13-C EXECUTION` bounded `THR-X03/X05` models
+
+- current truth:
+  - `src/calibration_methods/execution.py` now contains a real bounded `THR-X03` throttle model:
+    - calls/minute telemetry
+    - quota cap telemetry
+    - Little's-law burst margin
+    - hard cap at `80%` of official quota
+  - the same module now also contains a first bounded `THR-X05` slippage model:
+    - Huber fit on `sqrt(size)`
+    - service-owned `final_size` first, else `candidate_size`
+    - validation floor `R² >= 0.30`
+  - `src/local_replay_runtime/local_lab_execution_review.py` now marks `X03` and `X05` `ready` when aligned 30d evidence exists
+- preserve the doctrine:
+  - this is still Lab-side calibration/review only
+  - no runtime live mutation and no opaque model were introduced
+- latest proofs:
+  - targeted execution model slice: `21 passed`
+  - broader execution/protocols/monitoring cross-check: `35 passed`
+
+## Latest `13-C EXECUTION` runtime handoff projection
+
+- current truth:
+  - `src/local_replay_runtime/local_lab_execution_runtime_projection.py` now emits a typed handoff artifact for:
+    - `rate_limiter` from `THR-X03`
+    - `slippage_model` from `THR-X05`
+  - `artifact_proof_assessment` and `artifact_release_candidate` now surface that handoff state
+  - `run_local_lab_analysis_bundle.py` writes `local_lab_execution_runtime_projection.json`
+- preserve the doctrine:
+  - still descriptive only
+  - still no runtime live mutation
+  - still no new promotion shortcut
+- latest proofs:
+  - targeted projection/proof/release slice: `18 passed`
+  - broader execution/protocols/monitoring cross-check: `46 passed`
+
+## Latest `13-C EXECUTION` canonical runtime consumers
+
+- current truth:
+  - `src/execution_backbone/rate_limiter.py` now exists as the first bounded canonical consumer of `THR-X03`
+  - `src/execution_backbone/slippage_model.py` now exists as the first bounded canonical consumer of `THR-X05`
+  - `src/execution_backbone/execution_runtime.py` can consume them only when the caller injects them explicitly
+- bounded behavior:
+  - `THR-X05` adds conservative slippage friction into `expected_cost` and carries audit metadata on the submitted intent
+  - `THR-X03` blocks only when live metadata already exposes `rest_quota_ratio_current >= quota_ratio_ceiling`
+  - absent/invalid `THR-X03` telemetry still fails open
+- preserve the doctrine:
+  - no bootstrap auto-wire yet
+  - no live runtime mutation by default
+  - no Shadow/Micro-live/Live shortcut
+- latest proofs:
+  - focused runtime-consumer slice: `30 passed`
+  - broader execution/protocols/monitoring cross-check: `17 passed`
+
+## Latest `13-C EXECUTION` runtime projection bootstrap
+
+- current truth:
+  - `src/protocols/execution_runtime_projection_bridge.py` now exists and loads `local_lab_execution_runtime_projection.json` fail-open
+  - `src/protocols/execution_runtime_bootstrap.py` now accepts `execution_runtime_projection_path`
+  - canonical runtime consumers `THR-X03/X05` can now be recovered from the Lab artifact by explicit bootstrap, not just manual injection
+- preserve the doctrine:
+  - no path -> no activation
+  - invalid/missing/partial projection -> fail-open
+  - no Shadow/Micro-live/Live shortcut
+- latest proofs:
+  - projection-bridge/bootstrap focused slice: `36 passed`
+  - supporting execution/protocols cross-check: `14 passed`
+
+## Latest `13-C EXECUTION` runtime projection monitoring surface
+
+- current truth:
+  - Build-10 monitoring now exposes the new `execution_runtime_projection_path` seam as a typed technical dashboard and observability projection
+  - the surface is separate from `execution_no_trade_bridge`, so compiled no-trade bindings and Lab-driven runtime consumers are no longer conflated
+- preserve the doctrine:
+  - monitoring remains descriptive only
+  - no hidden runtime activation
+  - no Shadow/Micro-live/Live shortcut
+- latest proofs:
+  - protocol/backend/runtime/observability/UI focused slice: `91 passed`
+  - supporting execution bridge/bootstrap cross-check: `36 passed`
+
+## Latest `13-C EXECUTION` technical dashboard launcher auto-discovers the runtime projection bridge
+
+- current truth:
+  - `scripts/run_technical_dashboard.py` now auto-discovers `local_lab_execution_runtime_projection.json` from its demo output directory when present
+  - an explicit `--execution-runtime-projection-path` can also be provided for operator-side inspection
+- preserve the doctrine:
+  - launcher/operator surface only
+  - no runtime activation
+  - no Shadow/Micro-live/Live shortcut
+- latest proofs:
+  - launcher/ui/backend focused slice: `90 passed`
+  - supporting runtime/bridge cross-check: `46 passed`
+
+## Latest `13-C EXECUTION` local replay shadow runner now surfaces the runtime projection bridge
+
+- current truth:
+  - `scripts/run_local_replay_shadow.py` now auto-discovers `local_lab_execution_runtime_projection.json` from its output directory when present
+  - the same runner also accepts an explicit `--execution-runtime-projection-path`
+  - generated baseline and candidate technical payloads now expose the bounded `execution_runtime_projection_bridge` seam for `THR-X03/X05`
+- preserve the doctrine:
+  - runner/operator surface only
+  - no hidden runtime activation
+  - no Shadow/Micro-live/Live shortcut
+- latest proofs:
+  - focused runner/dashboard slice: `95 passed`
+  - supporting runtime/bridge cross-check: `36 passed`
+
+## Latest `13-C EXECUTION` Shadow orchestrator and VPS service now persist the runtime projection seam
+
+- current truth:
+  - `scripts/run_shadow_daily_orchestrator.py` now accepts `--execution-runtime-projection-path` and persists the projection ref plus readiness counts in `shadow_daily_orchestrator.last_run.json`
+  - `scripts/run_shadow_vps_service.py` now forwards that seam and persists it in service state, runtime evidence bundle, campaign summary, and monitoring payloads
+  - Shadow VPS observability now exposes the same seam through bounded projection metrics
+- preserve the doctrine:
+  - descriptive persistence only
+  - no hidden runtime activation
+  - no Shadow/Micro-live/Live shortcut
+- latest proofs:
+  - focused Shadow orchestrator/service slice: `24 passed`
+  - supporting runtime/dashboard cross-check: `108 passed`
+
+## Latest `13-C EXECUTION` Micro-live and Live-Light now carry the runtime projection seam
+
+- current truth:
+  - `MicroLiveInput`, `MicroLiveRunSummary`, `LiveLightInput`, and `LiveLightRunSummary` now carry the bounded `execution_runtime_projection_*` seam explicitly
+  - Micro-live derives that seam from the governed Shadow technical payload bridge, then Live-Light inherits it from the governed Micro-live summary
+  - normalized Build-10 monitoring projections for Micro-live and Live-Light now stay aligned with the same seam
+- preserve the doctrine:
+  - descriptive propagation only
+  - no hidden runtime activation
+  - no Shadow/Micro-live/Live shortcut
+- latest proofs:
+  - focused protocol/dashboard slice: `82 passed`
+  - supporting runner/service/dashboard cross-check: `88 passed`
+
+## Latest `13-C EXECUTION` Micro-live and Live dashboard cards now expose the runtime projection seam
+
+- current truth:
+  - Build-12 guardrails cards now show `exec_proj=<status>` plus ready/partial/blocked consumer counts
+  - Build-13 readiness cards now show the same bounded seam, using the canonical protocol fields already propagated through Micro-live and Live-Light
+- preserve the doctrine:
+  - operator visibility only
+  - no hidden runtime activation
+  - no Shadow/Micro-live/Live shortcut
+- latest proofs:
+  - focused dashboard slice: `33 passed`
+  - supporting protocol cross-check: `76 passed`
+
+## Latest `13-C EXECUTION` Shadow live startup config can now carry the runtime projection seam
+
+- current truth:
+  - `live_websocket_config.json` can now carry `execution_runtime_projection_path_ref`
+  - `run_shadow_vps_service.py` resolves that path at startup when no explicit CLI projection path is supplied
+  - explicit CLI still overrides config, and the seam remains descriptive only
+- preserve the doctrine:
+  - startup/config propagation only
+  - no hidden runtime activation
+  - no Shadow/Micro-live/Live shortcut
+- latest proofs:
+  - focused service/live-config slice: `12 passed`
+  - supporting monitoring/orchestrator cross-check: `18 passed`
+
+## Latest `13-C EXECUTION` Shadow service now preserves runtime projection provenance
+
+- current truth:
+  - Shadow service state, runtime bundle, campaign summary, and monitoring payloads now preserve `execution_runtime_projection_source`
+  - current governed values are `cli`, `live_websocket_config`, or `not_configured`
+  - the observability export now carries the same source on the bounded projection-ready metric labels
+- preserve the doctrine:
+  - provenance only
+  - no hidden runtime activation
+  - no Shadow/Micro-live/Live shortcut
+- latest proofs:
+  - focused provenance slice: `8 passed`
+  - supporting service/orchestrator cross-check: `22 passed`
+
+## Latest `13-C EXECUTION` Shadow Grafana now renders the runtime projection seam
+
+- current truth:
+  - the local Shadow Grafana generator now renders dedicated panels for runtime projection readiness, ready/partial/blocked consumer counts, and the instant `projection_status / projection_source` label surface
+  - this closes the remaining observability gap between Prometheus export and Grafana rendering for the `execution_runtime_projection` seam
+- preserve the doctrine:
+  - observability only
+  - no hidden runtime activation
+  - no Shadow/Micro-live/Live shortcut
+- latest proofs:
+  - focused Grafana slice: `2 passed`
+
+## Latest `13-C EXECUTION` Shadow service now keeps runtime projection observability on late telemetry failure
+
+- current truth:
+  - once the runtime evidence bundle is written, the Shadow service now persists the `execution_runtime_projection` seam into state before attempting the later execution telemetry sidecar
+  - if that later sidecar write fails, monitoring and Prometheus still expose the already-produced runtime projection seam instead of falling back to `not_configured`
+- preserve the doctrine:
+  - observability hardening only
+  - no hidden runtime activation
+  - no Shadow/Micro-live/Live shortcut
+- latest proofs:
+  - focused failure-hardening slice: `4 passed`
+
+## Latest `13-C EXECUTION` Shadow demo runs now skip missing telemetry sidecars without degrading
+
+- current truth:
+  - the Shadow service now falls back to `auto_export_dir` when a governed auto-export exists but `last_run.export_dir_ref` is blank
+  - for true demo/replay runs with no governed export, the service now records `execution_telemetry_skipped` instead of degrading the run
+  - current dev dual-role Shadow artifacts therefore finish `status=stopped`, `last_error=""`, `execution_telemetry_ref=""`, while keeping `exec_projection=ready@cli`
+- preserve the doctrine:
+  - honest skip semantics only
+  - no hidden runtime activation
+  - no Shadow/Micro-live/Live shortcut
+- latest proofs:
+  - focused Shadow/monitoring slice: `10 passed`
+  - supporting orchestrator/replay cross-check: `16 passed`
+
+## Latest `13-C EXECUTION` Shadow telemetry write/skip status is now visible in monitoring and local Grafana
+
+- current truth:
+  - the Build-10 Shadow backend payload now carries `execution_telemetry_status`
+  - the detail string now surfaces `exec_telemetry=<status>` alongside `exec_projection=...`
+  - the Shadow Prometheus export now emits `v53_shadow_vps_execution_telemetry_ready{telemetry_status=...}`
+  - the local Shadow Grafana bundle now renders dedicated telemetry readiness/label panels
+- current dev dual-role demo:
+  - `shadow_vps_service_monitoring_backend_payload.json` shows `exec_telemetry=skipped`
+  - `shadow_vps_service_observability.prom` now carries `v53_shadow_vps_execution_telemetry_ready{telemetry_status="skipped"} 0.0`
+- preserve the doctrine:
+  - observability only
+  - no hidden runtime activation
+  - no Shadow/Micro-live/Live shortcut
+- latest proofs:
+  - focused Shadow/monitoring slice: `10 passed`
+  - focused Grafana slice: `2 passed`
+
+## Latest `13-C EXECUTION` Build-10 technical dashboard now exposes Shadow execution telemetry
+
+- current truth:
+  - the canonical `ShadowProjection` now carries `execution_telemetry_ref` and `execution_telemetry_status`
+  - the live-artifact technical dashboard loader now projects these service-owned fields from `shadow_vps_service.campaign_summary.json`
+  - the `Build-11 Shadow` section now renders an explicit `Execution Telemetry` card instead of leaving that seam only in Prometheus/local Grafana
+- preserve the doctrine:
+  - dashboard/normalization only
+  - no hidden runtime activation
+  - no Shadow/Micro-live/Live shortcut
+- latest proofs:
+  - focused Build-10/UI/launcher slice: `74 passed`
+  - supporting Shadow monitoring non-regression: `10 passed`
+
+## Latest `13-C EXECUTION` THR-X04 is now a governed runtime consumer
+
+- current truth:
+  - `THR-X04` no longer stops at Local IA Lab review; it is now projected as `spread_guard` beside `rate_limiter` and `slippage_model`
+  - the projection bridge/bootstrap now load three opt-in execution consumers in fail-open mode
+  - the canonical execution runtime blocks on the spread guard only when that model is explicitly present
+  - Build-10/Prometheus/dashboard truth now exposes `spread_guard_model_loaded`
+  - Shadow, Micro-live, and Live-light preserve the new consumer counts end-to-end
+- preserve the doctrine:
+  - opt-in only
+  - no hidden live activation
+  - no Shadow/Micro-live/Live shortcut
+- latest proofs:
+  - focused THR-X04 runtime slice: `50 passed`
+  - supporting rail cross-check: `210 passed`
+
+## Latest `13-C EXECUTION` Build-9 core smoke now carries the execution projection seam
+
+- current truth:
+  - the first real non-test launcher that instantiates the execution runtime, [run_build9_core_smoke.py](/E:/claude%20%20v5.3/v53_trading_system/scripts/run_build9_core_smoke.py), now accepts `--execution-runtime-projection-path`
+  - the operated smoke bootstrap can therefore prove loading of `rate_limiter + spread_guard + slippage_model` on a real launcher path
+  - baseline smoke stays unchanged when no projection is provided
+- preserve the doctrine:
+  - explicit opt-in only
+  - no hidden live activation
+  - no gate shortcut
+- latest proofs:
+  - focused operated-smoke slice: `40 passed`
+
+## Latest `13-C EXECUTION` operated Shadow chain now preserves bridge-load truth
+
+- current truth:
+  - the operated Shadow daily/orchestrator seam no longer trusts only the Local IA Lab projection headline; it now derives runtime-readiness from the canonical bridge inspection
+  - the Shadow chain now persists `execution_runtime_projection_bridge_status` plus the three load flags `rate_limiter/spread_guard/slippage_model`
+  - Shadow VPS runtime-evidence, campaign summary, monitoring payload, and Prometheus export all preserve that bridge truth
+  - the local Shadow Grafana bundle now exposes the same bridge truth through dedicated bridge/model-load panels
+- preserve the doctrine:
+  - no hidden runtime activation
+  - no new launcher
+  - no gate shortcut
+- latest proofs:
+  - focused operated-bridge slice: `12 passed`
+  - supporting Shadow rail cross-check: `26 passed`
+  - focused local Shadow Grafana update: `2 passed`
+
+## Latest `13-C EXECUTION` Build-10 Shadow cards now expose the operated projection bridge truth
+
+- current truth:
+  - the canonical `ShadowProjection` now carries the service-owned `execution_runtime_projection_*` bridge/load fields
+  - the technical dashboard loader now maps those fields from `shadow_vps_service.campaign_summary.json`
+  - `Build-11 Shadow` now renders an explicit `Execution Projection` card, distinct from `Execution Telemetry` and distinct from the top-level execution bridge card
+  - the dev dual-role technical dashboard artifacts were regenerated
+- preserve the doctrine:
+  - dashboard/normalization only
+  - no hidden runtime activation
+  - no gate shortcut
+- latest proofs:
+  - focused Build-10 Shadow card slice: `74 passed`
+
+## Latest `Build-14` bounded Opus entry-timing reader
+
+- current truth:
+  - `src/complete_enablers/micro_edge_entry_timing_layer.py` now exists as the bounded Build-14 reader for the still-open Opus `entry timing` suggestion
+  - it remains a governed Build-14 enabler only; it does not open a new runtime rail and does not trade autonomously
+  - `src/complete_enablers/limited_influence.py` now includes this reader in the canonical Build-14 Shadow/post-Shadow influence evaluation
+- preserve the doctrine:
+  - Build-14 enabler only
+  - no hidden live activation
+  - no gate shortcut
+- latest proofs:
+  - focused Build-14 entry-timing slice: `97 passed`
+
+## Latest `Build-14` bounded Opus exit-governor reader
+
+- current truth:
+  - `src/complete_enablers/micro_edge_exit_governor.py` now exists as the bounded Build-14 reader for the still-open Opus `exit governor` suggestion
+  - it remains a governed Build-14 enabler only; it does not open a new runtime rail and does not trade autonomously
+  - `src/complete_enablers/limited_influence.py` now includes this reader in the canonical Build-14 Shadow/post-Shadow influence evaluation
+- preserve the doctrine:
+  - Build-14 enabler only
+  - no hidden live activation
+  - no gate shortcut
+- latest proofs:
+  - focused Build-14 exit-governor slice: `99 passed`
+
+## Latest `regime_lite` typed core
+
+- current code truth:
+  - `src/regime_classifier/regime_lite.py` now exists
+  - the first cut is intentionally bounded to a typed 3-state helper:
+    - `CALM / STRESSED / EXTREME`
+    - explicit thresholds object
+    - downgrade hysteresis
+    - EXTREME cooldown
+    - transition trace with no silent state skip
+  - `src/regime_classifier/` is now registered in the manifest/DAG as `regime_classifier`
+- preserve the doctrine:
+  - no hidden runtime activation
+  - no direct engine wiring in this slice
+  - no gate bypass
+- remaining work stays explicit:
+  - calibration artifact loading
+  - runtime/risk hooks
+  - replay proof on historical stress windows
+
+## Latest first governed risk consumer for `regime_lite`
+
+- current code truth:
+  - `src/risk_backbone/regime_lite_entry_gate.py` now exists
+  - `src/risk_backbone/risk_runtime.py` now exposes an opt-in typed `regime_precheck_hook`
+  - the first bounded behavior only blocks new entries while `EXTREME` or while `EXTREME` cooldown is active
+- preserve the doctrine:
+  - opt-in only
+  - fail-open by default
+  - no hidden live activation
+  - no exit-all wiring in this slice
+- latest proofs:
+  - focused `regime_lite + risk runtime` slice: `120 passed`
+
+## Latest `regime_lite` calibration loader seam
+
+- current truth:
+  - `src/regime_classifier/regime_lite.py` now exposes `RegimeLiteCalibrationConfig` and `resolve_regime_lite_thresholds(...)`
+  - the typed helper now loads signed `THR-RG01..04` artifacts through `calibration_loader`
+  - only the documented regime thresholds are artifact-governed in this slice; the remaining classifier dimensions stay on bounded documented defaults
+  - `calibration_loader` is now registered in the canonical manifest/build-order/dependency registry
+- preserve the doctrine:
+  - opt-in only
+  - no silent fallback when the calibrated seam is requested
+  - no hidden runtime activation
+- latest proofs:
+  - focused `regime_lite + manifest` slice: `128 passed`
+
+## Latest governed `regime_lite` safing recommendation
+
+- current truth:
+  - `src/risk_backbone/regime_lite_safing.py` now exists as the explicit `EXTREME -> safing recommendation` seam
+  - `ENTRY_BLOCK_ONLY` is used for cooldown-only states
+  - `HALT_RECOMMENDED` + `should_exit_all=True` is used for live `EXTREME` states
+  - the helper can materialize a canonical `OperatorSafingRequest(action=set_halted)` when the caller explicitly asks for it
+- preserve the doctrine:
+  - recommendation only
+  - no automatic kill switch trip
+  - no hidden activation
+- latest proofs:
+  - focused `regime_lite + safing` slice: `128 passed`
+
+## Latest Build-10 `regime_lite` safing observability seam
+
+- current truth:
+  - `ShadowProjection` now carries a typed `regime_lite` safing projection in Build-10 monitoring
+  - the technical dashboard loader now hydrates this seam from `shadow_vps_service.campaign_summary.json` when present
+  - `Build-11 Shadow` now renders an explicit `Regime Safing` card
+  - canonical observability now exports `v53_shadow_regime_lite_safing_status`
+- preserve the doctrine:
+  - recommendation only
+  - no auto-`set_halted`
+  - no hidden live activation
+- latest proofs:
+  - focused `Build-10 regime_lite observability` slice: `85 passed`
+
+## Latest `regime_lite` governed protocol-summary propagation
+
+- current truth:
+  - `RegimeLiteGovernanceSummary` now exists in canonical protocol contracts
+  - `run_shadow_validation(...)` can emit explicit governed regime truth when supplied with typed assessment/recommendation inputs
+  - `build_micro_live_input_from_shadow(...)` and `build_live_light_input_from_micro_live(...)` now preserve that truth without extra inference
+- preserve the doctrine:
+  - explicit producer only
+  - no fabricated classifier inputs
+  - recommendation only
+  - no hidden activation
+- latest proofs:
+  - focused `protocol regime_lite propagation` slice: `142 passed`
+
+## Latest operated `regime_lite` service-summary propagation
+
+- current truth:
+  - `shadow_daily_orchestrator.last_run.json` now persists flattened `regime_lite_governance` truth from the operated `shadow_summary`
+  - `ShadowVpsRuntimeEvidenceBundle` and `ShadowVpsCampaignSummary` now preserve that seam through the real Shadow VPS service rail
+  - service monitoring now exposes the seam in payload/detail and Prometheus via:
+    - `v53_shadow_vps_regime_lite_safing_status`
+    - `v53_shadow_vps_regime_lite_entries_blocked`
+    - `v53_shadow_vps_regime_lite_should_exit_all`
+- preserve the doctrine:
+  - copy operated Shadow truth only
+  - no synthetic regime inference inside the service
+  - recommendation only
+  - no hidden auto-halt
+- latest proofs:
+  - focused `orchestrator + service + monitoring regime_lite` slice: `13 passed`
+
+## Latest operated `regime_lite` Shadow producer seam
+
+- current truth:
+  - `run_local_replay_shadow.py` now accepts explicit typed `regime_lite` assessment/recommendation JSON inputs
+  - the daily orchestrator and the real Shadow VPS service now forward that seam end-to-end
+  - when the seam is supplied, the operated artifacts carry real `regime_lite_governance_status=ready` instead of staying protocol-only
+- preserve the doctrine:
+  - explicit opt-in only
+  - no synthetic classifier inputs
+  - recommendation only
+  - no hidden auto-halt
+- latest proofs:
+  - focused `local_replay_shadow -> orchestrator -> service regime_lite` slice: `8 passed`
+
+## Latest governed `regime_lite` auto-discovery seam
+
+- current truth:
+  - `run_local_replay_shadow.py` now auto-discovers `regime_lite_assessment.json` and `regime_lite_safing_recommendation.json` inside its governed `output_dir`
+  - the daily orchestrator therefore picks up the same seam automatically when those sidecars are staged inside the governed `shadow_output_dir`
+- preserve the doctrine:
+  - explicit path still wins
+  - typed sidecars only
+  - recommendation only
+  - no hidden auto-halt
+- latest proofs:
+  - focused `regime_lite auto-discovery` slice: `2 passed`
+
+## Latest local Shadow Grafana `regime_lite` panels
+
+- current truth:
+  - the local Shadow Grafana dashboard now includes dedicated panels for:
+    - entries blocked
+    - exit-all recommended
+    - regime_lite labels
+  - the dashboard reads only the bounded Prometheus service metrics:
+    - `v53_shadow_vps_regime_lite_entries_blocked`
+    - `v53_shadow_vps_regime_lite_should_exit_all`
+    - `v53_shadow_vps_regime_lite_safing_status`
+- preserve the doctrine:
+  - monitoring-only seam
+  - no dashboard-only JSON inference
+  - no hidden activation
+- latest proofs:
+  - focused `local shadow grafana regime_lite` slice: `4 passed`
+
+## Latest Shadow VPS `regime_lite` config-ref seam
+
+- current truth:
+  - `ShadowLiveWebSocketConfig` now supports:
+    - `regime_lite_assessment_path_ref`
+    - `regime_lite_safing_recommendation_path_ref`
+  - `run_shadow_vps_service.py` resolves those refs with explicit CLI precedence, then persists the chosen refs/sources into:
+    - service state
+    - runtime evidence bundle
+    - campaign summary
+    - monitoring payload
+- preserve the doctrine:
+  - typed refs only
+  - explicit path still wins
+  - no synthetic regime inference
+  - no hidden auto-halt
+- latest proofs:
+  - focused `shadow_vps_service + monitoring regime_lite provenance` slice: `12 passed`
+
+## Latest Shadow VPS Prometheus `regime_lite` provenance labels
+
+- current truth:
+  - the bounded service metrics now expose:
+    - `assessment_source`
+    - `safing_source`
+    labels for the `regime_lite` seam
+  - the monitoring detail string also carries the same provenance summary
+- preserve the doctrine:
+  - bounded labels only
+  - no dashboard-only seam
+  - no runtime behavior change
+- latest proofs:
+  - focused `shadow monitoring provenance labels` slice: `2 passed`
+
+## Latest Build-10 `regime_lite` provenance detail
+
+- current truth:
+  - the canonical technical dashboard now preserves and renders:
+    - `regime_lite_assessment_ref/source`
+    - `regime_lite_safing_recommendation_ref/source`
+    from the operated Shadow service campaign summary
+  - the Build-11 Shadow `Regime Safing` card therefore keeps the governed ref/source seam visible instead of collapsing it to severity-only
+- preserve the doctrine:
+  - dashboard consumes operated artifact truth only
+  - no dashboard-side inference
+  - recommendation only
+- latest proofs:
+  - focused `Build-10 regime_lite provenance detail` slice: `37 passed`
+
+## Latest Binance Shadow PowerShell bootstrap
+
+- current truth:
+  - `scripts/Install-BinanceApiEnv.ps1` now installs the Binance API env in process scope and, when requested, user scope
+  - `scripts/Start-BinanceShadowLiveCampaign.ps1` now materializes the governed campaign root, launches one bounded Shadow service cycle, and re-renders the canonical HTML dashboard
+  - user-scope Binance env is now installed on this Windows operator machine, so new terminals can reuse the same bootstrap without re-pasting secrets
+- preserve the doctrine:
+  - Shadow only
+  - no secrets written into repo JSON
+  - dashboard remains read-only
+- latest proofs:
+  - focused `PowerShell Binance bootstrap` slice: operator scripts exercised successfully
+
+## Latest native Binance live connect diagnostic
+
+- current truth:
+  - the native live websocket capture path now preserves endpoint + root cause when connect fails
+  - the previously observed `WinError 10013` was confirmed to be a Codex sandbox network artifact, not a host Windows firewall/policy issue
+  - the same bounded PowerShell live campaign succeeds when launched outside the sandbox on the real host
+- preserve the doctrine:
+  - diagnostics only
+  - no hidden retry or behavior change
+- latest proofs:
+  - focused `shadow live websocket diagnostics` slice: included in the `44 passed` targeted test run
+
+## Latest successful Binance Shadow operated campaign
+
+- current truth:
+  - the bounded PowerShell launcher now succeeds on the real Windows host against native Binance streaming
+  - current operated artifacts show:
+    - `last_completed_session_date=2026-04-12`
+    - `service_status=stopped`
+    - `last_error=""`
+    - `execution_telemetry_status=written`
+    - `live_user_data_authenticated=true`
+    - `live_capture_pair_scope=[BTCUSDT, ETHUSDT]`
+  - the canonical Build-10 HTML dashboard has been regenerated from that successful operated campaign root
+- preserve the doctrine:
+  - Shadow only
+  - no live order path
+  - dashboard remains read-only
+
+## Latest `daily_pnl_breaker` typed core and first governed runtime consumer
+
+- current truth:
+  - `src/risk_backbone/loss_budgeter/daily_pnl_breaker.py` now exists as the typed persistent `THR-R01` seam
+  - it loads governed `THR-R01`, enforces the documented `2%` hard cap, persists same-day Shadow lock state, and can optionally trip the canonical circuit breaker
+  - `src/risk_backbone/daily_pnl_breaker_entry_gate.py` now exists as the first bounded runtime consumer
+  - `RiskRuntime` now accepts a typed opt-in `daily_pnl_precheck_hook`, so the Build-4 rail can reject new entries once the daily breaker has forced the session into Shadow
+- preserve the doctrine:
+  - opt-in only
+  - fail-open by default
+  - no hidden live activation
+  - no automatic same-day reactivation
+- latest proofs:
+  - focused `daily_pnl_breaker + risk_runtime` slice: `34 passed`
+  - focused `risk_runtime + engine A/B/C/D cross-check` slice: `42 passed`
+
+## Latest `reconciliation_scheduler` bounded operated seam
+
+- current truth:
+  - `src/execution_backbone/reconciliation_layer/scheduler.py` now exists
+  - the scheduler now loads governed `THR-I04`, enforces bounded interval limits, and exposes typed `boot_reconcile(...)` + `run_periodic_if_due(...)`
+  - boot reconciliation now has an explicit blocking seam for unresolved divergences
+  - periodic reconciliation now has an explicit due/not-due seam and can trip the canonical circuit breaker on critical divergence
+- preserve the doctrine:
+  - no hidden background loop in this slice
+  - explicit caller ownership of timing
+  - reuse the canonical `EmergencyCircuitBreaker`
+  - no bypass of the existing reconciliation runtime
+- latest proofs:
+  - focused `reconciliation_scheduler + reconciliation_layer` slice: `35 passed`
+  - focused `execution_runtime cross-check` slice: `28 passed`
+
+## Latest `execution_runtime_bootstrap` operated boot caller for `THR-I04`
+
+- current truth:
+  - `src/protocols/execution_runtime_bootstrap.py` now exposes typed bootstrap bundles:
+    - `ExecutionRuntimeBootstrapBundle`
+    - `build_execution_runtime_bootstrap_bundle(...)`
+    - `build_binance_execution_runtime_bootstrap_bundle(...)`
+  - the existing bootstrap helpers remain backward-compatible and still return only `ExecutionRuntime`
+  - the bundle now exposes optional bounded `reconciliation_scheduler` + `reconciliation_boot_result`
+  - stale-only first boot with zero divergences is now treated as initial baseline establishment, not as a false trading block
+  - `scripts/run_build9_core_smoke.py` is now the first real operated caller of this seam and can also load governed `THR-I04` from an optional calibration root
+- preserve the doctrine:
+  - opt-in only
+  - no hidden loop
+  - no fake Shadow/service integration before a real runtime caller exists
+  - Build-9 smoke remains the first operated seam on this path
+- latest proofs:
+  - focused `execution runtime bootstrap + Build-9 smoke + reconciliation scheduler` slice: `20 passed`
+  - focused `execution runtime cross-check` slice: `48 passed`
+
+## Latest standalone Build-9 smoke alignment
+
+- current truth:
+  - `scripts/run_build9_core_smoke.py` now imports the canonical engine facades through `engines.engine_a` and `engines.engine_b`
+  - the same script now passes the explicit Build-8 portfolio `freshness_policy` required by the current `OrchestratorConfig`
+  - the standalone operated report now reaches:
+    - Build-2..9 `PASS`
+    - engine chain `PASS`
+    - portfolio chain `PASS`
+    - execution bootstrap `PASS`
+  - the remaining direct-run failure is upstream of this slice: Build-1 still reports pre-existing DAG violations
+- preserve the doctrine:
+  - no new launcher
+  - no fake alias package
+  - canonical facades and typed config only
+- latest proofs:
+  - focused `Build-9 smoke script + execution bootstrap` slice: `21 passed`
+  - direct `python scripts/run_build9_core_smoke.py` now fails only on Build-1 DAG debt
+
+## Latest Build-1 DAG debt reduction
+
+- current truth:
+  - the canonical manifest/build registries now include the real on-disk packages:
+    - `calibration_methods`
+    - `secrets_manager`
+    - `sharia_compliance`
+    - `venue_adapters`
+  - the dependency registry now authorizes the non-cyclic imports already present on disk for `execution_backbone`, `risk_backbone`, `scoring_backbone`, `local_replay_runtime`, `backtest_artifact_import`, `protocols`, and `venue_adapters`
+  - the mixed Build-1 DAG report has been reduced from `47` errors to `27`
+  - the remaining debt is now mostly real cycle/forward-edge debt, not missing-manifest drift
+- preserve the doctrine:
+  - no DAG validator weakening
+  - no cycle authorization just to force Build-1 green
+  - Build-1 module count remains unchanged
+- latest proofs:
+  - focused `manifest registry` slice: `83 passed`
+  - direct `dag_validator` report: `27` errors
+  - direct `python scripts/run_build9_core_smoke.py` still fails only on Build-1 `dag_validator`
+
+## Latest Build-1 monitoring seam reduction
+
+- current truth:
+  - Local IA Lab monitoring builders now live in `monitoring`, not `local_replay_runtime`
+  - `run_local_lab_analysis_bundle.py` now passes primitive release/bridge/promotion facts into that monitoring seam
+  - the old `local_replay_runtime` monitoring builder files were removed, not wrapped
+  - the `local_replay_runtime -> monitoring` unauthorized imports are gone from the DAG report
+  - Build-1 blocking debt is now `23` real errors:
+    - `4` cycles
+    - `19` unauthorized imports
+- preserve the doctrine:
+  - no fake alias package
+  - no validator weakening
+  - COMPLETE-only runtime doctrine unchanged
+- latest proofs:
+  - focused `Local Lab monitoring seam` slice: `23 passed`
+  - direct `python scripts/run_build9_core_smoke.py` still fails only on Build-1 `dag_validator (23 error(s))`
+
+## Latest Build-1 replay/protocol seam reduction
+
+- current truth:
+  - the replay workflow loader now lives under `local_replay_runtime`, not `monitoring`
+  - injected websocket frame loading now lives under `data_backbone.websocket_gateway`
+  - the `local_replay_runtime -> protocols` edge in the execution telemetry artifact path is gone
+  - Build-1 blocking debt is now `19` real errors:
+    - `3` cycles
+    - `16` unauthorized imports
+- preserve the doctrine:
+  - no wrapper alias to preserve the old seam
+  - no validator weakening
+  - COMPLETE-only runtime doctrine unchanged
+- latest proofs:
+  - focused `replay/protocol seam` slice: `36 passed`
+  - direct `python scripts/run_build9_core_smoke.py` still fails only on Build-1 `dag_validator (19 error(s))`
+
+## Latest Build-1 DAG closure
+
+- current code truth:
+  - the last execution-layer upward edges are gone
+  - `ExecutionRuntime` now consumes the canonical fee-aware edge helper from `execution_backbone`, not `scoring_backbone`
+  - `ReconciliationScheduler` now consumes the canonical circuit breaker from `execution_backbone`, not `risk_backbone`
+  - the former scoring/risk entrypoints remain as compatibility surfaces over the execution-owned implementations
+  - the temporary dependency-registry allowances for `execution_backbone -> risk_backbone/scoring_backbone` were removed
+  - Build-1 now passes with `0` blocking DAG errors
+- preserve the doctrine:
+  - no validator weakening
+  - no fake green via broad registry exceptions
+  - COMPLETE-only runtime doctrine unchanged
+- latest proofs:
+  - focused `execution/risk/scoring compatibility` slice: `168 passed`
+  - focused `manifest/build-order/dependency/layer` slice: `96 passed`
+  - direct `dag_validator` report: `0` blocking errors
+  - direct `python scripts/run_build9_core_smoke.py`: Build-1 `PASS`, Build-2..9 `PASS`
+
+## Latest `gatekeeper` canonical execution convergence
+
+- current code truth:
+  - `src/execution_backbone/gatekeeper/gatekeeper.py` now exists as the canonical Build-3 convergence wrapper
+  - `ExecutionRuntime.submit_opportunity(...)` now routes its pre-submit decision chain through `ExecutionGatekeeper.authorize(...)`
+  - the existing execution guards are still the real underlying checks; the gatekeeper only centralizes their decision into a typed `ExecutionPermit` / `ExecutionRefusal`
+  - refusals now preserve the real `pair` and `engine_id`
+  - `ExecutionSubmission` now carries `gate_trace`, and the same trace is emitted in structured runtime logs
+- preserve the doctrine:
+  - no parallel execution path
+  - no guard removal
+  - COMPLETE-only doctrine unchanged
+  - persisted `artifacts/gatekeeper/` audit storage is still not implemented
+- latest proofs:
+  - focused `gatekeeper + execution runtime + execution runtime bootstrap` slice: `41 passed`
+  - direct `python scripts/run_build9_core_smoke.py`: Build-1 `PASS`, Build-2..9 `PASS`
+
+## Latest `info_stress_monitor` bounded risk seam
+
+- current code truth:
+  - `src/risk_backbone/info_stress_monitor.py` now exists as the bounded V37-3 detector
+  - the first governed implementation classifies `NORMAL / ELEVATED / EXTREME` from five simple signals:
+    - spread explosion
+    - depth ratio collapse
+    - cancellation spike
+    - taker imbalance saturation
+    - micro-vol divergence
+  - `build_info_stress_entry_gate(...)` now exposes a typed `RiskInfoStressPrecheckHook`
+  - `RiskRuntime` now accepts that dedicated hook and blocks entries during an EXTREME cooldown when the hook is injected explicitly
+- preserve the doctrine:
+  - opt-in only
+  - no Shadow/Micro-live/Live auto-wiring yet
+  - no full MAS/ML layer; bounded lite seam only
+- latest proofs:
+  - focused `info_stress_monitor + risk_runtime` slice: `29 passed`
+  - direct `python scripts/run_build9_core_smoke.py`: Build-1 `PASS`, Build-2..9 `PASS`
+
+## Latest `info_stress` late-stage protocol propagation
+
+- current code truth:
+  - `src/protocols/contracts.py` now defines `InfoStressGovernanceSummary`
+  - `run_shadow_validation(...)` now accepts an optional `info_stress_assessment` and projects it into `shadow_summary.info_stress_governance`
+  - `build_micro_live_input_from_shadow(...)` and `run_micro_live_gate(...)` now preserve that summary unchanged
+  - `build_live_light_input_from_micro_live(...)` and `run_live_light_gate(...)` now preserve the same summary unchanged
+- preserve the doctrine:
+  - protocol propagation only
+  - no launcher/service/config auto-wiring yet
+  - no monitoring/dashboard work in this slice
+  - assessment-only seam; no fake recommendation layer added
+- latest proofs:
+  - focused `protocol contracts + shadow + micro-live + live-light` slice: `147 passed`
+  - focused `info_stress_monitor + risk_runtime` slice: `29 passed`
+  - direct `python scripts/run_build9_core_smoke.py`: Build-1 `PASS`, Build-2..9 `PASS`
+
+## Latest `info_stress` operated Shadow propagation
+
+- current code truth:
+  - `run_local_replay_shadow.py` now accepts and auto-discovers `info_stress_assessment.json`
+  - `run_shadow_daily_orchestrator.py` now persists `info_stress_governance_status`, `level`, `alert_count`, `entries_blocked`, `entries_blocked_until_ts`, `reason_codes`, and `detail`
+  - `run_shadow_vps_service.py` now resolves `info_stress_assessment` from CLI first, then `live_websocket_config.info_stress_assessment_path_ref`
+  - the Shadow VPS service now persists `info_stress` ref/source into state, runtime bundle, campaign summary, monitoring payload, and observability export
+  - monitoring now exposes the assessment-only seam via dedicated Prometheus samples
+- preserve the doctrine:
+  - assessment-only seam remains intact
+  - no fake safing layer
+  - no hidden Shadow/Micro-live/Live automation
+- latest proofs:
+  - focused `runner + orchestrator + service + monitoring` slice: `39 passed`
+  - direct `python scripts/run_build9_core_smoke.py`: Build-1 `PASS`, Build-2..9 `PASS`
+
+## Latest `gatekeeper` persisted audit store on the canonical execution rail
+
+- current code truth:
+  - `src/execution_backbone/gatekeeper/audit_logger.py` now exists as the append-only JSONL logger for canonical gatekeeper decisions
+  - `ExecutionRuntime.submit_opportunity(...)` now writes gatekeeper audit records when a `GatekeeperAuditLogger` is injected
+  - `execution_runtime_bootstrap.py` now accepts `gatekeeper_audit_path`
+  - `run_build9_core_smoke.py` now accepts `--gatekeeper-audit-path` and can materialize `artifacts/gatekeeper/audit.jsonl`
+- preserve the doctrine:
+  - no new runtime path outside canonical Build-3
+  - no dashboard-first expansion for this slice
+  - COMPLETE-only doctrine unchanged
+- latest proofs:
+  - focused `gatekeeper + execution_runtime + bootstrap + build9 smoke` slice: `51 passed`
+  - direct `python scripts/run_build9_core_smoke.py --gatekeeper-audit-path build/build9_core_smoke_run/artifacts/gatekeeper/audit.jsonl`: Build-1 `PASS`, Build-2..9 `PASS`
+
+## Latest `log_rotation` bounded monitoring seam
+
+- current code truth:
+  - `src/monitoring/log_rotation.py` now exists
+  - `rotate_log_file(...)` performs timestamped gzip rotation plus retention pruning on one operated log file
+  - `monitoring.__init__` now exports the rotation helper
+- preserve the doctrine:
+  - bounded helper only, no daemon or hidden scheduler
+  - no Telegram wiring yet
+  - no new package/profile semantics
+- latest proofs:
+  - focused `log_rotation + disk_monitor + execution audit slice`: `55 passed`
+
+## Latest bounded `telegram_alerter` adapter
+
+- current code truth:
+  - `src/alerting/{__init__,telegram_alerter}.py` now exists as a bounded external alert delivery package
+  - it accepts canonical `AlertRecord` values, applies severity filtering, formats bounded plain-text Telegram payloads, and can load sealed config via `secrets_manager`
+  - `manifest_registry` now registers `alerting` as a canonical Build-11 module, so the package no longer sits outside the manifest
+- preserve the doctrine:
+  - no hidden integration into `monitoring_runtime` yet
+  - no daemon or retry service
+  - COMPLETE-only doctrine unchanged
+- latest proofs:
+  - focused `alerting + manifest + layer DAG` slice: `126 passed`
+  - direct `python scripts/run_build9_core_smoke.py`: Build-1 `PASS`, Build-2..9 `PASS`
+
+## Latest operated Telegram alert seam on the Shadow VPS service
+
+- current code truth:
+  - `src/protocols/shadow_vps_service_telegram_alerting.py` now projects selected operated `ShadowVpsServiceEvent` values into canonical `AlertRecord`
+  - `scripts/run_shadow_vps_service.py` now accepts optional Telegram config/key paths and sends opt-in alerts from the service rail
+  - every successful or failed delivery is audited in `shadow_vps_service.events.jsonl` as `telegram_alert_sent` / `telegram_alert_failed`
+- preserve the doctrine:
+  - no Build-10 forward dependency into `alerting`
+  - no hidden background sender
+  - Telegram delivery failure stays fail-open for the service
+- latest proofs:
+  - focused `protocols + alerting + manifest layer` slice: `43 passed`
+  - direct `python scripts/run_build9_core_smoke.py`: Build-1 `PASS`, Build-2..9 `PASS`
+
+## Latest operated Telegram monitoring seam on the Shadow VPS service
+
+- current code truth:
+  - the service state, campaign summary, and monitoring payload now persist the last Telegram delivery truth as `telegram_alert_delivery_status / event_type / error`
+  - `run_shadow_vps_service.py` now updates that truth on each bounded delivery attempt and rewrites the final summary + monitoring artifacts after `service_stopped`
+  - Prometheus export now exposes `v53_shadow_vps_telegram_alert_delivery_status`
+- preserve the doctrine:
+  - still no Build-10/dashboard-first expansion
+  - still no retry daemon or hidden sender loop
+  - the seam remains last-state only, backed by operated service truth
+- latest proofs:
+  - focused `telegram seam + monitoring` slice: `17 passed`
+  - direct `python scripts/run_build9_core_smoke.py`: Build-1 `PASS`, Build-2..9 `PASS`
+
+## Latest Build-10 projection of the Shadow Telegram seam
+
+- current code truth:
+  - `run_technical_dashboard.py` now hydrates the last Telegram delivery truth from `shadow_vps_service.campaign_summary.json`
+  - `technical_dashboard_view.py` now renders a dedicated `Telegram Alerts` card in `Build-11 Shadow`
+  - the regenerated local Build-10 artifact for `build11_live_websocket_campaign` now shows the same operated Telegram seam already exposed in Prometheus
+- preserve the doctrine:
+  - projection only, no new alerting logic
+  - no Grafana-first expansion
+  - last-state only, still backed by service truth
+- latest proofs:
+  - focused `launcher + view + monitoring backend` slice: `77 passed`
+  - direct `python scripts/run_build9_core_smoke.py`: Build-1 `PASS`, Build-2..9 `PASS`
+
+## Latest local Grafana + operated Telegram config provenance seam
+
+- current code truth:
+  - the local Shadow Grafana bundle now contains `Telegram Alerts` and `Telegram Alert Labels`
+  - the operated Shadow service now resolves Telegram config/key refs from `live_websocket_config` with CLI override preserved
+  - service state, runtime evidence, campaign summary, monitoring payload, and Prometheus now persist the Telegram config provenance seam
+- preserve the doctrine:
+  - projection only on Grafana, no new alerting daemon
+  - operated precedence remains `cli > live_websocket_config > not_configured`
+  - still no hidden runtime activation
+- latest proofs:
+  - focused `local_grafana + monitoring + launcher` slice: `21 passed`
+  - direct `python scripts/run_build9_core_smoke.py`: Build-1 `PASS`, Build-2..9 `PASS`
+
+## Latest operated execution runtime bootstrap monitoring seam
+
+- current code truth:
+  - the operated Shadow service now persists bootstrap reconcile truth beyond `ref/status/source`: `executed`, `trading_blocked`, `circuit_breaker_tripped`, `recovery_action`, and `divergence_count`
+  - canonical Shadow monitoring/Prometheus now exposes that seam through `v53_shadow_vps_execution_runtime_bootstrap_status`, `..._divergence_count`, and `..._trading_blocked`
+  - the canonical Build-10 `Build-11 Shadow` section now renders a dedicated `Execution Bootstrap` card backed by the service campaign summary
+- preserve the doctrine:
+  - no new bootstrap runtime behavior
+  - no daemon/retry path, no hidden order flow
+  - Build-10 remains projection-only over service truth
+- latest proofs:
+  - focused `shadow monitoring + technical dashboard + launcher` slice: `56 passed`
+  - direct `python scripts/run_build9_core_smoke.py`: Build-1 `PASS`, Build-2..9 `PASS`
+
+## Latest Build-1 executable engineering guardrails baseline
+
+- current code truth:
+  - `smoke_bootstrap_recovery` now runs a real repo-wide engineering guardrail scan as part of Build-1 sanity, derived from `CODEX_PROMPT.md`
+  - `scripts/run_engineering_guardrails.py` now writes `build/engineering_guardrails/engineering_guardrails.report.json` and `.summary.txt`
+  - accepted legacy drift is frozen in `config/engineering_guardrails_baseline.json`, so Build-1 now blocks only net-new guardrail regressions instead of failing on the entire historical repo
+- preserve the doctrine:
+  - no repo-wide blind rewrite
+  - no bypass of the Build-1 foundation rail
+  - hotspots are surfaced explicitly for surgical follow-up
+- latest proofs:
+  - repo-wide baseline scan: `826` Python files, `4363` accepted legacy violations
+  - normal guardrail run: `new_violations=0`
+  - focused Build-1 guardrail suite: `41 passed`
+  - direct `python scripts/run_build9_core_smoke.py`: Build-1 `PASS`, Build-2..9 `PASS`
+
+## Latest first operated hotspot reduction under executable guardrails
+
+- current code truth:
+  - `scripts/run_shadow_vps_service.py` is no longer carrying untyped loader helpers, bare `print()` calls, or the previous bare `except Exception:` on the execution telemetry write path
+  - parser construction is now decomposed into typed `_build_argument_parser(...)` and `_add_*_arguments(...)` helpers
+  - the service final output is now emitted through a dedicated CLI-output helper instead of inline prints
+- preserve the doctrine:
+  - no service-loop semantic drift
+  - no bypass of the operated Shadow rail
+  - only the hotspot surface was reduced; the remaining large monoliths stay explicit and visible
+- latest proofs:
+  - focused `shadow service + monitoring` slice: `19 passed`
+  - direct `python scripts/run_build9_core_smoke.py`: Build-1 `PASS`, Build-2..9 `PASS`
+  - repo-wide guardrail total reduced from `4363` to `4341`
+  - `scripts/run_shadow_vps_service.py` reduced from `26` to `4` residual guardrail violations
+
+## Latest second operated hotspot reduction under executable guardrails
+
+- current code truth:
+  - `scripts/run_shadow_vps_service.py` now materializes `ShadowVpsCampaignSummary` through grouped field-builders instead of one monolithic inline constructor
+  - `_write_campaign_summary(...)` is now a thin typed wrapper over `core`, `live_capture`, `execution`, `regime`, and `info_stress` builders
+  - the helper decomposition keeps the exact summary schema and defaults while removing the previous function-length violation
+- preserve the doctrine:
+  - no service-loop semantic drift
+  - no artifact/schema rename
+  - remaining debt stays explicit: `FILE_TOO_LONG`, `_write_runtime_evidence_bundle(...)`, `run_shadow_vps_service(...)`
+- latest proofs:
+  - repo-wide guardrail run: `total_violations=4340`, `new_violations=0`
+  - focused `shadow service + monitoring` slice: `19 passed`
+  - direct `python scripts/run_build9_core_smoke.py`: Build-1 `PASS`, Build-2..9 `PASS`
+
+## Latest third operated hotspot reduction under executable guardrails
+
+- current code truth:
+  - `scripts/run_shadow_vps_service.py` now builds `ShadowVpsRuntimeEvidenceBundle` through grouped typed builders instead of one monolithic inline constructor
+  - `_write_runtime_evidence_bundle(...)` is now a thin wrapper over `input`, `execution`, `projection`, `regime_lite`, `info_stress`, and artifact-ref builders
+  - `last_run` conversions are centralized via typed helper functions, keeping the durable runtime schema unchanged
+- preserve the doctrine:
+  - no service-loop semantic drift
+  - no artifact/schema rename
+  - remaining debt on the file is now narrowed to `FILE_TOO_LONG` plus `run_shadow_vps_service(...)`
+- latest proofs:
+  - refreshed guardrail baseline, then steady-state run: `total_violations=4339`, `new_violations=0`
+  - focused `shadow service + monitoring` slice: `19 passed`
+  - direct `python scripts/run_build9_core_smoke.py`: Build-1 `PASS`, Build-2..9 `PASS`
+
+Latest fourth operated hotspot reduction under executable guardrails:
+
+- current code truth:
+  - `scripts/run_shadow_vps_service.py` public entrypoint is now a thin orchestrator over startup, main-loop, finalize, and output helpers
+  - the remaining newly introduced builder overage was reduced with small extraction helpers, so the guardrail run is back to zero new debt
+  - remaining explicit debt on this file is now only `FILE_TOO_LONG`
+- preserve the doctrine:
+  - no semantic drift in the Shadow operated rail
+  - no artifact/schema rename
+  - no monitoring field loss
+- latest proofs:
+  - repo-wide guardrail run: `total_violations=4338`, `new_violations=0`
+  - focused `shadow service + monitoring` slice: `19 passed`
+  - direct `python scripts/run_build9_core_smoke.py`: Build-1 `PASS`, Build-2..9 `PASS`
+
+Latest fifth operated hotspot reduction under executable guardrails:
+
+- current code truth:
+  - `scripts/run_local_replay_shadow.py` no longer keeps the governed LOCAL_REPLAY -> SHADOW export path inline inside one monolithic runner body
+  - import-context, import materialization, runtime bundle, session-day recording, demo payload, and per-engine Shadow evaluations are now all routed through typed helpers
+  - the file-local guardrail debt on this hotspot dropped from `22` to `1`; the only residue is now `FILE_TOO_LONG`
+- preserve the doctrine:
+  - no artifact/schema rename
+  - no session-summary or evidence-contract drift
+  - no hidden runtime behavior change on the governed Shadow rail
+- latest proofs:
+  - repo-wide guardrail run: `total_violations=4316`, `new_violations=0`
+  - focused `local replay shadow runner` slice: `18 passed`
+  - direct `python scripts/run_build9_core_smoke.py`: Build-1 `PASS`, Build-2..9 `PASS`
+
+Latest sixth operated hotspot reduction under executable guardrails:
+
+- current code truth:
+  - `scripts/run_local_replay_shadow.py` is now only the CLI/public facade; the governed runner internals were split into bounded support modules for models/recovery, engines, payloads, import pipeline, and runtime/session pipeline
+  - the split preserves the same public API (`main`, `export_local_replay_shadow_run`, `LocalReplayShadowArtifacts`) and the same governed sidecar/session artifacts
+  - all newly split files are now at `0` local guardrail violations; the previous file-length debt on the original runner is fully removed
+- preserve the doctrine:
+  - no artifact/schema rename
+  - no hidden runtime behavior change on the LOCAL_REPLAY -> SHADOW operated rail
+  - no bypass of canonical Shadow governance
+- latest proofs:
+  - repo-wide guardrail run: `total_violations=4315`, `new_violations=0`
+  - focused `local replay shadow runner` slice: `18 passed`
+  - direct `python scripts/run_build9_core_smoke.py`: Build-1 `PASS`, Build-2..9 `PASS`
+
+Latest seventh operated hotspot reduction under executable guardrails:
+
+- current code truth:
+  - `scripts/run_local_lab_analysis_bundle.py` no longer emits inline CLI `print()` calls at the end of the Local IA Lab chain
+  - operator output now flows through a single bounded `_emit_local_lab_analysis_bundle_output(...)` helper, preserving the same artifact refs and terminal surface
+  - hotspot-local debt dropped from `30` to `2`; the remaining debt is only `FILE_TOO_LONG` plus the still-monolithic `main(...)`
+- preserve the doctrine:
+  - no Local IA Lab artifact/schema drift
+  - no behavior change in the chained review/calibration/replay/monitoring pipeline
+  - no UI-only diversion
+- latest proofs:
+  - repo-wide guardrail run: `total_violations=4287`, `new_violations=0`
+  - focused `local_lab_analysis_bundle launcher` slice: `7 passed`

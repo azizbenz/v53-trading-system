@@ -37,6 +37,7 @@ from smoke_bootstrap_recovery.recovery_runner import run_recovery_cycle
 from smoke_bootstrap_recovery.state_sanity_checker import (
     capture_fd_count,
     check_dag_clean,
+    check_engineering_guardrails,
     check_fd_leak,
     check_kill_switch_persisted,
     check_manifest_consistency,
@@ -216,6 +217,8 @@ def run_build1_smoke(
         # Add DAG check to dag_validator module
         if mod_name == "dag_validator":
             sanity_checks["dag_clean"] = check_dag_clean()
+        if mod_name == "smoke_bootstrap_recovery":
+            sanity_checks["engineering_guardrails"] = check_engineering_guardrails()
         kill_switch_check = _resolve_kill_switch_smoke(
             module_name=mod_name,
             kill_switch_state_dir=kill_switch_state_dir,
@@ -265,6 +268,7 @@ __all__ = [
     "run_recovery_cycle",
     # Sanity
     "check_dag_clean",
+    "check_engineering_guardrails",
     "check_manifest_consistency",
     "check_module_importable",
     "run_sanity_checks",

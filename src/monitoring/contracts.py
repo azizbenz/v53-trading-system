@@ -25,6 +25,7 @@ Build14ReaderSeverity = Literal["nominal", "elevated", "critical"]
 MetricKind = Literal["counter", "gauge", "state"]
 AlertHistoryState = Literal["open", "resolved"]
 EngineJudgmentVerdict = Literal["promotable", "shadow-only", "rewrite-required", "dormant"]
+ShadowVpsLogScanMode = Literal["full_scan", "tail_recent"]
 
 
 class PortfolioMetrics(BaseModel, frozen=True):
@@ -484,6 +485,20 @@ class ReplayImportProjection(BaseModel, frozen=True):
     rejection_reasons: tuple[str, ...] = ()
 
 
+class RegimeLiteSafingProjection(BaseModel, frozen=True):
+    """Normalized regime_lite safing recommendation exposed on the Shadow rail."""
+
+    status: ProjectionStatus = "planned"
+    severity: str = "not_configured"
+    should_block_new_entries: bool = False
+    should_exit_all: bool = False
+    recommended_operator_action: str = ""
+    operator_safing_request_action: str = ""
+    operator_safing_request_source_runtime_mode: str = ""
+    detail: str = ""
+    reason_codes: tuple[str, ...] = ()
+
+
 class ShadowProjection(BaseModel, frozen=True):
     """Normalized Build-11 Shadow summary consumed by Build-10 supervision."""
 
@@ -510,6 +525,57 @@ class ShadowProjection(BaseModel, frozen=True):
     build14_enabler_count: int = Field(default=0, ge=0)
     shadow_validated_component_count: int = Field(default=0, ge=0)
     dormant_component_count: int = Field(default=0, ge=0)
+    execution_telemetry_ref: str = ""
+    execution_telemetry_status: str = "not_configured"
+    telegram_alert_delivery_status: str = "not_configured"
+    telegram_alert_delivery_event_type: str = ""
+    telegram_alert_delivery_error: str = ""
+    telegram_alert_config_ref: str = ""
+    telegram_alert_config_source: str = "not_configured"
+    telegram_alert_key_ref: str = ""
+    telegram_alert_key_source: str = "not_configured"
+    execution_runtime_bootstrap_ref: str = ""
+    execution_runtime_bootstrap_status: str = "not_configured"
+    execution_runtime_bootstrap_source: str = "not_configured"
+    execution_runtime_gatekeeper_audit_ref: str = ""
+    execution_runtime_gatekeeper_audit_source: str = "not_configured"
+    execution_runtime_bootstrap_user_data_stream_enabled: bool = False
+    execution_runtime_bootstrap_reconciliation_boot_executed: bool = False
+    execution_runtime_bootstrap_reconciliation_boot_trading_blocked: bool = False
+    execution_runtime_bootstrap_reconciliation_boot_circuit_breaker_tripped: bool = False
+    execution_runtime_bootstrap_reconciliation_boot_detail: str = ""
+    execution_runtime_bootstrap_reconciliation_boot_recovery_action: str = ""
+    execution_runtime_bootstrap_reconciliation_boot_divergence_count: int = Field(
+        default=0,
+        ge=0,
+    )
+    execution_runtime_projection_ref: str = ""
+    execution_runtime_projection_source: str = "not_configured"
+    regime_lite_assessment_ref: str = ""
+    regime_lite_assessment_source: str = "not_configured"
+    regime_lite_safing_recommendation_ref: str = ""
+    regime_lite_safing_recommendation_source: str = "not_configured"
+    info_stress_assessment_ref: str = ""
+    info_stress_assessment_source: str = "not_configured"
+    info_stress_governance_status: str = "not_configured"
+    info_stress_level: str = "not_configured"
+    info_stress_alert_count: int = Field(default=0, ge=0)
+    info_stress_entries_blocked: bool = False
+    info_stress_entries_blocked_until_ts: int = Field(default=0, ge=0)
+    info_stress_reason_codes: tuple[str, ...] = ()
+    info_stress_detail: str = ""
+    execution_runtime_projection_status: str = "not_configured"
+    execution_runtime_projection_ready: bool = False
+    execution_runtime_projection_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_ready_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_partial_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_blocked_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_bridge_status: str = "planned"
+    execution_runtime_projection_bridge_loaded: bool = False
+    execution_runtime_projection_rate_limit_model_loaded: bool = False
+    execution_runtime_projection_spread_guard_model_loaded: bool = False
+    execution_runtime_projection_slippage_model_loaded: bool = False
+    regime_lite_safing: RegimeLiteSafingProjection = RegimeLiteSafingProjection()
 
 
 class MicroLiveProjection(BaseModel, frozen=True):
@@ -529,6 +595,13 @@ class MicroLiveProjection(BaseModel, frozen=True):
     planned_engines: tuple[str, ...] = ()
     import_artifact_id: str = "none"
     import_lineage_version: str = "n/a"
+    execution_runtime_projection_ref: str = ""
+    execution_runtime_projection_status: str = "not_configured"
+    execution_runtime_projection_ready: bool = False
+    execution_runtime_projection_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_ready_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_partial_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_blocked_consumer_count: int = Field(default=0, ge=0)
     observability_ready: bool = False
     halt_ready: bool = False
     onboarding_ready: bool = False
@@ -560,6 +633,13 @@ class LiveLightProjection(BaseModel, frozen=True):
     planned_engines: tuple[str, ...] = ()
     import_artifact_id: str = "none"
     import_lineage_version: str = "n/a"
+    execution_runtime_projection_ref: str = ""
+    execution_runtime_projection_status: str = "not_configured"
+    execution_runtime_projection_ready: bool = False
+    execution_runtime_projection_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_ready_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_partial_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_blocked_consumer_count: int = Field(default=0, ge=0)
     observability_ready: bool = False
     halt_ready: bool = False
     execution_ready: bool = False
@@ -707,6 +787,28 @@ class ExecutionNoTradeBridgeProjection(BaseModel, frozen=True):
     detail: str = "Compiled execution no-trade bridge not configured"
 
 
+class ExecutionRuntimeProjectionBridgeProjection(BaseModel, frozen=True):
+    """Governed monitoring projection of the bounded Local IA Lab runtime projection bridge."""
+
+    status: ProjectionStatus = "planned"
+    configured: bool = False
+    projection_found: bool = False
+    projection_loaded: bool = False
+    projection_status: str = ""
+    projection_path: str = ""
+    consumer_count: int = Field(default=0, ge=0)
+    ready_consumer_count: int = Field(default=0, ge=0)
+    partial_consumer_count: int = Field(default=0, ge=0)
+    blocked_consumer_count: int = Field(default=0, ge=0)
+    rate_limit_model_loaded: bool = False
+    spread_guard_model_loaded: bool = False
+    slippage_model_loaded: bool = False
+    caution_flags: tuple[str, ...] = ()
+    blocking_reasons: tuple[str, ...] = ()
+    error_type: str = ""
+    detail: str = "Execution runtime projection bridge not configured"
+
+
 class AlertProjection(BaseModel, frozen=True):
     """Normalized alert and operability projection."""
 
@@ -753,6 +855,9 @@ class TechnicalDashboardPayload(TimestampedModel):
     build14: Build14Projection = Build14Projection()
     account_user_data: AccountUserDataProjection = AccountUserDataProjection()
     execution_no_trade_bridge: ExecutionNoTradeBridgeProjection = ExecutionNoTradeBridgeProjection()
+    execution_runtime_projection_bridge: ExecutionRuntimeProjectionBridgeProjection = (
+        ExecutionRuntimeProjectionBridgeProjection()
+    )
     runtime_hook_bridges: tuple[RuntimeHookBridgeProjection, ...] = ()
     replay_import: ReplayImportProjection
     alerts: AlertProjection
@@ -807,6 +912,51 @@ class LocalLabMonitoringBackendPayload(TimestampedModel):
     scope_blocked_count: int = Field(default=0, ge=0)
     release_scope_ready_count: int = Field(default=0, ge=0)
     release_scope_blocked_count: int = Field(default=0, ge=0)
+    loss_surrogate_status: str = Field(default="not_evaluated", min_length=1)
+    loss_surrogate_ready: bool = False
+    loss_surrogate_scope_count: int = Field(default=0, ge=0)
+    loss_surrogate_top_scope_slug: str = ""
+    loss_surrogate_top_probability: float = Field(default=0.0, ge=0.0, le=1.0)
+    calibration_methods_review_status: str = Field(default="not_evaluated", min_length=1)
+    calibration_methods_review_ready: bool = False
+    calibration_methods_dsr_pass: bool | None = None
+    calibration_methods_walk_forward_plan_ready: bool = False
+    calibration_methods_stationarity_status: str = Field(default="not_evaluated", min_length=1)
+    calibration_methods_stationarity_pass: bool | None = None
+    execution_review_status: str = Field(default="not_evaluated", min_length=1)
+    execution_review_ready: bool = False
+    execution_ready_threshold_count: int = Field(default=0, ge=0)
+    execution_partial_threshold_count: int = Field(default=0, ge=0)
+    execution_blocked_threshold_count: int = Field(default=0, ge=0)
+    multiple_testing_review_status: str = Field(default="not_evaluated", min_length=1)
+    multiple_testing_review_ready: bool = False
+    multiple_testing_correction_required: bool = False
+    multiple_testing_correction: str = Field(default="not_evaluated", min_length=1)
+    multiple_testing_family_count: int = Field(default=0, ge=0)
+    calibration_normalized_report_status: str = Field(default="not_evaluated", min_length=1)
+    calibration_normalized_report_ready: bool = False
+    calibration_normalized_threshold_count: int = Field(default=0, ge=0)
+    tail_risk_review_status: str = Field(default="not_evaluated", min_length=1)
+    tail_risk_review_ready: bool = False
+    tail_risk_ready_breaker_count: int = Field(default=0, ge=0)
+    tail_risk_partial_breaker_count: int = Field(default=0, ge=0)
+    tail_risk_blocked_breaker_count: int = Field(default=0, ge=0)
+    research_priority_status: str = Field(default="not_evaluated", min_length=1)
+    research_priority_scope_count: int = Field(default=0, ge=0)
+    research_priority_top_scope_slug: str = ""
+    research_priority_top_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    replay_candidate_queue_status: str = Field(default="not_evaluated", min_length=1)
+    replay_candidate_count: int = Field(default=0, ge=0)
+    replay_candidate_ready_count: int = Field(default=0, ge=0)
+    replay_candidate_top_scope_slug: str = ""
+    replay_ticket_index_status: str = Field(default="not_evaluated", min_length=1)
+    replay_ticket_count: int = Field(default=0, ge=0)
+    replay_ticket_ready_count: int = Field(default=0, ge=0)
+    replay_ticket_top_scope_slug: str = ""
+    replay_dispatch_plan_status: str = Field(default="not_evaluated", min_length=1)
+    replay_dispatch_ready_count: int = Field(default=0, ge=0)
+    replay_dispatch_blocked_count: int = Field(default=0, ge=0)
+    replay_dispatch_top_ticket_id: str = ""
     observability_sample_count: int = Field(default=0, ge=0)
     blocking_reason_count: int = Field(default=0, ge=0)
     release_gate_reason_count: int = Field(default=0, ge=0)
@@ -820,6 +970,18 @@ class LocalLabMonitoringBackendPayload(TimestampedModel):
     artifact_release_candidate_ref: str = ""
     artifact_import_dry_run_bridge_ref: str = ""
     artifact_promotion_readiness_summary_ref: str = ""
+    local_lab_loss_surrogate_ref: str = ""
+    local_lab_calibration_methods_review_ref: str = ""
+    local_lab_execution_review_ref: str = ""
+    local_lab_multiple_testing_review_ref: str = ""
+    local_lab_tail_risk_review_ref: str = ""
+    local_lab_calibration_normalized_report_ref: str = ""
+    local_lab_research_priority_ref: str = ""
+    local_lab_replay_candidate_queue_ref: str = ""
+    local_lab_replay_ticket_index_ref: str = ""
+    local_lab_replay_dispatch_plan_ref: str = ""
+    local_lab_replay_workflow_manifest_ref: str = ""
+    local_lab_monitoring_bundle_manifest_ref: str = ""
 
 
 class LocalLabMonitoringIngestionSummary(TimestampedModel):
@@ -848,6 +1010,7 @@ class LocalLabMonitoringIngestionSummary(TimestampedModel):
     ingestion_detail: str = Field(..., min_length=1)
     observability_export_ref: str = ""
     backend_payload_ref: str = ""
+    monitoring_bundle_manifest_ref: str = ""
 
 
 class MetricSample(BaseModel, frozen=True):
@@ -870,6 +1033,221 @@ class ObservabilityExport(TimestampedModel):
     text_payload: str = Field(..., min_length=1)
 
 
+class ProcessMetricsSample(BaseModel, frozen=True):
+    """Bounded real process metrics sampled from the running VPS service."""
+
+    pid: int = Field(..., ge=1)
+    cpu_pct: float = Field(default=0.0, ge=0.0, le=100.0)
+    ram_pct: float = Field(default=0.0, ge=0.0, le=100.0)
+    rss_mb: float = Field(default=0.0, ge=0.0)
+    thread_count: int = Field(default=0, ge=0)
+    sampling_mode: str = Field(..., min_length=1)
+
+
+class DiskUsageSample(BaseModel, frozen=True):
+    """Bounded disk usage snapshot for the runtime service directory/volume."""
+
+    path: str = Field(..., min_length=1)
+    total_gb: float = Field(default=0.0, ge=0.0)
+    free_gb: float = Field(default=0.0, ge=0.0)
+    used_pct: float = Field(default=0.0, ge=0.0, le=100.0)
+    sampling_mode: str = Field(..., min_length=1)
+
+
+class ShadowVpsServiceMonitoringPayload(TimestampedModel):
+    """Typed future-dashboard payload emitted by the real VPS Shadow service."""
+
+    correlation_id: str = Field(..., min_length=1)
+    profile: ProfileId
+    runtime_mode: RuntimeMode
+    status: ProjectionStatus
+    detail: str = Field(..., min_length=1)
+    service_status: str = Field(..., min_length=1)
+    heartbeat_age_ms: int = Field(default=0, ge=0)
+    loop_count: int = Field(default=0, ge=0)
+    success_count: int = Field(default=0, ge=0)
+    idle_count: int = Field(default=0, ge=0)
+    failure_count: int = Field(default=0, ge=0)
+    resumed: bool = False
+    acquisition_mode: str = Field(default="unknown", min_length=1)
+    runtime_data_source: str = Field(default="unknown", min_length=1)
+    accepted: bool = False
+    consecutive_days: int = Field(default=0, ge=0)
+    remaining_days: int = Field(default=0, ge=0)
+    promotion_gate_passed: bool = False
+    live_capture_emitted_message_count: int = Field(default=0, ge=0)
+    live_capture_accepted_message_count: int = Field(default=0, ge=0)
+    live_capture_rejected_message_count: int = Field(default=0, ge=0)
+    live_user_data_authenticated: bool = False
+    live_user_data_event_count: int = Field(default=0, ge=0)
+    last_selected_session_date: str = ""
+    last_completed_session_date: str = ""
+    last_error: str = ""
+    state_path: str = ""
+    events_path: str = ""
+    campaign_summary_ref: str = ""
+    runtime_evidence_bundle_ref: str = ""
+    execution_telemetry_ref: str = ""
+    execution_telemetry_status: str = "not_configured"
+    telegram_alert_delivery_status: str = "not_configured"
+    telegram_alert_delivery_event_type: str = ""
+    telegram_alert_delivery_error: str = ""
+    telegram_alert_config_ref: str = ""
+    telegram_alert_config_source: str = "not_configured"
+    telegram_alert_key_ref: str = ""
+    telegram_alert_key_source: str = "not_configured"
+    execution_runtime_bootstrap_ref: str = ""
+    execution_runtime_bootstrap_status: str = "not_configured"
+    execution_runtime_bootstrap_source: str = "not_configured"
+    execution_runtime_gatekeeper_audit_ref: str = ""
+    execution_runtime_gatekeeper_audit_source: str = "not_configured"
+    execution_runtime_bootstrap_user_data_stream_enabled: bool = False
+    execution_runtime_bootstrap_reconciliation_boot_executed: bool = False
+    execution_runtime_bootstrap_reconciliation_boot_trading_blocked: bool = False
+    execution_runtime_bootstrap_reconciliation_boot_circuit_breaker_tripped: bool = False
+    execution_runtime_bootstrap_reconciliation_boot_detail: str = ""
+    execution_runtime_bootstrap_reconciliation_boot_recovery_action: str = ""
+    execution_runtime_bootstrap_reconciliation_boot_divergence_count: int = Field(
+        default=0,
+        ge=0,
+    )
+    execution_runtime_projection_ref: str = ""
+    execution_runtime_projection_source: str = "not_configured"
+    regime_lite_assessment_ref: str = ""
+    regime_lite_assessment_source: str = "not_configured"
+    regime_lite_safing_recommendation_ref: str = ""
+    regime_lite_safing_recommendation_source: str = "not_configured"
+    info_stress_assessment_ref: str = ""
+    info_stress_assessment_source: str = "not_configured"
+    execution_runtime_projection_status: str = "not_configured"
+    execution_runtime_projection_ready: bool = False
+    execution_runtime_projection_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_ready_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_partial_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_blocked_consumer_count: int = Field(default=0, ge=0)
+    execution_runtime_projection_bridge_status: str = "planned"
+    execution_runtime_projection_bridge_loaded: bool = False
+    execution_runtime_projection_rate_limit_model_loaded: bool = False
+    execution_runtime_projection_spread_guard_model_loaded: bool = False
+    execution_runtime_projection_slippage_model_loaded: bool = False
+    regime_lite_governance_status: str = "not_configured"
+    regime_lite_state: str = "not_configured"
+    regime_lite_candidate_state: str = "not_configured"
+    regime_lite_entries_blocked: bool = False
+    regime_lite_sudden_event: bool = False
+    regime_lite_safing_severity: str = "not_configured"
+    regime_lite_safing_should_block_new_entries: bool = False
+    regime_lite_safing_should_exit_all: bool = False
+    regime_lite_safing_recommended_operator_action: str = ""
+    regime_lite_safing_operator_safing_request_action: str = ""
+    regime_lite_safing_operator_safing_request_source_runtime_mode: str = ""
+    regime_lite_safing_reason_codes: tuple[str, ...] = ()
+    regime_lite_safing_detail: str = ""
+    info_stress_governance_status: str = "not_configured"
+    info_stress_level: str = "not_configured"
+    info_stress_alert_count: int = Field(default=0, ge=0)
+    info_stress_entries_blocked: bool = False
+    info_stress_entries_blocked_until_ts: int = Field(default=0, ge=0)
+    info_stress_reason_codes: tuple[str, ...] = ()
+    info_stress_detail: str = ""
+    export_dir_ref: str = ""
+    recent_events_summary_ref: str = ""
+    node_exporter_textfile_ref: str = ""
+    scrape_manifest_ref: str = ""
+    prometheus_file_sd_ref: str = ""
+    process: ProcessMetricsSample
+    disk: DiskUsageSample
+
+
+class PrometheusFileSdEntry(BaseModel, frozen=True):
+    """Single Prometheus file_sd target entry."""
+
+    targets: tuple[str, ...] = Field(..., min_length=1)
+    labels: dict[str, str] = Field(default_factory=dict)
+
+
+class ShadowVpsServiceScrapeManifest(TimestampedModel):
+    """Typed local-PC scrape handoff for one Shadow VPS service instance."""
+
+    correlation_id: str = Field(..., min_length=1)
+    profile: ProfileId
+    runtime_mode: RuntimeMode
+    status: ProjectionStatus
+    detail: str = Field(..., min_length=1)
+    service_status: str = Field(..., min_length=1)
+    vps_id: str = Field(..., min_length=1)
+    scrape_host: str = Field(..., min_length=1)
+    node_exporter_scheme: str = Field(default="http", min_length=1)
+    node_exporter_port: int = Field(default=9100, ge=1, le=65535)
+    node_exporter_metrics_path: str = Field(default="/metrics", min_length=1)
+    node_exporter_target: str = Field(..., min_length=1)
+    prometheus_job_name: str = Field(..., min_length=1)
+    file_sd_entry_count: int = Field(default=0, ge=0)
+    node_exporter_textfile_ready: bool = False
+    monitoring_backend_payload_ref: str = ""
+    observability_export_ref: str = ""
+    recent_events_summary_ref: str = ""
+    node_exporter_textfile_ref: str = ""
+    labels: dict[str, str] = Field(default_factory=dict)
+
+
+class ShadowVpsServiceLogEventProjection(BaseModel, frozen=True):
+    """Normalized structured Shadow VPS service event for bounded retrieval."""
+
+    event_type: str = Field(..., min_length=1)
+    timestamp_ms: int = Field(..., ge=0)
+    message: str = Field(..., min_length=1)
+    session_date: str = ""
+    export_dir_ref: str = ""
+    accepted: bool | None = None
+    consecutive_days: int | None = Field(default=None, ge=0)
+    remaining_days: int | None = Field(default=None, ge=0)
+    live_capture_summary_ref: str = ""
+    emitted_message_count: int | None = Field(default=None, ge=0)
+    accepted_message_count: int | None = Field(default=None, ge=0)
+    ignored_message_count: int | None = Field(default=None, ge=0)
+    rejected_message_count: int | None = Field(default=None, ge=0)
+    pair_scope: tuple[str, ...] = ()
+    event_types: tuple[str, ...] = ()
+    error: str = ""
+
+
+class ShadowVpsServiceLogQuery(BaseModel, frozen=True):
+    """Bounded filter set used to inspect durable Shadow VPS service events."""
+
+    max_events: int = Field(default=50, ge=1, le=500)
+    event_types: tuple[str, ...] = ()
+    session_date: str = ""
+    contains_text: str = ""
+    error_only: bool = False
+    since_timestamp_ms: int | None = Field(default=None, ge=0)
+    newest_first: bool = True
+
+
+class ShadowVpsServiceLogQueryResult(TimestampedModel):
+    """Typed bounded result returned by Shadow VPS service event retrieval."""
+
+    correlation_id: str = Field(..., min_length=1)
+    profile: ProfileId
+    runtime_mode: RuntimeMode
+    status: ProjectionStatus
+    detail: str = Field(..., min_length=1)
+    scan_mode: ShadowVpsLogScanMode
+    scan_complete: bool = True
+    events_path: str = Field(..., min_length=1)
+    query: ShadowVpsServiceLogQuery
+    scanned_line_count: int = Field(default=0, ge=0)
+    parsed_event_count: int = Field(default=0, ge=0)
+    parse_error_count: int = Field(default=0, ge=0)
+    matched_event_count: int = Field(default=0, ge=0)
+    returned_event_count: int = Field(default=0, ge=0)
+    truncated: bool = False
+    latest_event_type: str = ""
+    latest_session_date: str = ""
+    latest_error: str = ""
+    events: tuple[ShadowVpsServiceLogEventProjection, ...] = ()
+
+
 __all__ = [
     "PortfolioMetrics",
     "EngineMetrics",
@@ -890,6 +1268,7 @@ __all__ = [
     "EngineJudgmentVerdict",
     "EngineJudgmentCard",
     "EngineJudgmentProjection",
+    "RegimeLiteSafingProjection",
     "ShadowProjection",
     "MicroLiveProjection",
     "LiveProjection",
@@ -899,6 +1278,7 @@ __all__ = [
     "AccountUserDataProjection",
     "RuntimeHookBridgeProjection",
     "ExecutionNoTradeBridgeProjection",
+    "ExecutionRuntimeProjectionBridgeProjection",
     "ReplayImportProjection",
     "AlertProjection",
     "TechnicalDashboardPayload",
@@ -907,4 +1287,13 @@ __all__ = [
     "MetricKind",
     "MetricSample",
     "ObservabilityExport",
+    "ShadowVpsLogScanMode",
+    "DiskUsageSample",
+    "ProcessMetricsSample",
+    "PrometheusFileSdEntry",
+    "ShadowVpsServiceScrapeManifest",
+    "ShadowVpsServiceLogEventProjection",
+    "ShadowVpsServiceLogQuery",
+    "ShadowVpsServiceLogQueryResult",
+    "ShadowVpsServiceMonitoringPayload",
 ]

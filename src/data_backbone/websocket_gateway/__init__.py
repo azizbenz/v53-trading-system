@@ -8,10 +8,13 @@ from .runtime_gateway import (
     WebSocketGatewayAdapter,
     WebSocketGatewayRuntime,
 )
+from .injected_stream_loader import InjectedWebSocketFrame, load_injected_websocket_frames
 
 __all__ = [
     "AdapterMessage",
     "GatewayPollResult",
     "WebSocketGatewayAdapter",
     "WebSocketGatewayRuntime",
+    "InjectedWebSocketFrame",
+    "load_injected_websocket_frames",
 ]

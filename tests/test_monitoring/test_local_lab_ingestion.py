@@ -3,11 +3,11 @@ from __future__ import annotations
 import pytest
 
 from interface_contracts import ProfileId, RuntimeMode
-from local_replay_runtime.local_lab_monitoring_backend import (
+from monitoring.local_lab_monitoring_backend import (
     build_local_lab_monitoring_backend_payload,
 )
-from local_replay_runtime.local_lab_monitoring_projection import LocalLabMonitoringProjection
-from local_replay_runtime.local_lab_observability import build_local_lab_observability_export
+from monitoring.local_lab_monitoring_projection import LocalLabMonitoringProjection
+from monitoring.local_lab_observability import build_local_lab_observability_export
 from monitoring.local_lab_ingestion import build_local_lab_monitoring_ingestion_summary
 
 

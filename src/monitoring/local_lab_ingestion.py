@@ -15,6 +15,7 @@ def build_local_lab_monitoring_ingestion_summary(
     observability_export: ObservabilityExport,
     backend_payload_ref: str = "",
     observability_export_ref: str = "",
+    monitoring_bundle_manifest_ref: str = "",
 ) -> LocalLabMonitoringIngestionSummary:
     """Summarize whether a Local IA Lab monitoring bundle is coherent for backend ingestion."""
 
@@ -71,6 +72,7 @@ def build_local_lab_monitoring_ingestion_summary(
         ingestion_detail=ingestion_detail,
         observability_export_ref=observability_export_ref,
         backend_payload_ref=backend_payload_ref,
+        monitoring_bundle_manifest_ref=monitoring_bundle_manifest_ref,
     )
 
 

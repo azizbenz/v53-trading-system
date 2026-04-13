@@ -14,6 +14,9 @@ from local_replay_runtime.artifact_exporter import (
     ReplayArtifactExportRequest,
     export_local_replay_artifact,
 )
+from local_replay_runtime.local_lab_execution_telemetry_artifact import (
+    LocalLabExecutionTelemetryArtifact,
+)
 from local_replay_runtime.replay_metrics_collector import build_replay_metrics_summary
 from local_replay_runtime.replay_run_manifest import ReplayRunManifest
 from local_replay_runtime.shadow_execution_simulator import ReplayParityDiagnosticsSummary
@@ -395,6 +398,9 @@ def test_run_local_lab_analysis_bundle_chains_review_and_edge_calibration():
         assert summary["local_lab_observability_export_path"].endswith(
             "local_lab_observability_export.json"
         )
+        assert summary["local_lab_observability_text_path"].endswith(
+            "local_lab_observability.prom"
+        )
         assert summary["local_lab_monitoring_backend_payload_path"].endswith(
             "local_lab_monitoring_backend_payload.json"
         )
@@ -403,6 +409,65 @@ def test_run_local_lab_analysis_bundle_chains_review_and_edge_calibration():
             "local_lab_monitoring_ingestion_summary.json"
         )
         assert summary["local_lab_monitoring_ingestion_ready"] is True
+        assert summary["local_lab_loss_surrogate_path"].endswith(
+            "local_lab_loss_surrogate_report.json"
+        )
+        assert summary["loss_surrogate_status"] == "insufficient_executed_records"
+        assert summary["loss_surrogate_ready"] is False
+        assert summary["local_lab_calibration_methods_review_path"].endswith(
+            "local_lab_calibration_methods_review.json"
+        )
+        assert summary["calibration_methods_review_status"] == "partial"
+        assert summary["calibration_methods_review_ready"] is False
+        assert summary["calibration_methods_dsr_pass"] is None
+        assert summary["calibration_methods_walk_forward_plan_ready"] is False
+        assert summary["local_lab_execution_review_path"].endswith(
+            "local_lab_execution_review.json"
+        )
+        assert summary["local_lab_execution_runtime_projection_path"].endswith(
+            "local_lab_execution_runtime_projection.json"
+        )
+        assert summary["execution_review_status"] == "partial"
+        assert summary["execution_review_ready"] is False
+        assert summary["execution_runtime_projection_status"] == "partial"
+        assert summary["execution_runtime_projection_ready"] is False
+        assert summary["execution_ready_threshold_count"] == 0
+        assert summary["execution_partial_threshold_count"] == 5
+        assert summary["execution_blocked_threshold_count"] == 0
+        assert summary["local_lab_tail_risk_review_path"].endswith(
+            "local_lab_tail_risk_review.json"
+        )
+        assert summary["tail_risk_review_status"] == "partial"
+        assert summary["tail_risk_review_ready"] is False
+        assert summary["tail_risk_ready_breaker_count"] == 0
+        assert summary["tail_risk_partial_breaker_count"] == 3
+        assert summary["tail_risk_blocked_breaker_count"] == 0
+        assert summary["local_lab_calibration_normalized_report_path"].endswith(
+            "local_lab_calibration_normalized_report.json"
+        )
+        assert summary["calibration_normalized_report_status"] == "partial"
+        assert summary["calibration_normalized_report_ready"] is False
+        assert summary["calibration_normalized_threshold_count"] == 5
+        assert summary["local_lab_research_priority_path"].endswith(
+            "local_lab_research_priority.json"
+        )
+        assert summary["research_priority_status"] == "no_losing_scopes"
+        assert summary["research_priority_scope_count"] == 0
+        assert summary["local_lab_replay_candidate_queue_path"].endswith(
+            "local_lab_replay_candidate_queue.json"
+        )
+        assert summary["replay_candidate_queue_status"] == "no_candidates"
+        assert summary["replay_candidate_count"] == 0
+        assert summary["local_lab_replay_ticket_index_path"].endswith(
+            "local_lab_replay_ticket_index.json"
+        )
+        assert summary["replay_ticket_index_status"] == "no_tickets"
+        assert summary["replay_ticket_count"] == 0
+        assert summary["local_lab_replay_dispatch_plan_path"].endswith(
+            "local_lab_replay_dispatch_plan.json"
+        )
+        assert summary["replay_dispatch_plan_status"] == "no_items"
+        assert summary["replay_dispatch_ready_count"] == 0
         assert summary["artifact_proof_validation_reasons"] == [
             "PROOF_WALK_FORWARD_REQUIRED",
             "PROOF_REGIME_SEGMENTATION_REQUIRED",
@@ -415,6 +480,7 @@ def test_run_local_lab_analysis_bundle_chains_review_and_edge_calibration():
         assert summary["recalibration_blocking_reasons"] == ["NO_LOSING_TRADES_TO_RECALIBRATE"]
         assert summary["recalibration_action_count"] == 0
         assert summary["bridge_ready_for_shadow_dry_run"] is False
+        assert (output_root / "local_lab_research_priority.json").exists()
         assert summary["bridge_status"] == "blocked_release_candidate"
         assert summary["bridge_release_gate_status"] == "proof_gate_blocked"
         assert summary["bridge_release_gate_reasons"] == [
@@ -444,6 +510,203 @@ def test_run_local_lab_analysis_bundle_chains_review_and_edge_calibration():
         assert edge_input["recalibration_plan_ref"].endswith("local_lab_recalibration_plan.json")
         assert edge_input["recalibration_candidate_ready"] is False
         assert edge_input["recalibration_blocking_reasons"] == ["NO_LOSING_TRADES_TO_RECALIBRATE"]
+        tail_risk_review = json.loads(
+            (output_root / "local_lab_tail_risk_review.json").read_text(encoding="utf-8")
+        )
+        calibration_normalized_report = json.loads(
+            (output_root / "local_lab_calibration_normalized_report.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert tail_risk_review["review_status"] == "partial"
+        assert tail_risk_review["review_ready"] is False
+        assert tail_risk_review["ready_breaker_count"] == 0
+        assert tail_risk_review["partial_breaker_count"] == 3
+        assert calibration_normalized_report["review_status"] == "partial"
+        assert calibration_normalized_report["threshold_count"] == 5
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_run_local_lab_analysis_bundle_accepts_service_owned_execution_telemetry_artifact():
+    scratch = _scratch_dir()
+    scratch.mkdir(parents=True, exist_ok=False)
+    try:
+        export_dir = scratch / "export_dir"
+        output_root = scratch / "analysis"
+        telemetry_path = scratch / "shadow_vps_service_execution_telemetry.json"
+        records = _records()
+        metrics = build_replay_metrics_summary(records, total_opportunities=len(records))
+        parity = ReplayParityDiagnosticsSummary(
+            parity_status="passed",
+            dataset_id="dataset-analysis-telemetry",
+            decision_match_rate=1.0,
+            score_match_rate=1.0,
+            baseline_status="available",
+            score_alignment="aligned",
+            cost_alignment="aligned",
+            compared_records=len(records),
+            shared_core_match=True,
+            parity_policy={"kind": "test"},
+        )
+        run_manifest = ReplayRunManifest(
+            run_id="run-analysis-telemetry",
+            strategy_id="strat-analysis",
+            strategy_version="v5.3",
+            strategy_classification=StrategyClassification.A_VARIANT,
+            lineage_version="v5.3.lineage",
+            profile_scope=ProfileId.COMPLETE,
+            runtime_mode=RuntimeMode.LOCAL_REPLAY,
+            engine_scope=("engine_a",),
+            tested_pairs=("BTCUSDT",),
+            dataset_manifest_id="dataset-analysis-telemetry",
+            timeframe_scope="2026-04-01/2026-04-02",
+            formula_set_version="formula.v1",
+            scoring_version="scoring.v1",
+            regime_version="regime.v1",
+            risk_policy_version="risk.v1",
+            cost_model_version="cost.v1",
+            performance_mode="shadow_fidelity_mode",
+            artifact_hash="artifact-analysis-telemetry",
+            clock_id="clock-analysis-telemetry",
+            start_timestamp_ms=1_700_000_000_000,
+            end_timestamp_ms=1_700_000_060_000,
+            tick_count=len(records),
+            record_count=len(records),
+        )
+        export_local_replay_artifact(
+            export_dir,
+            ReplayArtifactExportRequest(
+                run_manifest=run_manifest,
+                review_export_markdown=_build_review_export_markdown(
+                    run_id=run_manifest.run_id,
+                    strategy_id=run_manifest.strategy_id,
+                    strategy_version=run_manifest.strategy_version,
+                    lineage_version=run_manifest.lineage_version,
+                    profile_scope=run_manifest.profile_scope.value,
+                    runtime_mode=run_manifest.runtime_mode.value,
+                    performance_mode=run_manifest.performance_mode,
+                    total_opportunities=metrics.total_opportunities,
+                    total_records=metrics.total_records,
+                    dtr_coverage=metrics.dtr_coverage,
+                    status=parity.parity_status,
+                    decision_match_rate=parity.decision_match_rate,
+                ),
+                feature_bridge_payload={
+                    "dataset_id": run_manifest.dataset_manifest_id,
+                    "feature_set_version": run_manifest.feature_set_version,
+                    "transform_set_version": run_manifest.transform_set_version,
+                    "pairs": list(run_manifest.tested_pairs),
+                    "engines": list(run_manifest.engine_scope),
+                },
+                parity_diagnostics_payload=parity.model_dump(mode="json"),
+                replay_metrics_payload=metrics.model_dump(mode="json"),
+                replay_dtr_records=tuple(record.model_dump(mode="json") for record in records),
+            ),
+        )
+        telemetry_artifact = LocalLabExecutionTelemetryArtifact(
+            export_dir=str(export_dir.resolve()),
+            run_id=run_manifest.run_id,
+            source_session_dates=("2026-04-01", "2026-04-02"),
+            time_sync_offsets_ms=(20.0, 22.0, 25.0, 27.0, 29.0, 31.0, 33.0),
+            time_sync_observation_days=7.0,
+            time_sync_session_dates=("2026-04-01",),
+            time_sync_source_refs=("E:/shadow/time_sync_offsets.json",),
+            quota_call_counts=(7, 7),
+            quota_probe_durations_s=(3.5, 3.5),
+            quota_limit_calls_per_minute_values=(120, 120),
+            quota_calls_per_minute_observed=(120.0, 120.0),
+            quota_observation_days=31.0,
+            quota_session_dates=("2026-04-01", "2026-04-02"),
+            quota_source_refs=("E:/shadow/time_sync_offsets.json",),
+            websocket_interarrival_s=(0.05, 0.07, 0.09, 0.12, 0.15, 0.20, 0.22, 0.30),
+            websocket_observation_days=30.0,
+            websocket_session_dates=("2026-04-01", "2026-04-02"),
+            websocket_source_refs=("E:/shadow/live_capture_1.json", "E:/shadow/live_capture_2.json"),
+            spread_bps=(1.2, 1.5, 1.7, 2.0, 2.2, 2.8, 3.1, 3.8),
+            spread_observation_days=30.0,
+            spread_session_dates=("2026-04-01", "2026-04-02"),
+            spread_source_refs=("E:/shadow/live_capture_1.json", "E:/shadow/live_capture_2.json"),
+            slippage_bps=(1.5, 1.8, 2.0, 2.4),
+            slippage_observation_days=30.0,
+            slippage_session_dates=("2026-04-01", "2026-04-02"),
+            slippage_source_refs=("E:/shadow/live_capture_1.json", "E:/shadow/live_capture_2.json"),
+            candidate_sizes=(6.5, 9.5, 12.5, 16.5),
+            candidate_size_observation_days=30.0,
+            candidate_size_session_dates=("2026-04-01", "2026-04-02"),
+            candidate_size_source_refs=("E:/shadow/live_capture_1.json", "E:/shadow/live_capture_2.json"),
+            final_sizes=(6.0, 9.0, 12.0, 16.0),
+            final_size_observation_days=30.0,
+            final_size_session_dates=("2026-04-01", "2026-04-02"),
+            final_size_source_refs=("E:/shadow/live_capture_1.json", "E:/shadow/live_capture_2.json"),
+            coverage_caution_flags=("THR-X02_ACCEPTED_EVENTS_ONLY",),
+        )
+        telemetry_path.write_text(
+            telemetry_artifact.model_dump_json(indent=2),
+            encoding="utf-8",
+        )
+
+        exit_code = main(
+            [
+                "--export-dir",
+                str(export_dir),
+                "--correlation-id",
+                "corr-analysis-telemetry",
+                "--signed-by",
+                "operator.aziz",
+                "--output-root",
+                str(output_root),
+                "--pair",
+                "BTCUSDT",
+                "--engine-id",
+                "engine_a",
+                "--execution-telemetry-path",
+                str(telemetry_path),
+                "--bootstrap-samples",
+                "250",
+                "--min-positive-trades",
+                "2",
+                "--min-cost-observations",
+                "2",
+            ]
+        )
+
+        assert exit_code == 0
+        summary = json.loads(
+            (output_root / "local_lab_analysis_summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        execution_review = json.loads(
+            (output_root / "local_lab_execution_review.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        execution_runtime_projection = json.loads(
+            (output_root / "local_lab_execution_runtime_projection.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+        assert summary["execution_review_status"] == "ready"
+        assert summary["execution_review_ready"] is True
+        assert summary["execution_ready_threshold_count"] == 5
+        assert summary["execution_partial_threshold_count"] == 0
+        assert summary["local_lab_execution_runtime_projection_path"].endswith(
+            "local_lab_execution_runtime_projection.json"
+        )
+        assert summary["execution_runtime_projection_status"] == "ready"
+        assert summary["execution_runtime_projection_ready"] is True
+        assert summary["execution_runtime_projection_consumer_count"] == 3
+        assert summary["execution_runtime_projection_ready_consumer_count"] == 3
+        assert execution_review["review_status"] == "ready"
+        assert "THR-X02_ACCEPTED_EVENTS_ONLY" in execution_review["caution_flags"]
+        assert "THR-X03_HUMAN_HARD_CAP_CLIPPED" in execution_review["caution_flags"]
+        assert execution_runtime_projection["projection_status"] == "ready"
+        assert execution_runtime_projection["projection_ready"] is True
+        assert execution_runtime_projection["consumers"][0]["consumer_id"] == "rate_limiter"
+        assert execution_runtime_projection["consumers"][1]["consumer_id"] == "spread_guard"
+        assert execution_runtime_projection["consumers"][2]["consumer_id"] == "slippage_model"
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
@@ -1018,8 +1281,24 @@ def test_run_local_lab_analysis_bundle_all_scopes_emits_scope_matrix():
         monitoring = json.loads(
             (output_root / "local_lab_monitoring_projection.json").read_text(encoding="utf-8")
         )
+        calibration_methods_review = json.loads(
+            (output_root / "local_lab_calibration_methods_review.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        tail_risk_review = json.loads(
+            (output_root / "local_lab_tail_risk_review.json").read_text(encoding="utf-8")
+        )
+        calibration_normalized_report = json.loads(
+            (output_root / "local_lab_calibration_normalized_report.json").read_text(
+                encoding="utf-8"
+            )
+        )
         observability = json.loads(
             (output_root / "local_lab_observability_export.json").read_text(encoding="utf-8")
+        )
+        observability_text = (output_root / "local_lab_observability.prom").read_text(
+            encoding="utf-8"
         )
         backend_payload = json.loads(
             (output_root / "local_lab_monitoring_backend_payload.json").read_text(encoding="utf-8")
@@ -1037,11 +1316,39 @@ def test_run_local_lab_analysis_bundle_all_scopes_emits_scope_matrix():
         assert summary["local_lab_monitoring_backend_payload_path"].endswith(
             "local_lab_monitoring_backend_payload.json"
         )
+        assert summary["local_lab_observability_text_path"].endswith(
+            "local_lab_observability.prom"
+        )
         assert summary["local_lab_monitoring_backend_status"] == "warning"
         assert summary["local_lab_monitoring_ingestion_summary_path"].endswith(
             "local_lab_monitoring_ingestion_summary.json"
         )
         assert summary["local_lab_monitoring_ingestion_ready"] is True
+        assert summary["local_lab_loss_surrogate_path"].endswith(
+            "local_lab_loss_surrogate_report.json"
+        )
+        assert summary["loss_surrogate_status"] == "single_class_only"
+        assert summary["loss_surrogate_ready"] is False
+        assert summary["local_lab_research_priority_path"].endswith(
+            "local_lab_research_priority.json"
+        )
+        assert summary["research_priority_status"] == "no_losing_scopes"
+        assert summary["research_priority_scope_count"] == 0
+        assert summary["local_lab_replay_candidate_queue_path"].endswith(
+            "local_lab_replay_candidate_queue.json"
+        )
+        assert summary["replay_candidate_queue_status"] == "no_candidates"
+        assert summary["replay_candidate_count"] == 0
+        assert summary["local_lab_replay_ticket_index_path"].endswith(
+            "local_lab_replay_ticket_index.json"
+        )
+        assert summary["replay_ticket_index_status"] == "no_tickets"
+        assert summary["replay_ticket_count"] == 0
+        assert summary["local_lab_replay_dispatch_plan_path"].endswith(
+            "local_lab_replay_dispatch_plan.json"
+        )
+        assert summary["replay_dispatch_plan_status"] == "no_items"
+        assert summary["replay_dispatch_ready_count"] == 0
         assert summary["artifact_proof_ready"] is True
         assert summary["artifact_proof_validation_reasons"] == []
         assert summary["artifact_release_candidate_path"].endswith("artifact_release_candidate.json")
@@ -1088,6 +1395,7 @@ def test_run_local_lab_analysis_bundle_all_scopes_emits_scope_matrix():
         assert monitoring["release_scope_ready_count"] == 2
         assert monitoring["release_scope_blocked_count"] == 0
         assert observability["text_payload"].startswith("# V5.3 Local IA Lab observability export")
+        assert observability_text == observability["text_payload"] + "\n"
         assert any(
             sample["name"] == "v53_local_lab_monitoring_status"
             for sample in observability["samples"]
@@ -1322,8 +1630,24 @@ def test_run_local_lab_analysis_bundle_emits_governed_import_dry_run_when_ready(
         monitoring = json.loads(
             (output_root / "local_lab_monitoring_projection.json").read_text(encoding="utf-8")
         )
+        calibration_methods_review = json.loads(
+            (output_root / "local_lab_calibration_methods_review.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        tail_risk_review = json.loads(
+            (output_root / "local_lab_tail_risk_review.json").read_text(encoding="utf-8")
+        )
+        calibration_normalized_report = json.loads(
+            (output_root / "local_lab_calibration_normalized_report.json").read_text(
+                encoding="utf-8"
+            )
+        )
         observability = json.loads(
             (output_root / "local_lab_observability_export.json").read_text(encoding="utf-8")
+        )
+        observability_text = (output_root / "local_lab_observability.prom").read_text(
+            encoding="utf-8"
         )
         backend_payload = json.loads(
             (output_root / "local_lab_monitoring_backend_payload.json").read_text(encoding="utf-8")
@@ -1392,12 +1716,54 @@ def test_run_local_lab_analysis_bundle_emits_governed_import_dry_run_when_ready(
         assert summary["local_lab_observability_export_path"].endswith(
             "local_lab_observability_export.json"
         )
+        assert summary["local_lab_observability_text_path"].endswith(
+            "local_lab_observability.prom"
+        )
         assert summary["local_lab_monitoring_backend_payload_path"].endswith(
             "local_lab_monitoring_backend_payload.json"
         )
         assert summary["local_lab_monitoring_ingestion_summary_path"].endswith(
             "local_lab_monitoring_ingestion_summary.json"
         )
+        assert summary["local_lab_loss_surrogate_path"].endswith(
+            "local_lab_loss_surrogate_report.json"
+        )
+        assert summary["loss_surrogate_status"] == "insufficient_executed_records"
+        assert summary["loss_surrogate_ready"] is False
+        assert summary["local_lab_calibration_methods_review_path"].endswith(
+            "local_lab_calibration_methods_review.json"
+        )
+        assert summary["calibration_methods_review_status"] == "partial"
+        assert summary["calibration_methods_review_ready"] is False
+        assert summary["calibration_methods_dsr_pass"] is None
+        assert summary["calibration_methods_walk_forward_plan_ready"] is False
+        assert summary["local_lab_execution_review_path"].endswith(
+            "local_lab_execution_review.json"
+        )
+        assert summary["execution_review_status"] == "partial"
+        assert summary["execution_review_ready"] is False
+        assert summary["execution_ready_threshold_count"] == 0
+        assert summary["execution_partial_threshold_count"] == 5
+        assert summary["execution_blocked_threshold_count"] == 0
+        assert summary["local_lab_tail_risk_review_path"].endswith(
+            "local_lab_tail_risk_review.json"
+        )
+        assert summary["tail_risk_review_status"] == "partial"
+        assert summary["tail_risk_review_ready"] is False
+        assert summary["tail_risk_ready_breaker_count"] == 0
+        assert summary["tail_risk_partial_breaker_count"] == 3
+        assert summary["tail_risk_blocked_breaker_count"] == 0
+        assert summary["local_lab_calibration_normalized_report_path"].endswith(
+            "local_lab_calibration_normalized_report.json"
+        )
+        assert summary["calibration_normalized_report_status"] == "partial"
+        assert summary["calibration_normalized_report_ready"] is False
+        assert summary["calibration_normalized_threshold_count"] == 5
+        assert summary["local_lab_research_priority_path"].endswith(
+            "local_lab_research_priority.json"
+        )
+        assert summary["research_priority_status"] == "no_losing_scopes"
+        assert summary["research_priority_scope_count"] == 0
         assert summary["artifact_upload_request_path"].endswith(
             "artifact_upload_request.dry_run.json"
         )
@@ -1427,6 +1793,13 @@ def test_run_local_lab_analysis_bundle_emits_governed_import_dry_run_when_ready(
         assert bridge["ready_for_shadow_import_dry_run"] is True
         assert bridge["release_ready_for_shadow"] is True
         assert bridge["release_artifact_proof_ready"] is True
+        assert bridge["release_calibration_methods_review_status"] == "partial"
+        assert bridge["release_calibration_methods_review_ready"] is False
+        assert bridge["release_calibration_methods_dsr_pass"] is None
+        assert bridge["release_calibration_methods_walk_forward_plan_ready"] is False
+        assert bridge["release_calibration_methods_review_ref"].endswith(
+            "local_lab_calibration_methods_review.json"
+        )
         assert bridge["release_recalibration_candidate_ready"] is False
         assert bridge["release_recalibration_blocking_reasons"] == [
             "NO_LOSING_TRADES_TO_RECALIBRATE"
@@ -1471,6 +1844,13 @@ def test_run_local_lab_analysis_bundle_emits_governed_import_dry_run_when_ready(
         assert source_summary["version"] == "v1"
         assert source_summary["threshold_count"] == 2
         assert release_gate_summary["release_candidate_artifact_id"] == "edge_gate_thresholds"
+        assert release_gate_summary["release_calibration_methods_review_status"] == "partial"
+        assert release_gate_summary["release_calibration_methods_review_ready"] is False
+        assert release_gate_summary["release_calibration_methods_dsr_pass"] is None
+        assert release_gate_summary["release_calibration_methods_walk_forward_plan_ready"] is False
+        assert release_gate_summary["release_calibration_methods_review_ref"].endswith(
+            "local_lab_calibration_methods_review.json"
+        )
         assert release_gate_summary["release_gate_status"] == "proof_backed_no_recalibration_required"
         assert release_gate_summary["release_gate_reasons"] == [
             "PROOF_GATE_PASSED",
@@ -1486,18 +1866,80 @@ def test_run_local_lab_analysis_bundle_emits_governed_import_dry_run_when_ready(
         assert monitoring["bridge_status"] == "dry_run_ready"
         assert monitoring["promotion_readiness_status"] == "shadow_candidate_dry_run_ready"
         assert monitoring["release_gate_status"] == "proof_backed_no_recalibration_required"
+        assert monitoring["calibration_methods_review_status"] == "partial"
+        assert monitoring["calibration_methods_review_ready"] is False
+        assert monitoring["local_lab_calibration_methods_review_path"].endswith(
+            "local_lab_calibration_methods_review.json"
+        )
+        assert monitoring["tail_risk_review_status"] == "partial"
+        assert monitoring["tail_risk_review_ready"] is False
+        assert monitoring["tail_risk_partial_breaker_count"] == 3
+        assert monitoring["local_lab_tail_risk_review_path"].endswith(
+            "local_lab_tail_risk_review.json"
+        )
+        assert monitoring["calibration_normalized_report_status"] == "partial"
+        assert monitoring["calibration_normalized_report_ready"] is False
+        assert monitoring["calibration_normalized_threshold_count"] == 5
+        assert monitoring["local_lab_calibration_normalized_report_path"].endswith(
+            "local_lab_calibration_normalized_report.json"
+        )
+        assert calibration_methods_review["review_status"] == "partial"
+        assert calibration_methods_review["review_ready"] is False
+        assert calibration_methods_review["walk_forward_plan_status"] == "insufficient_history"
+        assert calibration_methods_review["stationarity_status"] == "insufficient_history"
+        assert calibration_methods_review["dsr_status"] == "insufficient_history"
+        assert tail_risk_review["review_status"] == "partial"
+        assert tail_risk_review["review_ready"] is False
+        assert tail_risk_review["partial_breaker_count"] == 3
+        assert calibration_normalized_report["review_status"] == "partial"
+        assert calibration_normalized_report["threshold_count"] == 5
         assert monitoring["artifact_promotion_readiness_summary_path"].endswith(
             "artifact_promotion_readiness_summary.json"
         )
         assert observability["text_payload"].startswith("# V5.3 Local IA Lab observability export")
+        assert observability_text == observability["text_payload"] + "\n"
         assert any(
             sample["name"] == "v53_local_lab_dry_run_ready_for_shadow"
             and sample["value"] == 1.0
             for sample in observability["samples"]
         )
+        assert any(
+            sample["name"] == "v53_local_lab_calibration_methods_review_ready"
+            and sample["value"] == 0.0
+            for sample in observability["samples"]
+        )
+        assert any(
+            sample["name"] == "v53_local_lab_tail_risk_review_ready"
+            and sample["value"] == 0.0
+            for sample in observability["samples"]
+        )
+        assert any(
+            sample["name"] == "v53_local_lab_calibration_normalized_report_ready"
+            and sample["value"] == 0.0
+            for sample in observability["samples"]
+        )
         assert backend_payload["status"] == "healthy"
         assert backend_payload["ready_for_shadow_import_dry_run"] is True
         assert backend_payload["observability_sample_count"] == len(observability["samples"])
+        assert backend_payload["calibration_methods_review_status"] == "partial"
+        assert backend_payload["calibration_methods_review_ready"] is False
+        assert backend_payload["calibration_methods_stationarity_status"] == "insufficient_history"
+        assert backend_payload["calibration_methods_stationarity_pass"] is None
+        assert backend_payload["local_lab_calibration_methods_review_ref"].endswith(
+            "local_lab_calibration_methods_review.json"
+        )
+        assert backend_payload["tail_risk_review_status"] == "partial"
+        assert backend_payload["tail_risk_review_ready"] is False
+        assert backend_payload["tail_risk_partial_breaker_count"] == 3
+        assert backend_payload["local_lab_tail_risk_review_ref"].endswith(
+            "local_lab_tail_risk_review.json"
+        )
+        assert backend_payload["calibration_normalized_report_status"] == "partial"
+        assert backend_payload["calibration_normalized_report_ready"] is False
+        assert backend_payload["calibration_normalized_threshold_count"] == 5
+        assert backend_payload["local_lab_calibration_normalized_report_ref"].endswith(
+            "local_lab_calibration_normalized_report.json"
+        )
         assert ingestion_summary["ingestion_ready"] is True
         assert ingestion_summary["projection_status"] == "healthy"
         loaded_bundle = load_local_lab_monitoring_bundle(output_root)

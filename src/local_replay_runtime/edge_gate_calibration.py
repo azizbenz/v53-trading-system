@@ -5,12 +5,16 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import math
 from pathlib import Path
-import random
 from typing import Iterable
 
 from pydantic import BaseModel, Field
 import yaml
 
+from calibration_methods import (
+    StationaryBootstrapConfig,
+    apply_human_minimum_floor,
+    stationary_bootstrap_confidence_interval,
+)
 from calibration_loader import (
     CalibrationArtifact,
     CalibrationManualSignature,
@@ -65,11 +69,16 @@ class EdgeGateThresholdCalibration(BaseModel, frozen=True):
 
     threshold_id: str = Field(..., min_length=1)
     unit: str = Field(..., min_length=1)
+    method_version: str = "stationary_block_bootstrap_v1"
     point_estimate: float
     ic95_lower: float
     ic95_upper: float
     published_value: float
     observation_count: int = Field(..., ge=0)
+    bootstrap_block_length: int = Field(..., ge=1)
+    hard_cap_human: float = Field(..., ge=0.0)
+    hard_cap_satisfied: bool
+    hard_cap_binding: bool
     description: str = ""
     notes: tuple[str, ...] = ()
 
@@ -256,13 +265,17 @@ def _calibrate_multiplier_threshold(
     calibration: EdgeGateCalibrationConfig,
 ) -> EdgeGateThresholdCalibration:
     point_estimate = _quantile(ratio_values, quantile)
-    bootstrap_values = _bootstrap_quantiles(
+    bootstrap_interval = stationary_bootstrap_confidence_interval(
         ratio_values,
-        quantile=quantile,
-        samples=calibration.bootstrap_samples,
-        seed=calibration.rng_seed,
+        estimator=lambda sample: _quantile(sample, quantile),
+        config=StationaryBootstrapConfig(
+            bootstrap_samples=calibration.bootstrap_samples,
+            confidence_level=calibration.confidence_level,
+            rng_seed=calibration.rng_seed,
+        ),
     )
-    ci_lower, ci_upper = _confidence_interval(bootstrap_values, calibration.confidence_level)
+    ci_lower = bootstrap_interval.ci_lower
+    ci_upper = bootstrap_interval.ci_upper
     _validate_relative_ic_width(
         point_estimate=point_estimate,
         ci_lower=ci_lower,
@@ -270,19 +283,25 @@ def _calibrate_multiplier_threshold(
         calibration=calibration,
         threshold_id=calibration.edge_multiplier_threshold_id,
     )
-    published_value = max(calibration.human_multiplier_floor, ci_upper)
+    hard_cap_policy = apply_human_minimum_floor(ci_upper, calibration.human_multiplier_floor)
     return EdgeGateThresholdCalibration(
         threshold_id=calibration.edge_multiplier_threshold_id,
         unit="multiplier",
         point_estimate=round(point_estimate, 6),
         ic95_lower=round(ci_lower, 6),
         ic95_upper=round(ci_upper, 6),
-        published_value=round(published_value, 6),
+        published_value=round(hard_cap_policy.published_value, 6),
         observation_count=len(ratio_values),
+        bootstrap_block_length=bootstrap_interval.expected_block_length,
+        hard_cap_human=round(calibration.human_multiplier_floor, 6),
+        hard_cap_satisfied=hard_cap_policy.hard_cap_satisfied,
+        hard_cap_binding=hard_cap_policy.hard_cap_binding,
         description="Minimum multiplier between expected edge and round-trip expected cost.",
         notes=(
             f"quantile={quantile:.2f} over positive realized net edge ratios",
             f"human_floor={calibration.human_multiplier_floor:.2f}",
+            f"hard_cap_binding={hard_cap_policy.hard_cap_binding}",
+            f"bootstrap_block_length={bootstrap_interval.expected_block_length}",
         ),
     )
 
@@ -294,29 +313,36 @@ def _calibrate_absolute_threshold_bps(
 ) -> EdgeGateThresholdCalibration:
     quantile = 0.90
     point_estimate = _quantile(cost_bps_values, quantile) + calibration.absolute_edge_margin_bps
-    bootstrap_quantiles = _bootstrap_quantiles(
+    bootstrap_interval = stationary_bootstrap_confidence_interval(
         cost_bps_values,
-        quantile=quantile,
-        samples=calibration.bootstrap_samples,
-        seed=calibration.rng_seed + 1,
+        estimator=lambda sample: _quantile(sample, quantile) + calibration.absolute_edge_margin_bps,
+        config=StationaryBootstrapConfig(
+            bootstrap_samples=calibration.bootstrap_samples,
+            confidence_level=calibration.confidence_level,
+            rng_seed=calibration.rng_seed + 1,
+        ),
     )
-    threshold_distribution = tuple(
-        value + calibration.absolute_edge_margin_bps for value in bootstrap_quantiles
-    )
-    ci_lower, ci_upper = _confidence_interval(threshold_distribution, calibration.confidence_level)
-    published_value = max(calibration.human_absolute_floor_bps, ci_upper)
+    ci_lower = bootstrap_interval.ci_lower
+    ci_upper = bootstrap_interval.ci_upper
+    hard_cap_policy = apply_human_minimum_floor(ci_upper, calibration.human_absolute_floor_bps)
     return EdgeGateThresholdCalibration(
         threshold_id=calibration.min_absolute_edge_threshold_id,
         unit="bps",
         point_estimate=round(point_estimate, 6),
         ic95_lower=round(ci_lower, 6),
         ic95_upper=round(ci_upper, 6),
-        published_value=round(published_value, 6),
+        published_value=round(hard_cap_policy.published_value, 6),
         observation_count=len(cost_bps_values),
+        bootstrap_block_length=bootstrap_interval.expected_block_length,
+        hard_cap_human=round(calibration.human_absolute_floor_bps, 6),
+        hard_cap_satisfied=hard_cap_policy.hard_cap_satisfied,
+        hard_cap_binding=hard_cap_policy.hard_cap_binding,
         description="Absolute expected-edge floor in bps.",
         notes=(
             f"q90(expected_cost_bps)+margin where margin={calibration.absolute_edge_margin_bps:.2f}bps",
             f"human_floor={calibration.human_absolute_floor_bps:.2f}bps",
+            f"hard_cap_binding={hard_cap_policy.hard_cap_binding}",
+            f"bootstrap_block_length={bootstrap_interval.expected_block_length}",
         ),
     )
 
@@ -337,30 +363,6 @@ def _validate_relative_ic_width(
         raise EdgeGateCalibrationValidationError(
             f"{threshold_id} bootstrap interval too wide for safe publication"
         )
-
-
-def _bootstrap_quantiles(
-    values: tuple[float, ...],
-    *,
-    quantile: float,
-    samples: int,
-    seed: int,
-) -> tuple[float, ...]:
-    rng = random.Random(seed)
-    count = len(values)
-    estimates: list[float] = []
-    for _ in range(samples):
-        resample = tuple(values[rng.randrange(count)] for _ in range(count))
-        estimates.append(_quantile(resample, quantile))
-    return tuple(estimates)
-
-
-def _confidence_interval(values: tuple[float, ...], confidence_level: float) -> tuple[float, float]:
-    alpha = (1.0 - confidence_level) / 2.0
-    return (
-        _quantile(values, alpha),
-        _quantile(values, 1.0 - alpha),
-    )
 
 
 def _quantile(values: Iterable[float], quantile: float) -> float:

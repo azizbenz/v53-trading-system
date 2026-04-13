@@ -40,11 +40,18 @@ def test_local_lab_artifact_release_candidate_blocks_without_ready_proof():
         recalibration_blocking_reasons=("NO_LOSING_TRADES_TO_RECALIBRATE",),
         artifact_proof_ready=False,
         artifact_proof_validation_reasons=("PROOF_ABLATION_DELTA_NET_PNL_TOO_LOW",),
+        local_lab_calibration_methods_review_path="E:/lab/local_lab_calibration_methods_review.json",
+        calibration_methods_review_status="partial",
+        calibration_methods_review_ready=False,
+        calibration_methods_dsr_pass=None,
+        calibration_methods_walk_forward_plan_ready=False,
     )
 
     assert candidate.ready_for_shadow_import is False
     assert candidate.release_status == "local_only"
     assert candidate.artifact_proof_ready is False
+    assert candidate.calibration_methods_review_status == "partial"
+    assert candidate.calibration_methods_review_ready is False
     assert candidate.recalibration_candidate_ready is False
     assert candidate.blocking_reasons == ("PROOF_ABLATION_DELTA_NET_PNL_TOO_LOW",)
 
@@ -65,8 +72,11 @@ def test_local_lab_artifact_release_candidate_projects_scope_matrix():
                 artifact_ablation_study_path="E:/lab/scopes/btcusdt__engine_a/artifact_ablation_study.json",
                 artifact_proof_summary_path="E:/lab/scopes/btcusdt__engine_a/artifact_proof_summary.json",
                 artifact_proof_assessment_path="E:/lab/scopes/btcusdt__engine_a/artifact_proof_assessment.json",
+                calibration_methods_review_path="E:/lab/scopes/btcusdt__engine_a/local_lab_calibration_methods_review.json",
                 artifact_ablation_ready=True,
                 artifact_proof_ready=True,
+                calibration_methods_review_status="ready",
+                calibration_methods_review_ready=True,
                 proof_summary=_proof_summary(),
             ),
         ),
@@ -84,6 +94,7 @@ def test_local_lab_artifact_release_candidate_projects_scope_matrix():
         local_lab_recalibration_plan_path="E:/lab/local_lab_recalibration_plan.json",
         artifact_proof_summary_path="E:/lab/artifact_proof_summary.json",
         artifact_proof_assessment_path="E:/lab/artifact_proof_assessment.json",
+        local_lab_calibration_methods_review_path="E:/lab/local_lab_calibration_methods_review.json",
         scope_matrix_path="E:/lab/local_lab_scope_matrix.json",
         scope_matrix=scope_matrix,
         edge_calibration_ready=True,
@@ -91,16 +102,48 @@ def test_local_lab_artifact_release_candidate_projects_scope_matrix():
         recalibration_blocking_reasons=("NO_LOSING_TRADES_TO_RECALIBRATE",),
         artifact_proof_ready=True,
         artifact_proof_validation_reasons=(),
-    )
+        calibration_methods_review_status="ready",
+        calibration_methods_review_ready=True,
+        calibration_methods_dsr_pass=True,
+        calibration_methods_walk_forward_plan_ready=True,
+        local_lab_execution_runtime_projection_path="E:/lab/local_lab_execution_runtime_projection.json",
+        execution_runtime_projection_status="ready",
+        execution_runtime_projection_ready=True,
+        execution_runtime_projection_consumer_count=3,
+        execution_runtime_projection_ready_consumer_count=3,
+        execution_runtime_projection_partial_consumer_count=0,
+        execution_runtime_projection_blocked_consumer_count=0,
+        )
 
     assert candidate.ready_for_shadow_import is True
     assert candidate.release_status == "shadow_candidate"
     assert candidate.artifact_proof_ready is True
+    assert candidate.local_lab_calibration_methods_review_path.endswith(
+        "local_lab_calibration_methods_review.json"
+    )
+    assert candidate.calibration_methods_review_status == "ready"
+    assert candidate.calibration_methods_review_ready is True
+    assert candidate.calibration_methods_dsr_pass is True
+    assert candidate.calibration_methods_walk_forward_plan_ready is True
+    assert candidate.local_lab_execution_runtime_projection_path.endswith(
+        "local_lab_execution_runtime_projection.json"
+    )
+    assert candidate.execution_runtime_projection_status == "ready"
+    assert candidate.execution_runtime_projection_ready is True
+    assert candidate.execution_runtime_projection_consumer_count == 3
+    assert candidate.execution_runtime_projection_ready_consumer_count == 3
+    assert candidate.execution_runtime_projection_partial_consumer_count == 0
+    assert candidate.execution_runtime_projection_blocked_consumer_count == 0
     assert candidate.recalibration_candidate_ready is False
     assert candidate.scope_count == 1
     assert candidate.ready_scope_count == 1
     assert candidate.blocked_scope_count == 0
     assert candidate.release_scopes[0].release_ready is True
+    assert candidate.release_scopes[0].calibration_methods_review_path.endswith(
+        "local_lab_calibration_methods_review.json"
+    )
+    assert candidate.release_scopes[0].calibration_methods_review_status == "ready"
+    assert candidate.release_scopes[0].calibration_methods_review_ready is True
     assert candidate.release_scopes[0].review_bundle_path.endswith("meta_learning_review.bundle.json")
     assert candidate.release_scopes[0].trade_loss_attribution_path.endswith(
         "trade_loss_attribution.json"
@@ -129,6 +172,11 @@ def test_local_lab_artifact_release_candidate_blocks_without_recalibration_plan(
         recalibration_blocking_reasons=("NO_LOSING_TRADES_TO_RECALIBRATE",),
         artifact_proof_ready=True,
         artifact_proof_validation_reasons=(),
+        local_lab_calibration_methods_review_path="E:/lab/local_lab_calibration_methods_review.json",
+        calibration_methods_review_status="ready",
+        calibration_methods_review_ready=True,
+        calibration_methods_dsr_pass=True,
+        calibration_methods_walk_forward_plan_ready=True,
     )
 
     assert candidate.ready_for_shadow_import is False
@@ -152,6 +200,11 @@ def test_local_lab_artifact_release_candidate_blocks_on_non_benign_recalibration
         recalibration_blocking_reasons=("TRACE_COVERAGE_BLOCKS_RECALIBRATION",),
         artifact_proof_ready=True,
         artifact_proof_validation_reasons=(),
+        local_lab_calibration_methods_review_path="E:/lab/local_lab_calibration_methods_review.json",
+        calibration_methods_review_status="ready",
+        calibration_methods_review_ready=True,
+        calibration_methods_dsr_pass=True,
+        calibration_methods_walk_forward_plan_ready=True,
     )
 
     assert candidate.ready_for_shadow_import is False

@@ -4,7 +4,7 @@ from datetime import date
 
 from interface_contracts import ArtifactClass, ArtifactProofSummary
 from local_replay_runtime import build_local_lab_artifact_release_candidate
-from local_replay_runtime.artifact_upload_bridge_candidate import (
+from backtest_artifact_import.local_lab_upload_bridge_candidate import (
     build_local_lab_artifact_upload_dry_run_bridge,
 )
 
@@ -42,6 +42,11 @@ def _release_candidate(*, ready_for_shadow_import: bool):
         artifact_proof_validation_reasons=(
             () if ready_for_shadow_import else ("PROOF_WALK_FORWARD_REQUIRED",)
         ),
+        local_lab_calibration_methods_review_path="E:/lab/local_lab_calibration_methods_review.json",
+        calibration_methods_review_status="ready" if ready_for_shadow_import else "partial",
+        calibration_methods_review_ready=ready_for_shadow_import,
+        calibration_methods_dsr_pass=True if ready_for_shadow_import else None,
+        calibration_methods_walk_forward_plan_ready=ready_for_shadow_import,
     )
 
 
@@ -66,6 +71,13 @@ def test_artifact_upload_bridge_candidate_blocks_without_ready_release_candidate
     assert bridge.ready_for_shadow_import_dry_run is False
     assert bridge.release_gate_status == "proof_gate_blocked"
     assert bridge.release_gate_reasons == ("PROOF_WALK_FORWARD_REQUIRED", "RECALIBRATION_NOT_REQUIRED")
+    assert bridge.release_calibration_methods_review_status == "partial"
+    assert bridge.release_calibration_methods_review_ready is False
+    assert bridge.release_calibration_methods_dsr_pass is None
+    assert bridge.release_calibration_methods_walk_forward_plan_ready is False
+    assert bridge.release_calibration_methods_review_ref.endswith(
+        "local_lab_calibration_methods_review.json"
+    )
     assert bridge.blocking_reasons == ("PROOF_WALK_FORWARD_REQUIRED",)
 
 
@@ -86,6 +98,10 @@ def test_artifact_upload_bridge_candidate_requires_explicit_governance_inputs():
     assert upload_context is None
     assert bridge.bridge_status == "blocked_missing_governance_inputs"
     assert bridge.ready_for_shadow_import_dry_run is False
+    assert bridge.release_calibration_methods_review_status == "ready"
+    assert bridge.release_calibration_methods_review_ready is True
+    assert bridge.release_calibration_methods_dsr_pass is True
+    assert bridge.release_calibration_methods_walk_forward_plan_ready is True
     assert set(bridge.blocking_reasons) == {
         "PROOF_SUMMARY_REQUIRED_FOR_DRY_RUN_BRIDGE",
         "GOVERNANCE_REFERENCE_DATE_REQUIRED",
@@ -118,4 +134,8 @@ def test_artifact_upload_bridge_candidate_blocks_when_source_artifact_is_unreada
 
     assert upload_context is None
     assert bridge.bridge_status == "blocked_source_artifact"
+    assert bridge.release_calibration_methods_review_status == "ready"
+    assert bridge.release_calibration_methods_review_ready is True
+    assert bridge.release_calibration_methods_dsr_pass is True
+    assert bridge.release_calibration_methods_walk_forward_plan_ready is True
     assert bridge.blocking_reasons == ("SOURCE_ARTIFACT_UNREADABLE",)

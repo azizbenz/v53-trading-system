@@ -54,6 +54,21 @@ def build_live_light_projection(summary: LiveLightRunSummary) -> LiveLightProjec
         planned_engines=summary.execution_intent.planned_engines,
         import_artifact_id=summary.import_artifact_id,
         import_lineage_version=summary.import_lineage_version,
+        execution_runtime_projection_ref=summary.execution_runtime_projection_ref,
+        execution_runtime_projection_status=summary.execution_runtime_projection_status,
+        execution_runtime_projection_ready=summary.execution_runtime_projection_ready,
+        execution_runtime_projection_consumer_count=(
+            summary.execution_runtime_projection_consumer_count
+        ),
+        execution_runtime_projection_ready_consumer_count=(
+            summary.execution_runtime_projection_ready_consumer_count
+        ),
+        execution_runtime_projection_partial_consumer_count=(
+            summary.execution_runtime_projection_partial_consumer_count
+        ),
+        execution_runtime_projection_blocked_consumer_count=(
+            summary.execution_runtime_projection_blocked_consumer_count
+        ),
         observability_ready=summary.observability_ready,
         halt_ready=summary.halt_ready,
         execution_ready=summary.execution_ready,
@@ -159,7 +174,13 @@ def build_live_light_dashboard_section(summary: LiveLightRunSummary) -> Dashboar
                     and projection.exchange_ready
                     else "critical"
                 ),
-                detail=projection.build14_summary or projection.import_lineage_version,
+                detail=(
+                    f"{projection.build14_summary or projection.import_lineage_version} / "
+                    f"exec_proj={projection.execution_runtime_projection_status} / "
+                    f"ready={projection.execution_runtime_projection_ready_consumer_count} / "
+                    f"partial={projection.execution_runtime_projection_partial_consumer_count} / "
+                    f"blocked={projection.execution_runtime_projection_blocked_consumer_count}"
+                ),
             ),
             DashboardCard(
                 key="live_light_safing_request",

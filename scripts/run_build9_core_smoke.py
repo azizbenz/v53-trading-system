@@ -3,11 +3,14 @@
 
 from __future__ import annotations
 
+import argparse
 from dataclasses import dataclass
 import importlib
 import json
 import sys
 from pathlib import Path
+
+import httpx
 
 
 @dataclass(frozen=True)
@@ -17,15 +20,15 @@ class SmokeCheck:
     message: str
 
 
-CORE_MODULES: tuple[str, ...] = (
-    "data_backbone",
-    "execution_backbone",
-    "risk_backbone",
-    "scoring_backbone",
-    "engine_a",
-    "engine_b",
-    "portfolio",
-    "meta",
+CORE_MODULES: tuple[tuple[str, str], ...] = (
+    ("data_backbone", "data_backbone"),
+    ("execution_backbone", "execution_backbone"),
+    ("risk_backbone", "risk_backbone"),
+    ("scoring_backbone", "scoring_backbone"),
+    ("engine_a", "engines.engine_a"),
+    ("engine_b", "engines.engine_b"),
+    ("portfolio", "portfolio"),
+    ("meta", "meta"),
 )
 
 
@@ -38,7 +41,7 @@ def _configure_stdio() -> None:
         stderr.reconfigure(encoding="utf-8", errors="replace")
 
 
-def _bootstrap_module(module_name: str) -> SmokeCheck:
+def _bootstrap_module(module_label: str, module_name: str) -> SmokeCheck:
     try:
         if module_name in sys.modules:
             module = importlib.reload(sys.modules[module_name])
@@ -50,24 +53,24 @@ def _bootstrap_module(module_name: str) -> SmokeCheck:
             missing = [name for name in declared if not hasattr(module, name)]
             if missing:
                 return SmokeCheck(
-                    module_name,
+                    module_label,
                     False,
                     f"__all__ exports missing: {', '.join(missing)}",
                 )
             return SmokeCheck(
-                module_name,
+                module_label,
                 True,
                 f"import + API OK ({len(declared)} exports)",
             )
 
-        return SmokeCheck(module_name, True, "import OK")
+        return SmokeCheck(module_label, True, "import OK")
     except Exception as exc:
-        return SmokeCheck(module_name, False, f"{type(exc).__name__}: {exc}")
+        return SmokeCheck(module_label, False, f"{type(exc).__name__}: {exc}")
 
 
 def _run_engine_chain() -> tuple[SmokeCheck, object, object]:
-    from engine_a import EngineADecision, EngineAInput, run_engine_a
-    from engine_b import EngineBDecision, EngineBInput, run_engine_b
+    from engines.engine_a import EngineADecision, EngineAInput, run_engine_a
+    from engines.engine_b import EngineBDecision, EngineBInput, run_engine_b
 
     engine_a_output = run_engine_a(
         EngineAInput(
@@ -144,6 +147,9 @@ def _run_portfolio_chain(engine_a_output: object, engine_b_output: object) -> tu
     from portfolio import OrchestratorConfig, run_portfolio_pipeline
     from portfolio_minimal.allocation_router.base_size_builder import SizeProfile
     from portfolio_minimal.opportunity_selector.candidate_pool_builder import OpportunityCandidate
+    from portfolio_minimal.opportunity_selector.candidate_pool_builder import (
+        CANDIDATE_POOL_FRESHNESS_DISABLED,
+    )
     from portfolio_minimal.opportunity_selector.eligibility_filter import PortfolioSnapshot
 
     candidates = (
@@ -197,6 +203,7 @@ def _run_portfolio_chain(engine_a_output: object, engine_b_output: object) -> tu
                 "eth_cluster": 500.0,
             },
         ),
+        freshness_policy=CANDIDATE_POOL_FRESHNESS_DISABLED,
         position_cap=500.0,
         min_viable_size=10.0,
         cluster_crowding_threshold=3,
@@ -326,8 +333,20 @@ def _run_meta_chain(portfolio_result: object) -> SmokeCheck:
 
 
 def _run_execution_bootstrap_smoke() -> SmokeCheck:
+    return _run_execution_bootstrap_smoke_with_projection()
+
+
+def _run_execution_bootstrap_smoke_with_projection(
+    execution_runtime_projection_path: Path | None = None,
+    reconciliation_calibration_root: Path | None = None,
+    gatekeeper_audit_path: Path | None = None,
+) -> SmokeCheck:
+    from execution_backbone import ExecutionOpportunity, ExecutionSubmissionStatus
+    from execution_backbone.reconciliation_layer.scheduler import (
+        ReconciliationSchedulerCalibrationConfig,
+    )
     from interface_contracts.binance_contracts import BinanceCredentials
-    from protocols import build_binance_execution_runtime
+    from protocols import build_binance_execution_runtime_bootstrap_bundle
     from venue_adapters.binance_spot.time_sync import BinanceAdapterConfig
 
     class _FakeSocket:
@@ -348,65 +367,222 @@ def _run_execution_bootstrap_smoke() -> SmokeCheck:
         def close(self) -> None:
             return None
 
-    runtime = build_binance_execution_runtime(
-        credentials=BinanceCredentials(
-            api_key="smoke-api-key",
-            secret_key="smoke-secret-key",
-            label="smoke",
-        ),
-        config=BinanceAdapterConfig(rest_base_url="https://testnet.binance.vision"),
-        user_data_stream_enabled=True,
-        user_data_socket_factory=lambda endpoint, connect_timeout_s, recv_timeout_s: _FakeSocket(
-            [
-                json.dumps(
-                    {
-                        "id": "v53-user-data-subscribe",
-                        "status": 200,
-                        "result": {"subscriptionId": 7},
-                    }
-                ),
-                json.dumps(
-                    {
-                        "subscriptionId": 7,
-                        "event": {
-                            "e": "executionReport",
-                            "E": 1_710_000_007_000,
-                            "s": "BTCUSDT",
-                            "c": "v53_engine_a_intent-1",
-                            "S": "BUY",
-                            "o": "LIMIT",
-                            "f": "GTC",
-                            "q": "0.25000000",
-                            "p": "50000.10000000",
-                            "x": "NEW",
-                            "X": "NEW",
-                            "i": 123462,
-                            "l": "0.00000000",
-                            "z": "0.00000000",
-                            "L": "0.00000000",
-                            "n": "0",
-                            "N": None,
-                            "t": -1,
-                            "r": "NONE",
-                        },
-                    }
-                ),
-            ]
-        ),
-        clock_ms=lambda: 1_710_000_000_000,
+    def _mock_binance_request(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v3/order" and request.method.upper() == "POST":
+            params = request.url.params
+            return httpx.Response(
+                200,
+                json={
+                    "symbol": params.get("symbol", "BTCUSDT"),
+                    "orderId": 123462,
+                    "clientOrderId": params.get("newClientOrderId", "smoke-order"),
+                    "transactTime": 1_710_000_001_000,
+                    "status": "NEW",
+                    "side": params.get("side", "BUY"),
+                    "type": params.get("type", "MARKET"),
+                    "price": params.get("price", "0"),
+                    "origQty": params.get("quantity", "0.25"),
+                },
+            )
+        if request.url.path == "/api/v3/openOrders":
+            return httpx.Response(200, json=[])
+        if request.url.path == "/api/v3/account":
+            return httpx.Response(
+                200,
+                json={
+                    "makerCommission": 10,
+                    "takerCommission": 10,
+                    "buyerCommission": 0,
+                    "sellerCommission": 0,
+                    "canTrade": True,
+                    "canWithdraw": True,
+                    "canDeposit": True,
+                    "accountType": "SPOT",
+                    "updateTime": 1_710_000_000_000,
+                    "balances": [],
+                },
+            )
+        return httpx.Response(404, json={"code": -1, "msg": "unexpected path"})
+
+    reconciliation_calibration_config = None
+    if reconciliation_calibration_root is not None:
+        reconciliation_calibration_config = ReconciliationSchedulerCalibrationConfig(
+            calibration_root=str(reconciliation_calibration_root),
+            calibration_version="v1",
+        )
+    http_client = httpx.AsyncClient(
+        base_url="https://testnet.binance.vision",
+        transport=httpx.MockTransport(_mock_binance_request),
     )
-    events = runtime._adapter.poll_order_events()
-    if len(events) != 1 or events[0].event_type.value != "ack":
+
+    try:
+        bundle = build_binance_execution_runtime_bootstrap_bundle(
+            credentials=BinanceCredentials(
+                api_key="smoke-api-key",
+                secret_key="smoke-secret-key",
+                label="smoke",
+            ),
+            config=BinanceAdapterConfig(rest_base_url="https://testnet.binance.vision"),
+            http_client=http_client,
+            user_data_stream_enabled=True,
+            user_data_socket_factory=lambda endpoint, connect_timeout_s, recv_timeout_s: _FakeSocket(
+                [
+                    json.dumps(
+                        {
+                            "id": "v53-user-data-subscribe",
+                            "status": 200,
+                            "result": {"subscriptionId": 7},
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "subscriptionId": 7,
+                            "event": {
+                                "e": "executionReport",
+                                "E": 1_710_000_007_000,
+                                "s": "BTCUSDT",
+                                "c": "v53_engine_a_intent-1",
+                                "S": "BUY",
+                                "o": "LIMIT",
+                                "f": "GTC",
+                                "q": "0.25000000",
+                                "p": "50000.10000000",
+                                "x": "NEW",
+                                "X": "NEW",
+                                "i": 123462,
+                                "l": "0.00000000",
+                                "z": "0.00000000",
+                                "L": "0.00000000",
+                                "n": "0",
+                                "N": None,
+                                "t": -1,
+                                "r": "NONE",
+                            },
+                        }
+                    ),
+                ]
+            ),
+            clock_ms=lambda: 1_710_000_000_000,
+            execution_runtime_projection_path=execution_runtime_projection_path,
+            gatekeeper_audit_path=gatekeeper_audit_path,
+            reconciliation_scheduler_calibration_config=(
+                reconciliation_calibration_config
+            ),
+            reconciliation_boot_now=1_710_000_000.5,
+        )
+        runtime = bundle.runtime
+        if gatekeeper_audit_path is not None:
+            submission = runtime.submit_opportunity(
+                ExecutionOpportunity(
+                    intent_id="smoke-intent-1",
+                    pair="BTCUSDT",
+                    engine_id="engine_a",
+                    side="buy",
+                    quantity=0.25,
+                    expected_gain=0.01,
+                    expected_cost=0.0015,
+                    score=0.82,
+                    justification="build9 gatekeeper audit smoke",
+                    spread_bps=2.0,
+                ),
+                now=1_710_000_001.0,
+            )
+            if submission.status != ExecutionSubmissionStatus.SUBMITTED:
+                return SmokeCheck(
+                    "execution_bootstrap",
+                    False,
+                    "bounded Binance execution bootstrap did not submit through the canonical gatekeeper path",
+                )
+            if not gatekeeper_audit_path.exists():
+                return SmokeCheck(
+                    "execution_bootstrap",
+                    False,
+                    "bounded Binance execution bootstrap did not materialize the gatekeeper audit store",
+                )
+        events = runtime._adapter.poll_order_events()
+        if len(events) != 1 or events[0].event_type.value != "ack":
+            return SmokeCheck(
+                "execution_bootstrap",
+                False,
+                "bounded Binance execution bootstrap did not emit the expected ACK event",
+            )
+        if bundle.reconciliation_scheduler is None or bundle.reconciliation_boot_result is None:
+            return SmokeCheck(
+                "execution_bootstrap",
+                False,
+                "bounded Binance execution bootstrap did not expose boot reconciliation state",
+            )
+        if (
+            not bundle.reconciliation_boot_result.executed
+            or bundle.reconciliation_boot_result.trading_blocked
+        ):
+            return SmokeCheck(
+                "execution_bootstrap",
+                False,
+                "bounded Binance execution bootstrap did not complete aligned boot reconciliation",
+            )
+
+        detail_parts = [
+            "bounded Binance execution bootstrap wires authenticated user-data polling",
+            "boot reconciliation",
+        ]
+        if reconciliation_calibration_root is not None:
+            if bundle.reconciliation_boot_result.interval_s != 1800.0:
+                return SmokeCheck(
+                    "execution_bootstrap",
+                    False,
+                    "bounded Binance execution bootstrap did not load governed THR-I04 for reconciliation boot",
+                )
+            detail_parts.append("governed THR-I04 scheduler")
+
+        if execution_runtime_projection_path is not None and (
+            runtime._rate_limit_model is None
+            or runtime._spread_guard_model is None
+            or runtime._slippage_model is None
+        ):
+            return SmokeCheck(
+                "execution_bootstrap",
+                False,
+                "bounded Binance execution bootstrap did not load all governed execution consumers",
+            )
+        if execution_runtime_projection_path is not None:
+            detail_parts.append("governed THR-X03/X04/X05 consumers")
+        if gatekeeper_audit_path is not None:
+            detail_parts.append("gatekeeper audit store")
         return SmokeCheck(
             "execution_bootstrap",
-            False,
-            "bounded Binance execution bootstrap did not emit the expected ACK event",
+            True,
+            " + ".join(detail_parts),
         )
-    return SmokeCheck(
-        "execution_bootstrap",
-        True,
-        "bounded Binance execution bootstrap wires authenticated user-data polling",
+    finally:
+        import asyncio
+
+        asyncio.run(http_client.aclose())
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Run the Build-1..9 core smoke suite.",
     )
+    parser.add_argument(
+        "--execution-runtime-projection-path",
+        type=Path,
+        default=None,
+        help="Optional Local IA Lab execution runtime projection to load in the execution bootstrap smoke.",
+    )
+    parser.add_argument(
+        "--reconciliation-calibration-root",
+        type=Path,
+        default=None,
+        help="Optional calibration root used to load governed THR-I04 for execution reconciliation bootstrap.",
+    )
+    parser.add_argument(
+        "--gatekeeper-audit-path",
+        type=Path,
+        default=None,
+        help="Optional append-only JSONL path used to persist canonical gatekeeper audit events.",
+    )
+    return parser.parse_args(argv)
 
 
 def _format_report(checks: list[SmokeCheck], build1_text: str) -> str:
@@ -435,10 +611,11 @@ def _format_report(checks: list[SmokeCheck], build1_text: str) -> str:
     return "\n".join(lines)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     _configure_stdio()
     repo_root = Path(__file__).resolve().parent.parent
     sys.path.insert(0, str(repo_root / "src"))
+    args = _parse_args(argv)
 
     try:
         from smoke_bootstrap_recovery import format_smoke_report, run_build1_smoke
@@ -449,7 +626,10 @@ def main() -> int:
     build1_report = run_build1_smoke()
     build1_text = format_smoke_report(build1_report)
 
-    checks = [_bootstrap_module(module_name) for module_name in CORE_MODULES]
+    checks = [
+        _bootstrap_module(module_label, module_name)
+        for module_label, module_name in CORE_MODULES
+    ]
 
     if all(check.passed for check in checks):
         engine_check, engine_a_output, engine_b_output = _run_engine_chain()
@@ -459,7 +639,13 @@ def main() -> int:
             checks.append(portfolio_check)
             if portfolio_check.passed:
                 checks.append(_run_meta_chain(portfolio_result))
-            checks.append(_run_execution_bootstrap_smoke())
+            checks.append(
+                _run_execution_bootstrap_smoke_with_projection(
+                    execution_runtime_projection_path=args.execution_runtime_projection_path,
+                    reconciliation_calibration_root=args.reconciliation_calibration_root,
+                    gatekeeper_audit_path=args.gatekeeper_audit_path,
+                )
+            )
 
     print(_format_report(checks, build1_text))
 

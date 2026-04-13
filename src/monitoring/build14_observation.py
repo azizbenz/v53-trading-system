@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from complete_enablers import Build14ObservationInput
+from interface_contracts import Build14ObservationInput
 from monitoring.contracts import MonitoringSnapshot, TechnicalDashboardPayload
 
 

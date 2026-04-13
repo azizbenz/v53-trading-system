@@ -26,6 +26,10 @@ coverage.xml
 .codex_pytest_calibration_run/
 .test_tmp/
 .tmp_pytest/
+data/chunks_head/
+data/wal/
+data/queries.active
+tests/_tmp_local_lab_replay_workflow_loader/
 engine_a_breaker_*/
 engine_b_breaker_*/
 v53_dag_*/

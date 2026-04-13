@@ -1,0 +1,11 @@
+{
+  "scan_roots": [
+    "src",
+    "scripts",
+    "tests"
+  ],
+  "max_file_lines": 700,
+  "max_function_lines": 120,
+  "allow_print_paths": [],
+  "hotspot_limit": 12
+}

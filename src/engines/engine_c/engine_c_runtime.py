@@ -8,7 +8,15 @@ from typing import Protocol
 
 from pydantic import BaseModel, Field
 
-from interface_contracts import EngineId, RegimeId, Side, SignalCandidate, SignalType
+from interface_contracts import (
+    EngineCVoidValidationInput,
+    EngineCVoidValidationOutcome,
+    EngineId,
+    RegimeId,
+    Side,
+    SignalCandidate,
+    SignalType,
+)
 from risk_backbone.emergency_kill_switch.circuit_breaker import EmergencyCircuitBreaker
 from risk_backbone.risk_runtime import RiskCandidate, RiskEvaluation, RiskRuntime, RiskRuntimeAction
 from scoring_backbone.hard_block_gate.blocker_evaluator import BlockerCondition
@@ -64,31 +72,6 @@ class EngineCRuntimeInput(BaseModel, frozen=True):
     max_selections: int = 1
     corr_penalty: float = 0.0
     risk_penalty: float = 0.0
-
-
-class EngineCVoidValidationInput(BaseModel, frozen=True):
-    """Bounded typed input for the Engine C void-validation hook."""
-
-    context_id: str = Field(..., min_length=1)
-    pair: str = Field(..., min_length=1)
-    engine_id: str = Field(..., min_length=1)
-    scoring_version: str = Field(..., min_length=1)
-    breakout_type: str = ""
-    continuation_context: str = ""
-    raw_score: float = 0.0
-    penalized_score: float = 0.0
-    expected_cost: float = 0.0
-    expected_ce: float = 0.0
-    conviction: str = ""
-    tier: str = ""
-
-
-class EngineCVoidValidationOutcome(BaseModel, frozen=True):
-    """Deterministic outcome of the bounded Engine C void-validation hook."""
-
-    accepted: bool = True
-    reason_codes: tuple[str, ...] = ()
-    detail: str = ""
 
 
 class EngineCVoidValidationHook(Protocol):

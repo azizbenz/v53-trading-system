@@ -596,6 +596,36 @@ def _execution_cards(payload: TechnicalDashboardPayload) -> tuple[DashboardCard,
                 )
             ),
         ),
+        DashboardCard(
+            key="execution_runtime_projection_bridge",
+            label="Runtime projection",
+            value=(
+                f"proj={payload.execution_runtime_projection_bridge.projection_status or 'none'} / "
+                f"loaded={'yes' if payload.execution_runtime_projection_bridge.projection_loaded else 'no'} / "
+                f"consumers={payload.execution_runtime_projection_bridge.consumer_count}"
+            ),
+            status=payload.execution_runtime_projection_bridge.status,
+            detail=(
+                f"cfg={'yes' if payload.execution_runtime_projection_bridge.configured else 'no'} / "
+                f"found={'yes' if payload.execution_runtime_projection_bridge.projection_found else 'no'} / "
+                f"ready={payload.execution_runtime_projection_bridge.ready_consumer_count} / "
+                f"partial={payload.execution_runtime_projection_bridge.partial_consumer_count} / "
+                f"blocked={payload.execution_runtime_projection_bridge.blocked_consumer_count} / "
+                f"rate_limit={'yes' if payload.execution_runtime_projection_bridge.rate_limit_model_loaded else 'no'} / "
+                f"spread_guard={'yes' if payload.execution_runtime_projection_bridge.spread_guard_model_loaded else 'no'} / "
+                f"slippage={'yes' if payload.execution_runtime_projection_bridge.slippage_model_loaded else 'no'}"
+                + (
+                    f" / path={payload.execution_runtime_projection_bridge.projection_path}"
+                    if payload.execution_runtime_projection_bridge.projection_path
+                    else ""
+                )
+                + (
+                    f" / err={payload.execution_runtime_projection_bridge.error_type}"
+                    if payload.execution_runtime_projection_bridge.error_type
+                    else ""
+                )
+            ),
+        ),
     )
 
 
@@ -635,7 +665,8 @@ def _runtime_hook_bridge_cards(payload: TechnicalDashboardPayload) -> tuple[Dash
             ),
             detail=(
                 f"warning={warning_count} / critical={critical_count} / "
-                f"execution_no_trade={payload.execution_no_trade_bridge.status}"
+                f"execution_no_trade={payload.execution_no_trade_bridge.status} / "
+                f"runtime_projection={payload.execution_runtime_projection_bridge.status}"
             ),
         )
     ]
@@ -667,6 +698,193 @@ def _runtime_hook_bridge_cards(payload: TechnicalDashboardPayload) -> tuple[Dash
             )
         )
     return tuple(cards)
+
+
+def _shadow_execution_telemetry_card_status(payload: TechnicalDashboardPayload) -> str:
+    status = payload.shadow.execution_telemetry_status
+    if status == "written":
+        return "healthy"
+    if status == "skipped":
+        return "info"
+    if status == "failed":
+        return "critical"
+    if status == "not_configured":
+        return "planned"
+    return "warning"
+
+
+def _shadow_execution_telemetry_card_detail(payload: TechnicalDashboardPayload) -> str:
+    status = payload.shadow.execution_telemetry_status
+    ref = payload.shadow.execution_telemetry_ref
+    if status == "written":
+        return f"ref={ref}" if ref else "Execution telemetry sidecar materialized"
+    if status == "skipped":
+        return "Execution telemetry sidecar intentionally skipped for this Shadow run"
+    if status == "failed":
+        return (
+            f"ref={ref}" if ref else "Execution telemetry sidecar write failed for this Shadow run"
+        )
+    return "No execution telemetry sidecar configured for this Shadow run"
+
+
+def _shadow_telegram_alert_card_status(payload: TechnicalDashboardPayload) -> str:
+    status = payload.shadow.telegram_alert_delivery_status
+    if status == "sent":
+        return "healthy"
+    if status == "failed":
+        return "critical"
+    if status == "skipped":
+        return "info"
+    if status == "not_configured":
+        return "planned"
+    return "warning"
+
+
+def _shadow_telegram_alert_card_detail(payload: TechnicalDashboardPayload) -> str:
+    shadow = payload.shadow
+    detail = f"event={shadow.telegram_alert_delivery_event_type or 'none'}"
+    if shadow.telegram_alert_delivery_error:
+        detail = f"{detail} / error={shadow.telegram_alert_delivery_error}"
+    return detail
+
+
+def _shadow_execution_bootstrap_card_status(payload: TechnicalDashboardPayload) -> str:
+    shadow = payload.shadow
+    status = shadow.execution_runtime_bootstrap_status
+    if status == "ready":
+        if shadow.execution_runtime_bootstrap_reconciliation_boot_circuit_breaker_tripped:
+            return "critical"
+        if shadow.execution_runtime_bootstrap_reconciliation_boot_trading_blocked:
+            return "warning"
+        return "healthy"
+    if status == "failed":
+        return "critical"
+    if status == "not_configured":
+        return "planned"
+    return "info"
+
+
+def _shadow_execution_bootstrap_card_detail(payload: TechnicalDashboardPayload) -> str:
+    shadow = payload.shadow
+    detail = (
+        f"gatekeeper_source={shadow.execution_runtime_gatekeeper_audit_source} / "
+        f"user_data={'yes' if shadow.execution_runtime_bootstrap_user_data_stream_enabled else 'no'} / "
+        f"executed={'yes' if shadow.execution_runtime_bootstrap_reconciliation_boot_executed else 'no'} / "
+        f"blocked={'yes' if shadow.execution_runtime_bootstrap_reconciliation_boot_trading_blocked else 'no'} / "
+        f"circuit_breaker={'yes' if shadow.execution_runtime_bootstrap_reconciliation_boot_circuit_breaker_tripped else 'no'} / "
+        f"divergences={shadow.execution_runtime_bootstrap_reconciliation_boot_divergence_count}"
+    )
+    if shadow.execution_runtime_bootstrap_ref:
+        detail = f"{detail} / ref={shadow.execution_runtime_bootstrap_ref}"
+    if shadow.execution_runtime_gatekeeper_audit_ref:
+        detail = (
+            f"{detail} / "
+            f"gatekeeper_ref={shadow.execution_runtime_gatekeeper_audit_ref}"
+        )
+    if shadow.execution_runtime_bootstrap_reconciliation_boot_recovery_action:
+        detail = (
+            f"{detail} / "
+            f"recovery={shadow.execution_runtime_bootstrap_reconciliation_boot_recovery_action}"
+        )
+    if shadow.execution_runtime_bootstrap_reconciliation_boot_detail:
+        detail = f"{detail} / {shadow.execution_runtime_bootstrap_reconciliation_boot_detail}"
+    return detail
+
+
+def _shadow_execution_projection_card_status(payload: TechnicalDashboardPayload) -> str:
+    bridge_status = payload.shadow.execution_runtime_projection_bridge_status
+    if bridge_status:
+        return bridge_status
+    status = payload.shadow.execution_runtime_projection_status
+    if status == "ready":
+        return "healthy" if payload.shadow.execution_runtime_projection_ready else "warning"
+    if status == "partial":
+        return "warning"
+    if status == "blocked":
+        return "critical"
+    if status == "not_configured":
+        return "planned"
+    return "info"
+
+
+def _shadow_execution_projection_card_detail(payload: TechnicalDashboardPayload) -> str:
+    shadow = payload.shadow
+    detail = (
+        f"source={shadow.execution_runtime_projection_source} / "
+        f"ready={shadow.execution_runtime_projection_ready_consumer_count} / "
+        f"partial={shadow.execution_runtime_projection_partial_consumer_count} / "
+        f"blocked={shadow.execution_runtime_projection_blocked_consumer_count} / "
+        f"rate_limit={'yes' if shadow.execution_runtime_projection_rate_limit_model_loaded else 'no'} / "
+        f"spread_guard={'yes' if shadow.execution_runtime_projection_spread_guard_model_loaded else 'no'} / "
+        f"slippage={'yes' if shadow.execution_runtime_projection_slippage_model_loaded else 'no'}"
+    )
+    if shadow.execution_runtime_projection_ref:
+        detail = f"{detail} / ref={shadow.execution_runtime_projection_ref}"
+    return detail
+
+
+def _shadow_regime_lite_safing_card_status(payload: TechnicalDashboardPayload) -> str:
+    return payload.shadow.regime_lite_safing.status
+
+
+def _shadow_regime_lite_safing_card_detail(payload: TechnicalDashboardPayload) -> str:
+    regime_safing = payload.shadow.regime_lite_safing
+    shadow = payload.shadow
+    detail = (
+        f"assessment_source={shadow.regime_lite_assessment_source} / "
+        f"safing_source={shadow.regime_lite_safing_recommendation_source} / "
+        f"block_entries={'yes' if regime_safing.should_block_new_entries else 'no'} / "
+        f"exit_all={'yes' if regime_safing.should_exit_all else 'no'} / "
+        f"recommended_action={regime_safing.recommended_operator_action or 'none'} / "
+        f"request_action={regime_safing.operator_safing_request_action or 'none'}"
+    )
+    if shadow.regime_lite_assessment_ref:
+        detail = f"{detail} / assessment_ref={shadow.regime_lite_assessment_ref}"
+    if shadow.regime_lite_safing_recommendation_ref:
+        detail = (
+            f"{detail} / "
+            f"safing_ref={shadow.regime_lite_safing_recommendation_ref}"
+        )
+    if regime_safing.operator_safing_request_source_runtime_mode:
+        detail = (
+            f"{detail} / "
+            f"source={regime_safing.operator_safing_request_source_runtime_mode}"
+        )
+    if regime_safing.reason_codes:
+        detail = f"{detail} / reasons={','.join(regime_safing.reason_codes)}"
+    if regime_safing.detail:
+        detail = f"{detail} / {regime_safing.detail}"
+    return detail
+
+
+def _shadow_info_stress_card_status(payload: TechnicalDashboardPayload) -> str:
+    shadow = payload.shadow
+    if shadow.info_stress_governance_status == "not_configured":
+        return "planned"
+    if shadow.info_stress_level == "extreme":
+        return "warning"
+    if shadow.info_stress_level == "elevated":
+        return "info"
+    if shadow.info_stress_level == "normal":
+        return "healthy"
+    return "info"
+
+
+def _shadow_info_stress_card_detail(payload: TechnicalDashboardPayload) -> str:
+    shadow = payload.shadow
+    detail = (
+        f"assessment_source={shadow.info_stress_assessment_source} / "
+        f"alerts={shadow.info_stress_alert_count} / "
+        f"entries_blocked={'yes' if shadow.info_stress_entries_blocked else 'no'} / "
+        f"blocked_until={shadow.info_stress_entries_blocked_until_ts or 'none'}"
+    )
+    if shadow.info_stress_assessment_ref:
+        detail = f"{detail} / assessment_ref={shadow.info_stress_assessment_ref}"
+    if shadow.info_stress_reason_codes:
+        detail = f"{detail} / reasons={','.join(shadow.info_stress_reason_codes)}"
+    if shadow.info_stress_detail:
+        detail = f"{detail} / {shadow.info_stress_detail}"
+    return detail
 
 
 def _infra_cards(payload: TechnicalDashboardPayload) -> tuple[DashboardCard, ...]:
@@ -1184,6 +1402,57 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> Locked
                         else "planned"
                     ),
                     detail=payload.shadow.import_artifact_id or "No import artifact id",
+                ),
+                DashboardCard(
+                    key="shadow_execution_telemetry",
+                    label="Execution Telemetry",
+                    value=payload.shadow.execution_telemetry_status,
+                    status=_shadow_execution_telemetry_card_status(payload),
+                    detail=_shadow_execution_telemetry_card_detail(payload),
+                ),
+                DashboardCard(
+                    key="shadow_telegram_alerts",
+                    label="Telegram Alerts",
+                    value=payload.shadow.telegram_alert_delivery_status,
+                    status=_shadow_telegram_alert_card_status(payload),
+                    detail=_shadow_telegram_alert_card_detail(payload),
+                ),
+                DashboardCard(
+                    key="shadow_execution_bootstrap",
+                    label="Execution Bootstrap",
+                    value=(
+                        f"{payload.shadow.execution_runtime_bootstrap_status}"
+                        f"@{payload.shadow.execution_runtime_bootstrap_source}"
+                    ),
+                    status=_shadow_execution_bootstrap_card_status(payload),
+                    detail=_shadow_execution_bootstrap_card_detail(payload),
+                ),
+                DashboardCard(
+                    key="shadow_execution_projection",
+                    label="Execution Projection",
+                    value=(
+                        f"{payload.shadow.execution_runtime_projection_status}"
+                        f"@{payload.shadow.execution_runtime_projection_source}"
+                    ),
+                    status=_shadow_execution_projection_card_status(payload),
+                    detail=_shadow_execution_projection_card_detail(payload),
+                ),
+                DashboardCard(
+                    key="shadow_regime_lite_safing",
+                    label="Regime Safing",
+                    value=payload.shadow.regime_lite_safing.severity,
+                    status=_shadow_regime_lite_safing_card_status(payload),
+                    detail=_shadow_regime_lite_safing_card_detail(payload),
+                ),
+                DashboardCard(
+                    key="shadow_info_stress",
+                    label="Info Stress",
+                    value=(
+                        f"{payload.shadow.info_stress_governance_status}"
+                        f"@{payload.shadow.info_stress_level}"
+                    ),
+                    status=_shadow_info_stress_card_status(payload),
+                    detail=_shadow_info_stress_card_detail(payload),
                 ),
                 DashboardCard(
                     key="shadow_blocking_reasons",

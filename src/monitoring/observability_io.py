@@ -18,4 +18,20 @@ def write_observability_text_payload(
     return Path(path)
 
 
-__all__ = ["write_observability_text_payload"]
+def write_node_exporter_textfile_payload(
+    export: ObservabilityExport,
+    collector_dir: Path,
+    *,
+    filename: str,
+) -> Path:
+    """Persist an observability export into a node_exporter textfile collector directory."""
+
+    target_path = Path(collector_dir) / filename
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    return write_observability_text_payload(export, target_path)
+
+
+__all__ = [
+    "write_observability_text_payload",
+    "write_node_exporter_textfile_payload",
+]
