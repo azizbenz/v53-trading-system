@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 
 import pytest
+from pydantic import ValidationError
 
 from engines.engine_b import (
     EngineBRuntime,
@@ -15,7 +16,16 @@ from engines.engine_b import (
     EngineBSweepValidationOutcome,
 )
 from engines.engine_b.engine_b_runner import EngineBInput
-from interface_contracts import EngineId, RegimeId, Side, SignalType
+from interface_contracts import (
+    BetStructure,
+    ConditioningFamily,
+    EngineId,
+    ForecastHorizonClass,
+    ForecastTargetClass,
+    RegimeId,
+    Side,
+    SignalType,
+)
 from risk_backbone.emergency_kill_switch.circuit_breaker import EmergencyCircuitBreaker, KillSwitchReason
 from risk_backbone.risk_runtime import RiskLimits, RiskRuntime
 from scoring_backbone.hard_block_gate.blocker_evaluator import BlockerCondition
@@ -127,18 +137,21 @@ def _runtime_input(**overrides) -> EngineBRuntimeInput:
     return EngineBRuntimeInput(**defaults)
 
 
-def _breaker_state_dir(name: str) -> Path:
-    state_dir = Path(".codex_kill_switch_tests") / name
+def _breaker_state_dir(repo_tmp_path: Path, name: str) -> Path:
+    state_dir = repo_tmp_path / ".codex_kill_switch_tests" / name
     shutil.rmtree(state_dir, ignore_errors=True)
     state_dir.mkdir(parents=True, exist_ok=True)
     return state_dir
 
 
-def _runtime(name: str, **overrides) -> EngineBRuntime:
+def _runtime(repo_tmp_path: Path, name: str, **overrides: object) -> EngineBRuntime:
     return EngineBRuntime(
         scoring_runtime=overrides.pop("scoring_runtime", _scoring_runtime()),
         risk_runtime=overrides.pop("risk_runtime", _risk_runtime()),
-        circuit_breaker=overrides.pop("circuit_breaker", EmergencyCircuitBreaker(state_dir=_breaker_state_dir(name))),
+        circuit_breaker=overrides.pop(
+            "circuit_breaker",
+            EmergencyCircuitBreaker(state_dir=_breaker_state_dir(repo_tmp_path, name)),
+        ),
         **overrides,
     )
 
@@ -162,8 +175,8 @@ def _boosting_sweep_hook(_: EngineBSweepValidationInput) -> EngineBSweepValidati
     )
 
 
-def test_runtime_emits_canonical_signal_and_accepts_through_risk():
-    runtime = _runtime("engine_b_accepts")
+def test_runtime_emits_canonical_signal_and_accepts_through_risk(repo_tmp_path: Path) -> None:
+    runtime = _runtime(repo_tmp_path, "engine_b_accepts")
 
     result = runtime.evaluate(_runtime_input(), now=10.0)
 
@@ -181,10 +194,44 @@ def test_runtime_emits_canonical_signal_and_accepts_through_risk():
     events = {entry.event for entry in result.log_entries}
     assert "engine_b_scoring_completed" in events
     assert "engine_b_accepted" in events
+    assert result.forecast_signal_candidate is None
 
 
-def test_runtime_blocks_before_scoring_when_circuit_breaker_is_tripped():
-    breaker = EmergencyCircuitBreaker(state_dir=_breaker_state_dir("engine_b"))
+def test_runtime_emits_additive_forecast_signal_when_strategy_id_is_provided(
+    repo_tmp_path: Path,
+) -> None:
+    runtime = _runtime(repo_tmp_path, "engine_b_accepts_forecast")
+
+    result = runtime.evaluate(
+        _runtime_input(strategy_id=" strategy-b-reversion "),
+        now=10.0,
+    )
+
+    assert result.status == EngineBRuntimeStatus.ACCEPTED
+    assert result.signal_candidate is not None
+    assert result.forecast_signal_candidate is not None
+    assert result.forecast_signal_candidate.strategy_id == "strategy-b-reversion"
+    assert result.forecast_signal_candidate.engine_id == EngineId.B
+    assert result.forecast_signal_candidate.side == Side.BUY
+    assert result.forecast_signal_candidate.bet_structure == BetStructure.MEAN_REVERT
+    assert result.forecast_signal_candidate.forecast_target_class == (
+        ForecastTargetClass.DIRECTION_PLUS_STRENGTH_PLUS_HORIZON
+    )
+    assert result.forecast_signal_candidate.forecast_horizon_class == ForecastHorizonClass.MEDIUM
+    assert result.forecast_signal_candidate.expected_cost == pytest.approx(0.001)
+    assert result.forecast_signal_candidate.expected_gain == pytest.approx(0.003)
+    assert result.forecast_signal_candidate.expected_break_even == pytest.approx(0.0018)
+    assert result.forecast_signal_candidate.reason_codes == ("engine_b.conviction.medium",)
+    assert result.forecast_signal_candidate.conditioning_state[0].family == ConditioningFamily.ENGINE_INTERNAL
+
+
+def test_runtime_input_rejects_blank_strategy_id() -> None:
+    with pytest.raises(ValidationError, match="strategy_id must not be blank"):
+        _runtime_input(strategy_id="   ")
+
+
+def test_runtime_blocks_before_scoring_when_circuit_breaker_is_tripped(repo_tmp_path: Path) -> None:
+    breaker = EmergencyCircuitBreaker(state_dir=_breaker_state_dir(repo_tmp_path, "engine_b"))
     breaker.trip(KillSwitchReason.OPERATOR_MANUAL, "manual stop")
     runtime = EngineBRuntime(
         scoring_runtime=_scoring_runtime(),
@@ -203,7 +250,7 @@ def test_runtime_blocks_before_scoring_when_circuit_breaker_is_tripped():
     assert any(entry.event == "engine_b_circuit_breaker_blocked" for entry in result.log_entries)
 
 
-def test_runtime_requires_explicit_circuit_breaker():
+def test_runtime_requires_explicit_circuit_breaker() -> None:
     with pytest.raises(ValueError, match="requires a circuit_breaker"):
         EngineBRuntime(
             scoring_runtime=_scoring_runtime(),
@@ -212,8 +259,8 @@ def test_runtime_requires_explicit_circuit_breaker():
         )
 
 
-def test_runtime_rejects_blank_scoring_version():
-    runtime = _runtime("engine_b_blank_version")
+def test_runtime_rejects_blank_scoring_version(repo_tmp_path: Path) -> None:
+    runtime = _runtime(repo_tmp_path, "engine_b_blank_version")
 
     with pytest.raises(ValueError, match="requires non-empty scoring_version"):
         runtime.evaluate(
@@ -222,8 +269,9 @@ def test_runtime_rejects_blank_scoring_version():
         )
 
 
-def test_runtime_can_be_blocked_by_sweep_validation_hook():
+def test_runtime_can_be_blocked_by_sweep_validation_hook(repo_tmp_path: Path) -> None:
     runtime = _runtime(
+        repo_tmp_path,
         "engine_b_hook_blocked",
         sweep_validation_hook=_blocking_sweep_hook,
     )
@@ -238,8 +286,11 @@ def test_runtime_can_be_blocked_by_sweep_validation_hook():
     assert blocked_logs[0].reasons == ("ARTIFACT_SWEEP_BLOCK",)
 
 
-def test_runtime_applies_sweep_validation_score_adjustments_before_scoring():
+def test_runtime_applies_sweep_validation_score_adjustments_before_scoring(
+    repo_tmp_path: Path,
+) -> None:
     runtime = _runtime(
+        repo_tmp_path,
         "engine_b_hook_boosted",
         sweep_validation_hook=_boosting_sweep_hook,
     )
@@ -261,12 +312,13 @@ def test_runtime_applies_sweep_validation_score_adjustments_before_scoring():
     assert "raw_score_add=0.0800" in applied_logs[0].reasons
 
 
-def test_runtime_rejects_missing_scoring_audit_for_engine_candidate():
+def test_runtime_rejects_missing_scoring_audit_for_engine_candidate(repo_tmp_path: Path) -> None:
     class _MalformedScoringRuntime:
         def run_round(self, *args, **kwargs):
             return type("MalformedScoringRound", (), {"audits": ()})()
 
     runtime = _runtime(
+        repo_tmp_path,
         "engine_b_missing_audit",
         scoring_runtime=_MalformedScoringRuntime(),
     )
@@ -275,8 +327,8 @@ def test_runtime_rejects_missing_scoring_audit_for_engine_candidate():
         runtime.evaluate(_runtime_input(), now=13.0)
 
 
-def test_runtime_hard_blocked_logs_explicit_reasons():
-    runtime = _runtime("engine_b_hard_blocked")
+def test_runtime_hard_blocked_logs_explicit_reasons(repo_tmp_path: Path) -> None:
+    runtime = _runtime(repo_tmp_path, "engine_b_hard_blocked")
     runtime_input = _runtime_input(
         blocker_conditions=BlockerCondition(is_stale_hard=True, is_pair_suspended=True),
     )
@@ -293,8 +345,8 @@ def test_runtime_hard_blocked_logs_explicit_reasons():
     assert "suspended" in joined
 
 
-def test_runtime_rejected_by_ranking_is_auditable():
-    runtime = _runtime("engine_b_rejected_ranking")
+def test_runtime_rejected_by_ranking_is_auditable(repo_tmp_path: Path) -> None:
+    runtime = _runtime(repo_tmp_path, "engine_b_rejected_ranking")
     peer = ScoringCandidateInput(
         engine_id="engine_a",
         pair="ETHUSDT",
@@ -338,8 +390,8 @@ def test_runtime_rejected_by_ranking_is_auditable():
     assert "max selections" in ranking_logs[0].reasons[0]
 
 
-def test_runtime_rejected_by_portfolio_is_auditable():
-    runtime = _runtime("engine_b_rejected_portfolio")
+def test_runtime_rejected_by_portfolio_is_auditable(repo_tmp_path: Path) -> None:
+    runtime = _runtime(repo_tmp_path, "engine_b_rejected_portfolio")
     result = runtime.evaluate(
         _runtime_input(
             portfolio=_portfolio_state(remaining_gross_capacity=10.0),
@@ -353,7 +405,7 @@ def test_runtime_rejected_by_portfolio_is_auditable():
     assert "remaining gross" in portfolio_logs[0].reasons[0]
 
 
-def test_runtime_cannot_bypass_risk_runtime():
+def test_runtime_cannot_bypass_risk_runtime(repo_tmp_path: Path) -> None:
     risk_runtime = RiskRuntime(
         RiskLimits(
             gross_cap=500.0,
@@ -363,7 +415,7 @@ def test_runtime_cannot_bypass_risk_runtime():
             cluster_cap=5000.0,
         )
     )
-    runtime = _runtime("engine_b_risk_runtime", risk_runtime=risk_runtime)
+    runtime = _runtime(repo_tmp_path, "engine_b_risk_runtime", risk_runtime=risk_runtime)
 
     result = runtime.evaluate(_runtime_input(projected_size=1000.0), now=50.0)
 

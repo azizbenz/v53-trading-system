@@ -1,5 +1,7 @@
 """Typed regime classification helpers."""
 
+from __future__ import annotations
+
 from regime_classifier.regime_lite import (
     RegimeLiteAssessment,
     RegimeLiteCalibrationConfig,

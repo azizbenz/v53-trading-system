@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
-
 from meta_minimal.dtr_core.dtr_record_builder import DTRRecord
 
 
 def export_replay_dtr_records(
     records: tuple[DTRRecord, ...],
-) -> tuple[dict[str, Any], ...]:
+) -> tuple[dict[str, object], ...]:
     """Convert typed DTR records into stable JSON-exportable dictionaries."""
 
     return tuple(record.model_dump(mode="json") for record in records)

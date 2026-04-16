@@ -1,4 +1,6 @@
-"""loss_budgeter — planned loss caps, per-position L_i, projection, reporting."""
+"""loss_budgeter â€” planned loss caps, per-position L_i, projection, reporting."""
+
+from __future__ import annotations
 
 from .aggregate_loss_budgeter import AggregateLossBudget, aggregate_loss_budget
 from .daily_pnl_breaker import (

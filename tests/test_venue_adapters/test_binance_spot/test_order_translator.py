@@ -46,7 +46,9 @@ def test_translate_market_intent_to_binance_order():
     assert request.quantity == "0.25"
     assert request.price is None
     assert request.time_in_force is None
-    assert request.client_order_id == "v53_engine_a_intent-1"
+    assert request.client_order_id == build_binance_client_order_id(
+        engine_id="engine_a", pair_id="BTCUSDT", intent_id="intent-1"
+    )
 
 
 def test_translate_limit_intent_to_binance_order():
@@ -86,9 +88,27 @@ def test_translate_no_trade_intent_is_rejected():
 
 def test_build_binance_client_order_id_stays_deterministic_and_bounded():
     intent_id = "x" * 80
-    first = build_binance_client_order_id(engine_id="engine_b", intent_id=intent_id)
-    second = build_binance_client_order_id(engine_id="engine_b", intent_id=intent_id)
+    first = build_binance_client_order_id(engine_id="engine_b", pair_id="ETHUSDT", intent_id=intent_id)
+    second = build_binance_client_order_id(engine_id="engine_b", pair_id="ETHUSDT", intent_id=intent_id)
 
     assert first == second
-    assert len(first) <= 36
-    assert first.startswith("v53_engine_b_")
+    assert len(first) == 36
+    assert "-" in first  # UUIDv5 format
+
+
+def test_build_binance_client_order_id_differs_by_pair() -> None:
+    """Same engine + intent but different pair must produce different order ids."""
+    base = dict(engine_id="engine_a", intent_id="intent-99")
+    btc_id = build_binance_client_order_id(**base, pair_id="BTCUSDT")
+    eth_id = build_binance_client_order_id(**base, pair_id="ETHUSDT")
+    sol_id = build_binance_client_order_id(**base, pair_id="SOLUSDT")
+    assert btc_id != eth_id
+    assert eth_id != sol_id
+    assert btc_id != sol_id
+
+
+def test_build_binance_client_order_id_pair_case_insensitive() -> None:
+    """Lowercase and uppercase pair produce the same id."""
+    lower = build_binance_client_order_id(engine_id="engine_a", pair_id="btcusdt", intent_id="i1")
+    upper = build_binance_client_order_id(engine_id="engine_a", pair_id="BTCUSDT", intent_id="i1")
+    assert lower == upper

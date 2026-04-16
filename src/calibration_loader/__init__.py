@@ -1,5 +1,7 @@
 """Shared-core calibration loader for dynamic threshold artifacts."""
 
+from __future__ import annotations
+
 from calibration_loader.contracts import (
     CalibrationArtifact,
     CalibrationArtifactCollection,

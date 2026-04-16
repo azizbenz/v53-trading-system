@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 
 import yaml
 from pydantic import ValidationError
@@ -40,7 +39,7 @@ class CalibrationThresholdNotFoundError(CalibrationLoaderError):
     """Raised when a threshold_id is absent from the loaded collection."""
 
 
-def _read_supported_payload(path: Path) -> Any:
+def _read_supported_payload(path: Path) -> object:
     text = path.read_text(encoding="utf-8")
     suffix = path.suffix.lower()
     try:
@@ -48,7 +47,7 @@ def _read_supported_payload(path: Path) -> Any:
             return yaml.safe_load(text)
         if suffix == ".json":
             return json.loads(text)
-    except Exception as exc:  # pragma: no cover - surfaced as explicit loader error
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, yaml.YAMLError) as exc:
         raise CalibrationArtifactFormatError(
             f"Calibration artifact {path} could not be parsed: {exc}"
         ) from exc
@@ -155,4 +154,3 @@ class CalibrationLoader:
         threshold_id: str,
     ) -> bool | int | float | str:
         return cls.get_entry(collection, threshold_id).value
-

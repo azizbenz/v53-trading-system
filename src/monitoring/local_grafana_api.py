@@ -5,12 +5,13 @@ from __future__ import annotations
 import base64
 import json
 from pathlib import Path
-from typing import Any
 from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 from pydantic import BaseModel, Field
+
+from monitoring.grafana_types import GrafanaPayload
 
 
 class LocalGrafanaBootstrapSummary(BaseModel, frozen=True):
@@ -38,9 +39,9 @@ def _basic_auth_headers(username: str, password: str) -> dict[str, str]:
 def _request_json(
     method: str,
     url: str,
-    payload: dict[str, Any],
+    payload: GrafanaPayload,
     headers: dict[str, str],
-) -> tuple[int, dict[str, Any]]:
+) -> tuple[int, GrafanaPayload]:
     request = Request(
         url=url,
         data=json.dumps(payload).encode("utf-8"),
@@ -59,7 +60,7 @@ def build_prometheus_datasource_payload(
     name: str = "Prometheus",
     uid: str = "prometheus",
     url: str = "http://127.0.0.1:9090",
-) -> dict[str, Any]:
+) -> GrafanaPayload:
     """Build the Grafana Prometheus datasource payload."""
 
     return {
@@ -74,7 +75,7 @@ def build_prometheus_datasource_payload(
     }
 
 
-def load_dashboard_payload(path: str | Path) -> dict[str, Any]:
+def load_dashboard_payload(path: str | Path) -> GrafanaPayload:
     """Load one Grafana dashboard import payload from disk."""
 
     return json.loads(Path(path).expanduser().resolve().read_text(encoding="utf-8"))

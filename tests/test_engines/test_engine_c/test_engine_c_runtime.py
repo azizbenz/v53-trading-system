@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import shutil
 
 import pytest
 
@@ -44,6 +43,13 @@ def _good_engine_inputs(**overrides) -> EngineCInput:
         pair_health=0.92,
         data_freshness=0.95,
         flow_coherence=0.79,
+        cumulative_ofi=24.0,
+        queue_pressure=0.36,
+        vpin=0.22,
+        kyle_lambda=0.0012,
+        continuation_ofi_min=0.0,
+        continuation_queue_min=0.0,
+        continuation_vpin_max=0.35,
         expected_gain=0.012,
         expected_cost=0.0025,
         candidate_size=1000.0,
@@ -113,18 +119,20 @@ def _runtime_input(**overrides) -> EngineCRuntimeInput:
     return EngineCRuntimeInput(**defaults)
 
 
-def _breaker_state_dir(name: str) -> Path:
-    state_dir = Path(".codex_kill_switch_tests") / name
-    shutil.rmtree(state_dir, ignore_errors=True)
+def _breaker_state_dir(repo_tmp_path: Path, name: str) -> Path:
+    state_dir = repo_tmp_path / ".codex_kill_switch_tests" / name
     state_dir.mkdir(parents=True, exist_ok=True)
     return state_dir
 
 
-def _runtime(name: str, **overrides) -> EngineCRuntime:
+def _runtime(repo_tmp_path: Path, name: str, **overrides: object) -> EngineCRuntime:
     return EngineCRuntime(
         scoring_runtime=overrides.pop("scoring_runtime", _scoring_runtime()),
         risk_runtime=overrides.pop("risk_runtime", _risk_runtime()),
-        circuit_breaker=overrides.pop("circuit_breaker", EmergencyCircuitBreaker(state_dir=_breaker_state_dir(name))),
+        circuit_breaker=overrides.pop(
+            "circuit_breaker",
+            EmergencyCircuitBreaker(state_dir=_breaker_state_dir(repo_tmp_path, name)),
+        ),
         **overrides,
     )
 
@@ -137,8 +145,8 @@ def _blocking_void_hook(_: EngineCVoidValidationInput) -> EngineCVoidValidationO
     )
 
 
-def test_runtime_emits_signal_and_accepts_through_risk():
-    runtime = _runtime("engine_c_accepts")
+def test_runtime_emits_signal_and_accepts_through_risk(repo_tmp_path: Path):
+    runtime = _runtime(repo_tmp_path, "engine_c_accepts")
     result = runtime.evaluate(_runtime_input(), now=10.0)
     assert result.status == EngineCRuntimeStatus.ACCEPTED
     assert result.signal_candidate is not None
@@ -149,15 +157,18 @@ def test_runtime_emits_signal_and_accepts_through_risk():
     assert result.signal_candidate.reason == "engine_c:medium:range_expansion"
     assert result.signal_candidate.stop_loss is not None
     assert result.signal_candidate.take_profit is not None
+    assert result.engine_output.microstructure_gate_applied is True
+    assert result.engine_output.cumulative_ofi == pytest.approx(24.0)
     assert result.risk_evaluation is not None
     assert result.risk_evaluation.accepted is True
     accepted_log = next(entry for entry in result.log_entries if entry.event == "engine_c_accepted")
     assert accepted_log.breakout_type == "range_expansion"
     assert accepted_log.duplication_overlap_with_engine_a == 0.28
+    assert accepted_log.queue_pressure == pytest.approx(0.36)
 
 
-def test_runtime_blocks_before_scoring_when_circuit_breaker_is_tripped():
-    breaker = EmergencyCircuitBreaker(state_dir=_breaker_state_dir("engine_c"))
+def test_runtime_blocks_before_scoring_when_circuit_breaker_is_tripped(repo_tmp_path: Path):
+    breaker = EmergencyCircuitBreaker(state_dir=_breaker_state_dir(repo_tmp_path, "engine_c"))
     breaker.trip(KillSwitchReason.OPERATOR_MANUAL, "manual stop")
     runtime = EngineCRuntime(
         scoring_runtime=_scoring_runtime(),
@@ -185,8 +196,8 @@ def test_runtime_requires_explicit_circuit_breaker():
         )
 
 
-def test_runtime_rejects_blank_scoring_version():
-    runtime = _runtime("engine_c_blank_version")
+def test_runtime_rejects_blank_scoring_version(repo_tmp_path: Path):
+    runtime = _runtime(repo_tmp_path, "engine_c_blank_version")
 
     with pytest.raises(ValueError, match="requires non-empty scoring_version"):
         runtime.evaluate(
@@ -195,8 +206,9 @@ def test_runtime_rejects_blank_scoring_version():
         )
 
 
-def test_runtime_can_be_blocked_by_void_validation_hook():
+def test_runtime_can_be_blocked_by_void_validation_hook(repo_tmp_path: Path):
     runtime = _runtime(
+        repo_tmp_path,
         "engine_c_hook_blocked",
         void_validation_hook=_blocking_void_hook,
     )
@@ -211,8 +223,8 @@ def test_runtime_can_be_blocked_by_void_validation_hook():
     assert blocked_logs[0].reasons == ("ARTIFACT_VOID_BLOCK",)
 
 
-def test_runtime_hard_blocked_logs_reasons():
-    runtime = _runtime("engine_c_hard_blocked")
+def test_runtime_hard_blocked_logs_reasons(repo_tmp_path: Path):
+    runtime = _runtime(repo_tmp_path, "engine_c_hard_blocked")
     result = runtime.evaluate(
         _runtime_input(blocker_conditions=BlockerCondition(is_stale_hard=True, is_pair_suspended=True)),
         now=20.0,
@@ -228,8 +240,8 @@ def test_runtime_hard_blocked_logs_reasons():
     assert "suspended" in joined
 
 
-def test_runtime_rejected_by_ranking_is_auditable():
-    runtime = _runtime("engine_c_rejected_ranking")
+def test_runtime_rejected_by_ranking_is_auditable(repo_tmp_path: Path):
+    runtime = _runtime(repo_tmp_path, "engine_c_rejected_ranking")
     peer = ScoringCandidateInput(
         engine_id="engine_a",
         pair="ETHUSDT",
@@ -258,14 +270,14 @@ def test_runtime_rejected_by_ranking_is_auditable():
     assert any(entry.event == "engine_c_rejected_by_ranking" for entry in result.log_entries)
 
 
-def test_runtime_rejected_by_portfolio_is_auditable():
-    runtime = _runtime("engine_c_rejected_portfolio")
+def test_runtime_rejected_by_portfolio_is_auditable(repo_tmp_path: Path):
+    runtime = _runtime(repo_tmp_path, "engine_c_rejected_portfolio")
     result = runtime.evaluate(_runtime_input(portfolio=_portfolio_state(remaining_gross_capacity=10.0)), now=40.0)
     assert result.status == EngineCRuntimeStatus.REJECTED_PORTFOLIO
     assert any(entry.event == "engine_c_rejected_by_portfolio" for entry in result.log_entries)
 
 
-def test_runtime_cannot_bypass_risk_runtime():
+def test_runtime_cannot_bypass_risk_runtime(repo_tmp_path: Path):
     risk_runtime = RiskRuntime(
         RiskLimits(
             gross_cap=500.0,
@@ -275,7 +287,7 @@ def test_runtime_cannot_bypass_risk_runtime():
             cluster_cap=5000.0,
         )
     )
-    runtime = _runtime("engine_c_risk_runtime", risk_runtime=risk_runtime)
+    runtime = _runtime(repo_tmp_path, "engine_c_risk_runtime", risk_runtime=risk_runtime)
     result = runtime.evaluate(_runtime_input(projected_size=1000.0), now=50.0)
     assert result.status == EngineCRuntimeStatus.RISK_REJECTED
     assert result.risk_evaluation is not None

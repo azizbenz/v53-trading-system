@@ -9,6 +9,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field, model_validator
 
 from calibration_loader import CalibrationLoader
+from calibration_loader.contracts import CalibrationArtifactCollection
 from calibration_loader.loader import CalibrationArtifactValidationError
 
 
@@ -344,7 +345,7 @@ def classify_regime_lite(
 
 def _resolve_non_negative_float_threshold(
     loader: CalibrationLoader,
-    collection,
+    collection: CalibrationArtifactCollection,
     threshold_id: str,
 ) -> float:
     value = loader.get_value(collection, threshold_id)
@@ -362,7 +363,7 @@ def _resolve_non_negative_float_threshold(
 
 def _resolve_non_negative_integral_threshold(
     loader: CalibrationLoader,
-    collection,
+    collection: CalibrationArtifactCollection,
     threshold_id: str,
 ) -> int:
     numeric = _resolve_non_negative_float_threshold(loader, collection, threshold_id)

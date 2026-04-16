@@ -11,6 +11,13 @@ from data_backbone.websocket_gateway.injected_stream_loader import (
     load_injected_websocket_frames,
 )
 from local_replay_runtime.historical_snapshot_loader import load_historical_snapshot_batch
+from local_replay_runtime.historical_snapshot_loader import HistoricalMarketEventEnvelope
+from local_replay_runtime.local_lab_execution_telemetry_archive_support import (
+    materialize_local_lab_execution_telemetry_artifact as _materialize_local_lab_execution_telemetry_artifact,
+)
+from local_replay_runtime.local_lab_execution_telemetry_archive_support import (
+    upsert_local_lab_execution_telemetry_archive as _upsert_local_lab_execution_telemetry_archive,
+)
 from local_replay_runtime.local_lab_execution_review import LocalLabExecutionTelemetry
 from local_replay_runtime.replay_run_manifest import ReplayRunManifest
 
@@ -290,286 +297,18 @@ def upsert_local_lab_execution_telemetry_archive(
     run_id: str,
     session: LocalLabExecutionTelemetrySession,
 ) -> LocalLabExecutionTelemetryArchive:
-    sessions_by_date = {item.session_date: item for item in archive.sessions}
-    existing = sessions_by_date.get(session.session_date)
-    if existing is None:
-        merged = session
-    else:
-        merged = LocalLabExecutionTelemetrySession(
-            session_date=session.session_date,
-            time_sync_offsets_ms=(
-                session.time_sync_offsets_ms
-                if session.time_sync_offsets_ms
-                else existing.time_sync_offsets_ms
-            ),
-            time_sync_source_ref=(
-                session.time_sync_source_ref
-                if session.time_sync_source_ref
-                else existing.time_sync_source_ref
-            ),
-            quota_call_count=(
-                session.quota_call_count
-                if session.quota_call_count > 0
-                else existing.quota_call_count
-            ),
-            quota_probe_duration_s=(
-                session.quota_probe_duration_s
-                if session.quota_probe_duration_s is not None
-                else existing.quota_probe_duration_s
-            ),
-            quota_limit_calls_per_minute=(
-                session.quota_limit_calls_per_minute
-                if session.quota_limit_calls_per_minute is not None
-                else existing.quota_limit_calls_per_minute
-            ),
-            quota_calls_per_minute_observed=(
-                session.quota_calls_per_minute_observed
-                if session.quota_calls_per_minute_observed is not None
-                else existing.quota_calls_per_minute_observed
-            ),
-            quota_source_ref=(
-                session.quota_source_ref
-                if session.quota_source_ref
-                else existing.quota_source_ref
-            ),
-            websocket_interarrival_s=(
-                session.websocket_interarrival_s
-                if session.websocket_interarrival_s
-                else existing.websocket_interarrival_s
-            ),
-            websocket_source_ref=(
-                session.websocket_source_ref
-                if session.websocket_source_ref
-                else existing.websocket_source_ref
-            ),
-            websocket_source_kind=(
-                session.websocket_source_kind
-                if session.websocket_source_kind
-                else existing.websocket_source_kind
-            ),
-            spread_bps=(
-                session.spread_bps if session.spread_bps else existing.spread_bps
-            ),
-            spread_source_ref=(
-                session.spread_source_ref
-                if session.spread_source_ref
-                else existing.spread_source_ref
-            ),
-            slippage_bps=(
-                session.slippage_bps
-                if session.slippage_bps
-                else existing.slippage_bps
-            ),
-            slippage_source_ref=(
-                session.slippage_source_ref
-                if session.slippage_source_ref
-                else existing.slippage_source_ref
-            ),
-            candidate_sizes=(
-                session.candidate_sizes
-                if session.candidate_sizes
-                else existing.candidate_sizes
-            ),
-            candidate_size_source_ref=(
-                session.candidate_size_source_ref
-                if session.candidate_size_source_ref
-                else existing.candidate_size_source_ref
-            ),
-            final_sizes=(
-                session.final_sizes
-                if session.final_sizes
-                else existing.final_sizes
-            ),
-            final_size_source_ref=(
-                session.final_size_source_ref
-                if session.final_size_source_ref
-                else existing.final_size_source_ref
-            ),
-            coverage_caution_flags=tuple(
-                dict.fromkeys(
-                    existing.coverage_caution_flags + session.coverage_caution_flags
-                )
-            ),
-        )
-    sessions_by_date[session.session_date] = merged
-    ordered_sessions = tuple(
-        sessions_by_date[session_date]
-        for session_date in sorted(sessions_by_date)
-    )
-    return LocalLabExecutionTelemetryArchive(
-        latest_export_dir=export_dir,
-        latest_run_id=run_id,
-        sessions=ordered_sessions,
+    return _upsert_local_lab_execution_telemetry_archive(
+        archive,
+        export_dir=export_dir,
+        run_id=run_id,
+        session=session,
     )
 
 
 def materialize_local_lab_execution_telemetry_artifact(
     archive: LocalLabExecutionTelemetryArchive,
 ) -> LocalLabExecutionTelemetryArtifact:
-    time_sync_sessions = tuple(
-        session for session in archive.sessions if session.time_sync_offsets_ms
-    )
-    quota_sessions = tuple(
-        session
-        for session in archive.sessions
-        if session.quota_call_count > 0
-        or session.quota_limit_calls_per_minute is not None
-        or session.quota_calls_per_minute_observed is not None
-    )
-    websocket_sessions = tuple(
-        session for session in archive.sessions if session.websocket_interarrival_s
-    )
-    spread_sessions = tuple(session for session in archive.sessions if session.spread_bps)
-    slippage_sessions = tuple(
-        session for session in archive.sessions if session.slippage_bps
-    )
-    candidate_size_sessions = tuple(
-        session for session in archive.sessions if session.candidate_sizes
-    )
-    final_size_sessions = tuple(
-        session for session in archive.sessions if session.final_sizes
-    )
-    return LocalLabExecutionTelemetryArtifact(
-        export_dir=archive.latest_export_dir,
-        run_id=archive.latest_run_id,
-        source_session_dates=tuple(session.session_date for session in archive.sessions),
-        time_sync_offsets_ms=tuple(
-            value
-            for session in time_sync_sessions
-            for value in session.time_sync_offsets_ms
-        ),
-        time_sync_observation_days=(
-            float(len(time_sync_sessions)) if time_sync_sessions else None
-        ),
-        time_sync_session_dates=tuple(
-            session.session_date for session in time_sync_sessions
-        ),
-        time_sync_source_refs=tuple(
-            dict.fromkeys(
-                session.time_sync_source_ref
-                for session in time_sync_sessions
-                if session.time_sync_source_ref
-            )
-        ),
-        quota_call_counts=tuple(
-            session.quota_call_count
-            for session in quota_sessions
-            if session.quota_call_count > 0
-        ),
-        quota_probe_durations_s=tuple(
-            session.quota_probe_duration_s
-            for session in quota_sessions
-            if session.quota_probe_duration_s is not None
-        ),
-        quota_limit_calls_per_minute_values=tuple(
-            session.quota_limit_calls_per_minute
-            for session in quota_sessions
-            if session.quota_limit_calls_per_minute is not None
-        ),
-        quota_calls_per_minute_observed=tuple(
-            session.quota_calls_per_minute_observed
-            for session in quota_sessions
-            if session.quota_calls_per_minute_observed is not None
-        ),
-        quota_observation_days=(
-            float(len(quota_sessions)) if quota_sessions else None
-        ),
-        quota_session_dates=tuple(session.session_date for session in quota_sessions),
-        quota_source_refs=tuple(
-            dict.fromkeys(
-                session.quota_source_ref
-                for session in quota_sessions
-                if session.quota_source_ref
-            )
-        ),
-        websocket_interarrival_s=tuple(
-            value
-            for session in websocket_sessions
-            for value in session.websocket_interarrival_s
-        ),
-        websocket_observation_days=(
-            float(len(websocket_sessions)) if websocket_sessions else None
-        ),
-        websocket_session_dates=tuple(
-            session.session_date for session in websocket_sessions
-        ),
-        websocket_source_refs=tuple(
-            dict.fromkeys(
-                session.websocket_source_ref
-                for session in websocket_sessions
-                if session.websocket_source_ref
-            )
-        ),
-        spread_bps=tuple(
-            value for session in spread_sessions for value in session.spread_bps
-        ),
-        spread_observation_days=(
-            float(len(spread_sessions)) if spread_sessions else None
-        ),
-        spread_session_dates=tuple(session.session_date for session in spread_sessions),
-        spread_source_refs=tuple(
-            dict.fromkeys(
-                session.spread_source_ref
-                for session in spread_sessions
-                if session.spread_source_ref
-            )
-        ),
-        slippage_bps=tuple(
-            value for session in slippage_sessions for value in session.slippage_bps
-        ),
-        slippage_observation_days=(
-            float(len(slippage_sessions)) if slippage_sessions else None
-        ),
-        slippage_session_dates=tuple(
-            session.session_date for session in slippage_sessions
-        ),
-        slippage_source_refs=tuple(
-            dict.fromkeys(
-                session.slippage_source_ref
-                for session in slippage_sessions
-                if session.slippage_source_ref
-            )
-        ),
-        candidate_sizes=tuple(
-            value for session in candidate_size_sessions for value in session.candidate_sizes
-        ),
-        candidate_size_observation_days=(
-            float(len(candidate_size_sessions)) if candidate_size_sessions else None
-        ),
-        candidate_size_session_dates=tuple(
-            session.session_date for session in candidate_size_sessions
-        ),
-        candidate_size_source_refs=tuple(
-            dict.fromkeys(
-                session.candidate_size_source_ref
-                for session in candidate_size_sessions
-                if session.candidate_size_source_ref
-            )
-        ),
-        final_sizes=tuple(
-            value for session in final_size_sessions for value in session.final_sizes
-        ),
-        final_size_observation_days=(
-            float(len(final_size_sessions)) if final_size_sessions else None
-        ),
-        final_size_session_dates=tuple(
-            session.session_date for session in final_size_sessions
-        ),
-        final_size_source_refs=tuple(
-            dict.fromkeys(
-                session.final_size_source_ref
-                for session in final_size_sessions
-                if session.final_size_source_ref
-            )
-        ),
-        coverage_caution_flags=tuple(
-            dict.fromkeys(
-                flag
-                for session in archive.sessions
-                for flag in session.coverage_caution_flags
-            )
-        ),
-    )
+    return _materialize_local_lab_execution_telemetry_artifact(archive)
 
 
 def build_local_lab_execution_telemetry_artifact_for_export(
@@ -778,7 +517,9 @@ def _extract_spread_bps(
     return None
 
 
-def _extract_event_spread_bps(envelope) -> float | None:
+def _extract_event_spread_bps(
+    envelope: HistoricalMarketEventEnvelope,
+) -> float | None:
     event = envelope.event
     if hasattr(event, "spread_bps"):
         try:
@@ -823,7 +564,7 @@ def _extract_route_hint_scalar(
 
 
 def _extract_envelope_route_hint_scalar(
-    envelope,
+    envelope: HistoricalMarketEventEnvelope,
     *,
     field_name: str,
 ) -> float | None:

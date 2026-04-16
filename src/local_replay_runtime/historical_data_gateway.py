@@ -5,7 +5,6 @@ from __future__ import annotations
 import csv
 import json
 from pathlib import Path
-from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -20,6 +19,8 @@ from interface_contracts import (
 from meta_minimal.dtr_core.decision_state_encoder import DecisionState
 
 FeatureScalar = str | int | float | bool
+ReplayRecord = dict[str, object]
+FeatureBridgePayload = dict[str, object]
 
 
 class HistoricalReplayOpportunity(BaseModel, frozen=True):
@@ -55,7 +56,7 @@ class HistoricalReplayOpportunity(BaseModel, frozen=True):
 
     @model_validator(mode="before")
     @classmethod
-    def normalize_input(cls, value: Any) -> Any:
+    def normalize_input(cls, value: object) -> object:
         if isinstance(value, cls):
             return value
         if not isinstance(value, dict):
@@ -108,8 +109,8 @@ class HistoricalReplayDataset(BaseModel, frozen=True):
         *,
         dataset_id: str,
         source_path: str,
-        records: tuple[HistoricalReplayOpportunity | dict[str, Any], ...]
-        | list[HistoricalReplayOpportunity | dict[str, Any]],
+        records: tuple[HistoricalReplayOpportunity | ReplayRecord, ...]
+        | list[HistoricalReplayOpportunity | ReplayRecord],
         source: str = "local_dataset",
     ) -> "HistoricalReplayDataset":
         normalized_rows = tuple(
@@ -164,7 +165,7 @@ class HistoricalReplayDataset(BaseModel, frozen=True):
         return self
 
 
-def _load_json_records(dataset_path: Path) -> tuple[dict[str, Any], ...]:
+def _load_json_records(dataset_path: Path) -> tuple[ReplayRecord, ...]:
     raw = json.loads(dataset_path.read_text(encoding="utf-8-sig"))
     if isinstance(raw, list):
         return tuple(item for item in raw if isinstance(item, dict))
@@ -175,8 +176,8 @@ def _load_json_records(dataset_path: Path) -> tuple[dict[str, Any], ...]:
     raise ValueError(f"Unsupported JSON dataset shape in {dataset_path}")
 
 
-def _load_jsonl_records(dataset_path: Path) -> tuple[dict[str, Any], ...]:
-    records: list[dict[str, Any]] = []
+def _load_jsonl_records(dataset_path: Path) -> tuple[ReplayRecord, ...]:
+    records: list[ReplayRecord] = []
     for line in dataset_path.read_text(encoding="utf-8-sig").splitlines():
         stripped = line.strip()
         if not stripped:
@@ -188,7 +189,7 @@ def _load_jsonl_records(dataset_path: Path) -> tuple[dict[str, Any], ...]:
     return tuple(records)
 
 
-def _load_csv_records(dataset_path: Path) -> tuple[dict[str, Any], ...]:
+def _load_csv_records(dataset_path: Path) -> tuple[ReplayRecord, ...]:
     with dataset_path.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
         return tuple(dict(row) for row in reader)
@@ -227,7 +228,7 @@ def build_feature_bridge_payload(
     dataset: HistoricalReplayDataset,
     *,
     feature_lineage_lock: FeatureLineageLock | None = None,
-) -> dict[str, Any]:
+) -> FeatureBridgePayload:
     """Summarize whether the historical dataset materialized the feature bridge."""
 
     bridge_status = (

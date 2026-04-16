@@ -61,17 +61,12 @@ def _format_labels(labels: dict[str, str]) -> str:
     return f"{{{joined}}}"
 
 
-def build_local_lab_observability_export(
-    *,
+def _build_readiness_samples(
     projection: LocalLabMonitoringProjection,
-    profile: ProfileId,
-    runtime_mode: RuntimeMode,
-    timestamp_ms: int,
-) -> ObservabilityExport:
-    """Emit a stable Local IA Lab observability surface from the compact monitoring projection."""
-
-    base_labels = _labels(projection, profile=profile, runtime_mode=runtime_mode)
-    samples = (
+    *,
+    base_labels: dict[str, str],
+) -> tuple[MetricSample, ...]:
+    return (
         _sample(
             "v53_local_lab_monitoring_status",
             kind="state",
@@ -161,6 +156,15 @@ def build_local_lab_observability_export(
             unit="count",
             labels=base_labels,
         ),
+    )
+
+
+def _build_calibration_samples(
+    projection: LocalLabMonitoringProjection,
+    *,
+    base_labels: dict[str, str],
+) -> tuple[MetricSample, ...]:
+    return (
         _sample(
             "v53_local_lab_loss_surrogate_ready",
             kind="state",
@@ -185,19 +189,12 @@ def build_local_lab_observability_export(
             "v53_local_lab_calibration_methods_review_ready",
             kind="state",
             value=1.0 if projection.calibration_methods_review_ready else 0.0,
-            labels={
-                **base_labels,
-                "calibration_review_status": projection.calibration_methods_review_status,
-            },
+            labels={**base_labels, "calibration_review_status": projection.calibration_methods_review_status},
         ),
         _sample(
             "v53_local_lab_calibration_methods_dsr_pass",
             kind="state",
-            value=(
-                0.0
-                if projection.calibration_methods_dsr_pass is not True
-                else 1.0
-            ),
+            value=0.0 if projection.calibration_methods_dsr_pass is not True else 1.0,
             labels=base_labels,
         ),
         _sample(
@@ -209,11 +206,8 @@ def build_local_lab_observability_export(
         _sample(
             "v53_local_lab_calibration_methods_stationarity_pass",
             kind="state",
-            value=(0.0 if projection.calibration_methods_stationarity_pass is not True else 1.0),
-            labels={
-                **base_labels,
-                "stationarity_status": projection.calibration_methods_stationarity_status,
-            },
+            value=0.0 if projection.calibration_methods_stationarity_pass is not True else 1.0,
+            labels={**base_labels, "stationarity_status": projection.calibration_methods_stationarity_status},
         ),
         _sample(
             "v53_local_lab_execution_review_ready",
@@ -242,6 +236,15 @@ def build_local_lab_observability_export(
             unit="count",
             labels=base_labels,
         ),
+    )
+
+
+def _build_calibration_review_samples(
+    projection: LocalLabMonitoringProjection,
+    *,
+    base_labels: dict[str, str],
+) -> tuple[MetricSample, ...]:
+    return (
         _sample(
             "v53_local_lab_multiple_testing_review_ready",
             kind="state",
@@ -269,10 +272,7 @@ def build_local_lab_observability_export(
             "v53_local_lab_calibration_normalized_report_ready",
             kind="state",
             value=1.0 if projection.calibration_normalized_report_ready else 0.0,
-            labels={
-                **base_labels,
-                "calibration_normalized_status": projection.calibration_normalized_report_status,
-            },
+            labels={**base_labels, "calibration_normalized_status": projection.calibration_normalized_report_status},
         ),
         _sample(
             "v53_local_lab_calibration_normalized_threshold_count",
@@ -308,6 +308,15 @@ def build_local_lab_observability_export(
             unit="count",
             labels=base_labels,
         ),
+    )
+
+
+def _build_replay_samples(
+    projection: LocalLabMonitoringProjection,
+    *,
+    base_labels: dict[str, str],
+) -> tuple[MetricSample, ...]:
+    return (
         _sample(
             "v53_local_lab_research_priority_scope_count",
             kind="gauge",
@@ -380,12 +389,37 @@ def build_local_lab_observability_export(
         ),
     )
 
+
+def _build_text_payload(
+    projection: LocalLabMonitoringProjection,
+    *,
+    samples: tuple[MetricSample, ...],
+) -> str:
     lines = [
         "# V5.3 Local IA Lab observability export",
         f"# detail: {projection.detail}",
     ]
     for sample in samples:
         lines.append(f"{sample.name}{_format_labels(sample.labels)} {sample.value}")
+    return "\n".join(lines)
+
+
+def build_local_lab_observability_export(
+    *,
+    projection: LocalLabMonitoringProjection,
+    profile: ProfileId,
+    runtime_mode: RuntimeMode,
+    timestamp_ms: int,
+) -> ObservabilityExport:
+    """Emit a stable Local IA Lab observability surface from the compact monitoring projection."""
+
+    base_labels = _labels(projection, profile=profile, runtime_mode=runtime_mode)
+    samples = (
+        _build_readiness_samples(projection, base_labels=base_labels)
+        + _build_calibration_samples(projection, base_labels=base_labels)
+        + _build_calibration_review_samples(projection, base_labels=base_labels)
+        + _build_replay_samples(projection, base_labels=base_labels)
+    )
 
     return ObservabilityExport(
         timestamp_ms=timestamp_ms,
@@ -393,7 +427,7 @@ def build_local_lab_observability_export(
         profile=profile,
         runtime_mode=runtime_mode,
         samples=samples,
-        text_payload="\n".join(lines),
+        text_payload=_build_text_payload(projection, samples=samples),
     )
 
 

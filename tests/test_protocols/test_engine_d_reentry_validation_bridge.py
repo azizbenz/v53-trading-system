@@ -21,6 +21,10 @@ from protocols import (
 )
 
 
+def _state_dir(repo_tmp_path: Path, name: str) -> Path:
+    return repo_tmp_path / name
+
+
 def _publish_engine_d_snapshot(
     state_dir: Path,
     *,
@@ -64,8 +68,8 @@ def _hook_input() -> EngineDReentryValidationInput:
     )
 
 
-def test_engine_d_reentry_validation_bridge_allows_without_snapshot():
-    state_dir = Path("build/test_protocols_engine_d_reentry_validation_bridge_empty")
+def test_engine_d_reentry_validation_bridge_allows_without_snapshot(repo_tmp_path: Path):
+    state_dir = _state_dir(repo_tmp_path, "test_protocols_engine_d_reentry_validation_bridge_empty")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         bridge = EngineDReentryValidationBridge(CompiledArtifactRegistryStore(state_dir))
@@ -78,8 +82,8 @@ def test_engine_d_reentry_validation_bridge_allows_without_snapshot():
         shutil.rmtree(state_dir, ignore_errors=True)
 
 
-def test_inspect_engine_d_reentry_validation_bridge_reports_no_snapshot():
-    state_dir = Path("build/test_protocols_engine_d_reentry_validation_bridge_status_empty")
+def test_inspect_engine_d_reentry_validation_bridge_reports_no_snapshot(repo_tmp_path: Path):
+    state_dir = _state_dir(repo_tmp_path, "test_protocols_engine_d_reentry_validation_bridge_status_empty")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         status = inspect_engine_d_reentry_validation_bridge(
@@ -95,8 +99,8 @@ def test_inspect_engine_d_reentry_validation_bridge_reports_no_snapshot():
         shutil.rmtree(state_dir, ignore_errors=True)
 
 
-def test_engine_d_reentry_validation_bridge_applies_loaded_plan():
-    state_dir = Path("build/test_protocols_engine_d_reentry_validation_bridge_loaded")
+def test_engine_d_reentry_validation_bridge_applies_loaded_plan(repo_tmp_path: Path):
+    state_dir = _state_dir(repo_tmp_path, "test_protocols_engine_d_reentry_validation_bridge_loaded")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = _publish_engine_d_snapshot(state_dir)
@@ -112,6 +116,9 @@ def test_engine_d_reentry_validation_bridge_applies_loaded_plan():
                     "blocked": True,
                     "block_reason_codes": ["ARTIFACT_REENTRY_BLOCK"],
                     "detail": "artifact veto on engine_d re-entry",
+                    "episode_reference_id": "episode-bridge-1",
+                    "anti_revenge_state": "cooldown_active",
+                    "observability_tags": ["backtest.anti_revenge_state"],
                 },
             },
         )
@@ -121,12 +128,15 @@ def test_engine_d_reentry_validation_bridge_applies_loaded_plan():
 
         assert outcome.accepted is False
         assert outcome.reason_codes == ("ARTIFACT_REENTRY_BLOCK",)
+        assert outcome.episode_reference_id == "episode-bridge-1"
+        assert outcome.anti_revenge_state == "cooldown_active"
+        assert outcome.observability_tags == ("backtest.anti_revenge_state",)
     finally:
         shutil.rmtree(state_dir, ignore_errors=True)
 
 
-def test_engine_d_reentry_validation_bridge_fails_open_on_invalid_hook_payload():
-    state_dir = Path("build/test_protocols_engine_d_reentry_validation_bridge_payload_invalid")
+def test_engine_d_reentry_validation_bridge_fails_open_on_invalid_hook_payload(repo_tmp_path: Path):
+    state_dir = _state_dir(repo_tmp_path, "test_protocols_engine_d_reentry_validation_bridge_payload_invalid")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = _publish_engine_d_snapshot(state_dir)
@@ -153,8 +163,8 @@ def test_engine_d_reentry_validation_bridge_fails_open_on_invalid_hook_payload()
         shutil.rmtree(state_dir, ignore_errors=True)
 
 
-def test_inspect_engine_d_reentry_validation_bridge_reports_invalid_plan_error():
-    state_dir = Path("build/test_protocols_engine_d_reentry_validation_bridge_status_invalid")
+def test_inspect_engine_d_reentry_validation_bridge_reports_invalid_plan_error(repo_tmp_path: Path):
+    state_dir = _state_dir(repo_tmp_path, "test_protocols_engine_d_reentry_validation_bridge_status_invalid")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = _publish_engine_d_snapshot(state_dir)
@@ -182,8 +192,8 @@ def test_inspect_engine_d_reentry_validation_bridge_reports_invalid_plan_error()
         shutil.rmtree(state_dir, ignore_errors=True)
 
 
-def test_engine_d_reentry_validation_bridge_fails_open_on_hook_execution_error(monkeypatch):
-    state_dir = Path("build/test_protocols_engine_d_reentry_validation_bridge_hook_error")
+def test_engine_d_reentry_validation_bridge_fails_open_on_hook_execution_error(monkeypatch, repo_tmp_path: Path):
+    state_dir = _state_dir(repo_tmp_path, "test_protocols_engine_d_reentry_validation_bridge_hook_error")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = _publish_engine_d_snapshot(state_dir)

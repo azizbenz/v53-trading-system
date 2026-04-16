@@ -110,7 +110,7 @@ class WebSocketGatewayRuntime:
                 },
             )
             return status
-        except Exception as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             logger.warning(
                 "websocket_gateway_connect_failed",
                 extra={"endpoint": endpoint, "timestamp": now, "error": str(exc)},
@@ -120,7 +120,7 @@ class WebSocketGatewayRuntime:
     def disconnect(self, endpoint: str, now: float, error: str = "") -> ConnectionStatus:
         try:
             self._adapter.disconnect(endpoint)
-        except Exception:
+        except (OSError, RuntimeError, ValueError):
             pass
         logger.info(
             "websocket_gateway_disconnected",
@@ -151,7 +151,7 @@ class WebSocketGatewayRuntime:
 
         try:
             message = self._adapter.recv(endpoint)
-        except Exception as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             logger.warning(
                 "websocket_gateway_recv_failed",
                 extra={"endpoint": endpoint, "timestamp": now, "error": str(exc)},
@@ -247,7 +247,7 @@ class WebSocketGatewayRuntime:
                 "websocket_gateway_reconnected",
                 extra={"endpoint": endpoint, "timestamp": now},
             )
-        except Exception as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             reconnect_error = str(exc)
             self._connections.mark_failed(endpoint, reconnect_error)
             logger.warning(

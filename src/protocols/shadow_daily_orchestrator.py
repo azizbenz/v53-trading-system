@@ -6,8 +6,6 @@ import json
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
-
 from pydantic import BaseModel, Field, model_validator
 
 from interface_contracts.atomic_io import atomic_write_json
@@ -158,7 +156,7 @@ class ShadowDailyOrchestrator:
             return None
         return date.fromisoformat(counted_runs[-1].session_date)
 
-    def _load_json_object(self, path: Path) -> dict[str, Any] | None:
+    def _load_json_object(self, path: Path) -> dict[str, object] | None:
         if not path.exists():
             return None
         try:

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
-from typing import Any
 
 from pydantic import BaseModel, Field
+
+from monitoring.grafana_types import GrafanaPayload
 
 
 METRIC_NAME_PATTERN = re.compile(r"^([a-zA-Z_:][a-zA-Z0-9_:]*)")
@@ -57,7 +58,7 @@ def _stat_panel(
     h: int = 4,
     unit: str = "none",
     color_mode: str = "background",
-) -> dict[str, Any]:
+) -> GrafanaPayload:
     return {
         "id": panel_id,
         "type": "stat",
@@ -105,7 +106,7 @@ def _timeseries_panel(
     w: int = 12,
     h: int = 8,
     unit: str = "none",
-) -> dict[str, Any]:
+) -> GrafanaPayload:
     targets = [
         {
             "expr": expr,
@@ -151,7 +152,7 @@ def _table_panel(
     y: int,
     w: int = 24,
     h: int = 7,
-) -> dict[str, Any]:
+) -> GrafanaPayload:
     return {
         "id": panel_id,
         "type": "table",
@@ -174,19 +175,12 @@ def _table_panel(
     }
 
 
-def build_local_shadow_vps_grafana_dashboard(
+def _build_shadow_overview_panels(
     *,
-    datasource_uid: str = "prometheus",
-    datasource_name: str = "Prometheus",
-    title: str = "V5.3 Shadow VPS - Local Dev Observability",
-    uid: str = "v53-shadow-vps-local",
-) -> dict[str, Any]:
-    """Build a detailed Grafana dashboard over the current Shadow VPS metrics."""
-
-    job_filter = 'job=~"$job"'
-    instance_filter = 'instance=~"$instance"'
-
-    panels: list[dict[str, Any]] = [
+    job_filter: str,
+    instance_filter: str,
+) -> list[GrafanaPayload]:
+    return [
         _stat_panel(
             panel_id=1,
             title="Service Status Series",
@@ -274,23 +268,26 @@ def build_local_shadow_vps_grafana_dashboard(
             w=12,
             h=8,
         ),
+    ]
+
+
+def _build_execution_panels(
+    *,
+    job_filter: str,
+    instance_filter: str,
+) -> list[GrafanaPayload]:
+    return [
         _stat_panel(
             panel_id=9,
             title="Execution Telemetry Ready",
-            expr=(
-                f"max(v53_shadow_vps_execution_telemetry_ready"
-                f"{{{job_filter},{instance_filter}}})"
-            ),
+            expr=f"max(v53_shadow_vps_execution_telemetry_ready{{{job_filter},{instance_filter}}})",
             x=0,
             y=20,
         ),
         _table_panel(
             panel_id=10,
             title="Execution Telemetry Labels",
-            expr=(
-                f"v53_shadow_vps_execution_telemetry_ready"
-                f"{{{job_filter},{instance_filter}}}"
-            ),
+            expr=f"v53_shadow_vps_execution_telemetry_ready{{{job_filter},{instance_filter}}}",
             x=6,
             y=20,
             w=18,
@@ -299,10 +296,7 @@ def build_local_shadow_vps_grafana_dashboard(
         _stat_panel(
             panel_id=11,
             title="Execution Projection Ready",
-            expr=(
-                f"max(v53_shadow_vps_execution_runtime_projection_ready"
-                f"{{{job_filter},{instance_filter}}})"
-            ),
+            expr=f"max(v53_shadow_vps_execution_runtime_projection_ready{{{job_filter},{instance_filter}}})",
             x=0,
             y=28,
         ),
@@ -311,18 +305,15 @@ def build_local_shadow_vps_grafana_dashboard(
             title="Execution Projection Consumer Counts",
             exprs=[
                 (
-                    f"v53_shadow_vps_execution_runtime_projection_ready_consumer_count"
-                    f"{{{job_filter},{instance_filter}}}",
+                    f"v53_shadow_vps_execution_runtime_projection_ready_consumer_count{{{job_filter},{instance_filter}}}",
                     "ready_consumers",
                 ),
                 (
-                    f"v53_shadow_vps_execution_runtime_projection_partial_consumer_count"
-                    f"{{{job_filter},{instance_filter}}}",
+                    f"v53_shadow_vps_execution_runtime_projection_partial_consumer_count{{{job_filter},{instance_filter}}}",
                     "partial_consumers",
                 ),
                 (
-                    f"v53_shadow_vps_execution_runtime_projection_blocked_consumer_count"
-                    f"{{{job_filter},{instance_filter}}}",
+                    f"v53_shadow_vps_execution_runtime_projection_blocked_consumer_count{{{job_filter},{instance_filter}}}",
                     "blocked_consumers",
                 ),
             ],
@@ -335,10 +326,7 @@ def build_local_shadow_vps_grafana_dashboard(
         _table_panel(
             panel_id=13,
             title="Execution Projection Labels",
-            expr=(
-                f"v53_shadow_vps_execution_runtime_projection_ready"
-                f"{{{job_filter},{instance_filter}}}"
-            ),
+            expr=f"v53_shadow_vps_execution_runtime_projection_ready{{{job_filter},{instance_filter}}}",
             x=0,
             y=36,
             w=12,
@@ -347,10 +335,7 @@ def build_local_shadow_vps_grafana_dashboard(
         _stat_panel(
             panel_id=14,
             title="Execution Projection Bridge Loaded",
-            expr=(
-                f"max(v53_shadow_vps_execution_runtime_projection_bridge_loaded"
-                f"{{{job_filter},{instance_filter}}})"
-            ),
+            expr=f"max(v53_shadow_vps_execution_runtime_projection_bridge_loaded{{{job_filter},{instance_filter}}})",
             x=12,
             y=36,
         ),
@@ -359,18 +344,15 @@ def build_local_shadow_vps_grafana_dashboard(
             title="Execution Projection Model Loads",
             exprs=[
                 (
-                    f"v53_shadow_vps_execution_runtime_projection_rate_limit_model_loaded"
-                    f"{{{job_filter},{instance_filter}}}",
+                    f"v53_shadow_vps_execution_runtime_projection_rate_limit_model_loaded{{{job_filter},{instance_filter}}}",
                     "rate_limit_model",
                 ),
                 (
-                    f"v53_shadow_vps_execution_runtime_projection_spread_guard_model_loaded"
-                    f"{{{job_filter},{instance_filter}}}",
+                    f"v53_shadow_vps_execution_runtime_projection_spread_guard_model_loaded{{{job_filter},{instance_filter}}}",
                     "spread_guard_model",
                 ),
                 (
-                    f"v53_shadow_vps_execution_runtime_projection_slippage_model_loaded"
-                    f"{{{job_filter},{instance_filter}}}",
+                    f"v53_shadow_vps_execution_runtime_projection_slippage_model_loaded{{{job_filter},{instance_filter}}}",
                     "slippage_model",
                 ),
             ],
@@ -383,10 +365,7 @@ def build_local_shadow_vps_grafana_dashboard(
         _table_panel(
             panel_id=16,
             title="Execution Projection Bridge Labels",
-            expr=(
-                f"v53_shadow_vps_execution_runtime_projection_bridge_loaded"
-                f"{{{job_filter},{instance_filter}}}"
-            ),
+            expr=f"v53_shadow_vps_execution_runtime_projection_bridge_loaded{{{job_filter},{instance_filter}}}",
             x=0,
             y=52,
             w=24,
@@ -401,33 +380,33 @@ def build_local_shadow_vps_grafana_dashboard(
             w=24,
             h=8,
         ),
+    ]
+
+
+def _build_regime_and_telegram_panels(
+    *,
+    job_filter: str,
+    instance_filter: str,
+) -> list[GrafanaPayload]:
+    return [
         _stat_panel(
             panel_id=18,
             title="Regime Lite Entries Blocked",
-            expr=(
-                f"max(v53_shadow_vps_regime_lite_entries_blocked"
-                f"{{{job_filter},{instance_filter}}})"
-            ),
+            expr=f"max(v53_shadow_vps_regime_lite_entries_blocked{{{job_filter},{instance_filter}}})",
             x=0,
             y=68,
         ),
         _stat_panel(
             panel_id=19,
             title="Regime Lite Exit-All Recommended",
-            expr=(
-                f"max(v53_shadow_vps_regime_lite_should_exit_all"
-                f"{{{job_filter},{instance_filter}}})"
-            ),
+            expr=f"max(v53_shadow_vps_regime_lite_should_exit_all{{{job_filter},{instance_filter}}})",
             x=6,
             y=68,
         ),
         _table_panel(
             panel_id=20,
             title="Regime Lite Labels",
-            expr=(
-                f"v53_shadow_vps_regime_lite_safing_status"
-                f"{{{job_filter},{instance_filter}}}"
-            ),
+            expr=f"v53_shadow_vps_regime_lite_safing_status{{{job_filter},{instance_filter}}}",
             x=12,
             y=68,
             w=12,
@@ -436,26 +415,59 @@ def build_local_shadow_vps_grafana_dashboard(
         _stat_panel(
             panel_id=21,
             title="Telegram Alerts",
-            expr=(
-                f"max(v53_shadow_vps_telegram_alert_delivery_status"
-                f"{{{job_filter},{instance_filter}}})"
-            ),
+            expr=f"max(v53_shadow_vps_telegram_alert_delivery_status{{{job_filter},{instance_filter}}})",
             x=0,
             y=76,
         ),
         _table_panel(
             panel_id=22,
             title="Telegram Alert Labels",
-            expr=(
-                f"v53_shadow_vps_telegram_alert_delivery_status"
-                f"{{{job_filter},{instance_filter}}}"
-            ),
+            expr=f"v53_shadow_vps_telegram_alert_delivery_status{{{job_filter},{instance_filter}}}",
             x=6,
             y=76,
             w=18,
             h=8,
         ),
     ]
+
+
+def _build_shadow_dashboard_panels(
+    *,
+    job_filter: str,
+    instance_filter: str,
+) -> list[GrafanaPayload]:
+    return (
+        _build_shadow_overview_panels(
+            job_filter=job_filter,
+            instance_filter=instance_filter,
+        )
+        + _build_execution_panels(
+            job_filter=job_filter,
+            instance_filter=instance_filter,
+        )
+        + _build_regime_and_telegram_panels(
+            job_filter=job_filter,
+            instance_filter=instance_filter,
+        )
+    )
+
+
+def build_local_shadow_vps_grafana_dashboard(
+    *,
+    datasource_uid: str = "prometheus",
+    datasource_name: str = "Prometheus",
+    title: str = "V5.3 Shadow VPS - Local Dev Observability",
+    uid: str = "v53-shadow-vps-local",
+) -> GrafanaPayload:
+    """Build a detailed Grafana dashboard over the current Shadow VPS metrics."""
+
+    job_filter = 'job=~"$job"'
+    instance_filter = 'instance=~"$instance"'
+
+    panels = _build_shadow_dashboard_panels(
+        job_filter=job_filter,
+        instance_filter=instance_filter,
+    )
 
     dashboard = {
         "annotations": {"list": []},

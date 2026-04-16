@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from interface_contracts import ProfileId, RuntimeMode
+from interface_contracts import ProfileId, RuntimeMode, StrategyIdentity
 
 from local_replay_runtime.replay_run_manifest import ReplayRunManifest
 
@@ -23,6 +23,7 @@ class ReplaySessionConfig(BaseModel, frozen=True):
 
     run_id: str = Field(..., min_length=1)
     strategy_id: str = Field(..., min_length=1)
+    strategy_identity: StrategyIdentity | None = None
     strategy_version: str = Field(..., min_length=1)
     lineage_version: str = Field(..., min_length=1)
     profile_scope: ProfileId
@@ -98,6 +99,7 @@ def build_replay_session_config(
     return ReplaySessionConfig(
         run_id=run_manifest.run_id,
         strategy_id=run_manifest.strategy_id,
+        strategy_identity=run_manifest.strategy_identity,
         strategy_version=run_manifest.strategy_version,
         lineage_version=run_manifest.lineage_version,
         profile_scope=run_manifest.profile_scope,

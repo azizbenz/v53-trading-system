@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Mapping
 
 import yaml
 from pydantic import ValidationError
@@ -18,7 +18,7 @@ class BinanceCredentialLoadError(RuntimeError):
     """Raised when Binance credentials cannot be loaded safely."""
 
 
-def load_binance_credentials(payload: Mapping[str, Any]) -> BinanceCredentials:
+def load_binance_credentials(payload: Mapping[str, object]) -> BinanceCredentials:
     """Validate credentials from a mapping without logging secret content."""
 
     if not isinstance(payload, Mapping):
@@ -95,7 +95,7 @@ def load_binance_credentials_from_file(
         raise BinanceCredentialLoadError(str(exc)) from exc
     except BinanceCredentialLoadError:
         raise
-    except Exception as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, yaml.YAMLError) as exc:
         raise BinanceCredentialLoadError(
             f"Binance credential file {credential_path} could not be parsed: {exc}"
         ) from exc

@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Mapping
 
 import yaml
 from pydantic import BaseModel, Field, ValidationError
@@ -58,7 +59,7 @@ def load_envelope(path: Path | str) -> SealedSecretEnvelope:
         raise SecretManagerLoadError(f"Sealed secret path {candidate} must be a file")
     try:
         payload = json.loads(candidate.read_text(encoding="utf-8"))
-    except Exception as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise SecretManagerLoadError(f"Sealed secret {candidate} could not be parsed: {exc}") from exc
     if not isinstance(payload, Mapping):
         raise SecretManagerLoadError(f"Sealed secret {candidate} must deserialize to a mapping")
@@ -75,7 +76,7 @@ def load_secret_bytes(path: Path | str, *, key_path: Path | str) -> bytes:
     entropy = _read_key_entropy(key_path)
     try:
         ciphertext = base64.b64decode(envelope.ciphertext_b64.encode("ascii"), validate=True)
-    except Exception as exc:
+    except (binascii.Error, UnicodeEncodeError, ValueError) as exc:
         raise SecretManagerLoadError(f"Sealed secret {path} has invalid ciphertext encoding: {exc}") from exc
     try:
         return unprotect_bytes(ciphertext, entropy=entropy)
@@ -92,13 +93,13 @@ def load_secret_text(path: Path | str, *, key_path: Path | str, encoding: str = 
         raise SecretManagerLoadError(f"Sealed secret {path} is not valid {encoding}: {exc}") from exc
 
 
-def load(path: Path | str, *, key_path: Path | str) -> dict[str, Any]:
+def load(path: Path | str, *, key_path: Path | str) -> dict[str, object]:
     """Load a sealed YAML/JSON mapping from disk."""
 
     text = load_secret_text(path, key_path=key_path)
     try:
         payload = yaml.safe_load(text)
-    except Exception as exc:
+    except yaml.YAMLError as exc:
         raise SecretManagerLoadError(f"Sealed secret {path} could not be parsed as YAML/JSON: {exc}") from exc
     if not isinstance(payload, Mapping):
         raise SecretManagerLoadError(f"Sealed secret {path} must contain a mapping payload")

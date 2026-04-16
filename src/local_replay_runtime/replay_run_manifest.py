@@ -11,6 +11,7 @@ from interface_contracts import (
     CANONICAL_TRANSFORM_SET_VERSION,
     ProfileId,
     RuntimeMode,
+    StrategyIdentity,
     StrategyClassification,
 )
 
@@ -20,6 +21,7 @@ class ReplayRunManifest(BaseModel, frozen=True):
 
     run_id: str = Field(..., min_length=1)
     strategy_id: str = Field(..., min_length=1)
+    strategy_identity: StrategyIdentity | None = None
     strategy_version: str = Field(..., min_length=1)
     strategy_classification: StrategyClassification
     lineage_version: str = Field(..., min_length=1)
@@ -60,6 +62,24 @@ class ReplayRunManifest(BaseModel, frozen=True):
         if not self.lineage_version.startswith(self.strategy_version):
             raise ValueError(
                 "ReplayRunManifest lineage_version must extend strategy_version"
+            )
+        if self.strategy_identity is None:
+            return self
+        if len(self.engine_scope) != 1:
+            raise ValueError(
+                "ReplayRunManifest strategy_identity requires single-engine scope"
+            )
+        if len(self.tested_pairs) != 1:
+            raise ValueError(
+                "ReplayRunManifest strategy_identity requires single-pair scope"
+            )
+        if self.strategy_identity.engine_id.value != self.engine_scope[0]:
+            raise ValueError(
+                "ReplayRunManifest strategy_identity.engine_id must match engine_scope"
+            )
+        if self.strategy_identity.pair != self.tested_pairs[0]:
+            raise ValueError(
+                "ReplayRunManifest strategy_identity.pair must match tested_pairs"
             )
         return self
 

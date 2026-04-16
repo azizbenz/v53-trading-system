@@ -1,5 +1,7 @@
 """Minimal real Build-11/12/13 protocol runtime surface."""
 
+from __future__ import annotations
+
 from protocols.contracts import (
     InfoStressGovernanceSummary,
     LiveDecision,
@@ -269,6 +271,13 @@ from protocols.execution_runtime_dashboard import (
     build_execution_runtime_projection_bridge_projection,
     build_runtime_hook_bridge_projections,
 )
+from protocols.closed_episode_journal import (
+    ClosedEpisodeJournal,
+    ClosedEpisodeJournalManifest,
+    ClosedEpisodeJournalSink,
+    EpisodeCloseReason,
+    EpisodeRef,
+)
 
 __all__ = [
     "LiveInput",
@@ -465,4 +474,9 @@ __all__ = [
     "build_execution_no_trade_bridge_projection",
     "build_execution_runtime_projection_bridge_projection",
     "build_runtime_hook_bridge_projections",
+    "EpisodeCloseReason",
+    "EpisodeRef",
+    "ClosedEpisodeJournalManifest",
+    "ClosedEpisodeJournal",
+    "ClosedEpisodeJournalSink",
 ]

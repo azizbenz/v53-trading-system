@@ -41,26 +41,10 @@ def validate_artifact_manifest(manifest: ArtifactManifest) -> None:
     ArtifactManifest.model_validate(manifest.model_dump())
 
 
-def validate_import_request(
+def _append_manifest_gate_reasons(
     request: ArtifactImportRequest,
-    *,
-    expected_payload_hash_sha256: str | None = None,
-    signature_verifier: ArtifactSignatureVerifier | None = None,
-) -> ArtifactImportDecision:
-    """Validate import request without bypassing promotion gates."""
-    validate_artifact_manifest(request.manifest)
-
-    reasons: list[str] = []
-    compatibility_check = evaluate_artifact_compatibility_policy(request.manifest)
-    reasons.extend(compatibility_check.reasons)
-    signature_check = evaluate_artifact_signature_policy(
-        request.manifest,
-        trust_store=DEFAULT_ARTIFACT_TRUST_STORE,
-        expected_payload_hash_sha256=expected_payload_hash_sha256,
-        signature_verifier=signature_verifier,
-    )
-    reasons.extend(signature_check.reasons)
-
+    reasons: list[str],
+) -> None:
     if request.target_runtime_mode != RuntimeMode.SHADOW:
         reasons.append("import target must start at SHADOW")
 
@@ -99,6 +83,11 @@ def validate_import_request(
     ):
         reasons.append("governed action kinds require explicit action units")
 
+
+def _append_payload_ref_reasons(
+    request: ArtifactImportRequest,
+    reasons: list[str],
+) -> None:
     if len(set(request.payload_refs)) != len(request.payload_refs):
         reasons.append("payload refs must be unique")
 
@@ -142,53 +131,66 @@ def validate_import_request(
     elif request.manifest.replay_dtr_ref not in request.payload_refs:
         reasons.append("replay dtr ref must be included in payload refs")
 
-    if request.feature_lineage_required:
-        if request.feature_lineage_lock is None:
-            reasons.append("feature lineage lock is required for governed artifact upload")
-        else:
-            if (
-                request.feature_lineage_lock.feature_set_version
-                != request.manifest.feature_set_version
-            ):
-                reasons.append(
-                    "feature lineage lock feature_set_version must match manifest"
-                )
-            if (
-                request.feature_lineage_lock.transform_set_version
-                != request.manifest.transform_set_version
-            ):
-                reasons.append(
-                    "feature lineage lock transform_set_version must match manifest"
-                )
-            reasons.extend(
-                f"feature lineage lock: {reason}"
-                for reason in validate_feature_lineage_lock(
-                    request.expected_feature_ids,
-                    request.feature_lineage_lock,
-                )
-            )
 
-    if request.transform_whitelist_required:
-        if request.transform_whitelist_lock is None:
-            reasons.append(
-                "transform whitelist lock is required for governed artifact upload"
-            )
-        else:
-            if (
-                request.transform_whitelist_lock.transform_set_version
-                != request.manifest.transform_set_version
-            ):
-                reasons.append(
-                    "transform whitelist lock transform_set_version must match manifest"
-                )
-            reasons.extend(
-                f"transform whitelist lock: {reason}"
-                for reason in validate_transform_whitelist_lock(
-                    request.expected_transform_ids,
-                    request.transform_whitelist_lock,
-                )
-            )
+def _append_feature_lineage_reasons(
+    request: ArtifactImportRequest,
+    reasons: list[str],
+) -> None:
+    if not request.feature_lineage_required:
+        return
+    if request.feature_lineage_lock is None:
+        reasons.append("feature lineage lock is required for governed artifact upload")
+        return
+    if (
+        request.feature_lineage_lock.feature_set_version
+        != request.manifest.feature_set_version
+    ):
+        reasons.append("feature lineage lock feature_set_version must match manifest")
+    if (
+        request.feature_lineage_lock.transform_set_version
+        != request.manifest.transform_set_version
+    ):
+        reasons.append(
+            "feature lineage lock transform_set_version must match manifest"
+        )
+    reasons.extend(
+        f"feature lineage lock: {reason}"
+        for reason in validate_feature_lineage_lock(
+            request.expected_feature_ids,
+            request.feature_lineage_lock,
+        )
+    )
 
+
+def _append_transform_whitelist_reasons(
+    request: ArtifactImportRequest,
+    reasons: list[str],
+) -> None:
+    if not request.transform_whitelist_required:
+        return
+    if request.transform_whitelist_lock is None:
+        reasons.append("transform whitelist lock is required for governed artifact upload")
+        return
+    if (
+        request.transform_whitelist_lock.transform_set_version
+        != request.manifest.transform_set_version
+    ):
+        reasons.append(
+            "transform whitelist lock transform_set_version must match manifest"
+        )
+    reasons.extend(
+        f"transform whitelist lock: {reason}"
+        for reason in validate_transform_whitelist_lock(
+            request.expected_transform_ids,
+            request.transform_whitelist_lock,
+        )
+    )
+
+
+def _append_runtime_governance_reasons(
+    request: ArtifactImportRequest,
+    reasons: list[str],
+) -> None:
     runtime_governance = evaluate_artifact_runtime_governance(
         training_end=request.training_end,
         lifecycle_policy=request.lifecycle_policy,
@@ -199,11 +201,107 @@ def validate_import_request(
     reasons.extend(runtime_governance.ttl_reasons)
     reasons.extend(runtime_governance.drift_reasons)
 
-    if request.proof_required:
-        if request.proof_summary is None:
-            reasons.append("PROOF_SUMMARY_REQUIRED")
-        else:
-            reasons.extend(validate_artifact_proof_summary(request.proof_summary))
+
+def _append_proof_reasons(request: ArtifactImportRequest, reasons: list[str]) -> None:
+    if not request.proof_required:
+        return
+    if request.proof_summary is None:
+        reasons.append("PROOF_SUMMARY_REQUIRED")
+        return
+    reasons.extend(validate_artifact_proof_summary(request.proof_summary))
+
+
+def _summarize_feature_lineage(
+    request: ArtifactImportRequest,
+) -> tuple[str, tuple[str, ...]]:
+    if not request.feature_lineage_required:
+        return "not_required", ()
+    if request.feature_lineage_lock is None:
+        return (
+            "missing",
+            ("feature lineage lock is required for governed artifact upload",),
+        )
+    derived_reasons: list[str] = []
+    if (
+        request.feature_lineage_lock.feature_set_version
+        != request.manifest.feature_set_version
+    ):
+        derived_reasons.append(
+            "feature lineage lock feature_set_version must match manifest"
+        )
+    if (
+        request.feature_lineage_lock.transform_set_version
+        != request.manifest.transform_set_version
+    ):
+        derived_reasons.append(
+            "feature lineage lock transform_set_version must match manifest"
+        )
+    derived_reasons.extend(
+        f"feature lineage lock: {reason}"
+        for reason in validate_feature_lineage_lock(
+            request.expected_feature_ids,
+            request.feature_lineage_lock,
+        )
+    )
+    reasons = tuple(derived_reasons)
+    return ("ok" if not reasons else "invalid", reasons)
+
+
+def _summarize_transform_whitelist(
+    request: ArtifactImportRequest,
+) -> tuple[str, tuple[str, ...]]:
+    if not request.transform_whitelist_required:
+        return "not_required", ()
+    if request.transform_whitelist_lock is None:
+        return (
+            "missing",
+            ("transform whitelist lock is required for governed artifact upload",),
+        )
+    derived_reasons: list[str] = []
+    if (
+        request.transform_whitelist_lock.transform_set_version
+        != request.manifest.transform_set_version
+    ):
+        derived_reasons.append(
+            "transform whitelist lock transform_set_version must match manifest"
+        )
+    derived_reasons.extend(
+        f"transform whitelist lock: {reason}"
+        for reason in validate_transform_whitelist_lock(
+            request.expected_transform_ids,
+            request.transform_whitelist_lock,
+        )
+    )
+    reasons = tuple(derived_reasons)
+    return ("ok" if not reasons else "invalid", reasons)
+
+
+def validate_import_request(
+    request: ArtifactImportRequest,
+    *,
+    expected_payload_hash_sha256: str | None = None,
+    signature_verifier: ArtifactSignatureVerifier | None = None,
+) -> ArtifactImportDecision:
+    """Validate import request without bypassing promotion gates."""
+    validate_artifact_manifest(request.manifest)
+
+    reasons: list[str] = []
+    compatibility_check = evaluate_artifact_compatibility_policy(request.manifest)
+    reasons.extend(compatibility_check.reasons)
+    signature_check = evaluate_artifact_signature_policy(
+        request.manifest,
+        trust_store=DEFAULT_ARTIFACT_TRUST_STORE,
+        expected_payload_hash_sha256=expected_payload_hash_sha256,
+        signature_verifier=signature_verifier,
+    )
+    reasons.extend(signature_check.reasons)
+
+    _append_manifest_gate_reasons(request, reasons)
+    _append_payload_ref_reasons(request, reasons)
+    _append_feature_lineage_reasons(request, reasons)
+    _append_transform_whitelist_reasons(request, reasons)
+    _append_runtime_governance_reasons(request, reasons)
+    _append_proof_reasons(request, reasons)
 
     accepted = len(reasons) == 0
     normalized_state = (
@@ -234,68 +332,12 @@ def summarize_import_request(
         expected_payload_hash_sha256=expected_payload_hash_sha256,
         signature_verifier=signature_verifier,
     )
-    feature_lineage_reasons: tuple[str, ...] = ()
-    feature_lineage_status = "not_required"
-    if request.feature_lineage_required:
-        if request.feature_lineage_lock is None:
-            feature_lineage_status = "missing"
-            feature_lineage_reasons = (
-                "feature lineage lock is required for governed artifact upload",
-            )
-        else:
-            derived_reasons: list[str] = []
-            if (
-                request.feature_lineage_lock.feature_set_version
-                != request.manifest.feature_set_version
-            ):
-                derived_reasons.append(
-                    "feature lineage lock feature_set_version must match manifest"
-                )
-            if (
-                request.feature_lineage_lock.transform_set_version
-                != request.manifest.transform_set_version
-            ):
-                derived_reasons.append(
-                    "feature lineage lock transform_set_version must match manifest"
-                )
-            derived_reasons.extend(
-                f"feature lineage lock: {reason}"
-                for reason in validate_feature_lineage_lock(
-                    request.expected_feature_ids,
-                    request.feature_lineage_lock,
-                )
-            )
-            feature_lineage_reasons = tuple(derived_reasons)
-            feature_lineage_status = "ok" if not feature_lineage_reasons else "invalid"
-
-    transform_whitelist_reasons: tuple[str, ...] = ()
-    transform_whitelist_status = "not_required"
-    if request.transform_whitelist_required:
-        if request.transform_whitelist_lock is None:
-            transform_whitelist_status = "missing"
-            transform_whitelist_reasons = (
-                "transform whitelist lock is required for governed artifact upload",
-            )
-        else:
-            derived_transform_reasons: list[str] = []
-            if (
-                request.transform_whitelist_lock.transform_set_version
-                != request.manifest.transform_set_version
-            ):
-                derived_transform_reasons.append(
-                    "transform whitelist lock transform_set_version must match manifest"
-                )
-            derived_transform_reasons.extend(
-                f"transform whitelist lock: {reason}"
-                for reason in validate_transform_whitelist_lock(
-                    request.expected_transform_ids,
-                    request.transform_whitelist_lock,
-                )
-            )
-            transform_whitelist_reasons = tuple(derived_transform_reasons)
-            transform_whitelist_status = (
-                "ok" if not transform_whitelist_reasons else "invalid"
-            )
+    feature_lineage_status, feature_lineage_reasons = _summarize_feature_lineage(
+        request
+    )
+    transform_whitelist_status, transform_whitelist_reasons = (
+        _summarize_transform_whitelist(request)
+    )
 
     runtime_governance = evaluate_artifact_runtime_governance(
         training_end=request.training_end,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TypeVar
 
 from pydantic import BaseModel, Field
 
@@ -17,6 +17,15 @@ from local_replay_runtime.historical_snapshot_loader import (
     HistoricalMarketEventEnvelope,
     HistoricalSnapshotBatch,
     ReplayRouteHint,
+)
+
+ReplayObservedEvent = SnapshotEvent | KlineEvent | TradeEvent | DepthEvent
+TReplayObservedEvent = TypeVar(
+    "TReplayObservedEvent",
+    SnapshotEvent,
+    KlineEvent,
+    TradeEvent,
+    DepthEvent,
 )
 
 
@@ -82,8 +91,8 @@ def _merge_route_hints(
 
 def _best_snapshot(
     envelopes: tuple[HistoricalMarketEventEnvelope, ...],
-    event_type: type[Any],
-) -> Any | None:
+    event_type: type[TReplayObservedEvent],
+) -> TReplayObservedEvent | None:
     for envelope in reversed(envelopes):
         if isinstance(envelope.event, event_type):
             return envelope.event

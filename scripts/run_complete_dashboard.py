@@ -37,8 +37,8 @@ from ui import (  # noqa: E402
     DashboardCard,
     DashboardSection,
     build_complete_dashboard_sections,
-    render_technical_dashboard_html,
 )
+from ui.technical_dashboard_html import render_technical_dashboard_html  # noqa: E402
 
 
 @dataclass(frozen=True)

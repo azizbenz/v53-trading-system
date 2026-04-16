@@ -46,7 +46,10 @@ from portfolio_minimal.allocation_router.base_size_builder import (
     compute_base_size,
 )
 from portfolio_minimal.allocation_router.score_size_mapper import compute_modulated_size
-from portfolio_minimal.allocation_router.portfolio_cap_applier import apply_caps
+from portfolio_minimal.allocation_router.portfolio_cap_applier import (
+    CapApplicationResult,
+    apply_caps,
+)
 from portfolio_minimal.allocation_router.phantom_trade_guard import (
     PhantomVerdict,
     check_phantom,
@@ -113,6 +116,54 @@ class PortfolioRelativeRankAdjustmentHook(Protocol):
         hook_input: PortfolioRelativeRankAdjustmentInput,
     ) -> PortfolioRelativeRankAdjustmentOutcome:
         ...
+
+
+def _build_allocation_entry(
+    *,
+    candidate: OpportunityCandidate,
+    ranking_score: float,
+    base_size: float,
+    modulated_size: float,
+    capped: CapApplicationResult,
+    is_phantom: bool,
+    viability_reason: str,
+) -> AllocationEntry:
+    return AllocationEntry(
+        pair=candidate.pair,
+        engine_id=candidate.engine_id,
+        base_size=base_size,
+        modulated_size=modulated_size,
+        final_size=capped.final_size,
+        tier=candidate.tier_suggestion,
+        ranking_score=ranking_score,
+        is_phantom=is_phantom,
+        cap_reason=capped.cap_reason,
+        viability_reason=viability_reason,
+    )
+
+
+def _consume_viable_budgets(
+    *,
+    candidate: OpportunityCandidate,
+    capped: CapApplicationResult,
+    is_phantom: bool,
+    remaining_gross: float,
+    remaining_loss: float,
+    remaining_beta: float,
+    remaining_cluster: dict[str, float],
+) -> tuple[float, float, float]:
+    if is_phantom:
+        return remaining_gross, remaining_loss, remaining_beta
+    remaining_gross -= capped.final_size
+    if candidate.cluster_id in remaining_cluster:
+        remaining_cluster[candidate.cluster_id] -= capped.final_size
+    if candidate.candidate_size > 0.0:
+        size_ratio = capped.final_size / candidate.candidate_size
+        if candidate.estimated_loss > 0.0:
+            remaining_loss -= candidate.estimated_loss * size_ratio
+        if abs(candidate.beta_impact) > 0.0:
+            remaining_beta -= abs(candidate.beta_impact) * size_ratio
+    return remaining_gross, remaining_loss, remaining_beta
 
 
 def run_portfolio_pipeline(
@@ -198,32 +249,26 @@ def run_portfolio_pipeline(
         )
         is_phantom = phantom.verdict != PhantomVerdict.VIABLE
 
-        entry = AllocationEntry(
-            pair=c.pair,
-            engine_id=c.engine_id,
+        entry = _build_allocation_entry(
+            candidate=c,
+            ranking_score=se.ranking_score,
             base_size=base.base_size,
             modulated_size=modulated.modulated_size,
-            final_size=capped.final_size,
-            tier=c.tier_suggestion,
-            ranking_score=se.ranking_score,
+            capped=capped,
             is_phantom=is_phantom,
-            cap_reason=capped.cap_reason,
             viability_reason=phantom.reason,
         )
         entries.append(entry)
 
-        # Decrement remaining budgets only for viable trades
-        if not is_phantom:
-            remaining_gross -= capped.final_size
-            if c.cluster_id in remaining_cluster:
-                remaining_cluster[c.cluster_id] -= capped.final_size
-            # Decrement loss and beta budgets proportionally
-            if c.candidate_size > 0.0:
-                size_ratio = capped.final_size / c.candidate_size
-                if c.estimated_loss > 0.0:
-                    remaining_loss -= c.estimated_loss * size_ratio
-                if abs(c.beta_impact) > 0.0:
-                    remaining_beta -= abs(c.beta_impact) * size_ratio
+        remaining_gross, remaining_loss, remaining_beta = _consume_viable_budgets(
+            candidate=c,
+            capped=capped,
+            is_phantom=is_phantom,
+            remaining_gross=remaining_gross,
+            remaining_loss=remaining_loss,
+            remaining_beta=remaining_beta,
+            remaining_cluster=remaining_cluster,
+        )
 
     # ── 9. Final report ──
     report = build_report(

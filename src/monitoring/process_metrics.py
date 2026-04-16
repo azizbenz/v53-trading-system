@@ -80,7 +80,7 @@ def _read_windows_rss_bytes() -> int | None:
         )
         if success:
             return int(counters.WorkingSetSize)
-    except Exception:
+    except (AttributeError, OSError, ValueError):
         return None
     return None
 
@@ -110,7 +110,7 @@ def _read_windows_total_memory_bytes() -> int | None:
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         if kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
             return int(status.ullTotalPhys)
-    except Exception:
+    except (AttributeError, OSError, ValueError):
         return None
     return None
 
@@ -123,7 +123,7 @@ def _read_posix_rusage_rss_bytes() -> int | None:
         if sys.platform == "darwin":
             return int(rss)
         return int(rss) * 1024
-    except Exception:
+    except (ImportError, OSError, ValueError):
         return None
 
 

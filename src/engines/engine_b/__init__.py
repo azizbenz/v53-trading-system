@@ -6,6 +6,8 @@ in a context that does not suggest hostile continuation.
 More cost-sensitive than Engine A, shorter holding, Tier 1-2 max.
 """
 
+from __future__ import annotations
+
 from .engine_b_runner import EngineBDecision, EngineBInput, EngineBLogEntry, EngineBOutput, run_engine_b
 from .engine_b_runtime import (
     EngineBRuntime,

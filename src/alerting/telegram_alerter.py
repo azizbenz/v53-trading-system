@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Callable, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -58,14 +58,14 @@ class TelegramNotificationResult(BaseModel, frozen=True):
     status_code: int = 0
 
 
-TelegramPostFunc = Callable[[str, Mapping[str, Any], float], tuple[int, str]]
+TelegramPostFunc = Callable[[str, Mapping[str, object], float], tuple[int, str]]
 
 
 def _severity_at_least(left: AlertSeverity, right: AlertSeverity) -> bool:
     return _SEVERITY_RANK[left] >= _SEVERITY_RANK[right]
 
 
-def load_telegram_alerter_config(payload: Mapping[str, Any]) -> TelegramAlerterConfig:
+def load_telegram_alerter_config(payload: Mapping[str, object]) -> TelegramAlerterConfig:
     """Validate Telegram alerter config from a mapping."""
 
     if not isinstance(payload, Mapping):
@@ -124,7 +124,7 @@ def load_telegram_alerter_config_from_file(
         raise TelegramAlerterLoadError(str(exc)) from exc
     except TelegramAlerterLoadError:
         raise
-    except Exception as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, yaml.YAMLError) as exc:
         raise TelegramAlerterLoadError(
             f"Telegram config file {config_path} could not be parsed: {exc}"
         ) from exc
@@ -166,7 +166,7 @@ def build_telegram_message(
 
 def _default_telegram_post(
     url: str,
-    payload: Mapping[str, Any],
+    payload: Mapping[str, object],
     timeout_s: float,
 ) -> tuple[int, str]:
     data = json.dumps(dict(payload)).encode("utf-8")

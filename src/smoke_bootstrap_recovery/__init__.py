@@ -10,7 +10,7 @@ Dependencies: interface_contracts, manifest_registry, contract_test_suite, dag_v
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Callable
 
 from smoke_bootstrap_recovery.smoke_models import (
     BootstrapResult,
@@ -35,6 +35,7 @@ from smoke_bootstrap_recovery.config_validator import (
 )
 from smoke_bootstrap_recovery.recovery_runner import run_recovery_cycle
 from smoke_bootstrap_recovery.state_sanity_checker import (
+    SanityCheck,
     capture_fd_count,
     check_dag_clean,
     check_engineering_guardrails,
@@ -52,6 +53,10 @@ from smoke_bootstrap_recovery.shadow_readiness import (
     ShadowReadinessReport,
     evaluate_shadow_readiness,
 )
+
+
+FDCountProvider = Callable[[], int | None]
+KillSwitchFactory = Callable[..., object]
 
 
 # ─── BUILD-1 MODULES ────────────────────────────────────────────────
@@ -75,9 +80,9 @@ class _Build1ModuleAdapter:
 
     def __init__(self, module_name: str) -> None:
         self.module_name = module_name
-        self._module: Any = None
+        self._module: object | None = None
 
-    def bootstrap(self, config: dict[str, Any]) -> None:
+    def bootstrap(self, config: dict[str, object]) -> None:
         import importlib
         import sys
 
@@ -100,10 +105,10 @@ class _Build1ModuleAdapter:
 
 def _build_resource_release_checker(
     before_fd_count: int | None,
-    fd_count_provider: Any | None,
+    fd_count_provider: FDCountProvider | None,
     *,
     max_total_fd_count: int | None,
-) -> Any:
+) -> SanityCheck:
     fd_leak_check = check_fd_leak(
         before_fd_count,
         fd_counter=fd_count_provider,
@@ -121,10 +126,10 @@ def _resolve_kill_switch_smoke(
     *,
     module_name: str,
     kill_switch_state_dir: str | Path | None,
-    kill_switch_factory: Any,
-    kill_switch_trip_reason: Any,
-    kill_switch_tripped_state: Any,
-) -> tuple[str, Any] | None:
+    kill_switch_factory: KillSwitchFactory | None,
+    kill_switch_trip_reason: object | None,
+    kill_switch_tripped_state: object | None,
+) -> tuple[str, SanityCheck] | None:
     provided = (
         kill_switch_state_dir is not None,
         kill_switch_factory is not None,
@@ -154,11 +159,11 @@ def _resolve_kill_switch_smoke(
 
 def run_build1_smoke(
     *,
-    fd_count_provider: Any | None = None,
+    fd_count_provider: FDCountProvider | None = None,
     kill_switch_state_dir: str | Path | None = None,
-    kill_switch_factory: Any = None,
-    kill_switch_trip_reason: Any = None,
-    kill_switch_tripped_state: Any = None,
+    kill_switch_factory: KillSwitchFactory | None = None,
+    kill_switch_trip_reason: object | None = None,
+    kill_switch_tripped_state: object | None = None,
 ) -> SmokeReport:
     """Run the full Build-1 smoke test suite.
 
@@ -203,7 +208,7 @@ def run_build1_smoke(
         )
 
         # 3. Per-module sanity checks
-        sanity_checks: dict[str, Any] = {
+        sanity_checks: dict[str, SanityCheck] = {
             f"importable_{mod_name}": check_module_importable(mod_name),
             "fd_leak": check_fd_leak(
                 before_fd_count,

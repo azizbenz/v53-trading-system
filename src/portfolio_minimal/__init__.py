@@ -6,6 +6,8 @@ Transforms surviving Engine A/B opportunities into a coherent Light portfolio:
 - allocation_router: allocate capital, apply caps, detect phantom trades
 """
 
+from __future__ import annotations
+
 from .portfolio_orchestrator import (
     OrchestratorConfig,
     OrchestratorResult,

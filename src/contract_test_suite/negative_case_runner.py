@@ -8,7 +8,7 @@ This ensures we test more than happy paths — spec 6.15 drift prevention.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Type
+from typing import Callable
 
 from pydantic import BaseModel, ValidationError
 
@@ -31,8 +31,8 @@ class NegativeCase(BaseModel, frozen=True):
 
 def run_negative_pydantic(
     case: NegativeCase,
-    model_class: Type[BaseModel],
-    invalid_data: dict[str, Any],
+    model_class: type[BaseModel],
+    invalid_data: dict[str, object],
 ) -> ContractResult:
     """Run a negative case against a Pydantic model.
 
@@ -58,10 +58,10 @@ def run_negative_pydantic(
 
 def run_negative_callable(
     case: NegativeCase,
-    func: Callable[..., Any],
-    args: tuple[Any, ...] = (),
-    kwargs: dict[str, Any] | None = None,
-    expected_exception: Type[Exception] = Exception,
+    func: Callable[..., object],
+    args: tuple[object, ...] = (),
+    kwargs: dict[str, object] | None = None,
+    expected_exception: type[Exception] = Exception,
 ) -> ContractResult:
     """Run a negative case against a callable.
 

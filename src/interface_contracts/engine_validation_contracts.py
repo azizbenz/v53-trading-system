@@ -46,6 +46,17 @@ class EngineDReentryValidationInput(BaseModel, frozen=True):
     expected_ce: float = 0.0
     conviction: str = ""
     tier: str = ""
+    first_episode_id: str = ""
+    first_episode_engine_id: str = ""
+    first_episode_close_reason: str = ""
+    consecutive_stop_count: int = Field(default=0, ge=0)
+    last_stop_at_ns: int | None = Field(default=None, ge=1_000_000_000_000_000_000, le=9_999_999_999_999_999_999)
+    last_fresh_a_detection_at_ns: int | None = Field(
+        default=None,
+        ge=1_000_000_000_000_000_000,
+        le=9_999_999_999_999_999_999,
+    )
+    anti_revenge_state: str = ""
 
 
 class EngineDReentryValidationOutcome(BaseModel, frozen=True):
@@ -54,6 +65,9 @@ class EngineDReentryValidationOutcome(BaseModel, frozen=True):
     accepted: bool = True
     reason_codes: tuple[str, ...] = ()
     detail: str = ""
+    episode_reference_id: str = ""
+    anti_revenge_state: str = ""
+    observability_tags: tuple[str, ...] = ()
 
 
 __all__ = [

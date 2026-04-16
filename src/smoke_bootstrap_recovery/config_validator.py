@@ -11,8 +11,6 @@ Spec 7.9: every startup error must be explicit.
 
 from __future__ import annotations
 
-from typing import Any
-
 from smoke_bootstrap_recovery.smoke_models import ConfigCheckResult, SmokeStatus
 
 
@@ -36,7 +34,7 @@ class ConfigSchema:
 
 def validate_config(
     module_name: str,
-    config: dict[str, Any],
+    config: dict[str, object],
     schema: ConfigSchema,
 ) -> ConfigCheckResult:
     """Validate a config dict against a schema.
@@ -93,7 +91,7 @@ BUILD1_SCHEMAS: dict[str, ConfigSchema] = {
 
 
 def validate_build1_configs(
-    configs: dict[str, dict[str, Any]] | None = None,
+    configs: dict[str, dict[str, object]] | None = None,
 ) -> tuple[ConfigCheckResult, ...]:
     """Validate configs for all Build-1 modules.
 

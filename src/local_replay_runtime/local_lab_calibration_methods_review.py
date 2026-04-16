@@ -56,6 +56,42 @@ class LocalLabCalibrationMethodsReview(BaseModel, frozen=True):
     caution_flags: tuple[str, ...] = ()
 
 
+def _resolve_review_status(
+    *,
+    walk_forward_plan_ready: bool,
+    stationarity_ready: bool,
+    stationarity_pass: bool | None,
+    dsr_ready: bool,
+    dsr_pass: bool | None,
+    blocking_reasons: list[str],
+) -> tuple[bool, LocalLabCalibrationMethodsStatus]:
+    review_ready = (
+        walk_forward_plan_ready
+        and stationarity_ready
+        and stationarity_pass is True
+        and dsr_ready
+        and dsr_pass is True
+    )
+    if blocking_reasons:
+        return review_ready, LocalLabCalibrationMethodsStatus.BLOCKED
+    if review_ready:
+        return review_ready, LocalLabCalibrationMethodsStatus.READY
+    return review_ready, LocalLabCalibrationMethodsStatus.PARTIAL
+
+
+def _extract_calibration_record_sets(
+    records: tuple[DTRRecord, ...],
+) -> tuple[tuple[object, ...], tuple[float, ...], set[tuple[str, str]]]:
+    ordered_timestamps = tuple(sorted({record.timestamp for record in records}))
+    executed_returns = tuple(
+        record.gross_return - record.realized_cost
+        for record in records
+        if record.decision_state == DecisionState.EXECUTED
+    )
+    distinct_scopes = {(record.pair, record.engine_id) for record in records}
+    return ordered_timestamps, executed_returns, distinct_scopes
+
+
 def build_local_lab_calibration_methods_review(
     *,
     correlation_id: str,
@@ -66,16 +102,9 @@ def build_local_lab_calibration_methods_review(
 ) -> LocalLabCalibrationMethodsReview:
     """Build a bounded Local IA Lab review from shared calibration-method helpers."""
 
-    ordered_timestamps = tuple(sorted({record.timestamp for record in records}))
-    executed_returns = tuple(
-        record.gross_return - record.realized_cost
-        for record in records
-        if record.decision_state == DecisionState.EXECUTED
+    ordered_timestamps, executed_returns, distinct_scopes = _extract_calibration_record_sets(
+        records
     )
-    distinct_scopes = {
-        (record.pair, record.engine_id)
-        for record in records
-    }
 
     walk_forward_plan_status = "not_evaluated"
     walk_forward_plan_ready = False
@@ -145,19 +174,14 @@ def build_local_lab_calibration_methods_review(
             blocking_reasons.append("CALIBRATION_METHODS_DSR_INVALID")
             caution_flags.append(str(exc))
 
-    review_ready = (
-        walk_forward_plan_ready
-        and stationarity_ready
-        and stationarity_pass is True
-        and dsr_ready
-        and dsr_pass is True
+    review_ready, review_status = _resolve_review_status(
+        walk_forward_plan_ready=walk_forward_plan_ready,
+        stationarity_ready=stationarity_ready,
+        stationarity_pass=stationarity_pass,
+        dsr_ready=dsr_ready,
+        dsr_pass=dsr_pass,
+        blocking_reasons=blocking_reasons,
     )
-    if blocking_reasons:
-        review_status = LocalLabCalibrationMethodsStatus.BLOCKED
-    elif review_ready:
-        review_status = LocalLabCalibrationMethodsStatus.READY
-    else:
-        review_status = LocalLabCalibrationMethodsStatus.PARTIAL
 
     return LocalLabCalibrationMethodsReview(
         correlation_id=correlation_id,

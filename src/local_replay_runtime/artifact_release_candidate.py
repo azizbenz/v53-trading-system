@@ -100,6 +100,38 @@ class LocalLabArtifactReleaseCandidate(BaseModel, frozen=True):
     blocking_reasons: tuple[str, ...] = ()
 
 
+def _build_release_scopes(
+    scope_matrix: LocalLabScopeAnalysisMatrix | None,
+) -> tuple[tuple[LocalLabArtifactReleaseScope, ...], int, int, int]:
+    if scope_matrix is None:
+        return (), 0, 0, 0
+    release_scopes = tuple(
+        LocalLabArtifactReleaseScope(
+            pair=scope.pair,
+            engine_id=scope.engine_id,
+            scope_slug=scope.scope_slug,
+            review_bundle_path=scope.review_bundle_path,
+            trade_loss_attribution_path=scope.trade_loss_attribution_path,
+            artifact_proof_summary_path=scope.artifact_proof_summary_path,
+            artifact_proof_assessment_path=scope.artifact_proof_assessment_path,
+            calibration_methods_review_path=scope.calibration_methods_review_path,
+            executed_records=scope.executed_records,
+            losing_trade_count=scope.losing_trade_count,
+            calibration_methods_review_status=scope.calibration_methods_review_status,
+            calibration_methods_review_ready=scope.calibration_methods_review_ready,
+            release_ready=scope.artifact_proof_ready,
+            blocking_reasons=scope.artifact_proof_validation_reasons,
+        )
+        for scope in scope_matrix.scopes
+    )
+    return (
+        release_scopes,
+        scope_matrix.scope_count,
+        scope_matrix.ready_scope_count,
+        scope_matrix.blocked_scope_count,
+    )
+
+
 def build_local_lab_artifact_release_candidate(
     *,
     correlation_id: str,
@@ -148,33 +180,9 @@ def build_local_lab_artifact_release_candidate(
     )
     blocking_reasons.extend(artifact_proof_validation_reasons)
 
-    release_scopes: tuple[LocalLabArtifactReleaseScope, ...] = ()
-    scope_count = 0
-    ready_scope_count = 0
-    blocked_scope_count = 0
-    if scope_matrix is not None:
-        release_scopes = tuple(
-            LocalLabArtifactReleaseScope(
-                pair=scope.pair,
-                engine_id=scope.engine_id,
-                scope_slug=scope.scope_slug,
-                review_bundle_path=scope.review_bundle_path,
-                trade_loss_attribution_path=scope.trade_loss_attribution_path,
-                artifact_proof_summary_path=scope.artifact_proof_summary_path,
-                artifact_proof_assessment_path=scope.artifact_proof_assessment_path,
-                calibration_methods_review_path=scope.calibration_methods_review_path,
-                executed_records=scope.executed_records,
-                losing_trade_count=scope.losing_trade_count,
-                calibration_methods_review_status=scope.calibration_methods_review_status,
-                calibration_methods_review_ready=scope.calibration_methods_review_ready,
-                release_ready=scope.artifact_proof_ready,
-                blocking_reasons=scope.artifact_proof_validation_reasons,
-            )
-            for scope in scope_matrix.scopes
-        )
-        scope_count = scope_matrix.scope_count
-        ready_scope_count = scope_matrix.ready_scope_count
-        blocked_scope_count = scope_matrix.blocked_scope_count
+    release_scopes, scope_count, ready_scope_count, blocked_scope_count = (
+        _build_release_scopes(scope_matrix)
+    )
 
     ready_for_shadow_import = edge_calibration_ready and artifact_proof_ready and not blocking_reasons
     release_status = "shadow_candidate" if ready_for_shadow_import else "local_only"

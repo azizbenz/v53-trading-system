@@ -1,5 +1,7 @@
 """Minimal LOCAL_REPLAY scaffold for the unified V5.3 plan."""
 
+from __future__ import annotations
+
 from local_replay_runtime.artifact_exporter import (
     ReplayArtifactExportRequest,
     ReplayArtifactExportResult,
@@ -182,6 +184,10 @@ from local_replay_runtime.replay_metrics_collector import (
     build_replay_metrics_summary,
 )
 from local_replay_runtime.replay_run_manifest import ReplayRunManifest
+from local_replay_runtime.replay_scope_identity import (
+    ReplayScopeIdentity,
+    build_replay_scope_identity,
+)
 from local_replay_runtime.replay_orchestrator import (
     ReplayChunkArtifact,
     ReplayChunkSessionSummary,
@@ -334,6 +340,8 @@ __all__ = [
     "PerformanceModeGuardReport",
     "build_performance_mode_guard_report",
     "ReplayRunManifest",
+    "ReplayScopeIdentity",
+    "build_replay_scope_identity",
     "ReplayInputKind",
     "ReplayDetailLevel",
     "ReplaySessionConfig",

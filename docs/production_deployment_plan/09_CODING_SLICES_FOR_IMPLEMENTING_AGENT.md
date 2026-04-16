@@ -3206,3 +3206,126 @@ Si un de ces critères échoue → la tranche n'est pas mergeable, on continue s
   - `total_violations=4287`, `new_violations=0`
   - `$env:PYTHONPATH='src'; rtk pytest tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py -q`
   - `7 passed`
+
+## 91. The next operated hotspot reduction decomposes `run_local_lab_analysis_bundle.py` into bounded post-review phases
+
+- new code truth:
+  - `scripts/run_local_lab_analysis_bundle.py` no longer keeps the full Local IA Lab chain inside one giant `main(...)`
+  - the launcher now orchestrates bounded helpers for review dispatch, secondary reviews, edge/proof, release/replay, monitoring, and summary emission
+  - function-level guardrail debt on this hotspot is cleared; the remaining explicit debt is only `FILE_TOO_LONG`
+- deliberate limit of this slice:
+  - no Local IA Lab artifact/schema drift
+  - no change to governed review/calibration/replay/monitoring outputs
+  - no broad cleanup outside this launcher hotspot
+- latest proofs:
+  - `$env:PYTHONPATH='src'; python scripts/run_engineering_guardrails.py`
+  - `total_violations=4286`, `new_violations=0`
+  - `$env:PYTHONPATH='src'; rtk pytest tests/test_local_replay_runtime/test_local_lab_analysis_bundle_launcher.py -q`
+  - `7 passed`
+- `python scripts/run_build9_core_smoke.py`
+- Build-1 `PASS`, Build-2..9 `PASS`
+
+## 92. The next operated hotspot reduction removes inline CLI print debt from `run_technical_dashboard.py`
+
+- new code truth:
+  - `scripts/run_technical_dashboard.py` now routes terminal output through `_emit_technical_dashboard_output(...)` instead of inline `print()` calls
+  - the change preserves the same artifact paths and HTML payload outputs
+- deliberate limit of this slice:
+  - no dashboard schema change
+  - no behavior change in the projection pipeline
+  - no cleanup outside this launcher hotspot
+- latest proofs:
+  - `$env:PYTHONPATH='src'; python scripts/run_engineering_guardrails.py`
+  - `total_violations=4279`, `new_violations=0`
+  - `$env:PYTHONPATH='src'; rtk pytest tests/test_ui/test_technical_dashboard_launcher.py -q`
+  - `10 passed`
+
+## 93. The next operated hotspot reduction decomposes `_apply_shadow_service_metadata` in `run_technical_dashboard.py`
+
+- new code truth:
+  - `scripts/run_technical_dashboard.py` now routes the Shadow service metadata projection through bounded helpers (`_build_shadow_projection_*`)
+  - no schema drift; the same `ShadowProjection` fields are populated
+- deliberate limit of this slice:
+  - no dashboard schema change
+  - no behavior change in the projection pipeline
+  - no cleanup outside this launcher hotspot
+- latest proofs:
+  - `$env:PYTHONPATH='src'; python scripts/run_engineering_guardrails.py`
+  - `total_violations=4278`, `new_violations=0`
+  - `$env:PYTHONPATH='src'; rtk pytest tests/test_ui/test_technical_dashboard_launcher.py -q`
+  - `10 passed`
+
+## 94. The next operated hotspot reduction splits `run_shadow_vps_service.py` into bounded support modules
+
+- new code truth:
+  - `scripts/shadow_vps_service_projection_support.py` now houses runtime evidence projection helpers
+  - `scripts/shadow_vps_service_campaign_support.py` now houses campaign summary projection helpers
+  - `scripts/shadow_vps_service_monitoring_support.py` now houses monitoring artifact helpers and file emission
+  - `scripts/run_shadow_vps_service.py` now imports those helpers and adds `scripts/` to `sys.path`
+- deliberate limit of this slice:
+  - no service-loop semantic change
+  - no artifact/schema drift
+  - no cleanup outside this hotspot
+- latest proofs:
+  - `python scripts/run_engineering_guardrails.py`
+  - `total_violations=4278`, `new_violations=0`
+
+## 95. The next operated hotspot reduction extracts Shadow VPS service dataclass models
+
+- new code truth:
+  - `scripts/shadow_vps_service_models.py` now defines `ShadowVpsServiceMonitoringConfig`, `ShadowVpsServiceRuntimeContext`, and `ShadowVpsCycleSelection`
+  - `scripts/run_shadow_vps_service.py` now imports those models
+- deliberate limit of this slice:
+  - no service-loop semantic change
+  - no artifact/schema drift
+  - no cleanup outside this hotspot
+- latest proofs:
+  - `python -m py_compile scripts/run_shadow_vps_service.py scripts/shadow_vps_service_projection_support.py scripts/shadow_vps_service_campaign_support.py scripts/shadow_vps_service_monitoring_support.py scripts/shadow_vps_service_models.py`
+
+## 96. The next operated hotspot reduction extracts Shadow VPS runtime context helpers
+
+- new code truth:
+  - `scripts/shadow_vps_service_context_support.py` now hosts runtime dir resolution + context construction helpers
+  - `scripts/run_shadow_vps_service.py` now imports those helpers and injects the launcher loader
+- deliberate limit of this slice:
+  - no service-loop semantic change
+  - no artifact/schema drift
+  - no cleanup outside this hotspot
+- latest proofs:
+  - `python -m py_compile scripts/run_shadow_vps_service.py scripts/shadow_vps_service_context_support.py`
+
+## 97. The next operated hotspot reduction extracts Shadow VPS cycle selection helpers
+
+- new code truth:
+  - `scripts/shadow_vps_service_cycle_support.py` now hosts cycle selection + idle/prepare helpers
+  - `scripts/run_shadow_vps_service.py` now imports those helpers and passes explicit hook callables
+- deliberate limit of this slice:
+  - no service-loop semantic change
+  - no artifact/schema drift
+  - no cleanup outside this hotspot
+- latest proofs:
+  - `python -m py_compile scripts/run_shadow_vps_service.py scripts/shadow_vps_service_cycle_support.py`
+
+## 98. The next operated hotspot reduction extracts Shadow VPS execution helpers
+
+- new code truth:
+  - `scripts/shadow_vps_service_execution_support.py` now hosts daily orchestrator, state application, telemetry, success, and failure helpers
+  - `scripts/run_shadow_vps_service.py` now imports those helpers and passes explicit hook callables
+- deliberate limit of this slice:
+  - no service-loop semantic change
+  - no artifact/schema drift
+  - no cleanup outside this hotspot
+- latest proofs:
+  - `python -m py_compile scripts/run_shadow_vps_service.py scripts/shadow_vps_service_execution_support.py`
+
+## 99. The next operated hotspot reduction extracts Shadow VPS runtime loop helpers
+
+- new code truth:
+  - `scripts/shadow_vps_service_runtime_support.py` now hosts finalize + main loop helpers and output emission
+  - `scripts/run_shadow_vps_service.py` now imports those helpers and injects callables
+- deliberate limit of this slice:
+  - no service-loop semantic change
+  - no artifact/schema drift
+  - no cleanup outside this hotspot
+- latest proofs:
+  - `python -m py_compile scripts/run_shadow_vps_service.py scripts/shadow_vps_service_runtime_support.py`

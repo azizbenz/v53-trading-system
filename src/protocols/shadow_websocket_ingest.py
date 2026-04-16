@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -12,8 +11,10 @@ from data_backbone.event_normalizer.message_classifier import MessageClass, clas
 from data_backbone.event_normalizer.schema_mapper import (
     DepthEvent as NormalizedDepthEvent,
     EventType,
+    HeartbeatEvent as NormalizedHeartbeatEvent,
     KlineEvent as NormalizedKlineEvent,
     MappingError,
+    NormalizedEvent,
     SnapshotEvent as NormalizedSnapshotEvent,
     TradeEvent as NormalizedTradeEvent,
     map_raw_to_event,
@@ -30,6 +31,15 @@ from data_backbone.websocket_gateway.injected_stream_loader import (
 from interface_contracts import DepthEvent, DepthLevel, KlineEvent, Side, SnapshotEvent, Timeframe, TradeEvent
 from interface_contracts.atomic_io import atomic_write_json
 from local_replay_runtime import HistoricalMarketEventEnvelope, HistoricalSnapshotBatch, ReplayRouteHint
+
+NormalizedObservedEvent = (
+    NormalizedTradeEvent
+    | NormalizedDepthEvent
+    | NormalizedKlineEvent
+    | NormalizedSnapshotEvent
+    | NormalizedHeartbeatEvent
+)
+MarketEvent = TradeEvent | DepthEvent | KlineEvent | SnapshotEvent
 
 
 class ObservedWebSocketMessage(BaseModel, frozen=True):
@@ -212,8 +222,8 @@ def _to_snapshot_event(event: NormalizedSnapshotEvent) -> SnapshotEvent:
 
 
 def _to_market_event(
-    mapped_event: Any,
-) -> tuple[str, Any] | None:
+    mapped_event: NormalizedObservedEvent,
+) -> tuple[str, MarketEvent] | None:
     if getattr(mapped_event, "event_type", None) == EventType.HEARTBEAT:
         return None
     if isinstance(mapped_event, NormalizedTradeEvent):

@@ -10,6 +10,7 @@ This module is intentionally bounded:
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 
 _P = 2**255 - 19
@@ -116,7 +117,7 @@ def verify_ed25519_signature_base64(
         left = _point_mul(_BASE_POINT, scalar_s)
         right = _point_add(r_point, _point_mul(public_point, challenge))
         return _point_mul(left, 8) == _point_mul(right, 8)
-    except Exception:
+    except (binascii.Error, TypeError, ValueError):
         return False
 
 

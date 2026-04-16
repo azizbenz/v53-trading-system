@@ -3101,3 +3101,119 @@ Latest seventh operated hotspot reduction under executable guardrails:
 - latest proofs:
   - repo-wide guardrail run: `total_violations=4287`, `new_violations=0`
   - focused `local_lab_analysis_bundle launcher` slice: `7 passed`
+
+Latest eighth operated hotspot reduction under executable guardrails:
+
+- current code truth:
+  - `scripts/run_local_lab_analysis_bundle.py` is now an orchestration facade over bounded phases for review, secondary analysis, edge/proof, release/replay, monitoring, and summary emission
+  - the previous `FUNCTION_TOO_LONG main` debt is cleared on this hotspot
+  - the explicit remaining debt on this launcher is now only `FILE_TOO_LONG`
+- preserve the doctrine:
+  - no Local IA Lab artifact/schema drift
+  - no hidden behavior change in the chained review/calibration/replay/monitoring rail
+  - no UI diversion
+- latest proofs:
+  - repo-wide guardrail run: `total_violations=4286`, `new_violations=0`
+  - focused `local_lab_analysis_bundle launcher` slice: `7 passed`
+  - direct `python scripts/run_build9_core_smoke.py`: Build-1 `PASS`, Build-2..9 `PASS`
+
+Latest ninth operated hotspot reduction under executable guardrails:
+
+- current code truth:
+  - `scripts/run_technical_dashboard.py` now emits CLI output via `_emit_technical_dashboard_output(...)` instead of inline `print()` calls
+  - artifact paths and HTML payload outputs are unchanged
+- preserve the doctrine:
+  - no dashboard schema drift
+  - no behavior change in the projection pipeline
+  - no UI-only diversion
+- latest proofs:
+  - repo-wide guardrail run: `total_violations=4279`, `new_violations=0`
+  - focused `technical_dashboard launcher` slice: `10 passed`
+
+Latest tenth operated hotspot reduction under executable guardrails:
+
+- current code truth:
+  - `scripts/run_technical_dashboard.py` now projects Shadow service metadata via bounded helpers (`_build_shadow_projection_*`)
+  - the same `ShadowProjection` fields and schema are preserved
+- preserve the doctrine:
+  - no dashboard schema drift
+  - no projection behavior change
+  - no cleanup outside this hotspot
+- latest proofs:
+  - repo-wide guardrail run: `total_violations=4278`, `new_violations=0`
+  - focused `technical_dashboard launcher` slice: `10 passed`
+
+Latest eleventh operated hotspot reduction under executable guardrails:
+
+- current code truth:
+  - `scripts/shadow_vps_service_projection_support.py` now hosts runtime evidence projection helpers
+  - `scripts/shadow_vps_service_campaign_support.py` now hosts campaign summary projection helpers
+  - `scripts/shadow_vps_service_monitoring_support.py` now hosts monitoring artifact helpers and file emission
+  - `scripts/run_shadow_vps_service.py` now imports those helpers and adds `scripts/` to `sys.path`
+- preserve the doctrine:
+  - no service-loop semantic drift
+  - no artifact/schema drift
+  - no cleanup outside this hotspot
+- latest proofs:
+  - `python scripts/run_engineering_guardrails.py`
+  - `total_violations=4278`, `new_violations=0`
+
+Latest twelfth operated hotspot reduction under executable guardrails:
+
+- current code truth:
+  - `scripts/shadow_vps_service_models.py` now defines the Shadow VPS service dataclass models
+  - `scripts/run_shadow_vps_service.py` now imports those models
+- preserve the doctrine:
+  - no service-loop semantic drift
+  - no artifact/schema drift
+  - no cleanup outside this hotspot
+- latest proofs:
+  - `python -m py_compile scripts/run_shadow_vps_service.py scripts/shadow_vps_service_projection_support.py scripts/shadow_vps_service_campaign_support.py scripts/shadow_vps_service_monitoring_support.py scripts/shadow_vps_service_models.py`
+
+Latest thirteenth operated hotspot reduction under executable guardrails:
+
+- current code truth:
+  - `scripts/shadow_vps_service_context_support.py` now hosts runtime dir resolution + context construction helpers
+  - `scripts/run_shadow_vps_service.py` now imports those helpers and injects the launcher loader
+- preserve the doctrine:
+  - no service-loop semantic drift
+  - no artifact/schema drift
+  - no cleanup outside this hotspot
+- latest proofs:
+  - `python -m py_compile scripts/run_shadow_vps_service.py scripts/shadow_vps_service_context_support.py`
+
+Latest fourteenth operated hotspot reduction under executable guardrails:
+
+- current code truth:
+  - `scripts/shadow_vps_service_cycle_support.py` now hosts cycle selection + idle/prepare helpers
+  - `scripts/run_shadow_vps_service.py` now imports those helpers and passes explicit hook callables
+- preserve the doctrine:
+  - no service-loop semantic drift
+  - no artifact/schema drift
+  - no cleanup outside this hotspot
+- latest proofs:
+  - `python -m py_compile scripts/run_shadow_vps_service.py scripts/shadow_vps_service_cycle_support.py`
+
+Latest fifteenth operated hotspot reduction under executable guardrails:
+
+- current code truth:
+  - `scripts/shadow_vps_service_execution_support.py` now hosts daily orchestrator, state application, telemetry, success, and failure helpers
+  - `scripts/run_shadow_vps_service.py` now imports those helpers and passes explicit hook callables
+- preserve the doctrine:
+  - no service-loop semantic change
+  - no artifact/schema drift
+  - no cleanup outside this hotspot
+- latest proofs:
+  - `python -m py_compile scripts/run_shadow_vps_service.py scripts/shadow_vps_service_execution_support.py`
+
+Latest sixteenth operated hotspot reduction under executable guardrails:
+
+- current code truth:
+  - `scripts/shadow_vps_service_runtime_support.py` now hosts finalize + main loop helpers and output emission
+  - `scripts/run_shadow_vps_service.py` now imports those helpers and injects callables
+- preserve the doctrine:
+  - no service-loop semantic drift
+  - no artifact/schema drift
+  - no cleanup outside this hotspot
+- latest proofs:
+  - `python -m py_compile scripts/run_shadow_vps_service.py scripts/shadow_vps_service_runtime_support.py`

@@ -6,6 +6,8 @@ They must never bypass canonical engines, risk/portfolio backbones, or activate
 Complete runtime behavior implicitly.
 """
 
+from __future__ import annotations
+
 from complete_enablers.competition_monitor import build_competition_monitor_snapshot
 from complete_enablers.contracts import (
     Build14EnablerContract,

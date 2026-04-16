@@ -1,5 +1,7 @@
 """Bounded Binance Spot adapter surfaces for P0-1."""
 
+from __future__ import annotations
+
 from venue_adapters.binance_spot.account_feature_provider import BinanceAccountFeatureAuditProvider
 from venue_adapters.binance_spot.credential_loader import (
     BinanceCredentialLoadError,
@@ -29,6 +31,14 @@ from venue_adapters.binance_spot.orderbook_manager import (
     BinanceOrderBookStatus,
     OrderBookSyncState,
 )
+from venue_adapters.binance_spot.rate_limiter import (
+    BinanceApiRateLimiter,
+    BinanceApiRateLimiterConfig,
+    BinanceApiRateLimiterSnapshot,
+    BinanceApiRateLimitExceededError,
+    BinanceRequestQuotaCost,
+    classify_binance_request_quota_cost,
+)
 from venue_adapters.binance_spot.ws_client import (
     BinanceDepthWebSocketClient,
     BinanceWsClientConfig,
@@ -55,6 +65,10 @@ __all__ = [
     "BinanceDepthWebSocketClient",
     "BinanceOrderBookManager",
     "BinanceOrderBookStatus",
+    "BinanceApiRateLimiter",
+    "BinanceApiRateLimiterConfig",
+    "BinanceApiRateLimiterSnapshot",
+    "BinanceApiRateLimitExceededError",
     "BinanceCredentialLoadError",
     "BinanceRestClient",
     "BinanceSpotExecutionAdapter",
@@ -65,11 +79,13 @@ __all__ = [
     "BinanceWsClientConfig",
     "BinanceWsClientPollResult",
     "BufferedBinanceUserDataEventSource",
+    "BinanceRequestQuotaCost",
     "OrderBookSyncState",
     "build_binance_spot_execution_adapter",
     "build_user_data_subscribe_request",
     "build_rest_depth_snapshot_provider",
     "build_binance_client_order_id",
+    "classify_binance_request_quota_cost",
     "classify_binance_order_error",
     "load_binance_adapter_config",
     "load_binance_credentials",

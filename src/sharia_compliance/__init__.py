@@ -1,5 +1,7 @@
 """Bounded halal compliance layer for P0-2."""
 
+from __future__ import annotations
+
 from sharia_compliance.account_features_audit import (
     AccountFeaturesAuditConfig,
     audit_account_features,

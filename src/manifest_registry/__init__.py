@@ -6,6 +6,8 @@ Public API for querying the manifest: modules, dependencies, profiles, build ord
 Dependencies: interface_contracts, stdlib, pydantic
 """
 
+from __future__ import annotations
+
 from manifest_registry.module_inventory import (
     MODULES,
     ModuleEntry,
@@ -37,6 +39,7 @@ from manifest_registry.profile_registry import (
     get_complete_only_pairs,
     get_engines_for_profile,
     get_modules_for_profile,
+    get_multipair7_universe,
     get_pairs_for_profile,
     is_engine_allowed,
     is_module_active_in_profile,
@@ -95,6 +98,7 @@ __all__ = [
     "PROFILE_PAIRS",
     "get_complete_only_modules",
     "get_complete_only_pairs",
+    "get_multipair7_universe",
     "get_engines_for_profile",
     "get_modules_for_profile",
     "get_pairs_for_profile",

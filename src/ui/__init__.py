@@ -1,5 +1,7 @@
 """Locked Build-10 operator UI backend surface."""
 
+from __future__ import annotations
+
 from ui.contracts import (
     DashboardCard,
     DashboardSection,
@@ -38,7 +40,6 @@ from ui.complete_dashboard_view import (
     CompletePairMetadata,
     build_complete_dashboard_sections,
 )
-from ui.technical_dashboard_html import render_technical_dashboard_html
 from ui.ui_light_locked import build_light_dashboard_view, build_locked_operator_dashboard_view
 from ui.technical_dashboard_view import build_technical_dashboard_view
 
@@ -76,5 +77,4 @@ __all__ = [
     "build_locked_operator_dashboard_view",
     "build_light_dashboard_view",
     "build_technical_dashboard_view",
-    "render_technical_dashboard_html",
 ]

@@ -1,5 +1,7 @@
 """Compatibility re-export for Build-14 enums."""
 
+from __future__ import annotations
+
 from interface_contracts.build14_contracts import (
     Build14HardState,
     Build14InfluenceAction,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from interface_contracts import AlertSeverity, DeploymentState, RuntimeMode
+from interface_contracts import AlertRecord, AlertSeverity, DeploymentState, RuntimeMode
 from monitoring.contracts import (
     AlertHistoryEntry,
     HealthDashboardPayload,
@@ -191,7 +191,7 @@ def build_health_dashboard_payload(
     )
 
 
-def _project_alert_history_entry(alert) -> AlertHistoryEntry:
+def _project_alert_history_entry(alert: AlertRecord) -> AlertHistoryEntry:
     return AlertHistoryEntry(
         alert_id=alert.alert_id,
         severity=alert.severity,

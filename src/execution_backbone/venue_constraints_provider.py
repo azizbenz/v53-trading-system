@@ -7,11 +7,12 @@ import logging
 import math
 import time
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping, Protocol
+from typing import Callable, Iterable, Mapping, Protocol
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
 from pydantic import BaseModel, Field
+from pydantic import ValidationError
 
 from interface_contracts import decimal_to_canonical_str, execution_decimal
 from interface_contracts.atomic_io import atomic_write_json
@@ -64,7 +65,7 @@ def _positive_decimal_str_or_none(value: object) -> str | None:
 
 
 def parse_binance_exchange_info_payload(
-    payload: Mapping[str, Any],
+    payload: Mapping[str, object],
     *,
     pair: str,
 ) -> VenueConstraintSnapshot | None:
@@ -169,7 +170,7 @@ class BinanceExchangeInfoVenueConstraintProvider:
         try:
             payload_bytes = self._http_get(self._build_url(pair_key), self._timeout_s)
             payload = json.loads(payload_bytes.decode("utf-8"))
-        except Exception as exc:
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             logger.warning(
                 "venue_constraints_fetch_failed",
                 extra={"pair": pair_key, "detail": str(exc)},
@@ -209,7 +210,7 @@ class BinanceExchangeInfoVenueConstraintProvider:
             return VenueConstraintCacheState.model_validate_json(
                 self._cache_path.read_text(encoding="utf-8")
             )
-        except Exception as exc:
+        except (OSError, ValidationError, ValueError) as exc:
             logger.warning(
                 "venue_constraints_cache_load_failed",
                 extra={"path": str(self._cache_path), "detail": str(exc)},

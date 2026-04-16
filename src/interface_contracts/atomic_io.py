@@ -6,7 +6,6 @@ import json
 import os
 import uuid
 from pathlib import Path
-from typing import Any
 
 
 def atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> None:
@@ -25,12 +24,13 @@ def atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> None
             fh.flush()
             os.fsync(fh.fileno())
         os.replace(tmp, path)
-    except Exception:
+    except Exception as exc:
+        _ = exc
         tmp.unlink(missing_ok=True)
         raise
 
 
-def atomic_write_json(path: Path, data: Any, *, indent: int | None = None) -> None:
+def atomic_write_json(path: Path, data: object, *, indent: int | None = None) -> None:
     """Write *data* as UTF-8 JSON to *path* atomically (write to tmp then rename).
 
     Creates parent directories if they do not exist.
@@ -56,7 +56,8 @@ def atomic_write_bytes(path: Path, data: bytes) -> None:
             fh.flush()
             os.fsync(fh.fileno())
         os.replace(tmp, path)
-    except Exception:
+    except Exception as exc:
+        _ = exc
         tmp.unlink(missing_ok=True)
         raise
 

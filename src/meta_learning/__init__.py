@@ -4,6 +4,8 @@ This package remains strictly governed and must not alter the Build-1..9
 decision path or create live mutation/promotion side effects.
 """
 
+from __future__ import annotations
+
 from meta_learning.contracts import (
     ArchiveEligibilityRecord,
     BreakdownReport,

@@ -20,6 +20,11 @@ from monitoring import (  # noqa: E402
 )
 
 
+def _emit_output_line(message: str) -> None:
+    """Emit a launcher path line without using print()."""
+    sys.stdout.write(f"{message}\n")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
@@ -53,8 +58,8 @@ def main(argv: list[str] | None = None) -> int:
         indent=2,
     )
 
-    print(f"Shadow VPS scrape discovery JSON: {discovery_path}")
-    print(f"Shadow VPS Prometheus file_sd JSON: {file_sd_path}")
+    _emit_output_line(f"Shadow VPS scrape discovery JSON: {discovery_path}")
+    _emit_output_line(f"Shadow VPS Prometheus file_sd JSON: {file_sd_path}")
     return 0
 
 

@@ -1,1 +1,3 @@
-"""order_decider — decide order type, guard execution, build intent."""
+"""order_decider â€” decide order type, guard execution, build intent."""
+
+from __future__ import annotations

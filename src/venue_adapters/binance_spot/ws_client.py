@@ -156,10 +156,181 @@ class BinanceDepthWebSocketClient:
         return self._manager.apply_delta(delta)
 
 
+class MultiSymbolPollResult(BaseModel, frozen=True):
+    """Aggregate poll result across all managed pairs."""
+
+    statuses: dict[str, BinanceOrderBookStatus]
+    raw_messages_seen: int = 0
+    reconnected_pairs: tuple[str, ...] = ()
+
+
+class MultiSymbolDepthWsClient:
+    """Manages a Binance combined-stream depth subscription for N pairs.
+
+    Uses the Binance combined stream endpoint:
+      wss://stream.binance.com/stream?streams=btcusdt@depth@100ms/ethusdt@depth@100ms/...
+
+    One ``BinanceOrderBookManager`` is maintained per pair.  Incoming
+    messages are routed by the ``stream`` field Binance embeds in each
+    combined-stream payload (e.g. ``"btcusdt@depth@100ms"``).
+
+    Lifecycle::
+        client = MultiSymbolDepthWsClient(pairs=["BTCUSDT", "ETHUSDT"], ...)
+        client.start()
+        while running:
+            result = client.poll_once()
+        client.stop()
+    """
+
+    _COMBINED_STREAM_BASE = "wss://stream.binance.com/stream"
+
+    def __init__(
+        self,
+        *,
+        pairs: list[str],
+        snapshot_provider: DepthSnapshotProvider,
+        adapter: WebSocketGatewayAdapter,
+        config: BinanceWsClientConfig | None = None,
+        clock: Callable[[], float] | None = None,
+    ) -> None:
+        if not pairs:
+            raise ValueError("pairs must be non-empty")
+        self._pairs = [p.upper() for p in pairs]
+        self._snapshot_provider = snapshot_provider
+        self._config = config or BinanceWsClientConfig()
+        self._clock = clock or time.time
+        self._managers: dict[str, BinanceOrderBookManager] = {
+            pair: BinanceOrderBookManager(
+                pair=pair,
+                gap_threshold_s=self._config.gap_threshold_s,
+                silence_threshold_s=self._config.silence_threshold_s,
+            )
+            for pair in self._pairs
+        }
+        # Build combined-stream URL:
+        #   wss://stream.binance.com/stream?streams=btcusdt@depth@100ms/ethusdt@...
+        stream_names = "/".join(
+            f"{pair.lower()}@{self._config.stream_type}@100ms" for pair in self._pairs
+        )
+        self._endpoint = f"{self._COMBINED_STREAM_BASE}?streams={stream_names}"
+        self._gateway = WebSocketGatewayRuntime(
+            adapter,
+            heartbeat_monitor=HeartbeatMonitor(
+                heartbeat_interval_s=self._config.silence_threshold_s,
+                late_threshold_s=self._config.silence_threshold_s,
+            ),
+        )
+        self._gateway.register_endpoint(self._endpoint)
+
+    def start(self, now: float | None = None) -> dict[str, BinanceOrderBookStatus]:
+        """Fetch initial snapshots for all pairs and connect the combined stream."""
+        current_time = self._clock() if now is None else now
+        statuses: dict[str, BinanceOrderBookStatus] = {}
+        for pair in self._pairs:
+            snapshot = self._snapshot_provider(pair)
+            statuses[pair] = self._managers[pair].apply_snapshot(snapshot)
+            # In combined streams we subscribe via the query-string URL;
+            # the gateway subscribe call maps pair→stream_type for message routing.
+            self._gateway.subscribe(pair, self._config.stream_type, self._endpoint)
+        self._gateway.connect(self._endpoint, current_time)
+        return statuses
+
+    def resync(self, pair: str, now: float | None = None) -> BinanceOrderBookStatus:
+        """Re-fetch snapshot for a single pair (e.g. after a reconnect event)."""
+        current_time = self._clock() if now is None else now
+        pair = pair.upper()
+        manager = self._managers.get(pair)
+        if manager is None:
+            raise KeyError(f"pair {pair!r} not in this MultiSymbolDepthWsClient")
+        snapshot = self._snapshot_provider(pair)
+        return manager.apply_snapshot(
+            snapshot.model_copy(update={"recv_time_s": current_time})
+        )
+
+    def poll_once(self, now: float | None = None) -> MultiSymbolPollResult:
+        """Poll the gateway once and dispatch to the matching pair manager."""
+        current_time = self._clock() if now is None else now
+        gateway_result = self._gateway.poll_once(self._endpoint, current_time)
+
+        reconnected_pairs: list[str] = []
+        raw_messages_seen = 0
+
+        if gateway_result.reconnect_event is not None:
+            # Mark ALL managed pairs stale — we lost connection for the whole stream.
+            for pair, manager in self._managers.items():
+                manager.mark_stale(reason="reconnect_resync_required", now=current_time)
+                reconnected_pairs.append(pair)
+            statuses = {p: m.build_status(now=current_time) for p, m in self._managers.items()}
+            return MultiSymbolPollResult(
+                statuses=statuses,
+                raw_messages_seen=0,
+                reconnected_pairs=tuple(reconnected_pairs),
+            )
+
+        raw_message = gateway_result.raw_message
+        if raw_message is not None:
+            raw_messages_seen = 1
+            # Combined stream wraps each event in {"stream": "btcusdt@depth", "data": {...}}
+            # The gateway may already unwrap; fall back to raw_message.pair for routing.
+            target_pair = raw_message.pair.upper() if raw_message.pair else None
+            if target_pair and target_pair in self._managers:
+                payload = raw_message.payload
+                delta = BinanceDepthDelta(
+                    pair=target_pair,
+                    first_update_id=int(
+                        payload.get("first_update_id", payload.get("last_update_id", 0))
+                    ),
+                    final_update_id=int(
+                        payload.get("final_update_id", payload.get("last_update_id", 0))
+                    ),
+                    bids=tuple(tuple(level) for level in payload.get("bids", [])),
+                    asks=tuple(tuple(level) for level in payload.get("asks", [])),
+                    recv_time_s=(
+                        raw_message.recv_time if raw_message.recv_time is not None
+                        else current_time
+                    ),
+                )
+                self._managers[target_pair].apply_delta(delta)
+
+        # Check heartbeat silence on the combined stream
+        if gateway_result.heartbeat_state.status == HeartbeatStatus.SILENT:
+            for pair, manager in self._managers.items():
+                manager.mark_stale(reason="heartbeat_silent", now=current_time)
+
+        statuses = {p: m.build_status(now=current_time) for p, m in self._managers.items()}
+        return MultiSymbolPollResult(
+            statuses=statuses,
+            raw_messages_seen=raw_messages_seen,
+            reconnected_pairs=tuple(reconnected_pairs),
+        )
+
+    def get_status(self, pair: str, now: float | None = None) -> BinanceOrderBookStatus:
+        """Return the current order-book status for a single pair."""
+        current_time = self._clock() if now is None else now
+        manager = self._managers.get(pair.upper())
+        if manager is None:
+            raise KeyError(f"pair {pair!r} not managed by this client")
+        return manager.build_status(now=current_time)
+
+    def get_all_statuses(self, now: float | None = None) -> dict[str, BinanceOrderBookStatus]:
+        current_time = self._clock() if now is None else now
+        return {p: m.build_status(now=current_time) for p, m in self._managers.items()}
+
+    @property
+    def pairs(self) -> list[str]:
+        return list(self._pairs)
+
+    @property
+    def endpoint(self) -> str:
+        return self._endpoint
+
+
 __all__ = [
     "BinanceDepthWebSocketClient",
     "BinanceWsClientConfig",
     "BinanceWsClientPollResult",
     "DepthSnapshotProvider",
+    "MultiSymbolDepthWsClient",
+    "MultiSymbolPollResult",
     "build_rest_depth_snapshot_provider",
 ]

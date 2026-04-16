@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 import json
 from pathlib import Path
-from typing import Any, TypeAlias
+from typing import TypeAlias
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -46,7 +46,7 @@ class ReplayRouteHint(BaseModel, frozen=True):
 
     @model_validator(mode="before")
     @classmethod
-    def normalize_input(cls, value: Any) -> Any:
+    def normalize_input(cls, value: object) -> object:
         if isinstance(value, cls):
             return value
         if not isinstance(value, dict):
@@ -90,7 +90,7 @@ class HistoricalMarketEventEnvelope(BaseModel, frozen=True):
 
     @model_validator(mode="before")
     @classmethod
-    def normalize_input(cls, value: Any) -> Any:
+    def normalize_input(cls, value: object) -> object:
         if isinstance(value, cls):
             return value
         if not isinstance(value, dict):
@@ -128,8 +128,8 @@ class HistoricalSnapshotBatch(BaseModel, frozen=True):
         cls,
         *,
         source_path: str,
-        records: tuple[HistoricalMarketEventEnvelope | dict[str, Any], ...]
-        | list[HistoricalMarketEventEnvelope | dict[str, Any]],
+        records: tuple[HistoricalMarketEventEnvelope | dict[str, object], ...]
+        | list[HistoricalMarketEventEnvelope | dict[str, object]],
         source: str = "historical_snapshot_batch",
     ) -> "HistoricalSnapshotBatch":
         events = tuple(
@@ -169,7 +169,7 @@ class HistoricalSnapshotBatch(BaseModel, frozen=True):
         return self
 
 
-def _parse_market_event(event_type: str, payload: Any) -> ReplayMarketEvent:
+def _parse_market_event(event_type: str, payload: object) -> ReplayMarketEvent:
     if isinstance(payload, (SnapshotEvent, DepthEvent, KlineEvent, TradeEvent)):
         return payload
     if not isinstance(payload, dict):
@@ -186,7 +186,7 @@ def _parse_market_event(event_type: str, payload: Any) -> ReplayMarketEvent:
     raise ValueError(f"Unsupported historical event_type: {event_type}")
 
 
-def _load_json_records(dataset_path: Path) -> tuple[dict[str, Any], ...]:
+def _load_json_records(dataset_path: Path) -> tuple[dict[str, object], ...]:
     raw = json.loads(dataset_path.read_text(encoding="utf-8-sig"))
     if isinstance(raw, list):
         return tuple(item for item in raw if isinstance(item, dict))
@@ -197,8 +197,8 @@ def _load_json_records(dataset_path: Path) -> tuple[dict[str, Any], ...]:
     raise ValueError(f"Unsupported historical snapshot JSON shape in {dataset_path}")
 
 
-def _load_jsonl_records(dataset_path: Path) -> tuple[dict[str, Any], ...]:
-    records: list[dict[str, Any]] = []
+def _load_jsonl_records(dataset_path: Path) -> tuple[dict[str, object], ...]:
+    records: list[dict[str, object]] = []
     for line in dataset_path.read_text(encoding="utf-8-sig").splitlines():
         stripped = line.strip()
         if not stripped:
@@ -210,10 +210,10 @@ def _load_jsonl_records(dataset_path: Path) -> tuple[dict[str, Any], ...]:
     return tuple(records)
 
 
-def _load_csv_records(dataset_path: Path) -> tuple[dict[str, Any], ...]:
+def _load_csv_records(dataset_path: Path) -> tuple[dict[str, object], ...]:
     with dataset_path.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
-        records: list[dict[str, Any]] = []
+        records: list[dict[str, object]] = []
         for row in reader:
             normalized = dict(row)
             for key in ("event", "payload", "route_hint"):

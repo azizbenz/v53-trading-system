@@ -7,6 +7,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from calibration_loader.contracts import CalibrationArtifactCollection
 from calibration_loader.loader import CalibrationArtifactValidationError, CalibrationLoader
 
 
@@ -114,7 +115,7 @@ def evaluate_fee_aware_edge(
 
 def _resolve_numeric_threshold(
     loader: CalibrationLoader,
-    collection,
+    collection: CalibrationArtifactCollection,
     threshold_id: str,
 ) -> float:
     value = loader.get_value(collection, threshold_id)

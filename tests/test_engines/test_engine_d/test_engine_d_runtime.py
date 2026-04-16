@@ -34,6 +34,13 @@ def _good_engine_inputs(**overrides) -> EngineDInput:
         origin_context_id="ctx-btc-01",
         origin_trade_id="trade-btc-01",
         link_type="prior_trade",
+        first_episode_id="episode-btc-01",
+        first_episode_engine_id="engine_a",
+        first_episode_close_reason="time_stop",
+        consecutive_stop_count=1,
+        last_stop_at_ns=1_700_000_000_000_000_000,
+        last_fresh_a_detection_at_ns=1_700_000_100_000_000_000,
+        anti_revenge_state="reset_required",
         prior_trade_quality=0.85,
         reformation_quality=0.77,
         pullback_quality=0.73,
@@ -113,18 +120,21 @@ def _runtime_input(**overrides) -> EngineDRuntimeInput:
     return EngineDRuntimeInput(**defaults)
 
 
-def _breaker_state_dir(name: str) -> Path:
-    state_dir = Path(".codex_kill_switch_tests") / name
+def _breaker_state_dir(repo_tmp_path: Path, name: str) -> Path:
+    state_dir = repo_tmp_path / name
     shutil.rmtree(state_dir, ignore_errors=True)
     state_dir.mkdir(parents=True, exist_ok=True)
     return state_dir
 
 
-def _runtime(name: str, **overrides) -> EngineDRuntime:
+def _runtime(repo_tmp_path: Path, name: str, **overrides) -> EngineDRuntime:
     return EngineDRuntime(
         scoring_runtime=overrides.pop("scoring_runtime", _scoring_runtime()),
         risk_runtime=overrides.pop("risk_runtime", _risk_runtime()),
-        circuit_breaker=overrides.pop("circuit_breaker", EmergencyCircuitBreaker(state_dir=_breaker_state_dir(name))),
+        circuit_breaker=overrides.pop(
+            "circuit_breaker",
+            EmergencyCircuitBreaker(state_dir=_breaker_state_dir(repo_tmp_path, name)),
+        ),
         **overrides,
     )
 
@@ -134,11 +144,14 @@ def _blocking_reentry_hook(_: EngineDReentryValidationInput) -> EngineDReentryVa
         accepted=False,
         reason_codes=("ARTIFACT_REENTRY_BLOCK",),
         detail="artifact veto on engine_d re-entry validation",
+        episode_reference_id="episode-btc-01",
+        anti_revenge_state="cooldown_active",
+        observability_tags=("backtest.anti_revenge_state",),
     )
 
 
-def test_runtime_emits_signal_and_accepts_through_risk():
-    runtime = _runtime("engine_d_accepts")
+def test_runtime_emits_signal_and_accepts_through_risk(repo_tmp_path: Path):
+    runtime = _runtime(repo_tmp_path, "engine_d_accepts")
     result = runtime.evaluate(_runtime_input(), now=10.0)
     assert result.status == EngineDRuntimeStatus.ACCEPTED
     assert result.signal_candidate is not None
@@ -156,8 +169,8 @@ def test_runtime_emits_signal_and_accepts_through_risk():
     assert accepted_log.duplication_overlap_with_engine_a == 0.24
 
 
-def test_runtime_blocks_before_scoring_when_circuit_breaker_is_tripped():
-    breaker = EmergencyCircuitBreaker(state_dir=_breaker_state_dir("engine_d"))
+def test_runtime_blocks_before_scoring_when_circuit_breaker_is_tripped(repo_tmp_path: Path):
+    breaker = EmergencyCircuitBreaker(state_dir=_breaker_state_dir(repo_tmp_path, "engine_d"))
     breaker.trip(KillSwitchReason.OPERATOR_MANUAL, "manual stop")
     runtime = EngineDRuntime(
         scoring_runtime=_scoring_runtime(),
@@ -185,8 +198,8 @@ def test_runtime_requires_explicit_circuit_breaker():
         )
 
 
-def test_runtime_rejects_blank_scoring_version():
-    runtime = _runtime("engine_d_blank_version")
+def test_runtime_rejects_blank_scoring_version(repo_tmp_path: Path):
+    runtime = _runtime(repo_tmp_path, "engine_d_blank_version")
 
     with pytest.raises(ValueError, match="requires non-empty scoring_version"):
         runtime.evaluate(
@@ -195,8 +208,9 @@ def test_runtime_rejects_blank_scoring_version():
         )
 
 
-def test_runtime_can_be_blocked_by_reentry_validation_hook():
+def test_runtime_can_be_blocked_by_reentry_validation_hook(repo_tmp_path: Path):
     runtime = _runtime(
+        repo_tmp_path,
         "engine_d_hook_blocked",
         reentry_validation_hook=_blocking_reentry_hook,
     )
@@ -209,10 +223,47 @@ def test_runtime_can_be_blocked_by_reentry_validation_hook():
     blocked_logs = [entry for entry in result.log_entries if entry.event == "engine_d_hook_blocked"]
     assert len(blocked_logs) == 1
     assert blocked_logs[0].reasons == ("ARTIFACT_REENTRY_BLOCK",)
+    assert result.hook_outcome is not None
+    assert result.hook_outcome.episode_reference_id == "episode-btc-01"
+    assert result.hook_outcome.anti_revenge_state == "cooldown_active"
 
 
-def test_runtime_hard_blocked_logs_reasons():
-    runtime = _runtime("engine_d_hard_blocked")
+def test_runtime_surfaces_anti_revenge_observability_for_backtest(repo_tmp_path: Path) -> None:
+    captured: dict[str, EngineDReentryValidationInput] = {}
+
+    def _capturing_hook(hook_input: EngineDReentryValidationInput) -> EngineDReentryValidationOutcome:
+        captured["hook_input"] = hook_input
+        return EngineDReentryValidationOutcome(
+            accepted=True,
+            episode_reference_id=hook_input.first_episode_id,
+            anti_revenge_state=hook_input.anti_revenge_state,
+            observability_tags=("backtest.anti_revenge_state", "backtest.episode_ref"),
+        )
+
+    runtime = _runtime(
+        repo_tmp_path,
+        "engine_d_backtest_observability",
+        reentry_validation_hook=_capturing_hook,
+    )
+
+    result = runtime.evaluate(_runtime_input(), now=13.0)
+
+    assert result.status == EngineDRuntimeStatus.ACCEPTED
+    assert captured["hook_input"].first_episode_id == "episode-btc-01"
+    assert captured["hook_input"].first_episode_engine_id == "engine_a"
+    assert captured["hook_input"].first_episode_close_reason == "time_stop"
+    assert captured["hook_input"].consecutive_stop_count == 1
+    assert captured["hook_input"].anti_revenge_state == "reset_required"
+    assert result.hook_outcome is not None
+    assert result.hook_outcome.episode_reference_id == "episode-btc-01"
+    assert result.hook_outcome.anti_revenge_state == "reset_required"
+    accepted_log = next(entry for entry in result.log_entries if entry.event == "engine_d_accepted")
+    assert accepted_log.first_episode_id == "episode-btc-01"
+    assert accepted_log.anti_revenge_state == "reset_required"
+
+
+def test_runtime_hard_blocked_logs_reasons(repo_tmp_path: Path):
+    runtime = _runtime(repo_tmp_path, "engine_d_hard_blocked")
     result = runtime.evaluate(
         _runtime_input(blocker_conditions=BlockerCondition(is_stale_hard=True, is_pair_suspended=True)),
         now=20.0,
@@ -228,8 +279,8 @@ def test_runtime_hard_blocked_logs_reasons():
     assert "suspended" in joined
 
 
-def test_runtime_rejected_by_ranking_is_auditable():
-    runtime = _runtime("engine_d_rejected_ranking")
+def test_runtime_rejected_by_ranking_is_auditable(repo_tmp_path: Path):
+    runtime = _runtime(repo_tmp_path, "engine_d_rejected_ranking")
     peer = ScoringCandidateInput(
         engine_id="engine_a",
         pair="ETHUSDT",
@@ -258,14 +309,14 @@ def test_runtime_rejected_by_ranking_is_auditable():
     assert any(entry.event == "engine_d_rejected_by_ranking" for entry in result.log_entries)
 
 
-def test_runtime_rejected_by_portfolio_is_auditable():
-    runtime = _runtime("engine_d_rejected_portfolio")
+def test_runtime_rejected_by_portfolio_is_auditable(repo_tmp_path: Path):
+    runtime = _runtime(repo_tmp_path, "engine_d_rejected_portfolio")
     result = runtime.evaluate(_runtime_input(portfolio=_portfolio_state(remaining_gross_capacity=10.0)), now=40.0)
     assert result.status == EngineDRuntimeStatus.REJECTED_PORTFOLIO
     assert any(entry.event == "engine_d_rejected_by_portfolio" for entry in result.log_entries)
 
 
-def test_runtime_cannot_bypass_risk_runtime():
+def test_runtime_cannot_bypass_risk_runtime(repo_tmp_path: Path):
     risk_runtime = RiskRuntime(
         RiskLimits(
             gross_cap=500.0,
@@ -275,7 +326,7 @@ def test_runtime_cannot_bypass_risk_runtime():
             cluster_cap=5000.0,
         )
     )
-    runtime = _runtime("engine_d_risk_runtime", risk_runtime=risk_runtime)
+    runtime = _runtime(repo_tmp_path, "engine_d_risk_runtime", risk_runtime=risk_runtime)
     result = runtime.evaluate(_runtime_input(projected_size=1000.0), now=50.0)
     assert result.status == EngineDRuntimeStatus.RISK_REJECTED
     assert result.risk_evaluation is not None

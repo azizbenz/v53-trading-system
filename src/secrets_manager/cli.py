@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
+import sys
 from typing import Sequence
 
 from secrets_manager.loader import SecretManagerLoadError, load_secret_text, write_unsealed_text
@@ -37,13 +37,18 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _emit_path(path: str | bytes | object) -> None:
+    """Emit a created path to stdout without using print()."""
+    sys.stdout.write(f"{path}\n")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
         if args.command == "gen-key":
             path = generate_master_key(args.path, force=args.force)
-            print(path)
+            _emit_path(path)
             return 0
         if args.command == "seal":
             path = seal_file(
@@ -52,12 +57,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 output_path=args.output,
                 remove_source=args.delete_source,
             )
-            print(path)
+            _emit_path(path)
             return 0
         if args.command == "unseal":
             text = load_secret_text(args.path, key_path=args.key_path)
             path = write_unsealed_text(args.output, text=text, force=args.force)
-            print(path)
+            _emit_path(path)
             return 0
     except SecretManagerLoadError as exc:
         parser.exit(1, f"{exc}\n")

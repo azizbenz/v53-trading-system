@@ -6,6 +6,8 @@ resides in `portfolio_minimal`. This facade keeps the canonical import surface
 stable while the implementation remains split into subpackages.
 """
 
+from __future__ import annotations
+
 from portfolio_minimal import allocation_router, opportunity_selector
 from portfolio_minimal.portfolio_orchestrator import (
     OrchestratorConfig,

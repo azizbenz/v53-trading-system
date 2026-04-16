@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal
-from typing import Any, Awaitable, Callable, Mapping, Protocol
+from decimal import Decimal, InvalidOperation
+from typing import Callable, Mapping, Protocol
 
 from sharia_compliance import (
     AccountFeaturesAuditConfig,
@@ -21,7 +21,7 @@ class BinanceAccountFeaturePayloadClient(Protocol):
         path: str,
         recv_window_ms: int,
         params: Mapping[str, str] | None = None,
-    ) -> Mapping[str, Any] | list[Any]:
+    ) -> Mapping[str, object] | list[object]:
         ...
 
 
@@ -29,7 +29,7 @@ class BinanceAccountFeaturePayloadClient(Protocol):
 class _Probe:
     path: str
     feature_key: str
-    detector: Callable[[Mapping[str, Any] | list[Any]], Decimal]
+    detector: Callable[[Mapping[str, object] | list[object]], Decimal]
     params: Mapping[str, str] | None = None
 
 
@@ -104,7 +104,7 @@ class BinanceAccountFeatureAuditProvider:
         )
 
 
-def _detect_list_payload(payload: Mapping[str, Any] | list[Any]) -> Decimal:
+def _detect_list_payload(payload: Mapping[str, object] | list[object]) -> Decimal:
     if isinstance(payload, list):
         return Decimal(len(payload))
     if isinstance(payload, Mapping):
@@ -115,7 +115,10 @@ def _detect_list_payload(payload: Mapping[str, Any] | list[Any]) -> Decimal:
     return Decimal("0")
 
 
-def _sum_nested_numeric(payload: Mapping[str, Any] | list[Any], keys: tuple[str, ...]) -> Decimal:
+def _sum_nested_numeric(
+    payload: Mapping[str, object] | list[object],
+    keys: tuple[str, ...],
+) -> Decimal:
     total = Decimal("0")
     if isinstance(payload, list):
         for item in payload:
@@ -128,7 +131,7 @@ def _sum_nested_numeric(payload: Mapping[str, Any] | list[Any], keys: tuple[str,
         if key in payload:
             total += _to_decimal(payload[key])
     for value in payload.values():
-        if isinstance(value, Mapping | list):
+        if isinstance(value, Mapping) or isinstance(value, list):
             total += _sum_nested_numeric(value, keys)
     return total
 
@@ -136,7 +139,8 @@ def _sum_nested_numeric(payload: Mapping[str, Any] | list[Any], keys: tuple[str,
 def _to_decimal(value: object) -> Decimal:
     try:
         return Decimal(str(value))
-    except Exception:
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        _ = exc
         return Decimal("0")
 
 

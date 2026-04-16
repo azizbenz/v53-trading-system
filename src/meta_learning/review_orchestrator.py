@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from meta_learning.breakdown_report_builder import build_breakdown_report
@@ -49,6 +50,24 @@ from meta_minimal.cra_monitor.cra_reporter import CRAReport
 from meta_minimal.dtr_core.dtr_record_builder import DTRRecord
 from meta_minimal.dtr_core.dtr_reporter import DTRSummary
 from meta_minimal.edge_tracker_prudent_minimal.edge_reporter import EdgeReport
+
+
+@dataclass(frozen=True)
+class _ReviewCoreArtifacts:
+    diagnostics: tuple[DiagnosticResult, ...]
+    mistake_classes: tuple[str, ...]
+    breakdown_report: object
+    checklist: LearningChecklist
+    raw_hypotheses: tuple[LearningHypothesis, ...]
+    capacity_snapshot: LearningCapacitySnapshot
+
+
+@dataclass(frozen=True)
+class _ReplayHandoffState:
+    checklist_for_export: LearningChecklist
+    replay_bundles: tuple[object, ...]
+    candidates: tuple[ImprovementCandidate, ...]
+    ready_for_replay_ids: frozenset[str]
 
 
 def _capacity_block_reason(capacity_snapshot: LearningCapacitySnapshot) -> str:
@@ -178,6 +197,175 @@ def _block_checklist_for_incomplete_data(
     )
 
 
+def _build_review_core_artifacts(
+    trade_input: TradeLearningInput,
+    *,
+    dtr_records: tuple[DTRRecord, ...],
+    dtr_summary: DTRSummary,
+    cra_report: CRAReport,
+    break_even_report: BreakEvenReport,
+    edge_report: EdgeReport,
+    near_miss_threshold: float,
+    capacity_snapshot: LearningCapacitySnapshot | None,
+) -> _ReviewCoreArtifacts:
+    diagnostics = build_post_trade_diagnostics(
+        trade_input,
+        dtr_summary,
+        cra_report,
+        break_even_report,
+        edge_report,
+    ) + analyze_near_misses(
+        trade_input.correlation_id,
+        dtr_records,
+        final_score_threshold=near_miss_threshold,
+    )
+    mistake_classes = classify_mistakes(diagnostics)
+    return _ReviewCoreArtifacts(
+        diagnostics=diagnostics,
+        mistake_classes=mistake_classes,
+        breakdown_report=build_breakdown_report(
+            trade_input.correlation_id,
+            diagnostics,
+            mistake_classes,
+        ),
+        checklist=build_learning_checklist(
+            trade_input.correlation_id,
+            diagnostics,
+            mistake_classes,
+        ),
+        raw_hypotheses=build_learning_hypotheses(
+            trade_input.correlation_id,
+            diagnostics,
+            source_version=trade_input.source_version,
+        ),
+        capacity_snapshot=capacity_snapshot or LearningCapacitySnapshot(),
+    )
+
+
+def _resolve_replay_handoff_state(
+    trade_input: TradeLearningInput,
+    *,
+    hypotheses: tuple[LearningHypothesis, ...],
+    raw_candidates: tuple[ImprovementCandidate, ...],
+    checklist: LearningChecklist,
+    review_export_ref: str,
+    dataset_ref: object | None,
+    clock_ref: object | None,
+    capacity_snapshot: LearningCapacitySnapshot,
+) -> _ReplayHandoffState:
+    if capacity_snapshot.review_blocked_due_to_incomplete_data:
+        return _ReplayHandoffState(
+            checklist_for_export=_block_checklist_for_incomplete_data(
+                checklist,
+                capacity_snapshot,
+            ),
+            replay_bundles=(),
+            candidates=enrich_candidates_with_replay_refs(raw_candidates, ()),
+            ready_for_replay_ids=frozenset(),
+        )
+
+    replay_bundles = build_replay_export_bundles(
+        trade_input,
+        hypotheses,
+        raw_candidates,
+        review_export_ref=review_export_ref,
+        dataset_ref=dataset_ref,
+        clock_ref=clock_ref,
+    )
+    ready_for_replay_ids = frozenset(
+        replay_bundle.candidate_id
+        for replay_bundle in replay_bundles
+        if replay_bundle.execution_plan.validation_ready
+    )
+    candidates = enrich_candidates_with_replay_refs(raw_candidates, replay_bundles)
+    return _ReplayHandoffState(
+        checklist_for_export=checklist,
+        replay_bundles=replay_bundles,
+        candidates=candidates,
+        ready_for_replay_ids=ready_for_replay_ids,
+    )
+
+
+def _build_final_review_bundle(
+    trade_input: TradeLearningInput,
+    *,
+    diagnostics: tuple[DiagnosticResult, ...],
+    mistake_classes: tuple[str, ...],
+    breakdown_report: object,
+    checklist_for_export: LearningChecklist,
+    hypotheses: tuple[LearningHypothesis, ...],
+    candidates: tuple[ImprovementCandidate, ...],
+    replay_bundles: tuple[object, ...],
+    memory_record: LearningMemoryRecord,
+    capacity_snapshot: LearningCapacitySnapshot,
+    review_decisions: tuple[object, ...],
+    archive_eligibility: tuple[object, ...],
+    lifecycle_transitions: tuple[LifecycleTransitionRecord, ...],
+    review_export_ref: str,
+) -> MetaLearningReviewBundle:
+    preliminary_review_export = export_learning_review(
+        trade_input.correlation_id,
+        breakdown_report,
+        checklist_for_export,
+        candidates,
+        hypotheses=hypotheses,
+        replay_bundles=replay_bundles,
+        capacity_snapshot=capacity_snapshot,
+        review_decisions=review_decisions,
+        archive_eligibility=archive_eligibility,
+        lifecycle_transitions=lifecycle_transitions,
+        export_ref=review_export_ref,
+    )
+    preliminary_bundle = MetaLearningReviewBundle(
+        correlation_id=trade_input.correlation_id,
+        diagnostics=diagnostics,
+        mistake_classes=mistake_classes,
+        breakdown_report=breakdown_report,
+        checklist=checklist_for_export,
+        hypotheses=hypotheses,
+        candidates=candidates,
+        replay_bundles=replay_bundles,
+        memory_record=memory_record,
+        review_export=preliminary_review_export,
+        capacity_snapshot=capacity_snapshot,
+        review_decisions=review_decisions,
+        archive_eligibility=archive_eligibility,
+        lifecycle_transitions=lifecycle_transitions,
+    )
+    merge_gate_report = evaluate_build9x_merge_gates(preliminary_bundle)
+    review_export = export_learning_review(
+        trade_input.correlation_id,
+        breakdown_report,
+        checklist_for_export,
+        candidates,
+        hypotheses=hypotheses,
+        replay_bundles=replay_bundles,
+        capacity_snapshot=capacity_snapshot,
+        review_decisions=review_decisions,
+        archive_eligibility=archive_eligibility,
+        lifecycle_transitions=lifecycle_transitions,
+        merge_gate_report=merge_gate_report,
+        export_ref=review_export_ref,
+    )
+    return MetaLearningReviewBundle(
+        correlation_id=trade_input.correlation_id,
+        diagnostics=diagnostics,
+        mistake_classes=mistake_classes,
+        breakdown_report=breakdown_report,
+        checklist=checklist_for_export,
+        hypotheses=hypotheses,
+        candidates=candidates,
+        replay_bundles=replay_bundles,
+        memory_record=memory_record,
+        review_export=review_export,
+        capacity_snapshot=capacity_snapshot,
+        review_decisions=review_decisions,
+        archive_eligibility=archive_eligibility,
+        lifecycle_transitions=lifecycle_transitions,
+        merge_gate_report=merge_gate_report,
+    )
+
+
 def run_meta_learning_review(
     trade_input: TradeLearningInput,
     *,
@@ -194,42 +382,23 @@ def run_meta_learning_review(
 ) -> MetaLearningReviewBundle:
     """Run the governed Build-9X review pipeline end-to-end."""
 
-    diagnostics = build_post_trade_diagnostics(
+    core = _build_review_core_artifacts(
         trade_input,
-        dtr_summary,
-        cra_report,
-        break_even_report,
-        edge_report,
-    ) + analyze_near_misses(
-        trade_input.correlation_id,
-        dtr_records,
-        final_score_threshold=near_miss_threshold,
+        dtr_records=dtr_records,
+        dtr_summary=dtr_summary,
+        cra_report=cra_report,
+        break_even_report=break_even_report,
+        edge_report=edge_report,
+        near_miss_threshold=near_miss_threshold,
+        capacity_snapshot=capacity_snapshot,
     )
-    mistake_classes = classify_mistakes(diagnostics)
-    breakdown_report = build_breakdown_report(
-        trade_input.correlation_id,
-        diagnostics,
-        mistake_classes,
-    )
-    checklist = build_learning_checklist(
-        trade_input.correlation_id,
-        diagnostics,
-        mistake_classes,
-    )
-    raw_hypotheses = build_learning_hypotheses(
-        trade_input.correlation_id,
-        diagnostics,
-        source_version=trade_input.source_version,
-    )
-    resolved_capacity_snapshot = capacity_snapshot or LearningCapacitySnapshot()
-    checklist_for_export = checklist
     diagnostics, diagnostic_transitions = _govern_diagnostics(
-        diagnostics,
-        review_blocked=resolved_capacity_snapshot.review_blocked_due_to_incomplete_data,
+        core.diagnostics,
+        review_blocked=core.capacity_snapshot.review_blocked_due_to_incomplete_data,
     )
     hypotheses, hypothesis_transitions = _govern_hypotheses(
-        raw_hypotheses,
-        review_blocked=resolved_capacity_snapshot.review_blocked_due_to_incomplete_data,
+        core.raw_hypotheses,
+        review_blocked=core.capacity_snapshot.review_blocked_due_to_incomplete_data,
     )
     raw_candidates = build_improvement_candidates(
         trade_input.correlation_id,
@@ -237,34 +406,22 @@ def run_meta_learning_review(
         hypotheses,
     )
     review_export_ref = f"meta_learning_review:{trade_input.correlation_id}"
-    if resolved_capacity_snapshot.review_blocked_due_to_incomplete_data:
-        checklist_for_export = _block_checklist_for_incomplete_data(
-            checklist,
-            resolved_capacity_snapshot,
-        )
-        replay_bundles = ()
-        ready_for_replay_ids: frozenset[str] = frozenset()
-        candidates = enrich_candidates_with_replay_refs(raw_candidates, replay_bundles)
-    else:
-        replay_bundles = build_replay_export_bundles(
-            trade_input,
-            hypotheses,
-            raw_candidates,
-            review_export_ref=review_export_ref,
-            dataset_ref=dataset_ref,
-            clock_ref=clock_ref,
-        )
-        ready_for_replay_ids = frozenset(
-            replay_bundle.candidate_id
-            for replay_bundle in replay_bundles
-            if replay_bundle.execution_plan.validation_ready
-        )
-        candidates = enrich_candidates_with_replay_refs(raw_candidates, replay_bundles)
+    replay_state = _resolve_replay_handoff_state(
+        trade_input,
+        hypotheses=hypotheses,
+        raw_candidates=raw_candidates,
+        checklist=core.checklist,
+        review_export_ref=review_export_ref,
+        dataset_ref=dataset_ref,
+        clock_ref=clock_ref,
+        capacity_snapshot=core.capacity_snapshot,
+    )
+    candidates = replay_state.candidates
     candidates, candidate_transitions = _govern_candidates(
         candidates,
-        ready_for_replay_ids=ready_for_replay_ids,
-        review_blocked=resolved_capacity_snapshot.review_blocked_due_to_incomplete_data,
-        capacity_snapshot=resolved_capacity_snapshot,
+        ready_for_replay_ids=replay_state.ready_for_replay_ids,
+        review_blocked=core.capacity_snapshot.review_blocked_due_to_incomplete_data,
+        capacity_snapshot=core.capacity_snapshot,
     )
     lifecycle_transitions = (
         diagnostic_transitions
@@ -274,7 +431,7 @@ def run_meta_learning_review(
     review_decisions = build_system_review_decisions(
         correlation_id=trade_input.correlation_id,
         review_entity_id=review_export_ref,
-        review_blocked_due_to_incomplete_data=resolved_capacity_snapshot.review_blocked_due_to_incomplete_data,
+        review_blocked_due_to_incomplete_data=core.capacity_snapshot.review_blocked_due_to_incomplete_data,
         has_candidates=bool(candidates),
     )
     archive_eligibility = build_archive_eligibility(
@@ -295,79 +452,33 @@ def run_meta_learning_review(
         candidate_count=len(candidates),
         verdict=(
             "incomplete_capture_blocked"
-            if resolved_capacity_snapshot.review_blocked_due_to_incomplete_data
+            if core.capacity_snapshot.review_blocked_due_to_incomplete_data
             else "review_required"
             if candidates
             else "no_action"
         ),
         rejection_reason=(
-            _capacity_block_reason(resolved_capacity_snapshot)
-            if resolved_capacity_snapshot.review_blocked_due_to_incomplete_data
+            _capacity_block_reason(core.capacity_snapshot)
+            if core.capacity_snapshot.review_blocked_due_to_incomplete_data
             else None
         ),
-        summary=breakdown_report.summary,
+        summary=core.breakdown_report.summary,
     )
-    preliminary_review_export = export_learning_review(
-        trade_input.correlation_id,
-        breakdown_report,
-        checklist_for_export,
-        candidates,
-        hypotheses=hypotheses,
-        replay_bundles=replay_bundles,
-        capacity_snapshot=resolved_capacity_snapshot,
-        review_decisions=review_decisions,
-        archive_eligibility=archive_eligibility,
-        lifecycle_transitions=lifecycle_transitions,
-        export_ref=review_export_ref,
-    )
-
-    preliminary_bundle = MetaLearningReviewBundle(
-        correlation_id=trade_input.correlation_id,
+    bundle = _build_final_review_bundle(
+        trade_input,
         diagnostics=diagnostics,
-        mistake_classes=mistake_classes,
-        breakdown_report=breakdown_report,
-        checklist=checklist_for_export,
+        mistake_classes=core.mistake_classes,
+        breakdown_report=core.breakdown_report,
+        checklist_for_export=replay_state.checklist_for_export,
         hypotheses=hypotheses,
         candidates=candidates,
-        replay_bundles=replay_bundles,
+        replay_bundles=replay_state.replay_bundles,
         memory_record=memory_record,
-        review_export=preliminary_review_export,
-        capacity_snapshot=resolved_capacity_snapshot,
+        capacity_snapshot=core.capacity_snapshot,
         review_decisions=review_decisions,
         archive_eligibility=archive_eligibility,
         lifecycle_transitions=lifecycle_transitions,
-    )
-    merge_gate_report = evaluate_build9x_merge_gates(preliminary_bundle)
-    review_export = export_learning_review(
-        trade_input.correlation_id,
-        breakdown_report,
-        checklist_for_export,
-        candidates,
-        hypotheses=hypotheses,
-        replay_bundles=replay_bundles,
-        capacity_snapshot=resolved_capacity_snapshot,
-        review_decisions=review_decisions,
-        archive_eligibility=archive_eligibility,
-        lifecycle_transitions=lifecycle_transitions,
-        merge_gate_report=merge_gate_report,
-        export_ref=review_export_ref,
-    )
-    bundle = MetaLearningReviewBundle(
-        correlation_id=trade_input.correlation_id,
-        diagnostics=diagnostics,
-        mistake_classes=mistake_classes,
-        breakdown_report=breakdown_report,
-        checklist=checklist_for_export,
-        hypotheses=hypotheses,
-        candidates=candidates,
-        replay_bundles=replay_bundles,
-        memory_record=memory_record,
-        review_export=review_export,
-        capacity_snapshot=resolved_capacity_snapshot,
-        review_decisions=review_decisions,
-        archive_eligibility=archive_eligibility,
-        lifecycle_transitions=lifecycle_transitions,
-        merge_gate_report=merge_gate_report,
+        review_export_ref=review_export_ref,
     )
     if state_dir is not None:
         AppendOnlyMetaLearningStore(state_dir).append_review_bundle(bundle)

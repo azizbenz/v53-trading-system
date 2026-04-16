@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import math
 from enum import StrEnum
-from typing import Any, Protocol
+from typing import Protocol
 
 from pydantic import BaseModel, Field
 
 from calibration_loader import CalibrationLoader
 from calibration_loader.loader import CalibrationArtifactValidationError
+from execution_backbone.execution_runtime import RuntimeReconciliationResult
 from execution_backbone.emergency_circuit_breaker import (
     EmergencyCircuitBreaker,
     KillSwitchReason,
@@ -67,14 +68,14 @@ class ReconciliationSchedulerRunResult(BaseModel, frozen=True):
     detail: str = ""
     recovery_action: str = RecoveryAction.NONE.value
     divergence_count: int = Field(default=0, ge=0)
-    runtime_result: Any = None
+    runtime_result: RuntimeReconciliationResult | None = None
     state: ReconciliationSchedulerState = Field(default_factory=ReconciliationSchedulerState)
 
 
 class ReconciliationExecutor(Protocol):
     """Minimal executor surface required by the bounded scheduler seam."""
 
-    def reconcile(self, now: float) -> Any:
+    def reconcile(self, now: float) -> RuntimeReconciliationResult:
         ...
 
 
@@ -284,7 +285,9 @@ def _require_scheduler_timestamp(now: float, *, context: str) -> float:
     return now
 
 
-def _is_stale_only_bootstrap_reconciliation(runtime_result: Any) -> bool:
+def _is_stale_only_bootstrap_reconciliation(
+    runtime_result: RuntimeReconciliationResult,
+) -> bool:
     recovery_decision = runtime_result.recovery_decision
     return (
         recovery_decision.action == RecoveryAction.SOFT_RESYNC

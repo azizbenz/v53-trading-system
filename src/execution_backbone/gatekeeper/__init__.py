@@ -1,5 +1,7 @@
 """Canonical execution gatekeeper surface."""
 
+from __future__ import annotations
+
 from .audit_logger import (
     ExecutionGatekeeperAuditDecision,
     ExecutionGatekeeperAuditEvent,

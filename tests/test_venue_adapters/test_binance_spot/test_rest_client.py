@@ -11,6 +11,7 @@ from interface_contracts.binance_contracts import (
     BinanceTimeInForce,
 )
 from venue_adapters.binance_spot.rest_client import BinanceRestClient
+from venue_adapters.binance_spot.rate_limiter import BinanceApiRateLimitExceededError
 
 
 def test_get_server_time_returns_typed_snapshot():
@@ -347,3 +348,78 @@ def test_cancel_order_signs_delete_request():
             await client.aclose()
 
     asyncio.run(run())
+
+
+def test_rest_client_blocks_after_weight_header_reaches_preemptive_ceiling() -> None:
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        assert request.url.path == "/api/v3/time"
+        return httpx.Response(
+            200,
+            json={"serverTime": 1_710_000_000_123},
+            headers={"X-MBX-USED-WEIGHT-1M": "800"},
+        )
+
+    async def run() -> None:
+        transport = httpx.MockTransport(handler)
+        client = httpx.AsyncClient(base_url="https://api.binance.com", transport=transport)
+        rest_client = BinanceRestClient(client=client, clock_ms=lambda: 1_710_000_000_000)
+        try:
+            await rest_client.get_server_time()
+            try:
+                await rest_client.get_server_time()
+            except BinanceApiRateLimitExceededError as exc:
+                assert "request-weight budget exhausted" in str(exc)
+            else:
+                raise AssertionError("Expected preemptive quota block after header sync")
+        finally:
+            await client.aclose()
+
+    asyncio.run(run())
+    assert call_count == 1
+
+
+def test_rest_client_enters_backoff_after_429_response() -> None:
+    current_ms = 1_710_000_000_000
+    call_count = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(429, json={"code": -1003, "msg": "too many requests"})
+
+    async def run() -> None:
+        nonlocal current_ms
+        transport = httpx.MockTransport(handler)
+        client = httpx.AsyncClient(base_url="https://api.binance.com", transport=transport)
+        rest_client = BinanceRestClient(client=client, clock_ms=lambda: current_ms)
+        try:
+            try:
+                await rest_client.get_server_time()
+            except httpx.HTTPStatusError:
+                pass
+            else:
+                raise AssertionError("Expected 429 to propagate as HTTPStatusError")
+
+            try:
+                await rest_client.get_server_time()
+            except BinanceApiRateLimitExceededError as exc:
+                assert "throttled" in str(exc)
+            else:
+                raise AssertionError("Expected local backoff after 429")
+
+            current_ms += 5_000
+            try:
+                await rest_client.get_server_time()
+            except httpx.HTTPStatusError:
+                pass
+            else:
+                raise AssertionError("Expected 429 to propagate again after backoff expiry")
+        finally:
+            await client.aclose()
+
+    asyncio.run(run())
+    assert call_count == 2

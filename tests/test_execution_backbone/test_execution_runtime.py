@@ -3,8 +3,6 @@ from datetime import datetime, timezone
 import json
 import logging
 from pathlib import Path
-import shutil
-from uuid import uuid4
 
 import pytest
 import yaml
@@ -22,6 +20,7 @@ from execution_backbone.execution_runtime import (
     VenueOrderEventType,
 )
 from execution_backbone.gatekeeper import GatekeeperAuditLogger
+from interface_contracts import RefusalCategory
 from execution_backbone.rate_limiter import ExecutionRateLimitModel
 from execution_backbone.spread_guard import ExecutionSpreadGuardModel
 from execution_backbone.slippage_model import ExecutionSlippageModel
@@ -43,6 +42,7 @@ from local_replay_runtime import (
 )
 from meta_minimal.dtr_core.decision_state_encoder import DecisionState
 from meta_minimal.dtr_core.dtr_record_builder import build_dtr
+from meta_minimal.refusal_journal import RefusalJournal, RefusalJournalSink
 from scoring_backbone import FeeAwareEdgeGateConfig
 from sharia_compliance import ShariaRuntime, load_sharia_policy
 
@@ -104,23 +104,17 @@ class FakeVenueConstraintProvider:
 
 
 @pytest.fixture
-def fee_aware_edge_tmpdir() -> Path:
-    root = Path("build/pytest-execution-fee-aware-edge") / uuid4().hex
+def fee_aware_edge_tmpdir(repo_tmp_path: Path) -> Path:
+    root = repo_tmp_path / "fee_aware_edge"
     root.mkdir(parents=True, exist_ok=False)
-    try:
-        yield root
-    finally:
-        shutil.rmtree(root, ignore_errors=True)
+    return root
 
 
 @pytest.fixture
-def gatekeeper_audit_tmpdir() -> Path:
-    root = Path("build/pytest-execution-gatekeeper-audit") / uuid4().hex
+def gatekeeper_audit_tmpdir(repo_tmp_path: Path) -> Path:
+    root = repo_tmp_path / "gatekeeper_audit"
     root.mkdir(parents=True, exist_ok=False)
-    try:
-        yield root
-    finally:
-        shutil.rmtree(root, ignore_errors=True)
+    return root
 
 
 def _edge_dtr(
@@ -190,8 +184,9 @@ def _opportunity(
     spread_bps: float = 2.0,
     reference_price: float | None = None,
     metadata: dict[str, object] | None = None,
+    **updates: object,
 ) -> ExecutionOpportunity:
-    return ExecutionOpportunity(
+    base = ExecutionOpportunity(
         intent_id=intent_id,
         pair=pair,
         engine_id="engine_a",
@@ -205,6 +200,7 @@ def _opportunity(
         reference_price=reference_price,
         metadata={} if metadata is None else metadata,
     )
+    return base.model_copy(update=updates)
 
 
 def _compiled_execution_no_trade_filter(
@@ -326,6 +322,53 @@ class TestExecutionRuntime:
         assert payload["decision"] == "no_trade"
         assert payload["gate_name"] == "order_type"
         assert payload["no_trade_reason"] == NoTradeReason.COST_EXCEEDS_EDGE.value
+
+    def test_runtime_writes_refusal_journal_for_no_trade(self, gatekeeper_audit_tmpdir: Path) -> None:
+        adapter = FakeExecutionVenue()
+        refusal_journal = RefusalJournal(flush_dir=gatekeeper_audit_tmpdir / "artifacts" / "refusals")
+        runtime = ExecutionRuntime(
+            adapter,
+            refusal_sink=RefusalJournalSink(refusal_journal),
+        )
+
+        submission = runtime.submit_opportunity(
+            _opportunity(
+                expected_gain=0.0010,
+                expected_cost=0.0050,
+                metadata={"timestamp_ms": 1_700_000_000_100},
+            ),
+            now=100.0,
+        )
+
+        assert submission.status == ExecutionSubmissionStatus.NO_TRADE
+        records = refusal_journal.read()
+        assert len(records) == 1
+        assert records[0].category == RefusalCategory.NO_TRADE
+        assert records[0].pair == "BTCUSDT"
+        assert records[0].engine_id == "engine_a"
+        assert records[0].reason_codes == ("execution.order_type.cost_exceeds_edge",)
+
+    def test_runtime_writes_refusal_journal_for_hard_block(self, gatekeeper_audit_tmpdir: Path) -> None:
+        adapter = FakeExecutionVenue()
+        refusal_journal = RefusalJournal(flush_dir=gatekeeper_audit_tmpdir / "artifacts" / "refusals")
+        runtime = ExecutionRuntime(
+            adapter,
+            refusal_sink=RefusalJournalSink(refusal_journal),
+        )
+
+        submission = runtime.submit_opportunity(
+            _opportunity(
+                pair_suspended=True,
+                metadata={"timestamp_ms": 1_700_000_000_200},
+            ),
+            now=100.0,
+        )
+
+        assert submission.status == ExecutionSubmissionStatus.BLOCKED
+        records = refusal_journal.read()
+        assert len(records) == 1
+        assert records[0].category == RefusalCategory.HARD_BLOCK
+        assert records[0].reason_codes == ("pair_suspended",)
 
     def test_runtime_reconciliation_ignores_terminal_orders_returned_by_remote(self):
         adapter = FakeExecutionVenue()

@@ -14,6 +14,30 @@ from meta_minimal.dtr_core.dtr_reporter import DTRSummary
 from meta_minimal.edge_tracker_prudent_minimal.edge_reporter import EdgeReport
 
 
+def _build_no_issue_diagnostic(trade_input: TradeLearningInput) -> DiagnosticResult:
+    return DiagnosticResult(
+        diagnostic_id=f"{trade_input.correlation_id}:no_issue",
+        correlation_id=trade_input.correlation_id,
+        category="no_issue",
+        summary="No material post-trade issue detected",
+        severity=DiagnosticSeverity.INFO,
+        root_causes=("no_material_issue",),
+        evidence=tuple(
+            DiagnosticEvidence(
+                source="dtr_summary",
+                reference=dtr_id,
+                observation="Governed review found no material issue",
+            )
+            for dtr_id in trade_input.dtr_ids
+        ),
+        evidence_refs=tuple(trade_input.dtr_ids),
+        counterfactual_summary="Continue collecting evidence before changing the strategy.",
+        economic_assessment="No material drift detected in current post-trade observations.",
+        actionability_level="low",
+        structured_log_key="build9x.diagnostic.no_issue",
+    )
+
+
 def build_post_trade_diagnostics(
     trade_input: TradeLearningInput,
     dtr_summary: DTRSummary,
@@ -120,27 +144,7 @@ def build_post_trade_diagnostics(
         ))
 
     if not diagnostics:
-        diagnostics.append(DiagnosticResult(
-            diagnostic_id=f"{trade_input.correlation_id}:no_issue",
-            correlation_id=trade_input.correlation_id,
-            category="no_issue",
-            summary="No material post-trade issue detected",
-            severity=DiagnosticSeverity.INFO,
-            root_causes=("no_material_issue",),
-            evidence=tuple(
-                DiagnosticEvidence(
-                    source="dtr_summary",
-                    reference=dtr_id,
-                    observation="Governed review found no material issue",
-                )
-                for dtr_id in trade_input.dtr_ids
-            ),
-            evidence_refs=tuple(trade_input.dtr_ids),
-            counterfactual_summary="Continue collecting evidence before changing the strategy.",
-            economic_assessment="No material drift detected in current post-trade observations.",
-            actionability_level="low",
-            structured_log_key="build9x.diagnostic.no_issue",
-        ))
+        diagnostics.append(_build_no_issue_diagnostic(trade_input))
 
     return tuple(diagnostics)
 

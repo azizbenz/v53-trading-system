@@ -63,6 +63,56 @@ human_signature_required: true
 notes: Anti edge < 1 bps en cas de bug. Si on trade des edges < 15 bps, c'est qu'on a survendu la prÃ©cision.
 ```
 
+#### THR-E03 â€" Competitive Edge minimum par moteur (ce_min)
+
+```yaml
+threshold_id: THR-E03
+description: Competitive Edge net minimum par moteur â€" en-dessous, le trade est rejetÃ© comme non-rentable
+source_module: src/engines/engine_{a,b,c,d}/engine_{a,b,c,d}_runner.py + cost_feasibility_{a,b,c,d}.py
+calibration_source: backtest (stationary block bootstrap IC 95% du CE net par paire)
+calibration_artifact: config/calibration/v1/cost_feasibility.yml
+default_value:
+  engine_a: 0.0001
+  engine_b: 0.0002
+  engine_c: 0.00015
+  engine_d: 0.00012
+ic95_lower: pair-specific (bootstrap)
+ic95_upper: pair-specific (bootstrap)
+n_observations_min: 200
+recalibration_freq: quarterly
+human_signature_required: true
+notes: |
+  Valeurs par dÃ©faut actuellement hardcodÃ©es dans les EngineInput Pydantic models.
+  Doivent migrer vers CalibrationLoader. Le ce_min est pair-spÃ©cifique en production
+  (liquiditÃ©, spread moyen, volume). Engine B a le ce_min le plus Ã©levÃ© car
+  mean-reversion a des CE plus serrÃ©s. Cf. 13_CALIBRATION_METHODS.md Â§2.1.
+```
+
+#### THR-E04 â€" Safety margin sur la profitabilitÃ© (delta_safe)
+
+```yaml
+threshold_id: THR-E04
+description: Marge de sÃ©curitÃ© au-dessus du break-even â€" condition E[g] > E[c] + delta_safe
+source_module: src/engines/engine_{a,b,c,d}/engine_{a,b,c,d}_runner.py + cost_feasibility_{a,b,c,d}.py
+calibration_source: backtest (bootstrap IC + Almgren-Chriss slippage tail)
+calibration_artifact: config/calibration/v1/cost_feasibility.yml
+default_value:
+  engine_a: 0.0005
+  engine_b: 0.0008
+  engine_c: 0.0005
+  engine_d: 0.0005
+ic95_lower: pair-specific
+ic95_upper: pair-specific
+n_observations_min: 200
+recalibration_freq: quarterly
+human_signature_required: true
+notes: |
+  delta_safe absorbe l'incertitude du modÃ¨le de coÃ»ts. Engine B est plus conservateur
+  (0.0008) car le mean-reversion opÃ¨re sur des fenÃªtres plus courtes avec plus de
+  variabilitÃ© de slippage. Doit intÃ©grer le percentile 95 du slippage rÃ©alisÃ© en shadow.
+  Cf. 13_CALIBRATION_METHODS.md Â§2.1 THR-E01/E02 formule complÃ¨te.
+```
+
 ---
 
 ### 2.2 CatÃ©gorie RISK / Loss budget
@@ -136,6 +186,49 @@ ic95_upper: 7
 recalibration_freq: quarterly
 human_signature_required: true
 notes: 5 positions Ã— 2k = 10k = 100% capital. CohÃ©rent avec un fully-invested mode max.
+```
+
+#### THR-W01 â€" Drawdown warning threshold (risk runtime)
+
+```yaml
+threshold_id: THR-W01
+description: Seuil de drawdown intra-session dÃ©clenchant un warning dans le risk runtime (OBSERVE_ONLY)
+source_module: src/risk_backbone/risk_runtime.py (RiskLimits.drawdown_warning_threshold_pct)
+calibration_source: backtest (distribution historique des DD intra-session)
+calibration_artifact: config/calibration/v1/risk_limits.yml
+default_value: 0.02   # 2%
+ic95_lower: 0.015
+ic95_upper: 0.03
+n_observations_min: 100
+recalibration_freq: monthly
+human_signature_required: true
+notes: |
+  ConsommÃ© par evaluate_drawdown_guard() via RiskLimits. Ce seuil est distinct de
+  THR-R01 (daily PnL breaker) : THR-W01 agit sur le runtime risk gate (OBSERVE_ONLY),
+  THR-R01 agit sur le breaker (retour SHADOW). DÃ©faut 2% actuellement hardcodÃ©
+  dans le model Pydantic. Doit Ãªtre injectÃ© depuis CalibrationLoader au boot.
+  Calibrer via percentile 70 de la distribution des DD intra-session sur backtest.
+```
+
+#### THR-W02 â€" Drawdown observe threshold (risk runtime)
+
+```yaml
+threshold_id: THR-W02
+description: Seuil de drawdown intra-session dÃ©clenchant un REDUCE_EXPOSURE dans le risk runtime
+source_module: src/risk_backbone/risk_runtime.py (RiskLimits.drawdown_observe_threshold_pct)
+calibration_source: backtest (EVT/POT tail de la distribution des DD)
+calibration_artifact: config/calibration/v1/risk_limits.yml
+default_value: 0.04   # 4%
+ic95_lower: 0.03
+ic95_upper: 0.06
+n_observations_min: 100
+recalibration_freq: monthly
+human_signature_required: true
+notes: |
+  Threshold REDUCE_EXPOSURE = plus strict que WARNING. Calibrer via VaR 99%
+  de la distribution des DD intra-session (EVT/POT/GPD, cf. 13_CALIBRATION_METHODS.md
+  Â§5.2). DÃ©faut 4% actuellement hardcodÃ© dans RiskLimits. Le ratio W02/W01 = 2.0
+  doit Ãªtre maintenu pour Ã©viter les false positive cascades.
 ```
 
 ---
@@ -240,12 +333,19 @@ human_signature_required: false
 ```yaml
 threshold_id: THR-X03
 description: Pourcentage du quota Binance Ã  partir duquel on throttle
-source_module: src/venue_adapters/binance_spot/rate_limiter.py
-calibration_source: empirical
+source_module: src/execution_backbone/rate_limiter.py (ExecutionRateLimitModel.quota_ratio_ceiling)
+calibration_source: empirical (Local IA Lab projection THR-X03)
+calibration_artifact: config/calibration/v1/execution.yml
 default_value: 0.80   # 80% du quota
 recalibration_freq: yearly
 human_signature_required: false
-notes: 80% de 1200/min = 960. Marge confortable.
+notes: |
+  ConsommÃ© par evaluate_execution_rate_limit(). Le fichier rÃ©el est
+  src/execution_backbone/rate_limiter.py (pas venue_adapters). Le quota ratio
+  est une projection du Local IA Lab sur le dÃ©bit max acceptable. 80% de
+  1200 weight/min = 960. Note : ce seuil contrÃ´le le quota d'exÃ©cution
+  applicatif, PAS le tracking de poids API Binance (qui nÃ©cessite un token
+  bucket sÃ©parÃ© dans venue_adapters/binance_spot/ â€" cf. W-07 work plan).
 ```
 
 #### THR-X04 â€” Spread max acceptable (bps)
@@ -374,6 +474,28 @@ human_signature_required: true
 notes: En-dessous, pas de signification statistique pour valider GO MICRO_LIVE.
 ```
 
+#### THR-S06 â€" Max allowed CE net drop (shadow gate)
+
+```yaml
+threshold_id: THR-S06
+description: DÃ©gradation maximale tolÃ©rÃ©e du Competitive Edge net entre backtest et shadow
+source_module: src/protocols/contracts.py (ShadowGateCheckInput.max_allowed_ce_net_drop)
+calibration_source: shadow (comparaison backtest vs shadow rÃ©alisÃ©)
+calibration_artifact: config/calibration/v1/shadow_gates.yml
+default_value: 0.0005
+ic95_lower: 0.0003
+ic95_upper: 0.0010
+n_observations_min: 50
+recalibration_freq: per phase
+human_signature_required: true
+notes: |
+  Mesure la dÃ©gradation du CE entre backtest et shadow. Si CE_shadow - CE_backtest < -THR-S06,
+  le gate Ã©choue. Cf. 14_SHADOW_GATE_MATH.md Â§3.3. La valeur 0.0005 (5 bps) est un
+  paramÃ¨tre de fonction avec dÃ©faut dans le contrat Pydantic (protocols/contracts.py:448).
+  Calibrer via la distribution empirique des Ã©carts CE backtest/shadow sur la pÃ©riode
+  de shadow complet. Percentile 90 du delta nÃ©gatif.
+```
+
 ---
 
 ### 2.7 CatÃ©gorie SCALING (Phase 4)
@@ -459,40 +581,47 @@ notes: Toutes les heures + au boot. Plus frÃ©quent = surcoÃ»t API. Moins fr�
 
 | ID | CatÃ©gorie | Default | Calibration | Recal freq | Sig humaine |
 |---|---|---|---|---|---|
-| THR-E01 | Edge multiplier | 2.0 | backtest | quarterly | âœ“ |
-| THR-E02 | Edge min abs (bps) | 15 | backtest | quarterly | âœ“ |
-| THR-R01 | Daily P&L breaker | -2% | bt+shadow | monthly | âœ“ |
-| THR-R02 | Weekly P&L breaker | -10% | backtest | quarterly | âœ“ |
-| THR-R03 | Monthly P&L breaker | -15% | backtest | quarterly | âœ“ |
-| THR-R04 | Position size max (USD) | 2000 | hybrid | monthly | âœ“ |
-| THR-R05 | Nb positions max | 5 | backtest | quarterly | âœ“ |
-| THR-RG01 | BTC vol â†’ STRESSED | 4% | backtest | quarterly | âœ“ |
-| THR-RG02 | BTC drop 1h â†’ EXTREME | -5% | backtest | quarterly | âœ“ |
+| THR-E01 | Edge multiplier | 2.0 | backtest | quarterly | âœ” |
+| THR-E02 | Edge min abs (bps) | 15 | backtest | quarterly | âœ” |
+| **THR-E03** | **ce_min per engine** | **A:0.0001 B:0.0002 C:0.00015 D:0.00012** | **backtest/bootstrap** | **quarterly** | **âœ”** |
+| **THR-E04** | **delta_safe per engine** | **A:0.0005 B:0.0008 C:0.0005 D:0.0005** | **backtest/bootstrap** | **quarterly** | **âœ”** |
+| THR-R01 | Daily P&L breaker | -2% | bt+shadow | monthly | âœ” |
+| THR-R02 | Weekly P&L breaker | -10% | backtest | quarterly | âœ” |
+| THR-R03 | Monthly P&L breaker | -15% | backtest | quarterly | âœ” |
+| THR-R04 | Position size max (USD) | 2000 | hybrid | monthly | âœ” |
+| THR-R05 | Nb positions max | 5 | backtest | quarterly | âœ” |
+| **THR-W01** | **DD warning (risk runtime)** | **2%** | **backtest** | **monthly** | **âœ”** |
+| **THR-W02** | **DD observe (risk runtime)** | **4%** | **backtest/EVT** | **monthly** | **âœ”** |
+| THR-RG01 | BTC vol â†’ STRESSED | 4% | backtest | quarterly | âœ” |
+| THR-RG02 | BTC drop 1h â†’ EXTREME | -5% | backtest | quarterly | âœ” |
 | THR-RG03 | HystÃ©rÃ©sis durÃ©e | 2h | empirical | yearly | â€” |
-| THR-RG04 | EXTREME cooldown | 24h | bt+judgment | yearly | âœ“ |
+| THR-RG04 | EXTREME cooldown | 24h | bt+judgment | yearly | âœ” |
 | THR-X01 | Time sync drift (ms) | 500 | empirical | yearly | â€” |
 | THR-X02 | WS gap (sec) | 5 | empirical | yearly | â€” |
-| THR-X03 | Rate limit throttle | 80% | empirical | yearly | â€” |
-| THR-X04 | Spread max (bps) | 30 | backtest/sym | monthly | âœ“ |
-| THR-X05 | Slippage model | function | hybrid | monthly | âœ“ |
-| THR-H01 | Edge post-purification | 2 bps | judgment | yearly | âœ“ |
+| THR-X03 | Rate limit throttle | 80% | empirical/Lab | yearly | â€” |
+| THR-X04 | Spread max (bps) | 30 | backtest/sym | monthly | âœ” |
+| THR-X05 | Slippage model | function | hybrid | monthly | âœ” |
+| THR-H01 | Edge post-purification | 2 bps | judgment | yearly | âœ” |
 | THR-H02 | Audit features Binance freq | 7j | empirical | â€” | â€” |
-| THR-H03 | Purification rate | 2%/an | external | yearly | âœ“ |
-| THR-S01 | Sharpe SHADOW M1 | 0.5 | backtest | per phase | âœ“ |
-| THR-S02 | Sharpe SHADOW M2 | 0.6 | backtest | per phase | âœ“ |
-| THR-S03 | Sharpe SHADOW M3 | 0.7 | backtest | per phase | âœ“ |
-| THR-S04 | Max DD SHADOW | 12% | backtest | per phase | âœ“ |
-| THR-S05 | Nb dÃ©cisions SHADOW M3 | 100 | empirical | per phase | âœ“ |
-| THR-SC01 | Capital MICRO_LIVE | 500 | decision | â€” | âœ“ |
-| THR-SC02 | Capital LIVE | 10000 | decision | â€” | âœ“ |
-| THR-SC03 | Steps scaling | [500,2000,5000,10000] | decision | â€” | âœ“ |
-| THR-SC04 | Step duration min (jours) | 14 | decision | â€” | âœ“ |
+| THR-H03 | Purification rate | 2%/an | external | yearly | âœ” |
+| THR-S01 | Sharpe SHADOW M1 | 0.5 | backtest | per phase | âœ” |
+| THR-S02 | Sharpe SHADOW M2 | 0.6 | backtest | per phase | âœ” |
+| THR-S03 | Sharpe SHADOW M3 | 0.7 | backtest | per phase | âœ” |
+| THR-S04 | Max DD SHADOW | 12% | backtest | per phase | âœ” |
+| THR-S05 | Nb dÃ©cisions SHADOW M3 | 100 | empirical | per phase | âœ” |
+| **THR-S06** | **Max CE net drop (shadow)** | **0.0005** | **shadow** | **per phase** | **âœ”** |
+| THR-SC01 | Capital MICRO_LIVE | 500 | decision | â€” | âœ” |
+| THR-SC02 | Capital LIVE | 10000 | decision | â€” | âœ” |
+| THR-SC03 | Steps scaling | [500,2000,5000,10000] | decision | â€” | âœ” |
+| THR-SC04 | Step duration min (jours) | 14 | decision | â€” | âœ” |
 | THR-I01 | Disk warn | 30% libre | â€” | â€” | â€” |
 | THR-I02 | Disk critical | 10% libre | â€” | â€” | â€” |
 | THR-I03 | Log retention | 90j | â€” | â€” | â€” |
 | THR-I04 | Reconciliation freq | 1h | â€” | â€” | â€” |
 
-**Total : 32 seuils dynamiques reels** identifiÃ©s, dont **22 nÃ©cessitent une signature humaine** pour usage production.
+**Total : 37 seuils dynamiques rÃ©els** identifiÃ©s, dont **27 nÃ©cessitent une signature humaine** pour usage production.
+
+> **Audit 2026-04-13** : +5 entrÃ©es (THR-E03, THR-E04, THR-W01, THR-W02, THR-S06) dÃ©couvertes par audit code vs plan. THR-X03 source_module corrigÃ© (execution_backbone, pas venue_adapters).
 
 ---
 

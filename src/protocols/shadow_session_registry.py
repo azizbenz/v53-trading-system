@@ -139,7 +139,7 @@ class ShadowSessionRegistry:
         self._state.entries = [*original_entries, *entries]
         try:
             self._persist()
-        except Exception:
+        except (OSError, RuntimeError, ValueError):
             self._state.entries = original_entries
             raise
 

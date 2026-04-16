@@ -3197,3 +3197,151 @@ Latest seventh operated hotspot reduction under executable guardrails:
 - latest proofs:
   - repo-wide guardrail run: `total_violations=4287`, `new_violations=0`
   - focused `local_lab_analysis_bundle launcher` slice: `7 passed`
+
+Latest eighth operated hotspot reduction under executable guardrails:
+
+- current code truth:
+  - `scripts/run_local_lab_analysis_bundle.py` no longer keeps the full Local IA Lab operated chain inline in one monolithic `main(...)`
+  - the launcher now delegates to bounded helpers for review dispatch, secondary review artifacts, edge/proof refresh, release/replay, monitoring, and final summary emission
+  - function-level guardrail debt on this hotspot is cleared; only `FILE_TOO_LONG` remains explicitly open
+- deliberate limit:
+  - no Local IA Lab artifact/schema drift
+  - no control-flow change outside the existing governed bundle rail
+  - no broad cleanup outside this hotspot
+- latest proofs:
+  - repo-wide guardrail run: `total_violations=4286`, `new_violations=0`
+  - focused `local_lab_analysis_bundle launcher` slice: `7 passed`
+  - direct `python scripts/run_build9_core_smoke.py`: Build-1 `PASS`, Build-2..9 `PASS`
+
+Latest ninth operated hotspot reduction under executable guardrails:
+
+- current code truth:
+  - `scripts/run_technical_dashboard.py` now emits terminal output through `_emit_technical_dashboard_output(...)` instead of inline `print()` calls
+  - the dashboard HTML/payload outputs are unchanged
+- deliberate limit:
+  - no dashboard schema drift
+  - no projection behavior change
+  - no cleanup outside this launcher hotspot
+- latest proofs:
+  - repo-wide guardrail run: `total_violations=4279`, `new_violations=0`
+  - focused `technical_dashboard launcher` slice: `10 passed`
+
+Latest tenth operated hotspot reduction under executable guardrails:
+
+- current code truth:
+  - `scripts/run_technical_dashboard.py` now projects Shadow service metadata via bounded helpers (`_build_shadow_projection_*`)
+  - the same `ShadowProjection` fields and schema are preserved
+- deliberate limit:
+  - no dashboard schema drift
+  - no projection behavior change
+  - no cleanup outside this hotspot
+- latest proofs:
+  - repo-wide guardrail run: `total_violations=4278`, `new_violations=0`
+  - focused `technical_dashboard launcher` slice: `10 passed`
+
+Latest eleventh operated hotspot reduction under executable guardrails:
+
+- current code truth:
+  - `scripts/shadow_vps_service_projection_support.py` now hosts runtime evidence projection helpers
+  - `scripts/shadow_vps_service_campaign_support.py` now hosts campaign summary projection helpers
+  - `scripts/shadow_vps_service_monitoring_support.py` now hosts monitoring artifact helpers and file emission
+  - `scripts/run_shadow_vps_service.py` now imports those helpers and adds `scripts/` to `sys.path`
+- deliberate limit:
+  - no service-loop semantic drift
+  - no artifact/schema drift
+  - no cleanup outside this hotspot
+- latest proofs:
+  - `python scripts/run_engineering_guardrails.py`
+  - `total_violations=4278`, `new_violations=0`
+
+Latest twelfth operated hotspot reduction under executable guardrails:
+
+- current code truth:
+  - `scripts/shadow_vps_service_models.py` now defines the Shadow VPS service dataclass models
+  - `scripts/run_shadow_vps_service.py` now imports those models
+- deliberate limit:
+  - no service-loop semantic drift
+  - no artifact/schema drift
+  - no cleanup outside this hotspot
+- latest proofs:
+  - `python -m py_compile scripts/run_shadow_vps_service.py scripts/shadow_vps_service_projection_support.py scripts/shadow_vps_service_campaign_support.py scripts/shadow_vps_service_monitoring_support.py scripts/shadow_vps_service_models.py`
+
+Latest thirteenth operated hotspot reduction under executable guardrails:
+
+- current code truth:
+  - `scripts/shadow_vps_service_context_support.py` now hosts runtime dir resolution + context construction helpers
+  - `scripts/run_shadow_vps_service.py` now imports those helpers and injects the launcher loader
+- deliberate limit:
+  - no service-loop semantic drift
+  - no artifact/schema drift
+  - no cleanup outside this hotspot
+- latest proofs:
+  - `python -m py_compile scripts/run_shadow_vps_service.py scripts/shadow_vps_service_context_support.py`
+
+Latest fourteenth operated hotspot reduction under executable guardrails:
+
+- current code truth:
+  - `scripts/shadow_vps_service_cycle_support.py` now hosts cycle selection + idle/prepare helpers
+  - `scripts/run_shadow_vps_service.py` now imports those helpers and passes explicit hook callables
+- deliberate limit:
+  - no service-loop semantic drift
+  - no artifact/schema drift
+  - no cleanup outside this hotspot
+- latest proofs:
+  - `python -m py_compile scripts/run_shadow_vps_service.py scripts/shadow_vps_service_cycle_support.py`
+
+Latest fifteenth operated hotspot reduction under executable guardrails:
+
+- current code truth:
+  - `scripts/shadow_vps_service_execution_support.py` now hosts daily orchestrator, state application, telemetry, success, and failure helpers
+  - `scripts/run_shadow_vps_service.py` now imports those helpers and passes explicit hook callables
+- deliberate limit:
+  - no service-loop semantic change
+  - no artifact/schema drift
+  - no cleanup outside this hotspot
+- latest proofs:
+  - `python -m py_compile scripts/run_shadow_vps_service.py scripts/shadow_vps_service_execution_support.py`
+
+Latest sixteenth operated hotspot reduction under executable guardrails:
+
+- current code truth:
+  - `scripts/shadow_vps_service_runtime_support.py` now hosts finalize + main loop helpers and output emission
+  - `scripts/run_shadow_vps_service.py` now imports those helpers and injects callables
+- deliberate limit:
+  - no service-loop semantic change
+  - no artifact/schema drift
+  - no cleanup outside this hotspot
+- latest proofs:
+  - `python -m py_compile scripts/run_shadow_vps_service.py scripts/shadow_vps_service_runtime_support.py`
+
+Latest bounded Binance venue quota tracking slice:
+
+- current code truth:
+  - `src/venue_adapters/binance_spot/rate_limiter.py` now exists as the venue-side token-bucket tracker for REST request-weight and order-count budgets
+  - `src/venue_adapters/binance_spot/rest_client.py` now reserves quota before supported calls, tightens from real `X-MBX-USED-WEIGHT-1M` / `X-MBX-ORDER-COUNT-10S` headers, and applies explicit 429 backoff without hidden retries
+  - `src/venue_adapters/binance_spot/__init__.py` now exports the bounded quota-tracking surface
+- deliberate limit:
+  - no new runtime rail
+  - no hidden retry loop
+  - no order-flow bypass around the Binance adapter
+- latest proofs:
+  - `python -m pytest tests/test_venue_adapters/test_binance_spot/test_rate_limiter.py tests/test_venue_adapters/test_binance_spot/test_rest_client.py -q`
+  - `22 passed`
+  - `python scripts/run_engineering_guardrails.py`
+  - `new_violations=0`
+
+Latest bounded Hansen SPA calibration slice:
+
+- current code truth:
+  - `src/calibration_methods/hansen_spa.py` now exists as a joint stationary-bootstrap multi-candidate SPA test over loss-differential series
+  - `src/calibration_methods/__init__.py` now exports `HansenSpaError`, `HansenSpaResult`, and `compute_hansen_spa_test`
+  - `tests/test_calibration_methods/test_hansen_spa.py` now proves both the "best-of-many random" rejection case and the persistent-superiority acceptance case
+- deliberate limit:
+  - Local IA Lab math only
+  - no promotion automation
+  - no runtime activation from the calibration result
+- latest proofs:
+  - `python -m pytest tests/test_calibration_methods/test_hansen_spa.py -q`
+  - `6 passed`
+  - `python scripts/run_engineering_guardrails.py`
+  - `new_violations=0`

@@ -137,7 +137,7 @@ def evaluate_artifact_signature_policy(
     resolved_signature_verifier = signature_verifier or verify_default_artifact_signature
     try:
         verified = bool(resolved_signature_verifier(envelope, trusted_entry))
-    except Exception:
+    except (RuntimeError, TypeError, ValueError):
         verified = False
     if not verified:
         return ArtifactSignatureCheckResult(

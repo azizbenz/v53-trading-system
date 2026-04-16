@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import json
+from types import ModuleType
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -45,7 +46,7 @@ from monitoring.observability import build_observability_export
 from monitoring.technical_dashboard_backend import build_technical_dashboard_payload
 
 
-def _ui_module():
+def _ui_module() -> ModuleType:
     return importlib.import_module("ui")
 
 

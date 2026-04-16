@@ -6,17 +6,22 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
-from .conviction_builder_c import build_conviction_c
-from .cost_feasibility_c import evaluate_cost_feasibility_c
-from .invalidation_mapper_c import build_invalidation_levels_c
+from .continuation_validator_c import (
+    EngineCContinuationValidationInput,
+    validate_continuation_c,
+)
+from .conviction_builder_c import ConvictionResultC, build_conviction_c
+from .cost_feasibility_c import CostMetricsC, evaluate_cost_feasibility_c
+from .invalidation_mapper_c import InvalidationLevelsC, build_invalidation_levels_c
 from .output_payload_builder_c import build_engine_c_output_payload
 from .signal_math_c import (
     compute_breakout_score,
     compute_context_score,
-    compute_continuation_score,
     compute_fake_breakout_risk,
 )
 from .structure_resolver_c import build_engine_c_log_context, resolve_engine_c_structure
+
+EngineCStructure = dict[str, float | str | bool]
 
 
 def _clamp(value: float) -> float:
@@ -32,6 +37,7 @@ class NoTradeReasonC(StrEnum):
     NON_LONG_BREAKOUT = "non_long_breakout"
     BREAKOUT_UNSTRUCTURED = "breakout_unstructured"
     CONTINUATION_NOT_VIABLE = "continuation_not_viable"
+    MICROSTRUCTURE_UNCONFIRMED = "microstructure_unconfirmed"
     FAKE_BREAKOUT_BLOCKED = "fake_breakout_blocked"
     COST_INFEASIBLE = "cost_infeasible"
 
@@ -69,6 +75,11 @@ class EngineCLogEntry(BaseModel, frozen=True):
     penalized_score: float = 0.0
     breakout_score: float = 0.0
     continuation_score: float = 0.0
+    cumulative_ofi: float | None = None
+    queue_pressure: float | None = None
+    vpin: float | None = None
+    kyle_lambda: float | None = None
+    microstructure_gate_applied: bool = False
     fake_breakout_risk: float = 0.0
     expected_cost: float = 0.0
     ce_expected: float = 0.0
@@ -102,6 +113,11 @@ class EngineCOutput(BaseModel, frozen=True):
     distance_to_breakout_pct: float = 0.0
     breakout_score: float = 0.0
     continuation_score: float = 0.0
+    cumulative_ofi: float | None = None
+    queue_pressure: float | None = None
+    vpin: float | None = None
+    kyle_lambda: float | None = None
+    microstructure_gate_applied: bool = False
     fake_breakout_risk: float = 0.0
     expected_cost: float = 0.0
     ce_expected: float = 0.0
@@ -133,6 +149,13 @@ class EngineCInput(BaseModel, frozen=True):
     pair_health: float = 0.5
     data_freshness: float = 0.5
     flow_coherence: float = 0.5
+    cumulative_ofi: float | None = None
+    queue_pressure: float | None = Field(default=None, ge=-1.0, le=1.0)
+    vpin: float | None = Field(default=None, ge=0.0, le=1.0)
+    kyle_lambda: float | None = None
+    continuation_ofi_min: float = 0.0
+    continuation_queue_min: float = 0.0
+    continuation_vpin_max: float | None = Field(default=None, ge=0.0, le=1.0)
     expected_gain: float = 0.0
     expected_cost: float = 0.0
     candidate_size: float = 0.0
@@ -155,146 +178,347 @@ def run_engine_c(inputs: EngineCInput) -> EngineCOutput:
     logs: list[EngineCLogEntry] = []
     no_trade_reasons: list[NoTradeReasonC] = []
     structure = resolve_engine_c_structure(inputs)
+    breakout_score, no_trade_output = _evaluate_breakout_stage(
+        inputs,
+        structure,
+        logs,
+        no_trade_reasons,
+    )
+    if no_trade_output is not None:
+        return no_trade_output
 
+    (
+        context_score,
+        continuation_score,
+        microstructure_gate_applied,
+        no_trade_output,
+    ) = _evaluate_continuation_stage(
+        inputs,
+        structure,
+        logs,
+        no_trade_reasons,
+        breakout_score=breakout_score,
+    )
+    if no_trade_output is not None:
+        return no_trade_output
+
+    fake_breakout_risk, no_trade_output = _evaluate_fake_breakout_stage(
+        inputs,
+        structure,
+        logs,
+        no_trade_reasons,
+        breakout_score=breakout_score,
+        continuation_score=continuation_score,
+        microstructure_gate_applied=microstructure_gate_applied,
+    )
+    if no_trade_output is not None:
+        return no_trade_output
+
+    cost_metrics, no_trade_output = _evaluate_cost_stage(
+        inputs,
+        structure,
+        logs,
+        no_trade_reasons,
+        breakout_score=breakout_score,
+        continuation_score=continuation_score,
+        microstructure_gate_applied=microstructure_gate_applied,
+        fake_breakout_risk=fake_breakout_risk,
+    )
+    if no_trade_output is not None:
+        return no_trade_output
+
+    return _build_engine_c_emit_output(
+        inputs,
+        structure,
+        logs,
+        breakout_score=breakout_score,
+        context_score=context_score,
+        continuation_score=continuation_score,
+        microstructure_gate_applied=microstructure_gate_applied,
+        fake_breakout_risk=fake_breakout_risk,
+        cost_metrics=cost_metrics,
+    )
+
+
+def _append_engine_c_log(
+    logs: list[EngineCLogEntry],
+    inputs: EngineCInput,
+    structure: EngineCStructure,
+    *,
+    event: str,
+    raw_score: float = 0.0,
+    penalized_score: float = 0.0,
+    breakout_score: float = 0.0,
+    continuation_score: float = 0.0,
+    microstructure_gate_applied: bool = False,
+    cumulative_ofi: float | None = None,
+    queue_pressure: float | None = None,
+    vpin: float | None = None,
+    kyle_lambda: float | None = None,
+    fake_breakout_risk: float = 0.0,
+    expected_cost: float = 0.0,
+    ce_expected: float = 0.0,
+    ev_net: float = 0.0,
+    conviction: str = "",
+    tier: str = "",
+    holding_hours: float = 0.0,
+    reasons: tuple[str, ...] = (),
+) -> None:
+    logs.append(
+        EngineCLogEntry(
+            event=event,
+            pair=inputs.pair,
+            regime=inputs.regime,
+            **build_engine_c_log_context(structure),
+            raw_score=raw_score,
+            penalized_score=penalized_score,
+            breakout_score=breakout_score,
+            continuation_score=continuation_score,
+            cumulative_ofi=inputs.cumulative_ofi if cumulative_ofi is None else cumulative_ofi,
+            queue_pressure=inputs.queue_pressure if queue_pressure is None else queue_pressure,
+            vpin=inputs.vpin if vpin is None else vpin,
+            kyle_lambda=inputs.kyle_lambda if kyle_lambda is None else kyle_lambda,
+            microstructure_gate_applied=microstructure_gate_applied,
+            fake_breakout_risk=fake_breakout_risk,
+            expected_cost=expected_cost,
+            ce_expected=ce_expected,
+            ev_net=ev_net,
+            conviction=conviction,
+            tier=tier,
+            holding_hours=holding_hours,
+            reasons=reasons,
+            scoring_version=inputs.scoring_version,
+        )
+    )
+
+
+def _build_engine_c_no_trade_output(
+    inputs: EngineCInput,
+    structure: EngineCStructure,
+    logs: list[EngineCLogEntry],
+    no_trade_reasons: list[NoTradeReasonC],
+    *,
+    breakout_score: float = 0.0,
+    continuation_score: float = 0.0,
+    microstructure_gate_applied: bool = False,
+    fake_breakout_risk: float = 0.0,
+    expected_cost: float = 0.0,
+    ce_expected: float = 0.0,
+    ev_net: float = 0.0,
+) -> EngineCOutput:
+    return EngineCOutput(
+        pair=inputs.pair,
+        decision=EngineCDecision.NO_TRADE,
+        **build_engine_c_output_payload(
+            structure=structure,
+            scoring_version=inputs.scoring_version,
+            log_entries=tuple(logs),
+            breakout_score=breakout_score,
+            continuation_score=continuation_score,
+            cumulative_ofi=inputs.cumulative_ofi,
+            queue_pressure=inputs.queue_pressure,
+            vpin=inputs.vpin,
+            kyle_lambda=inputs.kyle_lambda,
+            microstructure_gate_applied=microstructure_gate_applied,
+            fake_breakout_risk=fake_breakout_risk,
+            expected_cost=expected_cost,
+            ce_expected=ce_expected,
+            ev_net=ev_net,
+            no_trade_reasons=tuple(no_trade_reasons),
+        ),
+    )
+
+
+def _evaluate_breakout_stage(
+    inputs: EngineCInput,
+    structure: EngineCStructure,
+    logs: list[EngineCLogEntry],
+    no_trade_reasons: list[NoTradeReasonC],
+) -> tuple[float, EngineCOutput | None]:
     if inputs.breakout_strength <= 0:
         no_trade_reasons.append(NoTradeReasonC.NON_LONG_BREAKOUT)
-        logs.append(
-            EngineCLogEntry(
-                event="engine_c_no_trade",
-                pair=inputs.pair,
-                regime=inputs.regime,
-                **build_engine_c_log_context(structure),
-                reasons=(f"breakout_strength={inputs.breakout_strength:.3f} <= 0",),
-            )
+        _append_engine_c_log(
+            logs,
+            inputs,
+            structure,
+            event="engine_c_no_trade",
+            reasons=(f"breakout_strength={inputs.breakout_strength:.3f} <= 0",),
         )
-        return EngineCOutput(
-            pair=inputs.pair,
-            decision=EngineCDecision.NO_TRADE,
-            **build_engine_c_output_payload(
-                structure=structure,
-                scoring_version=inputs.scoring_version,
-                log_entries=tuple(logs),
-                no_trade_reasons=tuple(no_trade_reasons),
-            ),
+        return 0.0, _build_engine_c_no_trade_output(
+            inputs,
+            structure,
+            logs,
+            no_trade_reasons,
         )
 
     breakout_score = compute_breakout_score(inputs)
-    logs.append(
-        EngineCLogEntry(
-            event="engine_c_breakout_evaluated",
-            pair=inputs.pair,
-            regime=inputs.regime,
-            **build_engine_c_log_context(structure),
-            breakout_score=breakout_score,
-            raw_score=breakout_score,
-        )
+    _append_engine_c_log(
+        logs,
+        inputs,
+        structure,
+        event="engine_c_breakout_evaluated",
+        breakout_score=breakout_score,
+        raw_score=breakout_score,
     )
     if breakout_score < 0.62 or inputs.breakout_strength < 0.55 or inputs.range_quality < 0.50:
         no_trade_reasons.append(NoTradeReasonC.BREAKOUT_UNSTRUCTURED)
-        logs.append(
-            EngineCLogEntry(
-                event="engine_c_no_trade",
-                pair=inputs.pair,
-                regime=inputs.regime,
-                **build_engine_c_log_context(structure),
-                breakout_score=breakout_score,
-                reasons=("breakout structure insufficient",),
-            )
-        )
-        return EngineCOutput(
-            pair=inputs.pair,
-            decision=EngineCDecision.NO_TRADE,
-            **build_engine_c_output_payload(
-                structure=structure,
-                scoring_version=inputs.scoring_version,
-                log_entries=tuple(logs),
-                breakout_score=breakout_score,
-                no_trade_reasons=tuple(no_trade_reasons),
-            ),
-        )
-
-    context_score = compute_context_score(inputs)
-    continuation_score = compute_continuation_score(inputs, context_score=context_score)
-    logs.append(
-        EngineCLogEntry(
-            event="engine_c_continuation_checked",
-            pair=inputs.pair,
-            regime=inputs.regime,
-            **build_engine_c_log_context(structure),
+        _append_engine_c_log(
+            logs,
+            inputs,
+            structure,
+            event="engine_c_no_trade",
             breakout_score=breakout_score,
-            continuation_score=continuation_score,
-            raw_score=continuation_score,
+            reasons=("breakout structure insufficient",),
+        )
+        return breakout_score, _build_engine_c_no_trade_output(
+            inputs,
+            structure,
+            logs,
+            no_trade_reasons,
+            breakout_score=breakout_score,
+        )
+    return breakout_score, None
+
+
+def _evaluate_continuation_stage(
+    inputs: EngineCInput,
+    structure: EngineCStructure,
+    logs: list[EngineCLogEntry],
+    no_trade_reasons: list[NoTradeReasonC],
+    *,
+    breakout_score: float,
+) -> tuple[float, float, bool, EngineCOutput | None]:
+    context_score = compute_context_score(inputs)
+    continuation_validation = validate_continuation_c(
+        EngineCContinuationValidationInput(
+            followthrough_room=inputs.followthrough_room,
+            extension_pct=inputs.extension_pct,
+            context_score=context_score,
+            cumulative_ofi=inputs.cumulative_ofi,
+            queue_pressure=inputs.queue_pressure,
+            vpin=inputs.vpin,
+            kyle_lambda=inputs.kyle_lambda,
+            ofi_min=inputs.continuation_ofi_min,
+            queue_min=inputs.continuation_queue_min,
+            vpin_max=inputs.continuation_vpin_max,
         )
     )
-    if continuation_score < 0.58 or inputs.extension_pct > 0.72:
-        no_trade_reasons.append(NoTradeReasonC.CONTINUATION_NOT_VIABLE)
-        logs.append(
-            EngineCLogEntry(
-                event="engine_c_no_trade",
-                pair=inputs.pair,
-                regime=inputs.regime,
-                **build_engine_c_log_context(structure),
-                breakout_score=breakout_score,
-                continuation_score=continuation_score,
-                reasons=("continuation already too mature or too weak",),
-            )
+    _append_engine_c_log(
+        logs,
+        inputs,
+        structure,
+        event="engine_c_continuation_checked",
+        raw_score=continuation_validation.continuation_score,
+        breakout_score=breakout_score,
+        continuation_score=continuation_validation.continuation_score,
+        cumulative_ofi=continuation_validation.cumulative_ofi,
+        queue_pressure=continuation_validation.queue_pressure,
+        vpin=continuation_validation.vpin,
+        kyle_lambda=continuation_validation.kyle_lambda,
+        microstructure_gate_applied=continuation_validation.microstructure_gate_applied,
+        reasons=continuation_validation.reason_codes,
+    )
+    if not continuation_validation.accepted:
+        no_trade_reasons.append(
+            NoTradeReasonC.CONTINUATION_NOT_VIABLE
+            if not continuation_validation.continuation_viable
+            else NoTradeReasonC.MICROSTRUCTURE_UNCONFIRMED
         )
-        return EngineCOutput(
-            pair=inputs.pair,
-            decision=EngineCDecision.NO_TRADE,
-            **build_engine_c_output_payload(
-                structure=structure,
-                scoring_version=inputs.scoring_version,
-                log_entries=tuple(logs),
+        _append_engine_c_log(
+            logs,
+            inputs,
+            structure,
+            event="engine_c_no_trade",
+            breakout_score=breakout_score,
+            continuation_score=continuation_validation.continuation_score,
+            cumulative_ofi=continuation_validation.cumulative_ofi,
+            queue_pressure=continuation_validation.queue_pressure,
+            vpin=continuation_validation.vpin,
+            kyle_lambda=continuation_validation.kyle_lambda,
+            microstructure_gate_applied=continuation_validation.microstructure_gate_applied,
+            reasons=continuation_validation.reason_codes,
+        )
+        return (
+            context_score,
+            continuation_validation.continuation_score,
+            continuation_validation.microstructure_gate_applied,
+            _build_engine_c_no_trade_output(
+                inputs,
+                structure,
+                logs,
+                no_trade_reasons,
                 breakout_score=breakout_score,
-                continuation_score=continuation_score,
-                no_trade_reasons=tuple(no_trade_reasons),
+                continuation_score=continuation_validation.continuation_score,
+                microstructure_gate_applied=continuation_validation.microstructure_gate_applied,
             ),
         )
+    return (
+        context_score,
+        continuation_validation.continuation_score,
+        continuation_validation.microstructure_gate_applied,
+        None,
+    )
 
+
+def _evaluate_fake_breakout_stage(
+    inputs: EngineCInput,
+    structure: EngineCStructure,
+    logs: list[EngineCLogEntry],
+    no_trade_reasons: list[NoTradeReasonC],
+    *,
+    breakout_score: float,
+    continuation_score: float,
+    microstructure_gate_applied: bool,
+) -> tuple[float, EngineCOutput | None]:
     fake_breakout_risk = compute_fake_breakout_risk(inputs)
     penalized_score = max(0.0, breakout_score - max(0.0, fake_breakout_risk - 0.35))
-    logs.append(
-        EngineCLogEntry(
-            event="engine_c_fake_breakout_checked",
-            pair=inputs.pair,
-            regime=inputs.regime,
-            **build_engine_c_log_context(structure),
-            breakout_score=breakout_score,
-            continuation_score=continuation_score,
-            fake_breakout_risk=fake_breakout_risk,
-            raw_score=breakout_score,
-            penalized_score=penalized_score,
-        )
+    _append_engine_c_log(
+        logs,
+        inputs,
+        structure,
+        event="engine_c_fake_breakout_checked",
+        raw_score=breakout_score,
+        penalized_score=penalized_score,
+        breakout_score=breakout_score,
+        continuation_score=continuation_score,
+        fake_breakout_risk=fake_breakout_risk,
     )
     if fake_breakout_risk >= 0.65:
         no_trade_reasons.append(NoTradeReasonC.FAKE_BREAKOUT_BLOCKED)
-        logs.append(
-            EngineCLogEntry(
-                event="engine_c_no_trade",
-                pair=inputs.pair,
-                regime=inputs.regime,
-                **build_engine_c_log_context(structure),
-                breakout_score=breakout_score,
-                continuation_score=continuation_score,
-                fake_breakout_risk=fake_breakout_risk,
-                reasons=("fake breakout risk too high",),
-            )
+        _append_engine_c_log(
+            logs,
+            inputs,
+            structure,
+            event="engine_c_no_trade",
+            breakout_score=breakout_score,
+            continuation_score=continuation_score,
+            fake_breakout_risk=fake_breakout_risk,
+            reasons=("fake breakout risk too high",),
         )
-        return EngineCOutput(
-            pair=inputs.pair,
-            decision=EngineCDecision.NO_TRADE,
-            **build_engine_c_output_payload(
-                structure=structure,
-                scoring_version=inputs.scoring_version,
-                log_entries=tuple(logs),
-                breakout_score=breakout_score,
-                continuation_score=continuation_score,
-                fake_breakout_risk=fake_breakout_risk,
-                no_trade_reasons=tuple(no_trade_reasons),
-            ),
+        return fake_breakout_risk, _build_engine_c_no_trade_output(
+            inputs,
+            structure,
+            logs,
+            no_trade_reasons,
+            breakout_score=breakout_score,
+            continuation_score=continuation_score,
+            microstructure_gate_applied=microstructure_gate_applied,
+            fake_breakout_risk=fake_breakout_risk,
         )
+    return fake_breakout_risk, None
 
+
+def _evaluate_cost_stage(
+    inputs: EngineCInput,
+    structure: EngineCStructure,
+    logs: list[EngineCLogEntry],
+    no_trade_reasons: list[NoTradeReasonC],
+    *,
+    breakout_score: float,
+    continuation_score: float,
+    microstructure_gate_applied: bool,
+    fake_breakout_risk: float,
+) -> tuple[CostMetricsC, EngineCOutput | None]:
     cost_metrics = evaluate_cost_feasibility_c(
         expected_gain=inputs.expected_gain,
         expected_cost=inputs.expected_cost,
@@ -303,48 +527,55 @@ def run_engine_c(inputs: EngineCInput) -> EngineCOutput:
         delta_safe=inputs.delta_safe,
         ce_min=inputs.ce_min,
     )
-    logs.append(
-        EngineCLogEntry(
-            event="engine_c_cost_checked",
-            pair=inputs.pair,
-            regime=inputs.regime,
-            **build_engine_c_log_context(structure),
+    _append_engine_c_log(
+        logs,
+        inputs,
+        structure,
+        event="engine_c_cost_checked",
+        expected_cost=cost_metrics.expected_cost,
+        ce_expected=cost_metrics.ce_expected,
+        ev_net=cost_metrics.ev_net,
+    )
+    if not cost_metrics.is_feasible:
+        no_trade_reasons.append(NoTradeReasonC.COST_INFEASIBLE)
+        _append_engine_c_log(
+            logs,
+            inputs,
+            structure,
+            event="engine_c_no_trade",
+            expected_cost=cost_metrics.expected_cost,
+            ce_expected=cost_metrics.ce_expected,
+            ev_net=cost_metrics.ev_net,
+            reasons=("breakout edge does not survive costs",),
+        )
+        return cost_metrics, _build_engine_c_no_trade_output(
+            inputs,
+            structure,
+            logs,
+            no_trade_reasons,
+            breakout_score=breakout_score,
+            continuation_score=continuation_score,
+            microstructure_gate_applied=microstructure_gate_applied,
+            fake_breakout_risk=fake_breakout_risk,
             expected_cost=cost_metrics.expected_cost,
             ce_expected=cost_metrics.ce_expected,
             ev_net=cost_metrics.ev_net,
         )
-    )
-    if not cost_metrics.is_feasible:
-        no_trade_reasons.append(NoTradeReasonC.COST_INFEASIBLE)
-        logs.append(
-            EngineCLogEntry(
-                event="engine_c_no_trade",
-                pair=inputs.pair,
-                regime=inputs.regime,
-                **build_engine_c_log_context(structure),
-                expected_cost=cost_metrics.expected_cost,
-                ce_expected=cost_metrics.ce_expected,
-                ev_net=cost_metrics.ev_net,
-                reasons=("breakout edge does not survive costs",),
-            )
-        )
-        return EngineCOutput(
-            pair=inputs.pair,
-            decision=EngineCDecision.NO_TRADE,
-            **build_engine_c_output_payload(
-                structure=structure,
-                scoring_version=inputs.scoring_version,
-                log_entries=tuple(logs),
-                breakout_score=breakout_score,
-                continuation_score=continuation_score,
-                fake_breakout_risk=fake_breakout_risk,
-                expected_cost=cost_metrics.expected_cost,
-                ce_expected=cost_metrics.ce_expected,
-                ev_net=cost_metrics.ev_net,
-                no_trade_reasons=tuple(no_trade_reasons),
-            ),
-        )
+    return cost_metrics, None
 
+
+def _build_engine_c_emit_output(
+    inputs: EngineCInput,
+    structure: EngineCStructure,
+    logs: list[EngineCLogEntry],
+    *,
+    breakout_score: float,
+    context_score: float,
+    continuation_score: float,
+    microstructure_gate_applied: bool,
+    fake_breakout_risk: float,
+    cost_metrics: CostMetricsC,
+) -> EngineCOutput:
     conviction_result = build_conviction_c(
         breakout_score=breakout_score,
         continuation_score=continuation_score,
@@ -355,17 +586,14 @@ def run_engine_c(inputs: EngineCInput) -> EngineCOutput:
     )
     conviction = ConvictionLevelC(conviction_result.conviction_name)
     tier = TierSuggestionC(conviction_result.tier_name)
-
-    invalidation_levels = build_invalidation_levels_c(
-        entry_price=inputs.entry_price,
-        breakout_level=inputs.breakout_level,
-        atr=inputs.atr,
-        expected_gain=inputs.expected_gain,
-    )
-    invalidation = EngineCInvalidation(
-        stop_price=invalidation_levels.stop_price,
-        target_price=invalidation_levels.target_price,
-        risk_multiple=invalidation_levels.risk_multiple,
+    invalidation = _build_engine_c_invalidation(
+        inputs,
+        build_invalidation_levels_c(
+            entry_price=inputs.entry_price,
+            breakout_level=inputs.breakout_level,
+            atr=inputs.atr,
+            expected_gain=inputs.expected_gain,
+        ),
     )
     block_scores = {
         "breakout": breakout_score,
@@ -373,25 +601,23 @@ def run_engine_c(inputs: EngineCInput) -> EngineCOutput:
         "context": context_score,
         "cost_preference": cost_metrics.cost_preference_score,
     }
-    logs.append(
-        EngineCLogEntry(
-            event="engine_c_emit",
-            pair=inputs.pair,
-            regime=inputs.regime,
-            **build_engine_c_log_context(structure),
-            raw_score=conviction_result.raw_score,
-            penalized_score=conviction_result.conviction_score,
-            breakout_score=breakout_score,
-            continuation_score=continuation_score,
-            fake_breakout_risk=fake_breakout_risk,
-            expected_cost=cost_metrics.expected_cost,
-            ce_expected=cost_metrics.ce_expected,
-            ev_net=cost_metrics.ev_net,
-            conviction=conviction.value,
-            tier=tier.value,
-            holding_hours=inputs.holding_period,
-            scoring_version=inputs.scoring_version,
-        )
+    _append_engine_c_log(
+        logs,
+        inputs,
+        structure,
+        event="engine_c_emit",
+        raw_score=conviction_result.raw_score,
+        penalized_score=conviction_result.conviction_score,
+        breakout_score=breakout_score,
+        continuation_score=continuation_score,
+        microstructure_gate_applied=microstructure_gate_applied,
+        fake_breakout_risk=fake_breakout_risk,
+        expected_cost=cost_metrics.expected_cost,
+        ce_expected=cost_metrics.ce_expected,
+        ev_net=cost_metrics.ev_net,
+        conviction=conviction.value,
+        tier=tier.value,
+        holding_hours=inputs.holding_period,
     )
     return EngineCOutput(
         pair=inputs.pair,
@@ -407,6 +633,11 @@ def run_engine_c(inputs: EngineCInput) -> EngineCOutput:
             tier_suggestion=tier,
             breakout_score=breakout_score,
             continuation_score=continuation_score,
+            cumulative_ofi=inputs.cumulative_ofi,
+            queue_pressure=inputs.queue_pressure,
+            vpin=inputs.vpin,
+            kyle_lambda=inputs.kyle_lambda,
+            microstructure_gate_applied=microstructure_gate_applied,
             fake_breakout_risk=fake_breakout_risk,
             expected_cost=cost_metrics.expected_cost,
             ce_expected=cost_metrics.ce_expected,
@@ -414,4 +645,15 @@ def run_engine_c(inputs: EngineCInput) -> EngineCOutput:
             invalidation=invalidation,
             holding_hours=inputs.holding_period,
         ),
+    )
+
+
+def _build_engine_c_invalidation(
+    inputs: EngineCInput,
+    invalidation_levels: InvalidationLevelsC,
+) -> EngineCInvalidation:
+    return EngineCInvalidation(
+        stop_price=invalidation_levels.stop_price,
+        target_price=invalidation_levels.target_price,
+        risk_multiple=invalidation_levels.risk_multiple,
     )

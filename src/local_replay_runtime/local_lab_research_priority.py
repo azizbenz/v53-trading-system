@@ -12,6 +12,7 @@ from local_replay_runtime.local_lab_loss_surrogate import (
 )
 from local_replay_runtime.local_lab_scope_matrix import (
     LocalLabScopeAnalysisMatrix,
+    LocalLabScopeAnalysisRow,
     build_local_lab_scope_slug,
 )
 from meta_learning.contracts import TradeLossAttribution, TradeLossAttributionReport
@@ -256,7 +257,7 @@ def _resolve_scope_row(
     *,
     pair: str,
     engine_id: str,
-):
+) -> LocalLabScopeAnalysisRow | None:
     if scope_matrix is None:
         return None
     for row in scope_matrix.scopes:
@@ -283,7 +284,7 @@ def _build_features(
     scope_slug: str,
     scoped_attributions: tuple[TradeLossAttribution, ...],
     losses: tuple[TradeLossAttribution, ...],
-    scope_row,
+    scope_row: LocalLabScopeAnalysisRow | None,
     artifact_proof_ready: bool,
     artifact_proof_validation_reasons: tuple[str, ...],
     release_ready_for_shadow: bool,

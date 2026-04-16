@@ -18,27 +18,14 @@ from meta_learning.enums import LearningCaptureMode
 from meta_learning.merge_gate_contracts import Build9XMergeGateReport
 
 
-def export_learning_review(
-    correlation_id: str,
-    report: BreakdownReport,
-    checklist: LearningChecklist,
-    candidates: tuple[ImprovementCandidate, ...],
-    *,
-    hypotheses: tuple[LearningHypothesis, ...] = (),
-    replay_bundles: tuple[ReplayExportBundle, ...] = (),
-    capacity_snapshot: LearningCapacitySnapshot | None = None,
-    review_decisions: tuple[ReviewDecisionRecord, ...] = (),
-    archive_eligibility: tuple[ArchiveEligibilityRecord, ...] = (),
-    lifecycle_transitions: tuple[LifecycleTransitionRecord, ...] = (),
-    merge_gate_report: Build9XMergeGateReport | None = None,
-    export_ref: str = "",
-) -> LearningReviewExport:
-    """Render the governed review packet into a markdown export."""
+def _bullet_lines(items: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(f"- {item}" for item in items) or ("- none",)
 
-    mistake_lines = tuple(f"- {item}" for item in report.mistake_classes) or ("- none",)
-    checklist_lines = tuple(f"- {item}" for item in checklist.items) or ("- none",)
-    candidate_lines = tuple(f"- {candidate.summary}" for candidate in candidates) or ("- none",)
-    hypothesis_lines = (
+
+def _build_hypothesis_lines(
+    hypotheses: tuple[LearningHypothesis, ...],
+) -> tuple[str, ...]:
+    return (
         tuple(
             (
                 f"- {getattr(hypothesis, 'title', 'unknown')} "
@@ -49,7 +36,12 @@ def export_learning_review(
         )
         or ("- none",)
     )
-    candidate_detail_lines = (
+
+
+def _build_candidate_detail_lines(
+    candidates: tuple[ImprovementCandidate, ...],
+) -> tuple[str, ...]:
+    return (
         tuple(
             (
                 f"- {candidate.candidate_id} "
@@ -60,7 +52,12 @@ def export_learning_review(
         )
         or ("- none",)
     )
-    replay_bundle_lines = (
+
+
+def _build_replay_bundle_lines(
+    replay_bundles: tuple[ReplayExportBundle, ...],
+) -> tuple[str, ...]:
+    return (
         tuple(
             (
                 f"- {bundle.bundle_id} "
@@ -73,7 +70,12 @@ def export_learning_review(
         )
         or ("- none",)
     )
-    review_decision_lines = (
+
+
+def _build_review_decision_lines(
+    review_decisions: tuple[ReviewDecisionRecord, ...],
+) -> tuple[str, ...]:
+    return (
         tuple(
             (
                 f"- {decision.actor} "
@@ -85,7 +87,12 @@ def export_learning_review(
         )
         or ("- none",)
     )
-    archive_lines = (
+
+
+def _build_archive_lines(
+    archive_eligibility: tuple[ArchiveEligibilityRecord, ...],
+) -> tuple[str, ...]:
+    return (
         tuple(
             (
                 f"- {entry.entity_kind}:{entry.entity_id} "
@@ -97,23 +104,32 @@ def export_learning_review(
         )
         or ("- none",)
     )
+
+
+def _build_capacity_lines(
+    capacity_snapshot: LearningCapacitySnapshot | None,
+) -> tuple[str, ...]:
     if capacity_snapshot is None:
-        capacity_lines = ("- queue=0 / backlog=normal / mode=full_capture", "- none")
-    else:
-        capacity_lines = (
-            (
-                f"- queue={capacity_snapshot.queue_depth} / "
-                f"backlog={capacity_snapshot.backlog_state.value} / "
-                f"mode={capacity_snapshot.capture_mode.value}"
-            ),
-            (
-                f"- oldest={capacity_snapshot.queue_oldest_age_ms}ms / "
-                f"unprocessed={capacity_snapshot.unprocessed_items_count} / "
-                f"blocked={'yes' if capacity_snapshot.review_blocked_due_to_incomplete_data else 'no'} / "
-                f"reasons={', '.join(capacity_snapshot.blocking_reasons) or 'none'}"
-            ),
-        )
-    transition_lines = (
+        return ("- queue=0 / backlog=normal / mode=full_capture", "- none")
+    return (
+        (
+            f"- queue={capacity_snapshot.queue_depth} / "
+            f"backlog={capacity_snapshot.backlog_state.value} / "
+            f"mode={capacity_snapshot.capture_mode.value}"
+        ),
+        (
+            f"- oldest={capacity_snapshot.queue_oldest_age_ms}ms / "
+            f"unprocessed={capacity_snapshot.unprocessed_items_count} / "
+            f"blocked={'yes' if capacity_snapshot.review_blocked_due_to_incomplete_data else 'no'} / "
+            f"reasons={', '.join(capacity_snapshot.blocking_reasons) or 'none'}"
+        ),
+    )
+
+
+def _build_transition_lines(
+    lifecycle_transitions: tuple[LifecycleTransitionRecord, ...],
+) -> tuple[str, ...]:
+    return (
         tuple(
             (
                 f"- {transition.entity_kind}:{transition.entity_id} "
@@ -124,20 +140,40 @@ def export_learning_review(
         )
         or ("- none",)
     )
-    merge_gate_lines = (
-        tuple(
-            (
-                f"- {gate.gate_name.value}: "
-                f"{'pass' if gate.passed else 'fail'} "
-                f"(log={gate.structured_log_key}, "
-                f"reasons={', '.join(gate.blocking_reasons) or 'none'})"
-            )
-            for gate in merge_gate_report.gates
+
+
+def _build_merge_gate_lines(
+    merge_gate_report: Build9XMergeGateReport | None,
+) -> tuple[str, ...]:
+    if merge_gate_report is None:
+        return ("- not_evaluated",)
+    return tuple(
+        (
+            f"- {gate.gate_name.value}: "
+            f"{'pass' if gate.passed else 'fail'} "
+            f"(log={gate.structured_log_key}, "
+            f"reasons={', '.join(gate.blocking_reasons) or 'none'})"
         )
-        if merge_gate_report is not None
-        else ("- not_evaluated",)
+        for gate in merge_gate_report.gates
     )
 
+
+def _build_review_markdown_body(
+    *,
+    correlation_id: str,
+    report: BreakdownReport,
+    mistake_lines: tuple[str, ...],
+    checklist_lines: tuple[str, ...],
+    hypothesis_lines: tuple[str, ...],
+    candidate_lines: tuple[str, ...],
+    candidate_detail_lines: tuple[str, ...],
+    capacity_lines: tuple[str, ...],
+    review_decision_lines: tuple[str, ...],
+    archive_lines: tuple[str, ...],
+    transition_lines: tuple[str, ...],
+    merge_gate_lines: tuple[str, ...],
+    replay_bundle_lines: tuple[str, ...],
+) -> str:
     lines = [
         f"# Build-9X Review - {correlation_id}",
         "",
@@ -177,11 +213,56 @@ def export_learning_review(
         "## Replay Bundles",
         *replay_bundle_lines,
     ]
+    return "\n".join(lines)
+
+
+def export_learning_review(
+    correlation_id: str,
+    report: BreakdownReport,
+    checklist: LearningChecklist,
+    candidates: tuple[ImprovementCandidate, ...],
+    *,
+    hypotheses: tuple[LearningHypothesis, ...] = (),
+    replay_bundles: tuple[ReplayExportBundle, ...] = (),
+    capacity_snapshot: LearningCapacitySnapshot | None = None,
+    review_decisions: tuple[ReviewDecisionRecord, ...] = (),
+    archive_eligibility: tuple[ArchiveEligibilityRecord, ...] = (),
+    lifecycle_transitions: tuple[LifecycleTransitionRecord, ...] = (),
+    merge_gate_report: Build9XMergeGateReport | None = None,
+    export_ref: str = "",
+) -> LearningReviewExport:
+    """Render the governed review packet into a markdown export."""
+
+    mistake_lines = _bullet_lines(report.mistake_classes)
+    checklist_lines = _bullet_lines(checklist.items)
+    candidate_lines = _bullet_lines(tuple(candidate.summary for candidate in candidates))
+    hypothesis_lines = _build_hypothesis_lines(hypotheses)
+    candidate_detail_lines = _build_candidate_detail_lines(candidates)
+    replay_bundle_lines = _build_replay_bundle_lines(replay_bundles)
+    review_decision_lines = _build_review_decision_lines(review_decisions)
+    archive_lines = _build_archive_lines(archive_eligibility)
+    capacity_lines = _build_capacity_lines(capacity_snapshot)
+    transition_lines = _build_transition_lines(lifecycle_transitions)
+    merge_gate_lines = _build_merge_gate_lines(merge_gate_report)
 
     return LearningReviewExport(
         correlation_id=correlation_id,
         export_ref=export_ref or f"meta_learning_review:{correlation_id}",
-        markdown_body="\n".join(lines),
+        markdown_body=_build_review_markdown_body(
+            correlation_id=correlation_id,
+            report=report,
+            mistake_lines=mistake_lines,
+            checklist_lines=checklist_lines,
+            hypothesis_lines=hypothesis_lines,
+            candidate_lines=candidate_lines,
+            candidate_detail_lines=candidate_detail_lines,
+            capacity_lines=capacity_lines,
+            review_decision_lines=review_decision_lines,
+            archive_lines=archive_lines,
+            transition_lines=transition_lines,
+            merge_gate_lines=merge_gate_lines,
+            replay_bundle_lines=replay_bundle_lines,
+        ),
         checklist=checklist,
         candidates=candidates,
         replay_bundles=replay_bundles,

@@ -19,6 +19,10 @@ from protocols import (
 )
 
 
+def _state_dir(repo_tmp_path: Path, name: str) -> Path:
+    return repo_tmp_path / name
+
+
 def _publish_engine_d_snapshot(
     state_dir: Path,
     *,
@@ -62,8 +66,8 @@ def _hook_input() -> EngineDReentryValidationInput:
     )
 
 
-def test_load_engine_d_reentry_hook_payload_from_loaded_selection():
-    state_dir = Path("build/test_protocols_engine_d_reentry_hook_loaded")
+def test_load_engine_d_reentry_hook_payload_from_loaded_selection(repo_tmp_path: Path):
+    state_dir = _state_dir(repo_tmp_path, "test_protocols_engine_d_reentry_hook_loaded")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = _publish_engine_d_snapshot(state_dir)
@@ -92,8 +96,8 @@ def test_load_engine_d_reentry_hook_payload_from_loaded_selection():
         shutil.rmtree(state_dir, ignore_errors=True)
 
 
-def test_load_engine_d_reentry_hook_payload_rejects_wrong_hook():
-    state_dir = Path("build/test_protocols_engine_d_reentry_hook_wrong_hook")
+def test_load_engine_d_reentry_hook_payload_rejects_wrong_hook(repo_tmp_path: Path):
+    state_dir = _state_dir(repo_tmp_path, "test_protocols_engine_d_reentry_hook_wrong_hook")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = CompiledArtifactRegistryStore(state_dir)
@@ -107,12 +111,20 @@ def test_load_engine_d_reentry_hook_payload_rejects_wrong_hook():
 def test_run_engine_d_reentry_hook_returns_typed_acceptance():
     outcome = run_engine_d_reentry_hook(
         _hook_input(),
-        EngineDReentryHookPlanPayload(detail="artifact approved engine_d re-entry"),
+        EngineDReentryHookPlanPayload(
+            detail="artifact approved engine_d re-entry",
+            episode_reference_id="episode-1",
+            anti_revenge_state="reset_required",
+            observability_tags=("backtest.anti_revenge_state",),
+        ),
     )
 
     assert outcome.accepted is True
     assert outcome.reason_codes == ()
     assert "approved" in outcome.detail
+    assert outcome.episode_reference_id == "episode-1"
+    assert outcome.anti_revenge_state == "reset_required"
+    assert outcome.observability_tags == ("backtest.anti_revenge_state",)
 
 
 def test_run_engine_d_reentry_hook_blocks_with_typed_detail():
@@ -122,9 +134,18 @@ def test_run_engine_d_reentry_hook_blocks_with_typed_detail():
             blocked=True,
             block_reason_codes=("ARTIFACT_REENTRY_BLOCK",),
             detail="artifact veto on engine_d re-entry",
+            episode_reference_id="episode-2",
+            anti_revenge_state="cooldown_active",
+            observability_tags=("backtest.anti_revenge_state", "backtest.episode_ref"),
         ),
     )
 
     assert outcome.accepted is False
     assert outcome.reason_codes == ("ARTIFACT_REENTRY_BLOCK",)
     assert outcome.detail == "artifact veto on engine_d re-entry"
+    assert outcome.episode_reference_id == "episode-2"
+    assert outcome.anti_revenge_state == "cooldown_active"
+    assert outcome.observability_tags == (
+        "backtest.anti_revenge_state",
+        "backtest.episode_ref",
+    )

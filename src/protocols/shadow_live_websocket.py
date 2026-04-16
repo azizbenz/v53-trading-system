@@ -10,7 +10,7 @@ import os
 import time
 from datetime import date
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Protocol
+from typing import Awaitable, Callable, Mapping, Protocol
 
 from data_backbone.websocket_gateway.connection_manager import ConnectionState
 from data_backbone.websocket_gateway.runtime_gateway import AdapterMessage, WebSocketGatewayAdapter, WebSocketGatewayRuntime
@@ -101,8 +101,8 @@ class BinanceSpotLiveWebSocketAdapter(WebSocketGatewayAdapter):
         if stale_client is not None:
             try:
                 stale_client.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                _ = exc
         client = self._socket_factory(
             endpoint,
             self._config.connect_timeout_s,
@@ -118,8 +118,8 @@ class BinanceSpotLiveWebSocketAdapter(WebSocketGatewayAdapter):
             return
         try:
             client.close()
-        except Exception:
-            return
+        except Exception as exc:
+            _ = exc
 
     def subscribe(self, endpoint: str, pair: str, stream_type: str) -> None:
         if endpoint not in self._clients:
@@ -187,7 +187,7 @@ class BinanceSpotLiveWebSocketAdapter(WebSocketGatewayAdapter):
             return f"{symbol}@{lowered}"
         raise ValueError(f"Unsupported native live websocket stream_type: {stream_type}")
 
-    def _parse_message(self, payload: dict[str, Any]) -> AdapterMessage | None:
+    def _parse_message(self, payload: Mapping[str, object]) -> AdapterMessage | None:
         stream_name = str(payload.get("stream", ""))
         data = payload.get("data", payload)
         if not isinstance(data, dict):
@@ -323,7 +323,7 @@ def _resolve_required_env(env_var_name: str) -> str:
     )
 
 
-def _detect_user_data_event_type(payload: dict[str, Any]) -> str:
+def _detect_user_data_event_type(payload: Mapping[str, object]) -> str:
     event_payload = payload.get("event")
     if isinstance(event_payload, dict):
         event_type = str(event_payload.get("e", "")).strip()
@@ -379,7 +379,7 @@ def capture_live_user_data_stream(
     client.send(json.dumps(subscribe_request))
 
     subscription_id: int | None = None
-    observed_events: list[dict[str, Any]] = []
+    observed_events: list[dict[str, object]] = []
     event_types: set[str] = set()
     idle_polls = 0
     started_at = clock()
@@ -427,8 +427,8 @@ def capture_live_user_data_stream(
     finally:
         try:
             client.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            _ = exc
 
     if subscription_id is None:
         raise RuntimeError("Binance user data stream subscription did not succeed")
@@ -561,27 +561,17 @@ def capture_live_websocket_snapshot_batch(
     snapshot_batch_path = output_dir / "live_websocket_snapshot_batch.json"
     summary_path = output_dir / "live_websocket_capture_summary.json"
     endpoint = config.endpoint
-    adapter = (
-        adapter_factory(config)
-        if adapter_factory is not None
-        else BinanceSpotLiveWebSocketAdapter(config, clock=clock)
-    )
+    adapter = adapter_factory(config) if adapter_factory is not None else BinanceSpotLiveWebSocketAdapter(config, clock=clock)
     runtime = WebSocketGatewayRuntime(adapter)
     for pair in config.pairs:
         for stream_type in config.stream_types:
             runtime.subscribe(pair, stream_type, endpoint)
     status = runtime.connect(endpoint, now=clock())
     if status.state != ConnectionState.CONNECTED:
-        if status.error_message:
-            raise RuntimeError(
-                f"Native live_websocket adapter failed to connect to {endpoint}: "
-                f"{status.error_message}"
-            )
+        message = status.error_message or f"state={status.state.value}"
         raise RuntimeError(
-            f"Native live_websocket adapter failed to connect to {endpoint} "
-            f"(state={status.state.value})"
+            f"Native live_websocket adapter failed to connect to {endpoint}: {message}"
         )
-
     observed_messages: list[ObservedWebSocketMessage] = []
     idle_polls = 0
     started_at = clock()
@@ -591,32 +581,30 @@ def capture_live_websocket_snapshot_batch(
             and idle_polls < config.idle_poll_limit
             and (clock() - started_at) <= config.capture_timeout_s
         ):
-            now = clock()
-            result = runtime.poll_once(endpoint, now=now)
-            if result.raw_message is None:
+            result = runtime.poll_once(endpoint, now=clock())
+            raw_message = result.raw_message
+            if raw_message is None:
                 idle_polls += 1
                 continue
             idle_polls = 0
-            timestamp_ms = int(round(result.raw_message.recv_time * 1000.0))
             observed_messages.append(
                 ObservedWebSocketMessage(
-                    pair=result.raw_message.pair,
-                    stream_type=result.raw_message.stream_type,
-                    payload=dict(result.raw_message.payload),
-                    recv_time=result.raw_message.recv_time,
-                    source=result.raw_message.source or "binance_live",
-                    sequence=result.raw_message.sequence,
+                    pair=raw_message.pair,
+                    stream_type=raw_message.stream_type,
+                    payload=dict(raw_message.payload),
+                    recv_time=raw_message.recv_time,
+                    source=raw_message.source or "binance_live",
+                    sequence=raw_message.sequence,
                     route_hint=_route_hint_payload(
                         config,
-                        pair=result.raw_message.pair,
+                        pair=raw_message.pair,
                         index=len(observed_messages) + 1,
-                        timestamp_ms=timestamp_ms,
+                        timestamp_ms=int(round(raw_message.recv_time * 1000.0)),
                     ),
                 )
             )
     finally:
         runtime.disconnect(endpoint, now=clock(), error="capture_complete")
-
     build_result = build_snapshot_batch_from_observed_websocket_messages(
         tuple(observed_messages),
         stream_path=config.endpoint,
@@ -633,14 +621,16 @@ def capture_live_websocket_snapshot_batch(
             server_time_reader=time_sync_server_time_reader,
         )
     )
-    user_data_summary: ShadowLiveUserDataCaptureSummary | None = None
-    if config.user_data_stream_enabled:
-        user_data_summary = capture_live_user_data_stream(
+    user_data_summary = (
+        capture_live_user_data_stream(
             config,
             output_dir=output_dir,
             socket_factory=user_data_socket_factory,
             clock=clock,
         )
+        if config.user_data_stream_enabled
+        else None
+    )
     result = ShadowLiveWebSocketCaptureResult(
         session_date=session_date,
         live_capture_dir_ref=str(output_dir.resolve()),
@@ -655,24 +645,12 @@ def capture_live_websocket_snapshot_batch(
         time_sync_offsets_path_ref=time_sync_offsets_path_ref,
         time_sync_sample_count=time_sync_sample_count,
         time_sync_probe_error=time_sync_probe_error,
-        user_data_summary_path_ref=(
-            user_data_summary.summary_path_ref if user_data_summary is not None else ""
-        ),
-        user_data_events_path_ref=(
-            user_data_summary.events_path_ref if user_data_summary is not None else ""
-        ),
-        user_data_authenticated=(
-            user_data_summary.authenticated if user_data_summary is not None else False
-        ),
-        user_data_subscription_id=(
-            user_data_summary.subscription_id if user_data_summary is not None else None
-        ),
-        user_data_event_count=(
-            user_data_summary.emitted_event_count if user_data_summary is not None else 0
-        ),
-        user_data_event_types=(
-            user_data_summary.event_types if user_data_summary is not None else ()
-        ),
+        user_data_summary_path_ref=user_data_summary.summary_path_ref if user_data_summary is not None else "",
+        user_data_events_path_ref=user_data_summary.events_path_ref if user_data_summary is not None else "",
+        user_data_authenticated=user_data_summary.authenticated if user_data_summary is not None else False,
+        user_data_subscription_id=user_data_summary.subscription_id if user_data_summary is not None else None,
+        user_data_event_count=user_data_summary.emitted_event_count if user_data_summary is not None else 0,
+        user_data_event_types=user_data_summary.event_types if user_data_summary is not None else (),
     )
     atomic_write_json(summary_path, result.model_dump(mode="json"))
     return result

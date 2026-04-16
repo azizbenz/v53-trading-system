@@ -8,6 +8,7 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+from types import ModuleType
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -32,7 +33,7 @@ def _configure_stdio() -> None:
         stderr.reconfigure(encoding="utf-8", errors="replace")
 
 
-def _load_shadow_runner_module():
+def _load_shadow_runner_module() -> ModuleType:
     script_path = REPO_ROOT / "scripts" / "run_local_replay_shadow.py"
     module_name = "shadow_daily_orchestrator_runner"
     spec = importlib.util.spec_from_file_location(module_name, script_path)
@@ -205,6 +206,77 @@ def _read_info_stress_governance_summary(
     }
 
 
+def _emit_output_lines(lines: tuple[str, ...]) -> None:
+    if not lines:
+        return
+    sys.stdout.write("\n".join(lines) + "\n")
+
+
+def _build_last_run_payload(
+    *,
+    slot: ShadowDailyPlanSlot,
+    orchestrator: ShadowDailyOrchestrator,
+    resolved_shadow_output_dir: Path,
+    artifacts: object,
+    execution_runtime_projection_summary: dict[str, object],
+    regime_lite_governance_summary: dict[str, object],
+    info_stress_governance_summary: dict[str, object],
+    record: ShadowDailyExecutionRecord,
+) -> dict[str, object]:
+    return {
+        "session_date": slot.session_date,
+        "export_dir_ref": slot.export_dir_ref,
+        "state_path": str(orchestrator.state_path.resolve()),
+        "shadow_output_dir_ref": str(resolved_shadow_output_dir.resolve()),
+        "local_replay_evidence_ref": str(
+            artifacts.local_replay_evidence_json_path.resolve()
+        ),
+        "shadow_runtime_evidence_ref": str(
+            artifacts.shadow_runtime_evidence_json_path.resolve()
+        ),
+        "shadow_summary_ref": str(artifacts.shadow_summary_json_path.resolve()),
+        "shadow_report_ref": str(artifacts.shadow_report_json_path.resolve()),
+        "shadow_session_summary_ref": str(
+            artifacts.shadow_session_summary_json_path.resolve()
+        ),
+        "shadow_session_registry_ref": str(
+            artifacts.shadow_session_registry_json_path.resolve()
+        ),
+        "execution_runtime_projection_ref": (
+            str(artifacts.execution_runtime_projection_json_path.resolve())
+            if artifacts.execution_runtime_projection_json_path is not None
+            else ""
+        ),
+        **execution_runtime_projection_summary,
+        **regime_lite_governance_summary,
+        **info_stress_governance_summary,
+        "shadow_day_recorded": record.shadow_day_recorded,
+        "accepted": record.accepted,
+        "consecutive_days": record.consecutive_days,
+        "remaining_days": record.remaining_days,
+    }
+
+
+def _orchestrator_output_lines(
+    *,
+    slot: ShadowDailyPlanSlot,
+    orchestrator: ShadowDailyOrchestrator,
+    last_run_path: Path,
+    resolved_shadow_output_dir: Path,
+    artifacts: object,
+) -> tuple[str, ...]:
+    return (
+        f"Orchestrated session date: {slot.session_date}",
+        f"Orchestrator state JSON: {orchestrator.state_path}",
+        f"Last run JSON: {last_run_path}",
+        f"Shadow output dir: {resolved_shadow_output_dir}",
+        f"Local replay evidence JSON: {artifacts.local_replay_evidence_json_path}",
+        f"Shadow runtime evidence JSON: {artifacts.shadow_runtime_evidence_json_path}",
+        f"Shadow summary JSON: {artifacts.shadow_summary_json_path}",
+        f"Shadow report JSON: {artifacts.shadow_report_json_path}",
+    )
+
+
 def orchestrate_one_shadow_day(
     output_dir: Path,
     *,
@@ -227,11 +299,14 @@ def orchestrate_one_shadow_day(
         session_date=session_date,
     )
     if slot is None:
-        print("No pending dated Shadow export directory was found.")
+        _emit_output_lines(("No pending dated Shadow export directory was found.",))
         return 0
     if slot.session_date in set(orchestrator.completed_session_dates()):
-        print(
-            f"Shadow daily orchestrator already completed session_date={slot.session_date}."
+        _emit_output_lines(
+            (
+                "Shadow daily orchestrator already completed "
+                f"session_date={slot.session_date}.",
+            )
         )
         return 0
 
@@ -290,51 +365,31 @@ def orchestrate_one_shadow_day(
     last_run_path = output_dir / "shadow_daily_orchestrator.last_run.json"
     last_run_path.write_text(
         json.dumps(
-            {
-                "session_date": slot.session_date,
-                "export_dir_ref": slot.export_dir_ref,
-                "state_path": str(orchestrator.state_path.resolve()),
-                "shadow_output_dir_ref": str(resolved_shadow_output_dir.resolve()),
-                "local_replay_evidence_ref": str(
-                    artifacts.local_replay_evidence_json_path.resolve()
+            _build_last_run_payload(
+                slot=slot,
+                orchestrator=orchestrator,
+                resolved_shadow_output_dir=resolved_shadow_output_dir,
+                artifacts=artifacts,
+                execution_runtime_projection_summary=(
+                    execution_runtime_projection_summary
                 ),
-                "shadow_runtime_evidence_ref": str(
-                    artifacts.shadow_runtime_evidence_json_path.resolve()
-                ),
-                "shadow_summary_ref": str(artifacts.shadow_summary_json_path.resolve()),
-                "shadow_report_ref": str(artifacts.shadow_report_json_path.resolve()),
-                "shadow_session_summary_ref": str(
-                    artifacts.shadow_session_summary_json_path.resolve()
-                ),
-                "shadow_session_registry_ref": str(
-                    artifacts.shadow_session_registry_json_path.resolve()
-                ),
-                "execution_runtime_projection_ref": (
-                    str(artifacts.execution_runtime_projection_json_path.resolve())
-                    if artifacts.execution_runtime_projection_json_path is not None
-                    else ""
-                ),
-                **execution_runtime_projection_summary,
-                **regime_lite_governance_summary,
-                **info_stress_governance_summary,
-                "shadow_day_recorded": record.shadow_day_recorded,
-                "accepted": record.accepted,
-                "consecutive_days": record.consecutive_days,
-                "remaining_days": record.remaining_days,
-            },
+                regime_lite_governance_summary=regime_lite_governance_summary,
+                info_stress_governance_summary=info_stress_governance_summary,
+                record=record,
+            ),
             indent=2,
         ),
         encoding="utf-8",
     )
-
-    print(f"Orchestrated session date: {slot.session_date}")
-    print(f"Orchestrator state JSON: {orchestrator.state_path}")
-    print(f"Last run JSON: {last_run_path}")
-    print(f"Shadow output dir: {resolved_shadow_output_dir}")
-    print(f"Local replay evidence JSON: {artifacts.local_replay_evidence_json_path}")
-    print(f"Shadow runtime evidence JSON: {artifacts.shadow_runtime_evidence_json_path}")
-    print(f"Shadow summary JSON: {artifacts.shadow_summary_json_path}")
-    print(f"Shadow report JSON: {artifacts.shadow_report_json_path}")
+    _emit_output_lines(
+        _orchestrator_output_lines(
+            slot=slot,
+            orchestrator=orchestrator,
+            last_run_path=last_run_path,
+            resolved_shadow_output_dir=resolved_shadow_output_dir,
+            artifacts=artifacts,
+        )
+    )
     return 0
 
 

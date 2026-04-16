@@ -1,5 +1,7 @@
 """Bounded external alert delivery adapters."""
 
+from __future__ import annotations
+
 from alerting.telegram_alerter import (
     TelegramAlerter,
     TelegramAlerterConfig,

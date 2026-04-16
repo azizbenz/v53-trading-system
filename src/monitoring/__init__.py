@@ -1,5 +1,7 @@
 """Real Build-10 monitoring backend for the Light runtime."""
 
+from __future__ import annotations
+
 from monitoring.alert_manager import AlertLifecycleTracker, build_monitoring_alerts
 from monitoring.build14_observation import (
     derive_build14_observation_from_payload,
@@ -269,7 +271,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> object:
     if name in {"MonitoringRuntime", "MonitoringRuntimeConfig", "MonitoringRuntimeResult", "MonitoringRuntimeState"}:
         from monitoring.monitoring_runtime import (
             MonitoringRuntime,

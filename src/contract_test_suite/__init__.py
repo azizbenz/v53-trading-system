@@ -7,6 +7,8 @@ A broken contract MUST fail the build — spec 6.9.
 Dependencies: interface_contracts, manifest_registry
 """
 
+from __future__ import annotations
+
 from contract_test_suite.contract_models import (
     ContractCategory,
     ContractDefinition,

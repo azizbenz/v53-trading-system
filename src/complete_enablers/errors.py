@@ -8,7 +8,7 @@ from interface_contracts import V53BaseError
 class Build14GuardrailError(V53BaseError):
     """Raised when a Build-14 enabler violates its guardrails."""
 
-    def __init__(self, message: str, details: dict | None = None):
+    def __init__(self, message: str, details: dict[str, object] | None = None) -> None:
         super().__init__(
             message=message,
             code="ERR_BUILD14_GUARDRAIL",

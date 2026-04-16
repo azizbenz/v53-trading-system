@@ -1,5 +1,7 @@
 """Build-5 - scoring_backbone: auditable hard/soft/rank runtime."""
 
+from __future__ import annotations
+
 from .fee_aware_edge_gate import (
     FeeAwareEdgeDecision,
     FeeAwareEdgeGateConfig,

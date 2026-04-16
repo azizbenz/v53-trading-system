@@ -10,7 +10,7 @@ Spec 7.9: no partially initialized state considered OK.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable, Protocol
 
 from smoke_bootstrap_recovery.smoke_models import SmokeStatus, StateSanityResult
 from smoke_bootstrap_recovery.engineering_guardrails import (
@@ -24,6 +24,25 @@ from smoke_bootstrap_recovery.engineering_guardrails import (
 # A sanity check is a callable that returns (passed: bool, detail: str)
 SanityCheck = Callable[[], tuple[bool, str]]
 FD_LEAK_DELTA_TOLERANCE = 5
+
+
+class KillSwitchLike(Protocol):
+    """Protocol for the persisted kill switch used by smoke checks."""
+
+    current_state: object
+
+    def trip(self, reason: object, detail: str) -> None:
+        """Trip the kill switch and persist its state."""
+
+    def is_trading_allowed(self) -> bool:
+        """Report whether trading remains allowed."""
+
+
+class KillSwitchFactory(Protocol):
+    """Callable factory that reconstructs a persisted kill switch."""
+
+    def __call__(self, *, state_dir: Path) -> KillSwitchLike:
+        """Return a kill switch instance bound to the provided state dir."""
 
 
 def capture_fd_count(fd_counter: Callable[[], int | None] | None = None) -> int | None:
@@ -266,9 +285,9 @@ def check_engineering_guardrails(
 
 def check_kill_switch_persisted(
     state_dir_path: str | None,
-    breaker_factory: Any = None,
-    trip_reason: Any = None,
-    tripped_state: Any = None,
+    breaker_factory: KillSwitchFactory | None = None,
+    trip_reason: object | None = None,
+    tripped_state: object | None = None,
 ) -> SanityCheck:
     """GEM-10: verify kill switch state survives on disk after trip.
 

@@ -7,9 +7,11 @@ that a Pydantic model conforms to its declared schema contract.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
+
+FieldType = TypeVar("FieldType")
 
 from contract_test_suite.contract_models import (
     ContractCategory,
@@ -64,7 +66,7 @@ def assert_field_absent(
 def assert_field_type(
     model_class: type[BaseModel],
     field_name: str,
-    expected_type: type[Any],
+    expected_type: type[FieldType],
     module_name: str,
 ) -> ContractResult:
     """Assert that a field's annotation matches the expected type."""
@@ -101,7 +103,7 @@ def assert_field_type(
 
 def assert_valid_instance(
     model_class: type[BaseModel],
-    data: dict[str, Any],
+    data: dict[str, object],
     module_name: str,
     contract_name: str = "",
 ) -> ContractResult:
@@ -126,7 +128,7 @@ def assert_valid_instance(
 
 def assert_invalid_rejected(
     model_class: type[BaseModel],
-    data: dict[str, Any],
+    data: dict[str, object],
     module_name: str,
     contract_name: str = "",
     reason: str = "",
@@ -157,10 +159,10 @@ def assert_invalid_rejected(
 def assert_bounds(
     model_class: type[BaseModel],
     field_name: str,
-    valid_value: Any,
-    invalid_low: Any | None,
-    invalid_high: Any | None,
-    base_data: dict[str, Any],
+    valid_value: object,
+    invalid_low: object | None,
+    invalid_high: object | None,
+    base_data: dict[str, object],
     module_name: str,
 ) -> list[ContractResult]:
     """Assert that a field enforces its bounds.

@@ -135,6 +135,57 @@ $$P(\rho \geq k \mid e > 0) \geq 0.7$$
 2. Plancher = $\hat q_{0.9}(f + s + i) + \kappa$, où $\kappa = 5$ bps de marge.
 3. **Floor humain dur** : 15 bps (MI-7).
 
+#### 5.1.3 `THR-E03` — `ce_min` par engine (Competitive Edge minimum net)
+
+**Énoncé** : pour chaque engine $E \in \{A, B, C, D\}$ et chaque paire $p$, le trade est rejeté si $\text{CE}_{E,p} < \text{ce\_min}_{E,p}$.
+
+**Méthode** :
+1. Sur l'historique backtest par engine $E$ et paire $p$, calculer :
+   $$\text{CE}_i = e_i - c_i = \text{return net}_i - (f_i + s_i + i_i)$$
+   pour tous les trades positifs ($e_i > 0$).
+2. Estimer la distribution de $\text{CE}_i$ via **stationary block bootstrap** (Politis-Romano), $B = 10\,000$.
+3. Calibrer $\text{ce\_min}_{E,p}$ tel que :
+   $$\text{ce\_min}_{E,p} = \hat q_{0.05}(\text{CE}_i^{+})$$
+   c'est-à-dire le **percentile 5** de la distribution des CE positifs. Un trade doit avoir un CE ≥ au pire CE encore acceptable.
+4. **Floor humain dur** (MI-7) — bornes absolues par engine :
+   - Engine A : $\text{ce\_min}_A \geq 0.0001$ (1 bps)
+   - Engine B : $\text{ce\_min}_B \geq 0.0002$ (2 bps, mean-reversion = CE plus serrés)
+   - Engine C : $\text{ce\_min}_C \geq 0.00015$ (1.5 bps)
+   - Engine D : $\text{ce\_min}_D \geq 0.00012$ (1.2 bps, linkage = CE corrélé)
+
+**Robustesse** :
+- IC bootstrap 95% sur $\text{ce\_min}$. Publier la borne **supérieure** (conservatif).
+- Walk-forward sur $\geq 5$ plis. Dispersion inter-plis > 50% → **rejet**.
+- Si $N_{\text{trades positifs}} < 100$ pour un engine/paire → pas de calibration pair-specific, **utiliser le floor humain**.
+
+**Dépendance** : $c_i$ dépend de THR-E02 (edge_minimum_bps) et THR-X05 (slippage model).
+
+#### 5.1.4 `THR-E04` — `delta_safe` par engine (marge de sécurité coût)
+
+**Énoncé** : un trade est accepté si $\mathbb{E}[g_i \mid E, p] > \mathbb{E}[c_i \mid E, p] + \delta_{\text{safe},E}$.
+
+**Méthode** :
+1. Sur historique backtest, pour chaque engine $E$ :
+   $$\Delta_i = g_i - c_i$$
+   où $g_i$ = gain brut estimé, $c_i$ = coût total estimé.
+2. Estimer l'**incertitude** du modèle de coût via :
+   $$\hat\sigma_c = \text{std}(c_{\text{estimé}} - c_{\text{réalisé}})$$
+   sur les trades shadow (si disponibles) ou walk-forward.
+3. Calibrer $\delta_{\text{safe},E}$ :
+   $$\delta_{\text{safe},E} = \hat q_{0.95}(\hat\sigma_c) + \hat q_{0.95}(\text{slippage tail}_{E})$$
+   La marge absorbe l'erreur d'estimation des coûts + le tail du slippage (Almgren-Chriss).
+4. **Floor humain dur** (MI-7) :
+   - Engine A : $\delta_{\text{safe},A} \geq 0.0005$ (5 bps)
+   - Engine B : $\delta_{\text{safe},B} \geq 0.0008$ (8 bps, mean-reversion = fenêtres courtes = slippage volatile)
+   - Engine C : $\delta_{\text{safe},C} \geq 0.0005$ (5 bps)
+   - Engine D : $\delta_{\text{safe},D} \geq 0.0005$ (5 bps)
+
+**Robustesse** :
+- En shadow : comparer $\delta_{\text{safe}}$ calibré vs $|\hat c - c_{\text{réel}}|$ réalisé. Si la marge est dépassée dans > 5% des cas, **recalibration urgente**.
+- Walk-forward avec embargo.
+
+**Interaction** : $\delta_{\text{safe}}$ est mathématiquement le "tampon" entre THR-E03 (ce_min) et le break-even réel.
+
 ---
 
 ### 5.2 RISK — `THR-R01` à `THR-R05`
@@ -178,6 +229,44 @@ avec $\lambda = 0.25$ (quart-Kelly), choisi pour absorber l'erreur d'estimation 
 **Hard caps humains** :
 - `THR-R04` : position cap dur à 20% du capital sur une seule position
 - `THR-R05` : 5 positions max simultanées
+
+#### 5.2.4 `THR-W01`, `THR-W02` — drawdown runtime guards (warning / observe)
+
+**Contexte** : distincts de THR-R01 (daily PnL breaker). THR-W01/W02 agissent dans `risk_runtime.py` (gate temps réel), pas dans le breaker (post-facto).
+
+- **THR-W01** ($\theta_w$) : drawdown intra-session → `OBSERVE_ONLY` (le runtime laisse passer mais log un warning).
+- **THR-W02** ($\theta_o$) : drawdown intra-session → `REDUCE_EXPOSURE` (le runtime réduit l'exposition).
+
+**Méthode** :
+
+1. Définir la série des **max drawdowns intra-session** historiques :
+   $$D_t = \frac{\text{equity}_t - \text{peak}_t}{\text{peak}_t}$$
+   mesurée sur chaque session backtest (1 jour = 1 session).
+
+2. Estimer la distribution de $|D_t|$ :
+   - Si $|D_t|$ est fat-tailed (test d'Anderson-Darling sur GPD, $p < 0.05$), utiliser **EVT/POT** :
+     $$\theta_w = \hat q_{0.70}(|D_t|), \qquad \theta_o = \widehat{\text{VaR}}_{0.99}(|D_t|)$$
+   - Si $|D_t|$ est thin-tailed (normal-like), utiliser les quantiles empiriques bootstrap :
+     $$\theta_w = \hat q_{0.70}(|D_t|), \qquad \theta_o = \hat q_{0.95}(|D_t|)$$
+
+3. **Contrainte structurelle** : $\theta_o / \theta_w \geq 1.5$ (éviter le collapse warning→observe).
+   Si violé, élargir $\theta_o$ à $1.5 \times \theta_w$.
+
+4. **Floors humains durs** (MI-7) :
+   - $\theta_w \geq 0.015$ (1.5%, sinon alerts en permanence sur du bruit)
+   - $\theta_o \geq 0.03$ (3%, sinon réduction d'exposition intempestive)
+   - Defaults : $\theta_w = 0.02$, $\theta_o = 0.04$
+
+5. **Caps humains** :
+   - $\theta_w \leq 0.05$ (5%, sinon le warning arrive trop tard)
+   - $\theta_o \leq 0.08$ (8%, sinon le reduce arrive trop tard)
+
+**Robustesse** :
+- Bootstrap stationnaire (Politis-Romano), $B = 5\,000$, IC 95% sur $\theta_w$ et $\theta_o$.
+- Walk-forward sur $\geq 5$ plis. Dispersion > 40% → **rejet** (régime de drawdown instable).
+- **En shadow** : compter le nombre de jours `OBSERVE_ONLY` et `REDUCE_EXPOSURE`. Si taux OBSERVE > 30% ou REDUCE > 10%, **recalibrer** (seuils trop serrés).
+
+**Injection runtime** : au boot, `CalibrationLoader.get("THR-W01")` → `RiskLimits(drawdown_warning_threshold_pct=...)`.
 
 ---
 
@@ -275,11 +364,31 @@ Ratios fixes (référence AAOIFI / Usmani, à confirmer en D-02) :
 
 ---
 
-### 5.6 SHADOW — `THR-S01` à `THR-S05`
+### 5.6 SHADOW — `THR-S01` à `THR-S06`
 
 > Les seuils de promotion entre paliers Shadow (1m → 2m → 3m) sont **entièrement** spécifiés dans `14_SHADOW_GATE_MATH.md`.
 >
-> Ce paragraphe ne fait que rediriger pour éviter la duplication. Aucun calcul ici.
+> Ce paragraphe ne fait que rediriger pour éviter la duplication. Aucun calcul ici — sauf `THR-S06` ci-dessous.
+
+#### 5.6.1 `THR-S06` — `max_allowed_ce_net_drop` (dégradation CE shadow vs backtest)
+
+**Énoncé** : le gate shadow compare le Competitive Edge net moyen réalisé en shadow ($\overline{\text{CE}}_{\text{shadow}}$) à celui du backtest ($\overline{\text{CE}}_{\text{backtest}}$). Si la dégradation dépasse un seuil, le gate échoue.
+
+**Méthode** :
+1. Calculer la différence :
+   $$\Delta\text{CE} = \overline{\text{CE}}_{\text{shadow}} - \overline{\text{CE}}_{\text{backtest}}$$
+2. Le gate échoue si $\Delta\text{CE} < -\text{THR-S06}$.
+3. Calibration de THR-S06 :
+   - Sur les 5 walk-forward folds du backtest, calculer la variabilité inter-fold :
+     $$\hat\sigma_{\text{CE}} = \text{std}(\overline{\text{CE}}_{\text{fold}_1}, \ldots, \overline{\text{CE}}_{\text{fold}_5})$$
+   - THR-S06 = $2 \times \hat\sigma_{\text{CE}}$ (dégradation au-delà de 2σ inter-fold = anormale).
+4. **Floor humain dur** : THR-S06 $\geq 0.0003$ (3 bps, sinon trop de faux rejets).
+5. **Cap humain** : THR-S06 $\leq 0.0015$ (15 bps, sinon on tolère trop de dégradation).
+6. **Default** : 0.0005 (5 bps).
+
+**Robustesse** :
+- Bootstrap sur $\hat\sigma_{\text{CE}}$ : IC 95%.
+- Si le nombre de trades shadow < 50, **élargir** THR-S06 d'un facteur $\sqrt{50/N_{\text{shadow}}}$ pour compenser la variance d'échantillon.
 
 ---
 

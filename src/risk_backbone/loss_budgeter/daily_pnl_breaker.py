@@ -10,6 +10,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from pydantic import BaseModel, Field
+from pydantic import ValidationError
 
 from calibration_loader import CalibrationLoader
 from calibration_loader.loader import CalibrationArtifactValidationError
@@ -136,55 +137,27 @@ class DailyPnlBreaker:
         current_ts = time.time() if now_ts is None else now_ts
 
         if self._state.state_corrupted:
-            assessment = DailyPnlBreakerAssessment(
+            return _build_corrupted_state_assessment(
+                state=self._state,
                 session_date=evaluated_session_date,
-                verdict=DailyPnlBreakerVerdict.SHADOW_LOCKED,
                 current_equity=current_equity,
                 session_peak_equity=session_peak_equity,
                 drawdown_pct=drawdown_pct,
                 threshold_pct=threshold_set.intraday_drawdown_breach_pct,
-                should_force_shadow=True,
-                circuit_breaker_tripped=_maybe_trip_circuit_breaker(
-                    circuit_breaker=circuit_breaker,
-                    trip_circuit_breaker_on_breach=trip_circuit_breaker_on_breach,
-                    detail="daily breaker state corruption requires manual operator review",
-                ),
-                circuit_breaker_reason=(
-                    KillSwitchReason.LOSS_BUDGET_BREACH.value
-                    if circuit_breaker is not None and trip_circuit_breaker_on_breach
-                    else ""
-                ),
-                reason_codes=("RISK_DAILY_BREAKER_STATE_CORRUPTED",),
-                detail="daily breaker state file is corrupted; keep runtime shadowed until explicit reset",
-                state=self._state,
+                circuit_breaker=circuit_breaker,
+                trip_circuit_breaker_on_breach=trip_circuit_breaker_on_breach,
             )
-            return assessment
 
-        if self._state.shadow_locked_session_date:
-            locked_session_date = _normalize_session_date(self._state.shadow_locked_session_date)
-            if evaluated_session_date < locked_session_date:
-                raise ValueError(
-                    "daily breaker session_date cannot move backwards once a shadow lock was recorded"
-                )
-            if evaluated_session_date > locked_session_date:
-                self._state = DailyPnlBreakerState()
-                self._persist()
+        self._roll_session_lock_forward(evaluated_session_date)
 
         if self._state.shadow_locked_session_date == evaluated_session_date:
-            return DailyPnlBreakerAssessment(
+            return _build_locked_state_assessment(
+                state=self._state,
                 session_date=evaluated_session_date,
-                verdict=DailyPnlBreakerVerdict.SHADOW_LOCKED,
                 current_equity=current_equity,
                 session_peak_equity=session_peak_equity,
                 drawdown_pct=drawdown_pct,
                 threshold_pct=threshold_set.intraday_drawdown_breach_pct,
-                should_force_shadow=True,
-                reason_codes=("RISK_DAILY_BREAKER_ALREADY_LOCKED",),
-                detail=(
-                    f"daily breaker already locked Shadow for governed session {evaluated_session_date}; "
-                    "no automatic same-day reactivation"
-                ),
-                state=self._state,
             )
 
         if drawdown_pct >= threshold_set.intraday_drawdown_breach_pct:
@@ -195,35 +168,15 @@ class DailyPnlBreaker:
                 last_updated_ts=current_ts,
             )
             self._persist()
-            circuit_breaker_tripped = _maybe_trip_circuit_breaker(
-                circuit_breaker=circuit_breaker,
-                trip_circuit_breaker_on_breach=trip_circuit_breaker_on_breach,
-                detail=(
-                    "daily breaker breach "
-                    f"{drawdown_pct:.4f} >= {threshold_set.intraday_drawdown_breach_pct:.4f}"
-                ),
-            )
-            return DailyPnlBreakerAssessment(
+            return _build_breach_assessment(
+                state=self._state,
                 session_date=evaluated_session_date,
-                verdict=DailyPnlBreakerVerdict.SHADOW_RECOMMENDED,
                 current_equity=current_equity,
                 session_peak_equity=session_peak_equity,
                 drawdown_pct=drawdown_pct,
                 threshold_pct=threshold_set.intraday_drawdown_breach_pct,
-                should_force_shadow=True,
-                circuit_breaker_tripped=circuit_breaker_tripped,
-                circuit_breaker_reason=(
-                    KillSwitchReason.LOSS_BUDGET_BREACH.value
-                    if circuit_breaker_tripped
-                    else ""
-                ),
-                reason_codes=("RISK_DAILY_BREAKER_BREACHED",),
-                detail=(
-                    f"intraday drawdown {drawdown_pct:.4f} >= daily breaker "
-                    f"{threshold_set.intraday_drawdown_breach_pct:.4f}; shadow lock recorded "
-                    f"for governed session {evaluated_session_date}"
-                ),
-                state=self._state,
+                circuit_breaker=circuit_breaker,
+                trip_circuit_breaker_on_breach=trip_circuit_breaker_on_breach,
             )
 
         self._state = DailyPnlBreakerState(
@@ -232,17 +185,13 @@ class DailyPnlBreaker:
             last_updated_ts=current_ts,
         )
         self._persist()
-        return DailyPnlBreakerAssessment(
+        return _build_accepted_assessment(
+            state=self._state,
             session_date=evaluated_session_date,
-            verdict=DailyPnlBreakerVerdict.ACCEPTED,
             current_equity=current_equity,
             session_peak_equity=session_peak_equity,
             drawdown_pct=drawdown_pct,
             threshold_pct=threshold_set.intraday_drawdown_breach_pct,
-            should_force_shadow=False,
-            reason_codes=("RISK_DAILY_BREAKER_ACCEPTED",),
-            detail="intraday drawdown remains below the daily breaker threshold",
-            state=self._state,
         )
 
     def reset(self, *, operator_detail: str = "") -> DailyPnlBreakerState:
@@ -253,13 +202,26 @@ class DailyPnlBreaker:
         self._persist()
         return self._state
 
+    def _roll_session_lock_forward(self, evaluated_session_date: str) -> None:
+        if not self._state.shadow_locked_session_date:
+            return
+        locked_session_date = _normalize_session_date(self._state.shadow_locked_session_date)
+        if evaluated_session_date < locked_session_date:
+            raise ValueError(
+                "daily breaker session_date cannot move backwards once a shadow lock was recorded"
+            )
+        if evaluated_session_date > locked_session_date:
+            self._state = DailyPnlBreakerState()
+            self._persist()
+
     def _restore_from_disk(self) -> None:
         if not self._state_path.exists():
             return
         try:
             payload = json.loads(self._state_path.read_text(encoding="utf-8"))
             self._state = DailyPnlBreakerState.model_validate(payload)
-        except Exception:
+        except (OSError, ValidationError, ValueError) as exc:
+            _ = exc
             self._state = DailyPnlBreakerState(
                 state_corrupted=True,
                 last_reason="state_corrupted",
@@ -323,6 +285,130 @@ def _maybe_trip_circuit_breaker(
         return False
     circuit_breaker.trip(KillSwitchReason.LOSS_BUDGET_BREACH, detail)
     return True
+
+
+def _build_corrupted_state_assessment(
+    *,
+    state: DailyPnlBreakerState,
+    session_date: str,
+    current_equity: float,
+    session_peak_equity: float,
+    drawdown_pct: float,
+    threshold_pct: float,
+    circuit_breaker: EmergencyCircuitBreaker | None,
+    trip_circuit_breaker_on_breach: bool,
+) -> DailyPnlBreakerAssessment:
+    circuit_breaker_tripped = _maybe_trip_circuit_breaker(
+        circuit_breaker=circuit_breaker,
+        trip_circuit_breaker_on_breach=trip_circuit_breaker_on_breach,
+        detail="daily breaker state corruption requires manual operator review",
+    )
+    return DailyPnlBreakerAssessment(
+        session_date=session_date,
+        verdict=DailyPnlBreakerVerdict.SHADOW_LOCKED,
+        current_equity=current_equity,
+        session_peak_equity=session_peak_equity,
+        drawdown_pct=drawdown_pct,
+        threshold_pct=threshold_pct,
+        should_force_shadow=True,
+        circuit_breaker_tripped=circuit_breaker_tripped,
+        circuit_breaker_reason=(
+            KillSwitchReason.LOSS_BUDGET_BREACH.value
+            if circuit_breaker_tripped
+            else ""
+        ),
+        reason_codes=("RISK_DAILY_BREAKER_STATE_CORRUPTED",),
+        detail="daily breaker state file is corrupted; keep runtime shadowed until explicit reset",
+        state=state,
+    )
+
+
+def _build_locked_state_assessment(
+    *,
+    state: DailyPnlBreakerState,
+    session_date: str,
+    current_equity: float,
+    session_peak_equity: float,
+    drawdown_pct: float,
+    threshold_pct: float,
+) -> DailyPnlBreakerAssessment:
+    return DailyPnlBreakerAssessment(
+        session_date=session_date,
+        verdict=DailyPnlBreakerVerdict.SHADOW_LOCKED,
+        current_equity=current_equity,
+        session_peak_equity=session_peak_equity,
+        drawdown_pct=drawdown_pct,
+        threshold_pct=threshold_pct,
+        should_force_shadow=True,
+        reason_codes=("RISK_DAILY_BREAKER_ALREADY_LOCKED",),
+        detail=(
+            f"daily breaker already locked Shadow for governed session {session_date}; "
+            "no automatic same-day reactivation"
+        ),
+        state=state,
+    )
+
+
+def _build_breach_assessment(
+    *,
+    state: DailyPnlBreakerState,
+    session_date: str,
+    current_equity: float,
+    session_peak_equity: float,
+    drawdown_pct: float,
+    threshold_pct: float,
+    circuit_breaker: EmergencyCircuitBreaker | None,
+    trip_circuit_breaker_on_breach: bool,
+) -> DailyPnlBreakerAssessment:
+    circuit_breaker_tripped = _maybe_trip_circuit_breaker(
+        circuit_breaker=circuit_breaker,
+        trip_circuit_breaker_on_breach=trip_circuit_breaker_on_breach,
+        detail=f"daily breaker breach {drawdown_pct:.4f} >= {threshold_pct:.4f}",
+    )
+    return DailyPnlBreakerAssessment(
+        session_date=session_date,
+        verdict=DailyPnlBreakerVerdict.SHADOW_RECOMMENDED,
+        current_equity=current_equity,
+        session_peak_equity=session_peak_equity,
+        drawdown_pct=drawdown_pct,
+        threshold_pct=threshold_pct,
+        should_force_shadow=True,
+        circuit_breaker_tripped=circuit_breaker_tripped,
+        circuit_breaker_reason=(
+            KillSwitchReason.LOSS_BUDGET_BREACH.value
+            if circuit_breaker_tripped
+            else ""
+        ),
+        reason_codes=("RISK_DAILY_BREAKER_BREACHED",),
+        detail=(
+            f"intraday drawdown {drawdown_pct:.4f} >= daily breaker {threshold_pct:.4f}; "
+            f"shadow lock recorded for governed session {session_date}"
+        ),
+        state=state,
+    )
+
+
+def _build_accepted_assessment(
+    *,
+    state: DailyPnlBreakerState,
+    session_date: str,
+    current_equity: float,
+    session_peak_equity: float,
+    drawdown_pct: float,
+    threshold_pct: float,
+) -> DailyPnlBreakerAssessment:
+    return DailyPnlBreakerAssessment(
+        session_date=session_date,
+        verdict=DailyPnlBreakerVerdict.ACCEPTED,
+        current_equity=current_equity,
+        session_peak_equity=session_peak_equity,
+        drawdown_pct=drawdown_pct,
+        threshold_pct=threshold_pct,
+        should_force_shadow=False,
+        reason_codes=("RISK_DAILY_BREAKER_ACCEPTED",),
+        detail="intraday drawdown remains below the daily breaker threshold",
+        state=state,
+    )
 
 
 __all__ = [

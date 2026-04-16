@@ -266,14 +266,13 @@ def _hydrate_resume_defaults(
     return args
 
 
-def main(argv: list[str] | None = None) -> int:
-    """CLI entrypoint for the governed LOCAL_REPLAY export generator."""
+def _emit_output_lines(lines: tuple[str, ...]) -> None:
+    if not lines:
+        return
+    sys.stdout.write("\n".join(lines) + "\n")
 
-    _configure_stdio()
-    raw_argv = list(sys.argv[1:] if argv is None else argv)
-    parser = argparse.ArgumentParser(
-        description="Generate a governed LOCAL_REPLAY export artifact directory.",
-    )
+
+def _add_replay_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -354,10 +353,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--chunk-indices",
         default="",
-        help=(
-            "Optional explicit chunk selection for --run-all-chunks, for example "
-            "\"1,3,5-7\"."
-        ),
+        help='Optional explicit chunk selection for --run-all-chunks, for example "1,3,5-7".',
     )
     parser.add_argument(
         "--window-start-ms",
@@ -389,6 +385,9 @@ def main(argv: list[str] | None = None) -> int:
             "and write a canonical root export consumable by run_local_replay_shadow.py."
         ),
     )
+
+
+def _add_edge_calibration_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--emit-edge-calibration",
         action="store_true",
@@ -413,10 +412,28 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--edge-min-positive-trades", type=int, default=200)
     parser.add_argument("--edge-min-cost-observations", type=int, default=500)
     parser.add_argument("--edge-rng-seed", type=int, default=53)
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Generate a governed LOCAL_REPLAY export artifact directory.",
+    )
+    _add_replay_arguments(parser)
+    _add_edge_calibration_arguments(parser)
+    return parser
+
+
+def _parse_main_args(
+    argv: list[str] | None,
+) -> tuple[argparse.ArgumentParser, argparse.Namespace, tuple[int, ...]]:
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    parser = _build_parser()
     args = parser.parse_args(raw_argv)
     args = _hydrate_resume_defaults(args, raw_argv=raw_argv)
     if args.emit_edge_calibration and not args.edge_calibration_signed_by.strip():
-        parser.error("--edge-calibration-signed-by is required when --emit-edge-calibration is enabled")
+        parser.error(
+            "--edge-calibration-signed-by is required when --emit-edge-calibration is enabled"
+        )
     try:
         selected_chunk_indices = (
             _parse_chunk_indices(args.chunk_indices)
@@ -425,66 +442,95 @@ def main(argv: list[str] | None = None) -> int:
         )
     except ValueError as exc:
         parser.error(str(exc))
+    return parser, args, selected_chunk_indices
 
-    dataset: HistoricalReplayDataset | None = None
-    input_kind: ReplayInputKind | None = None
+
+def _load_requested_dataset(
+    *,
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+) -> tuple[HistoricalReplayDataset | None, ReplayInputKind | None]:
     if (
         args.run_all_chunks
         or not args.resume
         or args.dataset_path is not None
         or args.snapshot_path is not None
     ):
-        dataset, input_kind = _load_input_dataset(
+        return _load_input_dataset(
             parser=parser,
             run_id=args.run_id,
             dataset_path=args.dataset_path,
             snapshot_path=args.snapshot_path,
         )
-    result = orchestrate_local_replay_export(
-        ReplayOrchestratorRequest(
-            output_dir=args.output_dir,
-            run_id=args.run_id,
-            strategy_id=args.strategy_id,
-            strategy_version=args.strategy_version,
-            strategy_classification=StrategyClassification(args.strategy_classification),
-            lineage_version=args.lineage_version,
-            performance_mode=args.performance_mode,
-            profile_scope=ProfileId(args.profile_scope),
-            input_kind=input_kind,
-            dataset=dataset,
-            chunk_count=args.chunk_count,
-            chunk_index=args.chunk_index,
-            selected_chunk_indices=selected_chunk_indices,
-            window_start_ms=args.window_start_ms,
-            window_end_ms=args.window_end_ms,
-            rewind_requested=args.rewind_requested,
-            resume=args.resume,
-            run_all_chunks=args.run_all_chunks,
+    return None, None
+
+
+def _build_replay_request(
+    *,
+    args: argparse.Namespace,
+    dataset: HistoricalReplayDataset | None,
+    input_kind: ReplayInputKind | None,
+    selected_chunk_indices: tuple[int, ...],
+) -> ReplayOrchestratorRequest:
+    return ReplayOrchestratorRequest(
+        output_dir=args.output_dir,
+        run_id=args.run_id,
+        strategy_id=args.strategy_id,
+        strategy_version=args.strategy_version,
+        strategy_classification=StrategyClassification(args.strategy_classification),
+        lineage_version=args.lineage_version,
+        performance_mode=args.performance_mode,
+        profile_scope=ProfileId(args.profile_scope),
+        input_kind=input_kind,
+        dataset=dataset,
+        chunk_count=args.chunk_count,
+        chunk_index=args.chunk_index,
+        selected_chunk_indices=selected_chunk_indices,
+        window_start_ms=args.window_start_ms,
+        window_end_ms=args.window_end_ms,
+        rewind_requested=args.rewind_requested,
+        resume=args.resume,
+        run_all_chunks=args.run_all_chunks,
+    )
+
+
+def _resume_status_lines(result: object) -> tuple[str, ...]:
+    if not getattr(result, "resumed", False):
+        return ()
+    completed_chunk_indices = tuple(getattr(result, "completed_chunk_indices", ()) or ())
+    resumed_chunk_indices = tuple(getattr(result, "resumed_chunk_indices", ()) or ())
+    if completed_chunk_indices and resumed_chunk_indices:
+        if resumed_chunk_indices == completed_chunk_indices:
+            return ("Replay orchestrator resumed a fully completed multi-chunk export.",)
+        resumed_chunks = ", ".join(str(index) for index in resumed_chunk_indices)
+        return (
+            "Replay orchestrator resumed completed chunks "
+            f"{resumed_chunks} and rebuilt the missing chunks.",
+        )
+    return ("Replay orchestrator resumed a previously completed export.",)
+
+
+def _export_output_lines(
+    result: object,
+    *,
+    args: argparse.Namespace,
+) -> tuple[str, ...]:
+    export_result = result.export_result.export_result
+    lines = list(_resume_status_lines(result))
+    lines.extend(
+        (
+            f"Replay session config JSON: {result.session_config_path}",
+            f"Replay session state JSON: {result.session_state_path}",
+            f"Performance mode guard JSON: {result.performance_mode_guard_path}",
+            f"Run consistency guard JSON: {result.run_consistency_guard_path}",
+            f"Run manifest JSON: {export_result.run_manifest_path}",
+            f"Review export Markdown: {export_result.review_export_path}",
+            f"Feature bridge JSON: {export_result.feature_bridge_path}",
+            f"Parity diagnostics JSON: {export_result.parity_diagnostics_path}",
+            f"Replay metrics JSON: {export_result.replay_metrics_path}",
+            f"Replay DTR JSONL: {export_result.replay_dtr_path}",
         )
     )
-    if result.resumed:
-        if result.completed_chunk_indices and result.resumed_chunk_indices:
-            if result.resumed_chunk_indices == result.completed_chunk_indices:
-                print("Replay orchestrator resumed a fully completed multi-chunk export.")
-            else:
-                resumed_chunks = ", ".join(str(index) for index in result.resumed_chunk_indices)
-                print(
-                    "Replay orchestrator resumed completed chunks "
-                    f"{resumed_chunks} and rebuilt the missing chunks."
-                )
-        else:
-            print("Replay orchestrator resumed a previously completed export.")
-    export_result = result.export_result.export_result
-    print(f"Replay session config JSON: {result.session_config_path}")
-    print(f"Replay session state JSON: {result.session_state_path}")
-    print(f"Performance mode guard JSON: {result.performance_mode_guard_path}")
-    print(f"Run consistency guard JSON: {result.run_consistency_guard_path}")
-    print(f"Run manifest JSON: {export_result.run_manifest_path}")
-    print(f"Review export Markdown: {export_result.review_export_path}")
-    print(f"Feature bridge JSON: {export_result.feature_bridge_path}")
-    print(f"Parity diagnostics JSON: {export_result.parity_diagnostics_path}")
-    print(f"Replay metrics JSON: {export_result.replay_metrics_path}")
-    print(f"Replay DTR JSONL: {export_result.replay_dtr_path}")
     if args.emit_edge_calibration:
         output_path = args.edge_calibration_output_path or (
             args.output_dir / "calibration" / "edge_gate.yml"
@@ -499,10 +545,29 @@ def main(argv: list[str] | None = None) -> int:
             min_cost_observations=args.edge_min_cost_observations,
             rng_seed=args.edge_rng_seed,
         )
-        print(f"EDGE calibration YAML: {written_calibration_path}")
+        lines.append(f"EDGE calibration YAML: {written_calibration_path}")
     if result.chunk_session_path is not None:
-        print(f"Replay chunk session JSON: {result.chunk_session_path}")
-    print("Use this directory as --export-dir for run_local_replay_shadow.py.")
+        lines.append(f"Replay chunk session JSON: {result.chunk_session_path}")
+    lines.append("Use this directory as --export-dir for run_local_replay_shadow.py.")
+    return tuple(lines)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entrypoint for the governed LOCAL_REPLAY export generator."""
+
+    _configure_stdio()
+    parser, args, selected_chunk_indices = _parse_main_args(argv)
+    dataset, input_kind = _load_requested_dataset(parser=parser, args=args)
+
+    result = orchestrate_local_replay_export(
+        _build_replay_request(
+            args=args,
+            dataset=dataset,
+            input_kind=input_kind,
+            selected_chunk_indices=selected_chunk_indices,
+        )
+    )
+    _emit_output_lines(_export_output_lines(result, args=args))
     return 0
 
 

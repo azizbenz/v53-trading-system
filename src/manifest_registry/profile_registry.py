@@ -18,6 +18,7 @@ from interface_contracts.domain_types import (
     LIGHT_PAIRS,
     ModuleStatus,
     ProfileId,
+    V53_MULTIPAIR_7,
 )
 from manifest_registry.module_inventory import (
     MODULES,
@@ -100,3 +101,16 @@ def get_complete_only_modules() -> tuple[ModuleEntry, ...]:
 def get_complete_only_pairs() -> frozenset[str]:
     """Return pairs that only exist in Complete."""
     return COMPLETE_ADDITIONAL_PAIRS
+
+
+def get_multipair7_universe() -> frozenset[str]:
+    """Return the Phase-1 V5.3 multi-pair trading universe (7 canonical pairs).
+
+    These 7 pairs are the target for the multi-pair modernisation plan:
+    BTC, ETH, SOL, XRP, LINK, BNB, ADA — all vs USDT.
+
+    This is a subset of COMPLETE (ALL_PAIRS) and a superset of LIGHT (6 pairs).
+    It is NOT a new profile — it is a runtime trading universe constraint that
+    sits alongside the existing LIGHT/COMPLETE activation profiles.
+    """
+    return V53_MULTIPAIR_7

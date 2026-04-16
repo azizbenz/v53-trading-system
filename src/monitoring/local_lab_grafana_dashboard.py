@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 from pydantic import BaseModel, Field
 
+from monitoring.grafana_types import GrafanaPayload
 from monitoring.local_grafana_dashboard import extract_prometheus_metric_names
 from monitoring.local_prometheus_metrics_bridge import load_local_prometheus_text_payload
 
@@ -37,7 +37,7 @@ def _stat_panel(
     h: int = 4,
     unit: str = "none",
     color_mode: str = "background",
-) -> dict[str, Any]:
+) -> GrafanaPayload:
     return {
         "id": panel_id,
         "type": "stat",
@@ -79,7 +79,7 @@ def _timeseries_panel(
     w: int = 12,
     h: int = 8,
     unit: str = "none",
-) -> dict[str, Any]:
+) -> GrafanaPayload:
     targets = [
         {
             "expr": expr,
@@ -125,7 +125,7 @@ def _table_panel(
     y: int,
     w: int = 24,
     h: int = 8,
-) -> dict[str, Any]:
+) -> GrafanaPayload:
     return {
         "id": panel_id,
         "type": "table",
@@ -141,17 +141,8 @@ def _table_panel(
     }
 
 
-def build_local_lab_grafana_dashboard(
-    *,
-    datasource_uid: str = "prometheus",
-    datasource_name: str = "Prometheus",
-    title: str = "V5.3 Local IA Lab - Local Dev Observability",
-    uid: str = "v53-local-lab",
-) -> dict[str, Any]:
-    """Build a detailed Grafana dashboard over the current Local IA Lab metrics."""
-
-    base_filter = 'job=~"$job",instance=~"$instance",correlation_id=~"$correlation_id"'
-    panels: list[dict[str, Any]] = [
+def _build_local_lab_overview_panels(*, base_filter: str) -> list[GrafanaPayload]:
+    return [
         _stat_panel(
             panel_id=1,
             title="Monitoring Status Series",
@@ -195,6 +186,11 @@ def build_local_lab_grafana_dashboard(
             y=0,
             unit="short",
         ),
+    ]
+
+
+def _build_local_lab_readiness_panels(*, base_filter: str) -> list[GrafanaPayload]:
+    return [
         _timeseries_panel(
             panel_id=7,
             title="Core Gate Readiness",
@@ -270,6 +266,11 @@ def build_local_lab_grafana_dashboard(
             w=12,
             h=8,
         ),
+    ]
+
+
+def _build_local_lab_calibration_panels(*, base_filter: str) -> list[GrafanaPayload]:
+    return [
         _timeseries_panel(
             panel_id=10,
             title="Calibration Methods",
@@ -352,6 +353,11 @@ def build_local_lab_grafana_dashboard(
             w=12,
             h=8,
         ),
+    ]
+
+
+def _build_local_lab_tail_panels(*, base_filter: str) -> list[GrafanaPayload]:
+    return [
         _timeseries_panel(
             panel_id=13,
             title="Tail Risk Review",
@@ -453,6 +459,24 @@ def build_local_lab_grafana_dashboard(
             h=8,
         ),
     ]
+
+
+def build_local_lab_grafana_dashboard(
+    *,
+    datasource_uid: str = "prometheus",
+    datasource_name: str = "Prometheus",
+    title: str = "V5.3 Local IA Lab - Local Dev Observability",
+    uid: str = "v53-local-lab",
+) -> GrafanaPayload:
+    """Build a detailed Grafana dashboard over the current Local IA Lab metrics."""
+
+    base_filter = 'job=~"$job",instance=~"$instance",correlation_id=~"$correlation_id"'
+    panels = (
+        _build_local_lab_overview_panels(base_filter=base_filter)
+        + _build_local_lab_readiness_panels(base_filter=base_filter)
+        + _build_local_lab_calibration_panels(base_filter=base_filter)
+        + _build_local_lab_tail_panels(base_filter=base_filter)
+    )
 
     dashboard = {
         "annotations": {"list": []},

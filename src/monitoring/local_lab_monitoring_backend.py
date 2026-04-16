@@ -6,6 +6,49 @@ from monitoring.contracts import LocalLabMonitoringBackendPayload, Observability
 from monitoring.local_lab_monitoring_projection import LocalLabMonitoringProjection
 
 
+def _build_local_lab_monitoring_refs(
+    *,
+    projection: LocalLabMonitoringProjection,
+    observability_export_ref: str,
+) -> dict[str, str]:
+    return {
+        "observability_export_ref": observability_export_ref,
+        "scope_matrix_ref": projection.scope_matrix_path or "",
+        "artifact_release_candidate_ref": projection.artifact_release_candidate_path or "",
+        "artifact_import_dry_run_bridge_ref": projection.artifact_import_dry_run_bridge_path
+        or "",
+        "artifact_promotion_readiness_summary_ref": (
+            projection.artifact_promotion_readiness_summary_path or ""
+        ),
+        "local_lab_loss_surrogate_ref": projection.local_lab_loss_surrogate_path or "",
+        "local_lab_calibration_methods_review_ref": (
+            projection.local_lab_calibration_methods_review_path or ""
+        ),
+        "local_lab_execution_review_ref": projection.local_lab_execution_review_path or "",
+        "local_lab_multiple_testing_review_ref": (
+            projection.local_lab_multiple_testing_review_path or ""
+        ),
+        "local_lab_tail_risk_review_ref": projection.local_lab_tail_risk_review_path or "",
+        "local_lab_calibration_normalized_report_ref": (
+            projection.local_lab_calibration_normalized_report_path or ""
+        ),
+        "local_lab_research_priority_ref": projection.local_lab_research_priority_path or "",
+        "local_lab_replay_candidate_queue_ref": (
+            projection.local_lab_replay_candidate_queue_path or ""
+        ),
+        "local_lab_replay_ticket_index_ref": projection.local_lab_replay_ticket_index_path
+        or "",
+        "local_lab_replay_dispatch_plan_ref": projection.local_lab_replay_dispatch_plan_path
+        or "",
+        "local_lab_replay_workflow_manifest_ref": (
+            projection.local_lab_replay_workflow_manifest_path or ""
+        ),
+        "local_lab_monitoring_bundle_manifest_ref": (
+            projection.local_lab_monitoring_bundle_manifest_path or ""
+        ),
+    }
+
+
 def build_local_lab_monitoring_backend_payload(
     *,
     projection: LocalLabMonitoringProjection,
@@ -106,31 +149,10 @@ def build_local_lab_monitoring_backend_payload(
         recalibration_blocking_reasons=projection.recalibration_blocking_reasons,
         release_gate_reasons=projection.release_gate_reasons,
         bridge_blocking_reasons=projection.bridge_blocking_reasons,
-        observability_export_ref=observability_export_ref,
-        scope_matrix_ref=projection.scope_matrix_path or "",
-        artifact_release_candidate_ref=projection.artifact_release_candidate_path or "",
-        artifact_import_dry_run_bridge_ref=projection.artifact_import_dry_run_bridge_path or "",
-        artifact_promotion_readiness_summary_ref=(
-            projection.artifact_promotion_readiness_summary_path or ""
+        **_build_local_lab_monitoring_refs(
+            projection=projection,
+            observability_export_ref=observability_export_ref,
         ),
-        local_lab_loss_surrogate_ref=projection.local_lab_loss_surrogate_path or "",
-        local_lab_calibration_methods_review_ref=(
-            projection.local_lab_calibration_methods_review_path or ""
-        ),
-        local_lab_execution_review_ref=projection.local_lab_execution_review_path or "",
-        local_lab_multiple_testing_review_ref=(
-            projection.local_lab_multiple_testing_review_path or ""
-        ),
-        local_lab_tail_risk_review_ref=projection.local_lab_tail_risk_review_path or "",
-        local_lab_calibration_normalized_report_ref=(
-            projection.local_lab_calibration_normalized_report_path or ""
-        ),
-        local_lab_research_priority_ref=projection.local_lab_research_priority_path or "",
-        local_lab_replay_candidate_queue_ref=projection.local_lab_replay_candidate_queue_path or "",
-        local_lab_replay_ticket_index_ref=projection.local_lab_replay_ticket_index_path or "",
-        local_lab_replay_dispatch_plan_ref=projection.local_lab_replay_dispatch_plan_path or "",
-        local_lab_replay_workflow_manifest_ref=projection.local_lab_replay_workflow_manifest_path or "",
-        local_lab_monitoring_bundle_manifest_ref=projection.local_lab_monitoring_bundle_manifest_path or "",
     )
 
 

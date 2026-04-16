@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from pydantic import BaseModel, Field
 
 from data_backbone.market_physics_math import round_float64
@@ -56,7 +54,7 @@ class ReplayParityDiagnosticsSummary(BaseModel, frozen=True):
     missing_baseline_records: int = Field(default=0, ge=0)
     divergence_count: int = Field(default=0, ge=0)
     shared_core_match: bool = False
-    parity_policy: dict[str, Any] = Field(default_factory=dict)
+    parity_policy: dict[str, object] = Field(default_factory=dict)
 
 
 def _base_state(row: HistoricalReplayOpportunity) -> DecisionState:
@@ -199,7 +197,7 @@ def build_parity_diagnostics_payload(
     dtr_records: tuple[DTRRecord, ...],
     *,
     config: ShadowExecutionSimulatorConfig | None = None,
-) -> dict[str, Any]:
+) -> dict[str, object]:
     """Compare simulated replay outputs against optional production baselines."""
 
     effective_config = config or ShadowExecutionSimulatorConfig()

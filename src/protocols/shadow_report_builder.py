@@ -21,27 +21,14 @@ _BUILD14_READER_STATUS_SCORES = {
 }
 
 
-def build_shadow_daily_metrics_summary(
-    payload: TechnicalDashboardPayload,
-    shadow_summary: ShadowRunSummary,
+def _resolve_replay_metric_state(
+    replay_metrics_payload: Mapping[str, object] | None,
     *,
-    capital_simulated_usdt: float,
-    replay_metrics_payload: Mapping[str, object] | None = None,
-    hard_block_rate: float = 0.0,
-    phantom_trade_count: int = 0,
-    operator_actions_logged: bool | None = None,
-    ui_locked: bool = True,
-    go_no_go_rendered: bool = True,
-) -> dict[str, float | str]:
-    """Project a Build-10 technical payload + Build-11 run summary into daily report metrics.
-
-    This bridges the operated Shadow runtime to the Build-11 day counter so daily
-    reports no longer rely on handwritten metric dictionaries.
-    """
-
+    payload: TechnicalDashboardPayload,
+    hard_block_rate: float,
+    phantom_trade_count: int,
+) -> tuple[float, int, int, int, float]:
     replay_metrics = replay_metrics_payload or {}
-    engine_count = max(1, len(payload.engines))
-    pair_count = max(1, len(payload.pairs))
     resolved_dtr_coverage = float(
         replay_metrics.get("dtr_coverage", payload.build9_meta.dtr_coverage)
     )
@@ -58,6 +45,31 @@ def build_shadow_daily_metrics_summary(
         if replay_total_opportunities > 0
         else min(max(hard_block_rate, 0.0), 1.0)
     )
+    return (
+        resolved_dtr_coverage,
+        replay_total_opportunities,
+        replay_total_records,
+        replay_phantom_count,
+        resolved_hard_block_rate,
+    )
+
+
+def _build_base_shadow_metrics(
+    payload: TechnicalDashboardPayload,
+    shadow_summary: ShadowRunSummary,
+    *,
+    capital_simulated_usdt: float,
+    resolved_dtr_coverage: float,
+    replay_total_opportunities: int,
+    replay_total_records: int,
+    replay_phantom_count: int,
+    resolved_hard_block_rate: float,
+    operator_actions_logged: bool | None,
+    ui_locked: bool,
+    go_no_go_rendered: bool,
+) -> dict[str, float | str]:
+    engine_count = max(1, len(payload.engines))
+    pair_count = max(1, len(payload.pairs))
     expected_cost_bps = (
         payload.infra.expected_cost_bps
         if payload.infra.expected_cost_bps > 0.0
@@ -77,11 +89,7 @@ def build_shadow_daily_metrics_summary(
     stale_rate = round(payload.alerts.stale_pair_count / pair_count, 8)
     pair_health_ratio = round(healthy_pairs / pair_count, 8)
     economic_pass_rate = round(
-        sum(
-            1
-            for engine in payload.engines
-            if engine.net_edge_bps > engine.expected_cost_bps
-        )
+        sum(1 for engine in payload.engines if engine.net_edge_bps > engine.expected_cost_bps)
         / engine_count,
         8,
     )
@@ -95,7 +103,7 @@ def build_shadow_daily_metrics_summary(
         capital_simulated_usdt - payload.portfolio.capital_deployed_usdt,
         0.0,
     )
-    metrics: dict[str, float | str] = {
+    return {
         "dtr_coverage": resolved_dtr_coverage,
         "ce_net": payload.portfolio.ce_net,
         "estimated_cost_bps": expected_cost_bps,
@@ -140,14 +148,18 @@ def build_shadow_daily_metrics_summary(
             else 0.0
         ),
         "costs_plausible": 1.0 if expected_cost_bps > 0.0 else 0.0,
-        "break_even_visible": (
-            1.0 if bool(payload.build9_meta.break_even_state.strip()) else 0.0
-        ),
+        "break_even_visible": 1.0 if bool(payload.build9_meta.break_even_state.strip()) else 0.0,
         "critical_alerts_visible": 1.0,
         "operator_actions_logged": 1.0 if inferred_operator_log else 0.0,
         "ui_locked": 1.0 if ui_locked else 0.0,
         "go_no_go_rendered": 1.0 if go_no_go_rendered else 0.0,
     }
+
+
+def _append_engine_metrics(
+    metrics: dict[str, float | str],
+    payload: TechnicalDashboardPayload,
+) -> None:
     for engine in payload.engines:
         useful_frequency = (
             engine.useful_frequency
@@ -166,6 +178,13 @@ def build_shadow_daily_metrics_summary(
             max(engine.net_edge_bps - engine.expected_cost_bps, 0.0) / 10_000.0,
             8,
         )
+
+
+def _append_build14_metrics(
+    metrics: dict[str, float | str],
+    payload: TechnicalDashboardPayload,
+    shadow_summary: ShadowRunSummary,
+) -> None:
     for assessment in shadow_summary.component_assessments:
         if not assessment.component_id.startswith("build14_"):
             continue
@@ -187,6 +206,53 @@ def build_shadow_daily_metrics_summary(
         metrics[f"{metric_prefix}.detail"] = reader.detail
         if reader.structured_log_key:
             metrics[f"{metric_prefix}.structured_log_key"] = reader.structured_log_key
+
+
+def build_shadow_daily_metrics_summary(
+    payload: TechnicalDashboardPayload,
+    shadow_summary: ShadowRunSummary,
+    *,
+    capital_simulated_usdt: float,
+    replay_metrics_payload: Mapping[str, object] | None = None,
+    hard_block_rate: float = 0.0,
+    phantom_trade_count: int = 0,
+    operator_actions_logged: bool | None = None,
+    ui_locked: bool = True,
+    go_no_go_rendered: bool = True,
+) -> dict[str, float | str]:
+    """Project a Build-10 technical payload + Build-11 run summary into daily report metrics.
+
+    This bridges the operated Shadow runtime to the Build-11 day counter so daily
+    reports no longer rely on handwritten metric dictionaries.
+    """
+
+    (
+        resolved_dtr_coverage,
+        replay_total_opportunities,
+        replay_total_records,
+        replay_phantom_count,
+        resolved_hard_block_rate,
+    ) = _resolve_replay_metric_state(
+        replay_metrics_payload,
+        payload=payload,
+        hard_block_rate=hard_block_rate,
+        phantom_trade_count=phantom_trade_count,
+    )
+    metrics = _build_base_shadow_metrics(
+        payload,
+        shadow_summary,
+        capital_simulated_usdt=capital_simulated_usdt,
+        resolved_dtr_coverage=resolved_dtr_coverage,
+        replay_total_opportunities=replay_total_opportunities,
+        replay_total_records=replay_total_records,
+        replay_phantom_count=replay_phantom_count,
+        resolved_hard_block_rate=resolved_hard_block_rate,
+        operator_actions_logged=operator_actions_logged,
+        ui_locked=ui_locked,
+        go_no_go_rendered=go_no_go_rendered,
+    )
+    _append_engine_metrics(metrics, payload)
+    _append_build14_metrics(metrics, payload, shadow_summary)
     return metrics
 
 

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import importlib
 import time
-from typing import Any, Protocol
+from typing import Protocol
 
 from smoke_bootstrap_recovery.smoke_models import BootstrapResult, SmokeStatus
 
@@ -21,7 +21,7 @@ from smoke_bootstrap_recovery.smoke_models import BootstrapResult, SmokeStatus
 class Bootstrappable(Protocol):
     """Protocol that stateful modules should implement for smoke testing."""
 
-    def bootstrap(self, config: dict[str, Any]) -> None:
+    def bootstrap(self, config: dict[str, object]) -> None:
         """Initialize the module with the given config. Raise on failure."""
         ...
 
@@ -58,7 +58,7 @@ def bootstrap_module_import(module_name: str) -> BootstrapResult:
 def bootstrap_with_config(
     module_name: str,
     factory: Bootstrappable,
-    config: dict[str, Any],
+    config: dict[str, object],
 ) -> BootstrapResult:
     """Test that a module can bootstrap with a given config.
 

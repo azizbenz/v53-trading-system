@@ -196,9 +196,17 @@ PAIR_TIER_MAP: dict[str, Tier] = {
     "ATOMUSDT": Tier.TIER_2, "NEARUSDT": Tier.TIER_2,
 }
 
+# V5.3 canonical 7-pair trading universe (Phase-1 multi-pair target)
+V53_MULTIPAIR_7: frozenset[str] = frozenset({
+    "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT",
+    "LINKUSDT", "BNBUSDT", "ADAUSDT",
+})
+
 ENGINE_PAIR_MAP: dict[EngineId, frozenset[str]] = {
-    EngineId.A: frozenset({"BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "LINKUSDT"}),
-    EngineId.B: frozenset({"BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT", "LINKUSDT"}),
+    # Engine A: trend-following — full 7-pair universe
+    EngineId.A: V53_MULTIPAIR_7,
+    # Engine B: breakout — full 7-pair universe
+    EngineId.B: V53_MULTIPAIR_7,
     EngineId.C: ALL_PAIRS,
     EngineId.D: ALL_PAIRS,
 }
@@ -260,5 +268,5 @@ __all__ = [
     "TradeId", "OrderId", "RunId",
     "PairId", "TimestampedModel",
     "LIGHT_PAIRS", "COMPLETE_ADDITIONAL_PAIRS", "ALL_PAIRS",
-    "PAIR_TIER_MAP", "ENGINE_PAIR_MAP",
+    "PAIR_TIER_MAP", "ENGINE_PAIR_MAP", "V53_MULTIPAIR_7",
 ]

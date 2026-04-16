@@ -16,6 +16,8 @@ Ce module NE DOIT PAS :
 - Effectuer des calculs d'edge
 """
 
+from __future__ import annotations
+
 __contract_version__ = "1.0.0"
 
 from .domain_types import *
@@ -24,6 +26,9 @@ from .artifact_contracts import *
 from .binance_contracts import *
 from .market_event_contracts import *
 from .decision_contracts import *
+from .forecast_contracts import *
+from .strategy_identity import *
+from .refusal_records import *
 from .meta_contracts import *
 from .numeric_contracts import *
 from .error_contracts import *
@@ -31,6 +36,7 @@ from .operator_contracts import *
 from .build14_contracts import *
 from .engine_validation_contracts import *
 from .shadow_vps_service_contracts import *
+from .pair_catalog import *
 
 __all__ = [
     # domain_types — Enums
@@ -73,7 +79,7 @@ __all__ = [
     "BinanceSymbolInfo", "BinanceTimeSyncResult",
     # domain_types — Pairs
     "LIGHT_PAIRS", "COMPLETE_ADDITIONAL_PAIRS", "ALL_PAIRS",
-    "ENGINE_PAIR_MAP", "PAIR_TIER_MAP",
+    "ENGINE_PAIR_MAP", "PAIR_TIER_MAP", "V53_MULTIPAIR_7",
     # domain_types — NewTypes & base
     "PairId", "OrderId", "TradeId", "RunId", "TimestampedModel",
     # market_event_contracts
@@ -83,6 +89,13 @@ __all__ = [
     "ScorePayload", "SignalCandidate", "EdgeEstimate",
     "ExecutionIntent", "RiskDecision", "PortfolioAction", "PortfolioDecision",
     "PairHealthStatus", "BlockReason",
+    # forecast_contracts
+    "ForecastTargetClass", "ForecastHorizonClass", "BetStructure",
+    "ConditioningFamily", "ConditioningRecord", "ForecastSignalCandidate",
+    # strategy_identity
+    "StrategyIdentity",
+    # refusal_records
+    "RefusalCategory", "RefusalRecord",
     # meta_contracts
     "DTROutcome", "DTRRecord", "CostRecord", "PenaltyDetail", "AlertSeverity",
     "AlertCategory", "AlertRecord",
@@ -110,4 +123,6 @@ __all__ = [
     "ShadowVpsServiceStatus", "ShadowVpsServiceState",
     "ShadowVpsRuntimeEvidenceBundle", "ShadowVpsCampaignSummary",
     "ShadowVpsServiceEvent",
+    # pair_catalog
+    "PairEntry", "PairCatalog", "V53_PAIR_CATALOG",
 ]

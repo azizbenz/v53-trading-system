@@ -411,5 +411,77 @@ Cf. AS-T4.
 
 Le dossier `production_deployment_plan/` a maintenant besoin de :
 - `19_VPS_DEPLOYMENT_RUNBOOK.md` — déploiement Linux VPS pas à pas
-- Une mise à jour `11_DYNAMIC_THRESHOLDS_CATALOG.md` avec THR-E03/E04/W01/W02/S06
+- ~~Une mise à jour `11_DYNAMIC_THRESHOLDS_CATALOG.md` avec THR-E03/E04/W01/W02/S06~~ **FAIT** (2026-04-13)
 - Une mise à jour `13_CALIBRATION_METHODS.md` avec méthodes pour ces nouveaux seuils
+
+---
+
+## 9. Corrections appliquées — Deep audit code (2026-04-13)
+
+> Cette section trace les corrections réellement appliquées suite à l'audit profond du code source.
+
+### 9.1 Corrections code appliquées
+
+| # | Fichier | Fix appliqué | Statut |
+|---|---|---|---|
+| FIX-1 | `src/calibration_methods/pot_gpd.py:152` | Ajout `if xi_hat >= 1.0: raise PotGpdError(...)` avec ref Coles 2001 §4.3.2 | **DONE** |
+| FIX-2a | `tests/test_engines/test_engine_c/test_engine_c.py:5` | `from engine_c` → `from engines.engine_c` | **DONE** |
+| FIX-2b | `tests/test_engines/test_engine_d/test_engine_d.py:5` | `from engine_d` → `from engines.engine_d` | **DONE** |
+| FIX-2c | `tests/test_engines/test_engine_d/test_engine_d_bs104_regression.py:11` | `from engine_d` → `from engines.engine_d` | **DONE** |
+
+### 9.2 Corrections spec appliquées
+
+| # | Fichier | Fix appliqué | Statut |
+|---|---|---|---|
+| W-07 | `11_DYNAMIC_THRESHOLDS_CATALOG.md` | Ajout THR-E03 (ce_min per engine) + THR-E04 (delta_safe per engine) | **DONE** |
+| W-08 | `11_DYNAMIC_THRESHOLDS_CATALOG.md` | Ajout THR-W01 (drawdown warning 2%) + THR-W02 (drawdown observe 4%) | **DONE** |
+| W-08bis | `11_DYNAMIC_THRESHOLDS_CATALOG.md` | Ajout THR-S06 (max_allowed_ce_net_drop 0.0005) | **DONE** |
+| W-08ter | `11_DYNAMIC_THRESHOLDS_CATALOG.md` | Correction THR-X03 source_module (`execution_backbone/rate_limiter.py`, pas `venue_adapters`) + notes token bucket | **DONE** |
+| — | `11_DYNAMIC_THRESHOLDS_CATALOG.md` | Tableau synthèse mis à jour : 32 → **37 seuils**, 22 → **27 avec signature humaine** | **DONE** |
+
+### 9.3 False positives corrigées (audit 1 → audit 2)
+
+| Claim audit 1 | Réalité vérifiée en audit 2 | Impact |
+|---|---|---|
+| AS-T1 `rate_limiter.py` absent | **EXISTS** : `execution_backbone/rate_limiter.py` (quota ratio THR-X03, 66 LOC, intégré dans execution_runtime). **Mais** : pas de token bucket Binance API weight tracker — W-02 reste valide pour le tracking de poids API. | AS-T1 downgrade P0→P1, renommé : "Binance API weight tracker manquant" |
+| AS-C2 "sans tests suffisants" | **8 fichiers** dans `tests/test_calibration_methods/` : `test_bootstrap.py`, `test_dsr.py`, `test_pot_gpd.py`, `test_hard_cap_floor.py`, `test_walkforward.py`, `test_stationarity.py`, `test_multiple_testing.py`, `test_execution.py` | AS-C2 downgrade, tests existent mais validation vs paper manque (W-06 reste) |
+| AS-C3 `rate_limiter.py` absent | Idem AS-T1 — **existe** | AS-C3 fermé |
+| AS-C4 "pas de `tests/test_calibration_methods/`" | **FAUX** — répertoire existe avec 8 fichiers | AS-C4 fermé |
+| AS-M4 "bootstrap possiblement i.i.d." | **FAUX** — `bootstrap.py` IS stationary block bootstrap (Politis-Romano), `restart_probability = 1.0 / float(expected_block_length)` + `infer_stationary_block_length()` via autocorrélation | AS-M4 fermé, W-04 fermé |
+| AS-M5 "`hard_cap_floor.py` non intégré" | **FAUX** — intégré et utilisé par `execution.py`, `local_lab_tail_risk_review.py`, `edge_gate_calibration.py` (grep confirmé) | AS-M5 fermé, W-17 fermé |
+| AS-T5 "idempotency non-UUIDv5" | **ACCEPTABLE** — SHA1 truncation (8 chars hex), déterministe, collision-résistant pour l'échelle V5.3 (< 1000 ordres/jour). Binance max 36 chars. UUIDv5 serait plus pur mais l'implémentation actuelle est fonctionnelle. | AS-T5 fermé, W-03 fermé |
+
+### 9.4 Work plan mis à jour post-audit 2
+
+| # | Action | Statut post-audit 2 | Notes |
+|---|---|---|---|
+| W-01 | Fix Engine C/D imports | **FERMÉ** — appliqué | FIX-2a/2b/2c |
+| W-02 | Token bucket Binance API | **OUVERT** — mais scope réduit | `execution_backbone/rate_limiter.py` couvre le quota applicatif. Il faut un `venue_adapters/binance_spot/api_weight_tracker.py` (token bucket pour les poids HTTP). |
+| W-03 | Vérifier UUIDv5 | **FERMÉ** — acceptable | SHA1 truncation déterministe |
+| W-04 | Vérifier bootstrap stationnaire | **FERMÉ** — confirmé Politis-Romano | Code correct |
+| W-05 | Vérifier POT/GPD ξ>1 | **FERMÉ** — fix appliqué | FIX-1, `if xi_hat >= 1.0: raise PotGpdError(...)` |
+| W-06 | Tests paper validation | **OUVERT** — tests existent mais pas de validation vs valeurs connues papers | Priority downgrade P0→P1 |
+| W-07 | Spec THR-E03/E04 | **FERMÉ** — ajouté dans `11_...` | 2 entrées catalogue + méthode calibration |
+| W-08 | Spec THR-W01/W02/S06 | **FERMÉ** — ajouté dans `11_...` | 3 entrées catalogue |
+| W-09→W-13 | PSR, KS, Energy, Mann-Kendall, Hansen SPA | **OUVERT** | Sonnet — avant G2.1 |
+| W-14 | Calibration seam risk_runtime | **RE-QUALIFIÉ** — `RiskLimits` est déjà un modèle injectable (Pydantic), le seam existe. Fix = câbler au bootstrap. | Sonnet — wiring task, pas refactor |
+| W-15 | shadow_gate_check.py | **OUVERT** | Sonnet — avant G2.1 |
+| W-16 | Spec partial fill | **OUVERT** | Opus |
+| W-17 | Vérifier hard_cap_floor intégration | **FERMÉ** — confirmé intégré | — |
+| W-18 | Test testnet Binance | **OUVERT** | Sonnet — avant MICRO_LIVE |
+| W-19→W-25 | Déploiement, CI, rollback, etc. | **OUVERT** | Opus+Sonnet |
+
+### 9.5 Bilan quantitatif
+
+```
+Angles morts initiaux :     25
+Fermés (faux positifs) :     7  (AS-T5, AS-C3, AS-C4, AS-M4, AS-M5, W-03, W-04)
+Fermés (corrigés)      :     6  (W-01, W-05, W-07, W-08, W-17, THR-X03)
+Restants ouverts       :    12
+  - P0 Sonnet :              1  (W-02 scope réduit)
+  - P1 Sonnet :              7  (W-06, W-09→W-13, W-14, W-15)
+  - P1 Opus   :              1  (W-16)
+  - P2 mix    :              3  (W-19→W-25 regroupés)
+```
+
+**Progression** : 25 → **12 ouverts** (52% de réduction en une session d'audit + corrections).

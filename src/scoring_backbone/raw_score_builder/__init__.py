@@ -1,1 +1,3 @@
-"""Build-5 / raw_score_builder — construct readable, stable raw scores."""
+"""Build-5 / raw_score_builder â€” construct readable, stable raw scores."""
+
+from __future__ import annotations

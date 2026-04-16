@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass
 
 from pydantic import BaseModel, Field
 
@@ -55,21 +56,21 @@ class LocalLabRecalibrationPlan(BaseModel, frozen=True):
     actions: tuple[LocalLabRecalibrationAction, ...] = ()
 
 
-def build_local_lab_recalibration_plan(
-    *,
-    correlation_id: str,
-    export_dir: str,
-    loss_reports: tuple[TradeLossAttributionReport, ...],
-    scope_matrix: LocalLabScopeAnalysisMatrix | None = None,
-    loss_surrogate_report: LocalLabLossSurrogateReport | None = None,
-) -> LocalLabRecalibrationPlan:
-    """Build a bounded recalibration plan from governed Local IA Lab loss evidence."""
+@dataclass(frozen=True)
+class _LossSurrogateState:
+    status: str
+    ready: bool
+    high_risk_scopes: tuple[object, ...]
+    top_scope_slug: str
+    top_probability: float
 
+
+def _collect_loss_recalibration_inputs(
+    loss_reports: tuple[TradeLossAttributionReport, ...],
+) -> tuple[bool, tuple[TradeLossAttribution, ...], Counter[str], tuple[str, ...]]:
     all_ready = bool(loss_reports) and all(report.attribution_ready for report in loss_reports)
     all_attributions = tuple(
-        attribution
-        for report in loss_reports
-        for attribution in report.attributions
+        attribution for report in loss_reports for attribution in report.attributions
     )
     losses = tuple(
         attribution
@@ -88,36 +89,41 @@ def build_local_lab_recalibration_plan(
             }
         )
     )
-    surrogate_status = "not_evaluated" if loss_surrogate_report is None else loss_surrogate_report.status
-    surrogate_ready = False if loss_surrogate_report is None else loss_surrogate_report.ready
-    surrogate_high_risk_scopes = (
-        ()
-        if loss_surrogate_report is None
-        else tuple(
+    return all_ready, losses, failure_mode_counts, recommended_threshold_ids
+
+
+def _resolve_loss_surrogate_state(
+    loss_surrogate_report: LocalLabLossSurrogateReport | None,
+) -> _LossSurrogateState:
+    if loss_surrogate_report is None:
+        return _LossSurrogateState(
+            status="not_evaluated",
+            ready=False,
+            high_risk_scopes=(),
+            top_scope_slug="",
+            top_probability=0.0,
+        )
+    return _LossSurrogateState(
+        status=loss_surrogate_report.status,
+        ready=loss_surrogate_report.ready,
+        high_risk_scopes=tuple(
             scope
             for scope in loss_surrogate_report.scopes
             if scope.risk_band in {"elevated_risk", "high_risk"}
-        )
-    )
-    surrogate_top_scope_slug = (
-        "" if loss_surrogate_report is None else loss_surrogate_report.highest_risk_scope_slug
-    )
-    surrogate_top_probability = (
-        0.0 if loss_surrogate_report is None else loss_surrogate_report.highest_risk_probability
+        ),
+        top_scope_slug=loss_surrogate_report.highest_risk_scope_slug,
+        top_probability=loss_surrogate_report.highest_risk_probability,
     )
 
-    blocking_reasons: list[str] = []
-    if not all_ready:
-        blocking_reasons.append("LOSS_ATTRIBUTION_NOT_READY")
-    if not losses:
-        blocking_reasons.append("NO_LOSING_TRADES_TO_RECALIBRATE")
-    if "trace_coverage" in failure_mode_counts:
-        blocking_reasons.append("TRACE_COVERAGE_BLOCKS_RECALIBRATION")
-    if scope_matrix is not None and scope_matrix.blocked_scope_count > 0:
-        blocking_reasons.append("SCOPE_MATRIX_NOT_FULLY_READY")
-    if losses and not recommended_threshold_ids:
-        blocking_reasons.append("NO_THRESHOLD_RECOMMENDATION_FROM_LOSS_ATTRIBUTION")
 
+def _build_recalibration_actions(
+    *,
+    losses: tuple[TradeLossAttribution, ...],
+    failure_mode_counts: Counter[str],
+    recommended_threshold_ids: tuple[str, ...],
+    scope_matrix: LocalLabScopeAnalysisMatrix | None,
+    surrogate_state: _LossSurrogateState,
+) -> tuple[LocalLabRecalibrationAction, ...]:
     actions: list[LocalLabRecalibrationAction] = []
     threshold_recommendations = tuple(
         attribution for attribution in losses if attribution.recommended_threshold_ids
@@ -134,7 +140,12 @@ def build_local_lab_recalibration_plan(
                 action_scope=_aggregate_action_scope(threshold_recommendations),
                 affected_scope_count=_affected_scope_count(threshold_recommendations),
                 linked_failure_modes=tuple(
-                    sorted({attribution.primary_failure_mode for attribution in threshold_recommendations})
+                    sorted(
+                        {
+                            attribution.primary_failure_mode
+                            for attribution in threshold_recommendations
+                        }
+                    )
                 ),
                 rationale=(
                     "loss_attribution_recommended_edge_threshold_adjustment",
@@ -151,7 +162,9 @@ def build_local_lab_recalibration_plan(
         )
     if failure_mode_counts.get("sterilization", 0) > 0:
         sterilization_attributions = tuple(
-            attribution for attribution in losses if attribution.primary_failure_mode == "sterilization"
+            attribution
+            for attribution in losses
+            if attribution.primary_failure_mode == "sterilization"
         )
         actions.append(
             LocalLabRecalibrationAction(
@@ -172,7 +185,9 @@ def build_local_lab_recalibration_plan(
         )
     if failure_mode_counts.get("trace_coverage", 0) > 0:
         trace_attributions = tuple(
-            attribution for attribution in losses if attribution.primary_failure_mode == "trace_coverage"
+            attribution
+            for attribution in losses
+            if attribution.primary_failure_mode == "trace_coverage"
         )
         actions.append(
             LocalLabRecalibrationAction(
@@ -192,7 +207,7 @@ def build_local_lab_recalibration_plan(
                 blocking_reasons=("TRACE_COVERAGE_BLOCKS_RECALIBRATION",),
             )
         )
-    if surrogate_ready and surrogate_high_risk_scopes:
+    if surrogate_state.ready and surrogate_state.high_risk_scopes:
         replay_blockers: list[str] = []
         if "trace_coverage" in failure_mode_counts:
             replay_blockers.append("TRACE_COVERAGE_BLOCKS_RECALIBRATION")
@@ -200,20 +215,59 @@ def build_local_lab_recalibration_plan(
             LocalLabRecalibrationAction(
                 action_type="replay_surrogate_high_risk_scope",
                 action_scope=(
-                    surrogate_top_scope_slug
-                    if len(surrogate_high_risk_scopes) == 1
+                    surrogate_state.top_scope_slug
+                    if len(surrogate_state.high_risk_scopes) == 1
                     else "multi_scope"
                 ),
-                affected_scope_count=len({scope.scope_slug for scope in surrogate_high_risk_scopes}),
+                affected_scope_count=len(
+                    {scope.scope_slug for scope in surrogate_state.high_risk_scopes}
+                ),
                 linked_failure_modes=("modeled_loss_risk",),
                 rationale=(
                     "transparent_local_loss_surrogate_identified_elevated_loss_pressure",
                     "run_bounded_replay_before_publishing_new_thresholds",
                 ),
-                confidence=round(surrogate_top_probability, 6),
+                confidence=round(surrogate_state.top_probability, 6),
                 blocking_reasons=tuple(dict.fromkeys(replay_blockers)),
             )
         )
+    return tuple(actions)
+
+
+def build_local_lab_recalibration_plan(
+    *,
+    correlation_id: str,
+    export_dir: str,
+    loss_reports: tuple[TradeLossAttributionReport, ...],
+    scope_matrix: LocalLabScopeAnalysisMatrix | None = None,
+    loss_surrogate_report: LocalLabLossSurrogateReport | None = None,
+) -> LocalLabRecalibrationPlan:
+    """Build a bounded recalibration plan from governed Local IA Lab loss evidence."""
+
+    all_ready, losses, failure_mode_counts, recommended_threshold_ids = (
+        _collect_loss_recalibration_inputs(loss_reports)
+    )
+    surrogate_state = _resolve_loss_surrogate_state(loss_surrogate_report)
+
+    blocking_reasons: list[str] = []
+    if not all_ready:
+        blocking_reasons.append("LOSS_ATTRIBUTION_NOT_READY")
+    if not losses:
+        blocking_reasons.append("NO_LOSING_TRADES_TO_RECALIBRATE")
+    if "trace_coverage" in failure_mode_counts:
+        blocking_reasons.append("TRACE_COVERAGE_BLOCKS_RECALIBRATION")
+    if scope_matrix is not None and scope_matrix.blocked_scope_count > 0:
+        blocking_reasons.append("SCOPE_MATRIX_NOT_FULLY_READY")
+    if losses and not recommended_threshold_ids:
+        blocking_reasons.append("NO_THRESHOLD_RECOMMENDATION_FROM_LOSS_ATTRIBUTION")
+
+    actions = _build_recalibration_actions(
+        losses=losses,
+        failure_mode_counts=failure_mode_counts,
+        recommended_threshold_ids=recommended_threshold_ids,
+        scope_matrix=scope_matrix,
+        surrogate_state=surrogate_state,
+    )
 
     calibration_candidate_ready = (
         all_ready
@@ -239,15 +293,15 @@ def build_local_lab_recalibration_plan(
         losing_trade_count=sum(report.losing_trade_count for report in loss_reports),
         dominant_failure_modes=aggregates,
         recommended_threshold_ids=recommended_threshold_ids,
-        loss_surrogate_status=surrogate_status,
-        loss_surrogate_ready=surrogate_ready,
-        surrogate_high_risk_scope_count=len(surrogate_high_risk_scopes),
-        surrogate_top_scope_slug=surrogate_top_scope_slug,
-        surrogate_top_probability=surrogate_top_probability,
+        loss_surrogate_status=surrogate_state.status,
+        loss_surrogate_ready=surrogate_state.ready,
+        surrogate_high_risk_scope_count=len(surrogate_state.high_risk_scopes),
+        surrogate_top_scope_slug=surrogate_state.top_scope_slug,
+        surrogate_top_probability=surrogate_state.top_probability,
         action_count=len(actions),
         calibration_candidate_ready=calibration_candidate_ready,
         blocking_reasons=tuple(dict.fromkeys(blocking_reasons)),
-        actions=tuple(actions),
+        actions=actions,
     )
 
 

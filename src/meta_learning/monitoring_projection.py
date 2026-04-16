@@ -22,7 +22,7 @@ def _resolve_capacity_snapshot(
     return snapshot or LearningCapacitySnapshot()
 
 
-def _build9x_projection_type():
+def _build9x_projection_type() -> type[object]:
     return importlib.import_module("monitoring.contracts").Build9XProjection
 
 

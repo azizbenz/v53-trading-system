@@ -8,6 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from interface_contracts import StrategyIdentity
 from interface_contracts.atomic_io import atomic_write_json
 
 from local_replay_runtime.historical_data_gateway import HistoricalReplayDataset
@@ -35,6 +36,7 @@ class ReplaySessionState(BaseModel):
 
     run_id: str = ""
     strategy_id: str = ""
+    strategy_identity: StrategyIdentity | None = None
     last_error: str = ""
     lifecycle_state: ReplaySessionLifecycle = "idle"
     input_kind: str = "demo_dataset"
@@ -83,6 +85,7 @@ class ReplaySessionStateStore:
         self._state = ReplaySessionState(
             run_id=session_config.run_id,
             strategy_id=session_config.strategy_id,
+            strategy_identity=session_config.strategy_identity,
             lifecycle_state="initialized",
             input_kind=session_config.input_kind,
             input_path=session_config.input_path,

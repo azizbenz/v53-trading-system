@@ -61,7 +61,7 @@ class DTRStore:
             self._records_by_engine.setdefault(record.engine_id, []).append(record)
             self._records_by_state.setdefault(str(record.decision_state), []).append(record)
             return True
-        except Exception:
+        except (TypeError, ValueError):
             self._dropped += 1
             return False
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
+from types import ModuleType
 
 from meta_learning.enums import CandidateKind
 from meta_learning.contracts import (
@@ -22,7 +23,7 @@ _REGIME_LOGIC_VERSION = "v53.regime_logic.v1"
 _COST_MODEL_VERSION = "v53.cost_model.v1"
 
 
-def _local_replay_runtime():
+def _local_replay_runtime() -> ModuleType:
     return importlib.import_module("local_replay_runtime")
 
 
@@ -131,6 +132,143 @@ def _contracts_version(hypotheses: tuple[LearningHypothesis, ...]) -> str:
     return "+".join(versions)
 
 
+def _resolve_replay_scope(
+    candidate: ImprovementCandidate,
+    candidate_hypotheses: tuple[LearningHypothesis, ...],
+    trade_input: TradeLearningInput,
+) -> str:
+    return candidate.replay_scope or next(
+        (
+            hypothesis.required_replay_scope
+            for hypothesis in candidate_hypotheses
+            if hypothesis.required_replay_scope
+        ),
+        f"{trade_input.profile.value}:{trade_input.pair}:{trade_input.engine_id.value}:local_replay",
+    )
+
+
+def _build_payload_refs(
+    *,
+    candidate: ImprovementCandidate,
+    diagnostic_ids: tuple[str, ...],
+    review_export_ref: str,
+) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            {
+                review_export_ref,
+                f"{candidate.candidate_id}:feature_bridge",
+                f"{candidate.candidate_id}:parity_diagnostics",
+                f"{candidate.candidate_id}:replay_metrics",
+                f"{candidate.candidate_id}:replay_dtr",
+                *diagnostic_ids,
+                *candidate.hypothesis_ids,
+                candidate.candidate_id,
+            }
+        )
+    )
+
+
+def _build_replay_bundle_for_candidate(
+    *,
+    candidate: ImprovementCandidate,
+    trade_input: TradeLearningInput,
+    candidate_hypotheses: tuple[LearningHypothesis, ...],
+    shared_core_hash: str,
+    review_export_ref: str,
+    dataset_ref: object | None,
+    clock_ref: object | None,
+    local_replay_runtime: ModuleType,
+) -> ReplayExportBundle:
+    replay_scope = _resolve_replay_scope(candidate, candidate_hypotheses, trade_input)
+    tests_required = candidate.tests_required or _tests_required(
+        candidate,
+        candidate_hypotheses,
+    )
+    comparison_protocol = _comparison_protocol(
+        candidate,
+        candidate_hypotheses,
+        replay_scope,
+    )
+    replay_request = local_replay_runtime.LocalReplayRequest(
+        correlation_id=trade_input.correlation_id,
+        profile=trade_input.profile,
+        strategy_classification=trade_input.strategy_classification,
+        lineage_version=f"{trade_input.source_version}.build9x",
+        replay_reason=candidate.summary,
+    )
+    diagnostic_ids = tuple(
+        diagnostic_id
+        for hypothesis in candidate_hypotheses
+        for diagnostic_id in hypothesis.diagnostic_ids
+    )
+    target_components = tuple(
+        sorted(
+            {
+                hypothesis.target_component
+                for hypothesis in candidate_hypotheses
+                if hypothesis.target_component
+            }
+        )
+    )
+    expected_shadow_evidence = tuple(
+        dict.fromkeys(
+            evidence
+            for hypothesis in candidate_hypotheses
+            for evidence in hypothesis.expected_shadow_evidence
+        )
+    )
+    execution_plan = local_replay_runtime.LocalReplayOrchestrator.prepare_bundle(
+        replay_request,
+        artifact_id=f"{candidate.candidate_id}:artifact",
+        strategy_version=trade_input.source_version,
+        payload_refs=_build_payload_refs(
+            candidate=candidate,
+            diagnostic_ids=diagnostic_ids,
+            review_export_ref=review_export_ref,
+        ),
+        dataset_ref=dataset_ref,
+        clock_ref=clock_ref,
+        diagnostic_ids=diagnostic_ids,
+        hypothesis_ids=candidate.hypothesis_ids,
+        candidate_ids=(candidate.candidate_id,),
+        target_components=target_components,
+        expected_shadow_evidence=expected_shadow_evidence,
+        review_export_ref=review_export_ref,
+        feature_bridge_ref=f"{candidate.candidate_id}:feature_bridge",
+        parity_diagnostics_ref=f"{candidate.candidate_id}:parity_diagnostics",
+        replay_metrics_ref=f"{candidate.candidate_id}:replay_metrics",
+        replay_dtr_ref=f"{candidate.candidate_id}:replay_dtr",
+        notes=f"Build-9X governed replay handoff for {candidate.candidate_id}",
+    )
+    checksum_payload = json.dumps(
+        {
+            "execution_plan": execution_plan.model_dump(mode="json"),
+            "comparison_protocol": comparison_protocol.model_dump(mode="json"),
+            "tests_required": tests_required,
+        },
+        sort_keys=True,
+        default=str,
+    )
+    return ReplayExportBundle(
+        bundle_id=f"{candidate.candidate_id}:replay_bundle",
+        candidate_id=candidate.candidate_id,
+        hypothesis_ids=candidate.hypothesis_ids,
+        source_version=trade_input.source_version,
+        contracts_version=_contracts_version(candidate_hypotheses),
+        feature_schema_version=_FEATURE_SCHEMA_VERSION,
+        formula_schema_version=_FORMULA_SCHEMA_VERSION,
+        regime_logic_version=_REGIME_LOGIC_VERSION,
+        cost_model_version=_COST_MODEL_VERSION,
+        replay_scope=replay_scope,
+        tests_required=tests_required,
+        comparison_protocol=comparison_protocol,
+        execution_plan=execution_plan,
+        shared_core_hash=shared_core_hash,
+        bundle_checksum=hashlib.sha256(checksum_payload.encode("utf-8")).hexdigest(),
+    )
+
+
 def build_replay_export_bundles(
     trade_input: TradeLearningInput,
     hypotheses: tuple[LearningHypothesis, ...],
@@ -155,115 +293,16 @@ def build_replay_export_bundles(
             for hypothesis_id in candidate.hypothesis_ids
             if hypothesis_id in hypotheses_by_id
         )
-        replay_scope = (
-            candidate.replay_scope
-            or next(
-                (
-                    hypothesis.required_replay_scope
-                    for hypothesis in candidate_hypotheses
-                    if hypothesis.required_replay_scope
-                ),
-                f"{trade_input.profile.value}:{trade_input.pair}:{trade_input.engine_id.value}:local_replay",
-            )
-        )
-        tests_required = candidate.tests_required or _tests_required(
-            candidate,
-            candidate_hypotheses,
-        )
-        comparison_protocol = _comparison_protocol(
-            candidate,
-            candidate_hypotheses,
-            replay_scope,
-        )
-        replay_request = local_replay_runtime.LocalReplayRequest(
-            correlation_id=trade_input.correlation_id,
-            profile=trade_input.profile,
-            strategy_classification=trade_input.strategy_classification,
-            lineage_version=f"{trade_input.source_version}.build9x",
-            replay_reason=candidate.summary,
-        )
-        diagnostic_ids = tuple(
-            diagnostic_id
-            for hypothesis in candidate_hypotheses
-            for diagnostic_id in hypothesis.diagnostic_ids
-        )
-        target_components = tuple(
-            sorted(
-                {
-                    hypothesis.target_component
-                    for hypothesis in candidate_hypotheses
-                    if hypothesis.target_component
-                }
-            )
-        )
-        expected_shadow_evidence = tuple(
-            dict.fromkeys(
-                evidence
-                for hypothesis in candidate_hypotheses
-                for evidence in hypothesis.expected_shadow_evidence
-            )
-        )
-        payload_refs = tuple(
-            sorted(
-                {
-                    review_export_ref,
-                    f"{candidate.candidate_id}:feature_bridge",
-                    f"{candidate.candidate_id}:parity_diagnostics",
-                    f"{candidate.candidate_id}:replay_metrics",
-                    f"{candidate.candidate_id}:replay_dtr",
-                    *diagnostic_ids,
-                    *candidate.hypothesis_ids,
-                    candidate.candidate_id,
-                }
-            )
-        )
-        execution_plan = local_replay_runtime.LocalReplayOrchestrator.prepare_bundle(
-            replay_request,
-            artifact_id=f"{candidate.candidate_id}:artifact",
-            strategy_version=trade_input.source_version,
-            payload_refs=payload_refs,
-            dataset_ref=dataset_ref,
-            clock_ref=clock_ref,
-            diagnostic_ids=diagnostic_ids,
-            hypothesis_ids=candidate.hypothesis_ids,
-            candidate_ids=(candidate.candidate_id,),
-            target_components=target_components,
-            expected_shadow_evidence=expected_shadow_evidence,
-            review_export_ref=review_export_ref,
-            feature_bridge_ref=f"{candidate.candidate_id}:feature_bridge",
-            parity_diagnostics_ref=f"{candidate.candidate_id}:parity_diagnostics",
-            replay_metrics_ref=f"{candidate.candidate_id}:replay_metrics",
-            replay_dtr_ref=f"{candidate.candidate_id}:replay_dtr",
-            notes=f"Build-9X governed replay handoff for {candidate.candidate_id}",
-        )
-        checksum_payload = json.dumps(
-            {
-                "execution_plan": execution_plan.model_dump(mode="json"),
-                "comparison_protocol": comparison_protocol.model_dump(mode="json"),
-                "tests_required": tests_required,
-            },
-            sort_keys=True,
-            default=str,
-        )
         replay_bundles.append(
-            ReplayExportBundle(
-                bundle_id=f"{candidate.candidate_id}:replay_bundle",
-                candidate_id=candidate.candidate_id,
-                hypothesis_ids=candidate.hypothesis_ids,
-                source_version=trade_input.source_version,
-                contracts_version=_contracts_version(candidate_hypotheses),
-                feature_schema_version=_FEATURE_SCHEMA_VERSION,
-                formula_schema_version=_FORMULA_SCHEMA_VERSION,
-                regime_logic_version=_REGIME_LOGIC_VERSION,
-                cost_model_version=_COST_MODEL_VERSION,
-                replay_scope=replay_scope,
-                tests_required=tests_required,
-                comparison_protocol=comparison_protocol,
-                execution_plan=execution_plan,
+            _build_replay_bundle_for_candidate(
+                candidate=candidate,
+                trade_input=trade_input,
+                candidate_hypotheses=candidate_hypotheses,
                 shared_core_hash=shared_core_hash,
-                bundle_checksum=hashlib.sha256(
-                    checksum_payload.encode("utf-8")
-                ).hexdigest(),
+                review_export_ref=review_export_ref,
+                dataset_ref=dataset_ref,
+                clock_ref=clock_ref,
+                local_replay_runtime=local_replay_runtime,
             )
         )
 

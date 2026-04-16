@@ -10,11 +10,19 @@ from typing import Final
 from typing import Literal
 
 from pydantic import BaseModel, Field
+import yaml
 
 
 DEFAULT_METRICS_PATH: Final[str] = "/metrics"
 DEFAULT_READY_PATH: Final[str] = "/-/ready"
 PrometheusTextSourceKind = Literal["prometheus_text_file", "observability_export_json"]
+_LOCAL_PROMETHEUS_SOURCE_ERRORS = (
+    OSError,
+    UnicodeDecodeError,
+    json.JSONDecodeError,
+    yaml.YAMLError,
+    ValueError,
+)
 
 
 def resolve_local_prometheus_text_source(
@@ -149,7 +157,7 @@ def build_local_prometheus_metrics_bridge_server(
                 return
             self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
 
-        def log_message(self, format: str, *args) -> None:  # noqa: A003
+        def log_message(self, format: str, *args: object) -> None:  # noqa: A003
             return
 
         def _load_metrics_text(self) -> str:
@@ -183,7 +191,7 @@ def build_local_prometheus_metrics_bridge_server(
 
             try:
                 body = self._load_metrics_text().encode("utf-8")
-            except Exception as exc:  # noqa: BLE001
+            except _LOCAL_PROMETHEUS_SOURCE_ERRORS as exc:
                 body = (
                     "# local_prometheus_metrics_bridge source load failed\n"
                     f'# source="{self.metrics_bridge_source}"\n'
@@ -210,7 +218,7 @@ def build_local_prometheus_metrics_bridge_server(
                 try:
                     self._load_metrics_text()
                     source_ready = True
-                except Exception:  # noqa: BLE001
+                except _LOCAL_PROMETHEUS_SOURCE_ERRORS:
                     source_ready = False
             body = b"ready\n" if source_ready else b"missing_source\n"
             status = HTTPStatus.OK if source_ready else HTTPStatus.SERVICE_UNAVAILABLE

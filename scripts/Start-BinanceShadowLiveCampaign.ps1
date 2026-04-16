@@ -125,7 +125,6 @@ $orchestratorDir = Join-Path $CampaignRoot "orchestrator"
 $shadowSessionDir = Join-Path $CampaignRoot "shadow_session"
 $liveCapturesRoot = Join-Path $CampaignRoot "live_captures"
 $autoExportsRoot = Join-Path $CampaignRoot "auto_exports"
-$dashboardOutputDir = Join-Path $CampaignRoot "technical_dashboard"
 $configPath = Join-Path $CampaignRoot "live_websocket_config.json"
 
 New-Item -ItemType Directory -Force -Path @(
@@ -134,8 +133,7 @@ New-Item -ItemType Directory -Force -Path @(
     $orchestratorDir,
     $shadowSessionDir,
     $liveCapturesRoot,
-    $autoExportsRoot,
-    $dashboardOutputDir
+    $autoExportsRoot
 ) | Out-Null
 
 if (-not [string]::IsNullOrWhiteSpace($ApiKey) -or -not [string]::IsNullOrWhiteSpace($ApiSecret) -or $PersistUserEnv) {
@@ -242,24 +240,18 @@ if (-not $SkipServiceLaunch) {
     }
 }
 
-if (-not $SkipDashboardRender) {
-    & python "scripts/run_technical_dashboard.py" `
-        "--output-dir" $dashboardOutputDir `
-        "--local-runtime-root" $CampaignRoot
-    if ($LASTEXITCODE -ne 0) {
-        throw "run_technical_dashboard.py exited with code $LASTEXITCODE"
-    }
-}
-
 [ordered]@{
     campaign_root = [System.IO.Path]::GetFullPath($CampaignRoot)
     live_websocket_config = [System.IO.Path]::GetFullPath($configPath)
     service_dir = [System.IO.Path]::GetFullPath($serviceDir)
-    dashboard_html = [System.IO.Path]::GetFullPath((Join-Path $dashboardOutputDir "technical_dashboard.html"))
+    observability_export = [System.IO.Path]::GetFullPath((Join-Path $serviceDir "shadow_vps_service_observability_export.json"))
+    observability_prom = [System.IO.Path]::GetFullPath((Join-Path $serviceDir "shadow_vps_service_observability.prom"))
+    scrape_manifest = [System.IO.Path]::GetFullPath((Join-Path $serviceDir "shadow_vps_service_scrape_manifest.json"))
+    prometheus_file_sd = [System.IO.Path]::GetFullPath((Join-Path $serviceDir "shadow_vps_service_prometheus_file_sd.json"))
     user_data_stream_enabled = $hasAuthenticatedUserData
     execution_runtime_projection_path_ref = $configPayload["execution_runtime_projection_path_ref"]
     regime_lite_assessment_path_ref = $configPayload["regime_lite_assessment_path_ref"]
     regime_lite_safing_recommendation_path_ref = $configPayload["regime_lite_safing_recommendation_path_ref"]
     service_launched = (-not $SkipServiceLaunch)
-    dashboard_rendered = (-not $SkipDashboardRender)
+    dashboard_rendered = $false
 } | ConvertTo-Json -Depth 8

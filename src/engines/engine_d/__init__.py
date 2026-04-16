@@ -3,6 +3,8 @@
 Shadow-capable re-entry engine.
 """
 
+from __future__ import annotations
+
 from .engine_d_runner import (
     EngineDDecision,
     EngineDInput,

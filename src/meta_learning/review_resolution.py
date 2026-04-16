@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
@@ -33,6 +34,15 @@ _FINAL_HUMAN_RESOLUTIONS = {
     "shadow_rejected_closed_no_action",
     "deployed_versioned",
 }
+
+
+@dataclass(frozen=True)
+class _HumanResolutionSpec:
+    review_state: ReviewState
+    final_verdict_recorded: bool
+    expected_stage: HypothesisGovernanceStage
+    path: tuple[HypothesisGovernanceStage, ...]
+    required_candidate_stage: CandidateGovernanceStage | None = None
 
 
 def _utc_now() -> datetime:
@@ -256,6 +266,54 @@ def _archive_diagnostics_if_eligible(
     return tuple(updated), tuple(transitions)
 
 
+def _resolve_human_resolution_spec(resolution: str) -> _HumanResolutionSpec:
+    if resolution == "replay_approved":
+        return _HumanResolutionSpec(
+            review_state=ReviewState.APPROVED,
+            final_verdict_recorded=False,
+            expected_stage=HypothesisGovernanceStage.UNDER_REVIEW,
+            path=(HypothesisGovernanceStage.REPLAY_APPROVED,),
+        )
+    if resolution == "replay_rejected_closed_no_action":
+        return _HumanResolutionSpec(
+            review_state=ReviewState.REJECTED,
+            final_verdict_recorded=True,
+            expected_stage=HypothesisGovernanceStage.UNDER_REVIEW,
+            path=(
+                HypothesisGovernanceStage.REPLAY_REJECTED,
+                HypothesisGovernanceStage.CLOSED_NO_ACTION,
+            ),
+        )
+    if resolution == "shadow_candidate_approved":
+        return _HumanResolutionSpec(
+            review_state=ReviewState.APPROVED,
+            final_verdict_recorded=False,
+            expected_stage=HypothesisGovernanceStage.REPLAY_APPROVED,
+            path=(HypothesisGovernanceStage.SHADOW_CANDIDATE,),
+            required_candidate_stage=CandidateGovernanceStage.READY_FOR_SHADOW_REVIEW,
+        )
+    if resolution == "shadow_rejected_closed_no_action":
+        return _HumanResolutionSpec(
+            review_state=ReviewState.REJECTED,
+            final_verdict_recorded=True,
+            expected_stage=HypothesisGovernanceStage.SHADOW_CANDIDATE,
+            path=(
+                HypothesisGovernanceStage.SHADOW_REJECTED,
+                HypothesisGovernanceStage.CLOSED_NO_ACTION,
+            ),
+            required_candidate_stage=CandidateGovernanceStage.READY_FOR_SHADOW_REVIEW,
+        )
+    if resolution == "deployed_versioned":
+        return _HumanResolutionSpec(
+            review_state=ReviewState.APPROVED,
+            final_verdict_recorded=True,
+            expected_stage=HypothesisGovernanceStage.SHADOW_CANDIDATE,
+            path=(HypothesisGovernanceStage.DEPLOYED_VERSIONED,),
+            required_candidate_stage=CandidateGovernanceStage.READY_FOR_SHADOW_REVIEW,
+        )
+    raise ValueError(f"Unsupported human review resolution: {resolution}")
+
+
 def apply_candidate_replay_results(
     bundle: MetaLearningReviewBundle,
     *,
@@ -385,75 +443,25 @@ def apply_human_review_resolution(
 ) -> MetaLearningReviewBundle:
     """Apply a governed human resolution and propagate terminal transitions."""
 
-    if resolution not in {
-        "replay_approved",
-        "replay_rejected_closed_no_action",
-        "shadow_candidate_approved",
-        "shadow_rejected_closed_no_action",
-        "deployed_versioned",
-    }:
-        raise ValueError(f"Unsupported human review resolution: {resolution}")
-
+    spec = _resolve_human_resolution_spec(resolution)
     updated_hypotheses: list[LearningHypothesis] = []
     transitions = list(bundle.lifecycle_transitions)
-    if resolution == "replay_approved":
-        review_state = ReviewState.APPROVED
-        final_verdict_recorded = False
-        expected_stage = HypothesisGovernanceStage.UNDER_REVIEW
-        path = (HypothesisGovernanceStage.REPLAY_APPROVED,)
-    elif resolution == "replay_rejected_closed_no_action":
-        review_state = ReviewState.REJECTED
-        final_verdict_recorded = True
-        expected_stage = HypothesisGovernanceStage.UNDER_REVIEW
-        path = (
-            HypothesisGovernanceStage.REPLAY_REJECTED,
-            HypothesisGovernanceStage.CLOSED_NO_ACTION,
-        )
-    elif resolution == "shadow_candidate_approved":
-        review_state = ReviewState.APPROVED
-        final_verdict_recorded = False
-        expected_stage = HypothesisGovernanceStage.REPLAY_APPROVED
-        path = (HypothesisGovernanceStage.SHADOW_CANDIDATE,)
+    if spec.required_candidate_stage is not None:
         _require_candidate_support_for_hypotheses(
             bundle,
-            hypothesis_stage=HypothesisGovernanceStage.REPLAY_APPROVED,
-            candidate_stage=CandidateGovernanceStage.READY_FOR_SHADOW_REVIEW,
-            resolution="shadow_candidate_approved",
-        )
-    elif resolution == "shadow_rejected_closed_no_action":
-        review_state = ReviewState.REJECTED
-        final_verdict_recorded = True
-        expected_stage = HypothesisGovernanceStage.SHADOW_CANDIDATE
-        path = (
-            HypothesisGovernanceStage.SHADOW_REJECTED,
-            HypothesisGovernanceStage.CLOSED_NO_ACTION,
-        )
-        _require_candidate_support_for_hypotheses(
-            bundle,
-            hypothesis_stage=HypothesisGovernanceStage.SHADOW_CANDIDATE,
-            candidate_stage=CandidateGovernanceStage.READY_FOR_SHADOW_REVIEW,
-            resolution="shadow_rejected_closed_no_action",
-        )
-    else:
-        review_state = ReviewState.APPROVED
-        final_verdict_recorded = True
-        expected_stage = HypothesisGovernanceStage.SHADOW_CANDIDATE
-        path = (HypothesisGovernanceStage.DEPLOYED_VERSIONED,)
-        _require_candidate_support_for_hypotheses(
-            bundle,
-            hypothesis_stage=HypothesisGovernanceStage.SHADOW_CANDIDATE,
-            candidate_stage=CandidateGovernanceStage.READY_FOR_SHADOW_REVIEW,
-            resolution="deployed_versioned",
+            hypothesis_stage=spec.expected_stage,
+            candidate_stage=spec.required_candidate_stage,
+            resolution=resolution,
         )
 
     for hypothesis in bundle.hypotheses:
-        if hypothesis.governance_stage != expected_stage:
+        if hypothesis.governance_stage != spec.expected_stage:
             raise ValueError(
-                f"Resolution {resolution} requires hypotheses in stage {expected_stage.value}, found {hypothesis.governance_stage.value}"
+                f"Resolution {resolution} requires hypotheses in stage {spec.expected_stage.value}, found {hypothesis.governance_stage.value}"
             )
         current, current_transitions = apply_hypothesis_path(
             hypothesis,
-            path,
+            spec.path,
             actor=actor,
             reason=resolution,
         )
@@ -471,7 +479,7 @@ def apply_human_review_resolution(
         transitions.extend(current_transitions)
 
     updated_diagnostics = bundle.diagnostics
-    if final_verdict_recorded:
+    if spec.final_verdict_recorded:
         updated_diagnostics, review_transitions = _finalize_diagnostics_for_review(
             updated_diagnostics,
             actor=actor,
@@ -484,10 +492,10 @@ def apply_human_review_resolution(
         review_entity_id=bundle.review_export.export_ref,
         correlation_id=bundle.correlation_id,
         actor=actor,
-        review_state=review_state,
+        review_state=spec.review_state,
         verdict=resolution,
         rationale=rationale,
-        final_verdict_recorded=final_verdict_recorded,
+        final_verdict_recorded=spec.final_verdict_recorded,
     )
     archive_eligibility = build_archive_eligibility(
         correlation_id=bundle.correlation_id,
@@ -497,7 +505,7 @@ def apply_human_review_resolution(
         review_decisions=review_decisions,
     )
     memory_archived = False
-    if final_verdict_recorded:
+    if spec.final_verdict_recorded:
         updated_diagnostics, archive_transitions = _archive_diagnostics_if_eligible(
             updated_diagnostics,
             archive_eligibility,

@@ -101,18 +101,12 @@ class AppendOnlyMetaLearningStore:
         )
         existing_event_ids.add(payload.event_id)
 
-    def append_review_bundle(self, bundle: MetaLearningReviewBundle) -> None:
-        """Persist the full Build-9X review bundle into append-only ledgers."""
-
-        existing_event_ids = self._existing_event_ids()
-        review_open = not bundle.review_decisions or any(
-            decision.review_state.value in {"pending", "in_review", "needs_revision"}
-            for decision in bundle.review_decisions
-        )
-        replay_open = any(
-            candidate.governance_stage.value in {"ready_for_replay", "replay_running"}
-            for candidate in bundle.candidates
-        )
+    def _append_diagnostic_records(
+        self,
+        bundle: MetaLearningReviewBundle,
+        *,
+        existing_event_ids: set[str],
+    ) -> None:
         for diagnostic in bundle.diagnostics:
             retention_until, retention_policy = diagnostic_or_hypothesis_retention(
                 diagnostic.created_at,
@@ -124,10 +118,7 @@ class AppendOnlyMetaLearningStore:
                 retention_policy=retention_policy,
                 diagnostic=diagnostic,
             )
-            self._append_jsonl(
-                _DIAGNOSTIC_FILE,
-                record.model_dump(mode="json"),
-            )
+            self._append_jsonl(_DIAGNOSTIC_FILE, record.model_dump(mode="json"))
             self._append_event_once(
                 LearningEventRecord(
                     event_id=f"{diagnostic.diagnostic_id}:created",
@@ -144,6 +135,12 @@ class AppendOnlyMetaLearningStore:
                 existing_event_ids=existing_event_ids,
             )
 
+    def _append_hypothesis_records(
+        self,
+        bundle: MetaLearningReviewBundle,
+        *,
+        existing_event_ids: set[str],
+    ) -> None:
         for hypothesis in bundle.hypotheses:
             retention_until, retention_policy = diagnostic_or_hypothesis_retention(
                 hypothesis.created_at,
@@ -155,10 +152,7 @@ class AppendOnlyMetaLearningStore:
                 retention_policy=retention_policy,
                 hypothesis=hypothesis,
             )
-            self._append_jsonl(
-                _HYPOTHESIS_FILE,
-                record.model_dump(mode="json"),
-            )
+            self._append_jsonl(_HYPOTHESIS_FILE, record.model_dump(mode="json"))
             self._append_event_once(
                 LearningEventRecord(
                     event_id=f"{hypothesis.hypothesis_id}:registered",
@@ -175,6 +169,12 @@ class AppendOnlyMetaLearningStore:
                 existing_event_ids=existing_event_ids,
             )
 
+    def _append_candidate_records(
+        self,
+        bundle: MetaLearningReviewBundle,
+        *,
+        existing_event_ids: set[str],
+    ) -> None:
         for candidate in bundle.candidates:
             retention_until, retention_policy = review_or_promotion_retention(
                 candidate.created_at,
@@ -186,10 +186,7 @@ class AppendOnlyMetaLearningStore:
                 retention_policy=retention_policy,
                 candidate=candidate,
             )
-            self._append_jsonl(
-                _CANDIDATE_FILE,
-                record.model_dump(mode="json"),
-            )
+            self._append_jsonl(_CANDIDATE_FILE, record.model_dump(mode="json"))
             self._append_event_once(
                 LearningEventRecord(
                     event_id=f"{candidate.candidate_id}:prepared",
@@ -206,9 +203,13 @@ class AppendOnlyMetaLearningStore:
                 existing_event_ids=existing_event_ids,
             )
 
-        review_entity_id = bundle.review_export.export_ref or (
-            f"{bundle.correlation_id}:review_export"
-        )
+    def _append_review_record_and_export_event(
+        self,
+        bundle: MetaLearningReviewBundle,
+        *,
+        review_entity_id: str,
+        existing_event_ids: set[str],
+    ) -> None:
         review_retention_until, review_retention_policy = review_or_promotion_retention(
             bundle.review_decisions[-1].created_at
             if bundle.review_decisions
@@ -226,10 +227,7 @@ class AppendOnlyMetaLearningStore:
             archive_eligibility=bundle.archive_eligibility,
             lifecycle_transitions=bundle.lifecycle_transitions,
         )
-        self._append_jsonl(
-            _REVIEW_FILE,
-            review_record.model_dump(mode="json"),
-        )
+        self._append_jsonl(_REVIEW_FILE, review_record.model_dump(mode="json"))
         review_export_checksum = _checksum(bundle.review_export.model_dump(mode="json"))
         self._append_event_once(
             LearningEventRecord(
@@ -246,6 +244,13 @@ class AppendOnlyMetaLearningStore:
             ),
             existing_event_ids=existing_event_ids,
         )
+
+    def _append_review_decision_events(
+        self,
+        bundle: MetaLearningReviewBundle,
+        *,
+        existing_event_ids: set[str],
+    ) -> None:
         for decision in bundle.review_decisions:
             decision_retention_until, decision_retention_policy = review_or_promotion_retention(
                 decision.created_at,
@@ -267,30 +272,43 @@ class AppendOnlyMetaLearningStore:
                 ),
                 existing_event_ids=existing_event_ids,
             )
-        if (
-            bundle.capacity_snapshot is not None
-            and bundle.capacity_snapshot.backpressure_signal_key
-        ):
-            event_retention_until, event_retention_policy = review_or_promotion_retention(
-                bundle.memory_record.created_at,
-            )
-            capacity_checksum = _checksum(bundle.capacity_snapshot.model_dump(mode="json"))
-            self._append_event_once(
-                LearningEventRecord(
-                    event_id=f"{review_entity_id}:capacity_backpressure:{capacity_checksum}",
-                    entity_kind="capacity",
-                    entity_id=review_entity_id,
-                    correlation_id=bundle.correlation_id,
-                    event_type=bundle.capacity_snapshot.backpressure_signal_key,
-                    payload_ref=review_entity_id,
-                    payload_checksum=capacity_checksum,
-                    to_state=bundle.capacity_snapshot.capture_mode.value,
-                    reason=", ".join(bundle.capacity_snapshot.blocking_reasons),
-                    retention_until=event_retention_until,
-                    retention_policy=event_retention_policy,
-                ),
-                existing_event_ids=existing_event_ids,
-            )
+
+    def _append_capacity_event(
+        self,
+        bundle: MetaLearningReviewBundle,
+        *,
+        review_entity_id: str,
+        existing_event_ids: set[str],
+    ) -> None:
+        if bundle.capacity_snapshot is None or not bundle.capacity_snapshot.backpressure_signal_key:
+            return
+        event_retention_until, event_retention_policy = review_or_promotion_retention(
+            bundle.memory_record.created_at,
+        )
+        capacity_checksum = _checksum(bundle.capacity_snapshot.model_dump(mode="json"))
+        self._append_event_once(
+            LearningEventRecord(
+                event_id=f"{review_entity_id}:capacity_backpressure:{capacity_checksum}",
+                entity_kind="capacity",
+                entity_id=review_entity_id,
+                correlation_id=bundle.correlation_id,
+                event_type=bundle.capacity_snapshot.backpressure_signal_key,
+                payload_ref=review_entity_id,
+                payload_checksum=capacity_checksum,
+                to_state=bundle.capacity_snapshot.capture_mode.value,
+                reason=", ".join(bundle.capacity_snapshot.blocking_reasons),
+                retention_until=event_retention_until,
+                retention_policy=event_retention_policy,
+            ),
+            existing_event_ids=existing_event_ids,
+        )
+
+    def _append_transition_events(
+        self,
+        bundle: MetaLearningReviewBundle,
+        *,
+        existing_event_ids: set[str],
+    ) -> None:
         for transition in bundle.lifecycle_transitions:
             transition_retention_until, transition_retention_policy = review_or_promotion_retention(
                 transition.created_at,
@@ -313,7 +331,14 @@ class AppendOnlyMetaLearningStore:
                 ),
                 existing_event_ids=existing_event_ids,
             )
-        archive_actor = bundle.review_decisions[-1].actor if bundle.review_decisions else "system_build9x"
+
+    def _append_archive_events(
+        self,
+        bundle: MetaLearningReviewBundle,
+        *,
+        archive_actor: str,
+        existing_event_ids: set[str],
+    ) -> None:
         for entry in bundle.archive_eligibility:
             if entry.archived_at is None:
                 continue
@@ -338,6 +363,14 @@ class AppendOnlyMetaLearningStore:
                 existing_event_ids=existing_event_ids,
             )
 
+    def _append_replay_bundle_records(
+        self,
+        bundle: MetaLearningReviewBundle,
+        *,
+        review_open: bool,
+        replay_open: bool,
+        existing_event_ids: set[str],
+    ) -> None:
         for replay_bundle in bundle.replay_bundles:
             retention_until, retention_policy, retention_locked = export_bundle_retention(
                 replay_bundle.exported_at,
@@ -352,10 +385,7 @@ class AppendOnlyMetaLearningStore:
                 retention_locked=retention_locked,
                 replay_bundle=replay_bundle,
             )
-            self._append_jsonl(
-                _EXPORT_BUNDLE_FILE,
-                record.model_dump(mode="json"),
-            )
+            self._append_jsonl(_EXPORT_BUNDLE_FILE, record.model_dump(mode="json"))
             self._append_event_once(
                 LearningEventRecord(
                     event_id=f"{replay_bundle.bundle_id}:exported",
@@ -372,6 +402,12 @@ class AppendOnlyMetaLearningStore:
                 existing_event_ids=existing_event_ids,
             )
 
+    def _append_memory_record(
+        self,
+        bundle: MetaLearningReviewBundle,
+        *,
+        existing_event_ids: set[str],
+    ) -> None:
         memory_record = bundle.memory_record
         if not memory_record.record_id:
             memory_record = memory_record.model_copy(
@@ -380,10 +416,7 @@ class AppendOnlyMetaLearningStore:
         memory_retention_until, memory_retention_policy = review_or_promotion_retention(
             memory_record.created_at,
         )
-        self._append_jsonl(
-            _MEMORY_FILE,
-            memory_record.model_dump(mode="json"),
-        )
+        self._append_jsonl(_MEMORY_FILE, memory_record.model_dump(mode="json"))
         memory_checksum = _checksum(memory_record.model_dump(mode="json"))
         self._append_event_once(
             LearningEventRecord(
@@ -400,6 +433,50 @@ class AppendOnlyMetaLearningStore:
             ),
             existing_event_ids=existing_event_ids,
         )
+
+    def append_review_bundle(self, bundle: MetaLearningReviewBundle) -> None:
+        """Persist the full Build-9X review bundle into append-only ledgers."""
+
+        existing_event_ids = self._existing_event_ids()
+        review_open = not bundle.review_decisions or any(
+            decision.review_state.value in {"pending", "in_review", "needs_revision"}
+            for decision in bundle.review_decisions
+        )
+        replay_open = any(
+            candidate.governance_stage.value in {"ready_for_replay", "replay_running"}
+            for candidate in bundle.candidates
+        )
+        self._append_diagnostic_records(bundle, existing_event_ids=existing_event_ids)
+        self._append_hypothesis_records(bundle, existing_event_ids=existing_event_ids)
+        self._append_candidate_records(bundle, existing_event_ids=existing_event_ids)
+        review_entity_id = bundle.review_export.export_ref or (
+            f"{bundle.correlation_id}:review_export"
+        )
+        self._append_review_record_and_export_event(
+            bundle,
+            review_entity_id=review_entity_id,
+            existing_event_ids=existing_event_ids,
+        )
+        self._append_review_decision_events(bundle, existing_event_ids=existing_event_ids)
+        self._append_capacity_event(
+            bundle,
+            review_entity_id=review_entity_id,
+            existing_event_ids=existing_event_ids,
+        )
+        self._append_transition_events(bundle, existing_event_ids=existing_event_ids)
+        archive_actor = bundle.review_decisions[-1].actor if bundle.review_decisions else "system_build9x"
+        self._append_archive_events(
+            bundle,
+            archive_actor=archive_actor,
+            existing_event_ids=existing_event_ids,
+        )
+        self._append_replay_bundle_records(
+            bundle,
+            review_open=review_open,
+            replay_open=replay_open,
+            existing_event_ids=existing_event_ids,
+        )
+        self._append_memory_record(bundle, existing_event_ids=existing_event_ids)
 
 
 __all__ = [

@@ -67,7 +67,7 @@ def test_execution_adapter_submit_order_returns_submit_receipt():
             json={
                 "symbol": "BTCUSDT",
                 "orderId": 123456,
-                "clientOrderId": build_binance_client_order_id(engine_id="engine_a", intent_id="intent-1"),
+                "clientOrderId": build_binance_client_order_id(engine_id="engine_a", pair_id="BTCUSDT", intent_id="intent-1"),
                 "transactTime": 1_710_000_000_555,
                 "price": "50000.10000000",
                 "origQty": "0.25000000",
@@ -107,6 +107,7 @@ def test_execution_adapter_replace_order_cancels_then_submits():
                 "orderId": 234567,
                 "clientOrderId": build_binance_client_order_id(
                     engine_id="engine_a",
+                    pair_id="BTCUSDT",
                     intent_id="intent-1:replace:123456:1",
                 ),
                 "transactTime": 1_710_000_000_777,
@@ -153,7 +154,7 @@ def test_execution_adapter_cancel_order_uses_cached_pair():
                 json={
                     "symbol": "BTCUSDT",
                     "orderId": 123456,
-                    "clientOrderId": build_binance_client_order_id(engine_id="engine_a", intent_id="intent-1"),
+                    "clientOrderId": build_binance_client_order_id(engine_id="engine_a", pair_id="BTCUSDT", intent_id="intent-1"),
                     "transactTime": 1_710_000_000_555,
                     "price": "50000.10000000",
                     "origQty": "0.25000000",

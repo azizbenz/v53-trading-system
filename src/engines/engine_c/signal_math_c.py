@@ -30,15 +30,28 @@ def compute_context_score(inputs: "EngineCInput") -> float:
     )
 
 
+def compute_continuation_score_components(
+    *,
+    followthrough_room: float,
+    extension_pct: float,
+    context_score: float,
+) -> float:
+    return _clamp(
+        0.45 * followthrough_room
+        + 0.25 * (1.0 - extension_pct)
+        + 0.30 * context_score
+    )
+
+
 def compute_continuation_score(
     inputs: "EngineCInput",
     *,
     context_score: float,
 ) -> float:
-    return _clamp(
-        0.45 * inputs.followthrough_room
-        + 0.25 * (1.0 - inputs.extension_pct)
-        + 0.30 * context_score
+    return compute_continuation_score_components(
+        followthrough_room=inputs.followthrough_room,
+        extension_pct=inputs.extension_pct,
+        context_score=context_score,
     )
 
 

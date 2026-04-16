@@ -1,5 +1,7 @@
 """Compatibility surface for the canonical execution-owned fee-aware edge gate."""
 
+from __future__ import annotations
+
 from execution_backbone.fee_aware_edge_gate import (
     FeeAwareEdgeDecision,
     FeeAwareEdgeGateConfig,

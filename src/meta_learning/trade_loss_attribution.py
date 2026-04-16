@@ -110,6 +110,206 @@ def _trace_coverage_applies(record: DTRRecord, dtr_summary: DTRSummary) -> bool:
     return not record.path_complete or dtr_summary.dtr_coverage < 0.80
 
 
+def _build_loss_base_kwargs(
+    record: DTRRecord,
+    *,
+    linked_categories: tuple[str, ...],
+    net_return: float,
+) -> dict[str, object]:
+    return {
+        "dtr_id": record.dtr_id,
+        "pair": record.pair,
+        "engine_id": record.engine_id,
+        "decision_state": record.decision_state.value,
+        "attribution_status": "loss",
+        "gross_return": record.gross_return,
+        "realized_cost": record.realized_cost,
+        "net_return_after_cost": net_return,
+        "action_scope": f"{record.engine_id}:{record.pair}",
+        "linked_diagnostic_categories": linked_categories,
+    }
+
+
+def _build_cost_drift_loss_attribution(
+    record: DTRRecord,
+    *,
+    linked_categories: tuple[str, ...],
+    net_return: float,
+    break_even_report: BreakEvenReport,
+) -> TradeLossAttribution:
+    return TradeLossAttribution(
+        **_build_loss_base_kwargs(
+            record,
+            linked_categories=linked_categories,
+            net_return=net_return,
+        ),
+        primary_failure_mode="cost_drift",
+        why_losing=(
+            "realized_cost_exceeded_expected_cost",
+            "net_return_after_cost_turned_negative",
+        ),
+        preventive_action="Raise the fee-aware edge gate and recalibrate realized execution costs before replay promotion.",
+        confidence=0.90,
+        recommended_threshold_ids=_EDGE_THRESHOLD_IDS,
+        evidence=(
+            TradeLossEvidence(
+                source="dtr_record",
+                reference=record.dtr_id,
+                observation=(
+                    f"expected_cost={record.expected_cost:.6f}, "
+                    f"realized_cost={record.realized_cost:.6f}, "
+                    f"net_return_after_cost={net_return:.6f}"
+                ),
+            ),
+            TradeLossEvidence(
+                source="break_even_report",
+                reference="cost_drift_alert",
+                observation=f"has_cost_drift_alert={break_even_report.has_cost_drift_alert}",
+            ),
+        ),
+    )
+
+
+def _build_trace_coverage_loss_attribution(
+    record: DTRRecord,
+    *,
+    linked_categories: tuple[str, ...],
+    net_return: float,
+    dtr_summary: DTRSummary,
+) -> TradeLossAttribution:
+    return TradeLossAttribution(
+        **_build_loss_base_kwargs(
+            record,
+            linked_categories=linked_categories,
+            net_return=net_return,
+        ),
+        primary_failure_mode="trace_coverage",
+        why_losing=("diagnostic_trace_is_incomplete_for_high_confidence_loss_attribution",),
+        preventive_action="Do not mutate production gates yet; improve trace capture and rerun the governed replay first.",
+        confidence=0.82,
+        evidence=(
+            TradeLossEvidence(
+                source="dtr_record",
+                reference=record.dtr_id,
+                observation=f"path_complete={record.path_complete}",
+            ),
+            TradeLossEvidence(
+                source="dtr_summary",
+                reference="dtr_coverage",
+                observation=f"dtr_coverage={dtr_summary.dtr_coverage:.6f}",
+            ),
+        ),
+    )
+
+
+def _build_sterilization_loss_attribution(
+    record: DTRRecord,
+    *,
+    linked_categories: tuple[str, ...],
+    net_return: float,
+    cra_report: CRAReport,
+) -> TradeLossAttribution:
+    return TradeLossAttribution(
+        **_build_loss_base_kwargs(
+            record,
+            linked_categories=linked_categories,
+            net_return=net_return,
+        ),
+        primary_failure_mode="sterilization",
+        why_losing=(
+            "trade_was_reduced_or_crowded_before_execution",
+            "realized_value_was_destroyed_by_execution_pressure",
+        ),
+        preventive_action="Reduce size earlier or suspend this pair/engine scope when sterilization remains elevated.",
+        confidence=0.78,
+        evidence=(
+            TradeLossEvidence(
+                source="dtr_record",
+                reference=record.dtr_id,
+                observation=(
+                    f"candidate_size={record.candidate_size:.6f}, "
+                    f"final_size={record.final_size:.6f}, "
+                    f"cause_chain={','.join(record.cause_chain) or 'none'}"
+                ),
+            ),
+            TradeLossEvidence(
+                source="cra_report",
+                reference="sterilization_rate",
+                observation=f"sterilization_rate={cra_report.sterilization_rate:.6f}",
+            ),
+        ),
+    )
+
+
+def _build_edge_degraded_loss_attribution(
+    record: DTRRecord,
+    *,
+    linked_categories: tuple[str, ...],
+    net_return: float,
+    edge_report: EdgeReport,
+) -> TradeLossAttribution:
+    return TradeLossAttribution(
+        **_build_loss_base_kwargs(
+            record,
+            linked_categories=linked_categories,
+            net_return=net_return,
+        ),
+        primary_failure_mode="edge_degraded",
+        why_losing=(
+            "expected_edge_was_too_weak_for_realized_market_conditions",
+            "scope_requires_tighter_minimum_edge_before_execution",
+        ),
+        preventive_action="Tighten the minimum edge gate and keep this scope under surveillance until replay evidence improves.",
+        confidence=0.74,
+        recommended_threshold_ids=_EDGE_THRESHOLD_IDS,
+        evidence=(
+            TradeLossEvidence(
+                source="dtr_record",
+                reference=record.dtr_id,
+                observation=(
+                    f"ce_expected={record.ce_expected:.6f}, "
+                    f"final_score={record.final_score:.6f}, "
+                    f"net_return_after_cost={net_return:.6f}"
+                ),
+            ),
+            TradeLossEvidence(
+                source="edge_report",
+                reference="degraded_count",
+                observation=f"degraded_count={edge_report.degraded_count}",
+            ),
+        ),
+    )
+
+
+def _build_unclassified_loss_attribution(
+    record: DTRRecord,
+    *,
+    linked_categories: tuple[str, ...],
+    net_return: float,
+) -> TradeLossAttribution:
+    return TradeLossAttribution(
+        **_build_loss_base_kwargs(
+            record,
+            linked_categories=linked_categories,
+            net_return=net_return,
+        ),
+        primary_failure_mode="unclassified_loss",
+        why_losing=("manual_review_required_for_unclassified_loss",),
+        preventive_action="Review the governed DTR manually before changing runtime behavior.",
+        confidence=0.40,
+        evidence=(
+            TradeLossEvidence(
+                source="dtr_record",
+                reference=record.dtr_id,
+                observation=(
+                    f"primary_reason={record.primary_reason or 'none'}, "
+                    f"cause_chain={','.join(record.cause_chain) or 'none'}"
+                ),
+            ),
+        ),
+    )
+
+
 def _build_loss_attribution(
     record: DTRRecord,
     *,
@@ -122,175 +322,41 @@ def _build_loss_attribution(
     net_return = _net_return_after_cost(record)
 
     if _cost_drift_applies(record, break_even_report):
-        return TradeLossAttribution(
-            dtr_id=record.dtr_id,
-            pair=record.pair,
-            engine_id=record.engine_id,
-            decision_state=record.decision_state.value,
-            attribution_status="loss",
-            gross_return=record.gross_return,
-            realized_cost=record.realized_cost,
-            net_return_after_cost=net_return,
-            primary_failure_mode="cost_drift",
-            why_losing=(
-                "realized_cost_exceeded_expected_cost",
-                "net_return_after_cost_turned_negative",
-            ),
-            preventive_action="Raise the fee-aware edge gate and recalibrate realized execution costs before replay promotion.",
-            action_scope=f"{record.engine_id}:{record.pair}",
-            confidence=0.90,
-            recommended_threshold_ids=_EDGE_THRESHOLD_IDS,
-            linked_diagnostic_categories=linked_categories,
-            evidence=(
-                TradeLossEvidence(
-                    source="dtr_record",
-                    reference=record.dtr_id,
-                    observation=(
-                        f"expected_cost={record.expected_cost:.6f}, "
-                        f"realized_cost={record.realized_cost:.6f}, "
-                        f"net_return_after_cost={net_return:.6f}"
-                    ),
-                ),
-                TradeLossEvidence(
-                    source="break_even_report",
-                    reference="cost_drift_alert",
-                    observation=f"has_cost_drift_alert={break_even_report.has_cost_drift_alert}",
-                ),
-            ),
+        return _build_cost_drift_loss_attribution(
+            record,
+            linked_categories=linked_categories,
+            net_return=net_return,
+            break_even_report=break_even_report,
         )
 
     if _trace_coverage_applies(record, dtr_summary):
-        return TradeLossAttribution(
-            dtr_id=record.dtr_id,
-            pair=record.pair,
-            engine_id=record.engine_id,
-            decision_state=record.decision_state.value,
-            attribution_status="loss",
-            gross_return=record.gross_return,
-            realized_cost=record.realized_cost,
-            net_return_after_cost=net_return,
-            primary_failure_mode="trace_coverage",
-            why_losing=(
-                "diagnostic_trace_is_incomplete_for_high_confidence_loss_attribution",
-            ),
-            preventive_action="Do not mutate production gates yet; improve trace capture and rerun the governed replay first.",
-            action_scope=f"{record.engine_id}:{record.pair}",
-            confidence=0.82,
-            linked_diagnostic_categories=linked_categories,
-            evidence=(
-                TradeLossEvidence(
-                    source="dtr_record",
-                    reference=record.dtr_id,
-                    observation=f"path_complete={record.path_complete}",
-                ),
-                TradeLossEvidence(
-                    source="dtr_summary",
-                    reference="dtr_coverage",
-                    observation=f"dtr_coverage={dtr_summary.dtr_coverage:.6f}",
-                ),
-            ),
+        return _build_trace_coverage_loss_attribution(
+            record,
+            linked_categories=linked_categories,
+            net_return=net_return,
+            dtr_summary=dtr_summary,
         )
 
     if _sterilization_applies(record, cra_report):
-        return TradeLossAttribution(
-            dtr_id=record.dtr_id,
-            pair=record.pair,
-            engine_id=record.engine_id,
-            decision_state=record.decision_state.value,
-            attribution_status="loss",
-            gross_return=record.gross_return,
-            realized_cost=record.realized_cost,
-            net_return_after_cost=net_return,
-            primary_failure_mode="sterilization",
-            why_losing=(
-                "trade_was_reduced_or_crowded_before_execution",
-                "realized_value_was_destroyed_by_execution_pressure",
-            ),
-            preventive_action="Reduce size earlier or suspend this pair/engine scope when sterilization remains elevated.",
-            action_scope=f"{record.engine_id}:{record.pair}",
-            confidence=0.78,
-            linked_diagnostic_categories=linked_categories,
-            evidence=(
-                TradeLossEvidence(
-                    source="dtr_record",
-                    reference=record.dtr_id,
-                    observation=(
-                        f"candidate_size={record.candidate_size:.6f}, "
-                        f"final_size={record.final_size:.6f}, "
-                        f"cause_chain={','.join(record.cause_chain) or 'none'}"
-                    ),
-                ),
-                TradeLossEvidence(
-                    source="cra_report",
-                    reference="sterilization_rate",
-                    observation=f"sterilization_rate={cra_report.sterilization_rate:.6f}",
-                ),
-            ),
+        return _build_sterilization_loss_attribution(
+            record,
+            linked_categories=linked_categories,
+            net_return=net_return,
+            cra_report=cra_report,
         )
 
     if _edge_degraded_applies(record, edge_report):
-        return TradeLossAttribution(
-            dtr_id=record.dtr_id,
-            pair=record.pair,
-            engine_id=record.engine_id,
-            decision_state=record.decision_state.value,
-            attribution_status="loss",
-            gross_return=record.gross_return,
-            realized_cost=record.realized_cost,
-            net_return_after_cost=net_return,
-            primary_failure_mode="edge_degraded",
-            why_losing=(
-                "expected_edge_was_too_weak_for_realized_market_conditions",
-                "scope_requires_tighter_minimum_edge_before_execution",
-            ),
-            preventive_action="Tighten the minimum edge gate and keep this scope under surveillance until replay evidence improves.",
-            action_scope=f"{record.engine_id}:{record.pair}",
-            confidence=0.74,
-            recommended_threshold_ids=_EDGE_THRESHOLD_IDS,
-            linked_diagnostic_categories=linked_categories,
-            evidence=(
-                TradeLossEvidence(
-                    source="dtr_record",
-                    reference=record.dtr_id,
-                    observation=(
-                        f"ce_expected={record.ce_expected:.6f}, "
-                        f"final_score={record.final_score:.6f}, "
-                        f"net_return_after_cost={net_return:.6f}"
-                    ),
-                ),
-                TradeLossEvidence(
-                    source="edge_report",
-                    reference="degraded_count",
-                    observation=f"degraded_count={edge_report.degraded_count}",
-                ),
-            ),
+        return _build_edge_degraded_loss_attribution(
+            record,
+            linked_categories=linked_categories,
+            net_return=net_return,
+            edge_report=edge_report,
         )
 
-    return TradeLossAttribution(
-        dtr_id=record.dtr_id,
-        pair=record.pair,
-        engine_id=record.engine_id,
-        decision_state=record.decision_state.value,
-        attribution_status="loss",
-        gross_return=record.gross_return,
-        realized_cost=record.realized_cost,
-        net_return_after_cost=net_return,
-        primary_failure_mode="unclassified_loss",
-        why_losing=("manual_review_required_for_unclassified_loss",),
-        preventive_action="Review the governed DTR manually before changing runtime behavior.",
-        action_scope=f"{record.engine_id}:{record.pair}",
-        confidence=0.40,
-        linked_diagnostic_categories=linked_categories,
-        evidence=(
-            TradeLossEvidence(
-                source="dtr_record",
-                reference=record.dtr_id,
-                observation=(
-                    f"primary_reason={record.primary_reason or 'none'}, "
-                    f"cause_chain={','.join(record.cause_chain) or 'none'}"
-                ),
-            ),
-        ),
+    return _build_unclassified_loss_attribution(
+        record,
+        linked_categories=linked_categories,
+        net_return=net_return,
     )
 
 

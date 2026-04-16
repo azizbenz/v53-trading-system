@@ -989,6 +989,37 @@ def _account_user_data_section(payload: TechnicalDashboardPayload) -> DashboardS
     )
 
 
+def _governed_extensions_statuses(payload: TechnicalDashboardPayload) -> set[str]:
+    return {
+        payload.system.build9x_status,
+        payload.system.shadow_status,
+        payload.system.micro_live_status,
+        payload.system.live_light_status,
+        payload.system.build14_status,
+        payload.system.replay_import_status,
+    }
+
+
+def _governed_extensions_value(payload: TechnicalDashboardPayload) -> str:
+    return (
+        f"9X={payload.system.build9x_status} / "
+        f"shadow={payload.system.shadow_status} / "
+        f"micro={payload.system.micro_live_status} / "
+        f"live={payload.system.live_light_status} / "
+        f"b14={payload.system.build14_status} / "
+        f"replay={payload.system.replay_import_status}"
+    )
+
+
+def _governed_extensions_status(payload: TechnicalDashboardPayload) -> str:
+    statuses = _governed_extensions_statuses(payload)
+    if "critical" in statuses:
+        return "critical"
+    if "warning" in statuses:
+        return "warning"
+    return "info"
+
+
 def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LockedOperatorDashboardView:
     """Project normalized monitoring truth into the locked Build-10 UI surface."""
 
@@ -1016,35 +1047,8 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> Locked
                 DashboardCard(
                     key="build10_extensions",
                     label="Governed Extensions",
-                    value=(
-                        f"9X={payload.system.build9x_status} / "
-                        f"shadow={payload.system.shadow_status} / "
-                        f"micro={payload.system.micro_live_status} / "
-                        f"live={payload.system.live_light_status} / "
-                        f"b14={payload.system.build14_status} / "
-                        f"replay={payload.system.replay_import_status}"
-                    ),
-                    status=(
-                        "critical"
-                        if "critical" in {
-                            payload.system.build9x_status,
-                            payload.system.shadow_status,
-                            payload.system.micro_live_status,
-                            payload.system.live_light_status,
-                            payload.system.build14_status,
-                            payload.system.replay_import_status,
-                        }
-                        else "warning"
-                        if "warning" in {
-                            payload.system.build9x_status,
-                            payload.system.shadow_status,
-                            payload.system.micro_live_status,
-                            payload.system.live_light_status,
-                            payload.system.build14_status,
-                            payload.system.replay_import_status,
-                        }
-                        else "info"
-                    ),
+                    value=_governed_extensions_value(payload),
+                    status=_governed_extensions_status(payload),
                     detail=payload.system.governed_extensions_detail,
                 ),
             ),
@@ -1077,35 +1081,8 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> Locked
                 DashboardCard(
                     key="governed_extensions",
                     label="Governed Extensions",
-                    value=(
-                        f"9X={payload.system.build9x_status} / "
-                        f"shadow={payload.system.shadow_status} / "
-                        f"micro={payload.system.micro_live_status} / "
-                        f"live={payload.system.live_light_status} / "
-                        f"b14={payload.system.build14_status} / "
-                        f"replay={payload.system.replay_import_status}"
-                    ),
-                    status=(
-                        "critical"
-                        if "critical" in {
-                            payload.system.build9x_status,
-                            payload.system.shadow_status,
-                            payload.system.micro_live_status,
-                            payload.system.live_light_status,
-                            payload.system.build14_status,
-                            payload.system.replay_import_status,
-                        }
-                        else "warning"
-                        if "warning" in {
-                            payload.system.build9x_status,
-                            payload.system.shadow_status,
-                            payload.system.micro_live_status,
-                            payload.system.live_light_status,
-                            payload.system.build14_status,
-                            payload.system.replay_import_status,
-                        }
-                        else "info"
-                    ),
+                    value=_governed_extensions_value(payload),
+                    status=_governed_extensions_status(payload),
                     detail=payload.system.governed_extensions_detail,
                 ),
             ),

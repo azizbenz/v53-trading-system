@@ -1,5 +1,7 @@
 """Controlled local->VPS artifact import scaffold."""
 
+from __future__ import annotations
+
 from backtest_artifact_import.contracts import (
     ArtifactCompatibilityCheckResult,
     ArtifactImportDecision,

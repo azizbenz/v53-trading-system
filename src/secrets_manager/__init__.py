@@ -1,5 +1,7 @@
 """Bounded sealed-secrets helpers for local/runtime credential loading."""
 
+from __future__ import annotations
+
 from secrets_manager.cli import build_parser, main
 from secrets_manager.loader import (
     SecretBackend,

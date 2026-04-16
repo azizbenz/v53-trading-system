@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import hashlib
-import re
+import uuid
 
 from execution_backbone.order_decider.intent_builder import ExecutionIntent, OrderType
 from interface_contracts import decimal_to_canonical_str, execution_decimal
@@ -14,31 +13,25 @@ from interface_contracts.binance_contracts import (
     BinanceTimeInForce,
 )
 
-
-_CLIENT_ORDER_ID_MAX_LEN = 36
-_CLIENT_ORDER_ID_HASH_LEN = 8
-_CLIENT_ORDER_ID_SEPARATOR_LEN = 1
+# Fixed namespace for V5.3 client order ids — never change after first live order.
+_V53_ORDER_NAMESPACE = uuid.UUID("b9e2a8c1-4d3f-5a6b-8c9d-0e1f2a3b4c5d")
 
 
-def build_binance_client_order_id(*, engine_id: str, intent_id: str) -> str:
-    """Build a deterministic Binance-compatible client order id."""
+def build_binance_client_order_id(*, engine_id: str, pair_id: str, intent_id: str) -> str:
+    """Build a deterministic UUIDv5 Binance-compatible client order id.
 
-    raw = f"v53_{engine_id}_{intent_id}"
-    normalized = re.sub(r"[^A-Za-z0-9_-]+", "-", raw).strip("-_")
-    if not normalized:
-        normalized = "v53_order"
-    if len(normalized) <= _CLIENT_ORDER_ID_MAX_LEN:
-        return normalized
-    digest = hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:_CLIENT_ORDER_ID_HASH_LEN]
-    prefix_len = (
-        _CLIENT_ORDER_ID_MAX_LEN
-        - _CLIENT_ORDER_ID_HASH_LEN
-        - _CLIENT_ORDER_ID_SEPARATOR_LEN
-    )
-    prefix = normalized[:prefix_len].rstrip("-_")
-    if not prefix:
-        prefix = "v53"
-    return f"{prefix}_{digest}"
+    The name encodes (engine_id, pair_id, intent_id) so that:
+    - Distinct (engine, pair, intent) triplets never collide.
+    - For multi-pair trading the pair is embedded for traceability:
+      you can reverse-engineer which symbol an order belongs to from logs.
+    - UUIDv5 produces exactly 36 chars (fits Binance 36-char limit).
+    - Only hex digits and dashes (valid Binance clientOrderId characters).
+
+    Note: pair_id is expected to be the canonical Binance symbol string,
+    e.g. "BTCUSDT".  It is uppercased internally.
+    """
+    name = f"{engine_id}:{pair_id.upper()}:{intent_id}"
+    return str(uuid.uuid5(_V53_ORDER_NAMESPACE, name))
 
 
 def translate_execution_intent_to_binance_order(
@@ -62,6 +55,7 @@ def translate_execution_intent_to_binance_order(
             quantity=quantity,
             client_order_id=build_binance_client_order_id(
                 engine_id=intent.engine_id,
+                pair_id=intent.pair,
                 intent_id=intent.intent_id,
             ),
         )
@@ -84,6 +78,7 @@ def translate_execution_intent_to_binance_order(
         time_in_force=BinanceTimeInForce.GTC,
         client_order_id=build_binance_client_order_id(
             engine_id=intent.engine_id,
+            pair_id=intent.pair,
             intent_id=intent.intent_id,
         ),
     )

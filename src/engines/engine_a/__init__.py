@@ -8,6 +8,8 @@ Entry points:
 - engines.engine_a.engine_a_runtime.EngineARuntime
 """
 
+from __future__ import annotations
+
 from .engine_a_runner import EngineADecision, EngineAInput, EngineALogEntry, EngineAOutput, run_engine_a
 from .engine_a_runtime import (
     EngineAPreEntryValidationHook,

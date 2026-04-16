@@ -27,6 +27,9 @@ class EngineDReentryHookPlanPayload(BaseModel, frozen=True):
     blocked: bool = False
     block_reason_codes: tuple[str, ...] = ()
     detail: str = ""
+    episode_reference_id: str = ""
+    anti_revenge_state: str = ""
+    observability_tags: tuple[str, ...] = ()
 
 
 def load_engine_d_reentry_hook_payload(
@@ -60,6 +63,9 @@ def run_engine_d_reentry_hook(
             accepted=True,
             reason_codes=hook_payload.block_reason_codes,
             detail=detail,
+            episode_reference_id=hook_payload.episode_reference_id,
+            anti_revenge_state=hook_payload.anti_revenge_state,
+            observability_tags=hook_payload.observability_tags,
         )
 
     detail = hook_payload.detail.strip()
@@ -72,6 +78,9 @@ def run_engine_d_reentry_hook(
         accepted=False,
         reason_codes=hook_payload.block_reason_codes,
         detail=detail,
+        episode_reference_id=hook_payload.episode_reference_id,
+        anti_revenge_state=hook_payload.anti_revenge_state,
+        observability_tags=hook_payload.observability_tags,
     )
 
 

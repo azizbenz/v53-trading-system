@@ -37,6 +37,12 @@ _ENGINE_TO_STRATEGY: dict[str, StrategyClassification] = {
 }
 
 
+def _emit_output_lines(lines: tuple[str, ...]) -> None:
+    if not lines:
+        return
+    sys.stdout.write("\n".join(lines) + "\n")
+
+
 class GovernedPostTradeInputSummary(BaseModel, frozen=True):
     """Future-facing audit summary of the Local IA Lab review input surface."""
 
@@ -292,12 +298,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     atomic_write_json(loss_attribution_path, loss_attribution.model_dump(mode="json"), indent=2)
     atomic_write_json(input_summary_path, resolved_input_summary.model_dump(mode="json"), indent=2)
 
-    print(f"Meta runtime JSON: {meta_runtime_path}")
-    print(f"Review bundle JSON: {bundle_path}")
-    print(f"Review markdown: {review_markdown_path}")
-    print(f"Monitoring projection JSON: {projection_path}")
-    print(f"Trade loss attribution JSON: {loss_attribution_path}")
-    print(f"Governed input summary JSON: {input_summary_path}")
+    _emit_output_lines(
+        (
+            f"Meta runtime JSON: {meta_runtime_path}",
+            f"Review bundle JSON: {bundle_path}",
+            f"Review markdown: {review_markdown_path}",
+            f"Monitoring projection JSON: {projection_path}",
+            f"Trade loss attribution JSON: {loss_attribution_path}",
+            f"Governed input summary JSON: {input_summary_path}",
+        )
+    )
     return 0
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import time
-from typing import Any, Callable, Mapping
+from typing import Callable, Mapping
 from urllib.parse import urlencode
 
 import httpx
@@ -24,6 +24,10 @@ from interface_contracts.binance_contracts import (
     BinanceSymbolInfo,
 )
 from venue_adapters.binance_spot.orderbook_manager import BinanceDepthSnapshot
+from venue_adapters.binance_spot.rate_limiter import (
+    BinanceApiRateLimiter,
+    classify_binance_request_quota_cost,
+)
 
 
 class BinanceRestClient:
@@ -37,11 +41,13 @@ class BinanceRestClient:
         timeout_s: float = 5.0,
         client: httpx.AsyncClient | None = None,
         clock_ms: Callable[[], int] | None = None,
+        rate_limiter: BinanceApiRateLimiter | None = None,
     ) -> None:
         if timeout_s <= 0:
             raise ValueError("timeout_s must be > 0")
         self._credentials = credentials
         self._clock_ms = clock_ms or (lambda: time.time_ns() // 1_000_000)
+        self._rate_limiter = rate_limiter or BinanceApiRateLimiter(clock_ms=self._clock_ms)
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(
             base_url=base_url.rstrip("/"),
@@ -98,7 +104,7 @@ class BinanceRestClient:
         path: str,
         recv_window_ms: int,
         params: Mapping[str, str] | None = None,
-    ) -> Mapping[str, Any] | list[Any]:
+    ) -> Mapping[str, object] | list[object]:
         if self._credentials is None:
             raise RuntimeError("Authenticated Binance credentials are required for account feature audit endpoints")
         if path not in _ALLOWED_ACCOUNT_FEATURE_AUDIT_PATHS:
@@ -181,7 +187,7 @@ class BinanceRestClient:
         method: str = "GET",
         params: Mapping[str, str] | None = None,
         signed: bool = False,
-    ) -> Mapping[str, Any]:
+    ) -> Mapping[str, object]:
         payload = await self._request_payload(
             path,
             method=method,
@@ -199,7 +205,7 @@ class BinanceRestClient:
         method: str = "GET",
         params: Mapping[str, str] | None = None,
         signed: bool = False,
-    ) -> Mapping[str, Any] | list[Any]:
+    ) -> Mapping[str, object] | list[object]:
         request_params = dict(params or {})
         headers: dict[str, str] = {}
         if signed:
@@ -215,7 +221,21 @@ class BinanceRestClient:
             request_params["signature"] = signature
             headers["X-MBX-APIKEY"] = self._credentials.api_key.get_secret_value()
 
+        request_cost = classify_binance_request_quota_cost(
+            path,
+            method=method,
+            params=request_params,
+        )
+        self._rate_limiter.reserve(
+            cost=request_cost,
+            now_ms=self._clock_ms(),
+        )
         response = await self._client.request(method, path, params=request_params, headers=headers)
+        self._rate_limiter.observe_response(
+            headers=response.headers,
+            status_code=response.status_code,
+            now_ms=self._clock_ms(),
+        )
         response.raise_for_status()
         payload = response.json()
         return payload
@@ -256,7 +276,7 @@ def _canonical_decimal_str(value: object) -> str:
     return decimal_to_canonical_str(execution_decimal(value))
 
 
-def _parse_exchange_info(payload: Mapping[str, Any]) -> BinanceExchangeInfo:
+def _parse_exchange_info(payload: Mapping[str, object]) -> BinanceExchangeInfo:
     rate_limits_raw = payload.get("rateLimits", [])
     rate_limits: list[BinanceRateLimit] = []
     if isinstance(rate_limits_raw, list):
@@ -314,7 +334,7 @@ def _parse_exchange_info(payload: Mapping[str, Any]) -> BinanceExchangeInfo:
     )
 
 
-def _parse_account_snapshot(payload: Mapping[str, Any]) -> BinanceAccountSnapshot:
+def _parse_account_snapshot(payload: Mapping[str, object]) -> BinanceAccountSnapshot:
     balances_raw = payload.get("balances", [])
     balances: list[BinanceAssetBalance] = []
     if isinstance(balances_raw, list):
@@ -343,7 +363,7 @@ def _parse_account_snapshot(payload: Mapping[str, Any]) -> BinanceAccountSnapsho
     )
 
 
-def _parse_order_ack(payload: Mapping[str, Any]) -> BinanceOrderAck:
+def _parse_order_ack(payload: Mapping[str, object]) -> BinanceOrderAck:
     return BinanceOrderAck(
         symbol=str(payload.get("symbol", "")),
         order_id=int(payload.get("orderId", 0)),
@@ -359,7 +379,7 @@ def _parse_order_ack(payload: Mapping[str, Any]) -> BinanceOrderAck:
     )
 
 
-def _parse_open_order(payload: Mapping[str, Any]) -> BinanceOpenOrder:
+def _parse_open_order(payload: Mapping[str, object]) -> BinanceOpenOrder:
     return BinanceOpenOrder(
         symbol=str(payload.get("symbol", "")),
         order_id=int(payload.get("orderId", 0)),
@@ -376,7 +396,7 @@ def _parse_open_order(payload: Mapping[str, Any]) -> BinanceOpenOrder:
 
 
 def _parse_depth_snapshot(
-    payload: Mapping[str, Any],
+    payload: Mapping[str, object],
     *,
     pair: str,
     recv_time_s: float,

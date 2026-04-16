@@ -97,6 +97,38 @@ def _evaluate_no_live_mutation_path(bundle: MetaLearningReviewBundle) -> Build9X
     )
 
 
+def _validate_end_to_end_persistence(
+    bundle: MetaLearningReviewBundle,
+    *,
+    correlation_id: str,
+    state_dir: Path,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    store = AppendOnlyMetaLearningStore(state_dir)
+    diagnostic_records = _records_for_correlation(store, _DIAGNOSTIC_FILE, correlation_id)
+    hypothesis_records = _records_for_correlation(store, _HYPOTHESIS_FILE, correlation_id)
+    candidate_records = _records_for_correlation(store, _CANDIDATE_FILE, correlation_id)
+    review_records = _records_for_correlation(store, _REVIEW_FILE, correlation_id)
+    export_records = _records_for_correlation(store, _EXPORT_BUNDLE_FILE, correlation_id)
+    memory_records = _records_for_correlation(store, _MEMORY_FILE, correlation_id)
+    event_records = _records_for_correlation(store, _EVENT_FILE, correlation_id)
+    blocking_reasons: list[str] = []
+    if bundle.diagnostics and len(diagnostic_records) < len(bundle.diagnostics):
+        blocking_reasons.append("persistence:diagnostic_records_incomplete")
+    if bundle.hypotheses and len(hypothesis_records) < len(bundle.hypotheses):
+        blocking_reasons.append("persistence:hypothesis_records_incomplete")
+    if bundle.candidates and len(candidate_records) < len(bundle.candidates):
+        blocking_reasons.append("persistence:candidate_records_incomplete")
+    if not review_records:
+        blocking_reasons.append("persistence:review_records_missing")
+    if bundle.replay_bundles and len(export_records) < len(bundle.replay_bundles):
+        blocking_reasons.append("persistence:export_bundle_records_incomplete")
+    if not memory_records:
+        blocking_reasons.append("persistence:memory_records_missing")
+    if not event_records:
+        blocking_reasons.append("persistence:event_records_missing")
+    return tuple(blocking_reasons), (str(state_dir),)
+
+
 def _evaluate_end_to_end_id_correlation(
     bundle: MetaLearningReviewBundle,
     *,
@@ -194,30 +226,13 @@ def _evaluate_end_to_end_id_correlation(
             evidence_refs.append(transition.transition_id)
 
     if state_dir is not None:
-        store = AppendOnlyMetaLearningStore(state_dir)
-        diagnostic_records = _records_for_correlation(store, _DIAGNOSTIC_FILE, correlation_id)
-        hypothesis_records = _records_for_correlation(store, _HYPOTHESIS_FILE, correlation_id)
-        candidate_records = _records_for_correlation(store, _CANDIDATE_FILE, correlation_id)
-        review_records = _records_for_correlation(store, _REVIEW_FILE, correlation_id)
-        export_records = _records_for_correlation(store, _EXPORT_BUNDLE_FILE, correlation_id)
-        memory_records = _records_for_correlation(store, _MEMORY_FILE, correlation_id)
-        event_records = _records_for_correlation(store, _EVENT_FILE, correlation_id)
-
-        if bundle.diagnostics and len(diagnostic_records) < len(bundle.diagnostics):
-            blocking_reasons.append("persistence:diagnostic_records_incomplete")
-        if bundle.hypotheses and len(hypothesis_records) < len(bundle.hypotheses):
-            blocking_reasons.append("persistence:hypothesis_records_incomplete")
-        if bundle.candidates and len(candidate_records) < len(bundle.candidates):
-            blocking_reasons.append("persistence:candidate_records_incomplete")
-        if not review_records:
-            blocking_reasons.append("persistence:review_records_missing")
-        if bundle.replay_bundles and len(export_records) < len(bundle.replay_bundles):
-            blocking_reasons.append("persistence:export_bundle_records_incomplete")
-        if not memory_records:
-            blocking_reasons.append("persistence:memory_records_missing")
-        if not event_records:
-            blocking_reasons.append("persistence:event_records_missing")
-        evidence_refs.append(str(state_dir))
+        persistence_blockers, persistence_refs = _validate_end_to_end_persistence(
+            bundle,
+            correlation_id=correlation_id,
+            state_dir=state_dir,
+        )
+        blocking_reasons.extend(persistence_blockers)
+        evidence_refs.extend(persistence_refs)
 
     return _build_gate_result(
         Build9XMergeGateName.END_TO_END_ID_CORRELATION,

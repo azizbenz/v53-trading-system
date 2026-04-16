@@ -2,6 +2,8 @@
 4.5 - WebSocket Gateway: connexion fiable, observable et reconnectable.
 """
 
+from __future__ import annotations
+
 from .runtime_gateway import (
     AdapterMessage,
     GatewayPollResult,

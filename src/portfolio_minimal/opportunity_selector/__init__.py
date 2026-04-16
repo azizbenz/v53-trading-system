@@ -1,1 +1,3 @@
-"""Build-8 / opportunity_selector — Select which opportunities deserve capital."""
+"""Build-8 / opportunity_selector â€” Select which opportunities deserve capital."""
+
+from __future__ import annotations

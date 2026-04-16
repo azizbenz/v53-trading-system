@@ -148,7 +148,7 @@ class BinanceUserDataWebSocketEventSource(BinanceUserDataEventSource):
             return
         try:
             client.close()
-        except Exception:
+        except (OSError, RuntimeError, ValueError):
             return
 
     def poll_events(self) -> tuple[dict[str, object], ...]:
@@ -169,7 +169,7 @@ class BinanceUserDataWebSocketEventSource(BinanceUserDataEventSource):
             return None
         try:
             raw_payload = self._client.recv()
-        except Exception as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             if _is_timeout_exception(exc):
                 return None
             raise

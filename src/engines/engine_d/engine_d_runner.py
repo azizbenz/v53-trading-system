@@ -8,8 +8,8 @@ from pydantic import BaseModel, Field
 
 from .context_resolver_d import build_engine_d_log_context, resolve_engine_d_context
 from .conviction_builder_d import build_conviction_d
-from .cost_feasibility_d import evaluate_cost_feasibility_d
-from .invalidation_mapper_d import build_invalidation_levels_d
+from .cost_feasibility_d import CostMetricsD, evaluate_cost_feasibility_d
+from .invalidation_mapper_d import InvalidationLevelsD, build_invalidation_levels_d
 from .output_payload_builder_d import build_engine_d_output_payload
 from .signal_math_d import (
     compute_context_score,
@@ -17,6 +17,8 @@ from .signal_math_d import (
     compute_marginal_value_score,
     compute_reformation_score,
 )
+
+EngineDContext = dict[str, float | str | bool]
 
 
 def _clamp(value: float) -> float:
@@ -63,6 +65,13 @@ class EngineDLogEntry(BaseModel, frozen=True):
     origin_trade_id: str = ""
     link_type: str = ""
     structure_reformed_detected: bool = False
+    first_episode_id: str = ""
+    first_episode_engine_id: str = ""
+    first_episode_close_reason: str = ""
+    consecutive_stop_count: int = 0
+    last_stop_at_ns: int | None = None
+    last_fresh_a_detection_at_ns: int | None = None
+    anti_revenge_state: str = ""
     raw_score: float = 0.0
     penalized_score: float = 0.0
     history_score: float = 0.0
@@ -97,6 +106,13 @@ class EngineDOutput(BaseModel, frozen=True):
     origin_trade_id: str = ""
     link_type: str = ""
     structure_reformed_detected: bool = False
+    first_episode_id: str = ""
+    first_episode_engine_id: str = ""
+    first_episode_close_reason: str = ""
+    consecutive_stop_count: int = 0
+    last_stop_at_ns: int | None = None
+    last_fresh_a_detection_at_ns: int | None = None
+    anti_revenge_state: str = ""
     history_score: float = 0.0
     reformation_score: float = 0.0
     marginal_value_score: float = 0.0
@@ -121,6 +137,17 @@ class EngineDInput(BaseModel, frozen=True):
     origin_context_id: str = ""
     origin_trade_id: str = ""
     link_type: str = "prior_trade"
+    first_episode_id: str = ""
+    first_episode_engine_id: str = ""
+    first_episode_close_reason: str = ""
+    consecutive_stop_count: int = Field(default=0, ge=0)
+    last_stop_at_ns: int | None = Field(default=None, ge=1_000_000_000_000_000_000, le=9_999_999_999_999_999_999)
+    last_fresh_a_detection_at_ns: int | None = Field(
+        default=None,
+        ge=1_000_000_000_000_000_000,
+        le=9_999_999_999_999_999_999,
+    )
+    anti_revenge_state: str = ""
     prior_trade_quality: float
     reformation_quality: float
     pullback_quality: float
@@ -154,174 +181,329 @@ def run_engine_d(inputs: EngineDInput) -> EngineDOutput:
     no_trade_reasons: list[NoTradeReasonD] = []
     context = resolve_engine_d_context(inputs)
 
-    # BS-104 guard: entry_price=0 would cause Pydantic ValidationError
-    # when building EngineDInvalidation(stop_price=..., gt=0.0)
-    if inputs.entry_price <= 0.0:
-        no_trade_reasons.append(NoTradeReasonD.COST_INFEASIBLE)
-        logs.append(EngineDLogEntry(
-            event="engine_d_no_trade",
-            pair=inputs.pair,
-            regime=inputs.regime,
-            **build_engine_d_log_context(context),
-            reasons=("entry_price must be positive for re-entry invalidation",),
-        ))
-        return EngineDOutput(
-            pair=inputs.pair,
-            decision=EngineDDecision.NO_TRADE,
-            **build_engine_d_output_payload(
-                context=context,
-                scoring_version=inputs.scoring_version,
-                log_entries=tuple(logs),
-                no_trade_reasons=tuple(no_trade_reasons),
-            ),
-        )
-
-    history_score = compute_history_score(inputs)
-    logs.append(
-        EngineDLogEntry(
-            event="engine_d_history_checked",
-            pair=inputs.pair,
-            regime=inputs.regime,
-            **build_engine_d_log_context(context),
-            history_score=history_score,
-            raw_score=history_score,
-        )
+    no_trade_output = _evaluate_entry_price_stage(
+        inputs,
+        context,
+        logs,
+        no_trade_reasons,
     )
-    if history_score < 0.55:
-        no_trade_reasons.append(NoTradeReasonD.HISTORY_WEAK)
-        logs.append(
-            EngineDLogEntry(
-                event="engine_d_no_trade",
-                pair=inputs.pair,
-                regime=inputs.regime,
-                **build_engine_d_log_context(context),
-                history_score=history_score,
-                reasons=("prior context too weak for re-entry",),
-            )
-        )
-        return EngineDOutput(
-            pair=inputs.pair,
-            decision=EngineDDecision.NO_TRADE,
-            **build_engine_d_output_payload(
-                context=context,
-                scoring_version=inputs.scoring_version,
-                log_entries=tuple(logs),
-                history_score=history_score,
-                no_trade_reasons=tuple(no_trade_reasons),
-            ),
-        )
+    if no_trade_output is not None:
+        return no_trade_output
 
-    context_score = compute_context_score(inputs)
-    reformation_score = compute_reformation_score(inputs, context_score=context_score)
-    logs.append(
-        EngineDLogEntry(
-            event="engine_d_reformation_checked",
-            pair=inputs.pair,
-            regime=inputs.regime,
-            **build_engine_d_log_context(context),
-            history_score=history_score,
-            reformation_score=reformation_score,
-            raw_score=reformation_score,
-        )
+    history_score, no_trade_output = _evaluate_history_stage(
+        inputs,
+        context,
+        logs,
+        no_trade_reasons,
     )
-    if reformation_score < 0.58:
-        no_trade_reasons.append(NoTradeReasonD.REFORMATION_WEAK)
-        logs.append(
-            EngineDLogEntry(
-                event="engine_d_no_trade",
-                pair=inputs.pair,
-                regime=inputs.regime,
-                **build_engine_d_log_context(context),
-                history_score=history_score,
-                reformation_score=reformation_score,
-                reasons=("reformation too weak for second chance entry",),
-            )
-        )
-        return EngineDOutput(
-            pair=inputs.pair,
-            decision=EngineDDecision.NO_TRADE,
-            **build_engine_d_output_payload(
-                context=context,
-                scoring_version=inputs.scoring_version,
-                log_entries=tuple(logs),
-                history_score=history_score,
-                reformation_score=reformation_score,
-                no_trade_reasons=tuple(no_trade_reasons),
-            ),
-        )
+    if no_trade_output is not None:
+        return no_trade_output
 
-    marginal_value_score = compute_marginal_value_score(inputs)
-    concentration_risk = context["marginal_concentration"]
-    penalized_score = max(0.0, marginal_value_score - max(0.0, concentration_risk - 0.30))
+    context_score, reformation_score, no_trade_output = _evaluate_reformation_stage(
+        inputs,
+        context,
+        logs,
+        no_trade_reasons,
+        history_score=history_score,
+    )
+    if no_trade_output is not None:
+        return no_trade_output
+
+    marginal_value_score, concentration_risk, no_trade_output = _evaluate_marginal_value_stage(
+        inputs,
+        context,
+        logs,
+        no_trade_reasons,
+        history_score=history_score,
+        reformation_score=reformation_score,
+    )
+    if no_trade_output is not None:
+        return no_trade_output
+
+    cost_metrics, no_trade_output = _evaluate_cost_stage(
+        inputs,
+        context,
+        logs,
+        no_trade_reasons,
+        history_score=history_score,
+        reformation_score=reformation_score,
+        marginal_value_score=marginal_value_score,
+        concentration_risk=concentration_risk,
+    )
+    if no_trade_output is not None:
+        return no_trade_output
+
+    return _build_engine_d_emit_output(
+        inputs,
+        context,
+        logs,
+        history_score=history_score,
+        context_score=context_score,
+        reformation_score=reformation_score,
+        marginal_value_score=marginal_value_score,
+        concentration_risk=concentration_risk,
+        cost_metrics=cost_metrics,
+    )
+
+
+def _append_engine_d_log(
+    logs: list[EngineDLogEntry],
+    inputs: EngineDInput,
+    context: EngineDContext,
+    *,
+    event: str,
+    raw_score: float = 0.0,
+    penalized_score: float = 0.0,
+    history_score: float = 0.0,
+    reformation_score: float = 0.0,
+    marginal_value_score: float = 0.0,
+    concentration_risk: float = 0.0,
+    expected_cost: float = 0.0,
+    ce_expected: float = 0.0,
+    ev_net: float = 0.0,
+    conviction: str = "",
+    tier: str = "",
+    holding_hours: float = 0.0,
+    reasons: tuple[str, ...] = (),
+) -> None:
     logs.append(
         EngineDLogEntry(
-            event="engine_d_marginal_value_checked",
+            event=event,
             pair=inputs.pair,
             regime=inputs.regime,
             **build_engine_d_log_context(context),
+            raw_score=raw_score,
+            penalized_score=penalized_score,
             history_score=history_score,
             reformation_score=reformation_score,
             marginal_value_score=marginal_value_score,
             concentration_risk=concentration_risk,
-            raw_score=marginal_value_score,
-            penalized_score=penalized_score,
+            expected_cost=expected_cost,
+            ce_expected=ce_expected,
+            ev_net=ev_net,
+            conviction=conviction,
+            tier=tier,
+            holding_hours=holding_hours,
+            scoring_version=inputs.scoring_version,
+            reasons=reasons,
         )
+    )
+
+
+def _build_engine_d_no_trade_output(
+    inputs: EngineDInput,
+    context: EngineDContext,
+    logs: list[EngineDLogEntry],
+    no_trade_reasons: list[NoTradeReasonD],
+    *,
+    history_score: float = 0.0,
+    reformation_score: float = 0.0,
+    marginal_value_score: float = 0.0,
+    concentration_risk: float = 0.0,
+    expected_cost: float = 0.0,
+    ce_expected: float = 0.0,
+    ev_net: float = 0.0,
+) -> EngineDOutput:
+    return EngineDOutput(
+        pair=inputs.pair,
+        decision=EngineDDecision.NO_TRADE,
+        **build_engine_d_output_payload(
+            context=context,
+            scoring_version=inputs.scoring_version,
+            log_entries=tuple(logs),
+            history_score=history_score,
+            reformation_score=reformation_score,
+            marginal_value_score=marginal_value_score,
+            concentration_risk=concentration_risk,
+            expected_cost=expected_cost,
+            ce_expected=ce_expected,
+            ev_net=ev_net,
+            no_trade_reasons=tuple(no_trade_reasons),
+        ),
+    )
+
+
+def _evaluate_entry_price_stage(
+    inputs: EngineDInput,
+    context: EngineDContext,
+    logs: list[EngineDLogEntry],
+    no_trade_reasons: list[NoTradeReasonD],
+) -> EngineDOutput | None:
+    # BS-104 guard: entry_price=0 would fail invalidation construction.
+    if inputs.entry_price > 0.0:
+        return None
+    no_trade_reasons.append(NoTradeReasonD.COST_INFEASIBLE)
+    _append_engine_d_log(
+        logs,
+        inputs,
+        context,
+        event="engine_d_no_trade",
+        reasons=("entry_price must be positive for re-entry invalidation",),
+    )
+    return _build_engine_d_no_trade_output(
+        inputs,
+        context,
+        logs,
+        no_trade_reasons,
+    )
+
+
+def _evaluate_history_stage(
+    inputs: EngineDInput,
+    context: EngineDContext,
+    logs: list[EngineDLogEntry],
+    no_trade_reasons: list[NoTradeReasonD],
+) -> tuple[float, EngineDOutput | None]:
+    history_score = compute_history_score(inputs)
+    _append_engine_d_log(
+        logs,
+        inputs,
+        context,
+        event="engine_d_history_checked",
+        raw_score=history_score,
+        history_score=history_score,
+    )
+    if history_score < 0.55:
+        no_trade_reasons.append(NoTradeReasonD.HISTORY_WEAK)
+        _append_engine_d_log(
+            logs,
+            inputs,
+            context,
+            event="engine_d_no_trade",
+            history_score=history_score,
+            reasons=("prior context too weak for re-entry",),
+        )
+        return history_score, _build_engine_d_no_trade_output(
+            inputs,
+            context,
+            logs,
+            no_trade_reasons,
+            history_score=history_score,
+        )
+    return history_score, None
+
+
+def _evaluate_reformation_stage(
+    inputs: EngineDInput,
+    context: EngineDContext,
+    logs: list[EngineDLogEntry],
+    no_trade_reasons: list[NoTradeReasonD],
+    *,
+    history_score: float,
+) -> tuple[float, float, EngineDOutput | None]:
+    context_score = compute_context_score(inputs)
+    reformation_score = compute_reformation_score(inputs, context_score=context_score)
+    _append_engine_d_log(
+        logs,
+        inputs,
+        context,
+        event="engine_d_reformation_checked",
+        raw_score=reformation_score,
+        history_score=history_score,
+        reformation_score=reformation_score,
+    )
+    if reformation_score < 0.58:
+        no_trade_reasons.append(NoTradeReasonD.REFORMATION_WEAK)
+        _append_engine_d_log(
+            logs,
+            inputs,
+            context,
+            event="engine_d_no_trade",
+            history_score=history_score,
+            reformation_score=reformation_score,
+            reasons=("reformation too weak for second chance entry",),
+        )
+        return context_score, reformation_score, _build_engine_d_no_trade_output(
+            inputs,
+            context,
+            logs,
+            no_trade_reasons,
+            history_score=history_score,
+            reformation_score=reformation_score,
+        )
+    return context_score, reformation_score, None
+
+
+def _evaluate_marginal_value_stage(
+    inputs: EngineDInput,
+    context: EngineDContext,
+    logs: list[EngineDLogEntry],
+    no_trade_reasons: list[NoTradeReasonD],
+    *,
+    history_score: float,
+    reformation_score: float,
+) -> tuple[float, float, EngineDOutput | None]:
+    marginal_value_score = compute_marginal_value_score(inputs)
+    concentration_risk = float(context["marginal_concentration"])
+    penalized_score = max(0.0, marginal_value_score - max(0.0, concentration_risk - 0.30))
+    _append_engine_d_log(
+        logs,
+        inputs,
+        context,
+        event="engine_d_marginal_value_checked",
+        raw_score=marginal_value_score,
+        penalized_score=penalized_score,
+        history_score=history_score,
+        reformation_score=reformation_score,
+        marginal_value_score=marginal_value_score,
+        concentration_risk=concentration_risk,
     )
     if marginal_value_score < 0.56:
         no_trade_reasons.append(NoTradeReasonD.MARGINAL_EDGE_TOO_LOW)
-        logs.append(
-            EngineDLogEntry(
-                event="engine_d_no_trade",
-                pair=inputs.pair,
-                regime=inputs.regime,
-                **build_engine_d_log_context(context),
-                marginal_value_score=marginal_value_score,
-                concentration_risk=concentration_risk,
-                reasons=("re-entry adds insufficient marginal value",),
-            )
+        _append_engine_d_log(
+            logs,
+            inputs,
+            context,
+            event="engine_d_no_trade",
+            marginal_value_score=marginal_value_score,
+            concentration_risk=concentration_risk,
+            reasons=("re-entry adds insufficient marginal value",),
         )
-        return EngineDOutput(
-            pair=inputs.pair,
-            decision=EngineDDecision.NO_TRADE,
-            **build_engine_d_output_payload(
-                context=context,
-                scoring_version=inputs.scoring_version,
-                log_entries=tuple(logs),
-                history_score=history_score,
-                reformation_score=reformation_score,
-                marginal_value_score=marginal_value_score,
-                concentration_risk=concentration_risk,
-                no_trade_reasons=tuple(no_trade_reasons),
-            ),
+        return marginal_value_score, concentration_risk, _build_engine_d_no_trade_output(
+            inputs,
+            context,
+            logs,
+            no_trade_reasons,
+            history_score=history_score,
+            reformation_score=reformation_score,
+            marginal_value_score=marginal_value_score,
+            concentration_risk=concentration_risk,
         )
     if concentration_risk >= 0.64:
         no_trade_reasons.append(NoTradeReasonD.CONCENTRATION_BLOCKED)
-        logs.append(
-            EngineDLogEntry(
-                event="engine_d_no_trade",
-                pair=inputs.pair,
-                regime=inputs.regime,
-                **build_engine_d_log_context(context),
-                marginal_value_score=marginal_value_score,
-                concentration_risk=concentration_risk,
-                reasons=("concentration or lateness risk too high",),
-            )
+        _append_engine_d_log(
+            logs,
+            inputs,
+            context,
+            event="engine_d_no_trade",
+            marginal_value_score=marginal_value_score,
+            concentration_risk=concentration_risk,
+            reasons=("concentration or lateness risk too high",),
         )
-        return EngineDOutput(
-            pair=inputs.pair,
-            decision=EngineDDecision.NO_TRADE,
-            **build_engine_d_output_payload(
-                context=context,
-                scoring_version=inputs.scoring_version,
-                log_entries=tuple(logs),
-                history_score=history_score,
-                reformation_score=reformation_score,
-                marginal_value_score=marginal_value_score,
-                concentration_risk=concentration_risk,
-                no_trade_reasons=tuple(no_trade_reasons),
-            ),
+        return marginal_value_score, concentration_risk, _build_engine_d_no_trade_output(
+            inputs,
+            context,
+            logs,
+            no_trade_reasons,
+            history_score=history_score,
+            reformation_score=reformation_score,
+            marginal_value_score=marginal_value_score,
+            concentration_risk=concentration_risk,
         )
+    return marginal_value_score, concentration_risk, None
 
+
+def _evaluate_cost_stage(
+    inputs: EngineDInput,
+    context: EngineDContext,
+    logs: list[EngineDLogEntry],
+    no_trade_reasons: list[NoTradeReasonD],
+    *,
+    history_score: float,
+    reformation_score: float,
+    marginal_value_score: float,
+    concentration_risk: float,
+) -> tuple[CostMetricsD, EngineDOutput | None]:
     cost_metrics = evaluate_cost_feasibility_d(
         expected_gain=inputs.expected_gain,
         expected_cost=inputs.expected_cost,
@@ -330,49 +512,55 @@ def run_engine_d(inputs: EngineDInput) -> EngineDOutput:
         delta_safe=inputs.delta_safe,
         ce_min=inputs.ce_min,
     )
-    logs.append(
-        EngineDLogEntry(
-            event="engine_d_cost_checked",
-            pair=inputs.pair,
-            regime=inputs.regime,
-            **build_engine_d_log_context(context),
+    _append_engine_d_log(
+        logs,
+        inputs,
+        context,
+        event="engine_d_cost_checked",
+        expected_cost=cost_metrics.expected_cost,
+        ce_expected=cost_metrics.ce_expected,
+        ev_net=cost_metrics.ev_net,
+    )
+    if not cost_metrics.is_feasible:
+        no_trade_reasons.append(NoTradeReasonD.COST_INFEASIBLE)
+        _append_engine_d_log(
+            logs,
+            inputs,
+            context,
+            event="engine_d_no_trade",
+            expected_cost=cost_metrics.expected_cost,
+            ce_expected=cost_metrics.ce_expected,
+            ev_net=cost_metrics.ev_net,
+            reasons=("re-entry edge does not survive costs",),
+        )
+        return cost_metrics, _build_engine_d_no_trade_output(
+            inputs,
+            context,
+            logs,
+            no_trade_reasons,
+            history_score=history_score,
+            reformation_score=reformation_score,
+            marginal_value_score=marginal_value_score,
+            concentration_risk=concentration_risk,
             expected_cost=cost_metrics.expected_cost,
             ce_expected=cost_metrics.ce_expected,
             ev_net=cost_metrics.ev_net,
         )
-    )
-    if not cost_metrics.is_feasible:
-        no_trade_reasons.append(NoTradeReasonD.COST_INFEASIBLE)
-        logs.append(
-            EngineDLogEntry(
-                event="engine_d_no_trade",
-                pair=inputs.pair,
-                regime=inputs.regime,
-                **build_engine_d_log_context(context),
-                expected_cost=cost_metrics.expected_cost,
-                ce_expected=cost_metrics.ce_expected,
-                ev_net=cost_metrics.ev_net,
-                reasons=("re-entry edge does not survive costs",),
-            )
-        )
-        return EngineDOutput(
-            pair=inputs.pair,
-            decision=EngineDDecision.NO_TRADE,
-            **build_engine_d_output_payload(
-                context=context,
-                scoring_version=inputs.scoring_version,
-                log_entries=tuple(logs),
-                history_score=history_score,
-                reformation_score=reformation_score,
-                marginal_value_score=marginal_value_score,
-                concentration_risk=concentration_risk,
-                expected_cost=cost_metrics.expected_cost,
-                ce_expected=cost_metrics.ce_expected,
-                ev_net=cost_metrics.ev_net,
-                no_trade_reasons=tuple(no_trade_reasons),
-            ),
-        )
+    return cost_metrics, None
 
+
+def _build_engine_d_emit_output(
+    inputs: EngineDInput,
+    context: EngineDContext,
+    logs: list[EngineDLogEntry],
+    *,
+    history_score: float,
+    context_score: float,
+    reformation_score: float,
+    marginal_value_score: float,
+    concentration_risk: float,
+    cost_metrics: CostMetricsD,
+) -> EngineDOutput:
     conviction_result = build_conviction_d(
         history_score=history_score,
         reformation_score=reformation_score,
@@ -383,17 +571,13 @@ def run_engine_d(inputs: EngineDInput) -> EngineDOutput:
     )
     conviction = ConvictionLevelD(conviction_result.conviction_name)
     tier = TierSuggestionD(conviction_result.tier_name)
-
-    invalidation_levels = build_invalidation_levels_d(
-        entry_price=inputs.entry_price,
-        reentry_anchor_price=inputs.reentry_anchor_price,
-        atr=inputs.atr,
-        expected_gain=inputs.expected_gain,
-    )
-    invalidation = EngineDInvalidation(
-        stop_price=invalidation_levels.stop_price,
-        target_price=invalidation_levels.target_price,
-        risk_multiple=invalidation_levels.risk_multiple,
+    invalidation = _build_engine_d_invalidation(
+        build_invalidation_levels_d(
+            entry_price=inputs.entry_price,
+            reentry_anchor_price=inputs.reentry_anchor_price,
+            atr=inputs.atr,
+            expected_gain=inputs.expected_gain,
+        )
     )
     block_scores = {
         "history": history_score,
@@ -401,26 +585,23 @@ def run_engine_d(inputs: EngineDInput) -> EngineDOutput:
         "marginal_value": marginal_value_score,
         "cost_preference": cost_metrics.cost_preference_score,
     }
-    logs.append(
-        EngineDLogEntry(
-            event="engine_d_emit",
-            pair=inputs.pair,
-            regime=inputs.regime,
-            **build_engine_d_log_context(context),
-            raw_score=conviction_result.raw_score,
-            penalized_score=conviction_result.conviction_score,
-            history_score=history_score,
-            reformation_score=reformation_score,
-            marginal_value_score=marginal_value_score,
-            concentration_risk=concentration_risk,
-            expected_cost=cost_metrics.expected_cost,
-            ce_expected=cost_metrics.ce_expected,
-            ev_net=cost_metrics.ev_net,
-            conviction=conviction.value,
-            tier=tier.value,
-            holding_hours=inputs.holding_period,
-            scoring_version=inputs.scoring_version,
-        )
+    _append_engine_d_log(
+        logs,
+        inputs,
+        context,
+        event="engine_d_emit",
+        raw_score=conviction_result.raw_score,
+        penalized_score=conviction_result.conviction_score,
+        history_score=history_score,
+        reformation_score=reformation_score,
+        marginal_value_score=marginal_value_score,
+        concentration_risk=concentration_risk,
+        expected_cost=cost_metrics.expected_cost,
+        ce_expected=cost_metrics.ce_expected,
+        ev_net=cost_metrics.ev_net,
+        conviction=conviction.value,
+        tier=tier.value,
+        holding_hours=inputs.holding_period,
     )
     return EngineDOutput(
         pair=inputs.pair,
@@ -444,4 +625,12 @@ def run_engine_d(inputs: EngineDInput) -> EngineDOutput:
             invalidation=invalidation,
             holding_hours=inputs.holding_period,
         ),
+    )
+
+
+def _build_engine_d_invalidation(invalidation_levels: InvalidationLevelsD) -> EngineDInvalidation:
+    return EngineDInvalidation(
+        stop_price=invalidation_levels.stop_price,
+        target_price=invalidation_levels.target_price,
+        risk_multiple=invalidation_levels.risk_multiple,
     )

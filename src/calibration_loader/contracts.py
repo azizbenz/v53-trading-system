@@ -6,8 +6,6 @@ import hashlib
 import json
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
-
 from pydantic import BaseModel, Field, model_validator
 
 
@@ -62,7 +60,7 @@ class CalibrationArtifact(BaseModel, frozen=True):
             raise ValueError("CalibrationArtifact signature payload_hash_sha256 mismatch")
         return self
 
-    def canonical_payload(self) -> dict[str, Any]:
+    def canonical_payload(self) -> dict[str, object]:
         """Return the canonical unsigned payload used for hash attestation."""
 
         return {
@@ -120,4 +118,3 @@ class CalibrationArtifactCollection(BaseModel, frozen=True):
     @property
     def threshold_entries(self) -> tuple[CalibrationThresholdEntry, ...]:
         return tuple(entry for artifact in self.artifacts for entry in artifact.thresholds)
-

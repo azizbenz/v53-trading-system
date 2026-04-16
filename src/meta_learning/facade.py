@@ -6,6 +6,8 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from pydantic import BaseModel
+
 from meta_learning.contracts import (
     CandidateRecord,
     DiagnosticRecord,
@@ -218,7 +220,7 @@ class MetaLearningFacade(MetaLearningFacadeProtocol):
             unique[bundle.correlation_id] = bundle
         return tuple(unique.values())
 
-    def _latest_models(self, filename: str, model_cls) -> dict[str, object]:
+    def _latest_models(self, filename: str, model_cls: type[BaseModel]) -> dict[str, object]:
         if self._store is None:
             return {}
         latest_by_id: dict[str, object] = {}

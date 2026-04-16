@@ -7,7 +7,7 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Mapping
 
 import yaml
 
@@ -49,7 +49,7 @@ def seal_bytes(
 
 
 def seal_mapping(
-    payload: Mapping[str, Any],
+    payload: Mapping[str, object],
     *,
     key_path: Path | str,
     source_name: str = "",

@@ -64,6 +64,12 @@ def _configure_stdio() -> None:
         stderr.reconfigure(encoding="utf-8", errors="replace")
 
 
+def _emit_output_lines(lines: tuple[str, ...]) -> None:
+    if not lines:
+        return
+    sys.stdout.write("\n".join(lines) + "\n")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Generate THR-E01/THR-E02 from governed replay DTR evidence.",
@@ -190,24 +196,22 @@ def main(argv: list[str] | None = None) -> int:
 
     e01 = report.get_threshold(config.edge_multiplier_threshold_id)
     e02 = report.get_threshold(config.min_absolute_edge_threshold_id)
-    print(f"EDGE calibration artifact written: {output_path}")
-    print(f"EDGE calibration report JSON: {report_path}")
-    print(f"Governed input summary JSON: {input_summary_path}")
-    print(
-        "THR-E01="
-        f"{e01.published_value:.6f} multiplier "
-        f"(IC95 {e01.ic95_lower:.6f}..{e01.ic95_upper:.6f})"
-    )
-    print(
-        "THR-E02="
-        f"{e02.published_value:.6f} bps "
-        f"(IC95 {e02.ic95_lower:.6f}..{e02.ic95_upper:.6f})"
-    )
-    print(
-        "sample="
-        f"executed:{report.executed_record_count} "
-        f"positive:{report.positive_trade_count} "
-        f"cost:{report.cost_observation_count}"
+    _emit_output_lines(
+        (
+            f"EDGE calibration artifact written: {output_path}",
+            f"EDGE calibration report JSON: {report_path}",
+            f"Governed input summary JSON: {input_summary_path}",
+            "THR-E01="
+            f"{e01.published_value:.6f} multiplier "
+            f"(IC95 {e01.ic95_lower:.6f}..{e01.ic95_upper:.6f})",
+            "THR-E02="
+            f"{e02.published_value:.6f} bps "
+            f"(IC95 {e02.ic95_lower:.6f}..{e02.ic95_upper:.6f})",
+            "sample="
+            f"executed:{report.executed_record_count} "
+            f"positive:{report.positive_trade_count} "
+            f"cost:{report.cost_observation_count}",
+        )
     )
     return 0
 
