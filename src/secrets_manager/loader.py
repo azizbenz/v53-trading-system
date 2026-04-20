@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import os
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
@@ -21,13 +22,20 @@ class SecretBackend(StrEnum):
     """Backends supported by the bounded sealed-secret slice."""
 
     WINDOWS_DPAPI_USER = "windows_dpapi_user"
+    POSIX_KEYRING_USER = "posix_keyring_user"
+
+
+def _default_secret_backend() -> SecretBackend:
+    if os.name == "nt":
+        return SecretBackend.WINDOWS_DPAPI_USER
+    return SecretBackend.POSIX_KEYRING_USER
 
 
 class SealedSecretEnvelope(BaseModel, frozen=True):
     """Typed sealed-secret envelope written to disk."""
 
     schema_version: str = Field(default="v53.sealed_secret.v1", min_length=1)
-    backend: SecretBackend = SecretBackend.WINDOWS_DPAPI_USER
+    backend: SecretBackend = Field(default_factory=_default_secret_backend)
     source_name: str = ""
     created_at: datetime
     ciphertext_b64: str = Field(..., min_length=1)
@@ -73,6 +81,12 @@ def load_secret_bytes(path: Path | str, *, key_path: Path | str) -> bytes:
     """Decrypt a sealed secret envelope into bytes in memory."""
 
     envelope = load_envelope(path)
+    expected_backend = _default_secret_backend()
+    if envelope.backend != expected_backend:
+        raise SecretManagerLoadError(
+            f"Sealed secret {path} targets backend {envelope.backend.value!r}, "
+            f"expected {expected_backend.value!r} on this platform"
+        )
     entropy = _read_key_entropy(key_path)
     try:
         ciphertext = base64.b64decode(envelope.ciphertext_b64.encode("ascii"), validate=True)
@@ -125,6 +139,7 @@ __all__ = [
     "SecretBackend",
     "SecretManagerLoadError",
     "SealedSecretEnvelope",
+    "_default_secret_backend",
     "load",
     "load_envelope",
     "load_secret_bytes",

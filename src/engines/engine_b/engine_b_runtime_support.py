@@ -6,14 +6,10 @@ from dataclasses import dataclass
 import math
 
 from interface_contracts import (
-    BetStructure,
-    ConditioningFamily,
-    ConditioningRecord,
     EngineId,
-    ForecastHorizonClass,
     ForecastSignalCandidate,
-    ForecastTargetClass,
     RegimeId,
+    RefusalRecord,
     Side,
     SignalCandidate as DecisionSignalCandidate,
     SignalType,
@@ -23,8 +19,18 @@ from risk_backbone.risk_runtime import RiskCandidate, RiskEvaluation, RiskRuntim
 from scoring_backbone.ranking_router.selection_resolver import SelectionEntry, SelectionOutcome
 from scoring_backbone.penalty_aggregator.score_penalty_builder import ScorePenaltyItem
 from scoring_backbone.scoring_runtime import ScoringCandidateAudit, ScoringCandidateInput, ScoringRoundResult
+from .engine_b_runtime_forecast_support import (
+    annotate_forecast_signal_candidate_for_runtime_status as _annotate_forecast_signal_candidate_for_runtime_status,
+    build_forecast_signal_candidate as _build_forecast_signal_candidate,
+    resolve_hook_blocked_reason_codes as _resolve_hook_blocked_reason_codes,
+    resolve_runtime_economics_reason_codes as _resolve_runtime_economics_reason_codes,
+)
 
-from .conviction_builder_b import ENGINE_B_CONVICTION_FEATURE_WEIGHTS
+from .conviction_builder_b import (
+    ENGINE_B_CONVICTION_ADJUSTMENT_WEIGHTS,
+    ENGINE_B_CONVICTION_FEATURE_WEIGHTS,
+    ENGINE_B_CONVICTION_NORMALIZATION,
+)
 from .engine_b_runner import EngineBDecision, EngineBInput, EngineBLogEntry, EngineBOutput
 from .engine_b_runtime import (
     _BREAKOUT_WARNING_PENALTY_ID,
@@ -108,6 +114,7 @@ def _build_runtime_result(
     scoring_round: ScoringRoundResult | None = None,
     scoring_audit: ScoringCandidateAudit | None = None,
     risk_evaluation: RiskEvaluation | None = None,
+    refusal_record: RefusalRecord | None = None,
 ) -> EngineBRuntimeResult:
     return EngineBRuntimeResult(
         status=status,
@@ -117,6 +124,7 @@ def _build_runtime_result(
         scoring_round=scoring_round,
         scoring_audit=scoring_audit,
         risk_evaluation=risk_evaluation,
+        refusal_record=refusal_record,
         log_entries=tuple(logs),
     )
 
@@ -128,12 +136,9 @@ def _build_hook_blocked_runtime_result(
     *,
     hook_outcome: EngineBSweepValidationOutcome,
 ) -> EngineBRuntimeResult:
-    detail = hook_outcome.detail.strip()
-    if not detail:
-        detail = (
-            "compiled engine_b sweep validation blocked "
-            f"{engine_output.pair} / {engine_output.engine_id}"
-        )
+    hook_reason_codes = _resolve_hook_blocked_reason_codes(
+        hook_outcome.reason_codes,
+    )
     _append_runtime_log(
         logs,
         runtime_input,
@@ -141,7 +146,7 @@ def _build_hook_blocked_runtime_result(
         event="engine_b_hook_blocked",
         raw_score=engine_output.raw_score,
         penalized_score=engine_output.penalized_score,
-        reasons=hook_outcome.reason_codes or (detail,),
+        reasons=hook_reason_codes,
     )
     return _build_runtime_result(
         status=EngineBRuntimeStatus.HOOK_BLOCKED,
@@ -231,7 +236,13 @@ def _build_hard_blocked_runtime_result(
         engine_output=engine_output,
         logs=logs,
         signal_candidate=scoring_state.signal_candidate,
-        forecast_signal_candidate=scoring_state.forecast_signal_candidate,
+        forecast_signal_candidate=_annotate_forecast_signal_candidate_for_runtime_status(
+            scoring_state.forecast_signal_candidate,
+            timestamp_ms=runtime_input.timestamp_ms,
+            status=EngineBRuntimeStatus.HARD_BLOCKED.value,
+            scoring_audit=scoring_state.scoring_audit,
+            risk_evaluation=None,
+        ),
         scoring_round=scoring_state.scoring_round,
         scoring_audit=scoring_state.scoring_audit,
     )
@@ -267,7 +278,13 @@ def _build_selection_rejected_runtime_result(
             engine_output=engine_output,
             logs=logs,
             signal_candidate=scoring_state.signal_candidate,
-            forecast_signal_candidate=scoring_state.forecast_signal_candidate,
+            forecast_signal_candidate=_annotate_forecast_signal_candidate_for_runtime_status(
+                scoring_state.forecast_signal_candidate,
+                timestamp_ms=runtime_input.timestamp_ms,
+                status=EngineBRuntimeStatus.REJECTED_RANKING.value,
+                scoring_audit=scoring_state.scoring_audit,
+                risk_evaluation=None,
+            ),
             scoring_round=scoring_state.scoring_round,
             scoring_audit=scoring_state.scoring_audit,
         )
@@ -291,7 +308,13 @@ def _build_selection_rejected_runtime_result(
         engine_output=engine_output,
         logs=logs,
         signal_candidate=scoring_state.signal_candidate,
-        forecast_signal_candidate=scoring_state.forecast_signal_candidate,
+        forecast_signal_candidate=_annotate_forecast_signal_candidate_for_runtime_status(
+            scoring_state.forecast_signal_candidate,
+            timestamp_ms=runtime_input.timestamp_ms,
+            status=EngineBRuntimeStatus.REJECTED_PORTFOLIO.value,
+            scoring_audit=scoring_state.scoring_audit,
+            risk_evaluation=None,
+        ),
         scoring_round=scoring_state.scoring_round,
         scoring_audit=scoring_state.scoring_audit,
     )
@@ -307,11 +330,16 @@ def _build_risk_runtime_result(
 ) -> EngineBRuntimeResult | None:
     if risk_evaluation.action == RiskRuntimeAction.ACCEPT:
         return None
+    event = {
+        RiskRuntimeAction.REJECT: "engine_b_risk_rejected",
+        RiskRuntimeAction.REDUCE_EXPOSURE: "engine_b_risk_reduced",
+        RiskRuntimeAction.OBSERVE_ONLY: "engine_b_risk_observe_only",
+    }.get(risk_evaluation.action, "engine_b_risk_rejected")
     _append_runtime_log(
         logs,
         runtime_input,
         engine_output,
-        event="engine_b_risk_rejected",
+        event=event,
         raw_score=scoring_state.scoring_audit.raw_score_result.raw_score,
         penalized_score=scoring_state.penalized_score,
         reasons=risk_evaluation.reasons or ("risk runtime rejected candidate",),
@@ -326,7 +354,13 @@ def _build_risk_runtime_result(
         engine_output=engine_output,
         logs=logs,
         signal_candidate=scoring_state.signal_candidate,
-        forecast_signal_candidate=scoring_state.forecast_signal_candidate,
+        forecast_signal_candidate=_annotate_forecast_signal_candidate_for_runtime_status(
+            scoring_state.forecast_signal_candidate,
+            timestamp_ms=runtime_input.timestamp_ms,
+            status=status.value,
+            scoring_audit=scoring_state.scoring_audit,
+            risk_evaluation=risk_evaluation,
+        ),
         scoring_round=scoring_state.scoring_round,
         scoring_audit=scoring_state.scoring_audit,
         risk_evaluation=risk_evaluation,
@@ -366,13 +400,14 @@ def _build_circuit_breaker_blocked_result(
     circuit_breaker: EmergencyCircuitBreaker,
 ) -> EngineBRuntimeResult:
     reason = circuit_breaker.current_reason.value
+    reason_codes = (f"engine_b.runtime.circuit_breaker.{reason}",)
     log_entry = EngineBLogEntry(
         event="engine_b_circuit_breaker_blocked",
         pair=runtime_input.engine_inputs.pair,
         regime=runtime_input.engine_inputs.regime,
         local_mean=runtime_input.engine_inputs.local_mean,
         local_std=runtime_input.engine_inputs.local_std,
-        reasons=(f"emergency circuit breaker tripped: {reason}",),
+        reasons=reason_codes,
         scoring_version=runtime_input.engine_inputs.scoring_version,
     )
     engine_output = EngineBOutput(
@@ -380,6 +415,7 @@ def _build_circuit_breaker_blocked_result(
         decision=EngineBDecision.NO_TRADE,
         z_score=0.0,
         scoring_version=runtime_input.engine_inputs.scoring_version,
+        reason_codes=reason_codes,
         log_entries=(log_entry,),
     )
     return EngineBRuntimeResult(
@@ -387,6 +423,43 @@ def _build_circuit_breaker_blocked_result(
         engine_output=engine_output,
         log_entries=(log_entry,),
     )
+
+
+def _build_engine_b_scoring_raw_features(
+    engine_output: EngineBOutput,
+) -> dict[str, float]:
+    neutral_midpoint = ENGINE_B_CONVICTION_NORMALIZATION["neutral_midpoint"]
+    block_scores = engine_output.block_scores
+    return {
+        "excess": block_scores.get("excess", 0.0),
+        "structure": block_scores.get("structure", 0.0),
+        "context": block_scores.get("context", 0.0),
+        "cost_preference": block_scores.get("cost_preference", 0.0),
+        "sweep_score_centered": block_scores.get("sweep_score", neutral_midpoint) - neutral_midpoint,
+        "absorption_score_centered": (
+            block_scores.get("absorption_score", neutral_midpoint) - neutral_midpoint
+        ),
+        "poc_reversion_score_centered": (
+            block_scores.get("poc_reversion_score", neutral_midpoint) - neutral_midpoint
+        ),
+        "false_breakout_score": block_scores.get("false_breakout_score", neutral_midpoint),
+        "fragility_score": block_scores.get("fragility_score", 0.0),
+        "toxicity_score": block_scores.get("toxicity_score", 0.0),
+        "micro_friction_score": block_scores.get("micro_friction_score", 0.0),
+    }
+
+
+def _build_engine_b_scoring_weights() -> dict[str, float]:
+    return {
+        **ENGINE_B_CONVICTION_FEATURE_WEIGHTS,
+        "sweep_score_centered": ENGINE_B_CONVICTION_ADJUSTMENT_WEIGHTS["sweep_score"],
+        "absorption_score_centered": ENGINE_B_CONVICTION_ADJUSTMENT_WEIGHTS["absorption_score"],
+        "poc_reversion_score_centered": ENGINE_B_CONVICTION_ADJUSTMENT_WEIGHTS["poc_reversion_score"],
+        "false_breakout_score": -ENGINE_B_CONVICTION_ADJUSTMENT_WEIGHTS["false_breakout_penalty"],
+        "fragility_score": -ENGINE_B_CONVICTION_ADJUSTMENT_WEIGHTS["fragility_penalty"],
+        "toxicity_score": -ENGINE_B_CONVICTION_ADJUSTMENT_WEIGHTS["toxicity_penalty"],
+        "micro_friction_score": -ENGINE_B_CONVICTION_ADJUSTMENT_WEIGHTS["micro_friction_penalty"],
+    }
 
 
 def _build_scoring_candidate(
@@ -400,6 +473,8 @@ def _build_scoring_candidate(
     score_penalties = list(runtime_input.score_penalties)
     breakout_penalty = max(0.0, engine_output.raw_score - engine_output.penalized_score)
     if breakout_penalty > 0:
+        # This keeps the scoring backbone audit surface aligned with the runner-visible
+        # breakout warning penalty; it is not a second independent breakout logic.
         score_penalties.append(
             ScorePenaltyItem(
                 penalty_id=_BREAKOUT_WARNING_PENALTY_ID,
@@ -407,16 +482,17 @@ def _build_scoring_candidate(
                 reason=f"anti-breakout warning penalty ({engine_output.breakout_score:.3f})",
             )
         )
+    raw_features = _build_engine_b_scoring_raw_features(engine_output)
     return ScoringCandidateInput(
         engine_id="engine_b",
         pair=engine_output.pair,
-        raw_features={key: engine_output.block_scores.get(key, 0.0) for key in ENGINE_B_CONVICTION_FEATURE_WEIGHTS},
-        allowed_features=frozenset(ENGINE_B_CONVICTION_FEATURE_WEIGHTS),
-        weights=dict(ENGINE_B_CONVICTION_FEATURE_WEIGHTS),
+        raw_features=raw_features,
+        allowed_features=frozenset(raw_features),
+        weights=_build_engine_b_scoring_weights(),
         scoring_version=engine_output.scoring_version or runtime_input.engine_inputs.scoring_version,
         raw_score_multiplier=raw_score_multiplier,
         raw_score_add=raw_score_add,
-        raw_score_cap=raw_score_cap,
+        raw_score_cap=1.0 if raw_score_cap is None else min(1.0, raw_score_cap),
         score_penalties=tuple(score_penalties),
         size_penalties=runtime_input.size_penalties,
         blocker_conditions=runtime_input.blocker_conditions,
@@ -523,116 +599,6 @@ def _build_signal_candidate(
         max_hold_ms=max_hold_ms,
         reason=f"engine_b:{engine_output.conviction.value}:z={engine_output.z_score:.3f}",
     )
-
-
-def _build_forecast_signal_candidate(
-    runtime_input: EngineBRuntimeInput,
-    engine_output: EngineBOutput,
-    signal_candidate: DecisionSignalCandidate,
-    scoring_audit: ScoringCandidateAudit,
-) -> ForecastSignalCandidate | None:
-    if runtime_input.strategy_id is None:
-        return None
-    return ForecastSignalCandidate.from_decision_signal(
-        signal_candidate,
-        strategy_id=runtime_input.strategy_id,
-        forecast_direction=1.0 if signal_candidate.side == Side.BUY else -1.0,
-        forecast_strength=max(0.0, min(20.0, engine_output.penalized_score * 20.0)),
-        forecast_horizon_class=_resolve_forecast_horizon_class(signal_candidate),
-        forecast_target_class=ForecastTargetClass.DIRECTION_PLUS_STRENGTH_PLUS_HORIZON,
-        bet_structure=BetStructure.MEAN_REVERT,
-        conditioning_state=_build_conditioning_state(
-            runtime_input,
-            engine_output,
-            scoring_audit,
-        ),
-        expected_cost=engine_output.expected_cost,
-        expected_break_even=engine_output.expected_cost + runtime_input.engine_inputs.delta_safe,
-        expected_ce=engine_output.ce_expected,
-        expected_gain=runtime_input.engine_inputs.expected_gain,
-        invalidation_ref=_resolve_invalidation_ref(engine_output),
-        reason_codes=_build_forecast_reason_codes(engine_output, scoring_audit),
-        versions=_build_forecast_versions(runtime_input, engine_output),
-        confidence_band=signal_candidate.confidence,
-    )
-
-
-def _build_conditioning_state(
-    runtime_input: EngineBRuntimeInput,
-    engine_output: EngineBOutput,
-    scoring_audit: ScoringCandidateAudit,
-) -> tuple[ConditioningRecord, ...]:
-    records = [
-        ConditioningRecord(
-            timestamp_ms=runtime_input.timestamp_ms,
-            family=ConditioningFamily.ENGINE_INTERNAL,
-            code=f"engine_internal.engine_b.conviction.{engine_output.conviction.value}",
-            value=engine_output.penalized_score,
-            triggered_no_trade=False,
-        )
-    ]
-    for penalty in scoring_audit.score_penalty_result.penalties:
-        records.append(
-            ConditioningRecord(
-                timestamp_ms=runtime_input.timestamp_ms,
-                family=ConditioningFamily.SCORING,
-                code=f"scoring.penalty.{penalty.penalty_id}",
-                value=penalty.value,
-                triggered_no_trade=False,
-            )
-        )
-    return tuple(records)
-
-
-def _build_forecast_reason_codes(
-    engine_output: EngineBOutput,
-    scoring_audit: ScoringCandidateAudit,
-) -> tuple[str, ...]:
-    reason_codes = [f"engine_b.conviction.{engine_output.conviction.value}"]
-    reason_codes.extend(
-        f"scoring.penalty.{penalty.penalty_id}"
-        for penalty in scoring_audit.score_penalty_result.penalties
-    )
-    return tuple(dict.fromkeys(reason_codes))
-
-
-def _build_forecast_versions(
-    runtime_input: EngineBRuntimeInput,
-    engine_output: EngineBOutput,
-) -> dict[str, str]:
-    scoring_version = engine_output.scoring_version or runtime_input.engine_inputs.scoring_version
-    return {
-        "scoring_version": scoring_version,
-        "calibration_profile_id": engine_output.calibration_profile_id,
-        "calibration_status": engine_output.calibration_status,
-        "physics_calibration_profile_id": engine_output.physics_calibration_profile_id,
-        "physics_calibration_status": engine_output.physics_calibration_status,
-    }
-
-
-def _resolve_invalidation_ref(engine_output: EngineBOutput) -> str | None:
-    invalidation = engine_output.invalidation
-    if invalidation is None:
-        return None
-    primary = invalidation.primary_invalidation.strip()
-    if primary:
-        return primary
-    return None
-
-
-def _resolve_forecast_horizon_class(
-    signal_candidate: DecisionSignalCandidate,
-) -> ForecastHorizonClass:
-    max_hold_ms = signal_candidate.max_hold_ms
-    if max_hold_ms is None:
-        return ForecastHorizonClass.MEDIUM
-    if max_hold_ms < 60_000:
-        return ForecastHorizonClass.INTRABAR
-    if max_hold_ms <= 15 * 60_000:
-        return ForecastHorizonClass.SHORT
-    if max_hold_ms <= 4 * 60 * 60_000:
-        return ForecastHorizonClass.MEDIUM
-    return ForecastHorizonClass.LONG
 
 
 def _to_regime_id(value: str) -> RegimeId:

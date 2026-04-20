@@ -1,0 +1,21 @@
+[Unit]
+Description=V5.3 Shadow Runtime
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=v53
+Group=v53
+WorkingDirectory=/opt/v53
+EnvironmentFile=/etc/v53/shadow.env
+ExecStart=/opt/v53/.venv/bin/python -m protocols.shadow_runtime --config /etc/v53/shadow.yaml
+Restart=on-failure
+RestartSec=30
+KillSignal=SIGTERM
+TimeoutStopSec=60
+StandardOutput=append:/var/log/v53/shadow.log
+StandardError=append:/var/log/v53/shadow.err
+
+[Install]
+WantedBy=multi-user.target

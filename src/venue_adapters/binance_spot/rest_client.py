@@ -64,6 +64,12 @@ class BinanceRestClient:
         if self._owns_client:
             await self._client.aclose()
 
+    @property
+    def rate_limiter(self) -> BinanceApiRateLimiter:
+        """Expose the bounded rate-limiter state for diagnostics and integration tests."""
+
+        return self._rate_limiter
+
     async def get_server_time(self) -> BinanceServerTime:
         payload = await self._request_json("/api/v3/time")
         return BinanceServerTime(server_time_ms=int(payload["serverTime"]))

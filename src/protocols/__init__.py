@@ -278,6 +278,13 @@ from protocols.closed_episode_journal import (
     EpisodeCloseReason,
     EpisodeRef,
 )
+from protocols.engine_coordination_rules import (
+    EngineCoordinationAction,
+    EngineCoordinationInput,
+    EngineCoordinationOutcome,
+    EngineCoordinationThresholds,
+    evaluate_engine_coordination,
+)
 
 __all__ = [
     "LiveInput",
@@ -479,4 +486,9 @@ __all__ = [
     "ClosedEpisodeJournalManifest",
     "ClosedEpisodeJournal",
     "ClosedEpisodeJournalSink",
+    "EngineCoordinationAction",
+    "EngineCoordinationInput",
+    "EngineCoordinationOutcome",
+    "EngineCoordinationThresholds",
+    "evaluate_engine_coordination",
 ]

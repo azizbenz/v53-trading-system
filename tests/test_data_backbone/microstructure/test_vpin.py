@@ -81,12 +81,14 @@ def test_vpin_uses_defaults_and_available_bucket_window() -> None:
         VpinTradePoint(timestamp_ns=2_000_000_000, price=101.0, volume=10.0),
     ]
 
-    result = compute_vpin(trades, pair="SOLUSDT")
+    result = compute_vpin(trades, pair="SOLUSDT", allow_derived_daily_volume=True)
 
     assert result.n_buckets_used == 50
     assert result.bucket_volume == pytest.approx(0.4)
     assert result.n_events_used == 2
     assert result.window_used == pytest.approx((50, 1.0))
+    assert result.low_sample_confidence is True
+    assert result.derived_input_warning == "derived_daily_volume_used"
     assert DEFAULT_VPIN_BUCKETS_PER_DAY == 50
     assert DEFAULT_VPIN_WINDOW_BUCKETS == 50
 
@@ -103,5 +105,80 @@ def test_vpin_rejects_invalid_inputs() -> None:
     with pytest.raises(ValueError, match="window_buckets"):
         compute_vpin(trades[::-1], pair="BTCUSDT", window_buckets=MAX_VPIN_WINDOW_BUCKETS + 1)
 
-    with pytest.raises(ValueError, match="strictly ordered"):
+    with pytest.raises(ValueError, match="non-decreasing"):
         compute_vpin(trades, pair="BTCUSDT", daily_volume=10.0)
+
+    with pytest.raises(ValueError, match="daily_volume is required"):
+        compute_vpin(trades[::-1], pair="BTCUSDT")
+
+
+def test_vpin_effective_window_counts_exact_trades_not_timestamp_cutoff() -> None:
+    trades = [
+        VpinTradePoint(timestamp_ns=1_000_000_000, price=99.0, volume=10.0),
+        VpinTradePoint(timestamp_ns=1_000_000_000, price=100.0, volume=10.0),
+        VpinTradePoint(timestamp_ns=2_000_000_000, price=101.0, volume=10.0),
+    ]
+
+    result = compute_vpin(
+        trades,
+        pair="BTCUSDT",
+        buckets_per_day=3,
+        window_buckets=2,
+        daily_volume=30.0,
+    )
+
+    assert result.n_complete_buckets == 3
+    assert result.n_buckets_used == 2
+    assert result.n_events_received == 3
+    assert result.n_events_used == 2
+
+
+def test_vpin_hash_ignores_trades_outside_effective_bucket_window() -> None:
+    trades_a = [
+        VpinTradePoint(timestamp_ns=1_000_000_000, price=99.0, volume=10.0),
+        VpinTradePoint(timestamp_ns=1_000_000_000, price=100.0, volume=10.0),
+        VpinTradePoint(timestamp_ns=2_000_000_000, price=101.0, volume=10.0),
+    ]
+    trades_b = [
+        VpinTradePoint(timestamp_ns=1_000_000_000, price=250.0, volume=10.0),
+        VpinTradePoint(timestamp_ns=1_000_000_000, price=100.0, volume=10.0),
+        VpinTradePoint(timestamp_ns=2_000_000_000, price=101.0, volume=10.0),
+    ]
+
+    result_a = compute_vpin(
+        trades_a,
+        pair="BTCUSDT",
+        buckets_per_day=3,
+        window_buckets=2,
+        daily_volume=30.0,
+    )
+    result_b = compute_vpin(
+        trades_b,
+        pair="BTCUSDT",
+        buckets_per_day=3,
+        window_buckets=2,
+        daily_volume=30.0,
+    )
+
+    assert result_a.value == pytest.approx(result_b.value)
+    assert result_a.n_events_used == result_b.n_events_used == 2
+    assert result_a.input_data_hash == result_b.input_data_hash
+
+
+def test_vpin_marks_insufficient_variation_when_bucket_price_changes_are_flat() -> None:
+    trades = [
+        VpinTradePoint(timestamp_ns=1_000_000_000, price=100.0, volume=5.0),
+        VpinTradePoint(timestamp_ns=2_000_000_000, price=100.0, volume=5.0),
+        VpinTradePoint(timestamp_ns=3_000_000_000, price=100.0, volume=5.0),
+        VpinTradePoint(timestamp_ns=4_000_000_000, price=100.0, volume=5.0),
+    ]
+
+    result = compute_vpin(
+        trades,
+        pair="ETHUSDT",
+        buckets_per_day=2,
+        window_buckets=2,
+        daily_volume=20.0,
+    )
+
+    assert result.insufficient_variation is True

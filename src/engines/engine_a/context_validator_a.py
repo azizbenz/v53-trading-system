@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from data_backbone import TO_CALIBRATE
 
 
@@ -24,11 +24,11 @@ class ContextInput(BaseModel, frozen=True):
     """Contextual inputs for Engine A validation."""
 
     pair: str
-    regime_favorability: float  # [0, 1] — 1=ideal trend regime
-    regime_confidence: float  # [0, 1]
-    pair_health: float  # [0, 1]
-    data_freshness: float  # [0, 1] — 1=perfectly fresh
-    flow_coherence: float  # [0, 1]
+    regime_favorability: float = Field(..., ge=0.0, le=1.0)  # [0, 1] — 1=ideal trend regime
+    regime_confidence: float = Field(..., ge=0.0, le=1.0)  # [0, 1]
+    pair_health: float = Field(..., ge=0.0, le=1.0)  # [0, 1]
+    data_freshness: float = Field(..., ge=0.0, le=1.0)  # [0, 1] — 1=perfectly fresh
+    flow_coherence: float = Field(..., ge=0.0, le=1.0)  # [0, 1]
 
 
 class ContextResult(BaseModel, frozen=True):

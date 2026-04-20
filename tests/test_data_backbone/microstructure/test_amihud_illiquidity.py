@@ -48,5 +48,5 @@ def test_amihud_illiquidity_rejects_unordered_bars() -> None:
         AmihudBarPoint(timestamp_ns=1_000_000_000, close_price=101.0, dollar_volume=1_500.0),
     ]
 
-    with pytest.raises(ValueError, match="strictly ordered"):
+    with pytest.raises(ValueError, match="non-decreasing"):
         compute_amihud_illiquidity(bars, pair="BTCUSDT")

@@ -133,8 +133,8 @@ def compute_realized_kernel_vol(
             f"bucket_seconds must be in (0, {MAX_RK_BUCKET_SECONDS}]"
         )
     for previous, current in zip(points, points[1:]):
-        if current.timestamp_ns <= previous.timestamp_ns:
-            raise ValueError("points must be strictly ordered by timestamp_ns")
+        if current.timestamp_ns < previous.timestamp_ns:
+            raise ValueError("points must be non-decreasing in timestamp_ns")
     eval_time_ns = points[-1].timestamp_ns if computed_at_ns is None else computed_at_ns
     if eval_time_ns < points[-1].timestamp_ns:
         raise ValueError("computed_at_ns must be >= latest point timestamp")

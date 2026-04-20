@@ -93,7 +93,7 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
         "engine_a",
         "engine_b",
     }),
-    "calibration_methods": frozenset(),
+    "calibration_methods": frozenset({"interface_contracts"}),
     # Stage-10 scaffolding: LOCAL_REPLAY / artifact import / Build-9X
     "local_replay_runtime": frozenset({
         "interface_contracts",

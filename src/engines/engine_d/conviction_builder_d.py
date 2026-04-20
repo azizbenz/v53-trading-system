@@ -9,11 +9,16 @@ def _clamp(value: float) -> float:
     return max(0.0, min(1.0, value))
 
 
+_CONVICTION_EPSILON = 1e-12
+
+
 class ConvictionResultD(BaseModel, frozen=True):
+    ce_component: float
     raw_score: float
     conviction_score: float
     conviction_name: str
     tier_name: str
+    is_emittable: bool
 
 
 def build_conviction_d(
@@ -25,27 +30,33 @@ def build_conviction_d(
     ce_min: float,
     concentration_risk: float,
 ) -> ConvictionResultD:
+    ce_component = min(1.0, max(0.0, ce_expected / max(ce_min, 1e-6)))
     raw_score = _clamp(
         0.30 * history_score
         + 0.30 * reformation_score
         + 0.25 * marginal_value_score
-        + 0.15 * min(1.0, max(0.0, ce_expected / max(ce_min, 1e-6)))
+        + 0.15 * ce_component
     )
     conviction_score = max(0.0, raw_score - concentration_risk * 0.12)
 
-    if conviction_score >= 0.80:
+    if conviction_score >= 0.80 - _CONVICTION_EPSILON:
         conviction_name = "high"
         tier_name = "tier_2"
-    elif conviction_score >= 0.64:
+        is_emittable = True
+    elif conviction_score >= 0.64 - _CONVICTION_EPSILON:
         conviction_name = "medium"
         tier_name = "tier_1"
+        is_emittable = True
     else:
         conviction_name = "low"
-        tier_name = "tier_1"
+        tier_name = "no_trade"
+        is_emittable = False
 
     return ConvictionResultD(
+        ce_component=ce_component,
         raw_score=raw_score,
         conviction_score=conviction_score,
         conviction_name=conviction_name,
         tier_name=tier_name,
+        is_emittable=is_emittable,
     )

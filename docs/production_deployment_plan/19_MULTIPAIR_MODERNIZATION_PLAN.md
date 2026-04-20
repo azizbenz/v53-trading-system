@@ -104,10 +104,10 @@ Opus note: the +$40 to +$200/mo range is deliberately more conservative than z2'
 
 | P2-06 | **(addendum doc 20)** Enriched `SignalCandidate` contract per Narang §3.1 — additive backward-compatible migration seam, not a one-shot replacement; engines A/B migrated via adapters first | `src/interface_contracts/forecast_contracts.py` + engine adapters | every existing engine test green; new contract tests ≥ 20 |
 | P2-07 | **(addendum doc 20)** `forecast_normalizer.py` Carver `F ∝ E[r]/σ`, `ForecastScalar = 10/E[\|F\|]` learned offline per engine | `src/scoring_backbone/forecast_normalizer.py` + calibration seam | unit: `E[\|F_normalised\|] ≈ 10` after scaling |
-| P2-08 | **(addendum doc 20)** `break_even_filter.py` gates emission on `EV^net > THR-W01_floor` (Carver §7) | `src/scoring_backbone/break_even_filter.py` + calibration | unit: cost ≥ gain → no emit |
+| P2-08 | **(addendum doc 20)** `break_even_filter.py` gates emission on `EV^net > THR-E05_floor` (Carver §7) | `src/scoring_backbone/break_even_filter.py` + calibration | unit: cost ≥ gain → no emit |
 | P2-09 | **(addendum doc 20)** `cost_drift_monitor` ex-ante vs ex-post; alert if bias > THR-D01 | `src/meta_minimal/cost_drift_monitor/` | unit: 30%-bias synthetic stream → alert fires |
 | **P2-09.5** | **(delivered 2026-04-16 from doc 27 / dispute D-2026-04-16-004)** `multiple_testing_guard.py` now provides the explicit Harvey-Liu-Zhu deflation seam with declared V5.3 pair-count composition: `k_HLZ = pairs_tested` in observed mode, `k_HLZ = max(pairs_tested, 20)` in promotion-floor mode. | `src/calibration_methods/multiple_testing_guard.py` | unit: `SR_deflated` parity against HLZ eq.(8) + explicit `k_HLZ` composition regression |
-| **P3-10.5** | **(opened by doc 27 / dispute D-2026-04-16-002)** `closed_episode_journal.py` with frozen append-only `EpisodeRef` / `ClosedEpisodeJournal` contracts for Engine D historical linkage and replay/backtest evidence. Must stay under `src/protocols/`, not `src/meta_engine/`. | `src/protocols/closed_episode_journal.py` | unit: append-only invariant + stop-out filtering + most-recent eligible episode resolution + deterministic persistence hash |
+| **P3-10.5** | **(opened by doc 27 / dispute D-2026-04-16-002)** `closed_episode_journal.py` with frozen append-only `EpisodeRef` / `ClosedEpisodeJournal` contracts for Engine D historical linkage and replay/backtest evidence. Must stay under `src/protocols/` (protocol-layer artifact, not a meta-engine surface). | `src/protocols/closed_episode_journal.py` | unit: append-only invariant + stop-out filtering + most-recent eligible episode resolution + deterministic persistence hash |
 | **P2-10** | **(addendum doc 20)** S1 VPIN-fade as **B sub-signal** (not new engine): `toxic_flow_fade` feature feeding `engine_b.excess_detector_b`; ruled out if intra-B correlation > THR-F01 (default 0.7) | `src/engines/engine_b/sub_signals/toxic_flow_fade.py` + feature seam | unit: high-VPIN + extreme price dislocation → B emits with `reason_codes=("b.toxic_flow_fade",)`; corr > 0.7 → feature suppressed |
 
 **Gate to Phase 3**: 20+ microstructure features computed locally, SHAP ranking stable across 3 retrains, top-10 features promoted to CANDIDATE, **and** all `SignalCandidate` instances satisfy enriched contract.
@@ -211,7 +211,7 @@ Each tier transition goes through existing `shadow_gate_check` (W-15) + new `cap
 | THR-R04 | Regime-change vol spike multiplier | ≤ 5× | 3× |
 | THR-X06 | Maker-to-taker timeout | ≤ 60s | 20s |
 | THR-X07 | TWAP total duration | ≤ 300s | 120s |
-| **THR-W01** | Min `EV^net` floor for SignalCandidate emission (doc 20) | 0.0 (cannot disable) | $0.05/event |
+| **THR-E05** | Min `EV^net` floor for SignalCandidate emission (doc 20) | 0.0 (cannot disable) | $0.05/event |
 | **THR-T01** | Tail-loss multiplier vs median triggering engine halt (doc 20) | ≤ 5× | 3× |
 | **THR-D01** | Cost-drift bias % triggering alert (doc 20) | ≤ 50% | 20% |
 | **THR-D02** | Strategy drift KS p-value triggering pause (doc 20) | ≥ 0.001 | 0.01 |

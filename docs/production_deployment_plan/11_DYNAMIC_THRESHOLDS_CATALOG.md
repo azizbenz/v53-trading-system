@@ -113,6 +113,27 @@ notes: |
   Cf. 13_CALIBRATION_METHODS.md Â§2.1 THR-E01/E02 formule complÃ¨te.
 ```
 
+#### THR-E05 â€" EV^net floor explicite (economics gate)
+
+```yaml
+threshold_id: THR-E05
+description: Floor explicite sur EV^net pour les gates economics partagÃ©s
+source_module: src/scoring_backbone/ev_net_floor_thresholds.py + scoring_backbone/break_even_filter.py
+calibration_source: backtest (EV net distribution + shadow drift review)
+calibration_artifact: config/calibration/v1/ev_net_floor.yml
+default_value: 0.0
+ic95_lower: pair-specific
+ic95_upper: pair-specific
+n_observations_min: 200
+recalibration_freq: quarterly
+human_signature_required: true
+notes: |
+  Introduit pour supprimer la collision sÃ©mantique avec THR-W01. THR-W01 reste
+  exclusivement rÃ©servÃ© au runtime risk / drawdown warning. THR-E05 porte la
+  sÃ©mantique economics "EV^net floor" dans les docs 19/20/21/22 et dans les
+  seams partagÃ©s de gating economics.
+```
+
 ---
 
 ### 2.2 CatÃ©gorie RISK / Loss budget
@@ -585,6 +606,7 @@ notes: Toutes les heures + au boot. Plus frÃ©quent = surcoÃ»t API. Moins fr�
 | THR-E02 | Edge min abs (bps) | 15 | backtest | quarterly | âœ” |
 | **THR-E03** | **ce_min per engine** | **A:0.0001 B:0.0002 C:0.00015 D:0.00012** | **backtest/bootstrap** | **quarterly** | **âœ”** |
 | **THR-E04** | **delta_safe per engine** | **A:0.0005 B:0.0008 C:0.0005 D:0.0005** | **backtest/bootstrap** | **quarterly** | **âœ”** |
+| **THR-E05** | **EV^net floor (economics gate)** | **0.0** | **backtest/shadow review** | **quarterly** | **âœ”** |
 | THR-R01 | Daily P&L breaker | -2% | bt+shadow | monthly | âœ” |
 | THR-R02 | Weekly P&L breaker | -10% | backtest | quarterly | âœ” |
 | THR-R03 | Monthly P&L breaker | -15% | backtest | quarterly | âœ” |
@@ -619,9 +641,10 @@ notes: Toutes les heures + au boot. Plus frÃ©quent = surcoÃ»t API. Moins fr�
 | THR-I03 | Log retention | 90j | â€” | â€” | â€” |
 | THR-I04 | Reconciliation freq | 1h | â€” | â€” | â€” |
 
-**Total : 37 seuils dynamiques rÃ©els** identifiÃ©s, dont **27 nÃ©cessitent une signature humaine** pour usage production.
+**Total : 38 seuils dynamiques rÃ©els** identifiÃ©s, dont **28 nÃ©cessitent une signature humaine** pour usage production.
 
 > **Audit 2026-04-13** : +5 entrÃ©es (THR-E03, THR-E04, THR-W01, THR-W02, THR-S06) dÃ©couvertes par audit code vs plan. THR-X03 source_module corrigÃ© (execution_backbone, pas venue_adapters).
+> **Audit 2026-04-20** : +1 entrÃ©e (THR-E05) pour dÃ©sambiguÃ¯ser le floor economics EV^net des seuils risk runtime. THR-W01 reste strictement rÃ©servÃ© au drawdown warning.
 
 ---
 
@@ -681,4 +704,3 @@ notes: Toutes les heures + au boot. Plus frÃ©quent = surcoÃ»t API. Moins fr�
 ---
 
 **Suite logique** : `12_LOCAL_LAB_VS_VPS_SEPARATION.md` â€” oÃ¹ vit chaque chose.
-

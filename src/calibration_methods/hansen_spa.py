@@ -10,6 +10,7 @@ This implementation stays deliberately narrow:
 - the null is recentered with the positive-part adjustment `d - max(mean(d), 0)`
 
 Reference: Hansen (2005), Journal of Business & Economic Statistics.
+DOI: 10.1198/073500105000000063
 """
 
 from __future__ import annotations

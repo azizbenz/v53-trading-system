@@ -56,6 +56,7 @@ class VpinRecord(BaseModel):
     n_events_received: int = Field(..., ge=1)
     partial_window: bool = False
     low_sample_confidence: bool = False
+    insufficient_variation: bool = False
     derived_input_warning: str | None = None
     window_used: tuple[int | None, float | None]
     n_events_used: int = Field(..., ge=1)
@@ -86,27 +87,42 @@ def build_equal_volume_buckets(
 ) -> tuple[VpinBucket, ...]:
     """Split trades into complete equal-volume buckets, spilling volume across edges."""
 
+    return tuple(bucket for bucket, _ in _build_equal_volume_buckets_with_trade_indices(
+        trades,
+        bucket_volume=bucket_volume,
+    ))
+
+
+def _build_equal_volume_buckets_with_trade_indices(
+    trades: list[VpinTradePoint],
+    *,
+    bucket_volume: float,
+) -> tuple[tuple[VpinBucket, tuple[int, ...]], ...]:
+    """Build equal-volume buckets and retain exact contributing trade indices."""
+
     if len(trades) < 1:
         raise ValueError("at least 1 trade is required")
     if bucket_volume <= 0.0:
         raise ValueError("bucket_volume must be > 0")
     for previous, current in zip(trades, trades[1:]):
-        if current.timestamp_ns <= previous.timestamp_ns:
-            raise ValueError("trades must be strictly ordered by timestamp_ns")
+        if current.timestamp_ns < previous.timestamp_ns:
+            raise ValueError("trades must be non-decreasing in timestamp_ns")
 
-    buckets: list[VpinBucket] = []
+    buckets: list[tuple[VpinBucket, tuple[int, ...]]] = []
     current_volume = 0.0
     current_start_ns: int | None = None
     current_open_price: float | None = None
     current_close_price: float | None = None
     current_end_ns: int | None = None
+    current_trade_indices: set[int] = set()
 
-    for trade in trades:
+    for trade_index, trade in enumerate(trades):
         remaining_trade_volume = trade.volume
         while remaining_trade_volume > 0.0:
             if current_start_ns is None:
                 current_start_ns = trade.timestamp_ns
                 current_open_price = trade.price
+            current_trade_indices.add(trade_index)
             fill_volume = min(bucket_volume - current_volume, remaining_trade_volume)
             current_volume += fill_volume
             remaining_trade_volume -= fill_volume
@@ -115,12 +131,17 @@ def build_equal_volume_buckets(
 
             if current_volume >= bucket_volume - 1e-12:
                 buckets.append(
-                    VpinBucket(
-                        start_timestamp_ns=current_start_ns,
-                        end_timestamp_ns=current_end_ns,
-                        total_volume=bucket_volume,
-                        open_price=current_open_price if current_open_price is not None else trade.price,
-                        close_price=current_close_price,
+                    (
+                        VpinBucket(
+                            start_timestamp_ns=current_start_ns,
+                            end_timestamp_ns=current_end_ns,
+                            total_volume=bucket_volume,
+                            open_price=(
+                                current_open_price if current_open_price is not None else trade.price
+                            ),
+                            close_price=current_close_price,
+                        ),
+                        tuple(sorted(current_trade_indices)),
                     )
                 )
                 current_volume = 0.0
@@ -128,6 +149,7 @@ def build_equal_volume_buckets(
                 current_open_price = None
                 current_close_price = None
                 current_end_ns = None
+                current_trade_indices = set()
 
     return tuple(buckets)
 
@@ -227,14 +249,17 @@ def compute_vpin(
         raise ValueError("daily_volume must be > 0")
 
     bucket_volume = resolved_daily_volume / buckets_per_day
-    buckets = build_equal_volume_buckets(trades, bucket_volume=bucket_volume)
-    if not buckets:
+    bucket_rows = _build_equal_volume_buckets_with_trade_indices(trades, bucket_volume=bucket_volume)
+    if not bucket_rows:
         raise ValueError("at least 1 complete equal-volume bucket is required")
 
-    resolved_window = min(window_buckets, len(buckets))
-    recent_buckets = list(buckets[-resolved_window:])
-    effective_start_ns = recent_buckets[0].start_timestamp_ns
-    effective_trades = [trade for trade in trades if trade.timestamp_ns >= effective_start_ns]
+    resolved_window = min(window_buckets, len(bucket_rows))
+    recent_bucket_rows = list(bucket_rows[-resolved_window:])
+    recent_buckets = [bucket for bucket, _ in recent_bucket_rows]
+    effective_trade_indices = sorted(
+        {trade_index for _, bucket_trade_indices in recent_bucket_rows for trade_index in bucket_trade_indices}
+    )
+    effective_trades = [trades[index] for index in effective_trade_indices]
     delta_ps = [bucket.price_change for bucket in recent_buckets]
     sigma_delta_p = _stddev(delta_ps)
     buy_sell_volumes = [
@@ -254,13 +279,18 @@ def compute_vpin(
         value=max(0.0, min(1.0, vpin_value)),
         bucket_volume=bucket_volume,
         n_buckets_used=resolved_window,
-        n_complete_buckets=len(buckets),
+        n_complete_buckets=len(bucket_rows),
         n_events_received=len(trades),
         partial_window=resolved_window < window_buckets,
-        low_sample_confidence=resolved_window < 5,
+        low_sample_confidence=(
+            resolved_window < 5
+            or resolved_window < window_buckets
+            or derived_input_warning is not None
+        ),
+        insufficient_variation=sigma_delta_p <= 0.0,
         derived_input_warning=derived_input_warning,
         window_used=(resolved_window, observed_window_seconds),
-        n_events_used=len(effective_trades),
+        n_events_used=len(effective_trade_indices),
         method_version_hash=VPIN_METHOD_VERSION_HASH,
         pair=pair,
         computed_at_ns=eval_time_ns,

@@ -42,17 +42,17 @@ class ConvictionInputB(BaseModel, frozen=True):
 
     pair: str
     engine_id: str = "engine_b"
-    excess_score: float  # from excess_detector
-    structure_score: float  # range compatibility
-    context_score: float  # regime/health/freshness
-    cost_preference_score: float = 0.0  # cleaner = better
-    sweep_score: float = 0.5
-    absorption_score: float = 0.5
-    poc_reversion_score: float = 0.5
-    false_breakout_score: float = 0.5
-    execution_fragility: float = 0.0
-    market_toxicity: float = 0.0
-    spread_regime_penalty: float = 0.0
+    excess_score: float = Field(ge=0.0, le=1.0)  # from excess_detector
+    structure_score: float = Field(ge=0.0, le=1.0)  # range compatibility
+    context_score: float = Field(ge=0.0, le=1.0)  # regime/health/freshness
+    cost_preference_score: float = Field(default=0.0, ge=0.0, le=1.0)  # cleaner = better
+    sweep_score: float = Field(default=0.5, ge=0.0, le=1.0)
+    absorption_score: float = Field(default=0.5, ge=0.0, le=1.0)
+    poc_reversion_score: float = Field(default=0.5, ge=0.0, le=1.0)
+    false_breakout_score: float = Field(default=0.5, ge=0.0, le=1.0)
+    execution_fragility: float = Field(default=0.0, ge=0.0, le=1.0)
+    market_toxicity: float = Field(default=0.0, ge=0.0, le=1.0)
+    spread_regime_penalty: float = Field(default=0.0, ge=0.0, le=1.0)
     scoring_version: str = ""
 
 
@@ -65,6 +65,7 @@ class ConvictionResultB(BaseModel, frozen=True):
     block_scores: dict[str, float] = Field(default_factory=dict)
     conviction: ConvictionLevelB
     tier_suggestion: TierSuggestionB
+    is_emittable: bool
     scoring_version: str = ""
     calibration_profile_id: str = "engine_b_conviction.to_calibrate.v1"
     calibration_status: str = TO_CALIBRATE
@@ -210,12 +211,15 @@ def build_conviction_b(inputs: ConvictionInputB) -> ConvictionResultB:
     if raw >= ENGINE_B_CONVICTION_THRESHOLDS["medium"]:
         conviction = ConvictionLevelB.MEDIUM
         tier = TierSuggestionB.TIER_2
+        is_emittable = True
     elif raw >= ENGINE_B_CONVICTION_THRESHOLDS["low"]:
         conviction = ConvictionLevelB.LOW
-        tier = TierSuggestionB.TIER_1
+        tier = TierSuggestionB.NO_TRADE
+        is_emittable = False
     else:
         conviction = ConvictionLevelB.NONE
         tier = TierSuggestionB.NO_TRADE
+        is_emittable = False
 
     return ConvictionResultB(
         pair=inputs.pair,
@@ -224,6 +228,7 @@ def build_conviction_b(inputs: ConvictionInputB) -> ConvictionResultB:
         block_scores=block_scores,
         conviction=conviction,
         tier_suggestion=tier,
+        is_emittable=is_emittable,
         scoring_version=inputs.scoring_version,
         calibration_profile_id=ENGINE_B_CONVICTION_PROFILE_ID,
         calibration_status=ENGINE_B_CONVICTION_CALIBRATION_STATUS,

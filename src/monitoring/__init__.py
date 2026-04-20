@@ -93,6 +93,7 @@ from monitoring.local_lab_monitoring_projection import (
     build_local_lab_monitoring_projection,
 )
 from monitoring.local_lab_observability import build_local_lab_observability_export
+from monitoring.logging_config import build_rotating_file_handler
 from monitoring.local_lab_monitoring_backend import (
     build_local_lab_monitoring_backend_payload,
 )
@@ -220,6 +221,7 @@ __all__ = [
     "sample_disk_usage",
     "LogRotationResult",
     "rotate_log_file",
+    "build_rotating_file_handler",
     "ProcessMetricsSampler",
     "build_shadow_vps_service_monitoring_payload",
     "build_shadow_vps_service_observability_export",

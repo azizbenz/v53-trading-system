@@ -83,8 +83,8 @@ def compute_amihud_illiquidity(
     if window_seconds <= 0.0:
         raise ValueError("window_seconds must be > 0")
     for previous, current in zip(bars, bars[1:]):
-        if current.timestamp_ns <= previous.timestamp_ns:
-            raise ValueError("bars must be strictly ordered by timestamp_ns")
+        if current.timestamp_ns < previous.timestamp_ns:
+            raise ValueError("bars must be non-decreasing in timestamp_ns")
 
     eval_time_ns = bars[-1].timestamp_ns if computed_at_ns is None else computed_at_ns
     if eval_time_ns < bars[-1].timestamp_ns:

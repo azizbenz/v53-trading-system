@@ -93,8 +93,8 @@ def compute_corwin_schultz_spread(
     if len(bars) < 2:
         raise ValueError("at least 2 bars are required")
     for previous, current in zip(bars, bars[1:]):
-        if current.timestamp_ns <= previous.timestamp_ns:
-            raise ValueError("bars must be strictly ordered by timestamp_ns")
+        if current.timestamp_ns < previous.timestamp_ns:
+            raise ValueError("bars must be non-decreasing in timestamp_ns")
     eval_time_ns = bars[-1].timestamp_ns if computed_at_ns is None else computed_at_ns
     if eval_time_ns < bars[-1].timestamp_ns:
         raise ValueError("computed_at_ns must be >= latest bar timestamp")

@@ -44,15 +44,16 @@ class ConvictionInput(BaseModel, frozen=True):
 
     pair: str
     engine_id: str = "engine_a"
-    structure_score: float
-    context_score: float
-    flow_score: float = 0.0
-    cost_preference_score: float = 0.0
-    delta_confirmation: float = 0.5
-    execution_fragility: float = 0.0
-    market_toxicity: float = 0.0
-    spread_regime_penalty: float = 0.0
-    competition_density: float = 0.5
+    structure_score: float = Field(..., ge=0.0, le=1.0)
+    context_score: float = Field(..., ge=0.0, le=1.0)
+    flow_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    ofi_flow_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    cost_preference_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    delta_confirmation: float = Field(default=0.5, ge=0.0, le=1.0)
+    execution_fragility: float = Field(default=0.0, ge=0.0, le=1.0)
+    market_toxicity: float = Field(default=0.0, ge=0.0, le=1.0)
+    spread_regime_penalty: float = Field(default=0.0, ge=0.0, le=1.0)
+    competition_density: float = Field(default=0.5, ge=0.0, le=1.0)
     scoring_version: str = ""
 
 
@@ -65,6 +66,7 @@ class ConvictionResult(BaseModel, frozen=True):
     block_scores: dict[str, float] = Field(default_factory=dict)
     conviction: ConvictionLevel
     tier_suggestion: TierSuggestion
+    is_emittable: bool = False
     scoring_version: str = ""
     calibration_profile_id: str = "engine_a_conviction.to_calibrate.v1"
     calibration_status: str = TO_CALIBRATE
@@ -74,8 +76,9 @@ class ConvictionResult(BaseModel, frozen=True):
 
 ENGINE_A_CONVICTION_PROFILE_ID = "engine_a_conviction.to_calibrate.v1"
 ENGINE_A_CONVICTION_CALIBRATION_STATUS = TO_CALIBRATE
-ENGINE_A_CONVICTION_INPUT_DEFAULTS: dict[str, float | str] = {
+ENGINE_A_CONVICTION_INPUT_DEFAULTS: dict[str, float | str | None] = {
     "flow_score": 0.0,
+    "ofi_flow_score": None,
     "cost_preference_score": 0.0,
     "delta_confirmation": 0.5,
     "execution_fragility": 0.0,
@@ -105,6 +108,7 @@ ENGINE_A_CONVICTION_THRESHOLDS: dict[str, float] = {
 }
 
 ConvictionInput.model_fields["flow_score"].default = ENGINE_A_CONVICTION_INPUT_DEFAULTS["flow_score"]
+ConvictionInput.model_fields["ofi_flow_score"].default = ENGINE_A_CONVICTION_INPUT_DEFAULTS["ofi_flow_score"]
 ConvictionInput.model_fields["cost_preference_score"].default = ENGINE_A_CONVICTION_INPUT_DEFAULTS["cost_preference_score"]
 ConvictionInput.model_fields["delta_confirmation"].default = ENGINE_A_CONVICTION_INPUT_DEFAULTS["delta_confirmation"]
 ConvictionInput.model_fields["execution_fragility"].default = ENGINE_A_CONVICTION_INPUT_DEFAULTS["execution_fragility"]
@@ -122,6 +126,11 @@ def build_conviction(inputs: ConvictionInput) -> ConvictionResult:
     Normalized to [0, 1] for conviction thresholds.
     """
     neutral_midpoint = ENGINE_A_CONVICTION_NORMALIZATION["neutral_midpoint"]
+    effective_flow_score = (
+        inputs.flow_score
+        if inputs.ofi_flow_score is None
+        else inputs.ofi_flow_score
+    )
     competition_support = clip01(1.0 - inputs.competition_density)
     fragility_score = fragility_score_v1(
         inputs.execution_fragility,
@@ -146,7 +155,9 @@ def build_conviction(inputs: ConvictionInput) -> ConvictionResult:
     block_scores = {
         "structure": inputs.structure_score,
         "context": inputs.context_score,
-        "flow": inputs.flow_score,
+        "flow": effective_flow_score,
+        "flow_legacy_score": inputs.flow_score,
+        "flow_source_is_ofi": 1.0 if inputs.ofi_flow_score is not None else 0.0,
         "cost_preference": inputs.cost_preference_score,
         "delta_confirmation": inputs.delta_confirmation,
         "execution_fragility": inputs.execution_fragility,
@@ -158,11 +169,13 @@ def build_conviction(inputs: ConvictionInput) -> ConvictionResult:
         "execution_survivability_score": execution_survivability_score,
         "micro_friction_score": micro_friction_score,
     }
+    if inputs.ofi_flow_score is not None:
+        block_scores["ofi_flow_score"] = inputs.ofi_flow_score
 
     legacy_raw = (
         ENGINE_A_CONVICTION_FEATURE_WEIGHTS["structure"] * inputs.structure_score
         + ENGINE_A_CONVICTION_FEATURE_WEIGHTS["context"] * inputs.context_score
-        + ENGINE_A_CONVICTION_FEATURE_WEIGHTS["flow"] * inputs.flow_score
+        + ENGINE_A_CONVICTION_FEATURE_WEIGHTS["flow"] * effective_flow_score
         + ENGINE_A_CONVICTION_FEATURE_WEIGHTS["cost_preference"]
         * inputs.cost_preference_score
     )
@@ -196,15 +209,19 @@ def build_conviction(inputs: ConvictionInput) -> ConvictionResult:
     if raw >= ENGINE_A_CONVICTION_THRESHOLDS["high"]:
         conviction = ConvictionLevel.HIGH
         tier = TierSuggestion.TIER_3
+        is_emittable = True
     elif raw >= ENGINE_A_CONVICTION_THRESHOLDS["medium"]:
         conviction = ConvictionLevel.MEDIUM
         tier = TierSuggestion.TIER_2
+        is_emittable = True
     elif raw >= ENGINE_A_CONVICTION_THRESHOLDS["low"]:
         conviction = ConvictionLevel.LOW
-        tier = TierSuggestion.TIER_1
+        tier = TierSuggestion.NO_TRADE
+        is_emittable = False
     else:
         conviction = ConvictionLevel.NONE
         tier = TierSuggestion.NO_TRADE
+        is_emittable = False
 
     return ConvictionResult(
         pair=inputs.pair,
@@ -213,6 +230,7 @@ def build_conviction(inputs: ConvictionInput) -> ConvictionResult:
         block_scores=block_scores,
         conviction=conviction,
         tier_suggestion=tier,
+        is_emittable=is_emittable,
         scoring_version=inputs.scoring_version,
         calibration_profile_id=ENGINE_A_CONVICTION_PROFILE_ID,
         calibration_status=ENGINE_A_CONVICTION_CALIBRATION_STATUS,

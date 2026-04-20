@@ -13,7 +13,7 @@ from __future__ import annotations
 from enum import StrEnum
 
 from data_backbone import TO_CALIBRATE
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class BreakoutVerdict(StrEnum):
@@ -26,11 +26,11 @@ class BreakoutInput(BaseModel, frozen=True):
     """Inputs for anti-breakout filter."""
 
     pair: str
-    regime_trend_strength: float = 0.0
-    volume_anomaly: float = 0.0
-    structural_break: float = 0.0
-    continuation_momentum: float = 0.0
-    microstructure_breakout_confirmation: float = 0.0
+    regime_trend_strength: float = Field(default=0.0, ge=0.0, le=1.0)
+    volume_anomaly: float = Field(default=0.0, ge=0.0, le=1.0)
+    structural_break: float = Field(default=0.0, ge=0.0, le=1.0)
+    continuation_momentum: float = Field(default=0.0, ge=0.0, le=1.0)
+    microstructure_breakout_confirmation: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
 class BreakoutResult(BaseModel, frozen=True):
@@ -46,16 +46,46 @@ class BreakoutResult(BaseModel, frozen=True):
 
 ENGINE_B_BREAKOUT_FILTER_PROFILE_ID = "engine_b_breakout_filter.to_calibrate.v1"
 ENGINE_B_BREAKOUT_FILTER_CALIBRATION_STATUS = TO_CALIBRATE
+ENGINE_B_BREAKOUT_WARNING_THRESHOLD_ID = "THR-B03"
+ENGINE_B_BREAKOUT_BLOCKED_THRESHOLD_ID = "THR-B04"
+
+
+class EngineBBreakoutFilterWeights(BaseModel, frozen=True):
+    """Single-source weight ownership for Engine B anti-breakout governance."""
+
+    regime_trend_strength: float = Field(default=0.30, ge=0.0)
+    volume_anomaly: float = Field(default=0.25, ge=0.0)
+    structural_break: float = Field(default=0.25, ge=0.0)
+    continuation_momentum: float = Field(default=0.20, ge=0.0)
+    microstructure_breakout_confirmation: float = Field(default=0.15, ge=0.0)
+    calibration_profile_id: str = ENGINE_B_BREAKOUT_FILTER_PROFILE_ID
+    calibration_status: str = ENGINE_B_BREAKOUT_FILTER_CALIBRATION_STATUS
+
+
+class EngineBBreakoutFilterThresholds(BaseModel, frozen=True):
+    """Single-source threshold ownership for Engine B anti-breakout governance."""
+
+    blocked: float = Field(default=0.65, ge=0.0, le=1.0)
+    warning: float = Field(default=0.35, ge=0.0, le=1.0)
+    blocked_threshold_id: str = ENGINE_B_BREAKOUT_BLOCKED_THRESHOLD_ID
+    warning_threshold_id: str = ENGINE_B_BREAKOUT_WARNING_THRESHOLD_ID
+    calibration_profile_id: str = ENGINE_B_BREAKOUT_FILTER_PROFILE_ID
+    calibration_status: str = ENGINE_B_BREAKOUT_FILTER_CALIBRATION_STATUS
+
+
+ENGINE_B_BREAKOUT_FILTER_WEIGHTS_TO_CALIBRATE = EngineBBreakoutFilterWeights()
+ENGINE_B_BREAKOUT_FILTER_THRESHOLDS_TO_CALIBRATE = EngineBBreakoutFilterThresholds()
+# TO_CALIBRATE: grouped Engine B breakout weights/thresholds pending loader wiring.
 ENGINE_B_BREAKOUT_FILTER_WEIGHTS: dict[str, float] = {
-    "regime_trend_strength": 0.30,
-    "volume_anomaly": 0.25,
-    "structural_break": 0.25,
-    "continuation_momentum": 0.20,
-    "microstructure_breakout_confirmation": 0.15,
+    "regime_trend_strength": ENGINE_B_BREAKOUT_FILTER_WEIGHTS_TO_CALIBRATE.regime_trend_strength,
+    "volume_anomaly": ENGINE_B_BREAKOUT_FILTER_WEIGHTS_TO_CALIBRATE.volume_anomaly,
+    "structural_break": ENGINE_B_BREAKOUT_FILTER_WEIGHTS_TO_CALIBRATE.structural_break,
+    "continuation_momentum": ENGINE_B_BREAKOUT_FILTER_WEIGHTS_TO_CALIBRATE.continuation_momentum,
+    "microstructure_breakout_confirmation": ENGINE_B_BREAKOUT_FILTER_WEIGHTS_TO_CALIBRATE.microstructure_breakout_confirmation,
 }
 ENGINE_B_BREAKOUT_FILTER_THRESHOLDS: dict[str, float] = {
-    "blocked": 0.65,
-    "warning": 0.35,
+    "blocked": ENGINE_B_BREAKOUT_FILTER_THRESHOLDS_TO_CALIBRATE.blocked,
+    "warning": ENGINE_B_BREAKOUT_FILTER_THRESHOLDS_TO_CALIBRATE.warning,
 }
 
 
@@ -63,27 +93,27 @@ def evaluate_breakout_risk(inputs: BreakoutInput) -> BreakoutResult:
     """Evaluate breakout risk for a mean-reversion candidate."""
 
     score = (
-        ENGINE_B_BREAKOUT_FILTER_WEIGHTS["regime_trend_strength"]
+        ENGINE_B_BREAKOUT_FILTER_WEIGHTS_TO_CALIBRATE.regime_trend_strength
         * inputs.regime_trend_strength
-        + ENGINE_B_BREAKOUT_FILTER_WEIGHTS["volume_anomaly"] * inputs.volume_anomaly
-        + ENGINE_B_BREAKOUT_FILTER_WEIGHTS["structural_break"] * inputs.structural_break
-        + ENGINE_B_BREAKOUT_FILTER_WEIGHTS["continuation_momentum"]
+        + ENGINE_B_BREAKOUT_FILTER_WEIGHTS_TO_CALIBRATE.volume_anomaly * inputs.volume_anomaly
+        + ENGINE_B_BREAKOUT_FILTER_WEIGHTS_TO_CALIBRATE.structural_break * inputs.structural_break
+        + ENGINE_B_BREAKOUT_FILTER_WEIGHTS_TO_CALIBRATE.continuation_momentum
         * inputs.continuation_momentum
     )
     score = min(
         1.0,
         score
-        + ENGINE_B_BREAKOUT_FILTER_WEIGHTS["microstructure_breakout_confirmation"]
+        + ENGINE_B_BREAKOUT_FILTER_WEIGHTS_TO_CALIBRATE.microstructure_breakout_confirmation
         * inputs.microstructure_breakout_confirmation,
     )
 
-    if score >= ENGINE_B_BREAKOUT_FILTER_THRESHOLDS["blocked"]:
+    if score >= ENGINE_B_BREAKOUT_FILTER_THRESHOLDS_TO_CALIBRATE.blocked:
         verdict = BreakoutVerdict.BLOCKED
         reason = (
             f"breakout risk {score:.3f} >= "
-            f"{ENGINE_B_BREAKOUT_FILTER_THRESHOLDS['blocked']} hostile continuation"
+            f"{ENGINE_B_BREAKOUT_FILTER_THRESHOLDS_TO_CALIBRATE.blocked} hostile continuation"
         )
-    elif score >= ENGINE_B_BREAKOUT_FILTER_THRESHOLDS["warning"]:
+    elif score >= ENGINE_B_BREAKOUT_FILTER_THRESHOLDS_TO_CALIBRATE.warning:
         verdict = BreakoutVerdict.WARNING
         reason = f"breakout risk {score:.3f} ambiguous, penalizing"
     else:

@@ -49,6 +49,7 @@ from protocols.live_light_runtime_support import (
     _validate_micro_live_consistency,
     _validate_micro_live_source_payload_scope,
 )
+from protocols.runtime_signal_support import run_idle_runtime, runtime_cli_main
 @dataclass(frozen=True)
 class _Build14Evaluation:
     signal: Build14InfluenceSignal | None
@@ -692,8 +693,26 @@ __all__ = [
     "run_live_gate",
     "build_live_light_input_from_micro_live",
     "run_live_light_gate",
+    "run",
+    "main",
 ]
 
 
 build_live_input_from_micro_live = build_live_light_input_from_micro_live
 run_live_gate = run_live_light_gate
+
+
+def run(*, sleep_seconds: float = 0.1) -> int:
+    """Run a cooperative Live-Light runtime shell until shutdown is requested."""
+
+    return run_idle_runtime(__name__, sleep_seconds=sleep_seconds)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entrypoint for cooperative Live-Light runtime shutdown handling."""
+
+    return runtime_cli_main(__name__, argv=argv)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

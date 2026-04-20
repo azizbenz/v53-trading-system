@@ -17,6 +17,11 @@ from calibration_methods import (
     compute_mann_kendall_test,
     compute_probabilistic_sharpe_ratio,
 )
+from shadow_gate_check_sections_support import (
+    build_capital_usage,
+    build_execution_stats,
+    build_refusal_analysis,
+)
 
 
 HARD_VETO_KEYS = (
@@ -610,6 +615,9 @@ def build_shadow_gate_report(
     _append_metric_failures(blocking_reasons, hard_vetos)
     _append_metric_failures(blocking_reasons, halal_checks)
     _append_metric_failures(blocking_reasons, gate_specific_checks)
+    refusal_analysis = build_refusal_analysis(engine_id=engine_id, evidence=evidence)
+    capital_usage = build_capital_usage(engine_id=engine_id, evidence=evidence)
+    execution_stats = build_execution_stats(engine_id=engine_id, evidence=evidence)
 
     decision = _as_mapping(shadow_summary.get("decision"))
     engine_present = engine_id in active_engines or not active_engines
@@ -617,6 +625,7 @@ def build_shadow_gate_report(
         blocking_reasons.append(f"engine {engine_id} is absent from shadow_summary.active_engines")
     overall_pass = not blocking_reasons
     return {
+        "schema_version": "shadow_gate_report.v1",
         "gate_id": gate_id,
         "palier": spec.palier,
         "engine": engine_id,
@@ -627,6 +636,9 @@ def build_shadow_gate_report(
         "hard_vetos": hard_vetos,
         "halal_checks": halal_checks,
         "gate_specific_checks": gate_specific_checks,
+        "refusal_analysis": refusal_analysis,
+        "capital_usage": capital_usage,
+        "execution_stats": execution_stats,
         "source_artifacts": {
             "shadow_report_ready": bool(shadow_report.get("shadow_report_ready", False)),
             "promotion_gate_passed": bool(shadow_session_summary.get("promotion_gate_passed", False)),

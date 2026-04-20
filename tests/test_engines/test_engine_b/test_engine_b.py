@@ -1,5 +1,6 @@
 """Tests for engines.engine_b — Build-7 — Mean Reversion Intraday."""
 import pytest
+from pydantic import ValidationError
 from data_backbone.market_physics_math import ENGINE_CONVICTION_PHYSICS_PENALTY_WEIGHTS
 from engines.engine_a.conviction_builder_a import ENGINE_A_CONVICTION_ADJUSTMENT_WEIGHTS
 
@@ -13,6 +14,8 @@ from engines.engine_b.local_mean_estimator_b import (
 from engines.engine_b.excess_detector_b import (
     ENGINE_B_EXCESS_CALIBRATION_STATUS,
     ENGINE_B_EXCESS_PROFILE_ID,
+    ENGINE_B_EXCESS_ADJUSTMENTS_TO_CALIBRATE,
+    ENGINE_B_EXCESS_THRESHOLDS_TO_CALIBRATE,
     ExcessInput,
     ExcessVerdict,
     ExcessResult,
@@ -21,6 +24,8 @@ from engines.engine_b.excess_detector_b import (
 from engines.engine_b.anti_breakout_filter_b import (
     ENGINE_B_BREAKOUT_FILTER_CALIBRATION_STATUS,
     ENGINE_B_BREAKOUT_FILTER_PROFILE_ID,
+    ENGINE_B_BREAKOUT_FILTER_THRESHOLDS_TO_CALIBRATE,
+    ENGINE_B_BREAKOUT_FILTER_WEIGHTS_TO_CALIBRATE,
     BreakoutInput,
     BreakoutVerdict,
     BreakoutResult,
@@ -30,7 +35,9 @@ from engines.engine_b.cost_feasibility_b import (
     ENGINE_B_COST_CALIBRATION_STATUS,
     ENGINE_B_COST_DEFAULTS,
     ENGINE_B_COST_PROFILE_ID,
+    ENGINE_B_COST_THRESHOLDS_TO_CALIBRATE,
     CostInputB,
+    CostReasonCodeB,
     CostVerdictB,
     CostResultB,
     check_cost_feasibility_b,
@@ -51,11 +58,15 @@ from engines.engine_b.conviction_builder_b import (
 )
 from engines.engine_b.invalidation_mapper_b import (
     ENGINE_B_INVALIDATION_CALIBRATION_STATUS,
+    ENGINE_B_INVALIDATION_DEFAULTS,
     ENGINE_B_INVALIDATION_PROFILE_ID,
+    ENGINE_B_INVALIDATION_THRESHOLDS_TO_CALIBRATE,
     InvalidationMapB,
     build_invalidation_b,
 )
 from engines.engine_b.signal_reporter_b import (
+    ENGINE_B_SIGNAL_REPORTER_STATUS,
+    ENGINE_B_SIGNAL_REPORTER_STATUS_DETAIL,
     SignalDecisionB,
     NoTradeReasonB,
     SignalReporterB,
@@ -118,6 +129,14 @@ class TestLocalMeanEstimator:
         assert result.calibration_profile_id == ENGINE_B_LOCAL_MEAN_PROFILE_ID
         assert result.calibration_status == ENGINE_B_LOCAL_MEAN_CALIBRATION_STATUS
 
+    def test_local_mean_input_contract_explicit(self) -> None:
+        with pytest.raises(ValidationError):
+            LocalMeanInput(pair="BTCUSDT", current_price=0.0, local_mean=100.0, local_std=1.0)
+        with pytest.raises(ValidationError):
+            LocalMeanInput(pair="BTCUSDT", current_price=100.0, local_mean=0.0, local_std=1.0)
+        with pytest.raises(ValidationError):
+            LocalMeanInput(pair="BTCUSDT", current_price=100.0, local_mean=100.0, local_std=-1.0)
+
 
 # ── excess_detector_b ──
 
@@ -176,6 +195,36 @@ class TestExcessDetector:
         result = detect_excess(ExcessInput(pair="BTCUSDT", z_score=-2.0))
         assert result.calibration_profile_id == ENGINE_B_EXCESS_PROFILE_ID
         assert result.calibration_status == ENGINE_B_EXCESS_CALIBRATION_STATUS
+        assert ENGINE_B_EXCESS_THRESHOLDS_TO_CALIBRATE.z_marginal < ENGINE_B_EXCESS_THRESHOLDS_TO_CALIBRATE.z_star
+        assert ENGINE_B_EXCESS_THRESHOLDS_TO_CALIBRATE.z_star < ENGINE_B_EXCESS_THRESHOLDS_TO_CALIBRATE.z_max
+        assert ENGINE_B_EXCESS_ADJUSTMENTS_TO_CALIBRATE.range_bonus == pytest.approx(0.15)
+        assert ENGINE_B_EXCESS_ADJUSTMENTS_TO_CALIBRATE.expansion_penalty == pytest.approx(0.20)
+
+    def test_toxic_flow_fade_reason_code_activates_on_high_vpin(self) -> None:
+        result = detect_excess(ExcessInput(
+            pair="BTCUSDT",
+            z_score=-1.2,
+            vpin_current=0.40,
+        ))
+        assert result.verdict == ExcessVerdict.MARGINAL
+        assert result.active_reason_codes == ("b.toxic_flow_fade",)
+        assert result.suppressed_reason_codes == ()
+
+    def test_toxic_flow_fade_suppressed_when_correlation_too_high(self) -> None:
+        result = detect_excess(ExcessInput(
+            pair="BTCUSDT",
+            z_score=-1.2,
+            vpin_current=0.40,
+            toxic_flow_correlation=0.85,
+        ))
+        assert result.active_reason_codes == ()
+        assert result.suppressed_reason_codes == ("b.toxic_flow_fade_suppressed.correlation",)
+
+    def test_excess_input_rejects_out_of_range_fields(self) -> None:
+        with pytest.raises(ValidationError):
+            ExcessInput(pair="BTCUSDT", z_score=-2.0, structure_is_range=1.1)
+        with pytest.raises(ValidationError):
+            ExcessInput(pair="BTCUSDT", z_score=-2.0, recent_expansion=-0.1)
 
 
 # ── anti_breakout_filter_b ──
@@ -241,6 +290,15 @@ class TestAntiBreakoutFilter:
         result = evaluate_breakout_risk(BreakoutInput(pair="BTCUSDT"))
         assert result.calibration_profile_id == ENGINE_B_BREAKOUT_FILTER_PROFILE_ID
         assert result.calibration_status == ENGINE_B_BREAKOUT_FILTER_CALIBRATION_STATUS
+        assert ENGINE_B_BREAKOUT_FILTER_THRESHOLDS_TO_CALIBRATE.warning < ENGINE_B_BREAKOUT_FILTER_THRESHOLDS_TO_CALIBRATE.blocked
+        assert ENGINE_B_BREAKOUT_FILTER_WEIGHTS_TO_CALIBRATE.regime_trend_strength == pytest.approx(0.30)
+        assert ENGINE_B_BREAKOUT_FILTER_WEIGHTS_TO_CALIBRATE.microstructure_breakout_confirmation == pytest.approx(0.15)
+
+    def test_breakout_input_rejects_out_of_range_fields(self) -> None:
+        with pytest.raises(ValidationError):
+            BreakoutInput(pair="BTCUSDT", regime_trend_strength=1.1)
+        with pytest.raises(ValidationError):
+            BreakoutInput(pair="BTCUSDT", continuation_momentum=-0.1)
 
 
 # ── cost_feasibility_b ──
@@ -294,8 +352,65 @@ class TestCostFeasibilityB:
         ))
         assert result.calibration_profile_id == ENGINE_B_COST_PROFILE_ID
         assert result.calibration_status == ENGINE_B_COST_CALIBRATION_STATUS
-        assert CostInputB.model_fields["delta_safe"].default == ENGINE_B_COST_DEFAULTS["delta_safe"]
-        assert CostInputB.model_fields["ce_min"].default == ENGINE_B_COST_DEFAULTS["ce_min"]
+        assert CostInputB.model_fields["delta_safe"].default == ENGINE_B_COST_THRESHOLDS_TO_CALIBRATE.delta_safe
+        assert CostInputB.model_fields["ce_min"].default == ENGINE_B_COST_THRESHOLDS_TO_CALIBRATE.ce_min
+
+    def test_candidate_size_zero_is_not_emittable(self) -> None:
+        result = check_cost_feasibility_b(CostInputB(
+            pair="BTCUSDT",
+            expected_gain=0.003,
+            expected_cost=0.001,
+            candidate_size=0.0,
+            holding_period=2.0,
+        ))
+        assert result.verdict == CostVerdictB.INFEASIBLE
+        assert result.is_emittable is False
+        assert result.reason_codes == (CostReasonCodeB.INVALID_CANDIDATE_SIZE,)
+
+    def test_negative_candidate_size_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="candidate_size"):
+            CostInputB(
+                pair="BTCUSDT",
+                expected_gain=0.003,
+                expected_cost=0.001,
+                candidate_size=-1.0,
+                holding_period=2.0,
+            )
+
+    def test_zero_holding_period_rejected_or_not_feasible(self) -> None:
+        result = check_cost_feasibility_b(CostInputB(
+            pair="BTCUSDT",
+            expected_gain=0.003,
+            expected_cost=0.001,
+            candidate_size=100.0,
+            holding_period=0.0,
+        ))
+        assert result.verdict == CostVerdictB.INFEASIBLE
+        assert result.is_emittable is False
+        assert result.reason_codes == (CostReasonCodeB.INVALID_HOLDING_PERIOD,)
+
+    def test_expected_gain_equal_boundary_not_feasible_if_strict(self) -> None:
+        result = check_cost_feasibility_b(CostInputB(
+            pair="BTCUSDT",
+            expected_gain=0.0018,
+            expected_cost=0.001,
+            candidate_size=100.0,
+            holding_period=2.0,
+            delta_safe=0.0008,
+        ))
+        assert result.verdict == CostVerdictB.INFEASIBLE
+        assert result.reason_codes == (CostReasonCodeB.BREAK_EVEN_NOT_CLEARED,)
+
+    def test_reason_code_present_when_cost_infeasible(self) -> None:
+        result = check_cost_feasibility_b(CostInputB(
+            pair="BTCUSDT",
+            expected_gain=0.001,
+            expected_cost=0.001,
+            candidate_size=100.0,
+            holding_period=2.0,
+        ))
+        assert result.verdict == CostVerdictB.INFEASIBLE
+        assert result.reason_codes
 
 
 # ── conviction_builder_b ──
@@ -309,6 +424,7 @@ class TestConvictionBuilderB:
         ))
         assert result.conviction == ConvictionLevelB.MEDIUM
         assert result.tier_suggestion == TierSuggestionB.TIER_2
+        assert result.is_emittable is True
 
     def test_low_conviction(self):
         result = build_conviction_b(ConvictionInputB(
@@ -316,7 +432,8 @@ class TestConvictionBuilderB:
             context_score=0.3, cost_preference_score=0.2,
         ))
         assert result.conviction == ConvictionLevelB.LOW
-        assert result.tier_suggestion == TierSuggestionB.TIER_1
+        assert result.tier_suggestion == TierSuggestionB.NO_TRADE
+        assert result.is_emittable is False
 
     def test_none_conviction(self):
         result = build_conviction_b(ConvictionInputB(
@@ -325,6 +442,7 @@ class TestConvictionBuilderB:
         ))
         assert result.conviction == ConvictionLevelB.NONE
         assert result.tier_suggestion == TierSuggestionB.NO_TRADE
+        assert result.is_emittable is False
 
     def test_no_tier_3(self):
         """Engine B never gets Tier 3 — max is Tier 2."""
@@ -433,6 +551,32 @@ class TestConvictionBuilderB:
         assert "execution_survivability_score" in penalized.block_scores
         assert "micro_friction_score" in penalized.block_scores
 
+    def test_low_boundary_exact_is_not_emittable(self) -> None:
+        result = build_conviction_b(ConvictionInputB(
+            pair="BTCUSDT",
+            excess_score=1.0,
+            structure_score=0.0,
+            context_score=0.0,
+            cost_preference_score=0.0,
+        ))
+        assert result.raw_score == pytest.approx(0.30)
+        assert result.conviction == ConvictionLevelB.LOW
+        assert result.tier_suggestion == TierSuggestionB.NO_TRADE
+        assert result.is_emittable is False
+
+    def test_medium_boundary_exact_is_emittable(self) -> None:
+        result = build_conviction_b(ConvictionInputB(
+            pair="BTCUSDT",
+            excess_score=1.0,
+            structure_score=1.0,
+            context_score=0.0,
+            cost_preference_score=0.0000001,
+        ))
+        assert result.raw_score > 0.55
+        assert result.conviction == ConvictionLevelB.MEDIUM
+        assert result.tier_suggestion == TierSuggestionB.TIER_2
+        assert result.is_emittable is True
+
 
 # ── invalidation_mapper_b ──
 
@@ -481,12 +625,88 @@ class TestInvalidationMapperB:
         )
         assert inv.calibration_profile_id == ENGINE_B_INVALIDATION_PROFILE_ID
         assert inv.calibration_status == ENGINE_B_INVALIDATION_CALIBRATION_STATUS
+        assert inv.max_holding_hours == pytest.approx(
+            ENGINE_B_INVALIDATION_THRESHOLDS_TO_CALIBRATE.max_holding_hours
+        )
+        assert ENGINE_B_INVALIDATION_THRESHOLDS_TO_CALIBRATE.fallback_stop_ratio == pytest.approx(0.98)
+        assert ENGINE_B_INVALIDATION_THRESHOLDS_TO_CALIBRATE.stop_multiplier == pytest.approx(1.5)
+
+    def test_entry_price_invalid_rejected(self) -> None:
+        with pytest.raises(ValueError, match="entry_price"):
+            build_invalidation_b(
+                pair="BTCUSDT",
+                entry_price=0.0,
+                local_mean=100.0,
+                local_std=1.0,
+            )
+
+    def test_local_mean_invalid_rejected(self) -> None:
+        with pytest.raises(ValueError, match="local_mean"):
+            build_invalidation_b(
+                pair="BTCUSDT",
+                entry_price=98.0,
+                local_mean=0.0,
+                local_std=1.0,
+            )
+
+    def test_negative_local_std_rejected(self) -> None:
+        with pytest.raises(ValueError, match="local_std"):
+            build_invalidation_b(
+                pair="BTCUSDT",
+                entry_price=98.0,
+                local_mean=100.0,
+                local_std=-1.0,
+            )
+
+    def test_holding_hours_invalid_rejected(self) -> None:
+        with pytest.raises(ValueError, match="holding_hours"):
+            build_invalidation_b(
+                pair="BTCUSDT",
+                entry_price=98.0,
+                local_mean=100.0,
+                local_std=1.0,
+                holding_hours=0.0,
+            )
+
+    def test_stop_fallback_sets_reason_when_non_positive(self) -> None:
+        inv = build_invalidation_b(
+            pair="BTCUSDT",
+            entry_price=1.0,
+            local_mean=1.2,
+            local_std=10.0,
+        )
+        assert inv.stop_price == pytest.approx(0.98)
+        assert inv.reason == "engine_b.invalidation.fallback_stop.non_positive"
+
+    def test_target_at_or_below_entry_rejected_with_stable_code(self) -> None:
+        with pytest.raises(ValueError, match="INVALID_TARGET_LE_ENTRY"):
+            build_invalidation_b(
+                pair="BTCUSDT",
+                entry_price=100.0,
+                local_mean=100.0,
+                local_std=1.0,
+            )
+
+    def test_stop_at_or_above_entry_rejected_with_stable_code(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setitem(ENGINE_B_INVALIDATION_DEFAULTS, "stop_multiplier", -1.0)
+        with pytest.raises(ValueError, match="INVALID_STOP_GE_ENTRY"):
+            build_invalidation_b(
+                pair="BTCUSDT",
+                entry_price=100.0,
+                local_mean=120.0,
+                local_std=1.0,
+            )
 
 
 # ── signal_reporter_b ──
 
 
 class TestSignalReporterB:
+    def test_signal_reporter_status_is_explicit(self) -> None:
+        assert ENGINE_B_SIGNAL_REPORTER_STATUS == "secondary_helper_non_canonical_flow"
+        assert "NoTradeReasonB is canonical" in ENGINE_B_SIGNAL_REPORTER_STATUS_DETAIL
+        assert "secondary audit helpers" in ENGINE_B_SIGNAL_REPORTER_STATUS_DETAIL
+
     def test_initial_state(self):
         reporter = SignalReporterB()
         stats = reporter.get_stats()
@@ -553,6 +773,10 @@ def test_engine_b_runner_defaults_are_explicitly_governed():
     assert EngineBInput.model_fields["false_breakout_score"].default == ENGINE_B_RUNNER_INPUT_DEFAULTS["false_breakout_score"]
     assert EngineBInput.model_fields["holding_period"].default == ENGINE_B_RUNNER_INPUT_DEFAULTS["holding_period"]
     assert EngineBInput.model_fields["delta_safe"].default == ENGINE_B_RUNNER_INPUT_DEFAULTS["delta_safe"]
+    assert EngineBInput.model_fields["ce_min"].default == ENGINE_B_RUNNER_INPUT_DEFAULTS["ce_min"]
+    assert EngineBInput.model_fields["holding_period"].default == ENGINE_B_COST_THRESHOLDS_TO_CALIBRATE.holding_period
+    assert EngineBInput.model_fields["delta_safe"].default == ENGINE_B_COST_THRESHOLDS_TO_CALIBRATE.delta_safe
+    assert EngineBInput.model_fields["ce_min"].default == ENGINE_B_COST_THRESHOLDS_TO_CALIBRATE.ce_min
 
 
 def test_engine_b_runner_false_breakout_default_is_neutral():
@@ -574,8 +798,8 @@ class TestEngineBRunner:
         """Full pipeline with favorable inputs => EMIT."""
         output = run_engine_b(_emit_inputs())
         assert output.decision == EngineBDecision.EMIT
-        assert output.conviction in (ConvictionLevelB.MEDIUM, ConvictionLevelB.LOW)
-        assert output.tier_suggestion in (TierSuggestionB.TIER_2, TierSuggestionB.TIER_1)
+        assert output.conviction == ConvictionLevelB.MEDIUM
+        assert output.tier_suggestion == TierSuggestionB.TIER_2
         assert output.z_score < 0
         assert output.invalidation is not None
         assert output.invalidation.direction == "long"
@@ -593,6 +817,11 @@ class TestEngineBRunner:
         # z = (99.5 - 100) / 1.5 = -0.33 < z_marginal
         assert output.decision == EngineBDecision.NO_TRADE
         assert NoTradeReasonB.NO_EXCESS in output.no_trade_reasons
+        assert output.reason_codes == (
+            "engine_internal.engine_b.excess.no_excess",
+            "engine_b.excess.no_excess",
+        )
+        assert output.log_entries[-1].reasons == output.reason_codes
 
     def test_no_trade_breakout_blocked(self):
         """Strong trend against reversion => BLOCKED."""
@@ -602,6 +831,11 @@ class TestEngineBRunner:
         ))
         assert output.decision == EngineBDecision.NO_TRADE
         assert NoTradeReasonB.BREAKOUT_BLOCKED in output.no_trade_reasons
+        assert output.reason_codes == (
+            "engine_internal.engine_b.breakout.blocked",
+            "engine_b.breakout.blocked",
+        )
+        assert output.log_entries[-1].reasons == output.reason_codes
 
     def test_no_trade_cost_infeasible(self):
         """Cost kills the edge => NO_TRADE."""
@@ -614,6 +848,10 @@ class TestEngineBRunner:
         output = run_engine_b(_emit_inputs(local_std=0.0))
         assert output.decision == EngineBDecision.NO_TRADE
         assert NoTradeReasonB.INVALID_DISPERSION in output.no_trade_reasons
+        assert output.reason_codes == (
+            "hard_block.engine_b.local_mean.invalid_dispersion",
+            "engine_b.local_mean.invalid_dispersion",
+        )
 
     def test_scoring_version_propagated(self):
         output = run_engine_b(_emit_inputs(scoring_version="B_v2"))
@@ -643,6 +881,10 @@ class TestEngineBRunner:
         """Every NO_TRADE must have at least one explicit reason."""
         output = run_engine_b(_emit_inputs(current_price=103.0))
         assert len(output.no_trade_reasons) > 0
+        assert output.reason_codes == (
+            "engine_internal.engine_b.direction.non_long",
+            "engine_b.direction.non_long",
+        )
 
     def test_breakout_warning_still_emits(self):
         """WARNING doesn't block, only BLOCKED does."""
@@ -687,11 +929,21 @@ class TestEngineBRunner:
         output = run_engine_b(_emit_inputs())
         assert output.excess_score > 0.0
         assert output.excess_verdict == ExcessVerdict.EXPLOITABLE
+        assert "scoring.engine_b.conviction.medium" in output.reason_codes
+        assert "engine_b.conviction.medium" in output.reason_codes
+        assert "engine_internal.engine_b.excess.exploitable" in output.reason_codes
+        assert "engine_b.excess.exploitable" in output.reason_codes
+        assert "economics.engine_b.cost.feasible" in output.reason_codes
 
     def test_flow_coherence_feeds_runtime_conviction_path(self):
         weak_flow = run_engine_b(_emit_inputs(flow_coherence=0.0))
         strong_flow = run_engine_b(_emit_inputs(flow_coherence=1.0))
-        assert weak_flow.decision == EngineBDecision.EMIT
+        assert weak_flow.decision == EngineBDecision.NO_TRADE
+        assert weak_flow.no_trade_reasons == (NoTradeReasonB.CONVICTION_LOW,)
+        assert weak_flow.reason_codes == (
+            "scoring.engine_b.conviction.low",
+            "engine_b.conviction.low",
+        )
         assert strong_flow.decision == EngineBDecision.EMIT
         assert strong_flow.raw_score > weak_flow.raw_score
         assert strong_flow.block_scores["context"] > weak_flow.block_scores["context"]
@@ -738,3 +990,158 @@ class TestEngineBRunner:
         assert penalized_output.block_scores["market_toxicity"] == pytest.approx(1.0)
         assert "execution_survivability_score" in penalized_output.block_scores
         assert penalized_output.block_scores["micro_friction_score"] > 0.0
+
+    def test_toxic_flow_fade_reason_codes_propagate_on_emit(self) -> None:
+        output = run_engine_b(_emit_inputs(
+            vpin_current=0.40,
+        ))
+        assert output.decision == EngineBDecision.EMIT
+        assert "scoring.engine_b.conviction.medium" in output.reason_codes
+        assert "engine_b.conviction.medium" in output.reason_codes
+        assert "engine_internal.engine_b.excess.exploitable" in output.reason_codes
+        assert "engine_b.excess.exploitable" in output.reason_codes
+        assert "b.toxic_flow_fade" in output.reason_codes
+
+    def test_toxic_flow_fade_is_suppressed_when_correlation_exceeds_threshold(self) -> None:
+        output = run_engine_b(_emit_inputs(
+            vpin_current=0.40,
+            toxic_flow_correlation=0.85,
+        ))
+        assert output.decision == EngineBDecision.EMIT
+        assert "scoring.engine_b.conviction.medium" in output.reason_codes
+        assert "engine_b.conviction.medium" in output.reason_codes
+        assert "engine_internal.engine_b.excess.exploitable" in output.reason_codes
+        assert "engine_b.excess.exploitable" in output.reason_codes
+        assert "b.toxic_flow_fade_suppressed.correlation" in output.reason_codes
+        excess_logs = [entry for entry in output.log_entries if entry.event == "engine_b_excess_evaluated"]
+        assert len(excess_logs) == 1
+        assert "b.toxic_flow_fade_suppressed.correlation" in excess_logs[0].reasons
+
+    def test_emit_reason_codes_are_not_excess_only(self) -> None:
+        output = run_engine_b(_emit_inputs(
+            regime_trend_strength=0.5,
+            volume_anomaly=0.4,
+            structural_break=0.3,
+            continuation_momentum=0.3,
+        ))
+        assert output.decision == EngineBDecision.EMIT
+        assert "engine_b.conviction.medium" in output.reason_codes
+        assert "engine_b.excess.exploitable" in output.reason_codes
+        assert "engine_b.breakout.warning" in output.reason_codes
+
+    def test_candidate_size_zero_rejected_before_emit(self) -> None:
+        output = run_engine_b(_emit_inputs(candidate_size=0.0))
+        assert output.decision == EngineBDecision.NO_TRADE
+        assert output.no_trade_reasons == (NoTradeReasonB.INVALID_INPUT,)
+        assert output.reason_codes == (
+            "hard_block.engine_b.input.invalid_input",
+            "engine_b.input.candidate_size_non_positive",
+        )
+        assert output.log_entries[-1].event == "engine_b_no_trade"
+
+    def test_holding_period_zero_rejected_before_emit(self) -> None:
+        output = run_engine_b(_emit_inputs(holding_period=0.0))
+        assert output.decision == EngineBDecision.NO_TRADE
+        assert output.no_trade_reasons == (NoTradeReasonB.INVALID_INPUT,)
+        assert output.reason_codes == (
+            "hard_block.engine_b.input.invalid_input",
+            "engine_b.input.holding_period_non_positive",
+        )
+        assert output.log_entries[-1].event == "engine_b_no_trade"
+
+    def test_current_price_zero_rejected_before_emit(self) -> None:
+        output = run_engine_b(_emit_inputs(current_price=0.0))
+        assert output.decision == EngineBDecision.NO_TRADE
+        assert output.no_trade_reasons == (NoTradeReasonB.INVALID_INPUT,)
+        assert output.reason_codes == (
+            "hard_block.engine_b.input.invalid_input",
+            "engine_b.input.current_price_non_positive",
+        )
+        assert output.log_entries[-1].event == "engine_b_no_trade"
+
+    def test_cost_marginal_cannot_emit(self) -> None:
+        output = run_engine_b(_emit_inputs(
+            expected_gain=0.002,
+            expected_cost=0.001,
+            holding_period=100.0,
+            ce_min=0.001,
+        ))
+        assert output.decision == EngineBDecision.NO_TRADE
+        assert output.no_trade_reasons == (NoTradeReasonB.COST_MARGINAL,)
+        assert output.cost_verdict == CostVerdictB.MARGINAL
+        assert output.reason_codes == (
+            "economics.engine_b.cost.marginal",
+            "ce_below_minimum",
+        )
+        assert output.log_entries[-1].reasons == output.reason_codes
+        assert output.log_entries[-1].event == "engine_b_no_trade"
+
+    def test_low_conviction_cannot_emit(self) -> None:
+        output = run_engine_b(_emit_inputs(flow_coherence=0.0))
+        assert output.decision == EngineBDecision.NO_TRADE
+        assert output.no_trade_reasons == (NoTradeReasonB.CONVICTION_LOW,)
+        assert output.reason_codes == (
+            "scoring.engine_b.conviction.low",
+            "engine_b.conviction.low",
+        )
+        assert output.log_entries[-1].event == "engine_b_no_trade"
+
+    def test_invalid_invalidation_inputs_rejected_before_emit(self) -> None:
+        output = run_engine_b(_emit_inputs(local_mean=0.0))
+        assert output.decision == EngineBDecision.NO_TRADE
+        assert output.no_trade_reasons == (NoTradeReasonB.INVALID_INPUT,)
+        assert output.reason_codes == (
+            "hard_block.engine_b.input.invalid_input",
+            "engine_b.input.local_mean_non_positive",
+        )
+        assert output.log_entries[-1].event == "engine_b_no_trade"
+
+    def test_engine_b_input_rejects_out_of_range_normalized_fields(self) -> None:
+        with pytest.raises(ValidationError):
+            _emit_inputs(structure_is_range=1.1)
+
+    def test_engine_b_input_accepts_boundary_zero(self) -> None:
+        output = run_engine_b(_emit_inputs(
+            structure_is_range=0.0,
+            recent_expansion=0.0,
+            regime_trend_strength=0.0,
+            volume_anomaly=0.0,
+            structural_break=0.0,
+            continuation_momentum=0.0,
+            microstructure_breakout_confirmation=0.0,
+            sweep_score=0.0,
+            absorption_score=0.0,
+            poc_reversion_score=0.0,
+            false_breakout_score=0.0,
+            execution_fragility=0.0,
+            market_toxicity=0.0,
+            spread_regime_penalty=0.0,
+            regime_favorability=0.0,
+            pair_health=0.0,
+            data_freshness=0.0,
+            flow_coherence=0.0,
+        ))
+        assert output.decision == EngineBDecision.NO_TRADE
+
+    def test_engine_b_input_accepts_boundary_one(self) -> None:
+        output = run_engine_b(_emit_inputs(
+            structure_is_range=1.0,
+            recent_expansion=1.0,
+            regime_trend_strength=1.0,
+            volume_anomaly=1.0,
+            structural_break=1.0,
+            continuation_momentum=1.0,
+            microstructure_breakout_confirmation=1.0,
+            sweep_score=1.0,
+            absorption_score=1.0,
+            poc_reversion_score=1.0,
+            false_breakout_score=1.0,
+            execution_fragility=1.0,
+            market_toxicity=1.0,
+            spread_regime_penalty=1.0,
+            regime_favorability=1.0,
+            pair_health=1.0,
+            data_freshness=1.0,
+            flow_coherence=1.0,
+        ))
+        assert output.decision in (EngineBDecision.EMIT, EngineBDecision.NO_TRADE)

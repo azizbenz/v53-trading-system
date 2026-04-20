@@ -56,6 +56,18 @@ def load_binance_credentials_from_env(prefix: str = "V53_BINANCE_") -> BinanceCr
     )
 
 
+def load_testnet_credentials() -> BinanceCredentials:
+    """Load Binance Spot testnet credentials from the dedicated environment seam."""
+
+    return load_binance_credentials(
+        {
+            "api_key": os.getenv("BINANCE_TESTNET_API_KEY", ""),
+            "secret_key": os.getenv("BINANCE_TESTNET_SECRET", ""),
+            "label": os.getenv("BINANCE_TESTNET_LABEL", "testnet"),
+        }
+    )
+
+
 def load_binance_credentials_from_file(
     path: Path | str,
     *,
@@ -112,4 +124,5 @@ __all__ = [
     "load_binance_credentials",
     "load_binance_credentials_from_env",
     "load_binance_credentials_from_file",
+    "load_testnet_credentials",
 ]

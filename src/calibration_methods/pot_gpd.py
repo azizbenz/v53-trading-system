@@ -1,4 +1,8 @@
-"""Shared Local IA Lab POT-GPD tail-risk helpers."""
+"""Shared Local IA Lab POT-GPD tail-risk helpers.
+
+Reference: Coles, S. (2001). An Introduction to Statistical Modeling of
+Extreme Values. Springer.
+"""
 
 from __future__ import annotations
 

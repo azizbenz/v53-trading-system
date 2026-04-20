@@ -13,7 +13,12 @@ import yaml
 
 from interface_contracts.atomic_io import atomic_write_json, atomic_write_text
 from secrets_manager._dpapi import DpapiError, protect_bytes
-from secrets_manager.loader import SecretManagerLoadError, SealedSecretEnvelope, _read_key_entropy
+from secrets_manager.loader import (
+    SecretManagerLoadError,
+    SealedSecretEnvelope,
+    _default_secret_backend,
+    _read_key_entropy,
+)
 
 
 def generate_master_key(path: Path | str, *, force: bool = False) -> Path:
@@ -42,6 +47,7 @@ def seal_bytes(
     except DpapiError as exc:
         raise SecretManagerLoadError(f"Could not seal secret payload: {exc}") from exc
     return SealedSecretEnvelope(
+        backend=_default_secret_backend(),
         source_name=source_name,
         created_at=datetime.now(timezone.utc),
         ciphertext_b64=base64.b64encode(ciphertext).decode("ascii"),

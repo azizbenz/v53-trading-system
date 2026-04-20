@@ -7,11 +7,12 @@ Fix: next(..., None) + explicit HARD_BLOCKED return path.
 from __future__ import annotations
 
 from pathlib import Path
-import shutil
 from unittest.mock import patch
 
 from engines.engine_c import EngineCRuntime, EngineCRuntimeInput, EngineCRuntimeStatus
 from engines.engine_c.engine_c_runner import EngineCInput
+from interface_contracts import EngineId, Side
+from protocols.engine_coordination_rules import EngineCoordinationInput, evaluate_engine_coordination
 from risk_backbone.emergency_kill_switch.circuit_breaker import EmergencyCircuitBreaker
 from risk_backbone.risk_runtime import RiskLimits, RiskRuntime
 from scoring_backbone.hard_block_gate.blocker_reporter import BlockerStats
@@ -57,6 +58,8 @@ def _good_engine_inputs(**overrides) -> EngineCInput:
         breakout_level=101.0,
         range_low=97.5,
         range_high=101.0,
+        realized_vol_current=2.0 / 105.0,
+        realized_vol_at_break=2.0 / 105.0,
         atr=2.0,
         engine_a_overlap_ratio=0.28,
         marginal_portfolio_gain=9.2,
@@ -110,23 +113,38 @@ def _runtime_input(**overrides) -> EngineCRuntimeInput:
         session_peak_equity=10_000.0,
         pair_beta=0.8,
         cluster_id="btc_majors",
+        coordination_input=_coordination_input_c(),
     )
     defaults.update(overrides)
     return EngineCRuntimeInput(**defaults)
 
 
-def _breaker_state_dir(name: str) -> Path:
-    state_dir = Path(".codex_kill_switch_tests") / name
-    shutil.rmtree(state_dir, ignore_errors=True)
+def _coordination_input_c(**overrides: object) -> EngineCoordinationInput:
+    defaults = dict(
+        evaluated_at_ns=1_700_000_000_000_000_000,
+        engine_id=EngineId.C,
+        pair="BTCUSDT",
+        side=Side.BUY,
+    )
+    defaults.update(overrides)
+    return EngineCoordinationInput(**defaults)
+
+
+def _breaker_state_dir(repo_tmp_path: Path, name: str) -> Path:
+    state_dir = repo_tmp_path / ".codex_kill_switch_tests" / name
     state_dir.mkdir(parents=True, exist_ok=True)
     return state_dir
 
 
-def _runtime(name: str, **overrides) -> EngineCRuntime:
+def _runtime(repo_tmp_path: Path, name: str, **overrides) -> EngineCRuntime:
     return EngineCRuntime(
         scoring_runtime=overrides.pop("scoring_runtime", _scoring_runtime()),
         risk_runtime=overrides.pop("risk_runtime", _risk_runtime()),
-        circuit_breaker=overrides.pop("circuit_breaker", EmergencyCircuitBreaker(state_dir=_breaker_state_dir(name))),
+        circuit_breaker=overrides.pop(
+            "circuit_breaker",
+            EmergencyCircuitBreaker(state_dir=_breaker_state_dir(repo_tmp_path, name)),
+        ),
+        coordination_evaluator=overrides.pop("coordination_evaluator", evaluate_engine_coordination),
         **overrides,
     )
 
@@ -148,12 +166,12 @@ def _empty_scoring_round() -> ScoringRoundResult:
 # BS-next regression tests
 # ---------------------------------------------------------------------------
 
-def test_missing_audit_returns_hard_blocked_not_stop_iteration():
+def test_missing_audit_returns_hard_blocked_not_stop_iteration(repo_tmp_path: Path):
     """
     BS-next: When scoring_round.audits yields no engine_c/BTCUSDT match,
     runtime must return HARD_BLOCKED instead of raising StopIteration.
     """
-    runtime = _runtime("engine_c_bs_next_hard_block")
+    runtime = _runtime(repo_tmp_path, "engine_c_bs_next_hard_block")
 
     with patch.object(runtime._scoring_runtime, "run_round", return_value=_empty_scoring_round()):
         result = runtime.evaluate(_runtime_input(), now=10.0)
@@ -163,12 +181,12 @@ def test_missing_audit_returns_hard_blocked_not_stop_iteration():
     assert result.risk_evaluation is None
 
 
-def test_missing_audit_emits_diagnostic_log_entry():
+def test_missing_audit_emits_diagnostic_log_entry(repo_tmp_path: Path):
     """
     BS-next: The HARD_BLOCKED path must log event='engine_c_scoring_audit_missing'
     with a human-readable reason.
     """
-    runtime = _runtime("engine_c_bs_next_log")
+    runtime = _runtime(repo_tmp_path, "engine_c_bs_next_log")
 
     with patch.object(runtime._scoring_runtime, "run_round", return_value=_empty_scoring_round()):
         result = runtime.evaluate(_runtime_input(), now=10.0)
@@ -178,12 +196,12 @@ def test_missing_audit_emits_diagnostic_log_entry():
     assert any("hard blocked" in r.lower() for r in audit_missing_logs[0].reasons)
 
 
-def test_missing_audit_preserves_signal_candidate():
+def test_missing_audit_preserves_signal_candidate(repo_tmp_path: Path):
     """
     BS-next: The signal candidate built before the scoring round is preserved in
     the HARD_BLOCKED result for auditability.
     """
-    runtime = _runtime("engine_c_bs_next_signal")
+    runtime = _runtime(repo_tmp_path, "engine_c_bs_next_signal")
 
     with patch.object(runtime._scoring_runtime, "run_round", return_value=_empty_scoring_round()):
         result = runtime.evaluate(_runtime_input(), now=10.0)
@@ -192,12 +210,12 @@ def test_missing_audit_preserves_signal_candidate():
     assert result.signal_candidate.pair == "BTCUSDT"
 
 
-def test_missing_audit_scoring_round_still_attached():
+def test_missing_audit_scoring_round_still_attached(repo_tmp_path: Path):
     """
     BS-next: Even on HARD_BLOCKED the scoring_round itself is preserved in the
     result so callers can inspect the empty/mismatched round.
     """
-    runtime = _runtime("engine_c_bs_next_round")
+    runtime = _runtime(repo_tmp_path, "engine_c_bs_next_round")
     empty_round = _empty_scoring_round()
 
     with patch.object(runtime._scoring_runtime, "run_round", return_value=empty_round):
@@ -206,12 +224,12 @@ def test_missing_audit_scoring_round_still_attached():
     assert result.scoring_round is empty_round
 
 
-def test_missing_audit_no_risk_evaluation():
+def test_missing_audit_no_risk_evaluation(repo_tmp_path: Path):
     """
     BS-next: Risk evaluation must NOT run when the scoring audit is absent —
     the HARD_BLOCKED return must happen before reaching risk.
     """
-    runtime = _runtime("engine_c_bs_next_no_risk")
+    runtime = _runtime(repo_tmp_path, "engine_c_bs_next_no_risk")
 
     with patch.object(runtime._scoring_runtime, "run_round", return_value=_empty_scoring_round()):
         result = runtime.evaluate(_runtime_input(), now=10.0)
@@ -219,12 +237,12 @@ def test_missing_audit_no_risk_evaluation():
     assert result.risk_evaluation is None
 
 
-def test_normal_path_not_affected_by_fix():
+def test_normal_path_not_affected_by_fix(repo_tmp_path: Path):
     """
     BS-next: Verify the normal acceptance path still works after the fix is in place.
     Real scoring runtime produces the correct audit — must be ACCEPTED.
     """
-    runtime = _runtime("engine_c_bs_next_normal")
+    runtime = _runtime(repo_tmp_path, "engine_c_bs_next_normal")
     result = runtime.evaluate(_runtime_input(), now=10.0)
 
     assert result.status == EngineCRuntimeStatus.ACCEPTED

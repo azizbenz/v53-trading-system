@@ -71,6 +71,23 @@ def test_hansen_spa_rejects_best_of_many_random_strategies() -> None:
     assert result.p_value > 0.10
 
 
+def test_hansen_spa_anchor_all_five_candidates_worse_than_benchmark_gives_p_above_half() -> None:
+    rng = random.Random(20260420)
+    candidates = {
+        f"engine_{index}": tuple(rng.gauss(-0.02, 0.20) for _ in range(120))
+        for index in range(5)
+    }
+    result = compute_hansen_spa_test(
+        candidates,
+        acceptance_ceiling=0.05,
+        bootstrap_samples=299,
+        expected_block_length=5,
+        rng_seed=20260420,
+    )
+    assert result.p_value > 0.5
+    assert result.passes_floor is False
+
+
 def test_hansen_spa_accepts_persistent_superior_candidate() -> None:
     rng = random.Random(77)
     candidates = {
@@ -89,3 +106,24 @@ def test_hansen_spa_accepts_persistent_superior_candidate() -> None:
     assert result.selected_candidate_id == "engine_a"
     assert result.passes_floor is True
     assert result.p_value <= 0.10
+
+
+def test_hansen_spa_anchor_one_candidate_plus_point_three_mean_gives_p_below_five_percent() -> None:
+    rng = random.Random(20260420)
+    candidates = {
+        "engine_a": tuple(rng.gauss(0.30, 0.20) for _ in range(120)),
+        "engine_b": tuple(rng.gauss(0.00, 0.20) for _ in range(120)),
+        "engine_c": tuple(rng.gauss(-0.01, 0.20) for _ in range(120)),
+        "engine_d": tuple(rng.gauss(0.01, 0.20) for _ in range(120)),
+        "engine_e": tuple(rng.gauss(0.02, 0.20) for _ in range(120)),
+    }
+    result = compute_hansen_spa_test(
+        candidates,
+        acceptance_ceiling=0.05,
+        bootstrap_samples=299,
+        expected_block_length=5,
+        rng_seed=20260421,
+    )
+    assert result.selected_candidate_id == "engine_a"
+    assert result.p_value < 0.05
+    assert result.passes_floor is True

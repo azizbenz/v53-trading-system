@@ -120,8 +120,8 @@ def compute_order_flow_imbalance(
             f"window_events must be in [1, {MAX_OFI_WINDOW_EVENTS}]"
         )
     for previous, current in zip(points, points[1:]):
-        if current.timestamp_ns <= previous.timestamp_ns:
-            raise ValueError("points must be strictly ordered by timestamp_ns")
+        if current.timestamp_ns < previous.timestamp_ns:
+            raise ValueError("points must be non-decreasing in timestamp_ns")
 
     contributions = [
         compute_order_book_event_contribution(previous, current)

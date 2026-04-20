@@ -9,13 +9,18 @@ import pytest
 
 @pytest.mark.build1
 class TestCanonicalRuntimeSurface:
-    """Canonical package names should expose the current runtime surface."""
+    """Canonical package names should expose the current runtime surface.
+
+    Note: engines live under ``src/engines/engine_X/``, so the importable
+    path from ``pythonpath = ["src"]`` is ``engines.engine_X``, not bare
+    ``engine_X``.
+    """
 
     @pytest.mark.parametrize("module_name", [
-        "engine_a",
-        "engine_b",
-        "engine_c",
-        "engine_d",
+        "engines.engine_a",
+        "engines.engine_b",
+        "engines.engine_c",
+        "engines.engine_d",
         "portfolio",
         "meta",
         "meta_learning",
@@ -32,19 +37,19 @@ class TestCanonicalRuntimeSurface:
         assert len(module.__all__) > 0
 
     def test_engine_a_facade_exports_runner_api(self):
-        module = importlib.import_module("engine_a")
+        module = importlib.import_module("engines.engine_a")
         assert {"EngineAInput", "EngineAOutput", "EngineADecision", "run_engine_a"} <= set(module.__all__)
 
     def test_engine_a_facade_exports_runtime_api(self):
-        module = importlib.import_module("engine_a")
+        module = importlib.import_module("engines.engine_a")
         assert {"EngineARuntime", "EngineARuntimeInput", "EngineARuntimeResult", "EngineARuntimeStatus"} <= set(module.__all__)
 
     def test_engine_b_facade_exports_runner_api(self):
-        module = importlib.import_module("engine_b")
+        module = importlib.import_module("engines.engine_b")
         assert {"EngineBInput", "EngineBOutput", "EngineBDecision", "run_engine_b"} <= set(module.__all__)
 
     def test_engine_b_facade_exports_runtime_api(self):
-        module = importlib.import_module("engine_b")
+        module = importlib.import_module("engines.engine_b")
         assert {"EngineBRuntime", "EngineBRuntimeInput", "EngineBRuntimeResult", "EngineBRuntimeStatus"} <= set(module.__all__)
 
     def test_meta_facade_exports_runtime_api(self):
@@ -52,7 +57,7 @@ class TestCanonicalRuntimeSurface:
         assert {"MetaInputSource", "MetaRuntime", "MetaRuntimeConfig", "MetaRuntimeInput", "MetaRuntimeResult", "MetaRuntimeStatus"} <= set(module.__all__)
 
     def test_engine_c_facade_exports_runner_api(self):
-        module = importlib.import_module("engine_c")
+        module = importlib.import_module("engines.engine_c")
         assert {
             "EngineCInput",
             "EngineCOutput",
@@ -61,7 +66,7 @@ class TestCanonicalRuntimeSurface:
         } <= set(module.__all__)
 
     def test_engine_c_facade_exports_runtime_api(self):
-        module = importlib.import_module("engine_c")
+        module = importlib.import_module("engines.engine_c")
         assert {
             "EngineCRuntime",
             "EngineCRuntimeInput",
@@ -70,7 +75,7 @@ class TestCanonicalRuntimeSurface:
         } <= set(module.__all__)
 
     def test_engine_d_facade_exports_runner_api(self):
-        module = importlib.import_module("engine_d")
+        module = importlib.import_module("engines.engine_d")
         assert {
             "EngineDInput",
             "EngineDOutput",
@@ -79,7 +84,7 @@ class TestCanonicalRuntimeSurface:
         } <= set(module.__all__)
 
     def test_engine_d_facade_exports_runtime_api(self):
-        module = importlib.import_module("engine_d")
+        module = importlib.import_module("engines.engine_d")
         assert {
             "EngineDRuntime",
             "EngineDRuntimeInput",

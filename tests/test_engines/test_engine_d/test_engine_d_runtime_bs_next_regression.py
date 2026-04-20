@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import shutil
+import tempfile
 from unittest.mock import patch
 
 from engines.engine_d import EngineDRuntime, EngineDRuntimeInput, EngineDRuntimeStatus
@@ -33,7 +34,7 @@ from scoring_backbone.scoring_runtime import ScoringRoundResult, ScoringRuntime
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _good_engine_inputs(**overrides) -> EngineDInput:
+def _good_engine_inputs(**overrides: float | str | bool) -> EngineDInput:
     defaults = dict(
         pair="BTCUSDT",
         origin_context_id="ctx-btc-01",
@@ -58,6 +59,8 @@ def _good_engine_inputs(**overrides) -> EngineDInput:
         holding_period=2.0,
         entry_price=104.0,
         reentry_anchor_price=101.5,
+        realized_vol_current=1.8 / 104.0,
+        realized_vol_post_close=1.8 / 104.0,
         atr=1.8,
         duplication_overlap_with_engine_a=0.24,
         marginal_portfolio_gain=6.0,
@@ -99,7 +102,7 @@ def _portfolio_state() -> PortfolioState:
     )
 
 
-def _runtime_input(**overrides) -> EngineDRuntimeInput:
+def _runtime_input(**overrides: object) -> EngineDRuntimeInput:
     defaults = dict(
         engine_inputs=_good_engine_inputs(),
         timestamp_ms=1_700_000_000_000,
@@ -116,13 +119,10 @@ def _runtime_input(**overrides) -> EngineDRuntimeInput:
 
 
 def _breaker_state_dir(name: str) -> Path:
-    state_dir = Path(".codex_kill_switch_tests") / name
-    shutil.rmtree(state_dir, ignore_errors=True)
-    state_dir.mkdir(parents=True, exist_ok=True)
-    return state_dir
+    return Path(tempfile.mkdtemp(prefix=f"engine_d_runtime_bs_next_{name}_"))
 
 
-def _runtime(name: str, **overrides) -> EngineDRuntime:
+def _runtime(name: str, **overrides: object) -> EngineDRuntime:
     return EngineDRuntime(
         scoring_runtime=overrides.pop("scoring_runtime", _scoring_runtime()),
         risk_runtime=overrides.pop("risk_runtime", _risk_runtime()),
@@ -148,7 +148,7 @@ def _empty_scoring_round() -> ScoringRoundResult:
 # BS-next regression tests
 # ---------------------------------------------------------------------------
 
-def test_missing_audit_returns_hard_blocked_not_stop_iteration():
+def test_missing_audit_returns_hard_blocked_not_stop_iteration() -> None:
     """
     BS-next: When scoring_round.audits yields no engine_d/BTCUSDT match,
     runtime must return HARD_BLOCKED instead of raising StopIteration.
@@ -163,7 +163,7 @@ def test_missing_audit_returns_hard_blocked_not_stop_iteration():
     assert result.risk_evaluation is None
 
 
-def test_missing_audit_emits_diagnostic_log_entry():
+def test_missing_audit_emits_diagnostic_log_entry() -> None:
     """
     BS-next: The HARD_BLOCKED path must log event='engine_d_scoring_audit_missing'
     with a human-readable reason.
@@ -178,7 +178,7 @@ def test_missing_audit_emits_diagnostic_log_entry():
     assert any("hard blocked" in r.lower() for r in audit_missing_logs[0].reasons)
 
 
-def test_missing_audit_preserves_signal_candidate():
+def test_missing_audit_preserves_signal_candidate() -> None:
     """
     BS-next: The signal candidate built before the scoring round is preserved in
     the HARD_BLOCKED result for auditability.
@@ -192,7 +192,7 @@ def test_missing_audit_preserves_signal_candidate():
     assert result.signal_candidate.pair == "BTCUSDT"
 
 
-def test_missing_audit_scoring_round_still_attached():
+def test_missing_audit_scoring_round_still_attached() -> None:
     """
     BS-next: Even on HARD_BLOCKED the scoring_round itself is preserved in the
     result so callers can inspect the empty/mismatched round.
@@ -206,7 +206,7 @@ def test_missing_audit_scoring_round_still_attached():
     assert result.scoring_round is empty_round
 
 
-def test_missing_audit_no_risk_evaluation():
+def test_missing_audit_no_risk_evaluation() -> None:
     """
     BS-next: Risk evaluation must NOT run when the scoring audit is absent —
     the HARD_BLOCKED return must happen before reaching risk.
@@ -219,7 +219,7 @@ def test_missing_audit_no_risk_evaluation():
     assert result.risk_evaluation is None
 
 
-def test_normal_path_not_affected_by_fix():
+def test_normal_path_not_affected_by_fix() -> None:
     """
     BS-next: Verify the normal acceptance path still works after the fix is in place.
     Real scoring runtime produces the correct audit — must be ACCEPTED.

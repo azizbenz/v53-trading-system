@@ -1,4 +1,8 @@
-"""Shared Local IA Lab stationary bootstrap helpers."""
+"""Shared Local IA Lab stationary bootstrap helpers.
+
+Reference: Politis, D. N., & Romano, J. P. (1994). The stationary bootstrap.
+Journal of the American Statistical Association, 89(428), 1303-1313.
+"""
 
 from __future__ import annotations
 

@@ -47,5 +47,5 @@ def test_roll_spread_rejects_unordered_trades() -> None:
         RollTradePoint(timestamp_ns=3_000_000_000, price=100.0),
     ]
 
-    with pytest.raises(ValueError, match="strictly ordered"):
+    with pytest.raises(ValueError, match="non-decreasing"):
         compute_roll_spread(trades, pair="BTCUSDT")

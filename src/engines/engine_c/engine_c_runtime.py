@@ -2,24 +2,26 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from enum import StrEnum
-import math
 from typing import Protocol
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from interface_contracts import (
     EngineCVoidValidationInput,
     EngineCVoidValidationOutcome,
+    EngineCoordinationInput,
+    EngineCoordinationOutcome,
+    EngineCoordinationThresholds,
     EngineId,
-    RegimeId,
+    ForecastSignalCandidate,
+    RefusalRecord,
     Side,
-    SignalCandidate,
-    SignalType,
+    SignalCandidate as DecisionSignalCandidate,
 )
+from interface_contracts.forecast_contracts import merge_reason_codes
 from risk_backbone.emergency_kill_switch.circuit_breaker import EmergencyCircuitBreaker
-from risk_backbone.risk_runtime import RiskCandidate, RiskEvaluation, RiskRuntime, RiskRuntimeAction
+from risk_backbone.risk_runtime import RiskEvaluation, RiskRuntime, RiskRuntimeAction
 from scoring_backbone.hard_block_gate.blocker_evaluator import BlockerCondition
 from scoring_backbone.penalty_aggregator.score_penalty_builder import ScorePenaltyItem
 from scoring_backbone.penalty_aggregator.size_penalty_builder import SizePenaltyItem
@@ -33,14 +35,47 @@ from scoring_backbone.scoring_runtime import (
 )
 
 from .engine_c_runner import EngineCDecision, EngineCInput, EngineCLogEntry, EngineCOutput, run_engine_c
+from .engine_c_runtime_support import (
+    _EngineCScoringState,
+    _annotate_forecast_signal_candidate_for_runtime_status,
+    append_runtime_log as _append_runtime_log,
+    build_runtime_refusal_record as _build_runtime_refusal_record,
+    build_scoring_state as _build_scoring_state,
+    build_signal_candidate as _build_signal_candidate,
+    evaluate_risk as _evaluate_risk,
+    require_scoring_version as _require_scoring_version,
+    _resolve_hook_blocked_reason_codes,
+    require_selection_entry as _require_selection_entry,
+    resolve_runtime_now as _resolve_runtime_now,
+    run_void_validation_hook as _run_void_validation_hook,
+    validate_coordination_input as _validate_coordination_input,
+)
 
 
 _ENGINE_C_FEATURE_WEIGHTS: dict[str, float] = {
-    "breakout": 0.35,
+    "breakout": 0.40,
     "continuation": 0.30,
-    "context": 0.15,
-    "cost_preference": 0.20,
+    "context": 0.20,
+    "ce_component": 0.10,
+    "fake_breakout_risk": -0.10,
 }
+
+
+class _RefusalSink(Protocol):
+    def record_refusal(self, record: RefusalRecord) -> None:
+        ...
+
+
+class _CoordinationEvaluator(Protocol):
+    def __call__(
+        self,
+        coordination_input: EngineCoordinationInput,
+        *,
+        thresholds: EngineCoordinationThresholds | None = None,
+    ) -> EngineCoordinationOutcome:
+        ...
+
+
 class EngineCRuntimeStatus(StrEnum):
     NO_TRADE = "no_trade"
     CIRCUIT_BREAKER_BLOCKED = "circuit_breaker_blocked"
@@ -69,6 +104,18 @@ class EngineCRuntimeInput(BaseModel, frozen=True):
     max_selections: int = 1
     corr_penalty: float = 0.0
     risk_penalty: float = 0.0
+    coordination_input: EngineCoordinationInput | None = None
+    strategy_id: str | None = None
+
+    @field_validator("strategy_id")
+    @classmethod
+    def _normalize_strategy_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("strategy_id must not be blank")
+        return normalized
 class EngineCVoidValidationHook(Protocol):
     """Bounded hook surface injected into the real Engine C runtime rail."""
 
@@ -80,54 +127,14 @@ class EngineCVoidValidationHook(Protocol):
 class EngineCRuntimeResult(BaseModel, frozen=True):
     status: EngineCRuntimeStatus
     engine_output: EngineCOutput
-    signal_candidate: SignalCandidate | None = None
+    signal_candidate: DecisionSignalCandidate | None = None
+    forecast_signal_candidate: ForecastSignalCandidate | None = None
     scoring_round: ScoringRoundResult | None = None
     scoring_audit: ScoringCandidateAudit | None = None
     risk_evaluation: RiskEvaluation | None = None
+    coordination_outcome: EngineCoordinationOutcome | None = None
+    refusal_record: RefusalRecord | None = None
     log_entries: tuple[EngineCLogEntry, ...] = ()
-@dataclass(frozen=True)
-class _EngineCScoringState:
-    signal_candidate: SignalCandidate
-    scoring_round: ScoringRoundResult
-    scoring_audit: ScoringCandidateAudit | None
-    penalized_score: float
-def _runtime_log_entry(
-    runtime_input: EngineCRuntimeInput,
-    engine_output: EngineCOutput,
-    **overrides: object,
-) -> EngineCLogEntry:
-    payload: dict[str, object] = {
-        "pair": engine_output.pair,
-        "regime": runtime_input.engine_inputs.regime,
-        "range_low": engine_output.range_low,
-        "range_high": engine_output.range_high,
-        "range_width_pct": engine_output.range_width_pct,
-        "breakout_type": engine_output.breakout_type,
-        "continuation_context": engine_output.continuation_context,
-        "distance_to_breakout_pct": engine_output.distance_to_breakout_pct,
-        "breakout_score": engine_output.breakout_score,
-        "continuation_score": engine_output.continuation_score,
-        "cumulative_ofi": engine_output.cumulative_ofi,
-        "queue_pressure": engine_output.queue_pressure,
-        "vpin": engine_output.vpin,
-        "kyle_lambda": engine_output.kyle_lambda,
-        "microstructure_gate_applied": engine_output.microstructure_gate_applied,
-        "fake_breakout_risk": engine_output.fake_breakout_risk,
-        "expected_cost": engine_output.expected_cost,
-        "ce_expected": engine_output.ce_expected,
-        "ev_net": engine_output.ev_net,
-        "duplication_possible_with_engine_a": engine_output.duplication_possible_with_engine_a,
-        "duplication_overlap_with_engine_a": engine_output.duplication_overlap_with_engine_a,
-        "marginal_portfolio_gain": engine_output.marginal_portfolio_gain,
-        "covered_share_by_engine_a": engine_output.covered_share_by_engine_a,
-        "keff_contribution": engine_output.keff_contribution,
-        "conviction": engine_output.conviction.value,
-        "tier": engine_output.tier_suggestion.value,
-        "holding_hours": engine_output.holding_hours,
-        "scoring_version": engine_output.scoring_version,
-    }
-    payload.update(overrides)
-    return EngineCLogEntry(**payload)
 class EngineCRuntime:
     def __init__(
         self,
@@ -136,6 +143,9 @@ class EngineCRuntime:
         risk_runtime: RiskRuntime,
         circuit_breaker: EmergencyCircuitBreaker,
         void_validation_hook: EngineCVoidValidationHook | None = None,
+        refusal_sink: _RefusalSink | None = None,
+        coordination_thresholds: EngineCoordinationThresholds | None = None,
+        coordination_evaluator: _CoordinationEvaluator | None = None,
     ) -> None:
         if circuit_breaker is None:
             raise ValueError("EngineCRuntime requires a circuit_breaker")
@@ -143,6 +153,9 @@ class EngineCRuntime:
         self._risk_runtime = risk_runtime
         self._circuit_breaker = circuit_breaker
         self._void_validation_hook = void_validation_hook
+        self._refusal_sink = refusal_sink
+        self._coordination_thresholds = coordination_thresholds
+        self._coordination_evaluator = coordination_evaluator
 
     def evaluate(
         self,
@@ -153,44 +166,94 @@ class EngineCRuntime:
         timestamp = _resolve_runtime_now(runtime_input.timestamp_ms, now, context="EngineCRuntime.evaluate")
         _require_scoring_version(runtime_input.engine_inputs.scoring_version, context="EngineCRuntime.evaluate")
         if not self._circuit_breaker.is_trading_allowed():
-            return _build_circuit_breaker_blocked_result(runtime_input, self._circuit_breaker)
+            return self._finalize_runtime_result(
+                runtime_input,
+                _build_circuit_breaker_blocked_result(runtime_input, self._circuit_breaker),
+            )
 
         engine_output = run_engine_c(runtime_input.engine_inputs)
         logs = list(engine_output.log_entries)
         if engine_output.decision != EngineCDecision.EMIT:
-            return _build_runtime_result(
-                status=EngineCRuntimeStatus.NO_TRADE,
-                engine_output=engine_output,
-                logs=logs,
-            )
-
-        hook_outcome = self._run_void_validation_hook(runtime_input, engine_output)
-        if hook_outcome is not None and not hook_outcome.accepted:
-            return _build_hook_blocked_runtime_result(
+            return self._finalize_runtime_result(
                 runtime_input,
-                engine_output,
-                logs,
-                hook_outcome=hook_outcome,
+                _build_runtime_result(
+                    status=EngineCRuntimeStatus.NO_TRADE,
+                    engine_output=engine_output,
+                    logs=logs,
+                ),
             )
 
-        scoring_state = self._build_scoring_state(
+        try:
+            coordination_input = _require_coordination_input(runtime_input)
+        except ValueError:
+            return self._finalize_runtime_result(
+                runtime_input,
+                _build_coordination_missing_runtime_result(
+                    runtime_input,
+                    engine_output,
+                    logs,
+                ),
+            )
+
+        coordination_outcome = self._evaluate_coordination(
             runtime_input,
+            coordination_input,
             engine_output,
             logs,
+        )
+        if coordination_outcome is not None and coordination_outcome.blocked:
+            return self._finalize_runtime_result(
+                runtime_input,
+                _build_runtime_result(
+                    status=EngineCRuntimeStatus.HARD_BLOCKED,
+                    engine_output=engine_output,
+                    logs=logs,
+                    coordination_outcome=coordination_outcome,
+                ),
+            )
+
+        hook_outcome = _run_void_validation_hook(self._void_validation_hook, runtime_input, engine_output)
+        if hook_outcome is not None and not hook_outcome.accepted:
+            return self._finalize_runtime_result(
+                runtime_input,
+                _build_hook_blocked_runtime_result(
+                    runtime_input,
+                    engine_output,
+                    logs,
+                    hook_outcome=hook_outcome,
+                    coordination_outcome=coordination_outcome,
+                ),
+            )
+
+        scoring_state = _build_scoring_state(
+            self._scoring_runtime,
+            feature_weights=_ENGINE_C_FEATURE_WEIGHTS,
+            runtime_input=runtime_input,
+            engine_output=engine_output,
+            logs=logs,
             timestamp=timestamp,
         )
         if scoring_state.scoring_audit is None:
-            return _build_missing_scoring_audit_runtime_result(
-                engine_output,
-                logs,
-                scoring_state=scoring_state,
+            return self._finalize_runtime_result(
+                runtime_input,
+                _build_missing_scoring_audit_runtime_result(
+                    runtime_input,
+                    engine_output,
+                    logs,
+                    scoring_state=scoring_state,
+                    coordination_outcome=coordination_outcome,
+                ),
             )
         if scoring_state.scoring_audit.hard_block_decision.is_blocked:
-            return _build_hard_blocked_runtime_result(
+            return self._finalize_runtime_result(
                 runtime_input,
-                engine_output,
-                logs,
-                scoring_state=scoring_state,
+                _build_hard_blocked_runtime_result(
+                    runtime_input,
+                    engine_output,
+                    logs,
+                    scoring_state=scoring_state,
+                    coordination_outcome=coordination_outcome,
+                ),
             )
 
         selection_entry = _require_selection_entry(scoring_state.scoring_audit)
@@ -200,14 +263,16 @@ class EngineCRuntime:
             logs,
             scoring_state=scoring_state,
             selection_entry=selection_entry,
+            coordination_outcome=coordination_outcome,
         )
         if selection_result is not None:
-            return selection_result
+            return self._finalize_runtime_result(runtime_input, selection_result)
 
-        risk_evaluation = self._evaluate_risk(
-            runtime_input,
-            engine_output,
-            scoring_state,
+        risk_evaluation = _evaluate_risk(
+            self._risk_runtime,
+            runtime_input=runtime_input,
+            engine_output=engine_output,
+            scoring_state=scoring_state,
             timestamp=timestamp,
         )
         risk_result = _build_risk_runtime_result(
@@ -216,171 +281,139 @@ class EngineCRuntime:
             logs,
             scoring_state=scoring_state,
             risk_evaluation=risk_evaluation,
+            coordination_outcome=coordination_outcome,
         )
         if risk_result is not None:
-            return risk_result
+            return self._finalize_runtime_result(runtime_input, risk_result)
 
-        return _build_accepted_runtime_result(
+        return self._finalize_runtime_result(
             runtime_input,
-            engine_output,
-            logs,
-            scoring_state=scoring_state,
-            risk_evaluation=risk_evaluation,
+            _build_accepted_runtime_result(
+                runtime_input,
+                engine_output,
+                logs,
+                scoring_state=scoring_state,
+                risk_evaluation=risk_evaluation,
+                coordination_outcome=coordination_outcome,
+            ),
         )
 
-    def _build_scoring_state(
+    def _finalize_runtime_result(
         self,
         runtime_input: EngineCRuntimeInput,
+        result: EngineCRuntimeResult,
+    ) -> EngineCRuntimeResult:
+        refusal_record = _build_runtime_refusal_record(
+            timestamp_ms=runtime_input.timestamp_ms,
+            status=result.status.value,
+            engine_output=result.engine_output,
+            log_entries=result.log_entries,
+            scoring_audit=result.scoring_audit,
+            risk_evaluation=result.risk_evaluation,
+            coordination_outcome=result.coordination_outcome,
+        )
+        if refusal_record is None:
+            return result
+        if self._refusal_sink is not None:
+            self._refusal_sink.record_refusal(refusal_record)
+        return result.model_copy(update={"refusal_record": refusal_record})
+
+    def _evaluate_coordination(
+        self,
+        runtime_input: EngineCRuntimeInput,
+        coordination_input: EngineCoordinationInput,
         engine_output: EngineCOutput,
         logs: list[EngineCLogEntry],
-        *,
-        timestamp: float,
-    ) -> _EngineCScoringState:
-        signal_candidate = _build_signal_candidate(
-            runtime_input.engine_inputs,
-            engine_output,
-            runtime_input.timestamp_ms,
-        )
-        scoring_round = self._scoring_runtime.run_round(
-            candidates=(_build_scoring_candidate(runtime_input, engine_output), *runtime_input.peer_candidates),
-            portfolio=runtime_input.portfolio,
-            max_selections=runtime_input.max_selections,
-            now=timestamp,
-        )
-        scoring_audit = _resolve_scoring_audit(
-            scoring_round,
-            engine_id="engine_c",
+    ) -> EngineCoordinationOutcome | None:
+        """Evaluate canonical runtime coordination.
+
+        Engine C local duplication heuristics remain observability-only; the
+        doctrinal A/C hard-block lives here through engine_coordination_rules.
+        """
+        _validate_coordination_input(
+            coordination_input,
+            engine_id=EngineId.C,
             pair=engine_output.pair,
+            side=Side.BUY,
         )
-        if scoring_audit is None:
+        if self._coordination_evaluator is None:
+            raise ValueError("EngineCRuntime requires coordination_evaluator when coordination_input is provided")
+        coordination_outcome = self._coordination_evaluator(
+            coordination_input,
+            thresholds=self._coordination_thresholds,
+        )
+        if coordination_outcome.blocked:
             _append_runtime_log(
                 logs,
                 runtime_input,
                 engine_output,
-                event="engine_c_scoring_audit_missing",
-                reasons=("scoring audit not found for engine_c - hard blocked",),
-            )
-            return _EngineCScoringState(
-                signal_candidate=signal_candidate,
-                scoring_round=scoring_round,
-                scoring_audit=None,
-                penalized_score=0.0,
-            )
-
-        penalized_score = max(
-            0.0,
-            scoring_audit.raw_score_result.raw_score - scoring_audit.penalty_cap_result.capped_score_penalty,
-        )
-        _append_runtime_log(
-            logs,
-            runtime_input,
-            engine_output,
-            event="engine_c_scoring_completed",
-            raw_score=scoring_audit.raw_score_result.raw_score,
-            penalized_score=penalized_score,
-            reasons=tuple(item.penalty_id for item in scoring_audit.score_penalty_result.penalties),
-        )
-        return _EngineCScoringState(
-            signal_candidate=signal_candidate,
-            scoring_round=scoring_round,
-            scoring_audit=scoring_audit,
-            penalized_score=penalized_score,
-        )
-
-    def _evaluate_risk(
-        self,
-        runtime_input: EngineCRuntimeInput,
-        engine_output: EngineCOutput,
-        scoring_state: _EngineCScoringState,
-        *,
-        timestamp: float,
-    ) -> RiskEvaluation:
-        scoring_audit = scoring_state.scoring_audit
-        if scoring_audit is None:
-            raise ValueError("Engine C scoring state is missing its scoring audit")
-        size_multiplier = scoring_audit.penalty_cap_result.capped_size_multiplier
-        planned_loss = runtime_input.projected_loss
-        if planned_loss is not None:
-            planned_loss *= size_multiplier
-        self._risk_runtime.set_equity(
-            current_equity=runtime_input.current_equity,
-            session_peak_equity=runtime_input.session_peak_equity,
-        )
-        return self._risk_runtime.evaluate_candidate(
-            RiskCandidate(
-                pair=engine_output.pair,
-                engine_id="engine_c",
-                size=runtime_input.projected_size * size_multiplier,
-                planned_loss=planned_loss,
-                pair_beta=runtime_input.pair_beta,
-            ),
-            now=timestamp,
-        )
-
-    def _run_void_validation_hook(
-        self,
-        runtime_input: EngineCRuntimeInput,
-        engine_output: EngineCOutput,
-    ) -> EngineCVoidValidationOutcome | None:
-        if self._void_validation_hook is None:
-            return None
-        return self._void_validation_hook(
-            EngineCVoidValidationInput(
-                context_id=(
-                    f"{engine_output.pair}:{runtime_input.timestamp_ms}:"
-                    f"{engine_output.engine_id}:{engine_output.scoring_version}"
-                ),
-                pair=engine_output.pair,
-                engine_id=engine_output.engine_id,
-                scoring_version=engine_output.scoring_version,
-                breakout_type=engine_output.breakout_type,
-                continuation_context=engine_output.continuation_context,
+                event="engine_c_coordination_blocked",
                 raw_score=engine_output.raw_score,
                 penalized_score=engine_output.penalized_score,
-                expected_cost=engine_output.expected_cost,
-                expected_ce=engine_output.ce_expected,
-                conviction=engine_output.conviction.value,
-                tier=engine_output.tier_suggestion.value,
+                reasons=merge_reason_codes(
+                    ("engine_c.runtime.coordination_blocked",),
+                    coordination_outcome.reason_codes or (),
+                ),
             )
-        )
-def _append_runtime_log(
-    logs: list[EngineCLogEntry],
+        return coordination_outcome
+
+
+def _require_coordination_input(
     runtime_input: EngineCRuntimeInput,
-    engine_output: EngineCOutput,
-    *,
-    event: str,
-    raw_score: float = 0.0,
-    penalized_score: float = 0.0,
-    reasons: tuple[str, ...] = (),
-) -> None:
-    logs.append(
-        _runtime_log_entry(
-            runtime_input,
-            engine_output,
-            event=event,
-            raw_score=raw_score,
-            penalized_score=penalized_score,
-            reasons=reasons,
-        )
-    )
+) -> EngineCoordinationInput:
+    coordination_input = runtime_input.coordination_input
+    if coordination_input is None:
+        raise ValueError("coordination_input is required on the Engine C runtime emit rail")
+    return coordination_input
+
 def _build_runtime_result(
     *,
     status: EngineCRuntimeStatus,
     engine_output: EngineCOutput,
     logs: list[EngineCLogEntry],
-    signal_candidate: SignalCandidate | None = None,
+    signal_candidate: DecisionSignalCandidate | None = None,
+    forecast_signal_candidate: ForecastSignalCandidate | None = None,
     scoring_round: ScoringRoundResult | None = None,
     scoring_audit: ScoringCandidateAudit | None = None,
     risk_evaluation: RiskEvaluation | None = None,
+    coordination_outcome: EngineCoordinationOutcome | None = None,
+    refusal_record: RefusalRecord | None = None,
 ) -> EngineCRuntimeResult:
     return EngineCRuntimeResult(
         status=status,
         engine_output=engine_output,
         signal_candidate=signal_candidate,
+        forecast_signal_candidate=forecast_signal_candidate,
         scoring_round=scoring_round,
         scoring_audit=scoring_audit,
         risk_evaluation=risk_evaluation,
+        coordination_outcome=coordination_outcome,
+        refusal_record=refusal_record,
         log_entries=tuple(logs),
+    )
+
+
+def _build_coordination_missing_runtime_result(
+    runtime_input: EngineCRuntimeInput,
+    engine_output: EngineCOutput,
+    logs: list[EngineCLogEntry],
+) -> EngineCRuntimeResult:
+    _append_runtime_log(
+        logs,
+        runtime_input,
+        engine_output,
+        event="engine_c_coordination_missing",
+        raw_score=engine_output.raw_score,
+        penalized_score=engine_output.penalized_score,
+        reasons=(
+            "engine_c.runtime.coordination_input_missing",
+            "engine_c.runtime.coordination_required",
+        ),
+    )
+    return _build_runtime_result(
+        status=EngineCRuntimeStatus.HARD_BLOCKED,
+        engine_output=engine_output,
+        logs=logs,
     )
 def _build_hook_blocked_runtime_result(
     runtime_input: EngineCRuntimeInput,
@@ -388,13 +421,9 @@ def _build_hook_blocked_runtime_result(
     logs: list[EngineCLogEntry],
     *,
     hook_outcome: EngineCVoidValidationOutcome,
+    coordination_outcome: EngineCoordinationOutcome | None = None,
 ) -> EngineCRuntimeResult:
-    detail = hook_outcome.detail.strip()
-    if not detail:
-        detail = (
-            "compiled engine_c void validation blocked "
-            f"{engine_output.pair} / {engine_output.engine_id}"
-        )
+    hook_reason_codes = _resolve_hook_blocked_reason_codes(hook_outcome.reason_codes)
     _append_runtime_log(
         logs,
         runtime_input,
@@ -402,25 +431,36 @@ def _build_hook_blocked_runtime_result(
         event="engine_c_hook_blocked",
         raw_score=engine_output.raw_score,
         penalized_score=engine_output.penalized_score,
-        reasons=hook_outcome.reason_codes or (detail,),
+        reasons=hook_reason_codes,
     )
     return _build_runtime_result(
         status=EngineCRuntimeStatus.HOOK_BLOCKED,
         engine_output=engine_output,
         logs=logs,
+        coordination_outcome=coordination_outcome,
     )
 def _build_missing_scoring_audit_runtime_result(
+    runtime_input: EngineCRuntimeInput,
     engine_output: EngineCOutput,
     logs: list[EngineCLogEntry],
     *,
     scoring_state: _EngineCScoringState,
+    coordination_outcome: EngineCoordinationOutcome | None = None,
 ) -> EngineCRuntimeResult:
     return _build_runtime_result(
         status=EngineCRuntimeStatus.HARD_BLOCKED,
         engine_output=engine_output,
         logs=logs,
         signal_candidate=scoring_state.signal_candidate,
+        forecast_signal_candidate=_annotate_forecast_signal_candidate_for_runtime_status(
+            scoring_state.forecast_signal_candidate,
+            timestamp_ms=runtime_input.timestamp_ms,
+            status=EngineCRuntimeStatus.HARD_BLOCKED.value,
+            scoring_audit=None,
+            risk_evaluation=None,
+        ),
         scoring_round=scoring_state.scoring_round,
+        coordination_outcome=coordination_outcome,
     )
 def _build_hard_blocked_runtime_result(
     runtime_input: EngineCRuntimeInput,
@@ -428,6 +468,7 @@ def _build_hard_blocked_runtime_result(
     logs: list[EngineCLogEntry],
     *,
     scoring_state: _EngineCScoringState,
+    coordination_outcome: EngineCoordinationOutcome | None = None,
 ) -> EngineCRuntimeResult:
     scoring_audit = scoring_state.scoring_audit
     if scoring_audit is None:
@@ -446,14 +487,17 @@ def _build_hard_blocked_runtime_result(
         engine_output=engine_output,
         logs=logs,
         signal_candidate=scoring_state.signal_candidate,
+        forecast_signal_candidate=_annotate_forecast_signal_candidate_for_runtime_status(
+            scoring_state.forecast_signal_candidate,
+            timestamp_ms=runtime_input.timestamp_ms,
+            status=EngineCRuntimeStatus.HARD_BLOCKED.value,
+            scoring_audit=scoring_audit,
+            risk_evaluation=None,
+        ),
         scoring_round=scoring_state.scoring_round,
         scoring_audit=scoring_audit,
+        coordination_outcome=coordination_outcome,
     )
-def _require_selection_entry(scoring_audit: ScoringCandidateAudit) -> SelectionEntry:
-    selection_entry = scoring_audit.selection_entry
-    if selection_entry is None:
-        raise ValueError("Engine C scoring audit is missing its selection entry")
-    return selection_entry
 def _build_selection_rejected_runtime_result(
     runtime_input: EngineCRuntimeInput,
     engine_output: EngineCOutput,
@@ -461,6 +505,7 @@ def _build_selection_rejected_runtime_result(
     *,
     scoring_state: _EngineCScoringState,
     selection_entry: SelectionEntry,
+    coordination_outcome: EngineCoordinationOutcome | None = None,
 ) -> EngineCRuntimeResult | None:
     scoring_audit = scoring_state.scoring_audit
     if scoring_audit is None:
@@ -480,8 +525,16 @@ def _build_selection_rejected_runtime_result(
             engine_output=engine_output,
             logs=logs,
             signal_candidate=scoring_state.signal_candidate,
+            forecast_signal_candidate=_annotate_forecast_signal_candidate_for_runtime_status(
+                scoring_state.forecast_signal_candidate,
+                timestamp_ms=runtime_input.timestamp_ms,
+                status=EngineCRuntimeStatus.REJECTED_RANKING.value,
+                scoring_audit=scoring_audit,
+                risk_evaluation=None,
+            ),
             scoring_round=scoring_state.scoring_round,
             scoring_audit=scoring_audit,
+            coordination_outcome=coordination_outcome,
         )
     if selection_entry.outcome != SelectionOutcome.REJECTED_PORTFOLIO:
         return None
@@ -502,8 +555,16 @@ def _build_selection_rejected_runtime_result(
         engine_output=engine_output,
         logs=logs,
         signal_candidate=scoring_state.signal_candidate,
+        forecast_signal_candidate=_annotate_forecast_signal_candidate_for_runtime_status(
+            scoring_state.forecast_signal_candidate,
+            timestamp_ms=runtime_input.timestamp_ms,
+            status=EngineCRuntimeStatus.REJECTED_PORTFOLIO.value,
+            scoring_audit=scoring_audit,
+            risk_evaluation=None,
+        ),
         scoring_round=scoring_state.scoring_round,
         scoring_audit=scoring_audit,
+        coordination_outcome=coordination_outcome,
     )
 def _build_risk_runtime_result(
     runtime_input: EngineCRuntimeInput,
@@ -512,17 +573,23 @@ def _build_risk_runtime_result(
     *,
     scoring_state: _EngineCScoringState,
     risk_evaluation: RiskEvaluation,
+    coordination_outcome: EngineCoordinationOutcome | None = None,
 ) -> EngineCRuntimeResult | None:
     if risk_evaluation.action == RiskRuntimeAction.ACCEPT:
         return None
     scoring_audit = scoring_state.scoring_audit
     if scoring_audit is None:
         raise ValueError("Engine C risk evaluation requires a scoring audit")
+    event = {
+        RiskRuntimeAction.REJECT: "engine_c_risk_rejected",
+        RiskRuntimeAction.REDUCE_EXPOSURE: "engine_c_risk_reduced",
+        RiskRuntimeAction.OBSERVE_ONLY: "engine_c_risk_observe_only",
+    }.get(risk_evaluation.action, "engine_c_risk_rejected")
     _append_runtime_log(
         logs,
         runtime_input,
         engine_output,
-        event="engine_c_risk_rejected",
+        event=event,
         raw_score=scoring_audit.raw_score_result.raw_score,
         penalized_score=scoring_state.penalized_score,
         reasons=risk_evaluation.reasons or ("risk runtime rejected candidate",),
@@ -537,9 +604,17 @@ def _build_risk_runtime_result(
         engine_output=engine_output,
         logs=logs,
         signal_candidate=scoring_state.signal_candidate,
+        forecast_signal_candidate=_annotate_forecast_signal_candidate_for_runtime_status(
+            scoring_state.forecast_signal_candidate,
+            timestamp_ms=runtime_input.timestamp_ms,
+            status=status.value,
+            scoring_audit=scoring_audit,
+            risk_evaluation=risk_evaluation,
+        ),
         scoring_round=scoring_state.scoring_round,
         scoring_audit=scoring_audit,
         risk_evaluation=risk_evaluation,
+        coordination_outcome=coordination_outcome,
     )
 def _build_accepted_runtime_result(
     runtime_input: EngineCRuntimeInput,
@@ -548,6 +623,7 @@ def _build_accepted_runtime_result(
     *,
     scoring_state: _EngineCScoringState,
     risk_evaluation: RiskEvaluation,
+    coordination_outcome: EngineCoordinationOutcome | None = None,
 ) -> EngineCRuntimeResult:
     scoring_audit = scoring_state.scoring_audit
     if scoring_audit is None:
@@ -565,20 +641,23 @@ def _build_accepted_runtime_result(
         engine_output=engine_output,
         logs=logs,
         signal_candidate=scoring_state.signal_candidate,
+        forecast_signal_candidate=scoring_state.forecast_signal_candidate,
         scoring_round=scoring_state.scoring_round,
         scoring_audit=scoring_audit,
         risk_evaluation=risk_evaluation,
+        coordination_outcome=coordination_outcome,
     )
 def _build_circuit_breaker_blocked_result(
     runtime_input: EngineCRuntimeInput,
     circuit_breaker: EmergencyCircuitBreaker,
 ) -> EngineCRuntimeResult:
     reason = circuit_breaker.current_reason.value
+    reason_code = f"engine_c.runtime.circuit_breaker.{reason}"
     log_entry = EngineCLogEntry(
         event="engine_c_circuit_breaker_blocked",
         pair=runtime_input.engine_inputs.pair,
         regime=runtime_input.engine_inputs.regime,
-        reasons=(f"emergency circuit breaker tripped: {reason}",),
+        reasons=(reason_code,),
         scoring_version=runtime_input.engine_inputs.scoring_version,
     )
     engine_output = EngineCOutput(
@@ -592,82 +671,3 @@ def _build_circuit_breaker_blocked_result(
         engine_output=engine_output,
         log_entries=(log_entry,),
     )
-def _build_scoring_candidate(runtime_input: EngineCRuntimeInput, engine_output: EngineCOutput) -> ScoringCandidateInput:
-    return ScoringCandidateInput(
-        engine_id="engine_c",
-        pair=engine_output.pair,
-        raw_features={key: engine_output.block_scores.get(key, 0.0) for key in _ENGINE_C_FEATURE_WEIGHTS},
-        allowed_features=frozenset(_ENGINE_C_FEATURE_WEIGHTS),
-        weights=dict(_ENGINE_C_FEATURE_WEIGHTS),
-        scoring_version=engine_output.scoring_version or runtime_input.engine_inputs.scoring_version,
-        score_penalties=runtime_input.score_penalties,
-        size_penalties=runtime_input.size_penalties,
-        blocker_conditions=runtime_input.blocker_conditions,
-        expected_cost=engine_output.expected_cost,
-        expected_ce=engine_output.ce_expected,
-        projected_size=runtime_input.projected_size,
-        projected_loss=0.0 if runtime_input.projected_loss is None else runtime_input.projected_loss,
-        projected_beta_impact=0.0 if runtime_input.pair_beta is None else runtime_input.pair_beta * runtime_input.projected_size,
-        cluster_id=runtime_input.cluster_id,
-        corr_penalty=runtime_input.corr_penalty,
-        risk_penalty=runtime_input.risk_penalty,
-    )
-def _resolve_runtime_now(timestamp_ms: int, now: float | None, *, context: str) -> float:
-    """Resolve an audit timestamp from the explicit arg or the governed input."""
-
-    if now is None:
-        if timestamp_ms <= 0:
-            raise ValueError(f"{context} requires timestamp_ms > 0 when now is omitted")
-        return timestamp_ms / 1000.0
-    if not math.isfinite(now):
-        raise ValueError(f"{context} requires finite now")
-    if now <= 0.0:
-        raise ValueError(f"{context} requires now > 0")
-    return now
-def _require_scoring_version(scoring_version: str, *, context: str) -> str:
-    """Reject empty audit versions on the open engine runtime rail."""
-
-    normalized = scoring_version.strip()
-    if not normalized:
-        raise ValueError(f"{context} requires non-empty scoring_version")
-    return normalized
-def _resolve_scoring_audit(
-    scoring_round: ScoringRoundResult,
-    *,
-    engine_id: str,
-    pair: str,
-) -> ScoringCandidateAudit | None:
-    for audit in scoring_round.audits:
-        if audit.engine_id == engine_id and audit.pair == pair:
-            return audit
-    return None
-def _build_signal_candidate(inputs: EngineCInput, engine_output: EngineCOutput, timestamp_ms: int) -> SignalCandidate:
-    max_hold_ms = None
-    if engine_output.holding_hours > 0:
-        max_hold_ms = int(engine_output.holding_hours * 3600 * 1000)
-    return SignalCandidate(
-        timestamp_ms=timestamp_ms,
-        pair=engine_output.pair,
-        engine_id=EngineId.C,
-        signal_type=SignalType.ENTRY,
-        side=Side.BUY,
-        confidence=max(0.0, min(1.0, engine_output.penalized_score)),
-        regime=_to_regime_id(inputs.regime),
-        entry_price=inputs.entry_price,
-        stop_loss=engine_output.invalidation.stop_price if engine_output.invalidation is not None else None,
-        take_profit=engine_output.invalidation.target_price if engine_output.invalidation is not None else None,
-        max_hold_ms=max_hold_ms,
-        reason=f"engine_c:{engine_output.conviction.value}:{engine_output.breakout_type or 'breakout'}",
-    )
-def _to_regime_id(value: str) -> RegimeId:
-    normalized = value.strip().lower()
-    mapping = {
-        "breakout": RegimeId.BREAKOUT,
-        "trending_up": RegimeId.TRENDING_UP,
-        "trending_down": RegimeId.TRENDING_DOWN,
-        "range": RegimeId.RANGE_BOUND,
-        "range_bound": RegimeId.RANGE_BOUND,
-        "high_volatility": RegimeId.HIGH_VOLATILITY,
-        "low_volatility": RegimeId.LOW_VOLATILITY,
-    }
-    return mapping.get(normalized, RegimeId.UNKNOWN)

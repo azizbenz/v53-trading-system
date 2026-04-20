@@ -84,11 +84,17 @@ Detects a **new** exploitable structure on (pair, direction), distinct from `fir
 Output: `StructureReformation(detected: bool, evidence_codes: tuple[str, ...])`.
 
 ### Stage 4 — `marginal_value_estimator_d.py`
-Computes marginal EV:
+Target-state research formula for a future dedicated economics migration:
 ```
 marginal_EV = E[gain_d] − E[cost_d]
 ```
-Rank-4 user arbitration `D-2026-04-16-001` selected option `C`: no continuous `revenge_risk_penalty` is introduced at this stage. Anti-revenge discipline remains enforced by strategy β / R-D-2 / R-D-3 and must surface explicitly in replay/backtest evidence (closed episode journal + Engine D validation observability fields). If `marginal_EV ≤ THR-W01_floor` (doc 19 THR-W01) → no emit.
+Rank-4 user arbitration `D-2026-04-16-001` selected option `C`: no continuous `revenge_risk_penalty` is introduced at this stage. Anti-revenge discipline remains enforced by strategy β / R-D-2 / R-D-3 and must surface explicitly in replay/backtest evidence (closed episode journal + Engine D validation observability fields).
+
+**Current code truth for this governance slice**: Engine D stays on **Model A**.
+- Gate 1 = local history / reformation / `marginal_value_score` quality
+- Gate 2 = separate economics via `cost_feasibility_d.py`
+
+So the current runner seam is governed by a local setup-quality threshold on `marginal_value_score`, **not** by `THR-W01`, and **not** by a shared `marginal_EV` floor. Any future shared EV-net floor uses `THR-E05`; a true `marginal_EV` migration is explicitly deferred to a separate strategy migration.
 
 **Anti-overfitting discipline** (Carver + Taleb): `marginal_value_estimator_d` is **not** retunable per pair without shadow parity check of ≥ 4 weeks.
 
@@ -103,6 +109,18 @@ Carver-normalised, clip to [0, 10]. Inputs:
 
 ### Stage 7 — `invalidation_mapper_d.py`
 Invalidation = same structural level as `first_episode_ref`'s invalidation, but tightened by 0.5× (re-entry has less margin for error).
+
+### Comportement de D selon l'engine d'origine du first_episode_ref
+
+| Dimension | D-sur-A (first_episode vient de A) | D-sur-C (first_episode vient de C) |
+|---|---|---|
+| bet_structure hérité | DIRECTIONAL_LONG ou DIRECTIONAL_SHORT | BREAKOUT (continuation variant) |
+| forecast_strength clip | [0, 10] (identique) | [0, 10] (identique) |
+| conviction profile | Structure reformation dans direction trend A | Structure reformation post-breakout continuation |
+| invalidation | first_episode_ref.invalidation tightened 0.5× | first_episode_ref.invalidation tightened 0.5× |
+| sizing | 0.5 × N_first_episode (R-D-4) | 0.5 × N_first_episode (R-D-4) |
+| risque spécifique | Réversion contre le trend si momentum épuisé | Faux breakout continuation (fade setup) |
+| OFI requis | Dans la direction du trend A original | Dans la direction de la continuation C originale |
 
 ### Stage 8 — `signal_reporter_d.py`
 ```python
@@ -119,7 +137,8 @@ SignalCandidate(
     confidence_band=...,
     conditioning_state=(
         ConditioningRecord(family=ENGINE_INTERNAL, code="engine_internal.d.structure_reformation", ...),
-        ConditioningRecord(family=SCORING, code="scoring.d.marginal_ev_positive", value=marginal_EV),
+        ConditioningRecord(family=ENGINE_INTERNAL, code="engine_internal.d.marginal_value.present", value=marginal_value_score),
+        ConditioningRecord(family=SCORING, code="economics.engine_d.cost.feasible", value=expected_ce),
         ...
     ),
     expected_cost=...,
@@ -180,7 +199,8 @@ State lives in `consecutive_stop_counter_d.py` with persistence via `RefusalJour
 | β failsafe window not yet reached | HARD_BLOCK | `hard_block.d_failsafe_cooldown_active` (R-D-3) |
 | No new structure re-formed | ENGINE_INTERNAL | `engine_internal.d.no_reformation` |
 | Structure re-formation below quality | ENGINE_INTERNAL | `engine_internal.d.reformation_weak` |
-| Marginal EV ≤ floor | SCORING | `scoring.d.marginal_ev_fail` |
+| Marginal-value setup score below local floor | ENGINE_INTERNAL | `engine_internal.d.marginal_value.below_floor` |
+| Economics / break-even / CE fail | SCORING | `economics.engine_d.cost.infeasible` |
 | Pair health stale | HARD_BLOCK | `hard_block.pair_health.stale_book` |
 
 ---
@@ -195,7 +215,7 @@ State lives in `consecutive_stop_counter_d.py` with persistence via `RefusalJour
 | THR-X11 | D max consecutive re-entries before reset required | 1 | 3 | `consecutive_stop_counter_d` | `— (policy-governed)` |
 | THR-D_LOOKBACK | `first_episode_ref` lookback window | 12h | 48h | `first_episode_resolver_d` | `risk_runtime_drawdown_calibration.py` |
 | THR-D_MIN_GAP | Min gap between first_episode close and D emission | 15 min | 2h | `structure_reformation_detector_d` | `risk_runtime_drawdown_calibration.py` |
-| THR-D_MARGINAL_EV_FLOOR | Min marginal EV after revenge penalty | inherits THR-W01 | — | `marginal_value_estimator_d` | `risk_runtime_drawdown_calibration.py` |
+| THR-D_MARGINAL_VALUE_SCORE_MIN | Min local setup-quality floor for `marginal_value_score` | 0.56 | 1.0 | `marginal_value_estimator_d` | local Model A governance |
 | THR-C_RK_BANDWIDTH_C | Realized-kernel bandwidth constant for D re-entry window | 0.4 | 1.0 | `structure_reformation_detector_d` | `risk_runtime_drawdown_calibration.py` |
 | THR-C_RK_BUCKET_SIZE | Realized-kernel bucket duration for D re-entry window | 5 min | 15 min | `structure_reformation_detector_d` | `risk_runtime_drawdown_calibration.py` |
 | THR-C_OFI_WINDOW | OFI post-close cumulation window (events) | 500 events | 2000 events | `structure_reformation_detector_d` | `risk_runtime_drawdown_calibration.py` |
@@ -208,7 +228,7 @@ State lives in `consecutive_stop_counter_d.py` with persistence via `RefusalJour
 | THR-X11 | D max consecutive re-entries before reset required | 1 | 3 | `consecutive_stop_counter_d` |
 | THR-D_LOOKBACK | `first_episode_ref` lookback window | 12h | 48h | `first_episode_resolver_d` |
 | THR-D_MIN_GAP | Min gap between first_episode close and D emission | 15 min | 2h | `structure_reformation_detector_d` |
-| THR-D_MARGINAL_EV_FLOOR | Min marginal EV after revenge penalty | inherits THR-W01 | — | `marginal_value_estimator_d` |
+| THR-D_MARGINAL_VALUE_SCORE_MIN | Min local setup-quality floor for `marginal_value_score` | 0.56 | 1.0 | `marginal_value_estimator_d` |
 
 ---
 
@@ -347,7 +367,8 @@ Promotion requires:
 - Quadruple filter green (doc 20 §4.2).
 - `engine_coordination_rules` audit: 0 R-D violations leaking through.
 - Sharpe-deflated shadow Sharpe ≥ 1.2 (D carries a higher bar than A/B/C because it is structurally a marginal re-engagement), using Harvey-Liu-Zhu 2016 eq.(8) `SR_deflated = SR × √((N−k_HLZ)/(N−1))`; [Rang 1 + 2 + 4] current V5.3 `multiple_testing_guard.py` seam exposes two explicit modes: `k_HLZ = pairs_tested` in observed-shadow mode and `k_HLZ = max(pairs_tested, 20)` in promotion-floor mode. The current docs 21/22 default is the user-selected observed-shadow mode, so the current numeric default is `k_HLZ = pairs_tested` (currently `12` in the repo pair catalogue), while `promotion_floor` remains an explicit conservative non-default option (module blob `b2aafc74bd5abdefc8810e69f1562e9cc6881007`).
-- `marginal_EV` tracking: realised marginal EV within 20% of expected.
+- Gate 1 vs Gate 2 provenance tracking: `marginal_value_score` stays explicitly distinct from cost / break-even / CE economics.
+- True `marginal_EV` migration remains deferred until a separate typed economics object is introduced.
 - β reset rule verified fired correctly in shadow (at least one documented case).
 
 ---

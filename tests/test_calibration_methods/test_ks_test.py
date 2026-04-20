@@ -43,6 +43,17 @@ def test_ks_different_distributions_large_statistic() -> None:
     assert d > 0.80
 
 
+def test_ks_anchor_matches_fixed_seed_half_sigma_shift_at_n_1000() -> None:
+    """Massey-style anchor: N(0,1) vs N(0.5,1), n=m=1000, seed fixed -> D = 0.19."""
+    import random
+
+    rng = random.Random(488)
+    x = tuple(rng.gauss(0.0, 1.0) for _ in range(1000))
+    y = tuple(rng.gauss(0.5, 1.0) for _ in range(1000))
+    d = _ks_statistic(x, y)
+    assert d == pytest.approx(0.19, abs=1e-12)
+
+
 def test_ks_statistic_zero_for_exact_same_data() -> None:
     """Identical data → D = 0."""
     data = (0.1, 0.2, 0.3, 0.4, 0.5)

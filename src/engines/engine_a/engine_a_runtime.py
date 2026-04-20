@@ -15,16 +15,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+import logging
 from typing import Protocol
 
 from pydantic import BaseModel, Field, field_validator
 
-from interface_contracts import (
-    EngineId,
-    ForecastSignalCandidate,
-    SignalCandidate as DecisionSignalCandidate,
-    Side,
-)
+from interface_contracts import EngineId, ForecastSignalCandidate, RefusalRecord, SignalCandidate as DecisionSignalCandidate, Side
 from risk_backbone.emergency_kill_switch.circuit_breaker import EmergencyCircuitBreaker
 from risk_backbone.risk_runtime import RiskCandidate, RiskEvaluation, RiskRuntime, RiskRuntimeAction
 from scoring_backbone.hard_block_gate.blocker_evaluator import BlockerCondition
@@ -32,28 +28,31 @@ from scoring_backbone.penalty_aggregator.score_penalty_builder import ScorePenal
 from scoring_backbone.penalty_aggregator.size_penalty_builder import SizePenaltyItem
 from scoring_backbone.ranking_router.portfolio_compatibility_checker import PortfolioState
 from scoring_backbone.ranking_router.selection_resolver import SelectionEntry, SelectionOutcome
-from scoring_backbone.scoring_runtime import (
-    ScoringCandidateAudit,
-    ScoringCandidateInput,
-    ScoringRoundResult,
-    ScoringRuntime,
-)
-
-from .engine_a_runner import (
-    EngineADecision,
-    EngineAInput,
-    EngineALogEntry,
-    EngineAOutput,
-    run_engine_a,
-)
+from scoring_backbone.scoring_runtime import ScoringCandidateAudit, ScoringCandidateInput, ScoringRoundResult, ScoringRuntime
+from .engine_a_runner import EngineADecision, EngineAInput, EngineALogEntry, EngineAOutput, run_engine_a
 from .engine_a_runtime_support import (
+    _annotate_forecast_signal_candidate_for_runtime_status,
     _build_forecast_signal_candidate,
+    _build_runtime_refusal_record,
     _build_signal_candidate,
     _require_scoring_version,
+    _resolve_hook_blocked_reason_codes,
     _resolve_runtime_now,
     _resolve_scoring_audit,
 )
-from .conviction_builder_a import ENGINE_A_CONVICTION_FEATURE_WEIGHTS
+from .engine_a_scoring_candidate_builder import (
+    _build_engine_a_scoring_raw_features,
+    _build_engine_a_scoring_weights,
+    _build_scoring_candidate,
+)
+
+
+logger = logging.getLogger("engines.engine_a.engine_a_runtime")
+
+
+class _RefusalSink(Protocol):
+    def record_refusal(self, record: RefusalRecord) -> None:
+        ...
 
 
 class EngineARuntimeStatus(StrEnum):
@@ -75,17 +74,17 @@ class EngineARuntimeInput(BaseModel, frozen=True):
     engine_inputs: EngineAInput
     timestamp_ms: int = Field(..., ge=1_000_000_000_000)  # BS-86: must be milliseconds, not seconds
     portfolio: PortfolioState
-    projected_size: float
-    projected_loss: float | None = None
-    current_equity: float
-    session_peak_equity: float
+    projected_size: float = Field(..., gt=0.0)
+    projected_loss: float | None = Field(default=None, ge=0.0)
+    current_equity: float = Field(..., gt=0.0)
+    session_peak_equity: float = Field(..., gt=0.0)
     pair_beta: float | None = None
     cluster_id: str
     score_penalties: tuple[ScorePenaltyItem, ...] = ()
     size_penalties: tuple[SizePenaltyItem, ...] = ()
     blocker_conditions: BlockerCondition = Field(default_factory=BlockerCondition)
     peer_candidates: tuple[ScoringCandidateInput, ...] = ()
-    max_selections: int = 1
+    max_selections: int = Field(default=1, ge=1)
     corr_penalty: float = 0.0
     risk_penalty: float = 0.0
     strategy_id: str | None = None
@@ -99,8 +98,6 @@ class EngineARuntimeInput(BaseModel, frozen=True):
         if not normalized:
             raise ValueError("strategy_id must not be blank")
         return normalized
-
-
 class EngineAPreEntryValidationInput(BaseModel, frozen=True):
     """Bounded typed input for the Engine A pre-entry confirmation hook."""
 
@@ -116,16 +113,12 @@ class EngineAPreEntryValidationInput(BaseModel, frozen=True):
     structure_verdict: str = ""
     context_verdict: str = ""
     cost_verdict: str = ""
-
-
 class EngineAPreEntryValidationOutcome(BaseModel, frozen=True):
     """Deterministic outcome of the bounded Engine A pre-entry hook."""
 
     accepted: bool = True
     reason_codes: tuple[str, ...] = ()
     detail: str = ""
-
-
 class EngineAPreEntryValidationHook(Protocol):
     """Bounded hook surface injected into the real Engine A runtime rail."""
 
@@ -134,8 +127,6 @@ class EngineAPreEntryValidationHook(Protocol):
         hook_input: EngineAPreEntryValidationInput,
     ) -> EngineAPreEntryValidationOutcome:
         ...
-
-
 class EngineARuntimeResult(BaseModel, frozen=True):
     """Full Build-6 runtime result with audit-ready stage outputs."""
 
@@ -146,9 +137,8 @@ class EngineARuntimeResult(BaseModel, frozen=True):
     scoring_round: ScoringRoundResult | None = None
     scoring_audit: ScoringCandidateAudit | None = None
     risk_evaluation: RiskEvaluation | None = None
+    refusal_record: RefusalRecord | None = None
     log_entries: tuple[EngineALogEntry, ...] = ()
-
-
 @dataclass(frozen=True)
 class _EngineAScoringState:
     signal_candidate: DecisionSignalCandidate
@@ -156,8 +146,6 @@ class _EngineAScoringState:
     scoring_round: ScoringRoundResult
     scoring_audit: ScoringCandidateAudit
     penalized_score: float
-
-
 class EngineARuntime:
     """Real Build-6 runtime across signal, score/rank and risk."""
 
@@ -168,6 +156,7 @@ class EngineARuntime:
         risk_runtime: RiskRuntime,
         circuit_breaker: EmergencyCircuitBreaker,
         pre_entry_validation_hook: EngineAPreEntryValidationHook | None = None,
+        refusal_sink: _RefusalSink | None = None,
     ) -> None:
         if circuit_breaker is None:
             raise ValueError("EngineARuntime requires a circuit_breaker")
@@ -175,6 +164,7 @@ class EngineARuntime:
         self._risk_runtime = risk_runtime
         self._circuit_breaker = circuit_breaker
         self._pre_entry_validation_hook = pre_entry_validation_hook
+        self._refusal_sink = refusal_sink
 
     def evaluate(
         self,
@@ -186,24 +176,33 @@ class EngineARuntime:
         timestamp = _resolve_runtime_now(runtime_input.timestamp_ms, now, context="EngineARuntime.evaluate")
         _require_scoring_version(runtime_input.engine_inputs.scoring_version, context="EngineARuntime.evaluate")
         if not self._circuit_breaker.is_trading_allowed():
-            return _build_circuit_breaker_blocked_result(runtime_input, self._circuit_breaker)
+            return self._finalize_runtime_result(
+                runtime_input,
+                _build_circuit_breaker_blocked_result(runtime_input, self._circuit_breaker),
+            )
         engine_output = run_engine_a(runtime_input.engine_inputs)
         logs = list(engine_output.log_entries)
 
         if engine_output.decision != EngineADecision.EMIT:
-            return _build_runtime_result(
-                status=EngineARuntimeStatus.NO_TRADE,
-                engine_output=engine_output,
-                logs=logs,
+            return self._finalize_runtime_result(
+                runtime_input,
+                _build_runtime_result(
+                    status=EngineARuntimeStatus.NO_TRADE,
+                    engine_output=engine_output,
+                    logs=logs,
+                ),
             )
 
         hook_outcome = self._run_pre_entry_validation_hook(runtime_input, engine_output)
         if hook_outcome is not None and not hook_outcome.accepted:
-            return _build_hook_blocked_runtime_result(
+            return self._finalize_runtime_result(
                 runtime_input,
-                engine_output,
-                logs,
-                hook_outcome=hook_outcome,
+                _build_hook_blocked_runtime_result(
+                    runtime_input,
+                    engine_output,
+                    logs,
+                    hook_outcome=hook_outcome,
+                ),
             )
 
         scoring_state = self._build_scoring_state(
@@ -213,11 +212,14 @@ class EngineARuntime:
             timestamp=timestamp,
         )
         if scoring_state.scoring_audit.hard_block_decision.is_blocked:
-            return _build_hard_blocked_runtime_result(
+            return self._finalize_runtime_result(
                 runtime_input,
-                engine_output,
-                logs,
-                scoring_state=scoring_state,
+                _build_hard_blocked_runtime_result(
+                    runtime_input,
+                    engine_output,
+                    logs,
+                    scoring_state=scoring_state,
+                ),
             )
 
         selection_entry = _require_selection_entry(scoring_state.scoring_audit)
@@ -229,7 +231,7 @@ class EngineARuntime:
             selection_entry=selection_entry,
         )
         if selection_result is not None:
-            return selection_result
+            return self._finalize_runtime_result(runtime_input, selection_result)
 
         risk_evaluation = self._evaluate_risk(
             runtime_input,
@@ -245,15 +247,51 @@ class EngineARuntime:
             risk_evaluation=risk_evaluation,
         )
         if risk_result is not None:
-            return risk_result
+            return self._finalize_runtime_result(runtime_input, risk_result)
 
-        return _build_accepted_runtime_result(
+        return self._finalize_runtime_result(
             runtime_input,
-            engine_output,
-            logs,
-            scoring_state=scoring_state,
-            risk_evaluation=risk_evaluation,
+            _build_accepted_runtime_result(
+                runtime_input,
+                engine_output,
+                logs,
+                scoring_state=scoring_state,
+                risk_evaluation=risk_evaluation,
+            ),
         )
+
+    def _finalize_runtime_result(
+        self,
+        runtime_input: EngineARuntimeInput,
+        result: EngineARuntimeResult,
+    ) -> EngineARuntimeResult:
+        refusal_record = _build_runtime_refusal_record(
+            timestamp_ms=runtime_input.timestamp_ms,
+            engine_inputs=runtime_input.engine_inputs,
+            status=result.status.value,
+            engine_output=result.engine_output,
+            log_entries=result.log_entries,
+            scoring_audit=result.scoring_audit,
+            risk_evaluation=result.risk_evaluation,
+        )
+        if refusal_record is None:
+            return result
+        if self._refusal_sink is not None:
+            try:
+                self._refusal_sink.record_refusal(refusal_record)
+            except Exception as exc:
+                logger.exception(
+                    "engine_a_refusal_sink_record_failed",
+                    extra={
+                        "engine_id": result.engine_output.engine_id,
+                        "pair": result.engine_output.pair,
+                        "strategy_id": runtime_input.strategy_id,
+                        "status": result.status.value,
+                        "timestamp_ms": runtime_input.timestamp_ms,
+                        "error_type": type(exc).__name__,
+                    },
+                )
+        return result.model_copy(update={"refusal_record": refusal_record})
 
     def _build_scoring_state(
         self,
@@ -405,6 +443,7 @@ def _build_runtime_result(
     scoring_round: ScoringRoundResult | None = None,
     scoring_audit: ScoringCandidateAudit | None = None,
     risk_evaluation: RiskEvaluation | None = None,
+    refusal_record: RefusalRecord | None = None,
 ) -> EngineARuntimeResult:
     return EngineARuntimeResult(
         status=status,
@@ -414,6 +453,7 @@ def _build_runtime_result(
         scoring_round=scoring_round,
         scoring_audit=scoring_audit,
         risk_evaluation=risk_evaluation,
+        refusal_record=refusal_record,
         log_entries=tuple(logs),
     )
 
@@ -425,25 +465,16 @@ def _build_hook_blocked_runtime_result(
     *,
     hook_outcome: EngineAPreEntryValidationOutcome,
 ) -> EngineARuntimeResult:
-    detail = hook_outcome.detail.strip()
-    if not detail:
-        detail = (
-            "compiled engine_a pre-entry confirmation blocked "
-            f"{engine_output.pair} / {engine_output.engine_id}"
-        )
+    hook_reason_codes = _resolve_hook_blocked_reason_codes(hook_outcome.reason_codes)
     _append_runtime_log(
         logs,
         runtime_input,
         engine_output,
         event="engine_a_hook_blocked",
         raw_score=engine_output.raw_score,
-        reasons=hook_outcome.reason_codes or (detail,),
+        reasons=hook_reason_codes,
     )
-    return _build_runtime_result(
-        status=EngineARuntimeStatus.HOOK_BLOCKED,
-        engine_output=engine_output,
-        logs=logs,
-    )
+    return _build_runtime_result(status=EngineARuntimeStatus.HOOK_BLOCKED, engine_output=engine_output, logs=logs)
 
 
 def _build_hard_blocked_runtime_result(
@@ -470,7 +501,7 @@ def _build_hard_blocked_runtime_result(
         engine_output=engine_output,
         logs=logs,
         signal_candidate=scoring_state.signal_candidate,
-        forecast_signal_candidate=scoring_state.forecast_signal_candidate,
+        forecast_signal_candidate=_annotate_forecast_signal_candidate_for_runtime_status(scoring_state.forecast_signal_candidate, timestamp_ms=runtime_input.timestamp_ms, status=EngineARuntimeStatus.HARD_BLOCKED.value, scoring_audit=scoring_state.scoring_audit, risk_evaluation=None),
         scoring_round=scoring_state.scoring_round,
         scoring_audit=scoring_state.scoring_audit,
     )
@@ -506,7 +537,7 @@ def _build_selection_rejected_runtime_result(
             engine_output=engine_output,
             logs=logs,
             signal_candidate=scoring_state.signal_candidate,
-            forecast_signal_candidate=scoring_state.forecast_signal_candidate,
+            forecast_signal_candidate=_annotate_forecast_signal_candidate_for_runtime_status(scoring_state.forecast_signal_candidate, timestamp_ms=runtime_input.timestamp_ms, status=EngineARuntimeStatus.REJECTED_RANKING.value, scoring_audit=scoring_state.scoring_audit, risk_evaluation=None),
             scoring_round=scoring_state.scoring_round,
             scoring_audit=scoring_state.scoring_audit,
         )
@@ -530,7 +561,7 @@ def _build_selection_rejected_runtime_result(
         engine_output=engine_output,
         logs=logs,
         signal_candidate=scoring_state.signal_candidate,
-        forecast_signal_candidate=scoring_state.forecast_signal_candidate,
+        forecast_signal_candidate=_annotate_forecast_signal_candidate_for_runtime_status(scoring_state.forecast_signal_candidate, timestamp_ms=runtime_input.timestamp_ms, status=EngineARuntimeStatus.REJECTED_PORTFOLIO.value, scoring_audit=scoring_state.scoring_audit, risk_evaluation=None),
         scoring_round=scoring_state.scoring_round,
         scoring_audit=scoring_state.scoring_audit,
     )
@@ -546,11 +577,16 @@ def _build_risk_runtime_result(
 ) -> EngineARuntimeResult | None:
     if risk_evaluation.action == RiskRuntimeAction.ACCEPT:
         return None
+    event = {
+        RiskRuntimeAction.REJECT: "engine_a_risk_rejected",
+        RiskRuntimeAction.REDUCE_EXPOSURE: "engine_a_risk_reduced",
+        RiskRuntimeAction.OBSERVE_ONLY: "engine_a_risk_observe_only",
+    }.get(risk_evaluation.action, "engine_a_risk_rejected")
     _append_runtime_log(
         logs,
         runtime_input,
         engine_output,
-        event="engine_a_risk_rejected",
+        event=event,
         raw_score=scoring_state.scoring_audit.raw_score_result.raw_score,
         penalized_score=scoring_state.penalized_score,
         reasons=risk_evaluation.reasons or ("risk runtime rejected candidate",),
@@ -565,7 +601,7 @@ def _build_risk_runtime_result(
         engine_output=engine_output,
         logs=logs,
         signal_candidate=scoring_state.signal_candidate,
-        forecast_signal_candidate=scoring_state.forecast_signal_candidate,
+        forecast_signal_candidate=_annotate_forecast_signal_candidate_for_runtime_status(scoring_state.forecast_signal_candidate, timestamp_ms=runtime_input.timestamp_ms, status=status.value, scoring_audit=scoring_state.scoring_audit, risk_evaluation=risk_evaluation),
         scoring_round=scoring_state.scoring_round,
         scoring_audit=scoring_state.scoring_audit,
         risk_evaluation=risk_evaluation,
@@ -588,16 +624,7 @@ def _build_accepted_runtime_result(
         raw_score=scoring_state.scoring_audit.raw_score_result.raw_score,
         penalized_score=scoring_state.penalized_score,
     )
-    return _build_runtime_result(
-        status=EngineARuntimeStatus.ACCEPTED,
-        engine_output=engine_output,
-        logs=logs,
-        signal_candidate=scoring_state.signal_candidate,
-        forecast_signal_candidate=scoring_state.forecast_signal_candidate,
-        scoring_round=scoring_state.scoring_round,
-        scoring_audit=scoring_state.scoring_audit,
-        risk_evaluation=risk_evaluation,
-    )
+    return _build_runtime_result(status=EngineARuntimeStatus.ACCEPTED, engine_output=engine_output, logs=logs, signal_candidate=scoring_state.signal_candidate, forecast_signal_candidate=scoring_state.forecast_signal_candidate, scoring_round=scoring_state.scoring_round, scoring_audit=scoring_state.scoring_audit, risk_evaluation=risk_evaluation)
 
 
 def _build_circuit_breaker_blocked_result(
@@ -605,47 +632,23 @@ def _build_circuit_breaker_blocked_result(
     circuit_breaker: EmergencyCircuitBreaker,
 ) -> EngineARuntimeResult:
     reason = circuit_breaker.current_reason.value
+    reason_codes = (f"engine_a.runtime.circuit_breaker.{reason}",)
     log_entry = EngineALogEntry(
         event="engine_a_circuit_breaker_blocked",
         pair=runtime_input.engine_inputs.pair,
         regime=runtime_input.engine_inputs.regime,
-        reasons=(f"emergency circuit breaker tripped: {reason}",),
+        reasons=reason_codes,
         scoring_version=runtime_input.engine_inputs.scoring_version,
     )
     engine_output = EngineAOutput(
         pair=runtime_input.engine_inputs.pair,
         decision=EngineADecision.NO_TRADE,
         scoring_version=runtime_input.engine_inputs.scoring_version,
+        reason_codes=reason_codes,
         log_entries=(log_entry,),
     )
     return EngineARuntimeResult(
         status=EngineARuntimeStatus.CIRCUIT_BREAKER_BLOCKED,
         engine_output=engine_output,
         log_entries=(log_entry,),
-    )
-
-
-def _build_scoring_candidate(runtime_input: EngineARuntimeInput, engine_output: EngineAOutput) -> ScoringCandidateInput:
-    raw_features = {
-        key: engine_output.block_scores.get(key, 0.0)
-        for key in ENGINE_A_CONVICTION_FEATURE_WEIGHTS
-    }
-    return ScoringCandidateInput(
-        engine_id="engine_a",
-        pair=engine_output.pair,
-        raw_features=raw_features,
-        allowed_features=frozenset(ENGINE_A_CONVICTION_FEATURE_WEIGHTS),
-        weights=dict(ENGINE_A_CONVICTION_FEATURE_WEIGHTS),
-        scoring_version=engine_output.scoring_version or runtime_input.engine_inputs.scoring_version,
-        score_penalties=runtime_input.score_penalties,
-        size_penalties=runtime_input.size_penalties,
-        blocker_conditions=runtime_input.blocker_conditions,
-        expected_cost=engine_output.expected_cost,
-        expected_ce=engine_output.ce_expected,
-        projected_size=runtime_input.projected_size,
-        projected_loss=0.0 if runtime_input.projected_loss is None else runtime_input.projected_loss,
-        projected_beta_impact=0.0 if runtime_input.pair_beta is None else runtime_input.pair_beta * runtime_input.projected_size,
-        cluster_id=runtime_input.cluster_id,
-        corr_penalty=runtime_input.corr_penalty,
-        risk_penalty=runtime_input.risk_penalty,
     )

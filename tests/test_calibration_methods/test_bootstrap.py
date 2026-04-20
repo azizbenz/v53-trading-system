@@ -22,6 +22,18 @@ def _autocorrelated_series(length: int = 120) -> tuple[float, ...]:
     return tuple(series)
 
 
+def _ar1_series(*, rho: float, seed: int, length: int = 200) -> tuple[float, ...]:
+    import random
+
+    rng = random.Random(seed)
+    value = 0.0
+    series: list[float] = []
+    for _ in range(length):
+        value = (rho * value) + rng.gauss(0.0, 1.0)
+        series.append(value)
+    return tuple(series)
+
+
 def test_infer_stationary_block_length_detects_dependence():
     series = _autocorrelated_series()
 
@@ -29,6 +41,12 @@ def test_infer_stationary_block_length_detects_dependence():
 
     assert block_length > 1
     assert block_length <= len(series) // 3
+
+
+def test_infer_stationary_block_length_anchor_for_ar1_rho_half_is_four() -> None:
+    series = _ar1_series(rho=0.5, seed=6, length=200)
+    block_length = infer_stationary_block_length(series)
+    assert block_length == 4
 
 
 def test_stationary_bootstrap_confidence_interval_is_deterministic():

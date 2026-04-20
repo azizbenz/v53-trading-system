@@ -96,7 +96,7 @@ Signals fed into raw:
 **Forbidden inputs** (doc 23 §6): RSI, MACD, Stochastic, Bollinger, Williams %R, parabolic SAR. Hard contract check at unit-test level.
 
 ### Stage 5 — `cost_feasibility_c.py`
-Applies `break_even_filter` (doc 19 P2-08) with C-specific expected-cost model. If `EV^net ≤ THR-W01_floor` → no emit + `RefusalRecord(category=NO_TRADE, reason_codes=("c.break_even.fail",))`.
+Applies `break_even_filter` (doc 19 P2-08) with C-specific expected-cost model. If `EV^net ≤ THR-E05_floor` → no emit + `RefusalRecord(category=NO_TRADE, reason_codes=("economics.engine_c.break_even.fail", "c.break_even.fail"))`.
 
 ### Stage 6 — `invalidation_mapper_c.py`
 Structural invalidation = return below breakout level by more than `THR-C_INVALIDATION_VOL × realized_vol_at_break` (default 1.0, cap 2.0). Stored as `InvalidationContract` with `invalidation_ref` wired into `SignalCandidate`.

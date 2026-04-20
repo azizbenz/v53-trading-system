@@ -549,4 +549,81 @@ Règle dure :
 | Audit pack | Bloc 10 | preuve slice par slice, anti-hallucination inter-session |
 | Prohibitions | R-PROHIB | killswitches PR (1990s TA, meta_engine, flat side, full-Kelly…) |
 
+---
+
+## SESSION LESSON - 2026-04-17
+
+### L0 - Methode interdite : ideation avant double-check du reel
+- Erreur de methode generalisee : partir dans une direction de design ou de refactor avant d'avoir verifie simultanement :
+  - le code reel du repo
+  - les docs actifs qui gouvernent le slice
+  - le placement reel des modules deja existants
+- Cette methode est interdite dans tous les contextes, pas seulement pour A/B.
+- Interdictions explicites :
+  - ne pas proposer un nouveau seam, un nouveau helper, un nouveau module, ou une nouvelle logique avant ce triple controle
+  - ne pas deduire la structure cible depuis une intuition d'architecture ou depuis un seul doc lu isole
+  - ne pas raisonner "par analogie" avec un autre moteur ou un autre rail avant verification directe du code et des docs du rail cible
+
+### L0bis - Methode imposee : double-check obligatoire avant ideation
+- Avant toute proposition de design ou tout patch semantique, executer obligatoirement :
+  1. `CODE CHECK` : lire les fichiers reels qui portent deja la semantique ou le workflow cible
+  2. `DOC CHECK` : lire les docs actifs qui gouvernent ce slice
+  3. `PLACEMENT CHECK` : verifier qu'aucun fichier existant ne porte deja cette responsabilite
+- Si ces 3 checks ne sont pas faits, il est interdit de proposer une direction de design.
+- Si les 3 checks se contredisent ou restent ambigus :
+  - classer `USER_DECISION_REQUIRED`
+  - arreter
+  - demander au user
+
+### L1 - Methode interdite : semantic flattening depuis les engines les plus riches
+- Erreur Codex constatee : comparer `engine_a` et `engine_b` a `engine_c` / `engine_d`, puis proposer un seam partage avant d'avoir classe la nature exacte du gap.
+- Cette methode est maintenant interdite.
+- Interdictions explicites :
+  - ne pas utiliser `engine_c` / `engine_d` comme templates de logique de trading pour `engine_a` / `engine_b`
+  - ne pas proposer un seam partage simplement parce qu'un autre engine est plus riche
+  - ne pas deduire la richesse cible de A/B depuis la richesse existante de C/D sans preuve documentaire ou code-level qu'il s'agit bien d'une semantique transversale
+
+### L2 - Methode imposee : semantic-gap classification avant toute extension
+- Avant tout enrichissement de A/B, classer chaque manque detecte dans une categorie unique :
+  - `ENGINE_LOCAL_SEMANTICS`
+  - `TRANSVERSAL_SHARED_SEAM`
+  - `OBSERVABILITY_ONLY`
+  - `GOVERNANCE_ONLY`
+  - `USER_DECISION_REQUIRED`
+- Procedure obligatoire :
+  1. lire le code reel de l'engine cible et les docs actifs
+  2. ecrire l'intention de trading reelle de l'engine cible en une phrase
+  3. lister le gap detecte
+  4. classer le gap dans une seule categorie
+  5. coder seulement apres cette classification
+- Regles d'execution :
+  - si `ENGINE_LOCAL_SEMANTICS` : enrichir uniquement dans les fichiers existants de l'engine cible
+  - si `TRANSVERSAL_SHARED_SEAM` : prouver qu'au moins deux engines ont besoin de la meme semantique et que les docs ne l'assignent pas deja a un engine ou a un sub-signal local
+  - si `OBSERVABILITY_ONLY` : ne pas le presenter comme logique decisionnelle
+  - si `GOVERNANCE_ONLY` : ne pas le maquiller en logique quant ou en scoring local
+  - si `USER_DECISION_REQUIRED` : arreter et demander explicitement au user avant de coder
+
+### L3 - Role autorise de C/D
+- `engine_c` et `engine_d` peuvent servir de reference de richesse d'ingenierie seulement :
+  - garde-fous
+  - runtime statuses
+  - logs structures
+  - auditabilite
+  - granularite de tests
+- `engine_c` et `engine_d` ne sont pas une source autorisee pour imposer la logique de trading de `engine_a` ou `engine_b`.
+
+### L4 - Checklist obligatoire avant tout patch semantique sur A/B
+- Scan du dossier cible pour verifier qu'aucun `.py` existant ne porte deja la semantique
+- Phrase explicite : "intention de trading de l'engine"
+- Phrase explicite : "categorie du gap"
+- Preuve doc/code que le gap est local ou transversal
+- Si la preuve n'est pas assez forte : demander au user, ne pas deviner
+
+### L5 - Checklist obligatoire avant toute idee de patch dans le repo
+- `CODE CHECK` fait
+- `DOC CHECK` fait
+- `PLACEMENT CHECK` fait
+- la proposition est reliee a un besoin reel du repo, pas a une intuition abstraite
+- si un de ces points manque : ne pas proposer, relire d'abord
+
 **Total : 40 règles + 12 prohibitions + checklist 17 items + bloc audit pack = contrat de qualité Codex pour V5.3.**

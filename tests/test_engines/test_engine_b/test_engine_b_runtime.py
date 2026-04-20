@@ -15,6 +15,7 @@ from engines.engine_b import (
     EngineBSweepValidationInput,
     EngineBSweepValidationOutcome,
 )
+from engines.engine_b.conviction_builder_b import ENGINE_B_CONVICTION_FEATURE_WEIGHTS
 from engines.engine_b.engine_b_runner import EngineBInput
 from interface_contracts import (
     BetStructure,
@@ -27,7 +28,7 @@ from interface_contracts import (
     SignalType,
 )
 from risk_backbone.emergency_kill_switch.circuit_breaker import EmergencyCircuitBreaker, KillSwitchReason
-from risk_backbone.risk_runtime import RiskLimits, RiskRuntime
+from risk_backbone.risk_runtime import RiskCandidate, RiskEvaluation, RiskLimits, RiskRuntime, RiskRuntimeAction
 from scoring_backbone.hard_block_gate.blocker_evaluator import BlockerCondition
 from scoring_backbone.penalty_aggregator.penalty_registry import (
     PenaltyDefinition,
@@ -156,6 +157,34 @@ def _runtime(repo_tmp_path: Path, name: str, **overrides: object) -> EngineBRunt
     )
 
 
+def _base_risk_evaluation() -> RiskEvaluation:
+    risk_runtime = _risk_runtime()
+    risk_runtime.set_equity(current_equity=10_000.0, session_peak_equity=10_000.0)
+    return risk_runtime.evaluate_candidate(
+        RiskCandidate(
+            pair="BTCUSDT",
+            engine_id="engine_b",
+            size=100.0,
+            planned_loss=10.0,
+            pair_beta=0.5,
+        ),
+        now=10.0,
+    )
+
+
+class _FixedRiskRuntime:
+    def __init__(self, evaluation: RiskEvaluation) -> None:
+        self._evaluation = evaluation
+
+    def set_equity(self, *, current_equity: float, session_peak_equity: float) -> None:
+        self._equity = (current_equity, session_peak_equity)
+
+    def evaluate_candidate(self, candidate: object, *, now: float) -> RiskEvaluation:
+        self._candidate = candidate
+        self._now = now
+        return self._evaluation
+
+
 def _blocking_sweep_hook(_: EngineBSweepValidationInput) -> EngineBSweepValidationOutcome:
     return EngineBSweepValidationOutcome(
         accepted=False,
@@ -221,13 +250,186 @@ def test_runtime_emits_additive_forecast_signal_when_strategy_id_is_provided(
     assert result.forecast_signal_candidate.expected_cost == pytest.approx(0.001)
     assert result.forecast_signal_candidate.expected_gain == pytest.approx(0.003)
     assert result.forecast_signal_candidate.expected_break_even == pytest.approx(0.0018)
-    assert result.forecast_signal_candidate.reason_codes == ("engine_b.conviction.medium",)
+    assert "engine_b.conviction.medium" in result.forecast_signal_candidate.reason_codes
+    assert "engine_b.excess.exploitable" in result.forecast_signal_candidate.reason_codes
+    assert "engine_b.breakout.clear" in result.forecast_signal_candidate.reason_codes
+    assert "engine_b.cost.feasible" in result.forecast_signal_candidate.reason_codes
+    assert "engine_b.economics.break_even_cleared" in result.forecast_signal_candidate.reason_codes
     assert result.forecast_signal_candidate.conditioning_state[0].family == ConditioningFamily.ENGINE_INTERNAL
+
+
+def test_runtime_forecast_reason_codes_include_toxic_flow_fade(
+    repo_tmp_path: Path,
+) -> None:
+    runtime = _runtime(repo_tmp_path, "engine_b_accepts_forecast_toxic_flow")
+
+    result = runtime.evaluate(
+        _runtime_input(
+            strategy_id="strategy-b-reversion",
+            engine_inputs=_good_engine_inputs(
+                vpin_current=0.40,
+            ),
+        ),
+        now=10.0,
+    )
+
+    assert result.status == EngineBRuntimeStatus.ACCEPTED
+    assert result.forecast_signal_candidate is not None
+    assert "engine_b.conviction.medium" in result.forecast_signal_candidate.reason_codes
+    assert "engine_b.excess.exploitable" in result.forecast_signal_candidate.reason_codes
+    assert "b.toxic_flow_fade" in result.forecast_signal_candidate.reason_codes
+
+
+def test_runtime_forecast_reason_codes_include_toxic_flow_fade_suppressed_by_correlation(
+    repo_tmp_path: Path,
+) -> None:
+    runtime = _runtime(repo_tmp_path, "engine_b_accepts_forecast_toxic_flow_suppressed")
+
+    result = runtime.evaluate(
+        _runtime_input(
+            strategy_id="strategy-b-reversion",
+            engine_inputs=_good_engine_inputs(
+                vpin_current=0.40,
+                toxic_flow_correlation=0.95,
+            ),
+        ),
+        now=10.0,
+    )
+
+    assert result.status == EngineBRuntimeStatus.ACCEPTED
+    assert result.forecast_signal_candidate is not None
+    assert "b.toxic_flow_fade" not in result.forecast_signal_candidate.reason_codes
+    assert "b.toxic_flow_fade_suppressed.correlation" in result.forecast_signal_candidate.reason_codes
+
+
+def test_forecast_signal_candidate_contains_expected_break_even(
+    repo_tmp_path: Path,
+) -> None:
+    runtime = _runtime(repo_tmp_path, "engine_b_forecast_break_even")
+
+    result = runtime.evaluate(
+        _runtime_input(strategy_id="strategy-b-reversion"),
+        now=10.0,
+    )
+
+    assert result.status == EngineBRuntimeStatus.ACCEPTED
+    assert result.forecast_signal_candidate is not None
+    assert result.forecast_signal_candidate.expected_break_even == pytest.approx(0.0018)
+
+
+def test_forecast_reason_codes_include_engine_and_penalties(
+    repo_tmp_path: Path,
+) -> None:
+    runtime = _runtime(repo_tmp_path, "engine_b_forecast_penalties")
+
+    result = runtime.evaluate(
+        _runtime_input(
+            strategy_id="strategy-b-reversion",
+            score_penalties=(ScorePenaltyItem(penalty_id="context_soft", value=0.2, reason="context soft"),),
+        ),
+        now=10.0,
+    )
+
+    assert result.status == EngineBRuntimeStatus.ACCEPTED
+    assert result.forecast_signal_candidate is not None
+    assert "engine_b.conviction.medium" in result.forecast_signal_candidate.reason_codes
+    assert "engine_b.excess.exploitable" in result.forecast_signal_candidate.reason_codes
+    assert "scoring.penalty.context_soft" in result.forecast_signal_candidate.reason_codes
+
+
+def test_conditioning_state_contains_engine_internal_and_scoring_records(
+    repo_tmp_path: Path,
+) -> None:
+    runtime = _runtime(repo_tmp_path, "engine_b_forecast_conditioning")
+
+    result = runtime.evaluate(
+        _runtime_input(
+            strategy_id="strategy-b-reversion",
+            score_penalties=(ScorePenaltyItem(penalty_id="context_soft", value=0.2, reason="context soft"),),
+        ),
+        now=10.0,
+    )
+
+    assert result.status == EngineBRuntimeStatus.ACCEPTED
+    assert result.forecast_signal_candidate is not None
+    families = {record.family for record in result.forecast_signal_candidate.conditioning_state}
+    codes = {record.code for record in result.forecast_signal_candidate.conditioning_state}
+    assert ConditioningFamily.ENGINE_INTERNAL in families
+    assert ConditioningFamily.SCORING in families
+    assert "scoring.penalty.context_soft" in codes
+    assert "engine_internal.engine_b.excess.exploitable" in codes
+    assert "engine_internal.engine_b.break_even.cleared" in codes
+    assert "engine_internal.engine_b.runtime.raw_score.base_matches_runner" in codes
+    assert "engine_internal.engine_b.invalidation.present" in codes
+
+
+def test_runtime_raw_score_delta_vs_runner_is_explicitly_governed(repo_tmp_path: Path) -> None:
+    runtime = _runtime(repo_tmp_path, "engine_b_raw_score_parity")
+
+    result = runtime.evaluate(
+        _runtime_input(strategy_id="strategy-b-reversion"),
+        now=10.0,
+    )
+
+    assert result.status == EngineBRuntimeStatus.ACCEPTED
+    assert result.scoring_audit is not None
+    assert result.scoring_audit.raw_score_result.base_raw_score == pytest.approx(result.engine_output.raw_score)
+    legacy_raw = sum(
+        ENGINE_B_CONVICTION_FEATURE_WEIGHTS[name] * result.engine_output.block_scores.get(name, 0.0)
+        for name in ENGINE_B_CONVICTION_FEATURE_WEIGHTS
+    )
+    assert legacy_raw != pytest.approx(result.engine_output.raw_score)
+    assert result.forecast_signal_candidate is not None
+    parity_record = next(
+        record
+        for record in result.forecast_signal_candidate.conditioning_state
+        if record.code == "engine_internal.engine_b.runtime.raw_score.base_matches_runner"
+    )
+    assert parity_record.value == pytest.approx(0.0, abs=1e-12)
+
+
+def test_forecast_versions_non_regression(repo_tmp_path: Path) -> None:
+    runtime = _runtime(repo_tmp_path, "engine_b_forecast_versions")
+
+    result = runtime.evaluate(
+        _runtime_input(strategy_id="strategy-b-reversion"),
+        now=10.0,
+    )
+
+    assert result.status == EngineBRuntimeStatus.ACCEPTED
+    assert result.forecast_signal_candidate is not None
+    assert result.forecast_signal_candidate.versions == {
+        "scoring_version": "B_v1",
+        "calibration_profile_id": "engine_b_conviction.to_calibrate.v1",
+        "calibration_status": "TO_CALIBRATE",
+        "physics_calibration_profile_id": "market_physics.to_calibrate.v1",
+        "physics_calibration_status": "TO_CALIBRATE",
+    }
 
 
 def test_runtime_input_rejects_blank_strategy_id() -> None:
     with pytest.raises(ValidationError, match="strategy_id must not be blank"):
         _runtime_input(strategy_id="   ")
+
+
+def test_runtime_input_rejects_zero_projected_size() -> None:
+    with pytest.raises(ValidationError, match="projected_size"):
+        _runtime_input(projected_size=0.0)
+
+
+def test_runtime_input_rejects_zero_current_equity() -> None:
+    with pytest.raises(ValidationError, match="current_equity"):
+        _runtime_input(current_equity=0.0)
+
+
+def test_runtime_input_rejects_negative_session_peak_equity() -> None:
+    with pytest.raises(ValidationError, match="session_peak_equity"):
+        _runtime_input(session_peak_equity=-1.0)
+
+
+def test_runtime_input_rejects_zero_max_selections() -> None:
+    with pytest.raises(ValidationError, match="max_selections"):
+        _runtime_input(max_selections=0)
 
 
 def test_runtime_blocks_before_scoring_when_circuit_breaker_is_tripped(repo_tmp_path: Path) -> None:
@@ -345,6 +547,26 @@ def test_runtime_hard_blocked_logs_explicit_reasons(repo_tmp_path: Path) -> None
     assert "suspended" in joined
 
 
+def test_runtime_hard_blocked_annotates_forecast_truthfully(repo_tmp_path: Path) -> None:
+    runtime = _runtime(repo_tmp_path, "engine_b_hard_blocked_forecast")
+
+    result = runtime.evaluate(
+        _runtime_input(
+            strategy_id="strategy-b-reversion",
+            blocker_conditions=BlockerCondition(is_stale_hard=True, is_pair_suspended=True),
+        ),
+        now=20.0,
+    )
+
+    assert result.status == EngineBRuntimeStatus.HARD_BLOCKED
+    assert result.forecast_signal_candidate is not None
+    assert "engine_b.runtime.hard_blocked" in result.forecast_signal_candidate.reason_codes
+    assert result.refusal_record is not None
+    assert result.refusal_record.reason_codes
+    hard_block_codes = {record.code for record in result.forecast_signal_candidate.conditioning_state}
+    assert "hard_block.engine_b.runtime.hard_blocked" in hard_block_codes
+
+
 def test_runtime_rejected_by_ranking_is_auditable(repo_tmp_path: Path) -> None:
     runtime = _runtime(repo_tmp_path, "engine_b_rejected_ranking")
     peer = ScoringCandidateInput(
@@ -390,6 +612,50 @@ def test_runtime_rejected_by_ranking_is_auditable(repo_tmp_path: Path) -> None:
     assert "max selections" in ranking_logs[0].reasons[0]
 
 
+def test_runtime_rejected_by_ranking_annotates_forecast_truthfully(repo_tmp_path: Path) -> None:
+    runtime = _runtime(repo_tmp_path, "engine_b_rejected_ranking_forecast")
+    peer = ScoringCandidateInput(
+        engine_id="engine_a",
+        pair="ETHUSDT",
+        raw_features={"structure": 0.95},
+        allowed_features=frozenset({"structure"}),
+        weights={"structure": 1.0},
+        scoring_version="engine_a.v1",
+        expected_cost=0.0005,
+        expected_ce=0.003,
+        projected_size=500.0,
+        projected_loss=20.0,
+        projected_beta_impact=0.0,
+        cluster_id="eth_ecosystem",
+    )
+
+    result = runtime.evaluate(
+        _runtime_input(
+            strategy_id="strategy-b-reversion",
+            peer_candidates=(peer,),
+            max_selections=1,
+            portfolio=_portfolio_state(
+                remaining_cluster_capacity={"btc_majors": 5000.0, "eth_ecosystem": 5000.0},
+            ),
+            engine_inputs=_good_engine_inputs(
+                regime_trend_strength=0.5,
+                volume_anomaly=0.4,
+                structural_break=0.3,
+                continuation_momentum=0.3,
+            ),
+        ),
+        now=31.0,
+    )
+
+    assert result.status == EngineBRuntimeStatus.REJECTED_RANKING
+    assert result.forecast_signal_candidate is not None
+    assert "engine_b.runtime.rejected_ranking" in result.forecast_signal_candidate.reason_codes
+    conditioning_codes = {record.code for record in result.forecast_signal_candidate.conditioning_state}
+    assert "scoring.engine_b.runtime.rejected_ranking" in conditioning_codes
+    assert result.refusal_record is not None
+    assert result.refusal_record.category.value == "no_trade"
+
+
 def test_runtime_rejected_by_portfolio_is_auditable(repo_tmp_path: Path) -> None:
     runtime = _runtime(repo_tmp_path, "engine_b_rejected_portfolio")
     result = runtime.evaluate(
@@ -403,6 +669,25 @@ def test_runtime_rejected_by_portfolio_is_auditable(repo_tmp_path: Path) -> None
     portfolio_logs = [entry for entry in result.log_entries if entry.event == "engine_b_rejected_by_portfolio"]
     assert len(portfolio_logs) == 1
     assert "remaining gross" in portfolio_logs[0].reasons[0]
+
+
+def test_runtime_rejected_by_portfolio_annotates_forecast_truthfully(repo_tmp_path: Path) -> None:
+    runtime = _runtime(repo_tmp_path, "engine_b_rejected_portfolio_forecast")
+    result = runtime.evaluate(
+        _runtime_input(
+            strategy_id="strategy-b-reversion",
+            portfolio=_portfolio_state(remaining_gross_capacity=10.0),
+        ),
+        now=40.0,
+    )
+
+    assert result.status == EngineBRuntimeStatus.REJECTED_PORTFOLIO
+    assert result.forecast_signal_candidate is not None
+    assert "engine_b.runtime.rejected_portfolio" in result.forecast_signal_candidate.reason_codes
+    conditioning_codes = {record.code for record in result.forecast_signal_candidate.conditioning_state}
+    assert "portfolio.engine_b.runtime.rejected_portfolio" in conditioning_codes
+    assert result.refusal_record is not None
+    assert result.refusal_record.category.value == "portfolio_rejected"
 
 
 def test_runtime_cannot_bypass_risk_runtime(repo_tmp_path: Path) -> None:
@@ -425,3 +710,141 @@ def test_runtime_cannot_bypass_risk_runtime(repo_tmp_path: Path) -> None:
     risk_logs = [entry for entry in result.log_entries if entry.event == "engine_b_risk_rejected"]
     assert len(risk_logs) == 1
     assert "gross" in " ".join(risk_logs[0].reasons).lower()
+
+
+def test_runtime_risk_rejected_annotates_forecast_truthfully(repo_tmp_path: Path) -> None:
+    risk_runtime = RiskRuntime(
+        RiskLimits(
+            gross_cap=500.0,
+            position_cap=2000.0,
+            loss_cap=500.0,
+            beta_cap=5000.0,
+            cluster_cap=5000.0,
+        )
+    )
+    runtime = _runtime(repo_tmp_path, "engine_b_risk_runtime_forecast", risk_runtime=risk_runtime)
+
+    result = runtime.evaluate(
+        _runtime_input(strategy_id="strategy-b-reversion", projected_size=1000.0),
+        now=50.0,
+    )
+
+    assert result.status == EngineBRuntimeStatus.RISK_REJECTED
+    assert result.forecast_signal_candidate is not None
+    assert "engine_b.runtime.risk_rejected" in result.forecast_signal_candidate.reason_codes
+    assert result.refusal_record is not None
+    conditioning_codes = {record.code for record in result.forecast_signal_candidate.conditioning_state}
+    assert "hard_block.engine_b.runtime.risk_rejected" in conditioning_codes
+
+
+def test_runtime_risk_reduced_event_matches_status(repo_tmp_path: Path) -> None:
+    base = _base_risk_evaluation()
+    risk_runtime = _FixedRiskRuntime(
+        base.model_copy(
+            update={
+                "action": RiskRuntimeAction.REDUCE_EXPOSURE,
+                "accepted": False,
+                "reasons": ("reduce exposure",),
+            }
+        )
+    )
+    runtime = _runtime(repo_tmp_path, "engine_b_risk_reduced", risk_runtime=risk_runtime)
+
+    result = runtime.evaluate(_runtime_input(), now=70.0)
+
+    assert result.status == EngineBRuntimeStatus.RISK_REDUCED
+    assert result.risk_evaluation is not None
+    assert result.risk_evaluation.action == RiskRuntimeAction.REDUCE_EXPOSURE
+    assert any(entry.event == "engine_b_risk_reduced" for entry in result.log_entries)
+    assert not any(entry.event == "engine_b_risk_rejected" for entry in result.log_entries)
+    assert result.refusal_record is None
+
+
+def test_runtime_risk_reduced_is_governed_without_refusal_record(repo_tmp_path: Path) -> None:
+    base = _base_risk_evaluation()
+    risk_runtime = _FixedRiskRuntime(
+        base.model_copy(
+            update={
+                "action": RiskRuntimeAction.REDUCE_EXPOSURE,
+                "accepted": False,
+                "reasons": ("reduce exposure",),
+            }
+        )
+    )
+    runtime = _runtime(repo_tmp_path, "engine_b_risk_reduced_forecast", risk_runtime=risk_runtime)
+
+    result = runtime.evaluate(
+        _runtime_input(strategy_id="strategy-b-reversion"),
+        now=70.0,
+    )
+
+    assert result.status == EngineBRuntimeStatus.RISK_REDUCED
+    assert result.forecast_signal_candidate is not None
+    assert "engine_b.runtime.risk_reduced" in result.forecast_signal_candidate.reason_codes
+    conditioning_codes = {record.code for record in result.forecast_signal_candidate.conditioning_state}
+    assert "engine_internal.engine_b.runtime.risk_reduced" in conditioning_codes
+    assert result.refusal_record is None
+
+
+def test_runtime_risk_observe_only_event_matches_status(repo_tmp_path: Path) -> None:
+    base = _base_risk_evaluation()
+    risk_runtime = _FixedRiskRuntime(
+        base.model_copy(
+            update={
+                "action": RiskRuntimeAction.OBSERVE_ONLY,
+                "accepted": False,
+                "reasons": ("observe only",),
+            }
+        )
+    )
+    runtime = _runtime(repo_tmp_path, "engine_b_risk_observe", risk_runtime=risk_runtime)
+
+    result = runtime.evaluate(_runtime_input(), now=80.0)
+
+    assert result.status == EngineBRuntimeStatus.RISK_OBSERVE_ONLY
+    assert result.risk_evaluation is not None
+    assert result.risk_evaluation.action == RiskRuntimeAction.OBSERVE_ONLY
+    assert any(entry.event == "engine_b_risk_observe_only" for entry in result.log_entries)
+    assert not any(entry.event == "engine_b_risk_rejected" for entry in result.log_entries)
+
+
+def test_runtime_risk_observe_only_is_governed_without_refusal_record(repo_tmp_path: Path) -> None:
+    base = _base_risk_evaluation()
+    risk_runtime = _FixedRiskRuntime(
+        base.model_copy(
+            update={
+                "action": RiskRuntimeAction.OBSERVE_ONLY,
+                "accepted": False,
+                "reasons": ("observe only",),
+            }
+        )
+    )
+    runtime = _runtime(repo_tmp_path, "engine_b_risk_observe_forecast", risk_runtime=risk_runtime)
+
+    result = runtime.evaluate(
+        _runtime_input(strategy_id="strategy-b-reversion"),
+        now=80.0,
+    )
+
+    assert result.status == EngineBRuntimeStatus.RISK_OBSERVE_ONLY
+    assert result.forecast_signal_candidate is not None
+    assert "engine_b.runtime.risk_observe_only" in result.forecast_signal_candidate.reason_codes
+    conditioning_codes = {record.code for record in result.forecast_signal_candidate.conditioning_state}
+    assert "engine_internal.engine_b.runtime.risk_observe_only" in conditioning_codes
+    assert result.refusal_record is None
+
+
+def test_runtime_never_creates_fake_flat_side_or_fake_blocked_trade(repo_tmp_path: Path) -> None:
+    runtime = _runtime(repo_tmp_path, "engine_b_no_fake_flat")
+    result = runtime.evaluate(
+        _runtime_input(
+            strategy_id="strategy-b-reversion",
+            blocker_conditions=BlockerCondition(is_stale_hard=True),
+        ),
+        now=25.0,
+    )
+
+    assert result.status == EngineBRuntimeStatus.HARD_BLOCKED
+    assert result.signal_candidate is not None
+    assert result.signal_candidate.side == Side.BUY
+    assert result.forecast_signal_candidate is not None

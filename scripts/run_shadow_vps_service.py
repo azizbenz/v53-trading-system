@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+import signal
 import sys
 import time
 from pathlib import Path
@@ -91,6 +93,55 @@ from shadow_vps_service_startup_support import (  # noqa: E402
 from shadow_vps_service_telemetry_support import (  # noqa: E402
     _write_execution_telemetry_artifacts,
 )
+
+
+class _ShadowVpsSignalController:
+    def __init__(self) -> None:
+        self._stop_requested = False
+        self._signal_name = ""
+
+    def request_stop(self, signal_name: str) -> None:
+        normalized_name = signal_name.strip() or "UNKNOWN"
+        if not self._stop_requested:
+            self._signal_name = normalized_name
+        self._stop_requested = True
+
+    def stop_requested(self) -> bool:
+        return self._stop_requested
+
+    def stop_reason(self) -> str:
+        if self._signal_name:
+            return f"signal {self._signal_name}"
+        return "external stop requested"
+
+
+def _install_shadow_vps_signal_handlers(
+    controller: _ShadowVpsSignalController,
+) -> Callable[[], None]:
+    registered_handlers: list[tuple[signal.Signals, object]] = []
+
+    def _handle_stop_signal(stop_signal: signal.Signals, _frame: object) -> None:
+        controller.request_stop(getattr(stop_signal, "name", str(stop_signal)))
+
+    for signal_name in ("SIGINT", "SIGTERM"):
+        stop_signal = getattr(signal, signal_name, None)
+        if stop_signal is None:
+            continue
+        try:
+            previous_handler = signal.getsignal(stop_signal)
+            signal.signal(stop_signal, _handle_stop_signal)
+        except (OSError, RuntimeError, ValueError):
+            continue
+        registered_handlers.append((stop_signal, previous_handler))
+
+    def _restore_signal_handlers() -> None:
+        for stop_signal, previous_handler in reversed(registered_handlers):
+            try:
+                signal.signal(stop_signal, previous_handler)
+            except (OSError, RuntimeError, ValueError):
+                continue
+
+    return _restore_signal_handlers
 
 
 def _sync_shadow_vps_service_protocol_dependencies() -> None:
@@ -255,13 +306,22 @@ def run_shadow_vps_service(
         node_exporter_port=node_exporter_port, node_exporter_scheme=node_exporter_scheme,
         node_exporter_metrics_path=node_exporter_metrics_path, prometheus_job_name=prometheus_job_name,
     )
-    _run_shadow_vps_service_main_loop(
-        context,
-        poll_interval_s=poll_interval_s,
-        max_cycles=max_cycles,
-        continue_on_error=continue_on_error,
-        run_shadow_vps_service_cycle=_run_shadow_vps_service_cycle,
-    )
+    signal_controller = _ShadowVpsSignalController()
+    restore_signal_handlers = _install_shadow_vps_signal_handlers(signal_controller)
+    try:
+        _run_shadow_vps_service_main_loop(
+            context,
+            poll_interval_s=poll_interval_s,
+            max_cycles=max_cycles,
+            continue_on_error=continue_on_error,
+            run_shadow_vps_service_cycle=_run_shadow_vps_service_cycle,
+            should_stop=signal_controller.stop_requested,
+            resolve_stop_reason=signal_controller.stop_reason,
+            write_service_monitoring=_write_service_monitoring,
+            append_service_event=_append_service_event,
+        )
+    finally:
+        restore_signal_handlers()
     _finalize_shadow_vps_service_runtime(
         context,
         read_runtime_evidence_bundle=_read_runtime_evidence_bundle,

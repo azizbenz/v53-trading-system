@@ -42,6 +42,13 @@ def test_ascending_trend_passes_even_if_significant() -> None:
     assert result.passes_floor is True
 
 
+def test_strictly_increasing_length_100_series_has_mann_1945_s_anchor() -> None:
+    result = compute_mann_kendall_test(tuple(float(index) for index in range(1, 101)))
+    assert result.s_statistic == 4_950
+    assert result.kendall_tau == 1.0
+    assert result.passes_floor is True
+
+
 def test_flat_series_returns_no_trend_and_p_one() -> None:
     result = compute_mann_kendall_test([1.0, 1.0, 1.0, 1.0])
     assert result.trend_direction == "flat"

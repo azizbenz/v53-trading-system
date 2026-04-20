@@ -10,11 +10,12 @@ z_t = (p_t - mu_loc) / sigma_loc
 from __future__ import annotations
 
 from data_backbone import TO_CALIBRATE
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 ENGINE_B_LOCAL_MEAN_PROFILE_ID = "engine_b_local_mean.to_calibrate.v1"
 ENGINE_B_LOCAL_MEAN_CALIBRATION_STATUS = TO_CALIBRATE
+# TO_CALIBRATE: grouped Engine B local-mean defaults pending signed calibration.
 ENGINE_B_LOCAL_MEAN_DEFAULTS: dict[str, float] = {
     "min_std": 1e-12,
 }
@@ -24,9 +25,9 @@ class LocalMeanInput(BaseModel, frozen=True):
     """Inputs for local mean estimation."""
 
     pair: str
-    current_price: float
-    local_mean: float
-    local_std: float
+    current_price: float = Field(gt=0.0)
+    local_mean: float = Field(gt=0.0)
+    local_std: float = Field(ge=0.0)
 
 
 class LocalMeanResult(BaseModel, frozen=True):

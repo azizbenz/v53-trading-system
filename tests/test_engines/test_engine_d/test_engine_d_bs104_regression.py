@@ -1,7 +1,7 @@
 """
 Regression tests — BS-104
 entry_price=0.0 must NOT raise Pydantic ValidationError.
-Engine D must return NO_TRADE with COST_INFEASIBLE.
+Engine D must return NO_TRADE with INVALID_ENTRY_PRICE.
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from engines.engine_d import EngineDDecision, EngineDInput, run_engine_d
 from engines.engine_d.engine_d_runner import NoTradeReasonD
 
 
-def _base_inputs(**overrides) -> EngineDInput:
+def _base_inputs(**overrides: float | str) -> EngineDInput:
     defaults = dict(
         pair="BTCUSDT",
         prior_trade_quality=0.85,
@@ -28,27 +28,29 @@ def _base_inputs(**overrides) -> EngineDInput:
         holding_period=2.0,
         entry_price=104.0,
         reentry_anchor_price=101.5,
+        realized_vol_current=1.8 / 104.0,
+        realized_vol_post_close=1.8 / 104.0,
         atr=1.8,
     )
     defaults.update(overrides)
     return EngineDInput(**defaults)
 
 
-def test_entry_price_zero_returns_no_trade_not_exception():
+def test_entry_price_zero_returns_no_trade_not_exception() -> None:
     """BS-104: entry_price=0.0 must NOT raise ValidationError."""
     result = run_engine_d(_base_inputs(entry_price=0.0))
     assert result.decision == EngineDDecision.NO_TRADE
-    assert NoTradeReasonD.COST_INFEASIBLE in result.no_trade_reasons
+    assert NoTradeReasonD.INVALID_ENTRY_PRICE in result.no_trade_reasons
 
 
-def test_entry_price_negative_returns_no_trade_not_exception():
+def test_entry_price_negative_returns_no_trade_not_exception() -> None:
     """Negative entry_price is also invalid — must not reach invalidation builder."""
     result = run_engine_d(_base_inputs(entry_price=-1.0))
     assert result.decision == EngineDDecision.NO_TRADE
-    assert NoTradeReasonD.COST_INFEASIBLE in result.no_trade_reasons
+    assert NoTradeReasonD.INVALID_ENTRY_PRICE in result.no_trade_reasons
 
 
-def test_entry_price_zero_produces_log_entry():
+def test_entry_price_zero_produces_log_entry() -> None:
     """Log entry must be present explaining the rejection."""
     result = run_engine_d(_base_inputs(entry_price=0.0))
     assert len(result.log_entries) >= 1
@@ -59,13 +61,13 @@ def test_entry_price_zero_produces_log_entry():
     assert "entry_price" in no_trade_log.reasons[0]
 
 
-def test_valid_entry_price_still_emits():
+def test_valid_entry_price_still_emits() -> None:
     """Regression: a valid entry_price must still reach EMIT."""
     result = run_engine_d(_base_inputs(entry_price=104.0))
     assert result.decision == EngineDDecision.EMIT
 
 
-def test_entry_price_zero_never_raises_validation_error():
+def test_entry_price_zero_never_raises_validation_error() -> None:
     """Core contract: ValidationError must never escape run_engine_d."""
     try:
         run_engine_d(_base_inputs(entry_price=0.0))

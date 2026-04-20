@@ -47,3 +47,37 @@ def test_dsr_penalizes_multiple_trials():
 def test_dsr_rejects_zero_variance_returns():
     with pytest.raises(DeflatedSharpeRatioError, match="standard deviation"):
         compute_deflated_sharpe_ratio((0.01, 0.01, 0.01, 0.01), trial_count=3)
+
+
+def test_dsr_table1_mapping_anchor() -> None:
+    """DSR anchor: Bailey et al. (2014) Table 1 mapped onto the current API.
+
+    The current implementation returns:
+    - `sharpe_ratio`: observed sample Sharpe
+    - `benchmark_sharpe`: multiple-testing-adjusted hurdle
+    - `dsr`: probability that observed SR beats the adjusted hurdle
+
+    For the Table 1-style modest-SR scenario (mu≈0.5/12, n=1000, trial_count=20),
+    the current API should show:
+    - benchmark_sharpe > sharpe_ratio
+    - passes_floor is False for acceptance_floor=0.95
+
+    Reference: Bailey, Borwein, Lopez de Prado & Zhu (2014), Table 1.
+    """
+    import random
+
+    rng = random.Random(20240422)
+    mu_monthly = 0.5 / 12.0
+    returns = tuple(rng.gauss(mu_monthly, 1.0) for _ in range(1000))
+
+    result = compute_deflated_sharpe_ratio(
+        returns,
+        trial_count=20,
+        acceptance_floor=0.95,
+    )
+
+    assert result.observation_count == 1000
+    assert result.trial_count == 20
+    assert result.benchmark_sharpe > result.sharpe_ratio
+    assert result.dsr < result.acceptance_floor
+    assert result.passes_floor is False

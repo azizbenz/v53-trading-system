@@ -117,5 +117,5 @@ def test_order_flow_imbalance_rejects_invalid_inputs() -> None:
     with pytest.raises(ValueError, match="window_events"):
         compute_order_flow_imbalance(points[::-1], pair="BTCUSDT", window_events=MAX_OFI_WINDOW_EVENTS + 1)
 
-    with pytest.raises(ValueError, match="strictly ordered"):
+    with pytest.raises(ValueError, match="non-decreasing"):
         compute_order_flow_imbalance(points, pair="BTCUSDT")

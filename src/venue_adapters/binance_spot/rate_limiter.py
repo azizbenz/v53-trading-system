@@ -14,11 +14,8 @@ import math
 import time
 from collections.abc import Callable, Mapping
 
+from interface_contracts import BinanceApiRateLimitExceededError
 from pydantic import BaseModel, Field, model_validator
-
-
-class BinanceApiRateLimitExceededError(RuntimeError):
-    """Raised when the bounded venue-side quota tracker blocks a request."""
 
 
 class BinanceRequestQuotaCost(BaseModel, frozen=True):
@@ -37,6 +34,9 @@ class BinanceApiRateLimiterConfig(BaseModel, frozen=True):
 
     official_request_weight_limit_1m: int = Field(default=1200, gt=0)
     preemptive_request_weight_limit_1m: int = Field(default=800, gt=0)
+    official_request_weight_warn_ratio: float = Field(default=0.80, gt=0.0, le=1.0)
+    official_request_weight_block_ratio: float = Field(default=0.95, gt=0.0, le=1.0)
+    official_request_weight_block_window_s: float = Field(default=60.0, gt=0.0)
     official_orders_limit_10s: int = Field(default=50, gt=0)
     preemptive_orders_limit_10s: int = Field(default=40, gt=0)
     http_429_backoff_base_s: float = Field(default=5.0, gt=0.0)
@@ -46,6 +46,8 @@ class BinanceApiRateLimiterConfig(BaseModel, frozen=True):
     def validate_limits(self) -> "BinanceApiRateLimiterConfig":
         if self.preemptive_request_weight_limit_1m > self.official_request_weight_limit_1m:
             raise ValueError("preemptive_request_weight_limit_1m must stay <= official_request_weight_limit_1m")
+        if self.official_request_weight_warn_ratio >= self.official_request_weight_block_ratio:
+            raise ValueError("official_request_weight_warn_ratio must stay < official_request_weight_block_ratio")
         if self.preemptive_orders_limit_10s > self.official_orders_limit_10s:
             raise ValueError("preemptive_orders_limit_10s must stay <= official_orders_limit_10s")
         if self.http_429_backoff_base_s > self.http_429_backoff_max_s:
@@ -59,6 +61,11 @@ class BinanceApiRateLimiterSnapshot(BaseModel, frozen=True):
     request_weight_tokens_remaining: float = Field(..., ge=0.0)
     order_tokens_remaining: float = Field(..., ge=0.0)
     throttle_until_ms: int = Field(default=0, ge=0)
+    official_request_weight_used_1m: int = Field(default=0, ge=0)
+    official_request_weight_quota_ratio: float = Field(default=0.0, ge=0.0)
+    official_request_weight_warn_active: bool = Field(default=False)
+    official_request_weight_block_until_ms: int = Field(default=0, ge=0)
+    official_request_weight_block_active: bool = Field(default=False)
     consecutive_429s: int = Field(default=0, ge=0)
 
 
@@ -129,6 +136,9 @@ class BinanceApiRateLimiter:
             now_ms=now_ms,
         )
         self._throttle_until_ms = 0
+        self._official_request_weight_block_until_ms = 0
+        self._official_request_weight_used_1m = 0
+        self._official_request_weight_quota_ratio = 0.0
         self._consecutive_429s = 0
 
     def reserve(
@@ -138,6 +148,12 @@ class BinanceApiRateLimiter:
         now_ms: int | None = None,
     ) -> None:
         now = self._resolve_now_ms(now_ms)
+        if now < self._official_request_weight_block_until_ms:
+            remaining_ms = self._official_request_weight_block_until_ms - now
+            raise BinanceApiRateLimitExceededError(
+                "Binance REST requests are throttled for another "
+                f"{remaining_ms} ms after venue request-weight usage crossed the official block threshold"
+            )
         if now < self._throttle_until_ms:
             remaining_ms = self._throttle_until_ms - now
             raise BinanceApiRateLimitExceededError(
@@ -170,8 +186,17 @@ class BinanceApiRateLimiter:
         now = self._resolve_now_ms(now_ms)
         used_weight = _read_int_header(headers, "X-MBX-USED-WEIGHT-1M")
         if used_weight is not None:
+            self._official_request_weight_used_1m = used_weight
+            self._official_request_weight_quota_ratio = used_weight / float(
+                self._config.official_request_weight_limit_1m
+            )
             remaining_weight = max(self._config.preemptive_request_weight_limit_1m - used_weight, 0)
             self._request_weight_bucket.tighten_remaining(remaining_weight, now)
+            if self._official_request_weight_quota_ratio >= self._config.official_request_weight_block_ratio:
+                self._official_request_weight_block_until_ms = max(
+                    self._official_request_weight_block_until_ms,
+                    now + int(math.ceil(self._config.official_request_weight_block_window_s * 1000.0)),
+                )
         used_orders = _read_int_header(headers, "X-MBX-ORDER-COUNT-10S")
         if used_orders is not None:
             remaining_orders = max(self._config.preemptive_orders_limit_10s - used_orders, 0)
@@ -187,10 +212,22 @@ class BinanceApiRateLimiter:
 
     def snapshot(self, *, now_ms: int | None = None) -> BinanceApiRateLimiterSnapshot:
         now = self._resolve_now_ms(now_ms)
+        effective_throttle_until_ms = max(
+            self._throttle_until_ms,
+            self._official_request_weight_block_until_ms,
+        )
         return BinanceApiRateLimiterSnapshot(
             request_weight_tokens_remaining=self._request_weight_bucket.remaining(now),
             order_tokens_remaining=self._order_bucket.remaining(now),
-            throttle_until_ms=self._throttle_until_ms,
+            throttle_until_ms=effective_throttle_until_ms,
+            official_request_weight_used_1m=self._official_request_weight_used_1m,
+            official_request_weight_quota_ratio=self._official_request_weight_quota_ratio,
+            official_request_weight_warn_active=(
+                self._official_request_weight_used_1m > 0
+                and self._official_request_weight_quota_ratio >= self._config.official_request_weight_warn_ratio
+            ),
+            official_request_weight_block_until_ms=self._official_request_weight_block_until_ms,
+            official_request_weight_block_active=now < self._official_request_weight_block_until_ms,
             consecutive_429s=self._consecutive_429s,
         )
 

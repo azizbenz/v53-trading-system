@@ -11,7 +11,11 @@ from interface_contracts.binance_contracts import (
     BinanceTimeInForce,
 )
 from venue_adapters.binance_spot.rest_client import BinanceRestClient
-from venue_adapters.binance_spot.rate_limiter import BinanceApiRateLimitExceededError
+from venue_adapters.binance_spot.rate_limiter import (
+    BinanceApiRateLimiter,
+    BinanceApiRateLimiterConfig,
+    BinanceApiRateLimitExceededError,
+)
 
 
 def test_get_server_time_returns_typed_snapshot():
@@ -380,6 +384,58 @@ def test_rest_client_blocks_after_weight_header_reaches_preemptive_ceiling() -> 
 
     asyncio.run(run())
     assert call_count == 1
+
+
+def test_rest_client_blocks_for_60s_after_official_weight_header_reaches_95_percent() -> None:
+    current_ms = 1_710_000_000_000
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        assert request.url.path == "/api/v3/time"
+        return httpx.Response(
+            200,
+            json={"serverTime": 1_710_000_000_123},
+            headers={"X-MBX-USED-WEIGHT-1M": "1140"},
+        )
+
+    async def run() -> None:
+        nonlocal current_ms
+        transport = httpx.MockTransport(handler)
+        client = httpx.AsyncClient(base_url="https://api.binance.com", transport=transport)
+        limiter = BinanceApiRateLimiter(
+            config=BinanceApiRateLimiterConfig(
+                official_request_weight_limit_1m=1200,
+                preemptive_request_weight_limit_1m=1200,
+            ),
+            clock_ms=lambda: current_ms,
+        )
+        rest_client = BinanceRestClient(
+            client=client,
+            clock_ms=lambda: current_ms,
+            rate_limiter=limiter,
+        )
+        try:
+            await rest_client.get_server_time()
+            snapshot = limiter.snapshot(now_ms=current_ms)
+            assert snapshot.official_request_weight_warn_active is True
+            assert snapshot.official_request_weight_block_active is True
+            assert snapshot.throttle_until_ms == current_ms + 60_000
+            try:
+                await rest_client.get_server_time()
+            except BinanceApiRateLimitExceededError as exc:
+                assert "official block threshold" in str(exc)
+            else:
+                raise AssertionError("Expected official request-weight block after 95% header sync")
+
+            current_ms += 60_000
+            await rest_client.get_server_time()
+        finally:
+            await client.aclose()
+
+    asyncio.run(run())
+    assert call_count == 2
 
 
 def test_rest_client_enters_backoff_after_429_response() -> None:

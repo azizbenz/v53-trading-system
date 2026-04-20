@@ -1,0 +1,386 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shadow_gate_report.schema.json",
+  "title": "Shadow Gate Report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "gate_id",
+    "palier",
+    "engine",
+    "evaluated_at",
+    "data_window",
+    "sample",
+    "stat_tests",
+    "hard_vetos",
+    "halal_checks",
+    "gate_specific_checks",
+    "refusal_analysis",
+    "capital_usage",
+    "execution_stats",
+    "source_artifacts",
+    "overall_machine_recommendation",
+    "human_decision_required",
+    "human_signature",
+    "calibration_in_use",
+    "missing_inputs",
+    "blocking_reasons",
+    "reproducibility"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "shadow_gate_report.v1"
+    },
+    "gate_id": {
+      "type": "string"
+    },
+    "palier": {
+      "type": "string"
+    },
+    "engine": {
+      "type": "string"
+    },
+    "evaluated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "data_window": {
+      "$ref": "#/$defs/data_window"
+    },
+    "sample": {
+      "$ref": "#/$defs/sample"
+    },
+    "stat_tests": {
+      "$ref": "#/$defs/metric_map"
+    },
+    "hard_vetos": {
+      "$ref": "#/$defs/metric_map"
+    },
+    "halal_checks": {
+      "$ref": "#/$defs/metric_map"
+    },
+    "gate_specific_checks": {
+      "$ref": "#/$defs/metric_map"
+    },
+    "refusal_analysis": {
+      "$ref": "#/$defs/refusal_analysis"
+    },
+    "capital_usage": {
+      "$ref": "#/$defs/capital_usage"
+    },
+    "execution_stats": {
+      "$ref": "#/$defs/execution_stats"
+    },
+    "source_artifacts": {
+      "$ref": "#/$defs/source_artifacts"
+    },
+    "overall_machine_recommendation": {
+      "enum": [
+        "PASS_RECOMMENDED",
+        "FAIL"
+      ]
+    },
+    "human_decision_required": {
+      "type": "boolean"
+    },
+    "human_signature": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "calibration_in_use": {
+      "type": "string"
+    },
+    "missing_inputs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "blocking_reasons": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "reproducibility": {
+      "$ref": "#/$defs/reproducibility"
+    }
+  },
+  "$defs": {
+    "metric": {
+      "type": "object",
+      "required": [
+        "required",
+        "threshold",
+        "pass",
+        "status"
+      ],
+      "properties": {
+        "required": {
+          "type": "boolean"
+        },
+        "threshold": {},
+        "value": {},
+        "pass": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "status": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "metric_map": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/metric"
+      }
+    },
+    "status_value": {
+      "enum": [
+        "ready",
+        "not_provided",
+        "missing_input"
+      ]
+    },
+    "data_window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "start",
+        "end"
+      ],
+      "properties": {
+        "start": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "end": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "sample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "n_days",
+        "n_trades",
+        "n_min_required",
+        "n_days_satisfied",
+        "n_trades_satisfied"
+      ],
+      "properties": {
+        "n_days": {
+          "type": "integer"
+        },
+        "n_trades": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "n_min_required": {
+          "type": "integer"
+        },
+        "n_days_satisfied": {
+          "type": "boolean"
+        },
+        "n_trades_satisfied": {
+          "type": "boolean"
+        }
+      }
+    },
+    "refusal_analysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "total_refusals",
+        "hard_block_refusals",
+        "portfolio_refusals"
+      ],
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/status_value"
+        },
+        "total_refusals": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "hard_block_refusals": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "portfolio_refusals": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    },
+    "capital_usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "tier_cap_respected",
+        "max_capital_fraction_used",
+        "capital_tier"
+      ],
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/status_value"
+        },
+        "tier_cap_respected": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "max_capital_fraction_used": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "capital_tier": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    },
+    "execution_stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "fill_rate",
+        "average_slippage_bps",
+        "average_spread_paid_bps"
+      ],
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/status_value"
+        },
+        "fill_rate": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "average_slippage_bps": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "average_spread_paid_bps": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    },
+    "source_artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "shadow_report_ready",
+        "promotion_gate_passed",
+        "shadow_summary_verdict",
+        "shadow_summary_blocking_reasons",
+        "active_engines",
+        "engine_present_in_summary",
+        "build14_status"
+      ],
+      "properties": {
+        "shadow_report_ready": {
+          "type": "boolean"
+        },
+        "promotion_gate_passed": {
+          "type": "boolean"
+        },
+        "shadow_summary_verdict": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "shadow_summary_blocking_reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "active_engines": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "engine_present_in_summary": {
+          "type": "boolean"
+        },
+        "build14_status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "reproducibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "computed_with_method_version",
+        "code_commit",
+        "data_hash_sha256"
+      ],
+      "properties": {
+        "computed_with_method_version": {
+          "type": "string"
+        },
+        "code_commit": {
+          "type": "string"
+        },
+        "data_hash_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    }
+  }
+}

@@ -1078,13 +1078,6 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> Locked
                     detail=_join(payload.system.active_modules, empty="No active modules declared"),
                 ),
                 _engine_card(payload),
-                DashboardCard(
-                    key="governed_extensions",
-                    label="Governed Extensions",
-                    value=_governed_extensions_value(payload),
-                    status=_governed_extensions_status(payload),
-                    detail=payload.system.governed_extensions_detail,
-                ),
             ),
         ),
         DashboardSection(

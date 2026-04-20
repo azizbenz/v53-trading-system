@@ -13,6 +13,7 @@ def _clamp(value: float) -> float:
 
 
 def compute_breakout_score(inputs: "EngineCInput") -> float:
+    """0.35*breakout + 0.25*range + 0.20*compression + 0.20*volume."""
     return _clamp(
         0.35 * inputs.breakout_strength
         + 0.25 * inputs.range_quality
@@ -22,6 +23,7 @@ def compute_breakout_score(inputs: "EngineCInput") -> float:
 
 
 def compute_context_score(inputs: "EngineCInput") -> float:
+    """0.35*regime + 0.25*health + 0.20*freshness + 0.20*flow."""
     return _clamp(
         0.35 * inputs.regime_favorability
         + 0.25 * inputs.pair_health
@@ -36,6 +38,7 @@ def compute_continuation_score_components(
     extension_pct: float,
     context_score: float,
 ) -> float:
+    """0.45*followthrough + 0.25*(1-extension) + 0.30*context."""
     return _clamp(
         0.45 * followthrough_room
         + 0.25 * (1.0 - extension_pct)
@@ -56,8 +59,18 @@ def compute_continuation_score(
 
 
 def compute_fake_breakout_risk(inputs: "EngineCInput") -> float:
+    """0.45*retrace + 0.30*wick + 0.25*(1-volume)."""
     return _clamp(
         0.45 * inputs.retrace_risk
         + 0.30 * inputs.rejection_wick_ratio
         + 0.25 * (1.0 - inputs.volume_confirmation)
     )
+
+
+__all__ = [
+    "compute_breakout_score",
+    "compute_context_score",
+    "compute_continuation_score",
+    "compute_continuation_score_components",
+    "compute_fake_breakout_risk",
+]

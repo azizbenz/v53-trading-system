@@ -1,6 +1,11 @@
 """
 Build-7 / engine_b / signal_reporter_B
 Track and report Engine B signal events and statistics.
+
+Status:
+- `NoTradeReasonB` is canonical and consumed by `engine_b_runner`.
+- `SignalCandidateB`, `SignalStatsB`, and `SignalReporterB` remain
+  secondary audit helpers outside the canonical runner/runtime flow.
 """
 
 from __future__ import annotations
@@ -11,6 +16,13 @@ from pydantic import BaseModel, Field
 
 from engines.engine_b.conviction_builder_b import ConvictionLevelB, TierSuggestionB
 
+ENGINE_B_SIGNAL_REPORTER_STATUS = "secondary_helper_non_canonical_flow"
+ENGINE_B_SIGNAL_REPORTER_STATUS_DETAIL = (
+    "NoTradeReasonB is canonical and imported by engine_b_runner; "
+    "SignalCandidateB/SignalStatsB/SignalReporterB remain secondary audit helpers "
+    "outside the canonical runner/runtime path."
+)
+
 
 class SignalDecisionB(StrEnum):
     EMIT = "emit"
@@ -18,10 +30,14 @@ class SignalDecisionB(StrEnum):
 
 
 class NoTradeReasonB(StrEnum):
+    INVALID_INPUT = "invalid_input"
+    INVALID_INVALIDATION = "invalid_invalidation"
     NON_LONG_DIRECTION = "non_long_direction"
     NO_EXCESS = "no_excess"
     BREAKOUT_BLOCKED = "breakout_blocked"
     COST_INFEASIBLE = "cost_infeasible"
+    COST_MARGINAL = "cost_marginal"
+    CONVICTION_LOW = "conviction_low"
     CONVICTION_NONE = "conviction_none"
     INVALID_DISPERSION = "invalid_dispersion"
 
@@ -57,7 +73,7 @@ class SignalStatsB(BaseModel, frozen=True):
 
 
 class SignalReporterB:
-    """Track and report Engine B signal events."""
+    """Track Engine B audit stats outside the canonical runner/runtime path."""
 
     def __init__(self) -> None:
         self._total: int = 0
@@ -92,3 +108,14 @@ class SignalReporterB:
             mean_raw_score=mean_score,
             mean_z_score=mean_z,
         )
+
+
+__all__ = [
+    "ENGINE_B_SIGNAL_REPORTER_STATUS",
+    "ENGINE_B_SIGNAL_REPORTER_STATUS_DETAIL",
+    "NoTradeReasonB",
+    "SignalCandidateB",
+    "SignalDecisionB",
+    "SignalReporterB",
+    "SignalStatsB",
+]

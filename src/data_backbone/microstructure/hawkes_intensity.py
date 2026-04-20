@@ -103,8 +103,8 @@ def compute_hawkes_intensity(
     if window_events < 1:
         raise ValueError("window_events must be >= 1")
     for previous, current in zip(events, events[1:]):
-        if current.timestamp_ns <= previous.timestamp_ns:
-            raise ValueError("events must be strictly ordered by timestamp_ns")
+        if current.timestamp_ns < previous.timestamp_ns:
+            raise ValueError("events must be non-decreasing in timestamp_ns")
 
     resolved_window = min(window_events, len(events))
     recent_events = events[-resolved_window:]
@@ -127,11 +127,17 @@ def compute_hawkes_intensity(
     observed_window_seconds = (
         recent_events[-1].timestamp_ns - recent_events[0].timestamp_ns
     ) / 1_000_000_000.0
+    if (
+        parameter_warning is None
+        and observed_window_seconds > 0.0
+        and estimate.beta * observed_window_seconds < 1.0
+    ):
+        parameter_warning = "slow_decay_relative_to_window"
     return HawkesIntensityRecord(
         value=intensity,
         branching_ratio=branching_ratio,
         partial_window=resolved_window < window_events,
-        low_sample_confidence=resolved_window < 5,
+        low_sample_confidence=resolved_window < 5 or observed_window_seconds <= 0.0,
         parameter_warning=parameter_warning,
         parameter_source=estimate.estimation_source,
         n_events_received=len(events),

@@ -42,5 +42,5 @@ def test_corwin_schultz_spread_rejects_unordered_bars() -> None:
         CorwinSchultzBarPoint(timestamp_ns=1_000_000_000, high_price=106.0, low_price=96.0),
     ]
 
-    with pytest.raises(ValueError, match="strictly ordered"):
+    with pytest.raises(ValueError, match="non-decreasing"):
         compute_corwin_schultz_spread(bars, pair="BTCUSDT")

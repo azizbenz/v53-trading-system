@@ -17,7 +17,7 @@ from pydantic import BaseModel
 ENGINE_A_INVALIDATION_PROFILE_ID = "engine_a_invalidation.to_calibrate.v1"
 ENGINE_A_INVALIDATION_CALIBRATION_STATUS = TO_CALIBRATE
 ENGINE_A_INVALIDATION_DEFAULTS: dict[str, float] = {
-    "atr_stop_multiplier": 1.5,
+    "vol_stop_multiplier": 1.5,
     "default_holding_hours": 4.0,
 }
 
@@ -55,19 +55,30 @@ def build_invalidation(
     pair: str,
     direction_score: float,
     entry_price: float,
-    atr: float,
+    realized_vol_current: float | None,
     holding_hours: float = ENGINE_A_INVALIDATION_DEFAULTS["default_holding_hours"],
 ) -> InvalidationMap:
     """Build invalidation map for an Engine A signal."""
 
-    rules: list[InvalidationRule] = []
-    atr_stop_multiplier = ENGINE_A_INVALIDATION_DEFAULTS["atr_stop_multiplier"]
+    if entry_price <= 0.0:
+        raise ValueError("entry_price must be > 0")
+    if holding_hours <= 0.0:
+        raise ValueError("holding_hours must be > 0")
+    if realized_vol_current is not None and realized_vol_current < 0.0:
+        raise ValueError("realized_vol_current must be >= 0 when provided")
+    if direction_score == 0.0:
+        raise ValueError("direction_score must be non-zero")
 
-    if atr > 0 and entry_price > 0:
+    rules: list[InvalidationRule] = []
+    vol_stop_multiplier = ENGINE_A_INVALIDATION_DEFAULTS["vol_stop_multiplier"]
+    time_expiry_description = f"time expiry after {holding_hours:.1f}h"
+
+    if realized_vol_current is not None and realized_vol_current > 0.0:
+        price_delta = vol_stop_multiplier * entry_price * realized_vol_current
         if direction_score > 0:
-            inv_level = entry_price - atr_stop_multiplier * atr
+            inv_level = entry_price - price_delta
         else:
-            inv_level = entry_price + atr_stop_multiplier * atr
+            inv_level = entry_price + price_delta
 
         rules.append(
             InvalidationRule(
@@ -76,11 +87,13 @@ def build_invalidation(
                 level=inv_level,
             )
         )
+    else:
+        time_expiry_description += " (realized_vol_missing_no_price_level_rule)"
 
     rules.append(
         InvalidationRule(
             invalidation_type=InvalidationType.TIME_EXPIRY,
-            description=f"time expiry after {holding_hours:.1f}h",
+            description=time_expiry_description,
             horizon_hours=holding_hours,
         )
     )

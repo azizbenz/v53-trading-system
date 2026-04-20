@@ -11,6 +11,13 @@ from pydantic import BaseModel, Field
 
 from engines.engine_a.conviction_builder_a import ConvictionLevel, TierSuggestion
 
+ENGINE_A_SIGNAL_REPORTER_STATUS = "secondary_helper_non_canonical_flow"
+ENGINE_A_SIGNAL_REPORTER_STATUS_DETAIL = (
+    "NoTradeReason is canonical and imported by engine_a_runner; "
+    "SignalCandidateA/SignalStats/SignalReporterA remain secondary audit helpers "
+    "outside the canonical runner/runtime path."
+)
+
 
 class SignalDecision(StrEnum):
     EMIT = "emit"
@@ -19,9 +26,16 @@ class SignalDecision(StrEnum):
 
 class NoTradeReason(StrEnum):
     NON_LONG_DIRECTION = "non_long_direction"
+    INVALID_CANDIDATE_SIZE = "invalid_candidate_size"
+    INVALID_HOLDING_PERIOD = "invalid_holding_period"
+    INVALID_ENTRY_PRICE = "invalid_entry_price"
+    INVALID_ATR = "invalid_atr"
+    INVALID_INVALIDATION = "invalid_invalidation"
     STRUCTURE_UNFAVORABLE = "structure_unfavorable"
     CONTEXT_FATAL = "context_fatal"
     COST_INFEASIBLE = "cost_infeasible"
+    COST_MARGINAL = "cost_marginal"
+    LOW_CONVICTION = "low_conviction"
     CONVICTION_NONE = "conviction_none"
 
 
@@ -85,3 +99,14 @@ class SignalReporterA:
             no_trade_by_reason=dict(self._no_trade_reasons),
             mean_raw_score=mean,
         )
+
+
+__all__ = [
+    "ENGINE_A_SIGNAL_REPORTER_STATUS",
+    "ENGINE_A_SIGNAL_REPORTER_STATUS_DETAIL",
+    "NoTradeReason",
+    "SignalCandidateA",
+    "SignalDecision",
+    "SignalReporterA",
+    "SignalStats",
+]

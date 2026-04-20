@@ -29,8 +29,8 @@ class Owner(StrEnum):
 
 class ProfileScope(StrEnum):
     COMMON = "common"
-    LIGHT = "light"
-    COMPLETE = "complete"
+    LEGACY = "light"
+    GOVERNED = "complete"
 
 
 class ModuleEntry(BaseModel, frozen=True):
@@ -201,7 +201,7 @@ MODULES: tuple[ModuleEntry, ...] = (
         owner=Owner.CLAUDE,
         status=ModuleStatus.ACTIVE,
         priority=Priority.P0,
-        profile_scope=ProfileScope.LIGHT,
+        profile_scope=ProfileScope.LEGACY,
         build_stage=6,
         description="Premium Trend / Expansion",
     ),
@@ -212,7 +212,7 @@ MODULES: tuple[ModuleEntry, ...] = (
         owner=Owner.CLAUDE,
         status=ModuleStatus.ACTIVE,
         priority=Priority.P0,
-        profile_scope=ProfileScope.LIGHT,
+        profile_scope=ProfileScope.LEGACY,
         build_stage=7,
         description="Mean Reversion Intraday",
     ),
@@ -223,7 +223,7 @@ MODULES: tuple[ModuleEntry, ...] = (
         owner=Owner.CLAUDE,
         status=ModuleStatus.ACTIVE,
         priority=Priority.P0,
-        profile_scope=ProfileScope.LIGHT,
+        profile_scope=ProfileScope.LEGACY,
         build_stage=8,
         description="Sélection opportunités et allocation",
     ),
@@ -234,7 +234,7 @@ MODULES: tuple[ModuleEntry, ...] = (
         owner=Owner.CLAUDE,
         status=ModuleStatus.ACTIVE,
         priority=Priority.P0,
-        profile_scope=ProfileScope.LIGHT,
+        profile_scope=ProfileScope.LEGACY,
         build_stage=9,
         description="DTR, CRA, break-even, edge tracker",
     ),
@@ -274,7 +274,7 @@ MODULES: tuple[ModuleEntry, ...] = (
         owner=Owner.CLAUDE,
         status=ModuleStatus.ACTIVE,
         priority=Priority.P1,
-        profile_scope=ProfileScope.LIGHT,
+        profile_scope=ProfileScope.LEGACY,
         build_stage=10,
         description="Build-9X gouverne: diagnostics, hypotheses, candidats et exports de revue",
     ),
@@ -285,7 +285,7 @@ MODULES: tuple[ModuleEntry, ...] = (
         owner=Owner.CLAUDE,
         status=ModuleStatus.ACTIVE,
         priority=Priority.P0,
-        profile_scope=ProfileScope.LIGHT,
+        profile_scope=ProfileScope.LEGACY,
         build_stage=10,
         description="Métriques, alertes, dashboard backend pour la supervision opérateur verrouillée",
     ),
@@ -295,9 +295,9 @@ MODULES: tuple[ModuleEntry, ...] = (
         owner=Owner.CLAUDE,
         status=ModuleStatus.ACTIVE,
         priority=Priority.P1,
-        profile_scope=ProfileScope.LIGHT,
+        profile_scope=ProfileScope.LEGACY,
         build_stage=10,
-        description="UI opérateur verrouillée (surface historique: Light UI)",
+        description="UI opérateur verrouillée",
     ),
     # ── Build-11/12/13: Governed protocols rail (historical labels kept) ──
     ModuleEntry(
@@ -316,9 +316,9 @@ MODULES: tuple[ModuleEntry, ...] = (
         owner=Owner.CLAUDE,
         status=ModuleStatus.ACTIVE,
         priority=Priority.P0,
-        profile_scope=ProfileScope.LIGHT,
+        profile_scope=ProfileScope.LEGACY,
         build_stage=11,
-        description="Build-11 Shadow, Build-12 Micro-live et Build-13 Live gouvernes sur le rail runtime actif COMPLETE; les labels Shadow Light / Micro-live Light / Live-Light restent historiques",
+        description="Build-11 Shadow, Build-12 Micro-live et Build-13 Live gouvernes sur le rail runtime actif complet; les labels historiques restent documentaires",
     ),
     # ── Build-14: Complete Enablers ──
     ModuleEntry(
@@ -327,7 +327,7 @@ MODULES: tuple[ModuleEntry, ...] = (
         owner=Owner.CLAUDE,
         status=ModuleStatus.ACTIVE,
         priority=Priority.P1,
-        profile_scope=ProfileScope.COMPLETE,
+        profile_scope=ProfileScope.GOVERNED,
         build_stage=14,
         description="Microstructure, régime, covariance enrichis",
     ),
@@ -338,7 +338,7 @@ MODULES: tuple[ModuleEntry, ...] = (
         owner=Owner.CLAUDE,
         status=ModuleStatus.ACTIVE,
         priority=Priority.P1,
-        profile_scope=ProfileScope.COMPLETE,
+        profile_scope=ProfileScope.GOVERNED,
         build_stage=15,
         description="Breakout Continuation",
     ),
@@ -349,7 +349,7 @@ MODULES: tuple[ModuleEntry, ...] = (
         owner=Owner.CLAUDE,
         status=ModuleStatus.ACTIVE,
         priority=Priority.P1,
-        profile_scope=ProfileScope.COMPLETE,
+        profile_scope=ProfileScope.GOVERNED,
         build_stage=16,
         description="Re-entry / Second Chance",
     ),

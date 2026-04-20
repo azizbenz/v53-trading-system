@@ -1,4 +1,9 @@
-"""Shared Local IA Lab Deflated Sharpe Ratio helpers."""
+"""Shared Local IA Lab Deflated Sharpe Ratio helpers.
+
+Reference: Bailey, D. H., and Lopez de Prado, M. (2014). The deflated Sharpe
+ratio. Journal of Portfolio Management, 40(5), 94-107.
+DOI: 10.3905/jpm.2014.40.5.094
+"""
 
 from __future__ import annotations
 

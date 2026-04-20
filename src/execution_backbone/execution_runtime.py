@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from collections import deque
 import logging
+
+from interface_contracts import VenueRateLimitExceededError
 from .fee_aware_edge_gate import (
     FeeAwareEdgeGateConfig,
 )
@@ -37,6 +39,7 @@ from .order_decider.decision_reporter import DecisionReporter, DecisionStats
 from .order_decider.intent_builder import ExecutionIntent
 from .rate_limiter import ExecutionRateLimitModel
 from .spread_guard import ExecutionSpreadGuardModel
+
 from .reconciliation_layer.divergence_classifier import DivergenceClassification, classify_all, classify_divergence
 from .reconciliation_layer.fill_reconciler import FillReconciliationResult, reconcile_fills
 from .reconciliation_layer.order_reconciler import OrderReconciliationResult, reconcile_orders
@@ -163,7 +166,26 @@ class ExecutionRuntime(ExecutionRuntimeSupportMixin):
                 gate_trace=authorization.trace,
             )
         intent = authorization.intent
-        receipt = self._adapter.submit_order(intent, now)
+        try:
+            receipt = self._adapter.submit_order(intent, now)
+        except VenueRateLimitExceededError as exc:
+            logger.warning(
+                "execution_submission_rate_limited",
+                extra={
+                    "intent_id": intent.intent_id,
+                    "pair": intent.pair,
+                    "engine_id": intent.engine_id,
+                    "error": str(exc),
+                    "timestamp": now,
+                },
+            )
+            return ExecutionSubmission(
+                status=ExecutionSubmissionStatus.BLOCKED,
+                no_trade=f"RATE_LIMIT: {exc}",
+                guard="venue_rate_limiter",
+                detail=str(exc),
+                gate_trace=authorization.trace,
+            )
         self._register_live_order(receipt.order_id, intent, receipt.submitted_at)
         self._decision_reporter.record_trade(intent, timestamp=now)
         self._record_gatekeeper_submission_audit(

@@ -20,6 +20,59 @@ from .engine_b_runner import (
 )
 
 
+def _resolve_input_preconditions(inputs: EngineBInput) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    reason_codes: list[str] = []
+    reasons: list[str] = []
+    if inputs.current_price <= 0.0:
+        reason_codes.append("engine_b.input.current_price_non_positive")
+        reasons.append("current_price must be > 0")
+    if inputs.local_mean <= 0.0:
+        reason_codes.append("engine_b.input.local_mean_non_positive")
+        reasons.append("local_mean must be > 0")
+    if inputs.candidate_size <= 0.0:
+        reason_codes.append("engine_b.input.candidate_size_non_positive")
+        reasons.append("candidate_size must be > 0")
+    if inputs.holding_period <= 0.0:
+        reason_codes.append("engine_b.input.holding_period_non_positive")
+        reasons.append("holding_period must be > 0")
+    return tuple(reason_codes), tuple(reasons)
+
+
+def _merge_reason_codes(*reason_code_groups: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            code
+            for group in reason_code_groups
+            for code in group
+            if code
+        )
+    )
+
+
+def build_engine_b_gate_reason_codes(
+    *,
+    gate_reason_codes: tuple[str, ...],
+    detailed_reason_codes: tuple[str, ...] = (),
+) -> tuple[str, ...]:
+    """Return Engine B reason codes with explicit gate provenance first.
+
+    Gate 0 = hard-block/runtime-invalid.
+    Gate 1 = excess/fade/anti-breakout setup quality.
+    Gate 2 = economics/cost feasibility.
+    Gate 3 = downstream scoring/portfolio/risk runtime.
+    """
+
+    return _merge_reason_codes(gate_reason_codes, detailed_reason_codes)
+
+
+def _resolve_invalidation_error_reason_codes(error: ValueError) -> tuple[str, ...]:
+    return {
+        "INVALID_STOP_GE_ENTRY": ("engine_b.invalidation.invalid_stop_ge_entry",),
+        "INVALID_TARGET_LE_ENTRY": ("engine_b.invalidation.invalid_target_le_entry",),
+        "INVALID_RISK_MULTIPLE": ("engine_b.invalidation.invalid_risk_multiple",),
+    }.get(str(error), ("engine_b.invalidation.invalid_input",))
+
+
 def _append_engine_b_log(
     logs: list[EngineBLogEntry],
     *,
@@ -86,6 +139,7 @@ def _build_engine_b_no_trade_output(
     excess_verdict: ExcessVerdict = ExcessVerdict.NO_EXCESS,
     breakout_verdict: BreakoutVerdict = BreakoutVerdict.CLEAR,
     cost_verdict: CostVerdictB = CostVerdictB.INFEASIBLE,
+    reason_codes: tuple[str, ...] = (),
 ) -> EngineBOutput:
     return EngineBOutput(
         pair=inputs.pair,
@@ -103,6 +157,7 @@ def _build_engine_b_no_trade_output(
         excess_verdict=excess_verdict,
         breakout_verdict=breakout_verdict,
         cost_verdict=cost_verdict,
+        reason_codes=reason_codes,
         no_trade_reasons=tuple(no_trade_reasons),
         scoring_version=inputs.scoring_version,
         log_entries=tuple(logs),
@@ -138,6 +193,8 @@ def _evaluate_excess_stage(inputs: EngineBInput, mean_result: LocalMeanResult, l
             z_score_valid=mean_result.valid,
             structure_is_range=inputs.structure_is_range,
             recent_expansion=inputs.recent_expansion,
+            vpin_current=inputs.vpin_current,
+            toxic_flow_correlation=inputs.toxic_flow_correlation,
         )
     )
     _append_engine_b_log(
@@ -146,7 +203,11 @@ def _evaluate_excess_stage(inputs: EngineBInput, mean_result: LocalMeanResult, l
         pair=inputs.pair,
         z_score=mean_result.z_score,
         raw_score=excess.excess_score,
-        reasons=(excess.reason,) if excess.reason else (),
+        reasons=_merge_reason_codes(
+            (f"engine_b.excess.{excess.verdict.value}",),
+            excess.active_reason_codes,
+            excess.suppressed_reason_codes,
+        ),
     )
     return excess
 
@@ -167,7 +228,7 @@ def _evaluate_breakout_stage(inputs: EngineBInput, logs: list[EngineBLogEntry]) 
         event="engine_b_breakout_evaluated",
         pair=inputs.pair,
         raw_score=breakout.breakout_score,
-        reasons=(breakout.reason,) if breakout.reason else (),
+        reasons=() if breakout.verdict == BreakoutVerdict.CLEAR else (f"engine_b.breakout.{breakout.verdict.value}",),
     )
     return breakout
 
@@ -191,7 +252,7 @@ def _evaluate_cost_stage(inputs: EngineBInput, logs: list[EngineBLogEntry]) -> C
         expected_cost=cost.expected_cost,
         ce_expected=cost.ce_expected,
         ev_net=cost.ev_net,
-        reasons=(cost.reason,) if cost.reason else (),
+        reasons=tuple(reason.value for reason in cost.reason_codes),
     )
     return cost
 
@@ -284,6 +345,21 @@ def _build_engine_b_emit_output(
     *,
     penalized_score: float,
 ) -> EngineBOutput:
+    reason_codes = tuple(
+        dict.fromkeys(
+            (
+                f"scoring.engine_b.conviction.{conviction.conviction.value}",
+                f"engine_internal.engine_b.excess.{excess.verdict.value}",
+                f"economics.engine_b.cost.{cost.verdict.value}",
+                f"engine_b.conviction.{conviction.conviction.value}",
+                f"engine_b.excess.{excess.verdict.value}",
+                *(("engine_b.breakout.warning",) if breakout.verdict == BreakoutVerdict.WARNING else ()),
+                *(("engine_internal.engine_b.breakout.warning",) if breakout.verdict == BreakoutVerdict.WARNING else ()),
+                *excess.active_reason_codes,
+                *excess.suppressed_reason_codes,
+            )
+        )
+    )
     _append_engine_b_log(
         logs,
         event="engine_b_signal_emitted",
@@ -325,5 +401,6 @@ def _build_engine_b_emit_output(
         breakout_verdict=breakout.verdict,
         cost_verdict=cost.verdict,
         scoring_version=inputs.scoring_version,
+        reason_codes=reason_codes,
         log_entries=tuple(logs),
     )

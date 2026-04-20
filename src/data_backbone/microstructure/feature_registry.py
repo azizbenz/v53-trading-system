@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from enum import Enum, unique
+from hashlib import sha256
 from types import MappingProxyType
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -162,6 +163,40 @@ _PROMOTION_ORDER: tuple[MicrostructurePromotionState, ...] = (
 )
 _PROMOTION_INDEX = {state: index for index, state in enumerate(_PROMOTION_ORDER)}
 
+_IMPLEMENTATION_METHODS: Mapping[str, tuple[str, str]] = MappingProxyType(
+    {
+        "ofi.cont_kukanov": (
+            ORDER_FLOW_IMBALANCE_METHOD_VERSION,
+            ORDER_FLOW_IMBALANCE_METHOD_VERSION_HASH,
+        ),
+        "vpin.easley_lopez_ohara": (VPIN_METHOD_VERSION, VPIN_METHOD_VERSION_HASH),
+        "kyle_lambda.kyle": (KYLE_LAMBDA_METHOD_VERSION, KYLE_LAMBDA_METHOD_VERSION_HASH),
+        "amihud_illiquidity.amihud": (AMIHUD_METHOD_VERSION, AMIHUD_METHOD_VERSION_HASH),
+        "roll_spread.roll": (ROLL_SPREAD_METHOD_VERSION, ROLL_SPREAD_METHOD_VERSION_HASH),
+        "corwin_schultz_spread.corwin_schultz": (
+            CORWIN_SCHULTZ_METHOD_VERSION,
+            CORWIN_SCHULTZ_METHOD_VERSION_HASH,
+        ),
+        "realized_kernel_vol.barndorff_nielsen": (
+            REALIZED_KERNEL_METHOD_VERSION,
+            REALIZED_KERNEL_METHOD_VERSION_HASH,
+        ),
+        "hawkes_intensity.bacry_mastromatteo_muzy": (
+            HAWKES_METHOD_VERSION,
+            HAWKES_METHOD_VERSION_HASH,
+        ),
+        "pin.easley_kiefer_ohara_paperman": (PIN_METHOD_VERSION, PIN_METHOD_VERSION_HASH),
+        "queue_pressure.book_imbalance": (
+            QUEUE_PRESSURE_METHOD_VERSION,
+            QUEUE_PRESSURE_METHOD_VERSION_HASH,
+        ),
+        "realized_effective_spread.live": (
+            REALIZED_EFFECTIVE_SPREAD_METHOD_VERSION,
+            REALIZED_EFFECTIVE_SPREAD_METHOD_VERSION_HASH,
+        ),
+    }
+)
+
 
 def is_valid_feature_promotion_transition(
     current: MicrostructurePromotionState,
@@ -184,6 +219,15 @@ def is_valid_feature_promotion_transition(
     return _PROMOTION_INDEX[target] == _PROMOTION_INDEX[current] + 1
 
 
+def _validated_spec_copy(
+    spec: MicrostructureFeatureSpec,
+    **updates: object,
+) -> MicrostructureFeatureSpec:
+    data = spec.model_dump(mode="python")
+    data.update(updates)
+    return MicrostructureFeatureSpec.model_validate(data)
+
+
 def promote_feature_spec(
     spec: MicrostructureFeatureSpec,
     target: MicrostructurePromotionState,
@@ -194,12 +238,11 @@ def promote_feature_spec(
         raise ValueError(
             f"invalid promotion transition: {spec.promotion_state.value} -> {target.value}"
         )
-    return spec.model_copy(
-        update={
-            "promotion_state": target,
-            "quarantined_from": None,
-            "lifecycle_reason": None,
-        }
+    return _validated_spec_copy(
+        spec,
+        promotion_state=target,
+        quarantined_from=None,
+        lifecycle_reason=None,
     )
 
 
@@ -215,12 +258,11 @@ def quarantine_feature_spec(
         MicrostructurePromotionState.REJECTED,
     }:
         raise ValueError(f"cannot quarantine feature from {spec.promotion_state.value}")
-    return spec.model_copy(
-        update={
-            "promotion_state": MicrostructurePromotionState.QUARANTINED,
-            "quarantined_from": spec.promotion_state,
-            "lifecycle_reason": reason,
-        }
+    return _validated_spec_copy(
+        spec,
+        promotion_state=MicrostructurePromotionState.QUARANTINED,
+        quarantined_from=spec.promotion_state,
+        lifecycle_reason=reason,
     )
 
 
@@ -231,12 +273,11 @@ def restore_quarantined_feature_spec(spec: MicrostructureFeatureSpec) -> Microst
         raise ValueError("restore is only valid from QUARANTINED")
     if spec.quarantined_from is None:
         raise ValueError("quarantined spec is missing quarantined_from")
-    return spec.model_copy(
-        update={
-            "promotion_state": spec.quarantined_from,
-            "quarantined_from": None,
-            "lifecycle_reason": None,
-        }
+    return _validated_spec_copy(
+        spec,
+        promotion_state=spec.quarantined_from,
+        quarantined_from=None,
+        lifecycle_reason=None,
     )
 
 
@@ -248,13 +289,12 @@ def reject_feature_spec(
     """Mark a feature as explicitly rejected / not promotable."""
 
     if spec.promotion_state is MicrostructurePromotionState.REJECTED:
-        return spec.model_copy(update={"lifecycle_reason": reason})
-    return spec.model_copy(
-        update={
-            "promotion_state": MicrostructurePromotionState.REJECTED,
-            "quarantined_from": None,
-            "lifecycle_reason": reason,
-        }
+        return _validated_spec_copy(spec, lifecycle_reason=reason)
+    return _validated_spec_copy(
+        spec,
+        promotion_state=MicrostructurePromotionState.REJECTED,
+        quarantined_from=None,
+        lifecycle_reason=reason,
     )
 
 
@@ -293,9 +333,9 @@ _FEATURE_SPECS: tuple[MicrostructureFeatureSpec, ...] = (
         default_window_seconds=None,
         calibration_seam_path="src/calibration_methods/ofi_cont_kukanov_calibration.py",
         consumed_by=(
-            "engine_c.continuation_validator_c",
-            "engine_a.conviction_builder_a",
-            "meta_learning.ml_enabler",
+            "engines.engine_c.continuation_validator_c",
+            "engines.engine_a.conviction_builder_a",
+            "meta_learning",
         ),
         method_version=ORDER_FLOW_IMBALANCE_METHOD_VERSION,
         method_version_hash=ORDER_FLOW_IMBALANCE_METHOD_VERSION_HASH,
@@ -311,8 +351,8 @@ _FEATURE_SPECS: tuple[MicrostructureFeatureSpec, ...] = (
         default_window_seconds=86_400.0,
         calibration_seam_path="src/calibration_methods/vpin_easley_lopez_ohara_calibration.py",
         consumed_by=(
-            "engine_c.continuation_validator_c",
-            "engine_b.toxic_flow_fade",
+            "engines.engine_c.continuation_validator_c",
+            "engines.engine_b.excess_detector_b",
         ),
         method_version=VPIN_METHOD_VERSION,
         method_version_hash=VPIN_METHOD_VERSION_HASH,
@@ -327,9 +367,9 @@ _FEATURE_SPECS: tuple[MicrostructureFeatureSpec, ...] = (
         default_window_seconds=None,
         calibration_seam_path="src/calibration_methods/kyle_lambda_calibration.py",
         consumed_by=(
-            "engine_c.continuation_validator_c",
-            "engine_a.cost_feasibility",
-            "execution_backbone.slippage_pre_estimate",
+            "engines.engine_c.continuation_validator_c",
+            "engines.engine_a.cost_feasibility_a",
+            "execution_backbone",
         ),
         method_version=KYLE_LAMBDA_METHOD_VERSION,
         method_version_hash=KYLE_LAMBDA_METHOD_VERSION_HASH,
@@ -344,8 +384,8 @@ _FEATURE_SPECS: tuple[MicrostructureFeatureSpec, ...] = (
         default_window_seconds=86_400.0,
         calibration_seam_path="src/calibration_methods/amihud_illiquidity_calibration.py",
         consumed_by=(
-            "portfolio_minimal.pair_selection",
-            "scoring_backbone.cost_feasibility",
+            "portfolio_minimal",
+            "scoring_backbone",
             "interface_contracts.pair_catalog",
         ),
         method_version=AMIHUD_METHOD_VERSION,
@@ -375,7 +415,7 @@ _FEATURE_SPECS: tuple[MicrostructureFeatureSpec, ...] = (
         calibration_seam_path="src/calibration_methods/corwin_schultz_spread_calibration.py",
         consumed_by=(
             "interface_contracts.pair_catalog",
-            "meta_learning.cross_exchange_parity_checks",
+            "meta_learning",
         ),
         method_version=CORWIN_SCHULTZ_METHOD_VERSION,
         method_version_hash=CORWIN_SCHULTZ_METHOD_VERSION_HASH,
@@ -391,10 +431,16 @@ _FEATURE_SPECS: tuple[MicrostructureFeatureSpec, ...] = (
         default_window_seconds=3_600.0,
         calibration_seam_path="src/calibration_methods/realized_kernel_vol_calibration.py",
         consumed_by=(
-            "engine_a.vol_scaling",
-            "engine_c.structure_detector_c",
-            "portfolio_minimal.vol_target_sizer",
-            "risk_backbone.regime_shift_watcher",
+            "data_backbone.microstructure.engine_input_provenance",
+            "engines.engine_a.structure_detector_a",
+            "engines.engine_a.engine_a_runtime_support",
+            "engines.engine_a.invalidation_mapper_a",
+            "engines.engine_c.engine_c_runtime_forecast_support",
+            "engines.engine_c.invalidation_mapper_c",
+            "engines.engine_c.structure_resolver_c",
+            "engines.engine_d.runtime_input_assembler_d",
+            "engines.engine_d.engine_d_runtime_support",
+            "engines.engine_d.invalidation_mapper_d",
         ),
         method_version=REALIZED_KERNEL_METHOD_VERSION,
         method_version_hash=REALIZED_KERNEL_METHOD_VERSION_HASH,
@@ -409,8 +455,8 @@ _FEATURE_SPECS: tuple[MicrostructureFeatureSpec, ...] = (
         default_window_seconds=None,
         calibration_seam_path="src/calibration_methods/hawkes_intensity_calibration.py",
         consumed_by=(
-            "engine_c.continuation_validator_c",
-            "meta_learning.ml_enabler",
+            "engines.engine_c.continuation_validator_c",
+            "meta_learning",
         ),
         method_version=HAWKES_METHOD_VERSION,
         method_version_hash=HAWKES_METHOD_VERSION_HASH,
@@ -425,7 +471,7 @@ _FEATURE_SPECS: tuple[MicrostructureFeatureSpec, ...] = (
         default_window_events=None,
         default_window_seconds=604_800.0,
         calibration_seam_path="src/calibration_methods/pin_calibration.py",
-        consumed_by=("meta_learning.pair_selection_diagnostics",),
+        consumed_by=("meta_learning",),
         method_version=PIN_METHOD_VERSION,
         method_version_hash=PIN_METHOD_VERSION_HASH,
     ),
@@ -435,13 +481,7 @@ _FEATURE_SPECS: tuple[MicrostructureFeatureSpec, ...] = (
         default_window_events=1,
         default_window_seconds=None,
         calibration_seam_path="src/calibration_methods/queue_pressure_calibration.py",
-        consumed_by=(
-            "engine_a",
-            "engine_b",
-            "engine_c",
-            "engine_d",
-            "execution_backbone",
-        ),
+        consumed_by=("engines.engine_c.continuation_validator_c",),
         method_version=QUEUE_PRESSURE_METHOD_VERSION,
         method_version_hash=QUEUE_PRESSURE_METHOD_VERSION_HASH,
     ),
@@ -456,7 +496,7 @@ _FEATURE_SPECS: tuple[MicrostructureFeatureSpec, ...] = (
         calibration_seam_path="src/calibration_methods/realized_effective_spread_calibration.py",
         consumed_by=(
             "execution_backbone.execution_cost_meter",
-            "meta_minimal.cost_drift_monitor",
+            "meta_minimal",
         ),
         method_version=REALIZED_EFFECTIVE_SPREAD_METHOD_VERSION,
         method_version_hash=REALIZED_EFFECTIVE_SPREAD_METHOD_VERSION_HASH,
@@ -471,6 +511,19 @@ def _build_registry(
     for spec in specs:
         if spec.feature_id in registry:
             raise ValueError(f"duplicate microstructure feature_id: {spec.feature_id}")
+        expected_method = _IMPLEMENTATION_METHODS.get(spec.feature_id)
+        if expected_method is None:
+            raise ValueError(f"unknown implementation mapping for feature_id: {spec.feature_id}")
+        if (spec.method_version, spec.method_version_hash) != expected_method:
+            raise ValueError(
+                "registry method version drift detected for "
+                f"{spec.feature_id}: {spec.method_version}/{spec.method_version_hash}"
+            )
+        expected_hash = sha256(spec.method_version.encode("utf-8")).hexdigest()
+        if spec.method_version_hash != expected_hash:
+            raise ValueError(
+                f"method_version_hash mismatch for {spec.feature_id}: {spec.method_version_hash}"
+            )
         registry[spec.feature_id] = spec
     return MappingProxyType(registry)
 

@@ -5,7 +5,8 @@ Additive Narang-grade forecast contract seam on top of the canonical decision si
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import math
+from collections.abc import Iterable, Mapping
 from enum import Enum, unique
 
 from pydantic import ConfigDict, Field, field_validator
@@ -63,6 +64,89 @@ class ConditioningRecord(TimestampedModel):
         if not normalized:
             raise ValueError("ConditioningRecord.code must not be blank")
         return normalized
+
+
+def _normalize_reason_code_iterable(codes: Iterable[str]) -> tuple[str, ...]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for code in codes:
+        stripped = code.strip()
+        if not stripped:
+            raise ValueError("reason_codes must not contain blank values")
+        if stripped in seen:
+            continue
+        seen.add(stripped)
+        normalized.append(stripped)
+    return tuple(normalized)
+
+
+def _normalize_versions_mapping(value: Mapping[str, str]) -> dict[str, str]:
+    normalized: dict[str, str] = {}
+    for key, raw_value in value.items():
+        normalized_key = key.strip()
+        normalized_value = raw_value.strip()
+        if not normalized_key:
+            raise ValueError("versions must not contain blank keys")
+        if not normalized_value:
+            raise ValueError("versions must not contain blank values")
+        normalized[normalized_key] = normalized_value
+    if not normalized:
+        raise ValueError("versions must contain at least one entry")
+    return normalized
+
+
+def merge_reason_codes(*groups: Iterable[str]) -> tuple[str, ...]:
+    """Normalize and de-duplicate additive reason codes while preserving order."""
+
+    merged: list[str] = []
+    for group in groups:
+        merged.extend(group)
+    return _normalize_reason_code_iterable(merged)
+
+
+def build_scoring_conditioning_records(
+    *,
+    timestamp_ms: int,
+    penalties: Iterable[tuple[str, float]],
+) -> tuple[ConditioningRecord, ...]:
+    """Build scoring-family conditioning records without importing scoring implementations."""
+
+    records: list[ConditioningRecord] = []
+    for penalty_id, value in penalties:
+        normalized_penalty_id = penalty_id.strip()
+        if not normalized_penalty_id:
+            raise ValueError("penalty_id must not be blank")
+        records.append(
+            ConditioningRecord(
+                timestamp_ms=timestamp_ms,
+                family=ConditioningFamily.SCORING,
+                code=f"scoring.penalty.{normalized_penalty_id}",
+                value=value,
+                triggered_no_trade=False,
+            )
+        )
+    return tuple(records)
+
+
+def build_forecast_versions(
+    *,
+    scoring_version: str,
+    calibration_profile_id: str,
+    calibration_status: str,
+    physics_calibration_profile_id: str,
+    physics_calibration_status: str,
+) -> dict[str, str]:
+    """Build the governed additive forecast version map used by A/B runtime adapters."""
+
+    return _normalize_versions_mapping(
+        {
+            "scoring_version": scoring_version,
+            "calibration_profile_id": calibration_profile_id,
+            "calibration_status": calibration_status,
+            "physics_calibration_profile_id": physics_calibration_profile_id,
+            "physics_calibration_status": physics_calibration_status,
+        }
+    )
 
 
 class ForecastSignalCandidate(TimestampedModel):
@@ -128,29 +212,19 @@ class ForecastSignalCandidate(TimestampedModel):
     @field_validator("reason_codes")
     @classmethod
     def _normalize_reason_codes(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        normalized: list[str] = []
-        for code in value:
-            stripped = code.strip()
-            if not stripped:
-                raise ValueError("reason_codes must not contain blank values")
-            normalized.append(stripped)
-        return tuple(normalized)
+        return _normalize_reason_code_iterable(value)
 
     @field_validator("versions")
     @classmethod
     def _normalize_versions(cls, value: Mapping[str, str]) -> dict[str, str]:
-        normalized: dict[str, str] = {}
-        for key, raw_value in value.items():
-            normalized_key = key.strip()
-            normalized_value = raw_value.strip()
-            if not normalized_key:
-                raise ValueError("versions must not contain blank keys")
-            if not normalized_value:
-                raise ValueError("versions must not contain blank values")
-            normalized[normalized_key] = normalized_value
-        if not normalized:
-            raise ValueError("versions must contain at least one entry")
-        return normalized
+        return _normalize_versions_mapping(value)
+
+    @field_validator("expected_ce", "expected_gain")
+    @classmethod
+    def _require_finite_projection_metric(cls, value: float) -> float:
+        if not math.isfinite(value):
+            raise ValueError("expected_ce and expected_gain must be finite")
+        return value
 
     @classmethod
     def from_decision_signal(
@@ -206,4 +280,7 @@ __all__ = [
     "ConditioningFamily",
     "ConditioningRecord",
     "ForecastSignalCandidate",
+    "build_forecast_versions",
+    "build_scoring_conditioning_records",
+    "merge_reason_codes",
 ]

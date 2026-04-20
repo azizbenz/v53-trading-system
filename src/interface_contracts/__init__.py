@@ -32,6 +32,9 @@ from .refusal_records import *
 from .meta_contracts import *
 from .numeric_contracts import *
 from .error_contracts import *
+from .closed_episode_contracts import *
+from .engine_coordination_contracts import *
+from .venue_error_contracts import *
 from .operator_contracts import *
 from .build14_contracts import *
 from .engine_validation_contracts import *
@@ -109,6 +112,13 @@ __all__ = [
     "DataStaleError", "RiskBudgetExceededError", "PairSuspendedError",
     "EngineNotAllowedError", "InvalidProfileActivationError",
     "ReconciliationError", "BootstrapError",
+    # closed_episode_contracts
+    "EpisodeCloseReason", "EpisodeRef",
+    # engine_coordination_contracts
+    "EngineCoordinationAction", "EngineCoordinationInput",
+    "EngineCoordinationOutcome", "EngineCoordinationThresholds",
+    # venue_error_contracts
+    "VenueRateLimitExceededError", "BinanceApiRateLimitExceededError",
     # operator_contracts
     "OperatorSafingAction", "OperatorSafingRequest",
     # build14_contracts

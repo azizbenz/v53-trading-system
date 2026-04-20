@@ -17,7 +17,12 @@ from interface_contracts import (
 )
 from interface_contracts.decision_contracts import SignalCandidate as DecisionSignalCandidate
 from interface_contracts.domain_types import RegimeId
-from interface_contracts.forecast_contracts import SignalCandidate as ForecastModuleSignalCandidate
+from interface_contracts.forecast_contracts import (
+    SignalCandidate as ForecastModuleSignalCandidate,
+    build_forecast_versions,
+    build_scoring_conditioning_records,
+    merge_reason_codes,
+)
 
 
 NOW_MS = 1_700_000_000_000
@@ -151,6 +156,14 @@ class TestForecastSignalCandidate:
         with pytest.raises(ValidationError):
             _forecast_signal(versions={"engine_version": " "})
 
+    def test_expected_ce_must_be_finite(self) -> None:
+        with pytest.raises(ValidationError):
+            _forecast_signal(expected_ce=float("nan"))
+
+    def test_expected_gain_must_be_finite(self) -> None:
+        with pytest.raises(ValidationError):
+            _forecast_signal(expected_gain=float("inf"))
+
     def test_forecast_direction_bounds_enforced(self) -> None:
         with pytest.raises(ValidationError):
             _forecast_signal(forecast_direction=1.5)
@@ -221,3 +234,66 @@ class TestForecastSignalCandidate:
         assert candidate.strategy_id == "strategy-b-breakout"
         assert candidate.reason_codes == ("engine_b.breakout",)
 
+
+class TestForecastContractHelpers:
+    def test_merge_reason_codes_normalizes_and_deduplicates(self) -> None:
+        assert merge_reason_codes(
+            (" engine_a.cost.ok ", "engine_a.cost.ok"),
+            ("scoring.penalty.context_soft",),
+            (" engine_a.conviction.medium ",),
+        ) == (
+            "engine_a.cost.ok",
+            "scoring.penalty.context_soft",
+            "engine_a.conviction.medium",
+        )
+
+    def test_merge_reason_codes_rejects_blank_values(self) -> None:
+        with pytest.raises(ValueError, match="reason_codes"):
+            merge_reason_codes(("valid", " "),)
+
+    def test_build_forecast_versions_normalizes_values(self) -> None:
+        assert build_forecast_versions(
+            scoring_version=" a.v1 ",
+            calibration_profile_id=" engine_a.profile.v1 ",
+            calibration_status=" READY_FOR_SHADOW ",
+            physics_calibration_profile_id=" physics.profile.v1 ",
+            physics_calibration_status=" TO_CALIBRATE ",
+        ) == {
+            "scoring_version": "a.v1",
+            "calibration_profile_id": "engine_a.profile.v1",
+            "calibration_status": "READY_FOR_SHADOW",
+            "physics_calibration_profile_id": "physics.profile.v1",
+            "physics_calibration_status": "TO_CALIBRATE",
+        }
+
+    def test_build_forecast_versions_rejects_blank_values(self) -> None:
+        with pytest.raises(ValueError, match="versions"):
+            build_forecast_versions(
+                scoring_version=" ",
+                calibration_profile_id="engine_a.profile.v1",
+                calibration_status="READY_FOR_SHADOW",
+                physics_calibration_profile_id="physics.profile.v1",
+                physics_calibration_status="TO_CALIBRATE",
+            )
+
+    def test_build_scoring_conditioning_records_builds_scoring_family_entries(self) -> None:
+        records = build_scoring_conditioning_records(
+            timestamp_ms=NOW_MS,
+            penalties=(("context_soft", 0.2), ("risk_soft", 0.1)),
+        )
+
+        assert tuple(record.family for record in records) == (
+            ConditioningFamily.SCORING,
+            ConditioningFamily.SCORING,
+        )
+        assert tuple(record.code for record in records) == (
+            "scoring.penalty.context_soft",
+            "scoring.penalty.risk_soft",
+        )
+
+    def test_build_scoring_conditioning_records_rejects_blank_penalty_id(self) -> None:
+        with pytest.raises(ValueError, match="penalty_id"):
+            build_scoring_conditioning_records(
+                timestamp_ms=NOW_MS,
+                penalties=((" ", 0.2),),
+            )

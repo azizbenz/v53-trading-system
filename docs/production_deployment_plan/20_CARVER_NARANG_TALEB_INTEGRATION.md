@@ -54,7 +54,7 @@ Source: `MATH CARVNER.docx` + `V5_3_CARVER_INTEGRATION_FOR_CODE.md`.
 | Net return / Sharpe / variance per moteur, paire, portfolio | `src/meta_minimal/edge_tracker_prudent_minimal/` (already exists, enrich) | P2 | — |
 | Standardised forecast `F_i ∝ E[r_i]/σ_i`, `ForecastScalar = 10/E[|F|]` | `scoring_backbone/forecast_normalizer.py` (NEW) | **P2** | calibrated `ForecastScalar` per engine, computed offline |
 | Vol-target sizing `VolScalar = DailyCashVolTarget / InstrumentValueVol`, then `N = (F/10) × VolScalar` | `portfolio_minimal/allocation_router/vol_target_sizer.py` (replaces fixed sizing per P4-01) | **P4** | THR-S07 (already in doc 19) |
-| Cost / break-even / EV-net `EV^net = x × (E[g] − E[c])`; no-trade if EV^net ≤ 0 | `scoring_backbone/break_even_filter.py` (NEW, gates emission) | **P2** | reuse THR-W01 (W-Carver) for min EV^net floor |
+| Cost / break-even / EV-net `EV^net = x × (E[g] − E[c])`; no-trade if EV^net ≤ 0 | `scoring_backbone/break_even_filter.py` (NEW, gates emission) | **P2** | use THR-E05 for the min EV^net floor; THR-W01 stays risk-only |
 | CE per moteur/paire/portefeuille | `src/meta_minimal/cra_monitor/` (already exists) | P0 (already green) | — |
 | Diversification min (caps, cluster, BTC budget) | `risk_backbone/correlation_cluster_guard` + `btc_factor_guard` (already exist) | P4 | — |
 
@@ -81,7 +81,7 @@ Source: `V5_3_NARANG_INTEGRATION_MD.md`.
 ### 3.1 Enriched `SignalCandidate` contract (additive migration seam for Phase 2)
 File to create: `src/interface_contracts/forecast_contracts.py`
 
-Current code truth: the canonical runtime contract still lives in `src/interface_contracts/decision_contracts.py`, and engines A/B/C/D build it directly. Therefore the Narang-grade contract must land additively first (`forecast_contracts.py` + adapters), then migrate progressively. It is **not** a one-shot drop-in replacement.
+Current code truth: the canonical runtime contract still lives in `src/interface_contracts/decision_contracts.py`, and engines A/B/C/D build it directly. Therefore the Narang-grade contract must land additively first (`forecast_contracts.py` + adapters), then migrate progressively. The integration is a backward-compatible extension: optional fields are added first, then per-engine migration proceeds on a staged schedule — it is **not** a one-shot contract swap.
 
 ```python
 from enum import Enum
@@ -252,7 +252,7 @@ Already complete (2902 → 2940 green after Phase 1 plumbing landed).
 |---|---|---|---|
 | **P2-06 (NEW)** | Implement enriched `SignalCandidate` per §3.1 as an additive migration seam; migrate engines A/B emission via adapters before any canonical merge | `src/interface_contracts/forecast_contracts.py` + engine adapters | every existing engine test still green; new contract tests ≥ 15 |
 | **P2-07 (NEW)** | `forecast_normalizer.py`: implement Carver `F_i ∝ E[r_i]/σ_i` with `ForecastScalar = 10/E[|F|]` learned offline per engine | `src/scoring_backbone/forecast_normalizer.py` + calibration seam | unit: `E[|F_normalised|] ≈ 10` after scaling |
-| **P2-08 (NEW)** | `break_even_filter.py`: gates `SignalCandidate` emission on `EV^net = x × (E[g] − E[c]) > THR-W01_floor` (Carver §7) | `src/scoring_backbone/break_even_filter.py` + calibration | unit: cost ≥ gain → no emit; cost ≪ gain → emit |
+| **P2-08 (NEW)** | `break_even_filter.py`: gates `SignalCandidate` emission on `EV^net = x × (E[g] − E[c]) > THR-E05_floor` (Carver §7) | `src/scoring_backbone/break_even_filter.py` + calibration | unit: cost ≥ gain → no emit; cost ≪ gain → emit |
 | **P2-09 (NEW)** | `cost_drift_monitor`: ex-ante vs ex-post cost tracking, alerts when bias > 20% | `src/meta_minimal/cost_drift_monitor/` | unit: synthetic cost stream with 30% bias → alert fires |
 
 ### Phase 3 — ML enabler — **+2 tasks, +1 hard rule**
@@ -293,7 +293,7 @@ Each tier transition (`$100 → $200 → $500 → $2K → $4K`) must additionall
 
 | ID | Meaning | Hard cap | Default | Module |
 |---|---|---|---|---|
-| **THR-W01** | Min `EV^net` floor for SignalCandidate emission | 0.0 (cannot disable) | $0.05/event | `break_even_filter` |
+| **THR-E05** | Min `EV^net` floor for SignalCandidate emission | 0.0 (cannot disable) | $0.05/event | `break_even_filter` |
 | **THR-T01** | Tail-loss multiplier vs median triggering engine halt | ≤ 5× | 3× | `tail_risk_meter` |
 | **THR-D01** | Cost-drift bias % triggering alert | ≤ 50% | 20% | `cost_drift_monitor` |
 | **THR-D02** | Strategy drift KS p-value triggering pause | ≥ 0.001 | 0.01 | `strategy_drift_monitor` |
@@ -406,7 +406,7 @@ None contradicts the V5.3 canon, the Build-14 enabler pattern, or the LIGHT/COMP
 
 ### 11.2 Conditioning records emitted
 
-Every engine emission carries in `conditioning_state` the evaluation trace. Blocked paths append a HARD_BLOCK `ConditioningRecord` and a `RefusalRecord(category=HARD_BLOCK, reason_codes=(…,))` to `RefusalJournal`. Blocked paths do **not** emit a canonical `SignalCandidate`; this avoids inventing a fake `side="flat"` state that does not exist in the runtime enum.
+Every engine emission carries in `conditioning_state` the evaluation trace. Blocked paths append a HARD_BLOCK `ConditioningRecord` and a `RefusalRecord(category=HARD_BLOCK, reason_codes=(…,))` to `RefusalJournal`. Blocked paths do **not** emit a canonical `SignalCandidate`; this avoids inventing a fake neutral/no-direction side that does not exist in the runtime `Side` enum (which admits only LONG and SHORT).
 
 ### 11.3 What this is NOT
 

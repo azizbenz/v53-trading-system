@@ -1,0 +1,20 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.14"
+      - run: make install
+      - run: make lint
+      - run: make typecheck
+      - run: make dag
+      - run: make guardrails
+      - run: make test

@@ -95,6 +95,7 @@ Lecture séquentielle recommandée. Chaque fichier est self-contained mais s'app
 | 12 | [LOCAL_LAB_VS_VPS_SEPARATION.md](12_LOCAL_LAB_VS_VPS_SEPARATION.md) | Séparation Local IA Lab / VPS — qui fait quoi où | 15 min |
 | 13 | [CALIBRATION_METHODS.md](13_CALIBRATION_METHODS.md) | Méthodes math de calibration des seuils dynamiques | 20 min |
 | 14 | [SHADOW_GATE_MATH.md](14_SHADOW_GATE_MATH.md) | Math des gates Shadow 1m/2m/3m | 20 min |
+| 30 | [PROMOTION_CALIBRATION_REGISTER.md](30_PROMOTION_CALIBRATION_REGISTER.md) | Registre durable : quoi calibrer ou prouver avant Shadow / Micro-live / Live | 10 min |
 
 **Total : ~2h55 de lecture pour le dossier actuellement présent dans le repo.**
 

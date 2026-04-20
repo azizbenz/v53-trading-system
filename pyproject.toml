@@ -4,6 +4,7 @@ version = "5.3.0-build9"
 description = "V5.3 Crypto Trading System — Architecture modulaire prod-safe"
 requires-python = ">=3.12"
 dependencies = [
+    "keyring>=25.0,<26.0",
     "pydantic>=2.0,<3.0",
     "pyyaml>=6.0",
     "websocket-client>=1.8,<2.0",
@@ -29,6 +30,7 @@ markers = [
     "build5: Build-5 Scoring Backbone",
     "build6: Build-6 Engine A",
     "slow: Tests lents (shadow/live simulation)",
+    "testnet: Binance Spot testnet integration tests",
 ]
 
 [tool.ruff]

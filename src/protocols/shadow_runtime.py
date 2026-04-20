@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from protocols.runtime_signal_support import run_idle_runtime, runtime_cli_main
 from protocols.shadow_runtime_inputs import (
     build_shadow_input_from_payloads,
     build_shadow_runtime_evidence,
@@ -43,6 +44,18 @@ def check_shadow_30j_gate(
     return gate_passed, report
 
 
+def run(*, sleep_seconds: float = 0.1) -> int:
+    """Run a cooperative Shadow runtime shell until shutdown is requested."""
+
+    return run_idle_runtime(__name__, sleep_seconds=sleep_seconds)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entrypoint for cooperative Shadow runtime shutdown handling."""
+
+    return runtime_cli_main(__name__, argv=argv)
+
+
 __all__ = [
     "build_shadow_runtime_evidence",
     "build_shadow_input_from_payloads",
@@ -51,4 +64,10 @@ __all__ = [
     "compare_shadow_candidate",
     "run_shadow_validation",
     "check_shadow_30j_gate",
+    "run",
+    "main",
 ]
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,51 +1,53 @@
-.PHONY: test lint typecheck dag-check ci clean install build9-core-smoke
+.PHONY: install test lint typecheck dag dag-check guardrails all ci clean build9-core-smoke
 
-PYTHON ?= python
+UV ?= uv
 
-# Installation
 install:
-	$(PYTHON) -m pip install -e ".[dev]"
+	$(UV) sync
 
-# Tests
 test:
-	$(PYTHON) -m pytest tests/ -v --tb=short
+	$(UV) run pytest tests/ -v --tb=short
 
 test-build1:
-	$(PYTHON) -m pytest tests/test_interface_contracts/ tests/test_manifest_registry/ tests/test_dag_validator/ tests/test_contract_test_suite/ tests/test_smoke_bootstrap_recovery/ -v --tb=short
+	$(UV) run pytest tests/test_interface_contracts/ tests/test_manifest_registry/ tests/test_dag_validator/ tests/test_contract_test_suite/ tests/test_smoke_bootstrap_recovery/ -v --tb=short
 
 test-cov:
-	$(PYTHON) -m pytest tests/ --cov=src --cov-report=term-missing --cov-report=html
+	$(UV) run pytest tests/ --cov=src --cov-report=term-missing --cov-report=html
 
-# Qualité
 lint:
-	$(PYTHON) -m ruff check src/ tests/
-	$(PYTHON) -m ruff format --check src/ tests/
+	$(UV) run ruff check src/ tests/
+	$(UV) run ruff format --check src/ tests/
 
 format:
-	$(PYTHON) -m ruff format src/ tests/
-	$(PYTHON) -m ruff check --fix src/ tests/
+	$(UV) run ruff format src/ tests/
+	$(UV) run ruff check --fix src/ tests/
 
 typecheck:
-	$(PYTHON) -m mypy src/
+	$(UV) run mypy src/
 
-# Architecture
+dag:
+	$(UV) run python scripts/run_dag_check.py
+
 dag-check:
-	$(PYTHON) scripts/run_dag_check.py
+	$(UV) run python scripts/run_dag_check.py
+
+guardrails:
+	$(UV) run python scripts/run_engineering_guardrails.py
 
 contract-tests:
-	$(PYTHON) scripts/run_contract_tests.py
+	$(UV) run python scripts/run_contract_tests.py
 
 smoke-tests:
-	$(PYTHON) scripts/run_smoke_tests.py
+	$(UV) run python scripts/run_smoke_tests.py
 
 build9-core-smoke:
-	$(PYTHON) scripts/run_build9_core_smoke.py
+	$(UV) run python scripts/run_build9_core_smoke.py
 
-# CI complet
-ci: lint typecheck test dag-check
-	@echo "✅ CI complet — tous les checks passent"
+all: lint typecheck dag guardrails test
 
-# Nettoyage
+ci: all
+	@echo "CI complet - tous les checks passent"
+
 clean:
 	find . -type d -name __pycache__ -exec rm -rf {} +
 	find . -type d -name .pytest_cache -exec rm -rf {} +

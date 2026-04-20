@@ -1,0 +1,43 @@
+﻿# ChatGPT Upload Bundles
+
+Ce dossier contient 20 fichiers `.md` maximum orientés audit ChatGPT.
+Les fichiers originaux n'ont pas été modifiés ; chaque bundle concatène plusieurs sources avec leurs chemins d'origine.
+
+- [01_GOVERNANCE_CORE.md](01_GOVERNANCE_CORE.md)
+  - sources: AGENTS.md; CODEX_PROMPT.md; docs/production_deployment_plan/24_V53_UPDATE_SURGICAL_INTEGRATION_MAP.md; docs/production_deployment_plan/25_UPDATE_AUDIT_PROTOCOL.md; docs/production_deployment_plan/26_UPDATE_AUDIT_PACK_TEMPLATE.md; docs/production_deployment_plan/28_ARBITRATION_PROTOCOL_OPUS_CODEX.md
+- [02_SYSTEM_OVERVIEW_AND_GAPS.md](02_SYSTEM_OVERVIEW_AND_GAPS.md)
+  - sources: docs/production_deployment_plan/00_README.md; docs/production_deployment_plan/01_VERDICT_V53_VS_V37.md; docs/production_deployment_plan/02_V53_PRODUCTION_AUDIT.md; docs/production_deployment_plan/03_GAPS_P0.md; docs/production_deployment_plan/04_GAPS_P1.md; docs/production_deployment_plan/05_V37_BRICKS_INCORPORATION.md; docs/production_deployment_plan/06_BLIND_SPOTS_MULTIDISCIPLINARY.md; docs/production_deployment_plan/07_PHASE_PLAN_0_TO_4.md; docs/production_deployment_plan/08_RISK_REGISTER.md; docs/production_deployment_plan/09_CODING_SLICES_FOR_IMPLEMENTING_AGENT.md; docs/production_deployment_plan/10_DECISIONS_REQUIRED.md; docs/production_deployment_plan/18_CODE_VS_PLAN_AUDIT_AND_WORK_PLAN.md
+- [03_THRESHOLDS_CALIBRATION_SHADOW_MATH.md](03_THRESHOLDS_CALIBRATION_SHADOW_MATH.md)
+  - sources: docs/production_deployment_plan/11_DYNAMIC_THRESHOLDS_CATALOG.md; docs/production_deployment_plan/11A_DYNAMIC_THRESHOLDS_REPO_CROSSCHECK.md; docs/production_deployment_plan/13_CALIBRATION_METHODS.md; docs/production_deployment_plan/14_SHADOW_GATE_MATH.md
+- [04_LOCAL_LAB_VPS_ARCHITECTURE.md](04_LOCAL_LAB_VPS_ARCHITECTURE.md)
+  - sources: docs/production_deployment_plan/12_LOCAL_LAB_VS_VPS_SEPARATION.md; docs/production_deployment_plan/15_LOCAL_LAB_INGESTION_DIAGNOSTIC.md; docs/production_deployment_plan/16_VPS_LOCAL_OBSERVABILITY_ARCHITECTURE.md; docs/production_deployment_plan/17A_BINANCE_SHADOW_POWERSHELL_BOOTSTRAP.md
+- [05_MODERNIZATION_AND_DOC20_TARGET.md](05_MODERNIZATION_AND_DOC20_TARGET.md)
+  - sources: docs/production_deployment_plan/19_MULTIPAIR_MODERNIZATION_PLAN.md; docs/production_deployment_plan/20_CARVER_NARANG_TALEB_INTEGRATION.md; docs/production_deployment_plan/29_SPRINT_FINAL_CODEX_BEFORE_MONDAY.md; docs/production_deployment_plan/30_PROMOTION_CALIBRATION_REGISTER.md
+- [06_ENGINE_C_SPEC_AND_DOCTRINE.md](06_ENGINE_C_SPEC_AND_DOCTRINE.md)
+  - sources: docs/production_deployment_plan/21_ENGINE_C_SPEC_BREAKOUT_CONTINUATION.md; docs/production_deployment_plan/27_OPUS_TO_CODEX_AUDIT_DOCS21_22_PASS2.md; docs/production_deployment_plan/update_audit/2026-04-16_engine_c_continuation_microstructure_wiring.md
+- [07_ENGINE_D_SPEC_AND_DOCTRINE.md](07_ENGINE_D_SPEC_AND_DOCTRINE.md)
+  - sources: docs/production_deployment_plan/22_ENGINE_D_SPEC_REENTRY_SECOND_CHANCE.md; docs/production_deployment_plan/update_audit/2026-04-16_docs21_22_opus_audit.md; docs/production_deployment_plan/update_audit/2026-04-17_doc20_phase_d_engine_coordination_rules.md; docs/production_deployment_plan/update_audit/2026-04-17_doc20_phase_d_cd_runtime_coordination_and_refusal.md
+- [08_MICROSTRUCTURE_POLICY_AND_DICTIONARY.md](08_MICROSTRUCTURE_POLICY_AND_DICTIONARY.md)
+  - sources: docs/production_deployment_plan/23_MICROSTRUCTURE_FEATURE_DICTIONARY.md; docs/production_deployment_plan/update_audit/2026-04-16_no_1990s_ta_gate.md
+- [09_MICROSTRUCTURE_MEASURES_A.md](09_MICROSTRUCTURE_MEASURES_A.md)
+  - sources: docs/production_deployment_plan/update_audit/2026-04-16_microstructure_feature_registry.md; docs/production_deployment_plan/update_audit/2026-04-16_order_flow_imbalance.md; docs/production_deployment_plan/update_audit/2026-04-16_realized_kernel_vol.md; docs/production_deployment_plan/update_audit/2026-04-16_vpin.md; docs/production_deployment_plan/update_audit/2026-04-16_queue_pressure.md
+- [10_MICROSTRUCTURE_MEASURES_B.md](10_MICROSTRUCTURE_MEASURES_B.md)
+  - sources: docs/production_deployment_plan/update_audit/2026-04-16_kyle_lambda.md; docs/production_deployment_plan/update_audit/2026-04-16_hawkes_intensity.md; docs/production_deployment_plan/update_audit/2026-04-16_pin.md; docs/production_deployment_plan/update_audit/2026-04-16_roll_spread.md; docs/production_deployment_plan/update_audit/2026-04-16_amihud_illiquidity.md; docs/production_deployment_plan/update_audit/2026-04-16_corwin_schultz_spread.md; docs/production_deployment_plan/update_audit/2026-04-16_realized_effective_spread.md
+- [11_STRATEGY_IDENTITY_AND_REPLAY.md](11_STRATEGY_IDENTITY_AND_REPLAY.md)
+  - sources: docs/production_deployment_plan/update_audit/2026-04-15_strategy_identity_contract.md; docs/production_deployment_plan/update_audit/2026-04-15_replay_manifest_strategy_identity.md; docs/production_deployment_plan/update_audit/2026-04-15_replay_scope_identity.md; docs/production_deployment_plan/update_audit/2026-04-15_replay_session_config_strategy_identity.md; docs/production_deployment_plan/update_audit/2026-04-15_replay_session_state_strategy_identity.md
+- [12_FORECAST_CONTRACTS_AND_ADAPTERS.md](12_FORECAST_CONTRACTS_AND_ADAPTERS.md)
+  - sources: docs/production_deployment_plan/update_audit/2026-04-15_forecast_contract_engine_a_adapter.md; docs/production_deployment_plan/update_audit/2026-04-15_engine_b_forecast_adapter.md; docs/production_deployment_plan/update_audit/2026-04-17_doc20_native_phase_a_phase_b_seams.md; docs/production_deployment_plan/update_audit/2026-04-18_doc20_cd_additive_forecast_runtime_seam.md
+- [13_ENGINE_A_AUDITS.md](13_ENGINE_A_AUDITS.md)
+  - sources: docs/production_deployment_plan/update_audit/2026-04-17_engine_a_runtime_risk_event_alignment.md; docs/production_deployment_plan/update_audit/2026-04-17_engine_a_ofi_first_local_conviction_seam.md; docs/production_deployment_plan/update_audit/2026-04-17_engine_a_kyle_lambda_cost_seam.md; docs/production_deployment_plan/update_audit/2026-04-17_engine_a_realized_kernel_structure_seam.md; docs/production_deployment_plan/update_audit/2026-04-17_engine_a_prompt_correction_hardening.md; docs/production_deployment_plan/update_audit/2026-04-18_doc20_phase_b1_engine_a_additive_economics_wiring.md; docs/production_deployment_plan/update_audit/2026-04-18_engine_a_runtime_downstream_truthfulness.md
+- [14_ENGINE_B_AUDITS.md](14_ENGINE_B_AUDITS.md)
+  - sources: docs/production_deployment_plan/update_audit/2026-04-17_engine_b_toxic_flow_fade_local_subsignal.md; docs/production_deployment_plan/update_audit/2026-04-17_engine_b_hardening_from_cartography_audit.md; docs/production_deployment_plan/update_audit/2026-04-17_engine_b_reaudit_residual_fixes.md; docs/production_deployment_plan/update_audit/2026-04-17_engine_b_prompt1_explicit_status_and_forecast_proofs.md
+- [15_ENGINE_C_AUDITS.md](15_ENGINE_C_AUDITS.md)
+  - sources: docs/production_deployment_plan/update_audit/2026-04-18_doc20_phase_b3_engine_c_additive_economics_wiring.md; docs/production_deployment_plan/update_audit/2026-04-18_engine_a_risk_code_fix_and_engine_c_truthful_runtime_patch.md
+- [16_ENGINE_D_AUDITS_AND_SPLITS.md](16_ENGINE_D_AUDITS_AND_SPLITS.md)
+  - sources: docs/production_deployment_plan/update_audit/2026-04-18_t9_engine_d_runtime_support_split.md; docs/production_deployment_plan/update_audit/2026-04-18_t9_engine_b_d_runtime_test_split.md
+- [17_RUNTIME_REFUSAL_AND_COORDINATION_SEAMS.md](17_RUNTIME_REFUSAL_AND_COORDINATION_SEAMS.md)
+  - sources: docs/production_deployment_plan/update_audit/2026-04-17_doc20_phase_c_ab_runtime_refusal_seam.md; docs/production_deployment_plan/update_audit/2026-04-17_doc20_phase_d_engine_coordination_rules.md; docs/production_deployment_plan/update_audit/2026-04-17_doc20_phase_d_cd_runtime_coordination_and_refusal.md
+- [18_REPO_ALIGNMENT_PROMOTION_OPS.md](18_REPO_ALIGNMENT_PROMOTION_OPS.md)
+  - sources: docs/production_deployment_plan/update_audit/2026-04-17_repo_alignment_matrix_local_lab_vps_shadow.md; docs/production_deployment_plan/update_audit/2026-04-17_shadow_vps_service_process_metrics_service_path.md; docs/production_deployment_plan/update_audit/2026-04-17_promotion_calibration_register.md
+- [19_METHODOLOGY_AND_SPRINT_PLANS.md](19_METHODOLOGY_AND_SPRINT_PLANS.md)
+  - sources: docs/production_deployment_plan/update_audit/2026-04-17_codex_methodology_semantic_gap_guard.md; docs/production_deployment_plan/update_audit/2026-04-19_sprint_30_codex_3day_mathgates_ratelimiter.md; docs/production_deployment_plan/update_audit/2026-04-19_sprint_31_codex_6day_travail_critique_suite_sprint_30.md

@@ -107,8 +107,8 @@ def build_kyle_intervals(
     if bucket_seconds <= 0.0:
         raise ValueError("bucket_seconds must be > 0")
     for previous, current in zip(trades, trades[1:]):
-        if current.timestamp_ns <= previous.timestamp_ns:
-            raise ValueError("trades must be strictly ordered by timestamp_ns")
+        if current.timestamp_ns < previous.timestamp_ns:
+            raise ValueError("trades must be non-decreasing in timestamp_ns")
 
     bucket_ns = int(bucket_seconds * 1_000_000_000.0)
     intervals: list[KyleIntervalPoint] = []

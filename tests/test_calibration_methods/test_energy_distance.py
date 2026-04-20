@@ -34,6 +34,17 @@ def test_energy_statistic_positive_for_different_data() -> None:
     assert stat > 0.0
 
 
+def test_energy_statistic_exceeds_half_point_for_unit_mean_shift_anchor() -> None:
+    """Anchor: N(0,1) vs N(1,1), n=500 -> scaled energy statistic stays > 0.5."""
+    import random
+
+    rng = random.Random(20260420)
+    x = tuple(rng.gauss(0.0, 1.0) for _ in range(500))
+    y = tuple(rng.gauss(1.0, 1.0) for _ in range(500))
+    stat = _energy_statistic(x, y)
+    assert stat > 0.5
+
+
 def test_energy_statistic_is_symmetric() -> None:
     """E(F, G) == E(G, F)."""
     import random
@@ -173,3 +184,30 @@ def test_energy_test_rejects_invalid_floor() -> None:
         compute_energy_distance_test(
             [0.01, 0.02], [0.01, 0.02], acceptance_floor=2.0, n_permutations=99
         )
+
+
+def test_energy_distance_same_distribution_anchor() -> None:
+    """Energy same-distribution anchor: N(0,1) vs N(0,1) should not raise a false alarm.
+
+    The current implementation returns a scaled energy statistic together with a
+    permutation p-value. Under H0 (same distribution), the deterministic seeded
+    permutation test should yield p_value > 0.05 and pass the G2.1 floor.
+
+    Reference: Szekely & Rizzo (2004); Rizzo & Szekely (2016).
+    """
+    import random
+
+    rng = random.Random(20240424)
+    shadow = tuple(rng.gauss(0.0, 1.0) for _ in range(100))
+    backtest = tuple(rng.gauss(0.0, 1.0) for _ in range(100))
+
+    result = compute_energy_distance_test(
+        shadow,
+        backtest,
+        n_permutations=999,
+        random_seed=20240424,
+        acceptance_floor=0.01,
+    )
+
+    assert result.p_value > 0.05
+    assert result.passes_floor is True

@@ -96,6 +96,58 @@ def test_response_headers_tighten_request_budget() -> None:
     assert snapshot.request_weight_tokens_remaining == 2.0
 
 
+def test_response_headers_flag_warning_at_80_percent_of_official_quota() -> None:
+    limiter = BinanceApiRateLimiter(
+        config=BinanceApiRateLimiterConfig(
+            official_request_weight_limit_1m=100,
+            preemptive_request_weight_limit_1m=100,
+            preemptive_orders_limit_10s=4,
+        ),
+        clock_ms=lambda: 0,
+    )
+    limiter.observe_response(
+        headers={"X-MBX-USED-WEIGHT-1M": "80"},
+        status_code=200,
+        now_ms=0,
+    )
+    snapshot = limiter.snapshot(now_ms=0)
+    assert snapshot.official_request_weight_used_1m == 80
+    assert snapshot.official_request_weight_quota_ratio == 0.8
+    assert snapshot.official_request_weight_warn_active is True
+    assert snapshot.official_request_weight_block_active is False
+
+
+def test_response_headers_block_for_60s_at_95_percent_of_official_quota() -> None:
+    limiter = BinanceApiRateLimiter(
+        config=BinanceApiRateLimiterConfig(
+            official_request_weight_limit_1m=100,
+            preemptive_request_weight_limit_1m=100,
+            preemptive_orders_limit_10s=4,
+        ),
+        clock_ms=lambda: 0,
+    )
+    limiter.observe_response(
+        headers={"X-MBX-USED-WEIGHT-1M": "95"},
+        status_code=200,
+        now_ms=0,
+    )
+    snapshot = limiter.snapshot(now_ms=0)
+    assert snapshot.official_request_weight_quota_ratio == 0.95
+    assert snapshot.official_request_weight_warn_active is True
+    assert snapshot.official_request_weight_block_until_ms == 60_000
+    assert snapshot.official_request_weight_block_active is True
+    assert snapshot.throttle_until_ms == 60_000
+
+    try:
+        limiter.reserve(cost=BinanceRequestQuotaCost(request_weight=1), now_ms=59_999)
+    except BinanceApiRateLimitExceededError as exc:
+        assert "official block threshold" in str(exc)
+    else:
+        raise AssertionError("Expected official request-weight block window to stop reserve()")
+
+    limiter.reserve(cost=BinanceRequestQuotaCost(request_weight=1), now_ms=60_000)
+
+
 def test_response_headers_tighten_order_budget() -> None:
     limiter = BinanceApiRateLimiter(
         config=BinanceApiRateLimiterConfig(

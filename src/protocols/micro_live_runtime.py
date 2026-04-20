@@ -35,6 +35,7 @@ from protocols.micro_live_runtime_support import (
     _shadow_portfolio_blocking_reasons,
     _shadow_temporal_blocking_reasons,
 )
+from protocols.runtime_signal_support import run_idle_runtime, runtime_cli_main
 
 @dataclass(frozen=True)
 class _MicroLiveOutcome:
@@ -610,4 +611,22 @@ def run_micro_live_gate(
 __all__ = [
     "build_micro_live_input_from_shadow",
     "run_micro_live_gate",
+    "run",
+    "main",
 ]
+
+
+def run(*, sleep_seconds: float = 0.1) -> int:
+    """Run a cooperative Micro-live runtime shell until shutdown is requested."""
+
+    return run_idle_runtime(__name__, sleep_seconds=sleep_seconds)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entrypoint for cooperative Micro-live runtime shutdown handling."""
+
+    return runtime_cli_main(__name__, argv=argv)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

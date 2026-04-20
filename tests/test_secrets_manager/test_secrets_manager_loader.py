@@ -14,8 +14,8 @@ from secrets_manager.sealer import generate_master_key, seal_file
 pytestmark = pytest.mark.skipif(os.name != "nt", reason="requires Windows DPAPI")
 
 
-def test_seal_and_load_round_trip_removes_plaintext_when_requested() -> None:
-    build_root = Path("build/test_secrets_manager_roundtrip")
+def test_seal_and_load_round_trip_removes_plaintext_when_requested(repo_tmp_path: Path) -> None:
+    build_root = repo_tmp_path / "test_secrets_manager_roundtrip"
     shutil.rmtree(build_root, ignore_errors=True)
     build_root.mkdir(parents=True, exist_ok=True)
     try:
@@ -37,8 +37,8 @@ def test_seal_and_load_round_trip_removes_plaintext_when_requested() -> None:
         shutil.rmtree(build_root, ignore_errors=True)
 
 
-def test_load_rejects_wrong_master_key() -> None:
-    build_root = Path("build/test_secrets_manager_wrong_key")
+def test_load_rejects_wrong_master_key(repo_tmp_path: Path) -> None:
+    build_root = repo_tmp_path / "test_secrets_manager_wrong_key"
     shutil.rmtree(build_root, ignore_errors=True)
     build_root.mkdir(parents=True, exist_ok=True)
     try:
@@ -54,8 +54,8 @@ def test_load_rejects_wrong_master_key() -> None:
         shutil.rmtree(build_root, ignore_errors=True)
 
 
-def test_cli_gen_key_seal_and_unseal_round_trip() -> None:
-    build_root = Path("build/test_secrets_manager_cli")
+def test_cli_gen_key_seal_and_unseal_round_trip(repo_tmp_path: Path) -> None:
+    build_root = repo_tmp_path / "test_secrets_manager_cli"
     shutil.rmtree(build_root, ignore_errors=True)
     build_root.mkdir(parents=True, exist_ok=True)
     try:
