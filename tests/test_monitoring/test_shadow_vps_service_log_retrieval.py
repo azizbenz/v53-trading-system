@@ -13,12 +13,9 @@ from protocols.shadow_vps_service import ShadowVpsServiceEvent
 
 
 def _scratch_dir(label: str) -> Path:
-    repo_root = Path(__file__).resolve().parents[2]
-    base_dir = repo_root / "build" / "shadow_vps_service_log_retrieval_tests"
-    base_dir.mkdir(parents=True, exist_ok=True)
-    output_dir = base_dir / f"{label}_{uuid4().hex}"
-    output_dir.mkdir(parents=True, exist_ok=False)
-    return output_dir
+    from tests.support_paths import make_repo_scratch_dir
+
+    return make_repo_scratch_dir("shadow_vps_service_log_retrieval_tests", label)
 
 
 def _write_events(events_path: Path, events: list[str]) -> None:

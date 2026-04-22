@@ -34,8 +34,10 @@ from monitoring import (
 )
 from protocols import (
     InfoStressGovernanceSummary,
+    LiveLightGateGroupSummary,
     LiveLightInput,
     LiveLightInputError,
+    LiveLightRunSummary,
     LiveLightVerdict,
     MicroLiveDecision,
     MicroLiveExecutionPlan,
@@ -51,6 +53,13 @@ from protocols import (
     run_live_light_gate,
 )
 from interface_contracts import PromotionState
+
+
+def _gate_group(
+    summary: LiveLightRunSummary,
+    gate_id: str,
+) -> LiveLightGateGroupSummary:
+    return next(group for group in summary.gate_groups if group.gate_id == gate_id)
 
 
 def _micro_live_payload(
@@ -986,6 +995,14 @@ def test_run_live_light_gate_allows_small_execution_when_micro_live_and_guards_a
     assert summary.decision.verdict == LiveLightVerdict.ALLOWED_TO_EXECUTE_SMALL
     assert summary.decision.allowed_to_execute_small is True
     assert summary.execution_intent.approved_total_notional_usdt == 80.0
+    assert {group.gate_id for group in summary.gate_groups} == {
+        "governance_envelope",
+        "promotion_history",
+        "import_replay_integrity",
+        "operational_readiness",
+        "build14_influence",
+    }
+    assert all(group.status == "passed" for group in summary.gate_groups)
 
 
 def test_run_live_light_gate_applies_build14_budget_downgrade_without_bypass():
@@ -1067,6 +1084,10 @@ def test_run_live_light_gate_keeps_build14_review_only_governed():
     assert summary.execution_intent.dry_run_only is True
     assert "Critical execution fragility requires manual review" in summary.decision.blocking_reasons
     assert "build14 gate: execution_fragility_score_critical" in summary.decision.blocking_reasons
+    build14_group = _gate_group(summary, "build14_influence")
+    assert build14_group.status == "review_only"
+    assert "Critical execution fragility requires manual review" in build14_group.reasons
+    assert "build14 gate: execution_fragility_score_critical" in build14_group.reasons
 
 
 def test_run_live_light_gate_accepts_typed_build14_report_with_matching_correlation():
@@ -1222,6 +1243,10 @@ def test_run_live_light_gate_blocks_when_execution_or_onboarding_is_missing():
     assert summary.decision.verdict == LiveLightVerdict.BLOCKED
     assert "execution readiness must be confirmed before Live-Light execution" in summary.decision.blocking_reasons
     assert "strategy onboarding must be accepted before Live-Light" in summary.decision.blocking_reasons
+    operational_group = _gate_group(summary, "operational_readiness")
+    assert operational_group.status == "blocked"
+    assert "execution readiness must be confirmed before Live-Light execution" in operational_group.reasons
+    assert "strategy onboarding must be accepted before Live-Light" in operational_group.reasons
 
 
 def test_run_live_light_gate_blocks_when_operator_requests_downgrade_to_micro_live():
@@ -1286,6 +1311,11 @@ def test_run_live_light_gate_stays_dry_run_only_when_micro_live_needs_review():
     assert summary.decision.verdict == LiveLightVerdict.DRY_RUN_ONLY
     assert summary.decision.allowed_to_execute_small is False
     assert summary.execution_intent.dry_run_only is True
+    promotion_group = _gate_group(summary, "promotion_history")
+    assert promotion_group.status == "review_only"
+    assert promotion_group.reasons == (
+        "Build-12 Micro-live verdict must be allowed_to_probe before Live-Light can execute small size",
+    )
 
 
 def test_run_live_light_gate_keeps_hard_blockers_stronger_than_dry_run():
@@ -1522,6 +1552,13 @@ def test_run_live_light_gate_blocks_model_constructed_rejected_import_policy():
         "Build-13 Live-Light requires import_review_export_ref"
         in summary.decision.blocking_reasons
     )
+    import_group = _gate_group(summary, "import_replay_integrity")
+    assert import_group.status == "blocked"
+    assert (
+        "Build-13 Live-Light requires a non-rejected import_compatibility_status"
+        in import_group.reasons
+    )
+    assert "import compatibility gate: schema mismatch" in import_group.reasons
 
 
 def test_run_live_light_gate_blocks_model_constructed_non_complete_import_source_profile():
@@ -1813,6 +1850,10 @@ def test_run_live_light_gate_blocks_model_constructed_governance_envelope_mismat
         "Build-13 Live-Light operator_safing_request must match source_runtime_mode=LIVE"
         in summary.decision.blocking_reasons
     )
+    governance_group = _gate_group(summary, "governance_envelope")
+    assert governance_group.status == "blocked"
+    assert "Build-13 Live-Light opens in COMPLETE profile only" in governance_group.reasons
+    assert "Build-13 Live-Light requires runtime_mode=LIVE" in governance_group.reasons
 
 
 def test_run_live_light_gate_blocks_model_constructed_shadow_only_engine_scope():

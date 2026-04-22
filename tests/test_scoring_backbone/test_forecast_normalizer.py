@@ -25,6 +25,17 @@ def test_resolve_forecast_scalar_targets_mean_absolute_forecast() -> None:
     assert scalar == pytest.approx(10.0 / 4.0)
 
 
+def test_normalized_sample_targets_mean_absolute_forecast_near_ten() -> None:
+    raw_forecasts = (2.0, -3.0, 1.5, -1.0, 4.0)
+    scalar = resolve_forecast_scalar(raw_forecasts)
+    normalized = [
+        normalize_raw_forecast(value, forecast_scalar=scalar).normalized_forecast
+        for value in raw_forecasts
+    ]
+
+    assert sum(abs(value) for value in normalized) / len(normalized) == pytest.approx(10.0, abs=0.5)
+
+
 def test_resolve_forecast_scalar_rejects_zero_mean_absolute_forecast() -> None:
     with pytest.raises(ValueError, match="positive mean absolute magnitude"):
         resolve_forecast_scalar((0.0, 0.0))

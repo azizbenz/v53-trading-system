@@ -8,6 +8,7 @@ from protocols.contracts import (
     LiveExecutionIntent,
     LiveInput,
     LiveRunSummary,
+    LiveLightGateGroupSummary,
     LiveLightDecision,
     LiveLightExecutionIntent,
     LiveLightInput,
@@ -271,6 +272,13 @@ from protocols.execution_runtime_dashboard import (
     build_execution_runtime_projection_bridge_projection,
     build_runtime_hook_bridge_projections,
 )
+from protocols.execution_opportunity_bridge import (
+    ExecutionOpportunityBridgeContext,
+    PortfolioExecutionSelection,
+    build_execution_opportunity_from_orchestrator_result,
+    build_execution_opportunity_from_portfolio_selection,
+    resolve_portfolio_execution_selection,
+)
 from protocols.closed_episode_journal import (
     ClosedEpisodeJournal,
     ClosedEpisodeJournalManifest,
@@ -291,6 +299,7 @@ __all__ = [
     "LiveDecision",
     "LiveExecutionIntent",
     "LiveRunSummary",
+    "LiveLightGateGroupSummary",
     "LiveRunState",
     "LiveVerdict",
     "LiveProtocolError",
@@ -481,6 +490,11 @@ __all__ = [
     "build_execution_no_trade_bridge_projection",
     "build_execution_runtime_projection_bridge_projection",
     "build_runtime_hook_bridge_projections",
+    "ExecutionOpportunityBridgeContext",
+    "PortfolioExecutionSelection",
+    "resolve_portfolio_execution_selection",
+    "build_execution_opportunity_from_portfolio_selection",
+    "build_execution_opportunity_from_orchestrator_result",
     "EpisodeCloseReason",
     "EpisodeRef",
     "ClosedEpisodeJournalManifest",

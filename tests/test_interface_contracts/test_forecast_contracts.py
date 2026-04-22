@@ -168,9 +168,17 @@ class TestForecastSignalCandidate:
         with pytest.raises(ValidationError):
             _forecast_signal(forecast_direction=1.5)
 
+    def test_forecast_strength_upper_bound_enforced(self) -> None:
+        with pytest.raises(ValidationError):
+            _forecast_signal(forecast_strength=21.0)
+
     def test_confidence_band_bounds_enforced(self) -> None:
         with pytest.raises(ValidationError):
             _forecast_signal(confidence_band=1.2)
+
+    def test_expected_cost_must_be_non_negative(self) -> None:
+        with pytest.raises(ValidationError):
+            _forecast_signal(expected_cost=-0.01)
 
     def test_extra_fields_forbidden(self) -> None:
         with pytest.raises(ValidationError):

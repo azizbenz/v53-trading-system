@@ -52,8 +52,9 @@ def _critical_alert() -> AlertRecord:
 
 
 def _scratch_dir(name: str) -> Path:
-    repo_root = Path(__file__).resolve().parents[2]
-    return repo_root / "build" / "light_ui_runtime_tests" / name
+    from tests.support_paths import make_repo_scratch_dir
+
+    return make_repo_scratch_dir("light_ui_runtime_tests", name)
 
 
 def test_light_ui_runtime_builds_view_with_pending_critical_notifications():

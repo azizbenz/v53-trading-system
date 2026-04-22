@@ -17,6 +17,7 @@ from monitoring import TechnicalDashboardPayload
 from protocols.contracts import (
     LiveLightDecision,
     LiveLightExecutionIntent,
+    LiveLightGateGroupSummary,
     LiveLightInput,
     LiveLightRunSummary,
     MicroLiveRunSummary,
@@ -69,6 +70,7 @@ class _LiveLightOutcome:
     decision: LiveLightDecision
     execution_intent: LiveLightExecutionIntent
     run_state: LiveLightRunState
+
 
 def build_live_light_input_from_micro_live(
     micro_live_summary: MicroLiveRunSummary,
@@ -584,12 +586,95 @@ def _build_ready_outcome(
     )
 
 
+def _micro_live_review_reasons(micro_live_needs_review: bool) -> tuple[str, ...]:
+    if not micro_live_needs_review:
+        return ()
+    return (
+        "Build-12 Micro-live verdict must be allowed_to_probe before Live-Light can execute small size",
+    )
+
+
+def _build14_review_reasons(
+    build14_evaluation: _Build14Evaluation,
+) -> tuple[str, ...]:
+    if build14_evaluation.signal is None or not build14_evaluation.requires_review:
+        return ()
+    return (build14_evaluation.summary,) + build14_evaluation.reason_lines
+
+
+def _build14_group_blocking_reasons(
+    build14_evaluation: _Build14Evaluation,
+) -> tuple[str, ...]:
+    if not build14_evaluation.blocking_reasons:
+        return ()
+    return build14_evaluation.blocking_reasons + build14_evaluation.reason_lines
+
+
+def _build_gate_group_summary(
+    gate_id: str,
+    *,
+    blocking_reasons: tuple[str, ...] = (),
+    review_reasons: tuple[str, ...] = (),
+) -> LiveLightGateGroupSummary:
+    if blocking_reasons:
+        return LiveLightGateGroupSummary(
+            gate_id=gate_id,
+            status="blocked",
+            reasons=blocking_reasons,
+        )
+    if review_reasons:
+        return LiveLightGateGroupSummary(
+            gate_id=gate_id,
+            status="review_only",
+            reasons=review_reasons,
+        )
+    return LiveLightGateGroupSummary(gate_id=gate_id, status="passed")
+
+
+def _build_live_light_gate_groups(
+    *,
+    governance_reasons: tuple[str, ...],
+    shadow_day_reasons: tuple[str, ...],
+    micro_live_reasons: tuple[str, ...],
+    micro_live_needs_review: bool,
+    import_surface_reasons: tuple[str, ...],
+    import_contract_reasons: tuple[str, ...],
+    operational_reasons: tuple[str, ...],
+    build14_evaluation: _Build14Evaluation,
+) -> tuple[LiveLightGateGroupSummary, ...]:
+    return (
+        _build_gate_group_summary(
+            "governance_envelope",
+            blocking_reasons=governance_reasons,
+        ),
+        _build_gate_group_summary(
+            "promotion_history",
+            blocking_reasons=shadow_day_reasons + micro_live_reasons,
+            review_reasons=_micro_live_review_reasons(micro_live_needs_review),
+        ),
+        _build_gate_group_summary(
+            "import_replay_integrity",
+            blocking_reasons=import_surface_reasons + import_contract_reasons,
+        ),
+        _build_gate_group_summary(
+            "operational_readiness",
+            blocking_reasons=operational_reasons,
+        ),
+        _build_gate_group_summary(
+            "build14_influence",
+            blocking_reasons=_build14_group_blocking_reasons(build14_evaluation),
+            review_reasons=_build14_review_reasons(build14_evaluation),
+        ),
+    )
+
+
 def _build_live_light_run_summary(
     live_light_input: LiveLightInput,
     *,
     run_id: str | None,
     outcome: _LiveLightOutcome,
     build14_evaluation: _Build14Evaluation,
+    gate_groups: tuple[LiveLightGateGroupSummary, ...],
 ) -> LiveLightRunSummary:
     return LiveLightRunSummary(
         run_id=run_id or f"{live_light_input.correlation_id}:live_light_run",
@@ -627,6 +712,7 @@ def _build_live_light_run_summary(
         build14_recommended_budget_factor=build14_evaluation.recommended_budget_factor,
         build14_live_eligible=live_light_input.build14_live_eligible,
         shadow_portfolio_judgment=live_light_input.shadow_portfolio_judgment,
+        gate_groups=gate_groups,
     )
 
 
@@ -643,22 +729,39 @@ def run_live_light_gate(
     shadow days before allowing Live-Light promotion.
     """
 
-    hard_blocking_reasons = list(_governance_envelope_blocking_reasons(live_light_input))
-    hard_blocking_reasons.extend(
-        _shadow_day_gate_blocking_reasons(live_light_input, shadow_state_dir)
+    governance_reasons = _governance_envelope_blocking_reasons(live_light_input)
+    shadow_day_reasons = _shadow_day_gate_blocking_reasons(
+        live_light_input,
+        shadow_state_dir,
     )
     build14_evaluation = _evaluate_build14_influence(
         live_light_input,
         build14_influence=build14_influence,
     )
-    hard_blocking_reasons.extend(build14_evaluation.blocking_reasons)
     micro_live_reasons, micro_live_needs_review = _evaluate_micro_live_gate(
         live_light_input
     )
+    import_surface_reasons = _import_surface_blocking_reasons(live_light_input)
+    import_contract_reasons = _import_contract_blocking_reasons(live_light_input)
+    operational_reasons = _operational_blocking_reasons(live_light_input)
+    gate_groups = _build_live_light_gate_groups(
+        governance_reasons=governance_reasons,
+        shadow_day_reasons=shadow_day_reasons,
+        micro_live_reasons=micro_live_reasons,
+        micro_live_needs_review=micro_live_needs_review,
+        import_surface_reasons=import_surface_reasons,
+        import_contract_reasons=import_contract_reasons,
+        operational_reasons=operational_reasons,
+        build14_evaluation=build14_evaluation,
+    )
+
+    hard_blocking_reasons = list(governance_reasons)
+    hard_blocking_reasons.extend(shadow_day_reasons)
+    hard_blocking_reasons.extend(build14_evaluation.blocking_reasons)
     hard_blocking_reasons.extend(micro_live_reasons)
-    hard_blocking_reasons.extend(_import_surface_blocking_reasons(live_light_input))
-    hard_blocking_reasons.extend(_import_contract_blocking_reasons(live_light_input))
-    hard_blocking_reasons.extend(_operational_blocking_reasons(live_light_input))
+    hard_blocking_reasons.extend(import_surface_reasons)
+    hard_blocking_reasons.extend(import_contract_reasons)
+    hard_blocking_reasons.extend(operational_reasons)
 
     if hard_blocking_reasons:
         outcome = _build_blocked_outcome(
@@ -685,6 +788,7 @@ def run_live_light_gate(
         run_id=run_id,
         outcome=outcome,
         build14_evaluation=build14_evaluation,
+        gate_groups=gate_groups,
     )
 
 

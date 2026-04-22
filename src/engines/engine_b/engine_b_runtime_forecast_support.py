@@ -34,7 +34,7 @@ from scoring_backbone.scoring_runtime import ScoringCandidateAudit
 from .engine_b_runner import EngineBInput, EngineBOutput
 from .engine_b_runtime import EngineBRuntimeInput
 
-_ENGINE_B_FORECAST_NORMALIZER_CONFIG = ForecastNormalizerConfig()
+_ENGINE_B_FORECAST_NORMALIZER_CONFIG = ForecastNormalizerConfig(max_abs_forecast=15.0)
 _ENGINE_B_BREAK_EVEN_FILTER_CONFIG = BreakEvenFilterConfig()
 
 

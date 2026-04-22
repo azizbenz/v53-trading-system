@@ -12,12 +12,9 @@ from monitoring.local_grafana_dashboard import (
 
 
 def _scratch_dir(label: str) -> Path:
-    repo_root = Path(__file__).resolve().parents[2]
-    base_dir = repo_root / "build" / "pytest-local-grafana-dashboard-summary"
-    base_dir.mkdir(parents=True, exist_ok=True)
-    output_dir = base_dir / f"{label}_{uuid4().hex}"
-    output_dir.mkdir(parents=True, exist_ok=False)
-    return output_dir
+    from tests.support_paths import make_repo_scratch_dir
+
+    return make_repo_scratch_dir("pytest-local-grafana-dashboard-summary", label)
 
 
 def test_extract_prometheus_metric_names_preserves_unique_metric_order():
@@ -34,6 +31,7 @@ def test_build_local_shadow_vps_grafana_dashboard_contains_expected_queries():
     payload = build_local_shadow_vps_grafana_dashboard()
     panels = payload["dashboard"]["panels"]
     titles = {panel["title"] for panel in panels}
+    guide_panel = next(panel for panel in panels if panel["title"] == "Metric Guide and Status Semantics")
 
     assert payload["overwrite"] is True
     assert "Loop and Outcome Counters" in titles
@@ -52,6 +50,7 @@ def test_build_local_shadow_vps_grafana_dashboard_contains_expected_queries():
     assert "Telegram Alerts" in titles
     assert "Telegram Alert Labels" in titles
     assert "Instant Metric Snapshot" in titles
+    assert "Metric Guide and Status Semantics" in titles
     all_exprs = [
         target["expr"]
         for panel in panels
@@ -112,6 +111,12 @@ def test_build_local_shadow_vps_grafana_dashboard_contains_expected_queries():
         "v53_shadow_vps_telegram_alert_delivery_status" in expr
         for expr in all_exprs
     )
+    assert guide_panel["type"] == "text"
+    assert guide_panel["options"]["mode"] == "markdown"
+    assert "v53_shadow_vps_service_promotion_gate_passed" in guide_panel["options"]["content"]
+    assert "v53_shadow_vps_execution_runtime_projection_bridge_loaded" in guide_panel["options"]["content"]
+    assert "v53_shadow_vps_regime_lite_safing_status" in guide_panel["options"]["content"]
+    assert "v53_shadow_vps_telegram_alert_delivery_status" in guide_panel["options"]["content"]
 
 
 def test_build_local_shadow_vps_grafana_dashboard_summary_reads_observed_metrics():
@@ -130,7 +135,7 @@ def test_build_local_shadow_vps_grafana_dashboard_summary_reads_observed_metrics
             output_path=output_path,
         )
 
-        assert summary.panel_count == 22
+        assert summary.panel_count == 23
         assert summary.observed_metric_count == 2
         assert "v53_shadow_vps_service_status" in summary.observed_metrics
         assert summary.output_path.endswith("dashboard.json")

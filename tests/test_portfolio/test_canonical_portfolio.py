@@ -3,13 +3,32 @@
 from __future__ import annotations
 
 import portfolio
-from portfolio import OrchestratorConfig, OrchestratorResult, run_portfolio_pipeline
+from portfolio import (
+    AllocationEntry,
+    AllocationReport,
+    OpportunityCandidate as FacadeOpportunityCandidate,
+    OrchestratorConfig,
+    OrchestratorResult,
+    SelectionEntry,
+    SelectionResult,
+    SelectionVerdict,
+    run_portfolio_pipeline,
+)
+from portfolio_minimal.allocation_router.allocation_reporter import (
+    AllocationEntry as ImplAllocationEntry,
+    AllocationReport as ImplAllocationReport,
+)
 from portfolio_minimal.allocation_router.base_size_builder import SizeProfile
 from portfolio_minimal.opportunity_selector.candidate_pool_builder import (
     CANDIDATE_POOL_FRESHNESS_DISABLED,
     OpportunityCandidate,
 )
 from portfolio_minimal.opportunity_selector.eligibility_filter import PortfolioSnapshot
+from portfolio_minimal.opportunity_selector.selection_resolver import (
+    SelectionEntry as ImplSelectionEntry,
+    SelectionResult as ImplSelectionResult,
+    SelectionVerdict as ImplSelectionVerdict,
+)
 from portfolio_minimal.portfolio_orchestrator import (
     OrchestratorConfig as ImplOrchestratorConfig,
     OrchestratorResult as ImplOrchestratorResult,
@@ -21,8 +40,14 @@ def test_portfolio_facade_exports_expected_symbols():
     assert portfolio.__all__ == [
         "allocation_router",
         "opportunity_selector",
+        "AllocationEntry",
+        "AllocationReport",
         "OrchestratorConfig",
         "OrchestratorResult",
+        "OpportunityCandidate",
+        "SelectionEntry",
+        "SelectionResult",
+        "SelectionVerdict",
         "run_portfolio_pipeline",
     ]
 
@@ -31,6 +56,12 @@ def test_portfolio_facade_reexports_impl_symbols():
     assert OrchestratorConfig is ImplOrchestratorConfig
     assert OrchestratorResult is ImplOrchestratorResult
     assert run_portfolio_pipeline is impl_run_portfolio_pipeline
+    assert AllocationEntry is ImplAllocationEntry
+    assert AllocationReport is ImplAllocationReport
+    assert FacadeOpportunityCandidate is OpportunityCandidate
+    assert SelectionEntry is ImplSelectionEntry
+    assert SelectionResult is ImplSelectionResult
+    assert SelectionVerdict is ImplSelectionVerdict
 
 
 def test_portfolio_facade_runs_minimal_pipeline():

@@ -17,6 +17,7 @@ from monitoring import (
     Build14Projection,
     Build9XProjection,
     ExecutionRuntimeProjectionBridgeProjection,
+    LiveLightGateGroupProjection,
     LiveLightProjection,
     MicroLiveProjection,
     OperatorRuntimeEvent,
@@ -124,7 +125,16 @@ def _payload(
             capital_deployed_usdt=1200.0,
             ce_net=0.0012,
         ),
-        infra=collect_infra_metrics(queue_backlog=75, stale_pairs=("BTCUSDT",), dtr_loss_count=1),
+        infra=collect_infra_metrics(
+            queue_backlog=75,
+            stale_pairs=("BTCUSDT",),
+            dtr_loss_count=1,
+            signal_to_submit_ms_p90=87,
+            signal_to_scoring_ms_p90=24,
+            scoring_to_risk_ms_p90=16,
+            risk_to_portfolio_ms_p90=28,
+            portfolio_to_submit_ms_p90=19,
+        ),
         meta=collect_meta_metrics(
             dtr_summary,
             cra_report,
@@ -190,7 +200,7 @@ def test_monitoring_exports_observability_symbols():
     }.issubset(set(monitoring.__all__))
 
 
-def test_observability_export_contains_grouped_metrics():
+def test_observability_export_contains_grouped_metrics() -> None:
     payload = _payload(
         operator_runtime=OperatorRuntimeProjection(
             event_count=2,
@@ -226,9 +236,24 @@ def test_observability_export_contains_grouped_metrics():
     assert "v53_alert_operator_event_count" in names
     assert "v53_alert_operator_pending_notification_count" in names
     assert "v53_alert_operator_recent_event" in names
+    assert "v53_execution_signal_to_submit_ms_p90" in names
+    assert "v53_execution_signal_to_scoring_ms_p90" in names
+    assert "v53_execution_scoring_to_risk_ms_p90" in names
+    assert "v53_execution_risk_to_portfolio_ms_p90" in names
+    assert "v53_execution_portfolio_to_submit_ms_p90" in names
     assert export.correlation_id == "corr-obs"
     assert 'profile="light"' in export.text_payload
     assert 'runtime_mode="shadow"' in export.text_payload
+    assert any(
+        sample.name == "v53_execution_signal_to_submit_ms_p90"
+        and sample.value == 87.0
+        for sample in export.samples
+    )
+    assert any(
+        sample.name == "v53_execution_signal_to_scoring_ms_p90"
+        and sample.value == 24.0
+        for sample in export.samples
+    )
 
 
 def test_observability_export_tracks_modules_engines_and_governed_flags():
@@ -329,6 +354,22 @@ def test_observability_export_tracks_modules_engines_and_governed_flags():
             build14_reason_codes=("execution_fragility_score_critical",),
             build14_confidence_penalty_weight=0.15,
             build14_recommended_budget_factor=0.0,
+            gate_groups=(
+                LiveLightGateGroupProjection(
+                    gate_id="governance_envelope",
+                    status="passed",
+                ),
+                LiveLightGateGroupProjection(
+                    gate_id="promotion_history",
+                    status="review_only",
+                    reasons=("micro-live review required",),
+                ),
+                LiveLightGateGroupProjection(
+                    gate_id="operational_readiness",
+                    status="blocked",
+                    reasons=("broker readiness must be confirmed before Live-Light execution",),
+                ),
+            ),
         ),
         build14_projection=Build14Projection(
             status="critical",
@@ -461,6 +502,26 @@ def test_observability_export_tracks_modules_engines_and_governed_flags():
     assert any(sample.name == "v53_live_light_allowed_to_execute_small" and sample.value == 0.0 for sample in export.samples)
     assert any(sample.name == "v53_live_light_blocking_reason_count" and sample.value == 1.0 for sample in export.samples)
     assert any(sample.name == "v53_live_light_broker_ready" and sample.value == 0.0 for sample in export.samples)
+    assert any(
+        sample.name == "v53_live_light_gate_group_status"
+        and sample.labels["gate_group"] == "promotion_history"
+        and sample.labels["status"] == "review_only"
+        and sample.value == 1.0
+        for sample in export.samples
+    )
+    assert any(
+        sample.name == "v53_live_light_gate_group_status"
+        and sample.labels["gate_group"] == "operational_readiness"
+        and sample.labels["status"] == "blocked"
+        and sample.value == 2.0
+        for sample in export.samples
+    )
+    assert any(
+        sample.name == "v53_live_light_gate_group_reason_count"
+        and sample.labels["gate_group"] == "operational_readiness"
+        and sample.value == 1.0
+        for sample in export.samples
+    )
     assert any(sample.name == "v53_system_build14_status" and sample.labels["status"] == "critical" for sample in export.samples)
     assert any(sample.name == "v53_build14_hard_state" and sample.labels["hard_state"] == "shadow_enabled" for sample in export.samples)
     assert any(sample.name == "v53_build14_live_promotion_eligible" and sample.value == 0.0 for sample in export.samples)

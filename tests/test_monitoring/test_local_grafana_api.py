@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shutil
 from threading import Thread
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -9,6 +10,11 @@ from monitoring.local_grafana_api import (
     bootstrap_local_grafana,
     build_prometheus_datasource_payload,
 )
+from tests.support_paths import make_repo_scratch_dir
+
+
+def _scratch_dir(label: str) -> Path:
+    return make_repo_scratch_dir("pytest-local-grafana-api", label)
 
 
 class _GrafanaApiHandler(BaseHTTPRequestHandler):
@@ -65,8 +71,9 @@ def test_build_prometheus_datasource_payload_projects_expected_fields():
     assert payload["url"] == "http://127.0.0.1:9090"
 
 
-def test_bootstrap_local_grafana_posts_datasource_and_dashboard(tmp_path: Path):
-    dashboard_path = tmp_path / "dashboard.json"
+def test_bootstrap_local_grafana_posts_datasource_and_dashboard():
+    output_dir = _scratch_dir("bootstrap")
+    dashboard_path = output_dir / "dashboard.json"
     dashboard_path.write_text(
         json.dumps(
             {
@@ -86,7 +93,7 @@ def test_bootstrap_local_grafana_posts_datasource_and_dashboard(tmp_path: Path):
             username="admin",
             password="admin",
             dashboard_payload_path=dashboard_path,
-            output_path=tmp_path / "summary.json",
+            output_path=output_dir / "summary.json",
         )
 
         assert summary.datasource_status_code == 200
@@ -98,10 +105,12 @@ def test_bootstrap_local_grafana_posts_datasource_and_dashboard(tmp_path: Path):
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+        shutil.rmtree(output_dir, ignore_errors=True)
 
 
-def test_bootstrap_local_grafana_updates_existing_datasource_on_conflict(tmp_path: Path):
-    dashboard_path = tmp_path / "dashboard.json"
+def test_bootstrap_local_grafana_updates_existing_datasource_on_conflict():
+    output_dir = _scratch_dir("conflict")
+    dashboard_path = output_dir / "dashboard.json"
     dashboard_path.write_text(
         json.dumps(
             {
@@ -122,7 +131,7 @@ def test_bootstrap_local_grafana_updates_existing_datasource_on_conflict(tmp_pat
             username="admin",
             password="admin",
             dashboard_payload_path=dashboard_path,
-            output_path=tmp_path / "summary.json",
+            output_path=output_dir / "summary.json",
         )
 
         assert summary.datasource_status_code == 200
@@ -132,3 +141,4 @@ def test_bootstrap_local_grafana_updates_existing_datasource_on_conflict(tmp_pat
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+        shutil.rmtree(output_dir, ignore_errors=True)

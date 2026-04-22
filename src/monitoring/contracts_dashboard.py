@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, model_validator
 
 from interface_contracts import HookId, ProfileId, RuntimeMode, TimestampedModel
@@ -244,6 +246,19 @@ class MicroLiveProjection(BaseModel, frozen=True):
     operator_safing_reason: str = ""
     blocking_reasons: tuple[str, ...] = ()
 
+class LiveLightGateGroupProjection(BaseModel, frozen=True):
+    """Normalized gate-group projection exposed to monitoring and dashboards."""
+
+    gate_id: Literal[
+        "governance_envelope",
+        "promotion_history",
+        "import_replay_integrity",
+        "operational_readiness",
+        "build14_influence",
+    ]
+    status: Literal["passed", "blocked", "review_only"] = "passed"
+    reasons: tuple[str, ...] = ()
+
 
 class LiveLightProjection(BaseModel, frozen=True):
     """Normalized Build-13 Live summary consumed by Build-10 supervision.
@@ -290,6 +305,7 @@ class LiveLightProjection(BaseModel, frozen=True):
     build14_reason_codes: tuple[str, ...] = ()
     build14_confidence_penalty_weight: float = Field(default=0.0, ge=0.0, le=0.25)
     build14_recommended_budget_factor: float = Field(default=1.0, ge=0.0, le=1.0)
+    gate_groups: tuple[LiveLightGateGroupProjection, ...] = ()
 
 
 LiveProjection = LiveLightProjection
@@ -656,6 +672,7 @@ __all__ = [
     "EngineJudgmentProjection",
     "ExecutionNoTradeBridgeProjection",
     "ExecutionRuntimeProjectionBridgeProjection",
+    "LiveLightGateGroupProjection",
     "LiveLightProjection",
     "LiveProjection",
     "LocalLabMonitoringBackendPayload",

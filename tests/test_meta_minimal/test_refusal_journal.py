@@ -45,6 +45,17 @@ class TestRefusalJournal:
         assert len(journal.get_by_engine(EngineId.B.value)) == 1
         assert len(journal.get_by_category(RefusalCategory.HARD_BLOCK)) == 1
 
+    def test_count_by_category_returns_append_only_counts(self) -> None:
+        journal = RefusalJournal()
+        journal.append(_record(category=RefusalCategory.NO_TRADE))
+        journal.append(_record(pair="ETHUSDT", category=RefusalCategory.NO_TRADE))
+        journal.append(_record(pair="SOLUSDT", category=RefusalCategory.HARD_BLOCK))
+
+        assert journal.count_by_category() == {
+            RefusalCategory.NO_TRADE: 2,
+            RefusalCategory.HARD_BLOCK: 1,
+        }
+
     def test_flush_to_disk_writes_jsonl_and_manifest(self, repo_tmp_path: Path) -> None:
         journal = RefusalJournal(flush_dir=repo_tmp_path)
         journal.append(_record())

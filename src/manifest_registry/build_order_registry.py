@@ -113,13 +113,13 @@ BUILD_STAGES: tuple[BuildStage, ...] = (
     ),
     BuildStage(
         stage=12,
-        name="Micro-live Runtime",
+        name="Micro-live",
         description="Validation Micro-live gouvernee sur le rail runtime actif complet, avec capital reel ultra-prudent; Build-13 Live reste ensuite gouverne et distinct",
         modules=("protocols",),
     ),
     BuildStage(
         stage=13,
-        name="Live Runtime",
+        name="Live-Light",
         description="Premiere execution reelle minimale et gouvernee sur le rail runtime actif complet, sans ouvrir l'extension gouvernee",
         modules=("protocols",),
     ),
@@ -143,7 +143,7 @@ BUILD_STAGES: tuple[BuildStage, ...] = (
     ),
     BuildStage(
         stage=17,
-        name="Operator UI + Live Extension",
+        name="UI Complete + Live-Complete",
         description="Extension finale: UI operateur et protocole live gouverne etendu",
         modules=("ui", "protocols"),
     ),

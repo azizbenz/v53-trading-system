@@ -19,8 +19,9 @@ from monitoring.local_lab_monitoring_feed import (
 
 
 def _scratch_dir(name: str) -> Path:
-    repo_root = Path(__file__).resolve().parents[2]
-    return repo_root / "build" / "pytest-local-lab-monitoring-feed" / name
+    from tests.support_paths import make_repo_scratch_dir
+
+    return make_repo_scratch_dir("pytest-local-lab-monitoring-feed", name)
 
 
 def _write_bundle(

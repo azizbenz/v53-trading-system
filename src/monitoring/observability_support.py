@@ -24,6 +24,14 @@ def _labels(payload: TechnicalDashboardPayload) -> dict[str, str]:
     }
 
 
+def _live_light_gate_group_status_value(status: str) -> float:
+    if status == "review_only":
+        return 1.0
+    if status == "blocked":
+        return 2.0
+    return 0.0
+
+
 def _format_labels(labels: dict[str, str]) -> str:
     if not labels:
         return ""
@@ -123,6 +131,34 @@ def _build_build9x_and_shadow_samples(payload: TechnicalDashboardPayload, base_l
 
 
 def _build_rollout_and_bridge_samples(payload: TechnicalDashboardPayload, base_labels: dict[str, str]) -> tuple[MetricSample, ...]:
+    live_light_gate_group_samples = tuple(
+        sample
+        for group in payload.live_light.gate_groups
+        for sample in (
+            _sample(
+                "v53_live_light_gate_group_status",
+                kind="gauge",
+                value=_live_light_gate_group_status_value(group.status),
+                unit="state",
+                labels={
+                    **base_labels,
+                    "gate_group": group.gate_id,
+                    "status": group.status,
+                },
+            ),
+            _sample(
+                "v53_live_light_gate_group_reason_count",
+                kind="gauge",
+                value=float(len(group.reasons)),
+                unit="count",
+                labels={
+                    **base_labels,
+                    "gate_group": group.gate_id,
+                    "status": group.status,
+                },
+            ),
+        )
+    )
     return (
         _sample("v53_micro_live_run_state", kind="state", value=1.0, labels={**base_labels, "state": payload.micro_live.run_state}),
         _sample("v53_micro_live_verdict", kind="state", value=1.0, labels={**base_labels, "verdict": payload.micro_live.verdict}),
@@ -146,6 +182,7 @@ def _build_rollout_and_bridge_samples(payload: TechnicalDashboardPayload, base_l
         _sample("v53_live_light_execution_ready", kind="state", value=1.0 if payload.live_light.execution_ready else 0.0, labels=base_labels),
         _sample("v53_live_light_broker_ready", kind="state", value=1.0 if payload.live_light.broker_ready else 0.0, labels=base_labels),
         _sample("v53_live_light_exchange_ready", kind="state", value=1.0 if payload.live_light.exchange_ready else 0.0, labels=base_labels),
+        *live_light_gate_group_samples,
         _sample("v53_execution_no_trade_bridge_status", kind="state", value=1.0, labels={**base_labels, "status": payload.execution_no_trade_bridge.status, "selection_status": payload.execution_no_trade_bridge.selection_status, "failure_mode": payload.execution_no_trade_bridge.failure_mode or "none", "error_stage": payload.execution_no_trade_bridge.error_stage or "none"}),
         _sample("v53_execution_no_trade_bridge_configured", kind="state", value=1.0 if payload.execution_no_trade_bridge.configured else 0.0, labels=base_labels),
         _sample("v53_execution_no_trade_bridge_binding_present", kind="state", value=1.0 if payload.execution_no_trade_bridge.binding_present else 0.0, labels=base_labels),
@@ -224,6 +261,11 @@ def _build_build14_replay_alert_samples(payload: TechnicalDashboardPayload, base
         _sample("v53_execution_elw_bps", kind="gauge", value=payload.infra.elw_bps, unit="bps", labels=base_labels),
         _sample("v53_execution_partial_fill_count", kind="gauge", value=float(payload.infra.partial_fill_count), unit="count", labels=base_labels),
         _sample("v53_execution_fill_latency_ms_p95", kind="gauge", value=float(payload.infra.fill_latency_ms_p95), unit="ms", labels=base_labels),
+        _sample("v53_execution_signal_to_submit_ms_p90", kind="gauge", value=float(payload.infra.signal_to_submit_ms_p90), unit="ms", labels=base_labels),
+        _sample("v53_execution_signal_to_scoring_ms_p90", kind="gauge", value=float(payload.infra.signal_to_scoring_ms_p90), unit="ms", labels=base_labels),
+        _sample("v53_execution_scoring_to_risk_ms_p90", kind="gauge", value=float(payload.infra.scoring_to_risk_ms_p90), unit="ms", labels=base_labels),
+        _sample("v53_execution_risk_to_portfolio_ms_p90", kind="gauge", value=float(payload.infra.risk_to_portfolio_ms_p90), unit="ms", labels=base_labels),
+        _sample("v53_execution_portfolio_to_submit_ms_p90", kind="gauge", value=float(payload.infra.portfolio_to_submit_ms_p90), unit="ms", labels=base_labels),
         _sample("v53_execution_reconciliation_alert_count", kind="gauge", value=float(payload.infra.reconciliation_alert_count), unit="count", labels=base_labels),
     )
 

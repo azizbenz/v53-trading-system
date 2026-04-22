@@ -168,6 +168,35 @@ def test_engine_chain_smoke_check_passes_via_canonical_engine_facades():
     assert engine_b_output.engine_id == "engine_b"
 
 
+def test_portfolio_execution_bridge_smoke_check_projects_canonical_execution_opportunity() -> None:
+    script_module = _load_script_module()
+
+    engine_check, engine_a_output, engine_b_output = script_module._run_engine_chain()
+    assert engine_check.passed is True
+    portfolio_check, portfolio_result = script_module._run_portfolio_chain(
+        engine_a_output,
+        engine_b_output,
+    )
+    assert portfolio_check.passed is True
+
+    result, opportunity = script_module._run_portfolio_execution_bridge(
+        portfolio_result,
+        latency_context=script_module.SmokeLatencyContext(
+            signal_arrival_monotonic_s=99.0,
+            portfolio_completed_monotonic_s=99.8,
+        ),
+    )
+
+    assert result.passed is True
+    assert result.name == "portfolio_execution_bridge"
+    assert "indicative" in result.message
+    assert opportunity is not None
+    assert opportunity.quantity > 0.0
+    assert opportunity.pair == portfolio_result.report.allocations[0].pair
+    assert opportunity.signal_arrival_monotonic_s == 99.0
+    assert opportunity.portfolio_completed_monotonic_s == 99.8
+
+
 def test_execution_bootstrap_smoke_check_accepts_execution_runtime_projection():
     script_module = _load_script_module()
     output_dir = _scratch_dir("projection")

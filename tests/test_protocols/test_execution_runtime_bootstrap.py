@@ -35,6 +35,7 @@ from local_replay_runtime import (
 )
 from meta_minimal.dtr_core.decision_state_encoder import DecisionState
 from meta_minimal.dtr_core.dtr_record_builder import build_dtr
+from tests.support_paths import repo_build_path
 from protocols import (
     CompiledArtifactHookBinding,
     CompiledArtifactRegistrySnapshot,
@@ -283,7 +284,7 @@ def test_build_execution_runtime_without_registry_state_dir_keeps_baseline_submi
 
 
 def test_build_execution_runtime_can_wire_fee_aware_edge_gate():
-    state_dir = Path("build/test_protocols_execution_runtime_fee_aware_edge")
+    state_dir = repo_build_path("build/test_protocols_execution_runtime_fee_aware_edge")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         _write_fee_aware_edge_artifact(state_dir)
@@ -313,7 +314,7 @@ def test_inspect_execution_runtime_bootstrap_reports_unconfigured_when_state_dir
 
 
 def test_build_execution_runtime_with_compiled_registry_blocks_when_plan_blocks():
-    state_dir = Path("build/test_protocols_execution_runtime_bootstrap_loaded")
+    state_dir = repo_build_path("build/test_protocols_execution_runtime_bootstrap_loaded")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         _publish_execution_no_trade_snapshot(state_dir)
@@ -353,7 +354,7 @@ def test_build_execution_runtime_with_compiled_registry_blocks_when_plan_blocks(
 
 
 def test_build_execution_runtime_with_empty_registry_state_dir_fails_open():
-    state_dir = Path("build/test_protocols_execution_runtime_bootstrap_empty")
+    state_dir = repo_build_path("build/test_protocols_execution_runtime_bootstrap_empty")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         adapter = FakeExecutionVenue()
@@ -371,7 +372,7 @@ def test_build_execution_runtime_with_empty_registry_state_dir_fails_open():
 
 
 def test_build_execution_runtime_can_load_lab_execution_runtime_projection():
-    state_dir = Path("build/test_protocols_execution_runtime_projection_bootstrap")
+    state_dir = repo_build_path("build/test_protocols_execution_runtime_projection_bootstrap")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         projection_path = state_dir / "local_lab_execution_runtime_projection.json"
@@ -417,7 +418,7 @@ def test_build_execution_runtime_bootstrap_bundle_can_run_boot_reconciliation():
 
 
 def test_build_execution_runtime_bootstrap_bundle_can_load_governed_thr_i04():
-    state_dir = Path("build/test_protocols_execution_runtime_reconciliation_bootstrap")
+    state_dir = repo_build_path("build/test_protocols_execution_runtime_reconciliation_bootstrap")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         _write_reconciliation_scheduler_artifact(state_dir, interval_s=1800)
@@ -443,7 +444,7 @@ def test_build_execution_runtime_bootstrap_bundle_can_load_governed_thr_i04():
 
 
 def test_build_execution_runtime_bootstrap_bundle_accepts_gatekeeper_audit_path():
-    state_dir = Path("build/test_protocols_execution_runtime_gatekeeper_audit")
+    state_dir = repo_build_path("build/test_protocols_execution_runtime_gatekeeper_audit")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         adapter = FakeExecutionVenue()
@@ -532,7 +533,7 @@ def test_build_binance_execution_runtime_wires_bounded_user_data_source():
 
 
 def test_build_binance_execution_runtime_can_enable_fee_aware_edge_gate_from_adapter_config():
-    state_dir = Path("build/test_protocols_execution_runtime_binance_fee_aware_edge")
+    state_dir = repo_build_path("build/test_protocols_execution_runtime_binance_fee_aware_edge")
     shutil.rmtree(state_dir, ignore_errors=True)
     http_client = httpx.AsyncClient(
         base_url="https://testnet.binance.vision",

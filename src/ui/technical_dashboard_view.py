@@ -549,6 +549,7 @@ def _execution_cards(payload: TechnicalDashboardPayload) -> tuple[DashboardCard,
                 f"latency_p95={payload.infra.fill_latency_ms_p95}ms"
             ),
             status="warning" if payload.infra.partial_fill_count > 0 else "healthy",
+            detail=f"signal_to_submit_p90={payload.infra.signal_to_submit_ms_p90}ms",
         ),
         DashboardCard(
             key="execution_reconciliation",

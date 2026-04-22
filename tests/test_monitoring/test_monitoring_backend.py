@@ -284,6 +284,45 @@ def test_health_dashboard_payload_preserves_identifiers_and_modes():
     assert payload.last_transition_summary == "entered shadow"
 
 
+def test_health_and_technical_payloads_project_pre_submit_latency_breakdown() -> None:
+    dtr_summary, cra_report, break_even_report, edge_report = _sample_build9_reports()
+    snapshot = collect_monitoring_snapshot(
+        correlation_id="corr-signal-submit",
+        profile=ProfileId.LIGHT,
+        runtime_mode=RuntimeMode.SHADOW,
+        timestamp_ms=1_700_000_123_500,
+        portfolio=collect_portfolio_metrics(
+            allocated_opportunities=1,
+            gross_capacity_used_pct=10.0,
+            loss_capacity_used_pct=2.0,
+            beta_utilization=0.1,
+            capital_deployed_usdt=500.0,
+            ce_net=0.0010,
+        ),
+        infra=collect_infra_metrics(
+            fill_latency_ms_p95=140,
+            signal_to_submit_ms_p90=65,
+            signal_to_scoring_ms_p90=20,
+            scoring_to_risk_ms_p90=15,
+            risk_to_portfolio_ms_p90=18,
+            portfolio_to_submit_ms_p90=12,
+        ),
+        meta=collect_meta_metrics(dtr_summary, cra_report, break_even_report, edge_report),
+    )
+
+    health_payload = build_health_dashboard_payload(snapshot)
+    technical_payload = build_technical_dashboard_payload(snapshot)
+
+    assert health_payload.signal_to_submit_ms_p90 == 65
+    assert health_payload.signal_to_scoring_ms_p90 == 20
+    assert health_payload.scoring_to_risk_ms_p90 == 15
+    assert health_payload.risk_to_portfolio_ms_p90 == 18
+    assert health_payload.portfolio_to_submit_ms_p90 == 12
+    assert technical_payload.infra.signal_to_submit_ms_p90 == 65
+    assert technical_payload.infra.signal_to_scoring_ms_p90 == 20
+    assert technical_payload.infra.portfolio_to_submit_ms_p90 == 12
+
+
 def test_health_and_technical_payloads_project_operator_runtime_state():
     dtr_summary, cra_report, break_even_report, edge_report = _sample_build9_reports()
     snapshot = collect_monitoring_snapshot(

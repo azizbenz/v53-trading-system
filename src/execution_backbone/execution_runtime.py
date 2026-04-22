@@ -186,6 +186,14 @@ class ExecutionRuntime(ExecutionRuntimeSupportMixin):
                 detail=str(exc),
                 gate_trace=authorization.trace,
             )
+        submit_latency = self._latency_meter.record_submit(
+            receipt.order_id,
+            signal_arrival_time=opportunity.signal_arrival_monotonic_s,
+            scoring_completed_time=opportunity.scoring_completed_monotonic_s,
+            risk_completed_time=opportunity.risk_completed_monotonic_s,
+            portfolio_completed_time=opportunity.portfolio_completed_monotonic_s,
+            submit_time=now,
+        )
         self._register_live_order(receipt.order_id, intent, receipt.submitted_at)
         self._decision_reporter.record_trade(intent, timestamp=now)
         self._record_gatekeeper_submission_audit(
@@ -202,6 +210,21 @@ class ExecutionRuntime(ExecutionRuntimeSupportMixin):
                 "pair": intent.pair,
                 "engine_id": intent.engine_id,
                 "order_type": intent.order_type.value,
+                "signal_to_submit_s": (
+                    None if submit_latency is None else submit_latency.signal_to_submit_s
+                ),
+                "signal_to_scoring_s": (
+                    None if submit_latency is None else submit_latency.signal_to_scoring_s
+                ),
+                "scoring_to_risk_s": (
+                    None if submit_latency is None else submit_latency.scoring_to_risk_s
+                ),
+                "risk_to_portfolio_s": (
+                    None if submit_latency is None else submit_latency.risk_to_portfolio_s
+                ),
+                "portfolio_to_submit_s": (
+                    None if submit_latency is None else submit_latency.portfolio_to_submit_s
+                ),
                 "gate_trace": tuple(step.model_dump(mode="json") for step in authorization.trace),
                 "timestamp": now,
             },
@@ -210,6 +233,21 @@ class ExecutionRuntime(ExecutionRuntimeSupportMixin):
             status=ExecutionSubmissionStatus.SUBMITTED,
             order_id=receipt.order_id,
             intent=intent,
+            signal_to_submit_s=(
+                None if submit_latency is None else submit_latency.signal_to_submit_s
+            ),
+            signal_to_scoring_s=(
+                None if submit_latency is None else submit_latency.signal_to_scoring_s
+            ),
+            scoring_to_risk_s=(
+                None if submit_latency is None else submit_latency.scoring_to_risk_s
+            ),
+            risk_to_portfolio_s=(
+                None if submit_latency is None else submit_latency.risk_to_portfolio_s
+            ),
+            portfolio_to_submit_s=(
+                None if submit_latency is None else submit_latency.portfolio_to_submit_s
+            ),
             detail=authorization.detail,
             gate_trace=authorization.trace,
         )

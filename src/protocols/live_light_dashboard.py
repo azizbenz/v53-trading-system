@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from monitoring import LiveLightProjection
+from monitoring import LiveLightGateGroupProjection, LiveLightProjection
 from protocols.contracts import LiveLightRunSummary
 from protocols.enums import LiveLightRunState, LiveLightVerdict
 from ui.contracts import DashboardCard, DashboardSection
@@ -34,6 +34,38 @@ def _operator_safing_status(summary: LiveLightRunSummary) -> str:
     if request.action.value == "set_halted":
         return "critical"
     return "warning"
+
+
+def _gate_group_value(
+    gate_groups: tuple[LiveLightGateGroupProjection, ...],
+) -> str:
+    blocked = sum(1 for group in gate_groups if group.status == "blocked")
+    review_only = sum(1 for group in gate_groups if group.status == "review_only")
+    passed = sum(1 for group in gate_groups if group.status == "passed")
+    return f"blocked={blocked} / review={review_only} / passed={passed}"
+
+
+def _gate_group_detail(
+    gate_groups: tuple[LiveLightGateGroupProjection, ...],
+) -> str:
+    if not gate_groups:
+        return "No gate group projection"
+    return ", ".join(
+        f"{group.gate_id}={group.status}:{len(group.reasons)}"
+        for group in gate_groups
+    )
+
+
+def _gate_group_status(
+    gate_groups: tuple[LiveLightGateGroupProjection, ...],
+) -> str:
+    if any(group.status == "blocked" for group in gate_groups):
+        return "critical"
+    if any(group.status == "review_only" for group in gate_groups):
+        return "warning"
+    if gate_groups:
+        return "healthy"
+    return "info"
 
 
 def build_live_light_projection(summary: LiveLightRunSummary) -> LiveLightProjection:
@@ -98,6 +130,14 @@ def build_live_light_projection(summary: LiveLightRunSummary) -> LiveLightProjec
         build14_reason_codes=summary.build14_reason_codes,
         build14_confidence_penalty_weight=summary.build14_confidence_penalty_weight,
         build14_recommended_budget_factor=summary.build14_recommended_budget_factor,
+        gate_groups=tuple(
+            LiveLightGateGroupProjection(
+                gate_id=group.gate_id,
+                status=group.status,
+                reasons=group.reasons,
+            )
+            for group in summary.gate_groups
+        ),
     )
 
 
@@ -181,6 +221,13 @@ def build_live_light_dashboard_section(summary: LiveLightRunSummary) -> Dashboar
                     f"partial={projection.execution_runtime_projection_partial_consumer_count} / "
                     f"blocked={projection.execution_runtime_projection_blocked_consumer_count}"
                 ),
+            ),
+            DashboardCard(
+                key="live_light_gate_groups",
+                label="Gate Groups",
+                value=_gate_group_value(projection.gate_groups),
+                status=_gate_group_status(projection.gate_groups),
+                detail=_gate_group_detail(projection.gate_groups),
             ),
             DashboardCard(
                 key="live_light_safing_request",

@@ -12,6 +12,7 @@ from protocols import (
     CompiledHookPlanLoadStatus,
     select_current_compiled_hook_plan,
 )
+from tests.support_paths import repo_build_path
 
 
 def _snapshot(
@@ -28,7 +29,7 @@ def _snapshot(
 
 
 def test_select_current_compiled_hook_plan_returns_no_snapshot_when_store_is_empty():
-    state_dir = Path("build/test_protocols_compiled_hook_plan_loader_empty")
+    state_dir = repo_build_path("build/test_protocols_compiled_hook_plan_loader_empty")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = CompiledArtifactRegistryStore(state_dir)
@@ -44,7 +45,7 @@ def test_select_current_compiled_hook_plan_returns_no_snapshot_when_store_is_emp
 
 
 def test_select_current_compiled_hook_plan_returns_no_binding_when_snapshot_has_other_hooks():
-    state_dir = Path("build/test_protocols_compiled_hook_plan_loader_no_binding")
+    state_dir = repo_build_path("build/test_protocols_compiled_hook_plan_loader_no_binding")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = CompiledArtifactRegistryStore(state_dir)
@@ -71,7 +72,7 @@ def test_select_current_compiled_hook_plan_returns_no_binding_when_snapshot_has_
 
 
 def test_select_current_compiled_hook_plan_returns_binding_only_when_ref_is_empty():
-    state_dir = Path("build/test_protocols_compiled_hook_plan_loader_binding_only")
+    state_dir = repo_build_path("build/test_protocols_compiled_hook_plan_loader_binding_only")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = CompiledArtifactRegistryStore(state_dir)
@@ -95,7 +96,7 @@ def test_select_current_compiled_hook_plan_returns_binding_only_when_ref_is_empt
 
 
 def test_select_current_compiled_hook_plan_loads_plan_and_validates_binding_match():
-    state_dir = Path("build/test_protocols_compiled_hook_plan_loader_loaded")
+    state_dir = repo_build_path("build/test_protocols_compiled_hook_plan_loader_loaded")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = CompiledArtifactRegistryStore(state_dir)
@@ -135,7 +136,7 @@ def test_select_current_compiled_hook_plan_loads_plan_and_validates_binding_matc
 
 
 def test_select_current_compiled_hook_plan_returns_load_error_on_plan_binding_mismatch():
-    state_dir = Path("build/test_protocols_compiled_hook_plan_loader_mismatch")
+    state_dir = repo_build_path("build/test_protocols_compiled_hook_plan_loader_mismatch")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = CompiledArtifactRegistryStore(state_dir)

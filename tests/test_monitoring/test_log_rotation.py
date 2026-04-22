@@ -10,9 +10,9 @@ from monitoring.log_rotation import rotate_log_file
 
 
 def _scratch_dir(label: str) -> Path:
-    root = Path("build/pytest-log-rotation") / f"{label}_{uuid4().hex}"
-    root.mkdir(parents=True, exist_ok=False)
-    return root
+    from tests.support_paths import make_repo_scratch_dir
+
+    return make_repo_scratch_dir("pytest-log-rotation", label)
 
 
 def test_rotate_log_file_is_noop_below_threshold():

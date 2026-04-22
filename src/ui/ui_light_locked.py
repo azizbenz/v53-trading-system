@@ -250,7 +250,10 @@ def _build_execution_section(payload: HealthDashboardPayload) -> DashboardSectio
                 label="Latency & Reco",
                 value=f"{payload.fill_latency_ms_p95} ms",
                 status="warning" if payload.reconciliation_alert_count > 0 else "healthy",
-                detail=f"Reconciliation alerts {payload.reconciliation_alert_count}",
+                detail=(
+                    f"Pre-submit p90 {payload.signal_to_submit_ms_p90} ms / "
+                    f"Reconciliation alerts {payload.reconciliation_alert_count}"
+                ),
             ),
         ),
     )

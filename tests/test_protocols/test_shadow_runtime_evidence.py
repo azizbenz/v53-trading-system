@@ -29,8 +29,9 @@ from protocols import (
 
 
 def _scratch_dir(name: str) -> Path:
-    repo_root = Path(__file__).resolve().parents[2]
-    return repo_root / "build" / "shadow_runtime_evidence_tests" / name
+    from tests.support_paths import make_repo_scratch_dir
+
+    return make_repo_scratch_dir("shadow_runtime_evidence_tests", name)
 
 
 def _component_assessments() -> tuple[ShadowComponentAssessment, ...]:

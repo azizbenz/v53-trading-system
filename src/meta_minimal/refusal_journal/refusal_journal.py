@@ -60,6 +60,12 @@ class RefusalJournal:
     def get_by_category(self, category: RefusalCategory) -> tuple[RefusalRecord, ...]:
         return tuple(self._records_by_category.get(category, ()))
 
+    def count_by_category(self) -> dict[RefusalCategory, int]:
+        return {
+            category: len(records)
+            for category, records in self._records_by_category.items()
+        }
+
     @property
     def size(self) -> int:
         return len(self._records)

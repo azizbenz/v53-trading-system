@@ -19,6 +19,7 @@ from protocols import (
     ExecutionNoTradeFilterBridge,
     inspect_execution_no_trade_filter_bridge,
 )
+from tests.support_paths import repo_build_path
 
 
 def _publish_execution_no_trade_snapshot(
@@ -57,7 +58,7 @@ def _hook_input() -> ExecutionNoTradeFilterInput:
 
 
 def test_execution_no_trade_filter_bridge_allows_without_snapshot():
-    state_dir = Path("build/test_protocols_execution_no_trade_filter_bridge_empty")
+    state_dir = repo_build_path("build/test_protocols_execution_no_trade_filter_bridge_empty")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         bridge = ExecutionNoTradeFilterBridge(CompiledArtifactRegistryStore(state_dir))
@@ -71,7 +72,7 @@ def test_execution_no_trade_filter_bridge_allows_without_snapshot():
 
 
 def test_inspect_execution_no_trade_filter_bridge_reports_no_snapshot():
-    state_dir = Path("build/test_protocols_execution_no_trade_filter_bridge_status_empty")
+    state_dir = repo_build_path("build/test_protocols_execution_no_trade_filter_bridge_status_empty")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         status = inspect_execution_no_trade_filter_bridge(
@@ -88,7 +89,7 @@ def test_inspect_execution_no_trade_filter_bridge_reports_no_snapshot():
 
 
 def test_execution_no_trade_filter_bridge_blocks_from_loaded_plan():
-    state_dir = Path("build/test_protocols_execution_no_trade_filter_bridge_loaded")
+    state_dir = repo_build_path("build/test_protocols_execution_no_trade_filter_bridge_loaded")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = _publish_execution_no_trade_snapshot(state_dir)
@@ -119,7 +120,7 @@ def test_execution_no_trade_filter_bridge_blocks_from_loaded_plan():
 
 
 def test_inspect_execution_no_trade_filter_bridge_reports_loaded_plan():
-    state_dir = Path("build/test_protocols_execution_no_trade_filter_bridge_status_loaded")
+    state_dir = repo_build_path("build/test_protocols_execution_no_trade_filter_bridge_status_loaded")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = _publish_execution_no_trade_snapshot(state_dir)
@@ -151,7 +152,7 @@ def test_inspect_execution_no_trade_filter_bridge_reports_loaded_plan():
 
 
 def test_execution_no_trade_filter_bridge_fails_open_on_invalid_plan_binding():
-    state_dir = Path("build/test_protocols_execution_no_trade_filter_bridge_invalid")
+    state_dir = repo_build_path("build/test_protocols_execution_no_trade_filter_bridge_invalid")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = _publish_execution_no_trade_snapshot(state_dir)
@@ -177,7 +178,7 @@ def test_execution_no_trade_filter_bridge_fails_open_on_invalid_plan_binding():
 
 
 def test_inspect_execution_no_trade_filter_bridge_reports_invalid_plan_error():
-    state_dir = Path("build/test_protocols_execution_no_trade_filter_bridge_status_invalid")
+    state_dir = repo_build_path("build/test_protocols_execution_no_trade_filter_bridge_status_invalid")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = _publish_execution_no_trade_snapshot(state_dir)
@@ -206,7 +207,7 @@ def test_inspect_execution_no_trade_filter_bridge_reports_invalid_plan_error():
 
 
 def test_execution_no_trade_filter_bridge_fails_open_on_invalid_hook_payload():
-    state_dir = Path("build/test_protocols_execution_no_trade_filter_bridge_payload_invalid")
+    state_dir = repo_build_path("build/test_protocols_execution_no_trade_filter_bridge_payload_invalid")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = _publish_execution_no_trade_snapshot(state_dir)
@@ -235,7 +236,7 @@ def test_execution_no_trade_filter_bridge_fails_open_on_invalid_hook_payload():
 
 
 def test_execution_no_trade_filter_bridge_fails_open_on_hook_execution_error(monkeypatch):
-    state_dir = Path("build/test_protocols_execution_no_trade_filter_bridge_hook_error")
+    state_dir = repo_build_path("build/test_protocols_execution_no_trade_filter_bridge_hook_error")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = _publish_execution_no_trade_snapshot(state_dir)

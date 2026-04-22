@@ -166,6 +166,15 @@ def test_light_dashboard_view_prefers_operator_runtime_last_error_in_alert_histo
     assert next(card for card in alerts.cards if card.key == "operator_events").detail == (
         "state_file_corrupted:JSONDecodeError:bad payload"
     )
+
+
+def test_light_dashboard_view_projects_pre_submit_latency_detail() -> None:
+    view = build_light_dashboard_view(_payload(signal_to_submit_ms_p90=95))
+    execution = next(section for section in view.sections if section.title == "Execution")
+
+    assert next(card for card in execution.cards if card.key == "execution_latency").detail == (
+        "Pre-submit p90 95 ms / Reconciliation alerts 1"
+    )
     assert view.control_surface.profile_selector_enabled is False
     assert view.control_surface.engine_cd_toggle_enabled is False
     assert view.control_surface.complete_pairs_enabled is False

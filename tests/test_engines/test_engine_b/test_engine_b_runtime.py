@@ -39,6 +39,10 @@ from scoring_backbone.penalty_aggregator.score_penalty_builder import ScorePenal
 from scoring_backbone.penalty_aggregator.size_penalty_builder import SizePenaltyItem
 from scoring_backbone.ranking_router.portfolio_compatibility_checker import PortfolioState
 from scoring_backbone.scoring_runtime import ScoringCandidateInput, ScoringRuntime
+from scoring_backbone import normalize_forecast
+from engines.engine_b.engine_b_runtime_forecast_support import (
+    _ENGINE_B_FORECAST_NORMALIZER_CONFIG,
+)
 
 
 def _good_engine_inputs(**overrides) -> EngineBInput:
@@ -315,6 +319,17 @@ def test_forecast_signal_candidate_contains_expected_break_even(
     assert result.status == EngineBRuntimeStatus.ACCEPTED
     assert result.forecast_signal_candidate is not None
     assert result.forecast_signal_candidate.expected_break_even == pytest.approx(0.0018)
+
+
+def test_forecast_signal_candidate_strength_cap_matches_engine_b_normalizer_config() -> None:
+    result = normalize_forecast(
+        expected_return=0.002,
+        volatility_scale=0.0001,
+        forecast_scalar=_ENGINE_B_FORECAST_NORMALIZER_CONFIG.target_mean_abs_forecast,
+        config=_ENGINE_B_FORECAST_NORMALIZER_CONFIG,
+    )
+
+    assert result.normalized_forecast == pytest.approx(15.0)
 
 
 def test_forecast_reason_codes_include_engine_and_penalties(

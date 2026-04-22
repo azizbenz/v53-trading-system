@@ -146,21 +146,29 @@ class TestPairMetrics:
 
 
 class TestInfraMetrics:
-    def test_defaults(self):
+    def test_defaults(self) -> None:
         m = collect_infra_metrics()
         assert isinstance(m, InfraMetrics)
         assert m.queue_backlog == 0
         assert m.stale_pairs == ()
 
-    def test_full_infra(self):
+    def test_full_infra(self) -> None:
         m = collect_infra_metrics(
             queue_backlog=500, reconnect_count=3,
             stale_pairs=("BTCUSDT", "ETHUSDT"),
             dtr_loss_count=2, log_loss_count=1,
+            signal_to_submit_ms_p90=85,
+            signal_to_scoring_ms_p90=25,
+            scoring_to_risk_ms_p90=15,
+            risk_to_portfolio_ms_p90=30,
+            portfolio_to_submit_ms_p90=15,
             cpu_pct=80.0, ram_pct=60.0,
         )
         assert m.queue_backlog == 500
         assert len(m.stale_pairs) == 2
+        assert m.signal_to_submit_ms_p90 == 85
+        assert m.signal_to_scoring_ms_p90 == 25
+        assert m.portfolio_to_submit_ms_p90 == 15
 
 
 class TestSnapshotConstruction:

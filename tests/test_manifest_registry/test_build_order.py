@@ -49,10 +49,10 @@ class TestBuildOrderCoherent:
         assert "calibration_loader" in stage1.modules
 
     def test_build12_exists(self):
-        """Build-12 Micro-live Light must exist per V5.3 plan."""
+        """Build-12 Micro-live must exist per V5.3 plan."""
         stage12 = get_build_stage(12)
         assert stage12 is not None
-        assert stage12.name == "Micro-live Light"
+        assert stage12.name == "Micro-live"
 
     def test_build10_contains_replay_and_learning_scaffolding(self):
         stage10 = get_build_stage(10)

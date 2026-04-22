@@ -43,6 +43,27 @@ class TestRefusalRecord:
         )
         assert record.engine_id is None
 
+    def test_counterfactual_pnl_accepts_none_and_negative_values(self) -> None:
+        none_record = RefusalRecord(
+            timestamp_ms=NOW_MS,
+            pair="BTCUSDT",
+            engine_id=EngineId.A,
+            category=RefusalCategory.NO_TRADE,
+            reason_codes=("economics.ev_net_below_floor",),
+            counterfactual_pnl=None,
+        )
+        loss_record = RefusalRecord(
+            timestamp_ms=NOW_MS,
+            pair="ETHUSDT",
+            engine_id=EngineId.B,
+            category=RefusalCategory.NO_FILL,
+            reason_codes=("execution.timeout",),
+            counterfactual_pnl=-0.50,
+        )
+
+        assert none_record.counterfactual_pnl is None
+        assert loss_record.counterfactual_pnl == pytest.approx(-0.50)
+
     def test_reason_codes_must_not_be_empty(self) -> None:
         with pytest.raises(ValidationError):
             RefusalRecord(

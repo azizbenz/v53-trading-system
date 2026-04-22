@@ -13,6 +13,7 @@ from protocols import (
     build_execution_runtime_projection_bridge_projection,
     build_runtime_hook_bridge_projections,
 )
+from tests.support_paths import repo_build_path
 
 
 def _publish_execution_no_trade_snapshot(
@@ -146,7 +147,7 @@ def test_build_execution_no_trade_bridge_projection_returns_planned_when_unconfi
 
 
 def test_build_execution_no_trade_bridge_projection_returns_healthy_when_loaded():
-    state_dir = Path("build/test_protocols_execution_runtime_dashboard_loaded")
+    state_dir = repo_build_path("build/test_protocols_execution_runtime_dashboard_loaded")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         _publish_execution_no_trade_snapshot(state_dir)
@@ -180,7 +181,7 @@ def test_build_execution_no_trade_bridge_projection_returns_healthy_when_loaded(
 
 
 def test_build_execution_no_trade_bridge_projection_returns_warning_on_invalid_plan():
-    state_dir = Path("build/test_protocols_execution_runtime_dashboard_invalid")
+    state_dir = repo_build_path("build/test_protocols_execution_runtime_dashboard_invalid")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         _publish_execution_no_trade_snapshot(state_dir)
@@ -218,7 +219,7 @@ def test_build_runtime_hook_bridge_projections_returns_all_runtime_open_hooks_wh
 
 
 def test_build_runtime_hook_bridge_projections_projects_loaded_engine_b_and_execution_hooks():
-    state_dir = Path("build/test_protocols_execution_runtime_dashboard_runtime_hooks")
+    state_dir = repo_build_path("build/test_protocols_execution_runtime_dashboard_runtime_hooks")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = CompiledArtifactRegistryStore(state_dir)
@@ -301,7 +302,7 @@ def test_build_execution_runtime_projection_bridge_projection_returns_planned_wh
 
 
 def test_build_execution_runtime_projection_bridge_projection_returns_healthy_when_models_load():
-    path = Path("build/test_protocols_execution_runtime_projection_bridge_ready.json")
+    path = repo_build_path("build/test_protocols_execution_runtime_projection_bridge_ready.json")
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         _write_execution_runtime_projection(path)
@@ -323,7 +324,7 @@ def test_build_execution_runtime_projection_bridge_projection_returns_healthy_wh
 
 
 def test_build_execution_runtime_projection_bridge_projection_returns_critical_when_blocked():
-    path = Path("build/test_protocols_execution_runtime_projection_bridge_blocked.json")
+    path = repo_build_path("build/test_protocols_execution_runtime_projection_bridge_blocked.json")
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         _write_execution_runtime_projection(

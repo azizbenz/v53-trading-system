@@ -18,8 +18,9 @@ from monitoring.local_lab_monitoring_bundle_manifest import build_local_lab_moni
 
 
 def _scratch_dir(name: str) -> Path:
-    repo_root = Path(__file__).resolve().parents[2]
-    return repo_root / "build" / "pytest-local-lab-bundle-discovery" / name
+    from tests.support_paths import make_repo_scratch_dir
+
+    return make_repo_scratch_dir("pytest-local-lab-bundle-discovery", name)
 
 
 def _write_bundle(output_dir: Path, *, correlation_id: str, timestamp_ms: int) -> None:

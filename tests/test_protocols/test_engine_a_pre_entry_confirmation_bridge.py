@@ -19,6 +19,7 @@ from protocols import (
     EngineAPreEntryConfirmationBridge,
     inspect_engine_a_pre_entry_confirmation_bridge,
 )
+from tests.support_paths import repo_build_path
 
 
 def _publish_engine_a_snapshot(
@@ -64,7 +65,7 @@ def _hook_input() -> EngineAPreEntryValidationInput:
 
 
 def test_engine_a_pre_entry_confirmation_bridge_allows_without_snapshot():
-    state_dir = Path("build/test_protocols_engine_a_pre_entry_confirmation_bridge_empty")
+    state_dir = repo_build_path("build/test_protocols_engine_a_pre_entry_confirmation_bridge_empty")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         bridge = EngineAPreEntryConfirmationBridge(CompiledArtifactRegistryStore(state_dir))
@@ -78,7 +79,7 @@ def test_engine_a_pre_entry_confirmation_bridge_allows_without_snapshot():
 
 
 def test_inspect_engine_a_pre_entry_confirmation_bridge_reports_no_snapshot():
-    state_dir = Path("build/test_protocols_engine_a_pre_entry_confirmation_bridge_status_empty")
+    state_dir = repo_build_path("build/test_protocols_engine_a_pre_entry_confirmation_bridge_status_empty")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         status = inspect_engine_a_pre_entry_confirmation_bridge(
@@ -95,7 +96,7 @@ def test_inspect_engine_a_pre_entry_confirmation_bridge_reports_no_snapshot():
 
 
 def test_engine_a_pre_entry_confirmation_bridge_applies_loaded_plan():
-    state_dir = Path("build/test_protocols_engine_a_pre_entry_confirmation_bridge_loaded")
+    state_dir = repo_build_path("build/test_protocols_engine_a_pre_entry_confirmation_bridge_loaded")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = _publish_engine_a_snapshot(state_dir)
@@ -125,7 +126,7 @@ def test_engine_a_pre_entry_confirmation_bridge_applies_loaded_plan():
 
 
 def test_engine_a_pre_entry_confirmation_bridge_fails_open_on_invalid_hook_payload():
-    state_dir = Path("build/test_protocols_engine_a_pre_entry_confirmation_bridge_payload_invalid")
+    state_dir = repo_build_path("build/test_protocols_engine_a_pre_entry_confirmation_bridge_payload_invalid")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = _publish_engine_a_snapshot(state_dir)
@@ -153,7 +154,7 @@ def test_engine_a_pre_entry_confirmation_bridge_fails_open_on_invalid_hook_paylo
 
 
 def test_inspect_engine_a_pre_entry_confirmation_bridge_reports_invalid_plan_error():
-    state_dir = Path("build/test_protocols_engine_a_pre_entry_confirmation_bridge_status_invalid")
+    state_dir = repo_build_path("build/test_protocols_engine_a_pre_entry_confirmation_bridge_status_invalid")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = _publish_engine_a_snapshot(state_dir)
@@ -182,7 +183,7 @@ def test_inspect_engine_a_pre_entry_confirmation_bridge_reports_invalid_plan_err
 
 
 def test_engine_a_pre_entry_confirmation_bridge_fails_open_on_hook_execution_error(monkeypatch):
-    state_dir = Path("build/test_protocols_engine_a_pre_entry_confirmation_bridge_hook_error")
+    state_dir = repo_build_path("build/test_protocols_engine_a_pre_entry_confirmation_bridge_hook_error")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = _publish_engine_a_snapshot(state_dir)

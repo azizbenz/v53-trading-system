@@ -19,6 +19,7 @@ from protocols import (
     PortfolioRelativeRankAdjustmentBridge,
     inspect_portfolio_relative_rank_adjustment_bridge,
 )
+from tests.support_paths import repo_build_path
 
 
 def _publish_portfolio_snapshot(
@@ -64,7 +65,7 @@ def _hook_input() -> PortfolioRelativeRankAdjustmentInput:
 
 
 def test_portfolio_relative_rank_adjustment_bridge_uses_neutral_outcome_without_snapshot():
-    state_dir = Path("build/test_protocols_portfolio_rank_bridge_empty")
+    state_dir = repo_build_path("build/test_protocols_portfolio_rank_bridge_empty")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         bridge = PortfolioRelativeRankAdjustmentBridge(CompiledArtifactRegistryStore(state_dir))
@@ -78,7 +79,7 @@ def test_portfolio_relative_rank_adjustment_bridge_uses_neutral_outcome_without_
 
 
 def test_inspect_portfolio_relative_rank_adjustment_bridge_reports_no_snapshot():
-    state_dir = Path("build/test_protocols_portfolio_rank_bridge_status_empty")
+    state_dir = repo_build_path("build/test_protocols_portfolio_rank_bridge_status_empty")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         status = inspect_portfolio_relative_rank_adjustment_bridge(
@@ -95,7 +96,7 @@ def test_inspect_portfolio_relative_rank_adjustment_bridge_reports_no_snapshot()
 
 
 def test_portfolio_relative_rank_adjustment_bridge_applies_loaded_plan():
-    state_dir = Path("build/test_protocols_portfolio_rank_bridge_loaded")
+    state_dir = repo_build_path("build/test_protocols_portfolio_rank_bridge_loaded")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = _publish_portfolio_snapshot(state_dir)
@@ -125,7 +126,7 @@ def test_portfolio_relative_rank_adjustment_bridge_applies_loaded_plan():
 
 
 def test_portfolio_relative_rank_adjustment_bridge_fails_open_on_invalid_hook_payload():
-    state_dir = Path("build/test_protocols_portfolio_rank_bridge_payload_invalid")
+    state_dir = repo_build_path("build/test_protocols_portfolio_rank_bridge_payload_invalid")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = _publish_portfolio_snapshot(state_dir)
@@ -153,7 +154,7 @@ def test_portfolio_relative_rank_adjustment_bridge_fails_open_on_invalid_hook_pa
 
 
 def test_inspect_portfolio_relative_rank_adjustment_bridge_reports_invalid_plan_error():
-    state_dir = Path("build/test_protocols_portfolio_rank_bridge_status_invalid")
+    state_dir = repo_build_path("build/test_protocols_portfolio_rank_bridge_status_invalid")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = _publish_portfolio_snapshot(state_dir)
@@ -182,7 +183,7 @@ def test_inspect_portfolio_relative_rank_adjustment_bridge_reports_invalid_plan_
 
 
 def test_portfolio_relative_rank_adjustment_bridge_fails_open_on_hook_execution_error(monkeypatch):
-    state_dir = Path("build/test_protocols_portfolio_rank_bridge_hook_error")
+    state_dir = repo_build_path("build/test_protocols_portfolio_rank_bridge_hook_error")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = _publish_portfolio_snapshot(state_dir)

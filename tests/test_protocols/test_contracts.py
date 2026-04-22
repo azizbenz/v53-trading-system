@@ -12,6 +12,7 @@ from protocols import (
     InfoStressGovernanceSummary,
     LiveLightDecision,
     LiveLightExecutionIntent,
+    LiveLightGateGroupSummary,
     LiveLightInput,
     LiveLightRunState,
     LiveLightRunSummary,
@@ -97,6 +98,7 @@ def test_protocols_exports_expected_symbols():
         "LiveLightInput",
         "LiveLightDecision",
         "LiveLightExecutionIntent",
+        "LiveLightGateGroupSummary",
         "LiveLightRunSummary",
         "build_live_light_input_from_micro_live",
         "run_live_light_gate",
@@ -1535,9 +1537,16 @@ def test_live_light_run_summary_counts_planned_surface():
         broker_ready=True,
         exchange_ready=True,
         onboarding_ready=True,
+        gate_groups=(
+            LiveLightGateGroupSummary(
+                gate_id="governance_envelope",
+                status="passed",
+            ),
+        ),
     )
 
     assert summary.planned_pair_count == 2
     assert summary.planned_engine_count == 2
     assert summary.blocking_reason_count == 0
+    assert summary.gate_groups[0].gate_id == "governance_envelope"
 

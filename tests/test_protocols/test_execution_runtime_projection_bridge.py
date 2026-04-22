@@ -13,6 +13,7 @@ from protocols import (
     inspect_execution_runtime_projection_bridge,
     load_execution_runtime_consumer_models,
 )
+from tests.support_paths import repo_build_path
 
 
 def _write_ready_projection(path: Path) -> None:
@@ -52,7 +53,7 @@ def test_inspect_execution_runtime_projection_bridge_reports_missing_projection(
 
 
 def test_load_execution_runtime_consumer_models_recovers_ready_models():
-    state_dir = Path("build/test_protocols_execution_runtime_projection_bridge_loaded")
+    state_dir = repo_build_path("build/test_protocols_execution_runtime_projection_bridge_loaded")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         projection_path = state_dir / "local_lab_execution_runtime_projection.json"

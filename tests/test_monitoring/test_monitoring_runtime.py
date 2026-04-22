@@ -29,8 +29,9 @@ from ui import LockedOperatorUiRuntime, OperatorActionRequest, OperatorActionTyp
 
 
 def _scratch_dir(name: str) -> Path:
-    repo_root = Path(__file__).resolve().parents[2]
-    return repo_root / "build" / "monitoring_runtime_tests" / name
+    from tests.support_paths import make_repo_scratch_dir
+
+    return make_repo_scratch_dir("monitoring_runtime_tests", name)
 
 
 def _meta_metrics():

@@ -217,7 +217,7 @@ def _compiled_execution_no_trade_filter(
 
 
 class TestExecutionRuntime:
-    def test_runtime_resolves_adverse_selection_delay_from_policy(self):
+    def test_runtime_resolves_adverse_selection_delay_from_policy(self) -> None:
         adapter = FakeExecutionVenue()
         runtime = ExecutionRuntime(
             adapter,
@@ -236,6 +236,47 @@ class TestExecutionRuntime:
             pair="NEARUSDT",
             event_delay_s=1.25,
         ) == pytest.approx(1.25)
+
+    def test_runtime_records_signal_to_submit_latency_from_monotonic_opportunity_timestamp(self) -> None:
+        adapter = FakeExecutionVenue()
+        runtime = ExecutionRuntime(adapter)
+
+        submission = runtime.submit_opportunity(
+            _opportunity(signal_arrival_monotonic_s=99.4),
+            now=100.0,
+        )
+
+        assert submission.status == ExecutionSubmissionStatus.SUBMITTED
+        assert submission.signal_to_submit_s == pytest.approx(0.6)
+        stats = runtime.get_latency_stats()
+        assert stats.count == 1
+        assert stats.avg_signal_to_submit_s == pytest.approx(0.6)
+
+    def test_runtime_records_pre_submit_stage_breakdown_from_execution_opportunity(self) -> None:
+        adapter = FakeExecutionVenue()
+        runtime = ExecutionRuntime(adapter)
+
+        submission = runtime.submit_opportunity(
+            _opportunity(
+                signal_arrival_monotonic_s=99.0,
+                scoring_completed_monotonic_s=99.3,
+                risk_completed_monotonic_s=99.45,
+                portfolio_completed_monotonic_s=99.8,
+            ),
+            now=100.0,
+        )
+
+        assert submission.status == ExecutionSubmissionStatus.SUBMITTED
+        assert submission.signal_to_submit_s == pytest.approx(1.0)
+        assert submission.signal_to_scoring_s == pytest.approx(0.3)
+        assert submission.scoring_to_risk_s == pytest.approx(0.15)
+        assert submission.risk_to_portfolio_s == pytest.approx(0.35)
+        assert submission.portfolio_to_submit_s == pytest.approx(0.2)
+        stats = runtime.get_latency_stats()
+        assert stats.p90_signal_to_scoring_s == pytest.approx(0.3)
+        assert stats.p90_scoring_to_risk_s == pytest.approx(0.15)
+        assert stats.p90_risk_to_portfolio_s == pytest.approx(0.35)
+        assert stats.p90_portfolio_to_submit_s == pytest.approx(0.2)
 
     def test_runtime_executes_real_path_across_fill_cost_and_reconciliation(self):
         adapter = FakeExecutionVenue()

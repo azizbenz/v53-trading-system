@@ -19,6 +19,7 @@ from protocols import (
     EngineBSweepValidationBridge,
     inspect_engine_b_sweep_validation_bridge,
 )
+from tests.support_paths import repo_build_path
 
 
 def _publish_engine_b_snapshot(
@@ -62,7 +63,7 @@ def _hook_input() -> EngineBSweepValidationInput:
 
 
 def test_engine_b_sweep_validation_bridge_allows_without_snapshot():
-    state_dir = Path("build/test_protocols_engine_b_sweep_validation_bridge_empty")
+    state_dir = repo_build_path("build/test_protocols_engine_b_sweep_validation_bridge_empty")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         bridge = EngineBSweepValidationBridge(CompiledArtifactRegistryStore(state_dir))
@@ -77,7 +78,7 @@ def test_engine_b_sweep_validation_bridge_allows_without_snapshot():
 
 
 def test_inspect_engine_b_sweep_validation_bridge_reports_no_snapshot():
-    state_dir = Path("build/test_protocols_engine_b_sweep_validation_bridge_status_empty")
+    state_dir = repo_build_path("build/test_protocols_engine_b_sweep_validation_bridge_status_empty")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         status = inspect_engine_b_sweep_validation_bridge(
@@ -94,7 +95,7 @@ def test_inspect_engine_b_sweep_validation_bridge_reports_no_snapshot():
 
 
 def test_engine_b_sweep_validation_bridge_applies_loaded_plan():
-    state_dir = Path("build/test_protocols_engine_b_sweep_validation_bridge_loaded")
+    state_dir = repo_build_path("build/test_protocols_engine_b_sweep_validation_bridge_loaded")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = _publish_engine_b_snapshot(state_dir)
@@ -127,7 +128,7 @@ def test_engine_b_sweep_validation_bridge_applies_loaded_plan():
 
 
 def test_inspect_engine_b_sweep_validation_bridge_reports_loaded_plan():
-    state_dir = Path("build/test_protocols_engine_b_sweep_validation_bridge_status_loaded")
+    state_dir = repo_build_path("build/test_protocols_engine_b_sweep_validation_bridge_status_loaded")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = _publish_engine_b_snapshot(state_dir)
@@ -157,7 +158,7 @@ def test_inspect_engine_b_sweep_validation_bridge_reports_loaded_plan():
 
 
 def test_engine_b_sweep_validation_bridge_fails_open_on_invalid_plan_binding():
-    state_dir = Path("build/test_protocols_engine_b_sweep_validation_bridge_invalid")
+    state_dir = repo_build_path("build/test_protocols_engine_b_sweep_validation_bridge_invalid")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = _publish_engine_b_snapshot(state_dir)
@@ -184,7 +185,7 @@ def test_engine_b_sweep_validation_bridge_fails_open_on_invalid_plan_binding():
 
 
 def test_inspect_engine_b_sweep_validation_bridge_reports_invalid_plan_error():
-    state_dir = Path("build/test_protocols_engine_b_sweep_validation_bridge_status_invalid")
+    state_dir = repo_build_path("build/test_protocols_engine_b_sweep_validation_bridge_status_invalid")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = _publish_engine_b_snapshot(state_dir)
@@ -213,7 +214,7 @@ def test_inspect_engine_b_sweep_validation_bridge_reports_invalid_plan_error():
 
 
 def test_engine_b_sweep_validation_bridge_fails_open_on_invalid_hook_payload():
-    state_dir = Path("build/test_protocols_engine_b_sweep_validation_bridge_payload_invalid")
+    state_dir = repo_build_path("build/test_protocols_engine_b_sweep_validation_bridge_payload_invalid")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = _publish_engine_b_snapshot(state_dir)
@@ -242,7 +243,7 @@ def test_engine_b_sweep_validation_bridge_fails_open_on_invalid_hook_payload():
 
 
 def test_engine_b_sweep_validation_bridge_fails_open_on_hook_execution_error(monkeypatch):
-    state_dir = Path("build/test_protocols_engine_b_sweep_validation_bridge_hook_error")
+    state_dir = repo_build_path("build/test_protocols_engine_b_sweep_validation_bridge_hook_error")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = _publish_engine_b_snapshot(state_dir)

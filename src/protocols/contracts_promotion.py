@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, model_validator
 
 from protocols.contracts_validation_support import (
@@ -441,6 +443,28 @@ class LiveLightExecutionIntent(BaseModel, frozen=True):
         return self
 
 
+class LiveLightGateGroupSummary(BaseModel, frozen=True):
+    """Audit-friendly status projection for the canonical Live-Light gate groups."""
+
+    gate_id: Literal[
+        "governance_envelope",
+        "promotion_history",
+        "import_replay_integrity",
+        "operational_readiness",
+        "build14_influence",
+    ]
+    status: Literal["passed", "blocked", "review_only"] = "passed"
+    reasons: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_status_consistency(self) -> "LiveLightGateGroupSummary":
+        if self.status == "passed" and self.reasons:
+            raise ValueError("Passed gate groups must not carry reasons")
+        if self.status != "passed" and not self.reasons:
+            raise ValueError("Blocked or review_only gate groups must carry reasons")
+        return self
+
+
 class LiveLightRunSummary(BaseModel, frozen=True):
     """Deterministic output of the minimal Build-13 Live-Light gate."""
 
@@ -483,6 +507,7 @@ class LiveLightRunSummary(BaseModel, frozen=True):
     build14_recommended_budget_factor: float = Field(default=1.0, ge=0.0, le=1.0)
     build14_live_eligible: bool = False
     shadow_portfolio_judgment: ShadowPortfolioJudgment = ShadowPortfolioJudgment()
+    gate_groups: tuple[LiveLightGateGroupSummary, ...] = ()
 
     @property
     def blocking_reason_count(self) -> int:
@@ -507,6 +532,7 @@ __all__ = [
     "LiveDecision",
     "LiveExecutionIntent",
     "LiveInput",
+    "LiveLightGateGroupSummary",
     "LiveLightDecision",
     "LiveLightExecutionIntent",
     "LiveLightInput",

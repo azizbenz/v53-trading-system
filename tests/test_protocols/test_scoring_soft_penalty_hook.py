@@ -17,6 +17,7 @@ from protocols import (
     select_current_compiled_hook_plan,
 )
 from scoring_backbone import ScoringSoftPenaltyLayerInput
+from tests.support_paths import repo_build_path
 
 
 def _publish_scoring_snapshot(
@@ -63,7 +64,7 @@ def _hook_input() -> ScoringSoftPenaltyLayerInput:
 
 
 def test_load_scoring_soft_penalty_hook_payload_from_loaded_selection():
-    state_dir = Path("build/test_protocols_scoring_soft_penalty_hook_loaded")
+    state_dir = repo_build_path("build/test_protocols_scoring_soft_penalty_hook_loaded")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = _publish_scoring_snapshot(state_dir)
@@ -97,7 +98,7 @@ def test_load_scoring_soft_penalty_hook_payload_from_loaded_selection():
 
 
 def test_load_scoring_soft_penalty_hook_payload_rejects_wrong_hook():
-    state_dir = Path("build/test_protocols_scoring_soft_penalty_hook_wrong_hook")
+    state_dir = repo_build_path("build/test_protocols_scoring_soft_penalty_hook_wrong_hook")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = CompiledArtifactRegistryStore(state_dir)

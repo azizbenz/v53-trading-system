@@ -49,6 +49,10 @@ class ExecutionOpportunity(BaseModel, frozen=True):
     price_limit: float | None = None
     profile: str = "COMPLETE"  # BS-49: LIGHT removed; COMPLETE is the governed profile
     venue_constraints: VenueConstraintSnapshot | None = None
+    signal_arrival_monotonic_s: float | None = Field(default=None, ge=0.0)
+    scoring_completed_monotonic_s: float | None = Field(default=None, ge=0.0)
+    risk_completed_monotonic_s: float | None = Field(default=None, ge=0.0)
+    portfolio_completed_monotonic_s: float | None = Field(default=None, ge=0.0)
     metadata: dict[str, object] = Field(default_factory=dict)
 
 
@@ -121,6 +125,11 @@ class ExecutionSubmission(BaseModel, frozen=True):
     intent: ExecutionIntent | None = None
     no_trade: NoTradeDecision | None = None
     guard: GuardResult | None = None
+    signal_to_submit_s: float | None = None
+    signal_to_scoring_s: float | None = None
+    scoring_to_risk_s: float | None = None
+    risk_to_portfolio_s: float | None = None
+    portfolio_to_submit_s: float | None = None
     detail: str = ""
     gate_trace: tuple[ExecutionGateTrace, ...] = ()
 

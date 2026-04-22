@@ -192,7 +192,69 @@ class TestFillAggregator:
 # --- Latency Meter ---
 
 class TestLatencyMeter:
-    def test_full_latency(self):
+    def test_signal_to_submit_latency_is_recorded_at_submit_boundary(self) -> None:
+        meter = LatencyMeter()
+        m = meter.record_submit("o1", signal_arrival_time=100.0, submit_time=100.4)
+
+        assert m is not None
+        assert m.signal_to_submit_s == pytest.approx(0.4)
+        stats = meter.get_stats()
+        assert stats.count == 1
+        assert stats.avg_signal_to_submit_s == pytest.approx(0.4)
+        assert stats.p90_signal_to_submit_s == pytest.approx(0.4)
+
+    def test_record_submit_projects_upstream_stage_breakdown(self) -> None:
+        meter = LatencyMeter()
+
+        m = meter.record_submit(
+            "o1",
+            signal_arrival_time=100.0,
+            scoring_completed_time=100.2,
+            risk_completed_time=100.35,
+            portfolio_completed_time=100.8,
+            submit_time=101.0,
+        )
+
+        assert m is not None
+        assert m.signal_to_submit_s == pytest.approx(1.0)
+        assert m.signal_to_scoring_s == pytest.approx(0.2)
+        assert m.scoring_to_risk_s == pytest.approx(0.15)
+        assert m.risk_to_portfolio_s == pytest.approx(0.45)
+        assert m.portfolio_to_submit_s == pytest.approx(0.2)
+        stats = meter.get_stats()
+        assert stats.avg_signal_to_scoring_s == pytest.approx(0.2)
+        assert stats.avg_scoring_to_risk_s == pytest.approx(0.15)
+        assert stats.avg_risk_to_portfolio_s == pytest.approx(0.45)
+        assert stats.avg_portfolio_to_submit_s == pytest.approx(0.2)
+        assert stats.p90_signal_to_scoring_s == pytest.approx(0.2)
+
+    def test_record_submit_merges_with_terminal_lifecycle_measurements(self) -> None:
+        meter = LatencyMeter()
+
+        meter.record_submit("o1", signal_arrival_time=100.0, submit_time=100.2)
+        m = meter.record("o1", sent_time=100.2, ack_time=100.5, first_fill_time=100.8)
+
+        assert m.signal_to_submit_s == pytest.approx(0.2)
+        assert m.submit_to_ack_s == pytest.approx(0.3)
+        stats = meter.get_stats()
+        assert stats.count == 1
+        assert stats.avg_signal_to_submit_s == pytest.approx(0.2)
+        assert stats.avg_submit_to_ack_s == pytest.approx(0.3)
+
+    def test_record_submit_keeps_partial_breakdown_without_signal_arrival(self) -> None:
+        meter = LatencyMeter()
+
+        m = meter.record_submit(
+            "o1",
+            portfolio_completed_time=100.6,
+            submit_time=100.9,
+        )
+
+        assert m is not None
+        assert m.signal_to_submit_s is None
+        assert m.portfolio_to_submit_s == pytest.approx(0.3)
+
+    def test_full_latency(self) -> None:
         meter = LatencyMeter()
         m = meter.record("o1", sent_time=100.0, ack_time=100.2, first_fill_time=100.5, full_fill_time=101.0)
         assert m.submit_to_ack_s == pytest.approx(0.2)
@@ -200,27 +262,27 @@ class TestLatencyMeter:
         assert m.submit_to_full_fill_s == pytest.approx(1.0)
         assert m.ack_to_first_fill_s == pytest.approx(0.3)
 
-    def test_partial_latency(self):
+    def test_partial_latency(self) -> None:
         meter = LatencyMeter()
         m = meter.record("o1", sent_time=100.0, ack_time=100.3)
         assert m.submit_to_ack_s == pytest.approx(0.3)
         assert m.submit_to_first_fill_s is None
 
-    def test_zero_sent_time_not_treated_as_none(self):
+    def test_zero_sent_time_not_treated_as_none(self) -> None:
         """sent_time=0.0 is a valid timestamp, must not be treated as absent."""
         meter = LatencyMeter()
         m = meter.record("o1", sent_time=0.0, ack_time=0.2)
         assert m.submit_to_ack_s == pytest.approx(0.2)
         assert m.submit_to_ack_s is not None
 
-    def test_zero_ack_time_not_treated_as_none(self):
+    def test_zero_ack_time_not_treated_as_none(self) -> None:
         """ack_time=0.0 is valid, first_fill latency must be computed."""
         meter = LatencyMeter()
         m = meter.record("o1", sent_time=0.0, ack_time=0.0, first_fill_time=0.3)
         assert m.ack_to_first_fill_s == pytest.approx(0.3)
         assert m.submit_to_first_fill_s == pytest.approx(0.3)
 
-    def test_stats(self):
+    def test_stats(self) -> None:
         meter = LatencyMeter()
         meter.record("o1", sent_time=100.0, ack_time=100.1)
         meter.record("o2", sent_time=200.0, ack_time=200.3)
@@ -228,16 +290,22 @@ class TestLatencyMeter:
         assert stats.count == 2
         assert stats.avg_submit_to_ack_s == pytest.approx(0.2)
 
-    def test_negative_latency_is_filtered(self):
+    def test_negative_latency_is_filtered(self) -> None:
         meter = LatencyMeter()
         m = meter.record("o1", sent_time=100.2, ack_time=100.1)
         assert m.submit_to_ack_s is None
         assert meter.get_stats().filtered_samples == 1
 
-    def test_aberrant_latency_is_filtered(self):
+    def test_aberrant_latency_is_filtered(self) -> None:
         meter = LatencyMeter(max_latency_s=1.0)
         m = meter.record("o1", sent_time=100.0, full_fill_time=105.0)
         assert m.submit_to_full_fill_s is None
+        assert meter.get_stats().filtered_samples == 1
+
+    def test_aberrant_signal_to_submit_latency_is_filtered(self) -> None:
+        meter = LatencyMeter(max_latency_s=1.0)
+        m = meter.record_submit("o1", signal_arrival_time=100.0, submit_time=102.0)
+        assert m is None
         assert meter.get_stats().filtered_samples == 1
 
 

@@ -17,6 +17,7 @@ from protocols import (
     run_portfolio_relative_rank_hook,
     select_current_compiled_hook_plan,
 )
+from tests.support_paths import repo_build_path
 
 
 def _publish_portfolio_snapshot(
@@ -62,7 +63,7 @@ def _hook_input() -> PortfolioRelativeRankAdjustmentInput:
 
 
 def test_load_portfolio_relative_rank_hook_payload_from_loaded_selection():
-    state_dir = Path("build/test_protocols_portfolio_relative_rank_hook_loaded")
+    state_dir = repo_build_path("build/test_protocols_portfolio_relative_rank_hook_loaded")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = _publish_portfolio_snapshot(state_dir)
@@ -92,7 +93,7 @@ def test_load_portfolio_relative_rank_hook_payload_from_loaded_selection():
 
 
 def test_load_portfolio_relative_rank_hook_payload_rejects_wrong_hook():
-    state_dir = Path("build/test_protocols_portfolio_relative_rank_hook_wrong_hook")
+    state_dir = repo_build_path("build/test_protocols_portfolio_relative_rank_hook_wrong_hook")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = CompiledArtifactRegistryStore(state_dir)

@@ -11,6 +11,7 @@ from protocols import (
     CompiledArtifactRegistrySnapshot,
     CompiledArtifactRegistryStore,
 )
+from tests.support_paths import repo_build_path
 
 
 def _snapshot(
@@ -37,7 +38,7 @@ def _snapshot(
 
 
 def test_registry_store_publish_and_load_current_snapshot():
-    state_dir = Path("build/test_protocols_compiled_registry_store_publish")
+    state_dir = repo_build_path("build/test_protocols_compiled_registry_store_publish")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = CompiledArtifactRegistryStore(state_dir)
@@ -53,7 +54,7 @@ def test_registry_store_publish_and_load_current_snapshot():
 
 
 def test_registry_store_tracks_previous_and_last_known_good_then_rolls_back():
-    state_dir = Path("build/test_protocols_compiled_registry_store_rollback")
+    state_dir = repo_build_path("build/test_protocols_compiled_registry_store_rollback")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = CompiledArtifactRegistryStore(state_dir)
@@ -93,7 +94,7 @@ def test_registry_store_tracks_previous_and_last_known_good_then_rolls_back():
 
 
 def test_registry_store_requires_last_known_good_before_rollback():
-    state_dir = Path("build/test_protocols_compiled_registry_store_no_lkg")
+    state_dir = repo_build_path("build/test_protocols_compiled_registry_store_no_lkg")
     shutil.rmtree(state_dir, ignore_errors=True)
     try:
         store = CompiledArtifactRegistryStore(state_dir)

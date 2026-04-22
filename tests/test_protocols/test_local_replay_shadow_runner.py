@@ -30,6 +30,7 @@ from risk_backbone import (
     InfoStressLevel,
     build_regime_lite_safing_recommendation,
 )
+from tests.support_paths import repo_build_path
 
 
 def _load_runner_module():
@@ -46,12 +47,9 @@ def _load_runner_module():
 
 
 def _scratch_dir(label: str) -> Path:
-    repo_root = Path(__file__).resolve().parents[2]
-    base_dir = repo_root / "build" / "local_replay_shadow_runner_tests"
-    base_dir.mkdir(parents=True, exist_ok=True)
-    output_dir = base_dir / f"{label}_{uuid4().hex}"
-    output_dir.mkdir(parents=True, exist_ok=False)
-    return output_dir
+    from tests.support_paths import make_repo_scratch_dir
+
+    return make_repo_scratch_dir("local_replay_shadow_runner_tests", label)
 
 
 def _write_execution_runtime_projection(path: Path) -> None:
@@ -213,8 +211,10 @@ def _write_info_stress_assessment(path: Path) -> None:
 
 
 def _real_exports_dir(*, profile_scope: ProfileId = ProfileId.COMPLETE) -> Path:
-    repo_root = Path(__file__).resolve().parents[2]
-    export_dir = repo_root / "build" / "local_replay_shadow_runner_tests" / f"real_exports_{uuid4().hex}"
+    export_dir = repo_build_path(
+        "local_replay_shadow_runner_tests",
+        f"real_exports_{uuid4().hex}",
+    )
     export_dir.mkdir(parents=True, exist_ok=False)
     execute_local_replay_export(
         export_dir,
@@ -295,8 +295,10 @@ def _real_exports_dir(*, profile_scope: ProfileId = ProfileId.COMPLETE) -> Path:
 
 
 def _chunked_exports_dir() -> Path:
-    repo_root = Path(__file__).resolve().parents[2]
-    export_dir = repo_root / "build" / "local_replay_shadow_runner_tests" / f"chunked_exports_{uuid4().hex}"
+    export_dir = repo_build_path(
+        "local_replay_shadow_runner_tests",
+        f"chunked_exports_{uuid4().hex}",
+    )
     export_dir.mkdir(parents=True, exist_ok=False)
     dataset = HistoricalReplayDataset.from_records(
         dataset_id="dataset-export-chunked-20260401",
@@ -501,12 +503,20 @@ def test_export_local_replay_shadow_run_writes_governed_chain_sidecars():
         )
         assert engine_runtime_evidence["engine_a"]["runtime_status"] == "accepted"
         assert engine_runtime_evidence["engine_b"]["runtime_status"] == "accepted"
-        assert engine_runtime_evidence["engine_c"]["runtime_status"] == "accepted"
+        assert engine_runtime_evidence["engine_c"]["runtime_status"] == "hard_blocked"
         assert engine_runtime_evidence["engine_d"]["runtime_status"] == "accepted"
         assert "features=" in engine_runtime_evidence["engine_a"]["scoring_summary"]
         assert engine_runtime_evidence["engine_a"]["risk_summary"] == "risk=accept / no blocker triggered"
         assert "SELECTION_SELECTED" in engine_runtime_evidence["engine_a"]["scoring_reason_codes"]
         assert engine_runtime_evidence["engine_a"]["risk_reason_codes"] == []
+        assert (
+            engine_runtime_evidence["engine_c"]["details"]["refusal_record"]["category"]
+            == "hard_block"
+        )
+        assert engine_runtime_evidence["engine_c"]["details"]["refusal_record"]["reason_codes"] == [
+            "engine_c.runtime.coordination_input_missing",
+            "engine_c.runtime.coordination_required",
+        ]
         engine_metrics = {
             entry["engine_id"]: entry for entry in candidate_payload["engines"]
         }

@@ -42,12 +42,9 @@ def _load_launcher_module():
 
 
 def _scratch_dir(label: str) -> Path:
-    repo_root = Path(__file__).resolve().parents[2]
-    base_dir = repo_root / "build" / "shadow_daily_orchestrator_launcher_tests"
-    base_dir.mkdir(parents=True, exist_ok=True)
-    output_dir = base_dir / f"{label}_{uuid4().hex}"
-    output_dir.mkdir(parents=True, exist_ok=False)
-    return output_dir
+    from tests.support_paths import make_repo_scratch_dir
+
+    return make_repo_scratch_dir("shadow_daily_orchestrator_launcher_tests", label)
 
 
 def _write_daily_export(export_dir: Path, session_date: str, run_suffix: str) -> None:

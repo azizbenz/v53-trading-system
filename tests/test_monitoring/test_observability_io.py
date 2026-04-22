@@ -11,8 +11,9 @@ from monitoring.observability_io import (
 
 
 def _scratch_dir() -> Path:
-    repo_root = Path(__file__).resolve().parents[2]
-    return repo_root / "build" / "pytest-observability-io"
+    from tests.support_paths import make_repo_scratch_dir
+
+    return make_repo_scratch_dir("pytest-observability-io")
 
 
 def test_write_observability_text_payload_persists_text_with_trailing_newline():

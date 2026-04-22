@@ -328,11 +328,12 @@ def test_technical_dashboard_view_exposes_system_meta_build9x_and_replay_section
     build10 = next(section for section in view.sections if section.title == "Build-10")
     assert next(card for card in build10.cards if card.key == "build10_state").value == "implemented"
     assert next(card for card in build10.cards if card.key == "build10_governed_rail").value == "light / shadow"
+    governed = next(card for card in build10.cards if card.key == "build10_extensions")
     system = next(section for section in view.sections if section.title == "System")
-    assert any(card.key == "governed_extensions" and "9X=warning" in card.value for card in system.cards)
-    assert any(card.key == "governed_extensions" and "micro=planned" in card.value for card in system.cards)
-    assert any(card.key == "governed_extensions" and "live=planned" in card.value for card in system.cards)
-    assert any(card.key == "governed_extensions" and "b14=planned" in card.value for card in system.cards)
+    assert "9X=warning" in governed.value
+    assert "micro=planned" in governed.value
+    assert "live=planned" in governed.value
+    assert "b14=planned" in governed.value
     build9x = next(section for section in view.sections if section.title == "Build-9X")
     assert next(card for card in build9x.cards if card.key == "diagnostics_recent").value == "2"
     assert next(card for card in build9x.cards if card.key == "hypotheses_open").value == "1"
@@ -419,6 +420,7 @@ def test_technical_dashboard_view_exposes_system_meta_build9x_and_replay_section
     ).detail
     assert next(card for card in risk.cards if card.key == "risk_exposure").value == "gross=35.0% / loss=8.0%"
     assert next(card for card in execution.cards if card.key == "execution_fills").value == "partial=0 / latency_p95=0ms"
+    assert next(card for card in execution.cards if card.key == "execution_fills").detail == "signal_to_submit_p90=0ms"
     assert next(card for card in infra.cards if card.key == "infra_queue").value == "backlog=75 / hwm=75 / drop=0.0%"
     assert next(card for card in account.cards if card.key == "account_user_data_auth").value == "not_configured"
     assert next(card for card in account.cards if card.key == "account_user_data_artifacts").value == "missing"
@@ -1157,10 +1159,11 @@ def test_technical_dashboard_view_projects_shadow_summary_when_available():
     )
 
     view = build_technical_dashboard_view(payload)
+    build10 = next(section for section in view.sections if section.title == "Build-10")
     system = next(section for section in view.sections if section.title == "System")
     shadow = next(section for section in view.sections if section.title == "Build-11 Shadow")
 
-    governed = next(card for card in system.cards if card.key == "governed_extensions")
+    governed = next(card for card in build10.cards if card.key == "build10_extensions")
     assert "shadow=warning" in governed.value
     assert next(card for card in shadow.cards if card.key == "shadow_verdict").value == "needs_review"
     assert next(card for card in shadow.cards if card.key == "shadow_divergences").status == "warning"
@@ -1290,10 +1293,11 @@ def test_technical_dashboard_view_projects_micro_live_summary_when_available():
     )
 
     view = build_technical_dashboard_view(payload)
+    build10 = next(section for section in view.sections if section.title == "Build-10")
     system = next(section for section in view.sections if section.title == "System")
     micro = next(section for section in view.sections if section.title == "Build-12 Micro-live")
 
-    governed = next(card for card in system.cards if card.key == "governed_extensions")
+    governed = next(card for card in build10.cards if card.key == "build10_extensions")
     assert "micro=healthy" in governed.value
     assert next(card for card in micro.cards if card.key == "micro_live_verdict").value == "allowed_to_probe"
     assert next(card for card in micro.cards if card.key == "micro_live_guardrails").status == "healthy"
@@ -1338,10 +1342,11 @@ def test_technical_dashboard_view_projects_live_light_summary_when_available():
     )
 
     view = build_technical_dashboard_view(payload)
+    build10 = next(section for section in view.sections if section.title == "Build-10")
     system = next(section for section in view.sections if section.title == "System")
     live = next(section for section in view.sections if section.title == "Build-13 Live")
 
-    governed = next(card for card in system.cards if card.key == "governed_extensions")
+    governed = next(card for card in build10.cards if card.key == "build10_extensions")
     assert "live=healthy" in governed.value
     assert next(card for card in live.cards if card.key == "live_light_verdict").value == "allowed_to_execute_small"
     assert next(card for card in live.cards if card.key == "live_light_readiness").status == "healthy"
@@ -1654,11 +1659,12 @@ def test_technical_dashboard_view_projects_build14_limited_influence_when_availa
     )
 
     view = build_technical_dashboard_view(payload)
+    build10 = next(section for section in view.sections if section.title == "Build-10")
     system = next(section for section in view.sections if section.title == "System")
     live = next(section for section in view.sections if section.title == "Build-13 Live")
     build14 = next(section for section in view.sections if section.title == "Build-14 Enablers")
 
-    governed = next(card for card in system.cards if card.key == "governed_extensions")
+    governed = next(card for card in build10.cards if card.key == "build10_extensions")
     assert "b14=warning" in governed.value
     assert next(card for card in live.cards if card.key == "live_light_budget").detail.endswith(
         "build14=downgrade_confidence@0.85"

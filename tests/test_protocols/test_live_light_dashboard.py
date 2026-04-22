@@ -6,6 +6,7 @@ from interface_contracts import PromotionState, ReviewState
 from protocols import (
     LiveLightDecision,
     LiveLightExecutionIntent,
+    LiveLightGateGroupSummary,
     OperatorSafingAction,
     OperatorSafingRequest,
     LiveLightRunState,
@@ -70,6 +71,29 @@ def _summary() -> LiveLightRunSummary:
         build14_reason_codes=("market_toxicity_snapshot_elevated",),
         build14_confidence_penalty_weight=0.10,
         build14_recommended_budget_factor=0.85,
+        gate_groups=(
+            LiveLightGateGroupSummary(
+                gate_id="governance_envelope",
+                status="passed",
+            ),
+            LiveLightGateGroupSummary(
+                gate_id="promotion_history",
+                status="passed",
+            ),
+            LiveLightGateGroupSummary(
+                gate_id="import_replay_integrity",
+                status="passed",
+            ),
+            LiveLightGateGroupSummary(
+                gate_id="operational_readiness",
+                status="passed",
+            ),
+            LiveLightGateGroupSummary(
+                gate_id="build14_influence",
+                status="review_only",
+                reasons=("Critical execution fragility requires manual review",),
+            ),
+        ),
     )
 
 
@@ -87,6 +111,9 @@ def test_build_live_light_projection_returns_normalized_monitoring_summary():
     assert projection.build14_action == "downgrade_confidence"
     assert projection.build14_recommended_budget_factor == 0.85
     assert projection.operator_safing_action == ""
+    assert len(projection.gate_groups) == 5
+    assert projection.gate_groups[-1].gate_id == "build14_influence"
+    assert projection.gate_groups[-1].status == "review_only"
 
 
 def test_build_live_light_dashboard_section_renders_expected_cards():
@@ -100,17 +127,22 @@ def test_build_live_light_dashboard_section_renders_expected_cards():
         "live_light_budget",
         "live_light_surface",
         "live_light_readiness",
+        "live_light_gate_groups",
         "live_light_safing_request",
         "live_light_blocking_reasons",
     }
     verdict = next(card for card in section.cards if card.key == "live_light_verdict")
     budget = next(card for card in section.cards if card.key == "live_light_budget")
     readiness = next(card for card in section.cards if card.key == "live_light_readiness")
+    gate_groups = next(card for card in section.cards if card.key == "live_light_gate_groups")
     assert verdict.value == "allowed_to_execute_small"
     assert verdict.status == "healthy"
     assert "build14=downgrade_confidence@0.85" in budget.detail
     assert "exec_proj=ready" in readiness.detail
     assert "ready=3" in readiness.detail
+    assert gate_groups.status == "warning"
+    assert gate_groups.value == "blocked=0 / review=1 / passed=4"
+    assert "build14_influence=review_only:1" in gate_groups.detail
 
 
 def test_build_live_light_dashboard_section_surfaces_manual_safing_request():

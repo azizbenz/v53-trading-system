@@ -7,6 +7,7 @@ import re
 
 from pydantic import BaseModel, Field
 
+from monitoring.dashboard_metric_guides import render_shadow_vps_metric_guide_markdown
 from monitoring.grafana_types import GrafanaPayload
 
 
@@ -170,6 +171,29 @@ def _table_panel(
         "options": {
             "showHeader": True,
             "sortBy": [{"displayName": "Value", "desc": True}],
+        },
+        "fieldConfig": {"defaults": {}, "overrides": []},
+    }
+
+
+def _text_panel(
+    *,
+    panel_id: int,
+    title: str,
+    markdown: str,
+    x: int,
+    y: int,
+    w: int = 24,
+    h: int = 10,
+) -> GrafanaPayload:
+    return {
+        "id": panel_id,
+        "type": "text",
+        "title": title,
+        "gridPos": {"x": x, "y": y, "w": w, "h": h},
+        "options": {
+            "mode": "markdown",
+            "content": markdown,
         },
         "fieldConfig": {"defaults": {}, "overrides": []},
     }
@@ -427,6 +451,15 @@ def _build_regime_and_telegram_panels(
             y=76,
             w=18,
             h=8,
+        ),
+        _text_panel(
+            panel_id=23,
+            title="Metric Guide and Status Semantics",
+            markdown=render_shadow_vps_metric_guide_markdown(),
+            x=0,
+            y=84,
+            w=24,
+            h=10,
         ),
     ]
 

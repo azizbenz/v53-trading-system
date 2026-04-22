@@ -6,6 +6,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from monitoring.dashboard_metric_guides import render_local_lab_metric_guide_markdown
 from monitoring.grafana_types import GrafanaPayload
 from monitoring.local_grafana_dashboard import extract_prometheus_metric_names
 from monitoring.local_prometheus_metrics_bridge import load_local_prometheus_text_payload
@@ -136,6 +137,29 @@ def _table_panel(
         "options": {
             "showHeader": True,
             "sortBy": [{"displayName": "Value", "desc": True}],
+        },
+        "fieldConfig": {"defaults": {}, "overrides": []},
+    }
+
+
+def _text_panel(
+    *,
+    panel_id: int,
+    title: str,
+    markdown: str,
+    x: int,
+    y: int,
+    w: int = 24,
+    h: int = 10,
+) -> GrafanaPayload:
+    return {
+        "id": panel_id,
+        "type": "text",
+        "title": title,
+        "gridPos": {"x": x, "y": y, "w": w, "h": h},
+        "options": {
+            "mode": "markdown",
+            "content": markdown,
         },
         "fieldConfig": {"defaults": {}, "overrides": []},
     }
@@ -457,6 +481,15 @@ def _build_local_lab_tail_panels(*, base_filter: str) -> list[GrafanaPayload]:
             y=44,
             w=24,
             h=8,
+        ),
+        _text_panel(
+            panel_id=17,
+            title="Metric Guide and Threshold Semantics",
+            markdown=render_local_lab_metric_guide_markdown(),
+            x=0,
+            y=52,
+            w=24,
+            h=10,
         ),
     ]
 
