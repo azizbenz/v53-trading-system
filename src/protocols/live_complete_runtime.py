@@ -17,6 +17,8 @@ from .contracts_complete import (
     LiveCompleteExecutionEnvelope,
     LiveCompleteGateGroupSummary,
     LiveCompleteInput,
+    LiveCompleteAllowedAction,
+    LiveCompleteForbiddenAction,
     LiveCompleteRunSummary,
     build_live_complete_input_defaults,
 )
@@ -25,26 +27,30 @@ from .enums import LiveCompleteRunState, LiveCompleteVerdict, LiveLightRunState,
 
 _REQUIRED_ALLOWED_ACTIONS = frozenset(
     {
-        "set_halted",
-        "rollback_to_light",
-        "suspend_pair",
-        "request_pair_resume",
-        "suspend_engine",
-        "request_engine_resume",
-        "request_upload_ml_artifact",
-        "request_upload_regime_detector_artifact",
-        "request_export_active_ml_artifact",
-        "request_export_active_regime_detector_artifact",
-        "request_export_regime_detector_shadow_audit_bundle",
-        "request_upload_binance_credentials_bundle",
-        "request_activate_binance_credentials_profile",
-        "request_export_binance_credential_inventory",
-        "request_deactivate_binance_credentials_profile",
-        "view_complete_gates",
+        LiveCompleteAllowedAction.SET_HALTED,
+        LiveCompleteAllowedAction.ROLLBACK_TO_LIGHT,
+        LiveCompleteAllowedAction.SUSPEND_PAIR,
+        LiveCompleteAllowedAction.REQUEST_PAIR_RESUME,
+        LiveCompleteAllowedAction.SUSPEND_ENGINE,
+        LiveCompleteAllowedAction.REQUEST_ENGINE_RESUME,
+        LiveCompleteAllowedAction.REQUEST_UPLOAD_ML_ARTIFACT,
+        LiveCompleteAllowedAction.REQUEST_UPLOAD_REGIME_DETECTOR_ARTIFACT,
+        LiveCompleteAllowedAction.REQUEST_EXPORT_ACTIVE_ML_ARTIFACT,
+        LiveCompleteAllowedAction.REQUEST_EXPORT_ACTIVE_REGIME_DETECTOR_ARTIFACT,
+        LiveCompleteAllowedAction.REQUEST_EXPORT_REGIME_DETECTOR_SHADOW_AUDIT_BUNDLE,
+        LiveCompleteAllowedAction.REQUEST_UPLOAD_BINANCE_CREDENTIALS_BUNDLE,
+        LiveCompleteAllowedAction.REQUEST_ACTIVATE_BINANCE_CREDENTIALS_PROFILE,
+        LiveCompleteAllowedAction.REQUEST_EXPORT_BINANCE_CREDENTIAL_INVENTORY,
+        LiveCompleteAllowedAction.REQUEST_DEACTIVATE_BINANCE_CREDENTIALS_PROFILE,
+        LiveCompleteAllowedAction.VIEW_COMPLETE_GATES,
     }
 )
 _REQUIRED_FORBIDDEN_ACTIONS = frozenset(
-    {"modify_risk_caps", "inject_unversioned_config", "bypass_hard_blocker"}
+    {
+        LiveCompleteForbiddenAction.MODIFY_RISK_CAPS,
+        LiveCompleteForbiddenAction.INJECT_UNVERSIONED_CONFIG,
+        LiveCompleteForbiddenAction.BYPASS_HARD_BLOCKER,
+    }
 )
 
 
@@ -54,8 +60,8 @@ def build_live_complete_input_from_live_light(
     complete_gates: tuple[str, ...] = (),
     selected_pairs: tuple[str, ...] = (),
     available_pairs: tuple[str, ...] = (),
-    allowed_actions: tuple[str, ...] = (),
-    forbidden_actions: tuple[str, ...] = (),
+    allowed_actions: tuple[LiveCompleteAllowedAction, ...] = (),
+    forbidden_actions: tuple[LiveCompleteForbiddenAction, ...] = (),
     command_queue_snapshot: DashboardCommandQueueSnapshot | None = None,
     active_ml_artifact: DashboardArtifactTransferManifest | None = None,
     active_regime_detector_artifact: DashboardArtifactTransferManifest | None = None,
@@ -167,12 +173,14 @@ def _operator_surface_reasons(
     missing_allowed = sorted(_REQUIRED_ALLOWED_ACTIONS - allowed)
     if missing_allowed:
         blocked.append(
-            f"Build-17 Complete missing required allowed_actions: {', '.join(missing_allowed)}"
+            "Build-17 Complete missing required allowed_actions: "
+            f"{', '.join(action.value for action in missing_allowed)}"
         )
     missing_forbidden = sorted(_REQUIRED_FORBIDDEN_ACTIONS - forbidden)
     if missing_forbidden:
         blocked.append(
-            f"Build-17 Complete missing required forbidden_actions: {', '.join(missing_forbidden)}"
+            "Build-17 Complete missing required forbidden_actions: "
+            f"{', '.join(action.value for action in missing_forbidden)}"
         )
     review = () if live_complete_input.complete_gates else (
         "Build-17 Complete has no explicit gate evidence attached",

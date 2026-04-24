@@ -15,6 +15,7 @@ from calibration_methods import (
     apply_human_minimum_floor,
     stationary_bootstrap_confidence_interval,
 )
+from interface_contracts.atomic_io import atomic_write_text
 from calibration_loader import (
     CalibrationArtifact,
     CalibrationManualSignature,
@@ -251,9 +252,9 @@ def write_edge_gate_calibration_artifact(
 
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(
+    atomic_write_text(
+        target,
         yaml.safe_dump(artifact.model_dump(mode="json"), sort_keys=False),
-        encoding="utf-8",
     )
     return target
 

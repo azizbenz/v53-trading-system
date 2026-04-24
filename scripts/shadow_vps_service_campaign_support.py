@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from interface_contracts.atomic_io import atomic_write_json
 from interface_contracts.shadow_vps_service_contracts import ShadowVpsServiceState
 from protocols import ShadowVpsCampaignSummary, ShadowVpsRuntimeEvidenceBundle
 
@@ -454,5 +455,5 @@ def _write_campaign_summary(
     summary_fields.update(_build_campaign_summary_execution_fields(state, bundle))
     summary_fields.update(_build_campaign_summary_regime_and_info_fields(bundle))
     summary = ShadowVpsCampaignSummary(**summary_fields)
-    summary_path.write_text(summary.model_dump_json(indent=2), encoding="utf-8")
+    atomic_write_json(summary_path, summary.model_dump(mode="json"), indent=2)
     return summary_path

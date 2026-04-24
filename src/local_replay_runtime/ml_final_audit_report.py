@@ -44,6 +44,12 @@ def _load_uploaded_ml_artifact(path_ref: str) -> MlModelArtifact:
     return MlModelArtifact.model_validate_json(path.read_text(encoding="utf-8"))
 
 
+def _ml_formalism_blocking_reasons() -> tuple[str, ...]:
+    """Return the current doctrinal blocker until ML formalism is explicitly accepted."""
+
+    return ("ml.formalism.unresolved",)
+
+
 def build_local_lab_ml_final_audit_report_from_vps_command_result(
     *,
     correlation_id: str,
@@ -71,6 +77,8 @@ def build_local_lab_ml_final_audit_report_from_vps_command_result(
         blocking_reasons.extend(training_report.blocking_reasons)
         if not training_report.blocking_reasons:
             blocking_reasons.append("ml.final_audit.training_report_not_ready")
+    elif recommended_artifact is not None:
+        blocking_reasons.extend(_ml_formalism_blocking_reasons())
 
     try:
         uploaded_artifact = _load_uploaded_ml_artifact(command_result.export_ref)
@@ -100,6 +108,8 @@ def build_local_lab_ml_final_audit_report_from_vps_command_result(
     )
     if recommended_artifact is not None and not feature_set_compatible:
         blocking_reasons.append("ml.final_audit.feature_set_incompatible")
+
+    blocking_reasons.extend(_ml_formalism_blocking_reasons())
 
     artifact_matches_lab_recommendation = (
         recommended_artifact is not None

@@ -26,6 +26,8 @@ from local_replay_runtime.live_complete_operator_audit_report import (
 from monitoring import build_shadow_vps_service_recent_events_summary
 from protocols import (
     LiveCompleteRunSummary,
+    LiveCompleteAllowedAction,
+    LiveCompleteForbiddenAction,
     LiveLightDecision,
     LiveLightExecutionIntent,
     LiveLightRunState,
@@ -42,27 +44,27 @@ from shadow_vps_service_models import ShadowVpsServiceRuntimeContext
 
 _CANONICAL_ENGINES = ("engine_a", "engine_b", "engine_c", "engine_d")
 _ALLOWED_ACTIONS = (
-    "set_halted",
-    "rollback_to_light",
-    "suspend_pair",
-    "request_pair_resume",
-    "suspend_engine",
-    "request_engine_resume",
-    "request_upload_ml_artifact",
-    "request_upload_regime_detector_artifact",
-    "request_export_active_ml_artifact",
-    "request_export_active_regime_detector_artifact",
-    "request_export_regime_detector_shadow_audit_bundle",
-    "request_upload_binance_credentials_bundle",
-    "request_activate_binance_credentials_profile",
-    "request_export_binance_credential_inventory",
-    "request_deactivate_binance_credentials_profile",
-    "view_complete_gates",
+    LiveCompleteAllowedAction.SET_HALTED,
+    LiveCompleteAllowedAction.ROLLBACK_TO_LIGHT,
+    LiveCompleteAllowedAction.SUSPEND_PAIR,
+    LiveCompleteAllowedAction.REQUEST_PAIR_RESUME,
+    LiveCompleteAllowedAction.SUSPEND_ENGINE,
+    LiveCompleteAllowedAction.REQUEST_ENGINE_RESUME,
+    LiveCompleteAllowedAction.REQUEST_UPLOAD_ML_ARTIFACT,
+    LiveCompleteAllowedAction.REQUEST_UPLOAD_REGIME_DETECTOR_ARTIFACT,
+    LiveCompleteAllowedAction.REQUEST_EXPORT_ACTIVE_ML_ARTIFACT,
+    LiveCompleteAllowedAction.REQUEST_EXPORT_ACTIVE_REGIME_DETECTOR_ARTIFACT,
+    LiveCompleteAllowedAction.REQUEST_EXPORT_REGIME_DETECTOR_SHADOW_AUDIT_BUNDLE,
+    LiveCompleteAllowedAction.REQUEST_UPLOAD_BINANCE_CREDENTIALS_BUNDLE,
+    LiveCompleteAllowedAction.REQUEST_ACTIVATE_BINANCE_CREDENTIALS_PROFILE,
+    LiveCompleteAllowedAction.REQUEST_EXPORT_BINANCE_CREDENTIAL_INVENTORY,
+    LiveCompleteAllowedAction.REQUEST_DEACTIVATE_BINANCE_CREDENTIALS_PROFILE,
+    LiveCompleteAllowedAction.VIEW_COMPLETE_GATES,
 )
 _FORBIDDEN_ACTIONS = (
-    "modify_risk_caps",
-    "inject_unversioned_config",
-    "bypass_hard_blocker",
+    LiveCompleteForbiddenAction.MODIFY_RISK_CAPS,
+    LiveCompleteForbiddenAction.INJECT_UNVERSIONED_CONFIG,
+    LiveCompleteForbiddenAction.BYPASS_HARD_BLOCKER,
 )
 AppendServiceEvent = Callable[..., None]
 

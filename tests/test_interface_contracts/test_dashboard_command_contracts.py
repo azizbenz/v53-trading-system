@@ -110,6 +110,28 @@ def test_dashboard_secret_manifest_rejects_plaintext_secret_ref() -> None:
         )
 
 
+def test_dashboard_secret_manifest_rejects_invalid_secret_hash() -> None:
+    with pytest.raises(ValidationError):
+        DashboardSecretTransferManifest(
+            secret_hash="B" * 64,
+            secret_kind=DashboardSecretKind.BINANCE_SPOT_CREDENTIALS,
+            profile_id="binance-live-001",
+            environment=DashboardSecretEnvironment.LIVE,
+            sealed_ref="secrets/binance-live-001.sealed.json",
+        )
+
+
+def test_dashboard_secret_manifest_rejects_traversal_sealed_ref() -> None:
+    with pytest.raises(ValidationError):
+        DashboardSecretTransferManifest(
+            secret_hash="b" * 64,
+            secret_kind=DashboardSecretKind.BINANCE_SPOT_CREDENTIALS,
+            profile_id="binance-live-001",
+            environment=DashboardSecretEnvironment.LIVE,
+            sealed_ref="../binance-live-001.sealed.json",
+        )
+
+
 def test_dashboard_binance_credential_upload_requires_secret_manifest() -> None:
     with pytest.raises(ValidationError):
         DashboardGovernedCommandRequest(

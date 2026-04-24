@@ -101,6 +101,31 @@ def test_process_dashboard_command_queue_once_round_trips_request_ack_and_result
         shutil.rmtree(queue_root, ignore_errors=True)
 
 
+def test_write_dashboard_command_request_uses_atomic_json_publication() -> None:
+    queue_root = _queue_root("atomic_request_write")
+    try:
+        initialize_dashboard_command_queue(queue_root)
+        request = DashboardGovernedCommandRequest(
+            timestamp_ms=1_700_000_000_000,
+            correlation_id="corr-queue-atomic",
+            request_id="req-atomic",
+            command_kind=DashboardGovernedCommandKind.SET_HALTED,
+            source_runtime_mode=RuntimeMode.LOCAL_REPLAY,
+            target_runtime_mode=RuntimeMode.LIVE,
+            operator_reason="operator halt",
+        )
+
+        request_path = write_dashboard_command_request(queue_root, request)
+
+        assert request_path.read_text(encoding="utf-8").strip().startswith("{")
+        assert not tuple(request_path.parent.glob("*.tmp_*"))
+        requests = load_dashboard_command_requests(queue_root)
+        assert len(requests) == 1
+        assert requests[0].request_id == "req-atomic"
+    finally:
+        shutil.rmtree(queue_root, ignore_errors=True)
+
+
 def test_process_dashboard_command_queue_once_is_idempotent_for_duplicate_request() -> None:
     queue_root = _queue_root("idempotent")
     try:

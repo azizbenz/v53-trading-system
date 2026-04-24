@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from pathlib import PurePosixPath
+import re
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -134,6 +136,44 @@ _REASON_REQUIRED_COMMANDS = frozenset(
     }
 )
 
+_SECRET_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+_FORBIDDEN_PLAINTEXT_SECRET_SUFFIXES = (".env", ".yaml", ".yml")
+
+
+def validate_dashboard_secret_reference(*, secret_hash: str, sealed_ref: str) -> None:
+    """Validate the governed secret hash and sealed bundle reference format."""
+
+    if not _SECRET_HASH_RE.fullmatch(secret_hash):
+        raise ValueError(
+            "Dashboard secret_hash must be a lowercase 64-character sha256 hex digest"
+        )
+    if not sealed_ref or sealed_ref.strip() != sealed_ref:
+        raise ValueError("Dashboard sealed_ref must not be empty or padded")
+    if any(char.isspace() for char in sealed_ref):
+        raise ValueError("Dashboard sealed_ref must not contain whitespace")
+    lowered = sealed_ref.lower()
+    if lowered.endswith(_FORBIDDEN_PLAINTEXT_SECRET_SUFFIXES):
+        raise ValueError("Dashboard sealed_ref must not reference plaintext secret files")
+    if lowered.startswith("sealed://"):
+        tail = sealed_ref[len("sealed://") :]
+        if not tail:
+            raise ValueError("Dashboard sealed_ref sealed:// URI must not be empty")
+        parts = tail.split("/")
+        if any(not part or part in {".", ".."} for part in parts):
+            raise ValueError(
+                "Dashboard sealed_ref sealed:// URI must not contain empty or traversal segments"
+            )
+        return
+    if "\\" in sealed_ref or ":" in sealed_ref or sealed_ref.startswith("/"):
+        raise ValueError("Dashboard sealed_ref must be a relative sealed bundle path")
+    candidate = PurePosixPath(sealed_ref)
+    if candidate.suffixes[-2:] != [".sealed", ".json"]:
+        raise ValueError("Dashboard sealed_ref must reference a .sealed.json bundle")
+    if any(part in {"", ".", ".."} for part in candidate.parts):
+        raise ValueError(
+            "Dashboard sealed_ref must not contain empty or traversal path segments"
+        )
+
 
 class DashboardArtifactTransferManifest(BaseModel, frozen=True):
     """Typed artifact descriptor carried by upload/export queue messages."""
@@ -185,16 +225,10 @@ class DashboardSecretTransferManifest(BaseModel, frozen=True):
     def validate_secret_manifest(self) -> "DashboardSecretTransferManifest":
         if len(set(self.payload_refs)) != len(self.payload_refs):
             raise ValueError("DashboardSecretTransferManifest payload_refs must be unique")
-        sealed_ref = self.sealed_ref.lower()
-        if not (sealed_ref.endswith(".sealed.json") or sealed_ref.startswith("sealed://")):
-            raise ValueError(
-                "DashboardSecretTransferManifest sealed_ref must reference a sealed bundle"
-            )
-        forbidden_plaintext_suffixes = (".env", ".yaml", ".yml")
-        if sealed_ref.endswith(forbidden_plaintext_suffixes):
-            raise ValueError(
-                "DashboardSecretTransferManifest must not reference plaintext secret files"
-            )
+        validate_dashboard_secret_reference(
+            secret_hash=self.secret_hash,
+            sealed_ref=self.sealed_ref,
+        )
         return self
 
 
@@ -208,6 +242,14 @@ class BinanceCredentialProfileRef(BaseModel, frozen=True):
     secret_hash: str = Field(..., min_length=1)
     sealed_ref: str = Field(..., min_length=1)
     backend: str = ""
+
+    @model_validator(mode="after")
+    def validate_reference(self) -> "BinanceCredentialProfileRef":
+        validate_dashboard_secret_reference(
+            secret_hash=self.secret_hash,
+            sealed_ref=self.sealed_ref,
+        )
+        return self
 
 
 class BinanceCredentialInventoryEntry(BaseModel, frozen=True):
@@ -475,6 +517,7 @@ __all__ = [
     "DashboardGovernedCommandKind",
     "DashboardGovernedCommandStatus",
     "DashboardCommandQueueStatus",
+    "validate_dashboard_secret_reference",
     "DashboardArtifactTransferManifest",
     "DashboardSecretTransferManifest",
     "BinanceCredentialProfileRef",

@@ -15,6 +15,7 @@ from monitoring.contracts import (
     ProcessMetricsSample,
     ShadowVpsServiceMonitoringPayload,
 )
+from monitoring.shadow_vps_redaction import redact_shadow_vps_text
 from monitoring.shadow_vps_service_monitoring_payload_field_support import (
     resolve_bootstrap_fields,
     resolve_projection_fields,
@@ -170,8 +171,12 @@ def _resolve_telemetry_and_telegram_fields(
             state.last_telegram_alert_delivery_event_type,
         ),
         "telegram_alert_delivery_error": _prefer_optional_text(
-            campaign_summary.telegram_alert_delivery_error if campaign_summary is not None else None,
-            state.last_telegram_alert_delivery_error,
+            redact_shadow_vps_text(
+                campaign_summary.telegram_alert_delivery_error
+                if campaign_summary is not None
+                else ""
+            ),
+            redact_shadow_vps_text(state.last_telegram_alert_delivery_error),
         ),
         "telegram_alert_config_ref": _prefer_optional_text(
             campaign_summary.telegram_alert_config_ref if campaign_summary is not None else None,
@@ -384,6 +389,7 @@ def _build_detail(
     latest_error: str,
     parse_error_count: int,
 ) -> str:
+    redacted_latest_error = redact_shadow_vps_text(latest_error)
     return (
         f"status={state.service_status.value} / "
         f"loops={state.loop_count} / "
@@ -411,8 +417,8 @@ def _build_detail(
         f"/report={resolved_fields['last_live_complete_operator_report_status']}"
         f"/log={latest_event_type or 'none'}"
         f"/log_errs={parse_error_count}"
-        f"{'/latest_error' if latest_error else ''}"
-        f"{'=' + latest_error if latest_error else ''} / "
+        f"{'/latest_error' if redacted_latest_error else ''}"
+        f"{'=' + redacted_latest_error if redacted_latest_error else ''} / "
         f"artifacts=ml:{resolved_fields['active_ml_artifact_hash'][:12] or 'none'}"
         f"/regime:{resolved_fields['active_regime_detector_artifact_hash'][:12] or 'none'} / "
         f"binance_profile={resolved_fields['active_binance_credential_profile_id'] or 'none'}"
@@ -467,13 +473,14 @@ def build_shadow_vps_service_monitoring_payload_support(
     resolved_fields.update(_resolve_regime_lite_fields(campaign_summary, runtime_evidence_bundle))
     resolved_fields.update(_resolve_info_stress_fields(campaign_summary, runtime_evidence_bundle))
 
+    redacted_latest_error = redact_shadow_vps_text(latest_error)
     detail = _build_detail(
         state,
         process,
         disk,
         resolved_fields,
         latest_event_type=latest_event_type,
-        latest_error=latest_error,
+        latest_error=redacted_latest_error,
         parse_error_count=parse_error_count,
     )
     resolved_fields.pop("execution_runtime_projection_source_detail", None)
@@ -484,7 +491,7 @@ def build_shadow_vps_service_monitoring_payload_support(
         "profile": ProfileId.COMPLETE,
         "runtime_mode": RuntimeMode.SHADOW,
         "status": _projection_status_from_state(state),
-        "detail": detail,
+        "detail": redact_shadow_vps_text(detail),
         "service_status": state.service_status.value,
         "heartbeat_age_ms": heartbeat_age_ms,
         "loop_count": state.loop_count,
@@ -494,7 +501,7 @@ def build_shadow_vps_service_monitoring_payload_support(
         "resumed": state.resumed,
         "last_selected_session_date": state.last_selected_session_date,
         "last_completed_session_date": state.last_completed_session_date,
-        "last_error": state.last_error,
+        "last_error": redact_shadow_vps_text(state.last_error),
         "state_path": state_path,
         "events_path": events_path,
         "campaign_summary_ref": state.last_campaign_summary_ref,
@@ -522,7 +529,7 @@ def build_shadow_vps_service_monitoring_payload_support(
         "export_dir_ref": state.last_export_dir_ref,
         "recent_events_summary_ref": recent_events_summary_ref,
         "latest_event_type": latest_event_type,
-        "latest_error": latest_error,
+        "latest_error": redacted_latest_error,
         "parse_error_count": parse_error_count,
         "node_exporter_textfile_ref": node_exporter_textfile_ref,
         "scrape_manifest_ref": scrape_manifest_ref,

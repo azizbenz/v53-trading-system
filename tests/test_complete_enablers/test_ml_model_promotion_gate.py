@@ -39,11 +39,12 @@ def _artifact(
     )
 
 
-def test_ml_model_promotion_gate_passes_when_all_rules_green() -> None:
+def test_ml_model_promotion_gate_blocks_on_unresolved_formalism_even_when_metrics_are_green() -> None:
     verdict = evaluate_ml_model_promotion_gate(_artifact())
 
-    assert verdict.passed is True
-    assert verdict.recommended_promotion_state == PromotionState.SHADOW_CANDIDATE
+    assert verdict.passed is False
+    assert verdict.recommended_promotion_state == PromotionState.REPLAY_ONLY
+    assert "ml.formalism.unresolved" in verdict.blocking_reasons
 
 
 def test_ml_model_promotion_gate_fails_closed_on_missing_metrics() -> None:
@@ -52,6 +53,7 @@ def test_ml_model_promotion_gate_fails_closed_on_missing_metrics() -> None:
     )
 
     assert verdict.passed is False
+    assert "ml.formalism.unresolved" in verdict.blocking_reasons
     assert "KS_TEST_FEATURES_PVALUE_REQUIRED" in verdict.blocking_reasons
     assert "SHADOW_DIFF_PCT_REQUIRED" in verdict.blocking_reasons
 

@@ -165,6 +165,22 @@ def test_ml_direction_never_overrides_engine_side(
     assert result.engine_side == Side.SELL
 
 
+def test_ml_direct_confidence_override_is_forbidden_without_explicit_opt_in() -> None:
+    artifact = _artifact(prediction=0.95)
+    enabler = MlConfidenceEnabler(default_alpha=0.3)
+
+    result = enabler.apply_to_engine_score(
+        base_score=6.0,
+        engine_side=Side.SELL,
+        artifact=artifact,
+        ml_confidence=0.9,
+    )
+
+    assert result.signal.artifact_status == MlArtifactStatus.INVALID
+    assert result.signal.reason_codes == ("ML_DIRECT_OVERRIDE_FORBIDDEN",)
+    assert result.fusion.applied is False
+
+
 def test_ml_confidence_loads_from_supplementary_refs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

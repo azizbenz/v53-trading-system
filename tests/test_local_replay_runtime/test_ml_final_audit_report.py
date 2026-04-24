@@ -96,7 +96,7 @@ def _command_result(export_ref: Path, artifact: MlModelArtifact) -> DashboardGov
     )
 
 
-def test_build_local_lab_ml_final_audit_report_is_ready_when_export_matches() -> None:
+def test_build_local_lab_ml_final_audit_report_blocks_when_formalism_is_unresolved() -> None:
     scratch_dir = _scratch_dir("ready")
     try:
         artifact = _artifact("a")
@@ -109,16 +109,17 @@ def test_build_local_lab_ml_final_audit_report_is_ready_when_export_matches() ->
             command_result=_command_result(artifact_path, artifact),
         )
 
-        assert report.status == "ready"
-        assert report.audit_ready is True
+        assert report.status == "blocked"
+        assert report.audit_ready is False
         assert report.feature_set_compatible is True
         assert report.artifact_matches_lab_recommendation is True
-        assert report.final_recommendation == "uploaded_ml_artifact_matches_lab_recommendation"
+        assert report.final_recommendation == "resolve_ml_final_audit_blockers"
+        assert "ml.formalism.unresolved" in report.blocking_reasons
     finally:
         shutil.rmtree(scratch_dir, ignore_errors=True)
 
 
-def test_build_local_lab_ml_final_audit_report_stays_partial_when_hash_differs() -> None:
+def test_build_local_lab_ml_final_audit_report_stays_blocked_when_hash_differs() -> None:
     scratch_dir = _scratch_dir("partial")
     try:
         recommended = _artifact("a")
@@ -132,11 +133,12 @@ def test_build_local_lab_ml_final_audit_report_stays_partial_when_hash_differs()
             command_result=_command_result(artifact_path, uploaded),
         )
 
-        assert report.status == "partial"
+        assert report.status == "blocked"
         assert report.audit_ready is False
         assert report.feature_set_compatible is True
-        assert report.final_recommendation == "uploaded_ml_artifact_differs_from_lab_recommendation"
+        assert report.final_recommendation == "resolve_ml_final_audit_blockers"
         assert "ml.final_audit.upload_differs_from_lab_recommendation" in report.caution_flags
+        assert "ml.formalism.unresolved" in report.blocking_reasons
     finally:
         shutil.rmtree(scratch_dir, ignore_errors=True)
 

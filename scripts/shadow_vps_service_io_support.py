@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 from interface_contracts.atomic_io import atomic_write_json
@@ -17,6 +16,7 @@ from protocols import (
     ShadowVpsRawInputConfig,
     build_binance_execution_runtime_bootstrap_bundle,
 )
+from venue_adapters.binance_spot.credential_loader import BinanceCredentialLoadError
 from venue_adapters.binance_spot.time_sync import BinanceAdapterConfig
 
 
@@ -201,13 +201,11 @@ def _pin_auto_export_session_date(auto_export_dir: Path, session_date: str) -> N
 def _resolve_bootstrap_credentials(
     bootstrap_config: ShadowLiveWebSocketConfig,
 ) -> BinanceCredentials:
-    api_key = os.getenv(bootstrap_config.user_data_api_key_env_var, "").strip()
-    api_secret = os.getenv(bootstrap_config.user_data_api_secret_env_var, "").strip()
-    if not api_key or not api_secret:
-        raise ValueError(
-            "execution runtime bootstrap requires Binance API credentials in the configured env vars"
-        )
-    return BinanceCredentials(api_key=api_key, secret_key=api_secret)
+    _ = bootstrap_config
+    raise BinanceCredentialLoadError(
+        "Governed execution runtime bootstrap requires a sealed Binance credential profile; "
+        "environment credentials are forbidden on the Shadow VPS launcher"
+    )
 
 
 def _build_bootstrap_adapter_config(

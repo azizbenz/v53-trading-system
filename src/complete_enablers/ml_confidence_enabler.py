@@ -227,6 +227,7 @@ class MlConfidenceEnabler:
         artifact: MlModelArtifact | None = None,
         feature_values: dict[str, float] | None = None,
         ml_confidence: float | None = None,
+        allow_direct_ml_confidence_override: bool = False,
         alpha: float | None = None,
         as_of: datetime | None = None,
     ) -> MlScoreApplication:
@@ -237,6 +238,14 @@ class MlConfidenceEnabler:
                 feature_values={} if feature_values is None else feature_values,
                 artifact=artifact,
                 as_of=as_of,
+            )
+        elif not allow_direct_ml_confidence_override:
+            signal = MlConfidenceSignal(
+                ml_confidence=0.5,
+                ml_direction=MlDirection.FLAT,
+                artifact_status=MlArtifactStatus.INVALID,
+                artifact_id=None if artifact is None else artifact.artifact_hash,
+                reason_codes=("ML_DIRECT_OVERRIDE_FORBIDDEN",),
             )
         else:
             clipped_confidence = min(1.0, max(0.0, float(ml_confidence)))
@@ -255,7 +264,10 @@ class MlConfidenceEnabler:
             base_score=base_score,
             ml_confidence=signal.ml_confidence,
             alpha=self._default_alpha if alpha is None else alpha,
-            artifact_ready=signal.artifact_status == MlArtifactStatus.ACTIVE,
+            artifact_ready=(
+                signal.artifact_status == MlArtifactStatus.ACTIVE
+                and (ml_confidence is None or allow_direct_ml_confidence_override)
+            ),
         )
         return MlScoreApplication(
             engine_side=_normalize_side(engine_side),

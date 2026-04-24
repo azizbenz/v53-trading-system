@@ -24,6 +24,7 @@ from interface_contracts import (
     DashboardGovernedCommandStatus,
     ProfileId,
 )
+from interface_contracts.atomic_io import atomic_write_json
 from .dashboard_command_result_support import (
     completed_command_result,
     deactivate_credential_entry,
@@ -149,7 +150,7 @@ def load_dashboard_command_results(
 
 
 def _write_model(path: Path, model: BaseModel) -> Path:
-    path.write_text(model.model_dump_json(indent=2), encoding="utf-8")
+    atomic_write_json(path, model.model_dump(mode="json"), indent=2)
     return path
 
 

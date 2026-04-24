@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from interface_contracts.atomic_io import atomic_write_json
 from protocols import (
     ShadowLiveWebSocketCaptureResult,
     ShadowVpsRawInputSlot,
@@ -406,5 +407,5 @@ def _write_runtime_evidence_bundle(
         )
     )
     bundle = ShadowVpsRuntimeEvidenceBundle(**bundle_fields)
-    bundle_path.write_text(bundle.model_dump_json(indent=2), encoding="utf-8")
+    atomic_write_json(bundle_path, bundle.model_dump(mode="json"), indent=2)
     return bundle_path

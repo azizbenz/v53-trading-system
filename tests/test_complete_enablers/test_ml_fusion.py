@@ -85,6 +85,7 @@ def test_ml_fusion_never_changes_engine_side() -> None:
         engine_side=Side.SELL,
         artifact=artifact,
         ml_confidence=0.9,
+        allow_direct_ml_confidence_override=True,
     )
 
     assert result.engine_side == Side.SELL

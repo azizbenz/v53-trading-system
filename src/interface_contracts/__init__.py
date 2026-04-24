@@ -40,6 +40,7 @@ from .build14_contracts import *
 from .engine_validation_contracts import *
 from .shadow_vps_service_contracts import *
 from .dashboard_command_contracts import *
+from .live_complete_actions import *
 from .vps_recovery_contracts import *
 from .pair_catalog import *
 from .ml_model_artifact import *
@@ -147,11 +148,14 @@ __all__ = [
     "DashboardGovernedCommandKind",
     "DashboardGovernedCommandStatus", "DashboardCommandQueueStatus",
     "DashboardArtifactTransferManifest", "DashboardSecretTransferManifest",
+    "validate_dashboard_secret_reference",
     "BinanceCredentialProfileRef", "BinanceCredentialInventoryEntry",
     "BinanceCredentialInventorySnapshot", "binance_credential_entry_from_manifest",
     "DashboardGovernedCommandRequest",
     "DashboardGovernedCommandAck", "DashboardGovernedCommandResult",
     "DashboardCommandQueueSnapshot",
+    # live_complete_actions
+    "LiveCompleteAllowedAction", "LiveCompleteForbiddenAction",
     # vps_recovery_contracts
     "VpsRecoveryCheckStatus", "VpsWarmupState", "VpsRecoveryCheck",
     "VpsRecoveryReadinessReport", "VpsWarmupRunSummary",

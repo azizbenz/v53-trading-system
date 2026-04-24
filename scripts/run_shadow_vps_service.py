@@ -195,6 +195,7 @@ def _dashboard_control_gate_result(
             message=(
                 "Governed dashboard control halt is active; Shadow VPS cycle skipped."
             ),
+            reason_codes=("shadow.dashboard_control.halted_active",),
         ),
     )
     _write_service_monitoring(context)

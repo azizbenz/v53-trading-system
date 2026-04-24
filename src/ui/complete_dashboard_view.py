@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field
 from interface_contracts import (
     DashboardArtifactTransferManifest,
     DashboardCommandQueueSnapshot,
+    LiveCompleteAllowedAction,
+    LiveCompleteForbiddenAction,
     VpsRecoveryReadinessReport,
     VpsWarmupRunSummary,
 )
@@ -71,30 +73,30 @@ class CompleteDashboardSupplement(BaseModel, frozen=True):
     selected_pairs: tuple[str, ...] = ()
     available_pairs: tuple[str, ...] = ()
     pair_selection_source: str = "canonical_complete_universe"
-    allowed_actions: tuple[str, ...] = (
-        "suspend_pair",
-        "request_pair_resume",
-        "suspend_engine",
-        "request_engine_resume",
-        "set_halted",
-        "rollback_to_light",
-        "request_upload_ml_artifact",
-        "request_upload_regime_detector_artifact",
-        "request_export_active_ml_artifact",
-        "request_export_active_regime_detector_artifact",
-        "request_export_regime_detector_shadow_audit_bundle",
-        "request_upload_binance_credentials_bundle",
-        "request_activate_binance_credentials_profile",
-        "request_export_binance_credential_inventory",
-        "request_deactivate_binance_credentials_profile",
-        "view_complete_gates",
+    allowed_actions: tuple[LiveCompleteAllowedAction, ...] = (
+        LiveCompleteAllowedAction.SUSPEND_PAIR,
+        LiveCompleteAllowedAction.REQUEST_PAIR_RESUME,
+        LiveCompleteAllowedAction.SUSPEND_ENGINE,
+        LiveCompleteAllowedAction.REQUEST_ENGINE_RESUME,
+        LiveCompleteAllowedAction.SET_HALTED,
+        LiveCompleteAllowedAction.ROLLBACK_TO_LIGHT,
+        LiveCompleteAllowedAction.REQUEST_UPLOAD_ML_ARTIFACT,
+        LiveCompleteAllowedAction.REQUEST_UPLOAD_REGIME_DETECTOR_ARTIFACT,
+        LiveCompleteAllowedAction.REQUEST_EXPORT_ACTIVE_ML_ARTIFACT,
+        LiveCompleteAllowedAction.REQUEST_EXPORT_ACTIVE_REGIME_DETECTOR_ARTIFACT,
+        LiveCompleteAllowedAction.REQUEST_EXPORT_REGIME_DETECTOR_SHADOW_AUDIT_BUNDLE,
+        LiveCompleteAllowedAction.REQUEST_UPLOAD_BINANCE_CREDENTIALS_BUNDLE,
+        LiveCompleteAllowedAction.REQUEST_ACTIVATE_BINANCE_CREDENTIALS_PROFILE,
+        LiveCompleteAllowedAction.REQUEST_EXPORT_BINANCE_CREDENTIAL_INVENTORY,
+        LiveCompleteAllowedAction.REQUEST_DEACTIVATE_BINANCE_CREDENTIALS_PROFILE,
+        LiveCompleteAllowedAction.VIEW_COMPLETE_GATES,
     )
-    forbidden_actions: tuple[str, ...] = (
-        "profile_custom",
-        "activate_unvalidated_engine",
-        "modify_risk_caps",
-        "inject_unversioned_config",
-        "bypass_hard_blocker",
+    forbidden_actions: tuple[LiveCompleteForbiddenAction, ...] = (
+        LiveCompleteForbiddenAction.PROFILE_CUSTOM,
+        LiveCompleteForbiddenAction.ACTIVATE_UNVALIDATED_ENGINE,
+        LiveCompleteForbiddenAction.MODIFY_RISK_CAPS,
+        LiveCompleteForbiddenAction.INJECT_UNVERSIONED_CONFIG,
+        LiveCompleteForbiddenAction.BYPASS_HARD_BLOCKER,
     )
     command_queue_snapshot: DashboardCommandQueueSnapshot | None = None
     active_ml_artifact: DashboardArtifactTransferManifest | None = None

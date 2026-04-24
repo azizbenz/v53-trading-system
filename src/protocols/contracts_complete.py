@@ -10,6 +10,8 @@ from interface_contracts import (
     DashboardArtifactTransferManifest,
     DashboardCommandQueueSnapshot,
     DeploymentState,
+    LiveCompleteAllowedAction,
+    LiveCompleteForbiddenAction,
     OperatorSafingRequest,
     ProfileId,
     ReviewState,
@@ -69,8 +71,8 @@ class LiveCompleteInput(BaseModel, frozen=True):
     complete_gates: tuple[str, ...] = ()
     selected_pairs: tuple[str, ...] = ()
     available_pairs: tuple[str, ...] = ()
-    allowed_actions: tuple[str, ...] = ()
-    forbidden_actions: tuple[str, ...] = ()
+    allowed_actions: tuple[LiveCompleteAllowedAction, ...] = ()
+    forbidden_actions: tuple[LiveCompleteForbiddenAction, ...] = ()
     command_queue_snapshot: DashboardCommandQueueSnapshot | None = None
     active_ml_artifact: DashboardArtifactTransferManifest | None = None
     active_regime_detector_artifact: DashboardArtifactTransferManifest | None = None
@@ -140,8 +142,8 @@ class LiveCompleteExecutionEnvelope(BaseModel, frozen=True):
     import_lineage_version: str = Field(..., min_length=1)
     deployment_state: DeploymentState = DeploymentState.LIVE_COMPLETE
     selected_pairs: tuple[str, ...] = ()
-    allowed_actions: tuple[str, ...] = ()
-    forbidden_actions: tuple[str, ...] = ()
+    allowed_actions: tuple[LiveCompleteAllowedAction, ...] = ()
+    forbidden_actions: tuple[LiveCompleteForbiddenAction, ...] = ()
     command_queue_enabled: bool = False
     active_ml_artifact_hash: str = ""
     active_regime_detector_artifact_hash: str = ""
@@ -217,6 +219,8 @@ __all__ = [
     "LiveExecutionIntent",
     "LiveRunSummary",
     "LiveCompleteGateGroupSummary",
+    "LiveCompleteAllowedAction",
+    "LiveCompleteForbiddenAction",
     "LiveCompleteInput",
     "LiveCompleteDecision",
     "LiveCompleteExecutionEnvelope",

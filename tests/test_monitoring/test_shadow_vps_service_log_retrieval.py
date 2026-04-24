@@ -194,3 +194,32 @@ def test_query_shadow_vps_service_events_matches_reason_codes() -> None:
         assert result.events[0].reason_codes == ("shadow.warmup.blocked",)
     finally:
         shutil.rmtree(scratch_dir, ignore_errors=True)
+
+
+def test_shadow_vps_service_log_retrieval_redacts_sensitive_event_text() -> None:
+    scratch_dir = _scratch_dir("redaction")
+    try:
+        events_path = scratch_dir / "shadow_vps_service.events.jsonl"
+        _write_events(
+            events_path,
+            [
+                ShadowVpsServiceEvent(
+                    event_type="shadow_day_failed",
+                    timestamp=70.0,
+                    message="api_key=live-key should not leak",
+                    error="secret_key=live-secret should not leak",
+                ).model_dump_json(),
+            ],
+        )
+
+        result = query_shadow_vps_service_events(
+            events_path,
+            query=ShadowVpsServiceLogQuery(max_events=5),
+            timestamp_ms=1_800_000_000_000,
+        )
+
+        assert result.events[0].message == "sensitive content redacted"
+        assert result.events[0].error == "sensitive content redacted"
+        assert result.latest_error == "sensitive content redacted"
+    finally:
+        shutil.rmtree(scratch_dir, ignore_errors=True)

@@ -11,6 +11,7 @@ from interface_contracts import (
     BinanceCredentialValidationStatus,
     DeploymentState,
     RuntimeMode,
+    validate_dashboard_secret_reference,
     VpsRecoveryCheck,
     VpsRecoveryCheckStatus,
     VpsRecoveryReadinessReport,
@@ -263,9 +264,18 @@ def _build_binance_credentials_check(
     )
     if entry is None:
         return _blocked("binance_credentials", "shadow.binance_credentials.profile_unknown")
-    sealed_ref = entry.profile.sealed_ref.lower()
-    if not (sealed_ref.endswith(".sealed.json") or sealed_ref.startswith("sealed://")):
-        return _blocked("binance_credentials", "shadow.binance_credentials.not_sealed")
+    try:
+        validate_dashboard_secret_reference(
+            secret_hash=entry.profile.secret_hash,
+            sealed_ref=entry.profile.sealed_ref,
+        )
+    except ValueError as exc:
+        reason = (
+            "shadow.binance_credentials.secret_hash_invalid"
+            if "secret_hash" in str(exc)
+            else "shadow.binance_credentials.not_sealed"
+        )
+        return _blocked("binance_credentials", reason)
     if (
         state.binance_credential_validation_status
         != BinanceCredentialValidationStatus.VALIDATED.value

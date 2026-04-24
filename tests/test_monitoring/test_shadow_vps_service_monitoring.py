@@ -280,6 +280,39 @@ def _build_rich_monitoring_runtime_bundle() -> ShadowVpsRuntimeEvidenceBundle:
     )
 
 
+def test_shadow_vps_service_monitoring_redacts_sensitive_error_surfaces() -> None:
+    state = _build_rich_monitoring_state().model_copy(
+        update={
+            "last_error": "BINANCE_API_SECRET=live-secret",
+            "last_telegram_alert_delivery_error": "api_key=live-key",
+        }
+    )
+    payload = build_shadow_vps_service_monitoring_payload(
+        timestamp_ms=1_800_000_000_000,
+        state=state,
+        process=_build_rich_monitoring_process(),
+        disk=DiskUsageSample(
+            path="E:/shadow",
+            total_gb=100.0,
+            free_gb=40.0,
+            used_pct=60.0,
+            sampling_mode="test_mode",
+        ),
+        campaign_summary=_build_rich_monitoring_campaign_summary(),
+        runtime_evidence_bundle=_build_rich_monitoring_runtime_bundle(),
+        latest_error="secret_key=live-secret",
+        parse_error_count=1,
+    )
+
+    dumped = payload.model_dump_json()
+    assert payload.last_error == "sensitive content redacted"
+    assert payload.latest_error == "sensitive content redacted"
+    assert payload.telegram_alert_delivery_error == "sensitive content redacted"
+    assert "BINANCE_API_SECRET" not in dumped
+    assert "secret_key" not in dumped
+    assert "api_key" not in dumped
+
+
 def _build_rich_monitoring_process() -> ProcessMetricsSample:
     return ProcessMetricsSample(
         pid=4321,

@@ -22,7 +22,7 @@ def evaluate_ml_model_promotion_gate(
 ) -> MlModelPromotionGateVerdict:
     """Evaluate the bounded ML artifact with fail-closed semantics."""
 
-    blocking_reasons: list[str] = []
+    blocking_reasons: list[str] = ["ml.formalism.unresolved"]
     if artifact.model_family.value != "lightgbm":
         blocking_reasons.append("MODEL_FAMILY_NOT_LIGHTGBM")
     if artifact.backtest_sharpe <= 0.0:

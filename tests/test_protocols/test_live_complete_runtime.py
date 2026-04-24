@@ -16,6 +16,8 @@ from interface_contracts import (
     VpsWarmupState,
 )
 from protocols import (
+    LiveCompleteAllowedAction,
+    LiveCompleteForbiddenAction,
     LiveCompleteRunState,
     LiveCompleteVerdict,
     LiveLightDecision,
@@ -176,6 +178,11 @@ def test_build_live_complete_input_from_live_light_maps_governed_surfaces() -> N
     assert complete_input.command_queue_snapshot is not None
     assert complete_input.active_ml_artifact is not None
     assert complete_input.warmup_run_summary is not None
+    assert complete_input.allowed_actions[0] == LiveCompleteAllowedAction.SET_HALTED
+    assert (
+        complete_input.forbidden_actions[0]
+        == LiveCompleteForbiddenAction.MODIFY_RISK_CAPS
+    )
 
 
 def test_run_live_complete_gate_allows_supervision_when_all_surfaces_are_ready() -> None:

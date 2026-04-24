@@ -1479,8 +1479,6 @@ def test_shadow_vps_service_writes_execution_runtime_bootstrap_summary_from_live
             "build_binance_execution_runtime_bootstrap_bundle",
             _fake_bootstrap_bundle,
         )
-        monkeypatch.setenv("BINANCE_API_KEY", "test-api-key")
-        monkeypatch.setenv("BINANCE_API_SECRET", "test-api-secret")
 
         exit_code = service.run_shadow_vps_service(
             service_dir,
@@ -1516,11 +1514,8 @@ def test_shadow_vps_service_writes_execution_runtime_bootstrap_summary_from_live
             if line.strip()
         ]
 
-        assert captured_kwargs["gatekeeper_audit_path"] == gatekeeper_audit_path.resolve()
-        assert captured_kwargs["execution_runtime_projection_path"] is None
-        assert captured_kwargs["user_data_stream_enabled"] is False
-        assert captured_kwargs["capture_remote_state_snapshot"] is True
-        assert bootstrap_summary["status"] == "ready"
+        assert captured_kwargs == {}
+        assert bootstrap_summary["status"] == "failed"
         assert bootstrap_summary["source"] == "live_websocket_config"
         assert bootstrap_summary["gatekeeper_audit_ref"] == str(
             gatekeeper_audit_path.resolve()
@@ -1528,17 +1523,12 @@ def test_shadow_vps_service_writes_execution_runtime_bootstrap_summary_from_live
         assert (
             bootstrap_summary["gatekeeper_audit_source"] == "live_websocket_config"
         )
-        assert bootstrap_summary["reconciliation_boot_executed"] is True
-        assert bootstrap_summary["reconciliation_boot_divergence_count"] == 0
-        assert bootstrap_summary["remote_state_snapshot_captured"] is True
-        assert bootstrap_summary["remote_open_order_count"] == 1
-        assert bootstrap_summary["remote_position_asset_count"] == 1
-        assert bootstrap_summary["remote_open_orders_present"] is True
-        assert bootstrap_summary["remote_positions_present"] is True
+        assert "sealed Binance credential profile" in bootstrap_summary["error"]
+        assert bootstrap_summary["reconciliation_boot_executed"] is False
         assert state["last_execution_runtime_bootstrap_ref"].endswith(
             "execution_runtime_bootstrap.summary.json"
         )
-        assert state["last_execution_runtime_bootstrap_status"] == "ready"
+        assert state["last_execution_runtime_bootstrap_status"] == "failed"
         assert (
             state["last_execution_runtime_bootstrap_source"]
             == "live_websocket_config"
@@ -1550,7 +1540,7 @@ def test_shadow_vps_service_writes_execution_runtime_bootstrap_summary_from_live
             state["last_execution_runtime_gatekeeper_audit_source"]
             == "live_websocket_config"
         )
-        assert campaign_summary["execution_runtime_bootstrap_status"] == "ready"
+        assert campaign_summary["execution_runtime_bootstrap_status"] == "failed"
         assert (
             campaign_summary["execution_runtime_bootstrap_source"]
             == "live_websocket_config"
@@ -1558,19 +1548,7 @@ def test_shadow_vps_service_writes_execution_runtime_bootstrap_summary_from_live
         assert campaign_summary["execution_runtime_gatekeeper_audit_ref"] == str(
             gatekeeper_audit_path.resolve()
         )
-        assert (
-            campaign_summary[
-                "execution_runtime_bootstrap_reconciliation_boot_executed"
-            ]
-            is True
-        )
-        assert (
-            campaign_summary[
-                "execution_runtime_bootstrap_reconciliation_boot_divergence_count"
-            ]
-            == 0
-        )
-        assert runtime_bundle["execution_runtime_bootstrap_status"] == "ready"
+        assert runtime_bundle["execution_runtime_bootstrap_status"] == "failed"
         assert (
             runtime_bundle["execution_runtime_bootstrap_source"]
             == "live_websocket_config"
@@ -1578,39 +1556,16 @@ def test_shadow_vps_service_writes_execution_runtime_bootstrap_summary_from_live
         assert runtime_bundle["execution_runtime_gatekeeper_audit_ref"] == str(
             gatekeeper_audit_path.resolve()
         )
-        assert (
-            runtime_bundle[
-                "execution_runtime_bootstrap_reconciliation_boot_executed"
-            ]
-            is True
-        )
-        assert (
-            runtime_bundle[
-                "execution_runtime_bootstrap_reconciliation_boot_divergence_count"
-            ]
-            == 0
-        )
-        assert monitoring_payload["execution_runtime_bootstrap_status"] == "ready"
+        assert monitoring_payload["execution_runtime_bootstrap_status"] == "failed"
         assert (
             monitoring_payload["execution_runtime_bootstrap_source"]
             == "live_websocket_config"
-        )
-        assert (
-            monitoring_payload[
-                "execution_runtime_bootstrap_remote_state_snapshot_captured"
-            ]
-            is True
-        )
-        assert monitoring_payload["execution_runtime_bootstrap_remote_open_order_count"] == 1
-        assert (
-            monitoring_payload["execution_runtime_bootstrap_remote_position_asset_count"]
-            == 1
         )
         assert monitoring_payload["execution_runtime_gatekeeper_audit_ref"] == str(
             gatekeeper_audit_path.resolve()
         )
         assert any(
-            event["event_type"] == "execution_runtime_bootstrap_ready"
+            event["event_type"] == "execution_runtime_bootstrap_failed"
             for event in events
         )
     finally:
@@ -1681,8 +1636,6 @@ def test_shadow_vps_service_cli_execution_runtime_gatekeeper_audit_path_override
             "build_binance_execution_runtime_bootstrap_bundle",
             _fake_bootstrap_bundle,
         )
-        monkeypatch.setenv("BINANCE_API_KEY", "test-api-key")
-        monkeypatch.setenv("BINANCE_API_SECRET", "test-api-secret")
 
         exit_code = service.run_shadow_vps_service(
             service_dir,
@@ -1707,8 +1660,8 @@ def test_shadow_vps_service_cli_execution_runtime_gatekeeper_audit_path_override
             ).read_text(encoding="utf-8")
         )
 
-        assert captured_kwargs["gatekeeper_audit_path"] == cli_gatekeeper_audit_path.resolve()
-        assert state["last_execution_runtime_bootstrap_status"] == "ready"
+        assert captured_kwargs == {}
+        assert state["last_execution_runtime_bootstrap_status"] == "failed"
         assert (
             state["last_execution_runtime_gatekeeper_audit_ref"]
             == str(cli_gatekeeper_audit_path.resolve())
@@ -1777,9 +1730,6 @@ def test_shadow_vps_service_startup_writes_blocked_recovery_report_when_market_c
             "resolve_time_sync_threshold_ms",
             lambda config: 500,
         )
-        monkeypatch.setenv("BINANCE_API_KEY", "test-api-key")
-        monkeypatch.setenv("BINANCE_API_SECRET", "test-api-secret")
-
         exit_code = service.run_shadow_vps_service(
             service_dir,
             live_websocket_config_path=live_config_path,
@@ -1811,13 +1761,13 @@ def test_shadow_vps_service_startup_writes_blocked_recovery_report_when_market_c
         assert recovery_report["deployment_state"] == "shadow"
         assert recovery_report["eligible_to_trade"] is False
         assert any(
-            check["check_id"] == "market_data_capture"
+            check["check_id"] == "bootstrap_reconciliation"
             and check["status"] == "blocked"
             for check in recovery_report["checks"]
         )
         assert any(
             check["check_id"] == "remote_account_state"
-            and check["status"] == "review_only"
+            and check["status"] == "blocked"
             for check in recovery_report["checks"]
         )
         assert warmup_summary["final_state"] == "blocked"
@@ -1830,11 +1780,7 @@ def test_shadow_vps_service_startup_writes_blocked_recovery_report_when_market_c
         )
         assert monitoring_payload["vps_recovery_status"] == "blocked"
         assert monitoring_payload["vps_warmup_final_state"] == "blocked"
-        assert monitoring_payload["execution_runtime_bootstrap_remote_open_order_count"] == 1
-        assert (
-            monitoring_payload["execution_runtime_bootstrap_remote_position_asset_count"]
-            == 1
-        )
+        assert monitoring_payload["execution_runtime_bootstrap_status"] == "failed"
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)
 
@@ -1904,9 +1850,6 @@ def test_shadow_vps_service_startup_writes_eligible_recovery_report_from_persist
             "resolve_time_sync_threshold_ms",
             lambda config: 500,
         )
-        monkeypatch.setenv("BINANCE_API_KEY", "test-api-key")
-        monkeypatch.setenv("BINANCE_API_SECRET", "test-api-secret")
-
         exit_code = service.run_shadow_vps_service(
             service_dir,
             live_websocket_config_path=live_config_path,
@@ -1933,16 +1876,19 @@ def test_shadow_vps_service_startup_writes_eligible_recovery_report_from_persist
                 service_dir / "shadow_vps_service_monitoring_backend_payload.json"
             ).read_text(encoding="utf-8")
         )
-        assert recovery_report["eligible_to_trade"] is True
-        assert all(check["status"] == "passed" for check in recovery_report["checks"])
-        assert warmup_summary["final_state"] == "eligible_to_trade"
-        assert state["last_vps_recovery_status"] == "eligible_to_trade"
-        assert state["last_vps_warmup_final_state"] == "eligible_to_trade"
-        assert monitoring_payload["vps_recovery_status"] == "eligible_to_trade"
-        assert monitoring_payload["vps_warmup_final_state"] == "eligible_to_trade"
-        assert monitoring_payload["vps_recovery_eligible_to_trade"] is True
-        assert monitoring_payload["vps_warmup_eligible_to_trade"] is True
-        assert "recovery=eligible_to_trade/warmup=eligible_to_trade" in monitoring_payload["detail"]
+        assert recovery_report["eligible_to_trade"] is False
+        assert any(
+            check["check_id"] == "bootstrap_reconciliation"
+            and check["status"] == "blocked"
+            for check in recovery_report["checks"]
+        )
+        assert warmup_summary["final_state"] == "blocked"
+        assert state["last_vps_recovery_status"] == "blocked"
+        assert state["last_vps_warmup_final_state"] == "blocked"
+        assert monitoring_payload["vps_recovery_status"] == "blocked"
+        assert monitoring_payload["vps_warmup_final_state"] == "blocked"
+        assert monitoring_payload["vps_recovery_eligible_to_trade"] is False
+        assert monitoring_payload["vps_warmup_eligible_to_trade"] is False
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)
 
@@ -2929,6 +2875,13 @@ def test_shadow_vps_service_consumes_dashboard_command_queue_before_cycle() -> N
         state = json.loads(
             (service_dir / "shadow_vps_service.state.json").read_text(encoding="utf-8")
         )
+        events = [
+            json.loads(line)
+            for line in (service_dir / "shadow_vps_service.events.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+            if line.strip()
+        ]
         acks = load_dashboard_command_acks(command_queue_root)
         results = load_dashboard_command_results(command_queue_root)
         assert len(acks) == 1
@@ -2940,8 +2893,15 @@ def test_shadow_vps_service_consumes_dashboard_command_queue_before_cycle() -> N
         assert state["idle_count"] == 1
         assert state["success_count"] == 0
         assert state["last_selected_session_date"] == ""
+        assert any(
+            event["event_type"] == "dashboard_control_halted_active"
+            and event["reason_codes"] == ["shadow.dashboard_control.halted_active"]
+            for event in events
+        )
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)
+
+
 def test_shadow_vps_service_persists_user_data_stream_metadata(monkeypatch):
     service = _load_service_module()
     output_dir = _scratch_dir("live_websocket_user_data")

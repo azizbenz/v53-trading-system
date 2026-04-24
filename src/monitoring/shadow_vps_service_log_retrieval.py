@@ -13,27 +13,29 @@ from monitoring.contracts import (
     ShadowVpsServiceLogQuery,
     ShadowVpsServiceLogQueryResult,
 )
+from monitoring.shadow_vps_redaction import redact_shadow_vps_event, redact_shadow_vps_text
 
 
 def _project_event(event: ShadowVpsServiceEvent) -> ShadowVpsServiceLogEventProjection:
+    sanitized = redact_shadow_vps_event(event)
     return ShadowVpsServiceLogEventProjection(
-        event_type=event.event_type,
-        timestamp_ms=max(0, int(event.timestamp * 1000.0)),
-        message=event.message,
-        session_date=event.session_date,
-        export_dir_ref=event.export_dir_ref,
-        accepted=event.accepted,
-        consecutive_days=event.consecutive_days,
-        remaining_days=event.remaining_days,
-        live_capture_summary_ref=event.live_capture_summary_ref,
-        emitted_message_count=event.emitted_message_count,
-        accepted_message_count=event.accepted_message_count,
-        ignored_message_count=event.ignored_message_count,
-        rejected_message_count=event.rejected_message_count,
-        pair_scope=event.pair_scope,
-        event_types=event.event_types,
-        reason_codes=event.reason_codes,
-        error=event.error,
+        event_type=sanitized.event_type,
+        timestamp_ms=max(0, int(sanitized.timestamp * 1000.0)),
+        message=sanitized.message,
+        session_date=sanitized.session_date,
+        export_dir_ref=sanitized.export_dir_ref,
+        accepted=sanitized.accepted,
+        consecutive_days=sanitized.consecutive_days,
+        remaining_days=sanitized.remaining_days,
+        live_capture_summary_ref=sanitized.live_capture_summary_ref,
+        emitted_message_count=sanitized.emitted_message_count,
+        accepted_message_count=sanitized.accepted_message_count,
+        ignored_message_count=sanitized.ignored_message_count,
+        rejected_message_count=sanitized.rejected_message_count,
+        pair_scope=sanitized.pair_scope,
+        event_types=sanitized.event_types,
+        reason_codes=sanitized.reason_codes,
+        error=sanitized.error,
     )
 
 
@@ -112,7 +114,10 @@ def query_shadow_vps_service_events(
     query = query or ShadowVpsServiceLogQuery()
     resolved_events_path = Path(events_path)
     if not resolved_events_path.is_file():
-        detail = f"Shadow VPS service events file is missing: {resolved_events_path}"
+        detail = (
+            "Shadow VPS service events file is missing: "
+            f"{redact_shadow_vps_text(str(resolved_events_path))}"
+        )
         return ShadowVpsServiceLogQueryResult(
             timestamp_ms=timestamp_ms,
             correlation_id="shadow-vps-service-log-query",
@@ -202,7 +207,10 @@ def build_shadow_vps_service_recent_events_summary(
     query = ShadowVpsServiceLogQuery(max_events=max_events, newest_first=True)
     resolved_events_path = Path(events_path)
     if not resolved_events_path.is_file():
-        detail = f"Shadow VPS service events file is missing: {resolved_events_path}"
+        detail = (
+            "Shadow VPS service events file is missing: "
+            f"{redact_shadow_vps_text(str(resolved_events_path))}"
+        )
         return ShadowVpsServiceLogQueryResult(
             timestamp_ms=timestamp_ms,
             correlation_id="shadow-vps-service-log-tail",

@@ -7,6 +7,7 @@ from typing import Protocol
 
 from pydantic import BaseModel, Field
 
+from interface_contracts.atomic_io import atomic_write_json
 from interface_contracts import DashboardCommandQueueStatus, VpsWarmupState
 from local_replay_runtime.ml_final_audit_report import LocalLabMlFinalAuditReport
 from local_replay_runtime.regime_detector_final_audit_report import (
@@ -235,7 +236,7 @@ def write_live_complete_operator_audit_report(
 
     path = Path(report_ref).resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(report.model_dump_json(indent=2), encoding="utf-8")
+    atomic_write_json(path, report.model_dump(mode="json"), indent=2)
     return path
 
 
