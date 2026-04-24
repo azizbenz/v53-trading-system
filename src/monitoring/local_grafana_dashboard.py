@@ -8,6 +8,9 @@ import re
 from pydantic import BaseModel, Field
 
 from monitoring.dashboard_metric_guides import render_shadow_vps_metric_guide_markdown
+from monitoring.local_grafana_dashboard_build17 import (
+    build_shadow_vps_recovery_and_control_panels,
+)
 from monitoring.grafana_types import GrafanaPayload
 
 
@@ -395,15 +398,6 @@ def _build_execution_panels(
             w=24,
             h=8,
         ),
-        _table_panel(
-            panel_id=17,
-            title="Instant Metric Snapshot",
-            expr=f"{{__name__=~\"v53_shadow_vps_.*\",{job_filter},{instance_filter}}}",
-            x=0,
-            y=60,
-            w=24,
-            h=8,
-        ),
     ]
 
 
@@ -414,50 +408,59 @@ def _build_regime_and_telegram_panels(
 ) -> list[GrafanaPayload]:
     return [
         _stat_panel(
-            panel_id=18,
+            panel_id=24,
             title="Regime Lite Entries Blocked",
             expr=f"max(v53_shadow_vps_regime_lite_entries_blocked{{{job_filter},{instance_filter}}})",
             x=0,
-            y=68,
+            y=94,
         ),
         _stat_panel(
-            panel_id=19,
+            panel_id=25,
             title="Regime Lite Exit-All Recommended",
             expr=f"max(v53_shadow_vps_regime_lite_should_exit_all{{{job_filter},{instance_filter}}})",
             x=6,
-            y=68,
+            y=94,
         ),
         _table_panel(
-            panel_id=20,
+            panel_id=26,
             title="Regime Lite Labels",
             expr=f"v53_shadow_vps_regime_lite_safing_status{{{job_filter},{instance_filter}}}",
             x=12,
-            y=68,
+            y=94,
             w=12,
             h=8,
         ),
         _stat_panel(
-            panel_id=21,
+            panel_id=27,
             title="Telegram Alerts",
             expr=f"max(v53_shadow_vps_telegram_alert_delivery_status{{{job_filter},{instance_filter}}})",
             x=0,
-            y=76,
+            y=102,
         ),
         _table_panel(
-            panel_id=22,
+            panel_id=28,
             title="Telegram Alert Labels",
             expr=f"v53_shadow_vps_telegram_alert_delivery_status{{{job_filter},{instance_filter}}}",
             x=6,
-            y=76,
+            y=102,
             w=18,
             h=8,
         ),
+        _table_panel(
+            panel_id=29,
+            title="Instant Metric Snapshot",
+            expr=f"{{__name__=~\"v53_shadow_vps_.*\",{job_filter},{instance_filter}}}",
+            x=0,
+            y=110,
+            w=24,
+            h=8,
+        ),
         _text_panel(
-            panel_id=23,
+            panel_id=30,
             title="Metric Guide and Status Semantics",
             markdown=render_shadow_vps_metric_guide_markdown(),
             x=0,
-            y=84,
+            y=118,
             w=24,
             h=10,
         ),
@@ -475,6 +478,10 @@ def _build_shadow_dashboard_panels(
             instance_filter=instance_filter,
         )
         + _build_execution_panels(
+            job_filter=job_filter,
+            instance_filter=instance_filter,
+        )
+        + build_shadow_vps_recovery_and_control_panels(
             job_filter=job_filter,
             instance_filter=instance_filter,
         )

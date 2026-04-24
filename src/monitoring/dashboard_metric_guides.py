@@ -165,6 +165,45 @@ _SHADOW_VPS_SECTIONS = (
         ),
     ),
     MetricGuideSection(
+        title="Recovery and governed control",
+        entries=(
+            MetricGuideEntry(
+                metric_name="v53_shadow_vps_recovery_status",
+                explanation=(
+                    "Current VPS recovery state with `recovery_status`, "
+                    "`eligible_to_trade`, and the readiness report reference carried "
+                    "in labels."
+                ),
+            ),
+            MetricGuideEntry(
+                metric_name="v53_shadow_vps_warmup_state",
+                explanation=(
+                    "Current VPS warm-up state with `warmup_final_state` and "
+                    "eligibility labels."
+                ),
+            ),
+            MetricGuideEntry(
+                metric_name="v53_shadow_vps_dashboard_control_halted",
+                explanation=(
+                    "Governed operator halt state. Labels carry the target profile, "
+                    "deployment state, and latest command/result pair."
+                ),
+            ),
+            MetricGuideEntry(
+                metric_name="v53_shadow_vps_active_regime_detector_artifact",
+                explanation=(
+                    "Active RegimeDetector artifact identity surface. Read the "
+                    "`artifact_hash` and `artifact_id` labels before concluding the "
+                    "VPS is running the expected artifact."
+                ),
+            ),
+        ),
+        notes=(
+            "Recovery and warm-up must both be eligible before any trading progression is treated as healthy.",
+            "Dashboard control metrics are governed operator surfaces only; Grafana does not execute the commands itself.",
+        ),
+    ),
+    MetricGuideSection(
         title="Regime-lite governance",
         entries=(
             MetricGuideEntry(

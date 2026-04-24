@@ -48,6 +48,23 @@ from backtest_artifact_import.export_dir_bridge import (
     build_import_context_from_export_dir,
     build_upload_request_from_export_dir,
 )
+from backtest_artifact_import.ml_model_transport import (
+    MlModelSourceArtifactSummary,
+    MlModelTransportPackage,
+    attach_ml_model_transport_refs,
+    build_ml_model_source_artifact_summary,
+    build_upload_request_from_replay_plan_with_ml_model_artifact,
+    load_ml_model_artifact,
+    package_ml_model_artifact_for_transport,
+)
+from backtest_artifact_import.regime_detector_transport import (
+    RegimeDetectorTransportPackage,
+    attach_regime_detector_transport_refs,
+    build_regime_detector_artifact_summary,
+    build_upload_request_from_replay_plan_with_regime_detector_artifact,
+    load_regime_detector_artifact,
+    package_regime_detector_artifact_for_transport,
+)
 from backtest_artifact_import.upload_bridge import (
     build_artifact_upload_decision,
     build_import_request_from_upload_request,
@@ -97,6 +114,19 @@ __all__ = [
     "build_upload_context_from_replay_import_context",
     "build_import_context_from_export_dir",
     "build_upload_request_from_export_dir",
+    "MlModelSourceArtifactSummary",
+    "MlModelTransportPackage",
+    "load_ml_model_artifact",
+    "build_ml_model_source_artifact_summary",
+    "package_ml_model_artifact_for_transport",
+    "attach_ml_model_transport_refs",
+    "build_upload_request_from_replay_plan_with_ml_model_artifact",
+    "RegimeDetectorTransportPackage",
+    "load_regime_detector_artifact",
+    "build_regime_detector_artifact_summary",
+    "package_regime_detector_artifact_for_transport",
+    "attach_regime_detector_transport_refs",
+    "build_upload_request_from_replay_plan_with_regime_detector_artifact",
     "build_import_request_from_upload_request",
     "build_artifact_upload_decision",
     "validate_artifact_manifest",

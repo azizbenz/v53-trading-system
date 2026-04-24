@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import shutil
-from uuid import uuid4
 
 from interface_contracts import (
     CANONICAL_FEATURE_SET_VERSION,
@@ -16,15 +15,11 @@ from interface_contracts import (
     TransformWhitelistId,
 )
 from local_replay_runtime import build_feature_bridge_payload, load_historical_replay_dataset
+from tests.support_paths import make_repo_scratch_dir
 
 
 def _scratch_dir(label: str) -> Path:
-    repo_root = Path(__file__).resolve().parents[2]
-    base_dir = repo_root / "build" / "historical_data_gateway_tests"
-    base_dir.mkdir(parents=True, exist_ok=True)
-    output_dir = base_dir / f"{label}_{uuid4().hex}"
-    output_dir.mkdir(parents=True, exist_ok=False)
-    return output_dir
+    return make_repo_scratch_dir("historical_data_gateway_tests", label)
 
 
 def test_load_historical_replay_dataset_normalizes_and_sorts_records():

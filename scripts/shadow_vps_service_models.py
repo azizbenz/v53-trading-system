@@ -50,6 +50,7 @@ class ShadowVpsServiceRuntimeContext:
     regime_lite_assessment_path: Path | None
     regime_lite_safing_recommendation_path: Path | None
     info_stress_assessment_path: Path | None
+    dashboard_command_queue_root: Path | None
     resolved_telegram_alert_config_path: Path | None
     resolved_telegram_alert_config_source: str
     resolved_telegram_alert_key_path: Path | None

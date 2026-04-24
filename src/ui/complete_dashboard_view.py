@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from interface_contracts import (
+    DashboardArtifactTransferManifest,
+    DashboardCommandQueueSnapshot,
+    VpsRecoveryReadinessReport,
+    VpsWarmupRunSummary,
+)
 from monitoring.contracts import TechnicalDashboardPayload
+from ui.complete_dashboard_control_plane import build_complete_control_plane_section
 from ui.contracts import DashboardCard, DashboardSection
 
 
@@ -69,9 +76,13 @@ class CompleteDashboardSupplement(BaseModel, frozen=True):
         "request_pair_resume",
         "suspend_engine",
         "request_engine_resume",
-        "set_degraded",
         "set_halted",
         "rollback_to_light",
+        "request_upload_ml_artifact",
+        "request_upload_regime_detector_artifact",
+        "request_export_active_ml_artifact",
+        "request_export_active_regime_detector_artifact",
+        "request_export_regime_detector_shadow_audit_bundle",
         "view_complete_gates",
     )
     forbidden_actions: tuple[str, ...] = (
@@ -81,6 +92,13 @@ class CompleteDashboardSupplement(BaseModel, frozen=True):
         "inject_unversioned_config",
         "bypass_hard_blocker",
     )
+    command_queue_snapshot: DashboardCommandQueueSnapshot | None = None
+    active_ml_artifact: DashboardArtifactTransferManifest | None = None
+    active_regime_detector_artifact: DashboardArtifactTransferManifest | None = None
+    recovery_readiness_report: VpsRecoveryReadinessReport | None = None
+    warmup_run_summary: VpsWarmupRunSummary | None = None
+    operator_report_status: str = "not_available"
+    operator_report_ref: str = ""
     pair_metadata: tuple[CompletePairMetadata, ...] = ()
     engine_metadata: tuple[CompleteEngineMetadata, ...] = ()
 
@@ -105,6 +123,7 @@ def build_complete_dashboard_sections(
         _build_meta_section(payload, supplement),
         _build_covariance_section(supplement),
         _build_diversity_section(payload, supplement),
+        build_complete_control_plane_section(supplement),
         _build_logs_section(payload, supplement),
         _build_admin_section(supplement),
     )

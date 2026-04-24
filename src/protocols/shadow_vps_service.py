@@ -194,6 +194,15 @@ class ShadowVpsServiceStore:
         self._state_dir.mkdir(parents=True, exist_ok=True)
         atomic_write_json(self._state_path, self._state.model_dump(mode="json"))
 
+    def reload(self) -> ShadowVpsServiceState:
+        self._state = self._load_or_create()
+        return self._state
+
+    def update_state(self, **updates: object) -> ShadowVpsServiceState:
+        self._state = self._state.model_copy(update=updates)
+        self.persist()
+        return self._state
+
     def append_event(self, event: ShadowVpsServiceEvent) -> None:
         self._state_dir.mkdir(parents=True, exist_ok=True)
         with self._events_path.open("a", encoding="utf-8") as handle:

@@ -53,6 +53,10 @@ def _prefer_optional_text(primary: str | None, secondary: str | None) -> str:
 
 
 def _projection_status_from_state(state: ShadowVpsServiceState) -> str:
+    if state.dashboard_control_halted:
+        return "critical"
+    if state.dashboard_control_target_deployment_state == "rollback":
+        return "warning"
     if state.service_status.value == "degraded":
         return "critical"
     if state.last_error:
@@ -387,7 +391,18 @@ def _build_detail(
         f"exec_bootstrap={resolved_fields['execution_runtime_bootstrap_status']}"
         f"@{resolved_fields['execution_runtime_bootstrap_source']}"
         f"@{resolved_fields['execution_runtime_gatekeeper_audit_source']}"
-        f"/div={resolved_fields['execution_runtime_bootstrap_reconciliation_boot_divergence_count']} / "
+        f"/div={resolved_fields['execution_runtime_bootstrap_reconciliation_boot_divergence_count']}"
+        f"/remote_orders={resolved_fields['execution_runtime_bootstrap_remote_open_order_count']}"
+        f"/remote_positions={resolved_fields['execution_runtime_bootstrap_remote_position_asset_count']} / "
+        f"recovery={resolved_fields['vps_recovery_status']}"
+        f"/warmup={resolved_fields['vps_warmup_final_state']} / "
+        f"dashboard_halted={resolved_fields['dashboard_control_halted']}"
+        f"/target={resolved_fields['dashboard_control_target_profile'] or 'none'}"
+        f":{resolved_fields['dashboard_control_target_deployment_state'] or 'none'}"
+        f"/pair_susp={resolved_fields['dashboard_control_suspended_pair_count']}"
+        f"/engine_susp={resolved_fields['dashboard_control_suspended_engine_count']} / "
+        f"artifacts=ml:{resolved_fields['active_ml_artifact_hash'][:12] or 'none'}"
+        f"/regime:{resolved_fields['active_regime_detector_artifact_hash'][:12] or 'none'} / "
         f"exec_projection={resolved_fields['execution_runtime_projection_status']}"
         f"@{resolved_fields['execution_runtime_projection_source_detail']} / "
         f"regime_lite={resolved_fields['regime_lite_safing_severity']}"

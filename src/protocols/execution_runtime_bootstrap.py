@@ -12,6 +12,7 @@ from execution_backbone import (
     ExecutionRuntime,
     ExecutionVenueAdapter,
     GatekeeperAuditLogger,
+    RemoteExecutionState,
     VenueConstraintProvider,
 )
 from execution_backbone.reconciliation_layer.scheduler import (
@@ -48,6 +49,7 @@ class ExecutionRuntimeBootstrapBundle:
     runtime: ExecutionRuntime
     reconciliation_scheduler: ReconciliationScheduler | None = None
     reconciliation_boot_result: ReconciliationSchedulerRunResult | None = None
+    remote_state_snapshot: RemoteExecutionState | None = None
 
 
 def build_execution_runtime_bootstrap_bundle(
@@ -66,6 +68,7 @@ def build_execution_runtime_bootstrap_bundle(
     reconciliation_boot_now: float | None = None,
     reconciliation_circuit_breaker: EmergencyCircuitBreaker | None = None,
     trip_reconciliation_circuit_breaker_on_unresolved: bool = True,
+    capture_remote_state_snapshot: bool = False,
 ) -> ExecutionRuntimeBootstrapBundle:
     """Build an execution runtime plus optional bounded reconciliation bootstrap state."""
 
@@ -123,11 +126,15 @@ def build_execution_runtime_bootstrap_bundle(
                 trip_reconciliation_circuit_breaker_on_unresolved
             ),
         )
+    remote_state_snapshot = (
+        adapter.fetch_remote_state() if capture_remote_state_snapshot else None
+    )
 
     return ExecutionRuntimeBootstrapBundle(
         runtime=runtime,
         reconciliation_scheduler=reconciliation_scheduler,
         reconciliation_boot_result=reconciliation_boot_result,
+        remote_state_snapshot=remote_state_snapshot,
     )
 
 
@@ -177,6 +184,7 @@ def build_binance_execution_runtime_bootstrap_bundle(
     user_data_stream_enabled: bool = False,
     user_data_socket_factory: UserDataSocketFactory | None = None,
     clock_ms: Callable[[], int] | None = None,
+    capture_remote_state_snapshot: bool = False,
 ) -> ExecutionRuntimeBootstrapBundle:
     """Build the bounded Binance execution runtime plus optional reconciliation bootstrap state."""
 
@@ -212,6 +220,7 @@ def build_binance_execution_runtime_bootstrap_bundle(
         trip_reconciliation_circuit_breaker_on_unresolved=(
             trip_reconciliation_circuit_breaker_on_unresolved
         ),
+        capture_remote_state_snapshot=capture_remote_state_snapshot,
     )
 
 

@@ -22,6 +22,10 @@ from .contracts_core import (
     ProjectionStatus,
     SystemProjection,
 )
+from .contracts_live_complete import (
+    LiveCompleteGateGroupProjection,
+    LiveCompleteProjection,
+)
 
 
 class EngineJudgmentCard(BaseModel, frozen=True):
@@ -672,6 +676,8 @@ __all__ = [
     "EngineJudgmentProjection",
     "ExecutionNoTradeBridgeProjection",
     "ExecutionRuntimeProjectionBridgeProjection",
+    "LiveCompleteGateGroupProjection",
+    "LiveCompleteProjection",
     "LiveLightGateGroupProjection",
     "LiveLightProjection",
     "LiveProjection",

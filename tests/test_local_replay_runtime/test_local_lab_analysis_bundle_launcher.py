@@ -24,10 +24,11 @@ from monitoring.local_lab_bundle_loader import load_local_lab_monitoring_bundle
 from meta_minimal.dtr_core.decision_state_encoder import DecisionState
 from meta_minimal.dtr_core.dtr_record_builder import build_dtr
 from scripts.run_local_lab_analysis_bundle import main
+from tests.support_paths import repo_build_path
 
 
 def _scratch_dir() -> Path:
-    return Path("build/pytest-local-lab-analysis-bundle") / uuid4().hex
+    return repo_build_path("pytest-local-lab-analysis-bundle", uuid4().hex)
 
 
 def _records():

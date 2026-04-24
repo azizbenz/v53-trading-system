@@ -1,0 +1,44 @@
+"""Canonical operator bridge markdown for Grafana-to-queue control."""
+
+from __future__ import annotations
+
+
+def render_shadow_vps_operator_queue_bridge_markdown() -> str:
+    """Render the governed operator bridge instructions for the local Grafana view."""
+
+    return (
+        "## Governed operator queue bridge\n\n"
+        "Grafana is the observation surface. It does **not** mutate VPS state directly.\n"
+        "All operator actions must be written as typed queue requests and then consumed by the VPS queue processor.\n\n"
+        "The VPS service must be started with the same queue root:\n\n"
+        "```powershell\n"
+        "python .\\scripts\\run_shadow_vps_service.py "
+        "--dashboard-command-queue-root .\\build\\dashboard_command_queue\n"
+        "```\n\n"
+        "Run these commands from the repo root:\n\n"
+        "```powershell\n"
+        "python .\\scripts\\run_dashboard_governed_command.py "
+        "--queue-root .\\build\\dashboard_command_queue "
+        "--command-kind set_halted "
+        "--operator-reason \"manual halt from grafana\"\n\n"
+        "python .\\scripts\\run_dashboard_governed_command.py "
+        "--queue-root .\\build\\dashboard_command_queue "
+        "--command-kind rollback_to_light "
+        "--operator-reason \"rollback ordered from grafana\"\n\n"
+        "python .\\scripts\\run_dashboard_governed_command.py "
+        "--queue-root .\\build\\dashboard_command_queue "
+        "--command-kind request_export_regime_detector_shadow_audit_bundle\n\n"
+        "python .\\scripts\\run_dashboard_governed_command.py "
+        "--queue-root .\\build\\dashboard_command_queue "
+        "--command-kind suspend_pair "
+        "--target-pair BTCUSDT "
+        "--operator-reason \"pair suspended from grafana review\"\n"
+        "```\n\n"
+        "Rules:\n"
+        "- The script only writes a `DashboardGovernedCommandRequest` into the queue.\n"
+        "- The VPS state machine remains the only place where the request is accepted, rejected, and applied.\n"
+        "- Use upload commands only with governed artifact lineage/hash fields.\n"
+    )
+
+
+__all__ = ["render_shadow_vps_operator_queue_bridge_markdown"]

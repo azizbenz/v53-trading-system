@@ -98,6 +98,22 @@ from meta_learning.review_resolution import (
     apply_candidate_replay_results,
     apply_human_review_resolution,
 )
+from meta_learning.model_risk_registry import (
+    MlModelDriftSnapshot,
+    MlModelRiskRecord,
+    MlModelRiskRegistry,
+    MlModelRiskSignal,
+    MlModelRiskState,
+    MlModelRuntimeStage,
+    evaluate_model_risk_signal,
+)
+from meta_learning.strategy_drift_monitor import (
+    StrategyDriftSignal,
+    StrategyDriftSnapshot,
+    StrategyDriftState,
+    StrategyDriftThresholds,
+    evaluate_strategy_drift,
+)
 from meta_learning.facade import MetaLearningFacade, MetaLearningFacadeProtocol
 from meta_learning.review_orchestrator import run_meta_learning_review
 
@@ -161,6 +177,18 @@ __all__ = [
     "build_archive_eligibility",
     "apply_candidate_replay_results",
     "apply_human_review_resolution",
+    "MlModelRuntimeStage",
+    "MlModelRiskState",
+    "MlModelDriftSnapshot",
+    "MlModelRiskSignal",
+    "MlModelRiskRecord",
+    "MlModelRiskRegistry",
+    "evaluate_model_risk_signal",
+    "StrategyDriftState",
+    "StrategyDriftSnapshot",
+    "StrategyDriftThresholds",
+    "StrategyDriftSignal",
+    "evaluate_strategy_drift",
     "build_review_queue",
     "MetaLearningFacadeProtocol",
     "MetaLearningFacade",

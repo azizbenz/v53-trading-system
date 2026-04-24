@@ -120,6 +120,43 @@ from local_replay_runtime.local_lab_replay_workflow_manifest import (
     LocalLabReplayWorkflowManifest,
     build_local_lab_replay_workflow_manifest,
 )
+from local_replay_runtime.local_lab_ml_artifact_training import (
+    LocalLabMlArtifactTrainingReport,
+    build_local_lab_ml_artifact_training_report,
+)
+from local_replay_runtime.local_lab_regime_detector_artifact_training import (
+    LocalLabRegimeDetectorArtifactTrainingReport,
+    build_local_lab_regime_detector_artifact_training_report,
+)
+from local_replay_runtime.regime_detector_profile_comparison import (
+    LocalLabRegimeDetectorProfileComparisonEntry,
+    LocalLabRegimeDetectorProfileComparisonReport,
+    build_local_lab_regime_detector_profile_comparison_report_from_reports,
+    build_local_lab_regime_detector_profile_comparison_report,
+)
+from local_replay_runtime.regime_detector_final_audit_report import (
+    LocalLabRegimeDetectorFinalAuditReport,
+    build_local_lab_regime_detector_final_audit_report,
+    build_local_lab_regime_detector_final_audit_report_from_vps_command_result,
+)
+from local_replay_runtime.live_complete_operator_audit_report import (
+    LiveCompleteOperatorAuditReport,
+    build_live_complete_operator_audit_report,
+    write_live_complete_operator_audit_report,
+)
+from local_replay_runtime.regime_detector_shadow_audit_diagnosis import (
+    build_local_lab_regime_detector_shadow_audit_diagnosis,
+    load_regime_detector_shadow_audit_bundle,
+)
+from local_replay_runtime.regime_detector_dataset_builder import (
+    build_regime_detector_training_dataset,
+)
+from local_replay_runtime.ml_backtest_projection import (
+    build_ml_backtest_training_dataset,
+    build_ml_backtest_training_dataset_from_replay_and_dtr,
+    project_historical_replay_opportunity_to_ml_sample,
+    project_historical_replay_opportunity_to_ml_sample_with_replay_dtr,
+)
 from local_replay_runtime.artifact_manifest import ArtifactManifest, SHARED_CORE_ID
 from local_replay_runtime.contracts import (
     LocalReplayRequest,
@@ -315,6 +352,27 @@ __all__ = [
     "build_local_lab_replay_dispatch_plan",
     "LocalLabReplayWorkflowManifest",
     "build_local_lab_replay_workflow_manifest",
+    "LocalLabMlArtifactTrainingReport",
+    "build_local_lab_ml_artifact_training_report",
+    "LocalLabRegimeDetectorArtifactTrainingReport",
+    "build_local_lab_regime_detector_artifact_training_report",
+    "LocalLabRegimeDetectorProfileComparisonEntry",
+    "LocalLabRegimeDetectorProfileComparisonReport",
+    "LocalLabRegimeDetectorFinalAuditReport",
+    "build_local_lab_regime_detector_profile_comparison_report_from_reports",
+    "build_local_lab_regime_detector_profile_comparison_report",
+    "build_local_lab_regime_detector_final_audit_report",
+    "build_local_lab_regime_detector_final_audit_report_from_vps_command_result",
+    "load_regime_detector_shadow_audit_bundle",
+    "build_local_lab_regime_detector_shadow_audit_diagnosis",
+    "LiveCompleteOperatorAuditReport",
+    "build_live_complete_operator_audit_report",
+    "write_live_complete_operator_audit_report",
+    "build_regime_detector_training_dataset",
+    "project_historical_replay_opportunity_to_ml_sample",
+    "project_historical_replay_opportunity_to_ml_sample_with_replay_dtr",
+    "build_ml_backtest_training_dataset",
+    "build_ml_backtest_training_dataset_from_replay_and_dtr",
     "ReplayPairAggregate",
     "ReplayEngineAggregate",
     "ReplayMetricsSummary",

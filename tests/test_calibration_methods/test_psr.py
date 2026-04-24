@@ -6,6 +6,7 @@ Reference values derived from Bailey & López de Prado (2012).
 from __future__ import annotations
 
 import math
+from statistics import NormalDist
 
 import pytest
 
@@ -31,6 +32,30 @@ def _flat_returns(n: int, mean: float, std: float) -> tuple[float, ...]:
     low = tuple(mean - step for _ in range(half))
     high = tuple(mean + step for _ in range(n - half))
     return low + high
+
+
+def _reference_psr(
+    returns: tuple[float, ...],
+    *,
+    benchmark_sharpe: float,
+) -> tuple[float, float, float, float]:
+    mean = sum(returns) / len(returns)
+    sample_std = math.sqrt(
+        sum((value - mean) ** 2 for value in returns) / float(len(returns) - 1)
+    )
+    sample_sharpe = mean / sample_std
+    standardized = tuple((value - mean) / sample_std for value in returns)
+    skewness = sum(value**3 for value in standardized) / len(standardized)
+    kurtosis = sum(value**4 for value in standardized) / len(standardized)
+    inner = 1.0 - (skewness * sample_sharpe) + (
+        ((kurtosis - 1.0) / 4.0) * sample_sharpe**2
+    )
+    z_score = (
+        (sample_sharpe - benchmark_sharpe)
+        * math.sqrt(len(returns) - 1)
+        / math.sqrt(inner)
+    )
+    return sample_sharpe, skewness, kurtosis, NormalDist().cdf(z_score)
 
 
 # ---------------------------------------------------------------------------
@@ -154,29 +179,49 @@ def test_psr_rejects_zero_std() -> None:
         compute_probabilistic_sharpe_ratio([0.01, 0.01, 0.01])
 
 
-def test_psr_numeric_anchor_0_9505() -> None:
-    """PSR anchor: fixed-seed Gaussian returns, n=100, PSR remains near the 0.9505 target band.
+def test_psr_matches_closed_form_reference_for_fixed_return_series() -> None:
+    """PSR closure path B: verify the current returns-based seam against Eq. 3 directly.
 
-    The current public API computes PSR from a return series, not from closed-form
-    moments directly. We therefore anchor the implementation with a deterministic
-    synthetic dataset: Gaussian returns with mean 0.168, std 1.0, n=100.
-
-    Seed 20240421 undershoots the documented target band on the current code path,
-    so the first doctrinally allowed replacement seed is 20240422. For that seed,
-    PSR lands inside the accepted anchor interval [0.90, 0.99].
-
-    Reference: Bailey & Lopez de Prado (2012), Eq. 3.
+    This is intentionally not a literal 0.9505 paper-reproduction target. The
+    public API accepts a return series, so the proof is: deterministic returns ->
+    independently recomputed Bailey-López de Prado Eq. 3 -> identical API result.
     """
-    import random
 
-    rng = random.Random(20240422)
-    returns = tuple(rng.gauss(0.168, 1.0) for _ in range(100))
+    returns = (
+        0.012,
+        -0.006,
+        0.009,
+        0.004,
+        -0.003,
+        0.011,
+        -0.008,
+        0.006,
+        0.015,
+        -0.002,
+        0.007,
+        0.003,
+        -0.005,
+        0.010,
+        0.002,
+        -0.004,
+        0.008,
+        0.005,
+    )
+    benchmark_sharpe = 0.10
 
+    expected_sr, expected_skew, expected_kurt, expected_psr = _reference_psr(
+        returns,
+        benchmark_sharpe=benchmark_sharpe,
+    )
     result = compute_probabilistic_sharpe_ratio(
         returns,
-        benchmark_sharpe=0.0,
+        benchmark_sharpe=benchmark_sharpe,
         acceptance_floor=0.95,
     )
 
-    assert result.observation_count == 100
-    assert 0.90 <= result.psr <= 0.99
+    assert result.observation_count == len(returns)
+    assert result.sample_sharpe == pytest.approx(expected_sr)
+    assert result.skewness == pytest.approx(expected_skew)
+    assert result.kurtosis == pytest.approx(expected_kurt)
+    assert result.psr == pytest.approx(expected_psr)
+    assert result.passes_floor is (expected_psr >= 0.95)

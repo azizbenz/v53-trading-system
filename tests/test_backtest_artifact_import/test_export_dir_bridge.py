@@ -4,7 +4,6 @@ from datetime import date
 import json
 from pathlib import Path
 import shutil
-from uuid import uuid4
 
 import pytest
 
@@ -46,15 +45,14 @@ from local_replay_runtime import (
 )
 from meta_minimal.dtr_core.decision_state_encoder import DecisionState
 from meta_minimal.dtr_core.dtr_record_builder import build_dtr
+from tests.support_paths import make_repo_scratch_dir
 
 
 def _scratch_dir(label: str) -> Path:
-    repo_root = Path(__file__).resolve().parents[2]
-    base_dir = repo_root / "build" / "backtest_artifact_import_export_dir_bridge_tests"
-    base_dir.mkdir(parents=True, exist_ok=True)
-    output_dir = base_dir / f"{label}_{uuid4().hex}"
-    output_dir.mkdir(parents=True, exist_ok=False)
-    return output_dir
+    return make_repo_scratch_dir(
+        "backtest_artifact_import_export_dir_bridge_tests",
+        label,
+    )
 
 
 def _export_dir(*, profile_scope: ProfileId = ProfileId.COMPLETE) -> Path:

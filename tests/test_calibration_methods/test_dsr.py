@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import math
+from statistics import NormalDist
+
 import pytest
 
 from calibration_methods import DeflatedSharpeRatioError, compute_deflated_sharpe_ratio
@@ -23,7 +26,54 @@ def _moderate_return_series(length: int = 200) -> tuple[float, ...]:
     return tuple(series)
 
 
-def test_dsr_is_high_for_stable_positive_series():
+def _reference_dsr(
+    returns: tuple[float, ...],
+    *,
+    trial_count: int,
+) -> tuple[float, float, float, float, float, float]:
+    mean_return = sum(returns) / len(returns)
+    sample_std = math.sqrt(
+        sum((value - mean_return) ** 2 for value in returns)
+        / float(len(returns) - 1)
+    )
+    sharpe_ratio = mean_return / sample_std
+    standardized = tuple((value - mean_return) / sample_std for value in returns)
+    skewness = sum(value**3 for value in standardized) / len(standardized)
+    kurtosis = sum(value**4 for value in standardized) / len(standardized)
+    denominator_term = 1.0 - (skewness * sharpe_ratio) + (
+        ((kurtosis - 1.0) / 4.0) * sharpe_ratio**2
+    )
+    sharpe_variance = denominator_term / float(len(returns) - 1)
+    if trial_count <= 1:
+        benchmark_sharpe = 0.0
+    else:
+        distribution = NormalDist()
+        gamma_e = 0.5772156649015329
+        variance_scale = math.sqrt(sharpe_variance)
+        upper_quantile = distribution.inv_cdf(1.0 - (1.0 / trial_count))
+        corrected_quantile = distribution.inv_cdf(
+            1.0 - (1.0 / (trial_count * math.e))
+        )
+        benchmark_sharpe = variance_scale * (
+            ((1.0 - gamma_e) * upper_quantile) + (gamma_e * corrected_quantile)
+        )
+    z_score = (
+        (sharpe_ratio - benchmark_sharpe)
+        * math.sqrt(len(returns) - 1)
+        / math.sqrt(denominator_term)
+    )
+    dsr = NormalDist().cdf(z_score)
+    return (
+        mean_return,
+        sample_std,
+        sharpe_ratio,
+        sharpe_variance,
+        benchmark_sharpe,
+        dsr,
+    )
+
+
+def test_dsr_is_high_for_stable_positive_series() -> None:
     result = compute_deflated_sharpe_ratio(
         _positive_return_series(),
         trial_count=8,
@@ -34,7 +84,7 @@ def test_dsr_is_high_for_stable_positive_series():
     assert result.benchmark_sharpe >= 0.0
 
 
-def test_dsr_penalizes_multiple_trials():
+def test_dsr_penalizes_multiple_trials() -> None:
     returns = _moderate_return_series()
 
     low_trial = compute_deflated_sharpe_ratio(returns, trial_count=1)
@@ -44,40 +94,41 @@ def test_dsr_penalizes_multiple_trials():
     assert high_trial.dsr < low_trial.dsr
 
 
-def test_dsr_rejects_zero_variance_returns():
+def test_dsr_rejects_zero_variance_returns() -> None:
     with pytest.raises(DeflatedSharpeRatioError, match="standard deviation"):
         compute_deflated_sharpe_ratio((0.01, 0.01, 0.01, 0.01), trial_count=3)
 
 
-def test_dsr_table1_mapping_anchor() -> None:
-    """DSR anchor: Bailey et al. (2014) Table 1 mapped onto the current API.
+def test_dsr_matches_current_api_reference_mapping() -> None:
+    """Closure path B: verify the current returns-based seam field by field.
 
-    The current implementation returns:
-    - `sharpe_ratio`: observed sample Sharpe
-    - `benchmark_sharpe`: multiple-testing-adjusted hurdle
-    - `dsr`: probability that observed SR beats the adjusted hurdle
-
-    For the Table 1-style modest-SR scenario (mu≈0.5/12, n=1000, trial_count=20),
-    the current API should show:
-    - benchmark_sharpe > sharpe_ratio
-    - passes_floor is False for acceptance_floor=0.95
-
-    Reference: Bailey, Borwein, Lopez de Prado & Zhu (2014), Table 1.
+    This is an equivalence proof for the real API. It does not inject a paper
+    table directly into the function signature.
     """
-    import random
 
-    rng = random.Random(20240422)
-    mu_monthly = 0.5 / 12.0
-    returns = tuple(rng.gauss(mu_monthly, 1.0) for _ in range(1000))
+    returns = _moderate_return_series(length=160)
+    trial_count = 20
 
+    (
+        expected_mean,
+        expected_std,
+        expected_sr,
+        expected_variance,
+        expected_benchmark,
+        expected_dsr,
+    ) = _reference_dsr(returns, trial_count=trial_count)
     result = compute_deflated_sharpe_ratio(
         returns,
-        trial_count=20,
+        trial_count=trial_count,
         acceptance_floor=0.95,
     )
 
-    assert result.observation_count == 1000
-    assert result.trial_count == 20
-    assert result.benchmark_sharpe > result.sharpe_ratio
-    assert result.dsr < result.acceptance_floor
-    assert result.passes_floor is False
+    assert result.observation_count == len(returns)
+    assert result.trial_count == trial_count
+    assert result.mean_return == pytest.approx(expected_mean)
+    assert result.sample_std == pytest.approx(expected_std)
+    assert result.sharpe_ratio == pytest.approx(expected_sr)
+    assert result.sharpe_variance == pytest.approx(expected_variance)
+    assert result.benchmark_sharpe == pytest.approx(expected_benchmark)
+    assert result.dsr == pytest.approx(expected_dsr)
+    assert result.passes_floor is (expected_dsr >= 0.95)

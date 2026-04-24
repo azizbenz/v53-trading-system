@@ -28,6 +28,7 @@ from shadow_vps_service_io_support import (
 from shadow_vps_service_loader_support import _load_daily_orchestrator_module
 from shadow_vps_service_models import ShadowVpsServiceRuntimeContext
 from shadow_vps_service_monitoring_support import _write_service_monitoring
+from shadow_vps_service_recovery_support import _refresh_shadow_vps_recovery_artifacts
 
 
 TelegramPostFunc = Callable[[str, dict[str, object], float], tuple[int, str]]
@@ -214,6 +215,7 @@ def _build_runtime_context_path_payload(
     regime_lite_assessment_path: Path | None,
     regime_lite_safing_recommendation_path: Path | None,
     info_stress_assessment_path: Path | None,
+    dashboard_command_queue_root: Path | None,
 ) -> dict[str, object]:
     """Shape path-oriented keyword arguments for runtime context creation."""
     return {
@@ -232,6 +234,7 @@ def _build_runtime_context_path_payload(
         "regime_lite_assessment_path": regime_lite_assessment_path,
         "regime_lite_safing_recommendation_path": regime_lite_safing_recommendation_path,
         "info_stress_assessment_path": info_stress_assessment_path,
+        "dashboard_command_queue_root": dashboard_command_queue_root,
     }
 
 
@@ -280,7 +283,8 @@ def _build_shadow_vps_service_payloads(
     websocket_streams_root: Path | None, live_websocket_config_path: Path | None,
     execution_time_sync_offsets_path: Path | None, execution_runtime_projection_path: Path | None,
     regime_lite_assessment_path: Path | None, regime_lite_safing_recommendation_path: Path | None,
-    info_stress_assessment_path: Path | None, resolved_telegram_alert_config_path: Path | None,
+    info_stress_assessment_path: Path | None, dashboard_command_queue_root: Path | None,
+    resolved_telegram_alert_config_path: Path | None,
     resolved_telegram_alert_config_source: str, resolved_telegram_alert_key_path: Path | None,
     resolved_telegram_alert_key_source: str, bootstrap_summary: ShadowVpsExecutionRuntimeBootstrapSummary,
     bootstrap_summary_path: Path | None, telegram_alerter: TelegramAlerter | None,
@@ -304,6 +308,7 @@ def _build_shadow_vps_service_payloads(
         regime_lite_assessment_path=regime_lite_assessment_path,
         regime_lite_safing_recommendation_path=regime_lite_safing_recommendation_path,
         info_stress_assessment_path=info_stress_assessment_path,
+        dashboard_command_queue_root=dashboard_command_queue_root,
     )
     monitoring_payload = _build_runtime_context_monitoring_payload(
         resolved_telegram_alert_config_path=resolved_telegram_alert_config_path,
@@ -332,6 +337,7 @@ def _build_shadow_vps_service_runtime_context(
     execution_runtime_bootstrap_enabled: bool, execution_runtime_gatekeeper_audit_path: Path | None,
     execution_runtime_projection_path: Path | None, regime_lite_assessment_path: Path | None,
     regime_lite_safing_recommendation_path: Path | None, info_stress_assessment_path: Path | None,
+    dashboard_command_queue_root: Path | None,
     telegram_alert_config_path: Path | None, telegram_alert_key_path: Path | None, telegram_post_func: TelegramPostFunc | None,
     node_exporter_textfile_dir: Path | None, scrape_host: str, vps_id: str, node_exporter_port: int,
     node_exporter_scheme: str, node_exporter_metrics_path: str, prometheus_job_name: str,
@@ -361,6 +367,7 @@ def _build_shadow_vps_service_runtime_context(
         regime_lite_assessment_path=regime_lite_assessment_path,
         regime_lite_safing_recommendation_path=regime_lite_safing_recommendation_path,
         info_stress_assessment_path=info_stress_assessment_path,
+        dashboard_command_queue_root=dashboard_command_queue_root,
         resolved_telegram_alert_config_path=inputs.resolved_telegram_alert_config_path,
         resolved_telegram_alert_config_source=inputs.resolved_telegram_alert_config_source,
         resolved_telegram_alert_key_path=inputs.resolved_telegram_alert_key_path,
@@ -486,6 +493,21 @@ def _apply_shadow_vps_startup_state(context: ShadowVpsServiceRuntimeContext) -> 
         if context.bootstrap_summary.gatekeeper_audit_ref
         else ""
     )
+    state.last_execution_runtime_bootstrap_remote_state_snapshot_captured = (
+        context.bootstrap_summary.remote_state_snapshot_captured
+    )
+    state.last_execution_runtime_bootstrap_remote_open_order_count = (
+        context.bootstrap_summary.remote_open_order_count
+    )
+    state.last_execution_runtime_bootstrap_remote_position_asset_count = (
+        context.bootstrap_summary.remote_position_asset_count
+    )
+    state.last_execution_runtime_bootstrap_remote_open_orders_present = (
+        context.bootstrap_summary.remote_open_orders_present
+    )
+    state.last_execution_runtime_bootstrap_remote_positions_present = (
+        context.bootstrap_summary.remote_positions_present
+    )
     context.store.persist()
 
 
@@ -528,6 +550,29 @@ def _emit_shadow_vps_startup_events(context: ShadowVpsServiceRuntimeContext) -> 
         )
 
 
+def _emit_shadow_vps_recovery_event(context: ShadowVpsServiceRuntimeContext) -> None:
+    status = context.store.state.last_vps_recovery_status
+    if status == "not_configured":
+        return
+    event_type = {
+        "eligible_to_trade": "vps_recovery_eligible_to_trade",
+        "review_only": "vps_recovery_review_only",
+        "blocked": "vps_recovery_blocked",
+    }.get(status, "vps_recovery_review_only")
+    message = (
+        f"Shadow VPS recovery status={status}; "
+        f"warmup={context.store.state.last_vps_warmup_final_state}."
+    )
+    _append_service_event(
+        store=context.store,
+        telegram_alerter=context.telegram_alerter,
+        event=ShadowVpsServiceEvent(
+            event_type=event_type,
+            message=message,
+        ),
+    )
+
+
 def _initialize_shadow_vps_service_runtime(
     *, service_dir: Path, orchestrator_output_dir: Path | None, shadow_output_dir: Path | None,
     exports_root: Path | None, raw_inputs_root: Path | None, websocket_streams_root: Path | None,
@@ -538,6 +583,7 @@ def _initialize_shadow_vps_service_runtime(
     regime_lite_assessment_path: Path | None, regime_lite_safing_recommendation_path: Path | None,
     info_stress_assessment_path: Path | None, telegram_alert_config_path: Path | None,
     telegram_alert_key_path: Path | None, telegram_post_func: TelegramPostFunc | None,
+    dashboard_command_queue_root: Path | None,
     node_exporter_textfile_dir: Path | None, scrape_host: str, vps_id: str,
     node_exporter_port: int, node_exporter_scheme: str,
     node_exporter_metrics_path: str, prometheus_job_name: str,
@@ -560,6 +606,7 @@ def _initialize_shadow_vps_service_runtime(
         regime_lite_assessment_path=regime_lite_assessment_path,
         regime_lite_safing_recommendation_path=regime_lite_safing_recommendation_path,
         info_stress_assessment_path=info_stress_assessment_path,
+        dashboard_command_queue_root=dashboard_command_queue_root,
         telegram_alert_config_path=telegram_alert_config_path,
         telegram_alert_key_path=telegram_alert_key_path,
         telegram_post_func=telegram_post_func,
@@ -572,6 +619,8 @@ def _initialize_shadow_vps_service_runtime(
         prometheus_job_name=prometheus_job_name,
     )
     _apply_shadow_vps_startup_state(context)
+    _refresh_shadow_vps_recovery_artifacts(context)
     _emit_shadow_vps_startup_events(context)
+    _emit_shadow_vps_recovery_event(context)
     _write_service_monitoring(context)
     return context

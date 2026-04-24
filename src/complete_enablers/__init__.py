@@ -33,6 +33,32 @@ from complete_enablers.limited_influence import (
     evaluate_build14_shadow_activation,
 )
 from complete_enablers.market_toxicity_snapshot import build_market_toxicity_snapshot
+from complete_enablers.ml_confidence_enabler import (
+    MlArtifactStatus,
+    MlConfidenceEnabler,
+    MlConfidenceSignal,
+    MlDirection,
+    MlScoreApplication,
+)
+from complete_enablers.ml_fusion import (
+    MlFusionResult,
+    apply_ml_score_fusion,
+    confidence_to_multiplier_delta,
+    validate_alpha,
+)
+from complete_enablers.ml_scoring_soft_penalty_hook import (
+    MlScoringSoftPenaltyHook,
+    MlScoringSoftPenaltyHookConfig,
+)
+from complete_enablers.ml_model_promotion_gate import (
+    MlModelPromotionGateVerdict,
+    evaluate_ml_model_promotion_gate,
+)
+from complete_enablers.ml_runtime_artifact_loader import (
+    MlRuntimeArtifactLoadStatus,
+    MlRuntimeArtifactSelection,
+    load_ml_runtime_artifact,
+)
 from complete_enablers.micro_edge_exit_governor import (
     build_micro_edge_exit_governor_snapshot,
 )
@@ -40,6 +66,16 @@ from complete_enablers.micro_edge_entry_timing_layer import (
     build_micro_edge_entry_timing_snapshot,
 )
 from complete_enablers.order_book_imbalance import build_order_book_imbalance_snapshot
+from complete_enablers.regime_detector_runtime import (
+    RegimeDetectorRuntime,
+    RegimeDetectorSignal,
+    RegimeDetectorSignalStatus,
+)
+from complete_enablers.regime_detector_runtime_loader import (
+    RegimeDetectorArtifactLoadStatus,
+    RegimeDetectorArtifactSelection,
+    load_regime_detector_runtime_artifact,
+)
 
 __all__ = [
     "Build14EnablerContract",
@@ -55,6 +91,22 @@ __all__ = [
     "Build14GuardrailError",
     "build_competition_monitor_snapshot",
     "build_market_toxicity_snapshot",
+    "MlDirection",
+    "MlArtifactStatus",
+    "MlConfidenceSignal",
+    "MlScoreApplication",
+    "MlConfidenceEnabler",
+    "MlFusionResult",
+    "MlScoringSoftPenaltyHook",
+    "MlScoringSoftPenaltyHookConfig",
+    "validate_alpha",
+    "confidence_to_multiplier_delta",
+    "apply_ml_score_fusion",
+    "MlModelPromotionGateVerdict",
+    "evaluate_ml_model_promotion_gate",
+    "MlRuntimeArtifactLoadStatus",
+    "MlRuntimeArtifactSelection",
+    "load_ml_runtime_artifact",
     "build_micro_edge_exit_governor_snapshot",
     "build_micro_edge_entry_timing_snapshot",
     "build_execution_fragility_score",
@@ -62,6 +114,12 @@ __all__ = [
     "build_hurst_regime_snapshot",
     "build_lob_deep_filter_vwa_snapshot",
     "build_order_book_imbalance_snapshot",
+    "RegimeDetectorSignalStatus",
+    "RegimeDetectorSignal",
+    "RegimeDetectorRuntime",
+    "RegimeDetectorArtifactLoadStatus",
+    "RegimeDetectorArtifactSelection",
+    "load_regime_detector_runtime_artifact",
     "evaluate_build14_shadow_activation",
     "evaluate_build14_limited_influence",
 ]

@@ -26,6 +26,9 @@ coverage.xml
 .codex_pytest_calibration_run/
 .test_tmp/
 .tmp_pytest/
+tmp_pytest*/
+.local_observability_stack/
+src/pytest-cache-files-*/
 data/chunks_head/
 data/wal/
 data/queries.active

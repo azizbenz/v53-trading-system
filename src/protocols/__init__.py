@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from protocols.contracts import (
     InfoStressGovernanceSummary,
+    LiveCompleteDecision,
+    LiveCompleteExecutionEnvelope,
+    LiveCompleteGateGroupSummary,
+    LiveCompleteInput,
+    LiveCompleteRunSummary,
     LiveDecision,
     LiveExecutionIntent,
     LiveInput,
@@ -41,6 +46,8 @@ from protocols.contracts import (
     ShadowValidationSet,
 )
 from protocols.enums import (
+    LiveCompleteRunState,
+    LiveCompleteVerdict,
     LiveRunState,
     LiveVerdict,
     LiveLightRunState,
@@ -56,6 +63,10 @@ from protocols.enums import (
     ShadowVerdict,
 )
 from protocols.errors import (
+    LiveCompleteBudgetError,
+    LiveCompleteGateError,
+    LiveCompleteInputError,
+    LiveCompleteProtocolError,
     LiveBudgetError,
     LiveGateError,
     LiveInputError,
@@ -73,6 +84,14 @@ from protocols.errors import (
     ShadowLineageError,
     ShadowProtocolError,
 )
+from protocols.live_complete_dashboard import (
+    build_live_complete_dashboard_section,
+    build_live_complete_projection,
+)
+from protocols.live_complete_runtime import (
+    build_live_complete_input_from_live_light,
+    run_live_complete_gate,
+)
 from protocols.micro_live_dashboard import (
     build_micro_live_dashboard_section,
     build_micro_live_projection,
@@ -82,16 +101,31 @@ from protocols.micro_live_runtime import (
     run_micro_live_gate,
 )
 from protocols.live_light_dashboard import (
-    build_live_dashboard_section,
-    build_live_projection,
     build_live_light_dashboard_section,
     build_live_light_projection,
 )
 from protocols.live_light_runtime import (
-    build_live_input_from_micro_live,
-    run_live_gate,
     build_live_light_input_from_micro_live,
     run_live_light_gate,
+)
+from protocols.dashboard_command_queue import (
+    DashboardCommandQueuePaths,
+    DashboardGovernedCommandExecutionContext,
+    build_dashboard_command_queue_snapshot,
+    execute_dashboard_governed_command,
+    initialize_dashboard_command_queue,
+    load_dashboard_command_acks,
+    load_dashboard_command_requests,
+    load_dashboard_command_results,
+    process_dashboard_command_queue_once,
+    resolve_dashboard_command_queue_paths,
+    write_dashboard_command_ack,
+    write_dashboard_command_request,
+    write_dashboard_command_result,
+)
+from protocols.vps_recovery_warmup import (
+    build_vps_recovery_readiness_report,
+    run_vps_warmup,
 )
 from protocols.shadow_dashboard import (
     build_shadow_dashboard_section,
@@ -294,22 +328,42 @@ from protocols.engine_coordination_rules import (
     evaluate_engine_coordination,
 )
 
+build_live_input_from_micro_live = build_live_complete_input_from_live_light
+run_live_gate = run_live_complete_gate
+build_live_projection = build_live_complete_projection
+build_live_dashboard_section = build_live_complete_dashboard_section
+
 __all__ = [
     "LiveInput",
     "LiveDecision",
     "LiveExecutionIntent",
     "LiveRunSummary",
+    "LiveCompleteInput",
+    "LiveCompleteDecision",
+    "LiveCompleteExecutionEnvelope",
+    "LiveCompleteRunSummary",
+    "LiveCompleteGateGroupSummary",
     "LiveLightGateGroupSummary",
     "LiveRunState",
     "LiveVerdict",
+    "LiveCompleteRunState",
+    "LiveCompleteVerdict",
     "LiveProtocolError",
     "LiveInputError",
     "LiveGateError",
     "LiveBudgetError",
+    "LiveCompleteProtocolError",
+    "LiveCompleteInputError",
+    "LiveCompleteGateError",
+    "LiveCompleteBudgetError",
     "build_live_input_from_micro_live",
     "run_live_gate",
     "build_live_projection",
     "build_live_dashboard_section",
+    "build_live_complete_input_from_live_light",
+    "run_live_complete_gate",
+    "build_live_complete_projection",
+    "build_live_complete_dashboard_section",
     "LiveLightInput",
     "LiveLightDecision",
     "LiveLightExecutionIntent",
@@ -324,6 +378,21 @@ __all__ = [
     "run_live_light_gate",
     "build_live_light_projection",
     "build_live_light_dashboard_section",
+    "DashboardCommandQueuePaths",
+    "DashboardGovernedCommandExecutionContext",
+    "resolve_dashboard_command_queue_paths",
+    "initialize_dashboard_command_queue",
+    "load_dashboard_command_requests",
+    "load_dashboard_command_acks",
+    "load_dashboard_command_results",
+    "write_dashboard_command_request",
+    "write_dashboard_command_ack",
+    "write_dashboard_command_result",
+    "execute_dashboard_governed_command",
+    "build_dashboard_command_queue_snapshot",
+    "process_dashboard_command_queue_once",
+    "build_vps_recovery_readiness_report",
+    "run_vps_warmup",
     "MicroLiveInput",
     "MicroLiveDecision",
     "MicroLiveExecutionPlan",

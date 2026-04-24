@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 import shutil
 import sys
-from uuid import uuid4
 
 
 def _load_launcher_module():
@@ -27,7 +26,7 @@ def _scratch_dir(label: str) -> Path:
     return make_repo_scratch_dir("pytest-local-grafana-dashboard", label)
 
 
-def test_local_grafana_dashboard_launcher_writes_dashboard_and_summary():
+def test_local_grafana_dashboard_launcher_writes_dashboard_and_summary() -> None:
     launcher = _load_launcher_module()
     scratch = _scratch_dir("launcher")
     try:
@@ -65,7 +64,7 @@ def test_local_grafana_dashboard_launcher_writes_dashboard_and_summary():
         )
 
         assert dashboard["dashboard"]["uid"] == "v53-shadow-vps-local"
-        assert len(dashboard["dashboard"]["panels"]) == 23
+        assert len(dashboard["dashboard"]["panels"]) == 30
         assert any(
             panel["title"] == "Execution Projection Labels"
             for panel in dashboard["dashboard"]["panels"]
@@ -76,6 +75,26 @@ def test_local_grafana_dashboard_launcher_writes_dashboard_and_summary():
         )
         assert any(
             panel["title"] == "Execution Telemetry Labels"
+            for panel in dashboard["dashboard"]["panels"]
+        )
+        assert any(
+            panel["title"] == "Recovery Eligible to Trade"
+            for panel in dashboard["dashboard"]["panels"]
+        )
+        assert any(
+            panel["title"] == "Warmup Eligible to Trade"
+            for panel in dashboard["dashboard"]["panels"]
+        )
+        assert any(
+            panel["title"] == "Dashboard Control Labels"
+            for panel in dashboard["dashboard"]["panels"]
+        )
+        assert any(
+            panel["title"] == "Active Artifact and Recovery Labels"
+            for panel in dashboard["dashboard"]["panels"]
+        )
+        assert any(
+            panel["title"] == "Governed Operator Queue Bridge"
             for panel in dashboard["dashboard"]["panels"]
         )
         assert any(

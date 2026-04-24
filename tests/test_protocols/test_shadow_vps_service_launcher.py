@@ -11,8 +11,16 @@ import sys
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
+
 from interface_contracts.binance_contracts import BinanceServerTime
-from interface_contracts import ProfileId, RuntimeMode, StrategyClassification
+from interface_contracts import (
+    DashboardGovernedCommandKind,
+    DashboardGovernedCommandRequest,
+    ProfileId,
+    RuntimeMode,
+    StrategyClassification,
+)
 from local_replay_runtime import (
     LocalLabExecutionTelemetry,
     build_local_lab_execution_review,
@@ -25,8 +33,13 @@ from meta_minimal.dtr_core.decision_state_encoder import DecisionState
 from meta_minimal.dtr_core.dtr_record_builder import build_dtr
 from protocols import (
     BinanceSpotLiveWebSocketAdapter,
+    ShadowLiveWebSocketCaptureResult,
     ShadowLiveWebSocketConfig,
     capture_live_websocket_snapshot_batch,
+    initialize_dashboard_command_queue,
+    load_dashboard_command_acks,
+    load_dashboard_command_results,
+    write_dashboard_command_request,
 )
 from regime_classifier import RegimeLiteAssessment, RegimeLiteState
 from risk_backbone import (
@@ -414,6 +427,53 @@ def _write_live_websocket_config(
 def _write_time_sync_offsets(path: Path, offsets_ms: list[float]) -> None:
     path.write_text(
         json.dumps({"time_sync_offsets_ms": offsets_ms}, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _write_live_capture_result(
+    live_capture_dir: Path,
+    *,
+    session_date: str,
+    accepted_message_count: int,
+    time_sync_offsets_path: Path | None = None,
+    user_data_authenticated: bool = False,
+) -> None:
+    live_capture_dir.mkdir(parents=True, exist_ok=True)
+    snapshot_batch_path = live_capture_dir / "live_websocket_snapshot_batch.json"
+    snapshot_batch_path.write_text(
+        json.dumps({"events": []}, indent=2),
+        encoding="utf-8",
+    )
+    summary = ShadowLiveWebSocketCaptureResult(
+        session_date=session_date,
+        live_capture_dir_ref=str(live_capture_dir.resolve()),
+        snapshot_batch_path_ref=str(snapshot_batch_path.resolve()),
+        summary_path_ref=str(
+            (live_capture_dir / "live_websocket_capture_summary.json").resolve()
+        ),
+        emitted_message_count=accepted_message_count,
+        accepted_message_count=accepted_message_count,
+        ignored_message_count=0,
+        rejected_message_count=0,
+        pair_scope=("BTCUSDT",),
+        event_types=("trade", "ticker"),
+        time_sync_offsets_path_ref=(
+            str(time_sync_offsets_path.resolve())
+            if time_sync_offsets_path is not None
+            else ""
+        ),
+        time_sync_sample_count=3 if time_sync_offsets_path is not None else 0,
+        time_sync_probe_error="",
+        user_data_summary_path_ref="",
+        user_data_events_path_ref="",
+        user_data_authenticated=user_data_authenticated,
+        user_data_subscription_id=None,
+        user_data_event_count=0,
+        user_data_event_types=(),
+    )
+    (live_capture_dir / "live_websocket_capture_summary.json").write_text(
+        summary.model_dump_json(indent=2),
         encoding="utf-8",
     )
 
@@ -1334,7 +1394,11 @@ def test_shadow_vps_service_writes_execution_runtime_bootstrap_summary_from_live
                 detail="boot reconciliation aligned local and remote state",
                 recovery_action="none",
                 divergence_count=0,
-            )
+            ),
+            remote_state_snapshot=SimpleNamespace(
+                orders={"ord-1": "NEW"},
+                positions={"BTC": 0.25},
+            ),
         )
 
     try:
@@ -1417,6 +1481,7 @@ def test_shadow_vps_service_writes_execution_runtime_bootstrap_summary_from_live
         assert captured_kwargs["gatekeeper_audit_path"] == gatekeeper_audit_path.resolve()
         assert captured_kwargs["execution_runtime_projection_path"] is None
         assert captured_kwargs["user_data_stream_enabled"] is False
+        assert captured_kwargs["capture_remote_state_snapshot"] is True
         assert bootstrap_summary["status"] == "ready"
         assert bootstrap_summary["source"] == "live_websocket_config"
         assert bootstrap_summary["gatekeeper_audit_ref"] == str(
@@ -1427,6 +1492,11 @@ def test_shadow_vps_service_writes_execution_runtime_bootstrap_summary_from_live
         )
         assert bootstrap_summary["reconciliation_boot_executed"] is True
         assert bootstrap_summary["reconciliation_boot_divergence_count"] == 0
+        assert bootstrap_summary["remote_state_snapshot_captured"] is True
+        assert bootstrap_summary["remote_open_order_count"] == 1
+        assert bootstrap_summary["remote_position_asset_count"] == 1
+        assert bootstrap_summary["remote_open_orders_present"] is True
+        assert bootstrap_summary["remote_positions_present"] is True
         assert state["last_execution_runtime_bootstrap_ref"].endswith(
             "execution_runtime_bootstrap.summary.json"
         )
@@ -1486,6 +1556,17 @@ def test_shadow_vps_service_writes_execution_runtime_bootstrap_summary_from_live
         assert (
             monitoring_payload["execution_runtime_bootstrap_source"]
             == "live_websocket_config"
+        )
+        assert (
+            monitoring_payload[
+                "execution_runtime_bootstrap_remote_state_snapshot_captured"
+            ]
+            is True
+        )
+        assert monitoring_payload["execution_runtime_bootstrap_remote_open_order_count"] == 1
+        assert (
+            monitoring_payload["execution_runtime_bootstrap_remote_position_asset_count"]
+            == 1
         )
         assert monitoring_payload["execution_runtime_gatekeeper_audit_ref"] == str(
             gatekeeper_audit_path.resolve()
@@ -1609,6 +1690,223 @@ def test_shadow_vps_service_cli_execution_runtime_gatekeeper_audit_path_override
             cli_gatekeeper_audit_path.resolve()
         )
         assert monitoring_payload["execution_runtime_gatekeeper_audit_source"] == "cli"
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_shadow_vps_service_startup_writes_blocked_recovery_report_when_market_capture_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _load_service_module()
+    import shadow_vps_service_recovery_support as recovery_support
+
+    output_dir = _scratch_dir("startup_recovery_blocked")
+
+    def _fake_bootstrap_bundle(**kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(
+            reconciliation_boot_result=SimpleNamespace(
+                executed=True,
+                trading_blocked=False,
+                circuit_breaker_tripped=False,
+                detail="boot reconciliation aligned local and remote state",
+                recovery_action="none",
+                divergence_count=0,
+            ),
+            remote_state_snapshot=SimpleNamespace(
+                orders={"ord-1": "NEW"},
+                positions={"BTC": 0.25},
+            ),
+        )
+
+    try:
+        service_dir = output_dir / "service"
+        live_config_path = output_dir / "live_websocket_config.json"
+        time_sync_offsets_path = output_dir / "time_sync_offsets.json"
+        _write_time_sync_offsets(time_sync_offsets_path, [4.0, -3.0, 2.0])
+        _write_live_websocket_config(
+            live_config_path,
+            "2026-04-01",
+            execution_runtime_bootstrap_enabled=True,
+            time_sync_probe_enabled=True,
+        )
+        monkeypatch.setattr(
+            service,
+            "build_binance_execution_runtime_bootstrap_bundle",
+            _fake_bootstrap_bundle,
+        )
+        monkeypatch.setattr(
+            recovery_support,
+            "resolve_time_sync_threshold_ms",
+            lambda config: 500,
+        )
+        monkeypatch.setenv("BINANCE_API_KEY", "test-api-key")
+        monkeypatch.setenv("BINANCE_API_SECRET", "test-api-secret")
+
+        exit_code = service.run_shadow_vps_service(
+            service_dir,
+            live_websocket_config_path=live_config_path,
+            execution_time_sync_offsets_path=time_sync_offsets_path,
+            max_cycles=0,
+            poll_interval_s=0.0,
+        )
+
+        assert exit_code == 0
+        state = json.loads(
+            (service_dir / "shadow_vps_service.state.json").read_text(encoding="utf-8")
+        )
+        recovery_report = json.loads(
+            (service_dir / "vps_recovery_readiness.report.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        warmup_summary = json.loads(
+            (service_dir / "vps_warmup_run.summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        monitoring_payload = json.loads(
+            (
+                service_dir / "shadow_vps_service_monitoring_backend_payload.json"
+            ).read_text(encoding="utf-8")
+        )
+        assert recovery_report["runtime_mode"] == "shadow"
+        assert recovery_report["deployment_state"] == "shadow"
+        assert recovery_report["eligible_to_trade"] is False
+        assert any(
+            check["check_id"] == "market_data_capture"
+            and check["status"] == "blocked"
+            for check in recovery_report["checks"]
+        )
+        assert any(
+            check["check_id"] == "remote_account_state"
+            and check["status"] == "review_only"
+            for check in recovery_report["checks"]
+        )
+        assert warmup_summary["final_state"] == "blocked"
+        assert state["last_vps_recovery_status"] == "blocked"
+        assert state["last_vps_warmup_final_state"] == "blocked"
+        assert (
+            monitoring_payload["vps_recovery_readiness_report_ref"].endswith(
+                "vps_recovery_readiness.report.json"
+            )
+        )
+        assert monitoring_payload["vps_recovery_status"] == "blocked"
+        assert monitoring_payload["vps_warmup_final_state"] == "blocked"
+        assert monitoring_payload["execution_runtime_bootstrap_remote_open_order_count"] == 1
+        assert (
+            monitoring_payload["execution_runtime_bootstrap_remote_position_asset_count"]
+            == 1
+        )
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_shadow_vps_service_startup_writes_eligible_recovery_report_from_persisted_live_capture(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _load_service_module()
+    import shadow_vps_service_recovery_support as recovery_support
+
+    output_dir = _scratch_dir("startup_recovery_eligible")
+
+    def _fake_bootstrap_bundle(**kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(
+            reconciliation_boot_result=SimpleNamespace(
+                executed=True,
+                trading_blocked=False,
+                circuit_breaker_tripped=False,
+                detail="boot reconciliation aligned local and remote state",
+                recovery_action="none",
+                divergence_count=0,
+            ),
+            remote_state_snapshot=SimpleNamespace(
+                orders={},
+                positions={},
+            ),
+        )
+
+    try:
+        service_dir = output_dir / "service"
+        live_capture_dir = output_dir / "live_captures" / "2026-04-02"
+        live_config_path = output_dir / "live_websocket_config.json"
+        time_sync_offsets_path = live_capture_dir / "live_time_sync_offsets.json"
+        live_capture_dir.mkdir(parents=True, exist_ok=False)
+        _write_time_sync_offsets(time_sync_offsets_path, [1.0, -1.0, 0.5])
+        _write_live_capture_result(
+            live_capture_dir,
+            session_date="2026-04-02",
+            accepted_message_count=2,
+            time_sync_offsets_path=time_sync_offsets_path,
+        )
+        service_dir.mkdir(parents=True, exist_ok=False)
+        (service_dir / "shadow_vps_service.state.json").write_text(
+            json.dumps(
+                {
+                    "loop_count": 1,
+                    "last_live_capture_dir_ref": str(live_capture_dir.resolve()),
+                    "last_live_capture_time_sync_offsets_ref": str(
+                        time_sync_offsets_path.resolve()
+                    ),
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        _write_live_websocket_config(
+            live_config_path,
+            "2026-04-02",
+            execution_runtime_bootstrap_enabled=True,
+            time_sync_probe_enabled=True,
+        )
+        monkeypatch.setattr(
+            service,
+            "build_binance_execution_runtime_bootstrap_bundle",
+            _fake_bootstrap_bundle,
+        )
+        monkeypatch.setattr(
+            recovery_support,
+            "resolve_time_sync_threshold_ms",
+            lambda config: 500,
+        )
+        monkeypatch.setenv("BINANCE_API_KEY", "test-api-key")
+        monkeypatch.setenv("BINANCE_API_SECRET", "test-api-secret")
+
+        exit_code = service.run_shadow_vps_service(
+            service_dir,
+            live_websocket_config_path=live_config_path,
+            max_cycles=0,
+            poll_interval_s=0.0,
+        )
+
+        assert exit_code == 0
+        state = json.loads(
+            (service_dir / "shadow_vps_service.state.json").read_text(encoding="utf-8")
+        )
+        recovery_report = json.loads(
+            (service_dir / "vps_recovery_readiness.report.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        warmup_summary = json.loads(
+            (service_dir / "vps_warmup_run.summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        monitoring_payload = json.loads(
+            (
+                service_dir / "shadow_vps_service_monitoring_backend_payload.json"
+            ).read_text(encoding="utf-8")
+        )
+        assert recovery_report["eligible_to_trade"] is True
+        assert all(check["status"] == "passed" for check in recovery_report["checks"])
+        assert warmup_summary["final_state"] == "eligible_to_trade"
+        assert state["last_vps_recovery_status"] == "eligible_to_trade"
+        assert state["last_vps_warmup_final_state"] == "eligible_to_trade"
+        assert monitoring_payload["vps_recovery_status"] == "eligible_to_trade"
+        assert monitoring_payload["vps_warmup_final_state"] == "eligible_to_trade"
+        assert monitoring_payload["vps_recovery_eligible_to_trade"] is True
+        assert monitoring_payload["vps_warmup_eligible_to_trade"] is True
+        assert "recovery=eligible_to_trade/warmup=eligible_to_trade" in monitoring_payload["detail"]
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)
 
@@ -2463,6 +2761,149 @@ def test_shadow_vps_service_preserves_execution_runtime_projection_when_telemetr
         assert monitoring_payload["execution_runtime_projection_bridge_status"] == "healthy"
         assert monitoring_payload["execution_runtime_projection_bridge_loaded"] is True
         assert any(event["event_type"] == "shadow_day_failed" for event in events)
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_shadow_vps_service_skips_cycle_when_dashboard_control_halt_is_active() -> None:
+    service = _load_service_module()
+    output_dir = _scratch_dir("dashboard_control_halt_active")
+
+    try:
+        service_dir = output_dir / "service"
+        orchestrator_dir = output_dir / "orchestrator"
+        shadow_output_dir = output_dir / "shadow_session"
+        exports_root = output_dir / "exports_root"
+        export_day = exports_root / "2026-04-02"
+        export_day.mkdir(parents=True, exist_ok=False)
+        _write_daily_export(export_day, "2026-04-02", "halted")
+        service_dir.mkdir(parents=True, exist_ok=False)
+        (service_dir / "shadow_vps_service.state.json").write_text(
+            json.dumps(
+                {
+                    "dashboard_control_halted": True,
+                    "dashboard_control_target_profile": "light",
+                    "dashboard_control_target_deployment_state": "rollback",
+                    "dashboard_control_last_request_id": "req-halt-1",
+                    "dashboard_control_last_command_kind": "set_halted",
+                    "dashboard_control_last_result_status": "completed",
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        exit_code = service.main(
+            [
+                "--service-dir",
+                str(service_dir),
+                "--orchestrator-output-dir",
+                str(orchestrator_dir),
+                "--shadow-output-dir",
+                str(shadow_output_dir),
+                "--exports-root",
+                str(exports_root),
+                "--max-cycles",
+                "1",
+                "--poll-interval-s",
+                "0",
+            ]
+        )
+
+        assert exit_code == 0
+        state = json.loads(
+            (service_dir / "shadow_vps_service.state.json").read_text(encoding="utf-8")
+        )
+        monitoring_payload = json.loads(
+            (
+                service_dir / "shadow_vps_service_monitoring_backend_payload.json"
+            ).read_text(encoding="utf-8")
+        )
+        events = [
+            json.loads(line)
+            for line in (service_dir / "shadow_vps_service.events.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+            if line.strip()
+        ]
+
+        assert state["dashboard_control_halted"] is True
+        assert state["service_status"] == "degraded"
+        assert state["loop_count"] == 1
+        assert state["idle_count"] == 1
+        assert state["success_count"] == 0
+        assert state["last_selected_session_date"] == ""
+        assert monitoring_payload["status"] == "critical"
+        assert monitoring_payload["dashboard_control_halted"] is True
+        assert monitoring_payload["dashboard_control_target_profile"] == "light"
+        assert monitoring_payload["dashboard_control_target_deployment_state"] == "rollback"
+        assert any(
+            event["event_type"] == "dashboard_control_halted_active" for event in events
+        )
+        assert not any(event["event_type"] == "shadow_day_completed" for event in events)
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_shadow_vps_service_consumes_dashboard_command_queue_before_cycle() -> None:
+    service = _load_service_module()
+    output_dir = _scratch_dir("dashboard_command_queue_halt")
+
+    try:
+        service_dir = output_dir / "service"
+        orchestrator_dir = output_dir / "orchestrator"
+        shadow_output_dir = output_dir / "shadow_session"
+        exports_root = output_dir / "exports_root"
+        command_queue_root = output_dir / "dashboard_command_queue"
+        export_day = exports_root / "2026-04-02"
+        export_day.mkdir(parents=True, exist_ok=False)
+        _write_daily_export(export_day, "2026-04-02", "queue-halted")
+        initialize_dashboard_command_queue(command_queue_root)
+        request = DashboardGovernedCommandRequest(
+            timestamp_ms=1_700_000_000_000,
+            correlation_id="corr-dashboard-queue-halt",
+            request_id="req-dashboard-queue-halt",
+            command_kind=DashboardGovernedCommandKind.SET_HALTED,
+            source_runtime_mode=RuntimeMode.LOCAL_REPLAY,
+            target_runtime_mode=RuntimeMode.LIVE,
+            operator_reason="manual halt from grafana",
+        )
+        write_dashboard_command_request(command_queue_root, request)
+
+        exit_code = service.main(
+            [
+                "--service-dir",
+                str(service_dir),
+                "--orchestrator-output-dir",
+                str(orchestrator_dir),
+                "--shadow-output-dir",
+                str(shadow_output_dir),
+                "--exports-root",
+                str(exports_root),
+                "--dashboard-command-queue-root",
+                str(command_queue_root),
+                "--max-cycles",
+                "1",
+                "--poll-interval-s",
+                "0",
+            ]
+        )
+
+        assert exit_code == 0
+        state = json.loads(
+            (service_dir / "shadow_vps_service.state.json").read_text(encoding="utf-8")
+        )
+        acks = load_dashboard_command_acks(command_queue_root)
+        results = load_dashboard_command_results(command_queue_root)
+        assert len(acks) == 1
+        assert len(results) == 1
+        assert results[0].status.value == "completed"
+        assert state["dashboard_control_halted"] is True
+        assert state["dashboard_control_last_request_id"] == request.request_id
+        assert state["dashboard_control_last_command_kind"] == "set_halted"
+        assert state["idle_count"] == 1
+        assert state["success_count"] == 0
+        assert state["last_selected_session_date"] == ""
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)
 

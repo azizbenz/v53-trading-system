@@ -39,7 +39,15 @@ from .operator_contracts import *
 from .build14_contracts import *
 from .engine_validation_contracts import *
 from .shadow_vps_service_contracts import *
+from .dashboard_command_contracts import *
+from .vps_recovery_contracts import *
 from .pair_catalog import *
+from .ml_model_artifact import *
+from .ml_backtest_training_contracts import *
+from .ml_model_transport_contracts import *
+from .regime_detector_artifact import *
+from .regime_detector_label_contracts import *
+from .regime_detector_shadow_audit_contracts import *
 
 __all__ = [
     # domain_types — Enums
@@ -132,7 +140,40 @@ __all__ = [
     # shadow_vps_service_contracts
     "ShadowVpsServiceStatus", "ShadowVpsServiceState",
     "ShadowVpsRuntimeEvidenceBundle", "ShadowVpsCampaignSummary",
-    "ShadowVpsServiceEvent",
+    "ShadowVpsServiceEvent", "ShadowVpsExecutionRuntimeBootstrapSummary",
+    # dashboard_command_contracts
+    "DashboardArtifactKind", "DashboardGovernedCommandKind",
+    "DashboardGovernedCommandStatus", "DashboardCommandQueueStatus",
+    "DashboardArtifactTransferManifest", "DashboardGovernedCommandRequest",
+    "DashboardGovernedCommandAck", "DashboardGovernedCommandResult",
+    "DashboardCommandQueueSnapshot",
+    # vps_recovery_contracts
+    "VpsRecoveryCheckStatus", "VpsWarmupState", "VpsRecoveryCheck",
+    "VpsRecoveryReadinessReport", "VpsWarmupRunSummary",
     # pair_catalog
     "PairEntry", "PairCatalog", "V53_PAIR_CATALOG",
+    # ml_model_artifact
+    "MlModelFamily", "MlModelWindow", "MlModelDriftBaseline", "MlModelArtifact",
+    # regime_detector_artifact
+    "RegimeDetectorModelFamily", "RegimeDetectorFeatureSetVersion", "RegimeDetectorOutputSemantics",
+    "RegimeDurationBucket", "RegimeDetectorWindow", "RegimeDetectorArtifact",
+    "RegimeDetectorArtifactSummary",
+    # regime_detector_shadow_audit_contracts
+    "RegimeDetectorShadowAuditSchemaMatchStatus", "RegimeDetectorShadowAuditMetricSummary",
+    "RegimeDetectorShadowAuditReasonCodeCount", "RegimeDetectorShadowAuditStatusCount",
+    "RegimeDetectorShadowAuditDurationCounts", "RegimeDetectorShadowAuditSample",
+    "RegimeDetectorShadowAuditBundle", "RegimeDetectorShadowAuditFindingSeverity",
+    "RegimeDetectorShadowAuditFindingCode", "RegimeDetectorShadowAuditFinding",
+    "RegimeDetectorShadowAuditDiagnosisStatus", "RegimeDetectorShadowAuditDiagnosis",
+    # regime_detector_label_contracts
+    "REGIME_DETECTOR_LABEL_POLICY", "DEFAULT_REGIME_DETECTOR_WINDOW_SECONDS",
+    "MAX_REGIME_DETECTOR_WINDOW_SECONDS", "DEFAULT_REGIME_DETECTOR_FUTURE_STEPS",
+    "DEFAULT_REGIME_DETECTOR_TOP_N", "MAX_REGIME_DETECTOR_TOP_N",
+    "RegimeToxicityBucket", "RegimeDetectorLabelConfig",
+    "RegimeDetectorDatasetSample", "RegimeDetectorTrainingDataset",
+    # ml_backtest_training_contracts
+    "ML_BACKTEST_TARGET_POLICY", "ML_BACKTEST_REALIZED_TARGET_POLICY", "ML_BACKTEST_ROUTE_FEATURE_NAMES",
+    "MlBacktestRouteFeatures", "MlBacktestOutcomeContext",
+    "MlBacktestTrainingSample", "MlBacktestTrainingDataset",
+    "MlModelSourceArtifactSummary",
 ]

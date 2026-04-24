@@ -633,3 +633,27 @@ def test_build_binance_execution_runtime_bootstrap_bundle_exposes_boot_reconcili
         assert bundle.runtime._adapter.poll_order_events()[0].event_type == VenueOrderEventType.ACK
     finally:
         asyncio.run(http_client.aclose())
+
+
+def test_build_binance_execution_runtime_bootstrap_bundle_can_capture_remote_state_snapshot() -> None:
+    http_client = httpx.AsyncClient(
+        base_url="https://testnet.binance.vision",
+        transport=httpx.MockTransport(_mock_binance_remote_state_request),
+    )
+    try:
+        bundle = build_binance_execution_runtime_bootstrap_bundle(
+            credentials=BinanceCredentials(
+                api_key="test-api-key",
+                secret_key="test-api-secret",
+                label="testnet",
+            ),
+            config=BinanceAdapterConfig(rest_base_url="https://testnet.binance.vision"),
+            http_client=http_client,
+            capture_remote_state_snapshot=True,
+        )
+
+        assert bundle.remote_state_snapshot is not None
+        assert bundle.remote_state_snapshot.orders == {}
+        assert bundle.remote_state_snapshot.positions == {}
+    finally:
+        asyncio.run(http_client.aclose())

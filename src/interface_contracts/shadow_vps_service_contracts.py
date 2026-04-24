@@ -8,6 +8,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field, model_validator
 
+from .dashboard_command_contracts import DashboardArtifactTransferManifest
+from .domain_types import DeploymentState, ProfileId
 
 class ShadowVpsServiceStatus(StrEnum):
     """Runtime status for the autonomous VPS Shadow service."""
@@ -58,8 +60,38 @@ class ShadowVpsServiceState(BaseModel):
     last_execution_runtime_bootstrap_source: str = ""
     last_execution_runtime_gatekeeper_audit_ref: str = ""
     last_execution_runtime_gatekeeper_audit_source: str = ""
+    last_execution_runtime_bootstrap_remote_state_snapshot_captured: bool = False
+    last_execution_runtime_bootstrap_remote_open_order_count: int = Field(
+        default=0,
+        ge=0,
+    )
+    last_execution_runtime_bootstrap_remote_position_asset_count: int = Field(
+        default=0,
+        ge=0,
+    )
+    last_execution_runtime_bootstrap_remote_open_orders_present: bool = False
+    last_execution_runtime_bootstrap_remote_positions_present: bool = False
     last_execution_runtime_projection_ref: str = ""
     last_execution_runtime_projection_source: str = ""
+    last_vps_recovery_readiness_report_ref: str = ""
+    last_vps_recovery_status: str = "not_configured"
+    last_vps_recovery_eligible_to_trade: bool = False
+    last_vps_warmup_summary_ref: str = ""
+    last_vps_warmup_final_state: str = "not_configured"
+    last_vps_warmup_eligible_to_trade: bool = False
+    active_ml_artifact: DashboardArtifactTransferManifest | None = None
+    active_regime_detector_artifact: DashboardArtifactTransferManifest | None = None
+    active_regime_detector_shadow_audit_bundle_ref: str = ""
+    dashboard_control_halted: bool = False
+    dashboard_control_target_profile: str = ""
+    dashboard_control_target_deployment_state: str = ""
+    dashboard_control_suspended_pairs: tuple[str, ...] = ()
+    dashboard_control_suspended_engines: tuple[str, ...] = ()
+    dashboard_control_last_request_id: str = ""
+    dashboard_control_last_command_kind: str = ""
+    dashboard_control_last_operator_reason: str = ""
+    dashboard_control_last_result_status: str = ""
+    dashboard_control_last_command_timestamp_ms: int = Field(default=0, ge=0)
     last_regime_lite_assessment_ref: str = ""
     last_regime_lite_assessment_source: str = ""
     last_regime_lite_safing_recommendation_ref: str = ""
@@ -72,6 +104,22 @@ class ShadowVpsServiceState(BaseModel):
     last_orchestrator_state_ref: str = ""
     last_campaign_summary_ref: str = ""
     last_error: str = ""
+
+    @model_validator(mode="after")
+    def validate_dashboard_control_state(self) -> "ShadowVpsServiceState":
+        if len(set(self.dashboard_control_suspended_pairs)) != len(
+            self.dashboard_control_suspended_pairs
+        ):
+            raise ValueError("dashboard_control_suspended_pairs must be unique")
+        if len(set(self.dashboard_control_suspended_engines)) != len(
+            self.dashboard_control_suspended_engines
+        ):
+            raise ValueError("dashboard_control_suspended_engines must be unique")
+        if self.dashboard_control_target_profile:
+            ProfileId(self.dashboard_control_target_profile)
+        if self.dashboard_control_target_deployment_state:
+            DeploymentState(self.dashboard_control_target_deployment_state)
+        return self
 
 
 class ShadowVpsRuntimeEvidenceBundle(BaseModel, frozen=True):
@@ -324,6 +372,11 @@ class ShadowVpsExecutionRuntimeBootstrapSummary(BaseModel, frozen=True):
     reconciliation_boot_detail: str = ""
     reconciliation_boot_recovery_action: str = ""
     reconciliation_boot_divergence_count: int = Field(default=0, ge=0)
+    remote_state_snapshot_captured: bool = False
+    remote_open_order_count: int = Field(default=0, ge=0)
+    remote_position_asset_count: int = Field(default=0, ge=0)
+    remote_open_orders_present: bool = False
+    remote_positions_present: bool = False
     error: str = ""
 
 

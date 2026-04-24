@@ -20,10 +20,11 @@ from local_replay_runtime.shadow_execution_simulator import ReplayParityDiagnost
 from meta_minimal.dtr_core.decision_state_encoder import DecisionState
 from meta_minimal.dtr_core.dtr_record_builder import build_dtr
 from scripts.run_edge_gate_calibration import main
+from tests.support_paths import repo_build_path
 
 
 def _scratch_dir() -> Path:
-    return Path("build/pytest-edge-gate-launcher") / uuid4().hex
+    return repo_build_path("pytest-edge-gate-launcher", uuid4().hex)
 
 
 def _records():

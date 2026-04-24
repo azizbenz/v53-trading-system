@@ -28,6 +28,8 @@ from monitoring.contracts import (
     RuntimeHookBridgeProjection,
     HealthDashboardPayload,
     InfraMetrics,
+    LiveCompleteGateGroupProjection,
+    LiveCompleteProjection,
     LiveProjection,
     LiveLightGateGroupProjection,
     LiveLightProjection,
@@ -116,6 +118,14 @@ from monitoring.shadow_vps_service_scrape_manifest import (
     build_shadow_vps_service_prometheus_file_sd,
     build_shadow_vps_service_scrape_manifest,
 )
+from monitoring.regime_detector_shadow_projection import (
+    RegimeDetectorShadowProjection,
+    build_regime_detector_shadow_projection,
+)
+from monitoring.regime_detector_shadow_audit_bundle import (
+    build_regime_detector_shadow_audit_bundle,
+    build_regime_detector_shadow_audit_sample,
+)
 from monitoring.shadow_vps_scrape_discovery import (
     ShadowVpsScrapeDiscovery,
     ShadowVpsScrapeDiscoveryItem,
@@ -181,6 +191,8 @@ __all__ = [
     "Build14ReaderProjection",
     "Build14Projection",
     "AccountUserDataProjection",
+    "LiveCompleteGateGroupProjection",
+    "LiveCompleteProjection",
     "MicroLiveProjection",
     "LiveProjection",
     "LiveLightGateGroupProjection",
@@ -202,6 +214,7 @@ __all__ = [
     "ShadowVpsServiceLogQueryResult",
     "ShadowVpsServiceMonitoringPayload",
     "ShadowVpsServiceScrapeManifest",
+    "RegimeDetectorShadowProjection",
     "ShadowVpsScrapeDiscoveryItem",
     "ShadowVpsScrapeDiscovery",
     "collect_portfolio_metrics",
@@ -231,6 +244,9 @@ __all__ = [
     "build_shadow_vps_service_recent_events_summary",
     "build_shadow_vps_service_scrape_manifest",
     "build_shadow_vps_service_prometheus_file_sd",
+    "build_regime_detector_shadow_projection",
+    "build_regime_detector_shadow_audit_sample",
+    "build_regime_detector_shadow_audit_bundle",
     "discover_shadow_vps_service_scrape_manifests",
     "build_shadow_vps_prometheus_file_sd_from_root",
     "build_local_lab_monitoring_ingestion_summary",

@@ -23,10 +23,11 @@ from local_replay_runtime.local_lab_execution_telemetry_artifact import (
     materialize_local_lab_execution_telemetry_artifact,
     upsert_local_lab_execution_telemetry_archive,
 )
+from tests.support_paths import repo_build_path
 
 
 def _scratch_dir() -> Path:
-    return Path("build/pytest-local-lab-execution-telemetry") / uuid4().hex
+    return repo_build_path("pytest-local-lab-execution-telemetry", uuid4().hex)
 
 
 def _write_stream(path: Path) -> None:

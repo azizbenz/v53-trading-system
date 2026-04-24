@@ -5,6 +5,10 @@ from monitoring.shadow_vps_service_monitoring import (
     build_shadow_vps_service_monitoring_payload,
     build_shadow_vps_service_observability_export,
 )
+from interface_contracts import (
+    DashboardArtifactKind,
+    DashboardArtifactTransferManifest,
+)
 from protocols.shadow_vps_service import (
     ShadowVpsCampaignSummary,
     ShadowVpsRuntimeEvidenceBundle,
@@ -40,6 +44,38 @@ def test_shadow_vps_service_monitoring_payload_projects_state_and_process_metric
         last_execution_runtime_bootstrap_source="live_websocket_config",
         last_execution_runtime_gatekeeper_audit_ref="E:/shadow/artifacts/gatekeeper/audit.jsonl",
         last_execution_runtime_gatekeeper_audit_source="cli",
+        last_execution_runtime_bootstrap_remote_state_snapshot_captured=True,
+        last_execution_runtime_bootstrap_remote_open_order_count=1,
+        last_execution_runtime_bootstrap_remote_position_asset_count=1,
+        last_execution_runtime_bootstrap_remote_open_orders_present=True,
+        last_execution_runtime_bootstrap_remote_positions_present=True,
+        last_vps_recovery_readiness_report_ref="E:/shadow/vps_recovery_readiness.report.json",
+        last_vps_recovery_status="blocked",
+        last_vps_recovery_eligible_to_trade=False,
+        last_vps_warmup_summary_ref="E:/shadow/vps_warmup_run.summary.json",
+        last_vps_warmup_final_state="blocked",
+        last_vps_warmup_eligible_to_trade=False,
+        active_ml_artifact=DashboardArtifactTransferManifest(
+            artifact_hash="a" * 64,
+            artifact_kind=DashboardArtifactKind.ML_MODEL_ARTIFACT,
+            artifact_id="ml-active",
+            source_ref="E:/shadow/active_ml_artifact.json",
+        ),
+        active_regime_detector_artifact=DashboardArtifactTransferManifest(
+            artifact_hash="b" * 64,
+            artifact_kind=DashboardArtifactKind.REGIME_DETECTOR_ARTIFACT,
+            artifact_id="regime-active",
+            source_ref="E:/shadow/active_regime_detector_artifact.json",
+        ),
+        active_regime_detector_shadow_audit_bundle_ref="E:/shadow/regime_detector_shadow_audit_bundle.json",
+        dashboard_control_halted=True,
+        dashboard_control_target_profile="light",
+        dashboard_control_target_deployment_state="rollback",
+        dashboard_control_suspended_pairs=("BTCUSDT",),
+        dashboard_control_suspended_engines=("engine_c",),
+        dashboard_control_last_request_id="req-queue-1",
+        dashboard_control_last_command_kind="set_halted",
+        dashboard_control_last_result_status="completed",
         last_execution_runtime_projection_ref="E:/shadow/local_lab_execution_runtime_projection.json",
         last_execution_runtime_projection_source="cli",
         last_regime_lite_assessment_ref="E:/shadow/regime_lite_assessment.json",
@@ -217,7 +253,7 @@ def test_shadow_vps_service_monitoring_payload_projects_state_and_process_metric
         node_exporter_textfile_ref="E:/node-textfile/v53_shadow_vps_service.prom",
     )
 
-    assert payload.status == "healthy"
+    assert payload.status == "critical"
     assert payload.service_status == "running"
     assert payload.heartbeat_age_ms == 2_500
     assert payload.acquisition_mode == "dated_export"
@@ -250,6 +286,28 @@ def test_shadow_vps_service_monitoring_payload_projects_state_and_process_metric
     assert payload.execution_runtime_gatekeeper_audit_source == "cli"
     assert payload.execution_runtime_bootstrap_reconciliation_boot_executed is True
     assert payload.execution_runtime_bootstrap_reconciliation_boot_trading_blocked is False
+    assert payload.execution_runtime_bootstrap_remote_state_snapshot_captured is True
+    assert payload.execution_runtime_bootstrap_remote_open_order_count == 1
+    assert payload.execution_runtime_bootstrap_remote_position_asset_count == 1
+    assert payload.vps_recovery_status == "blocked"
+    assert payload.vps_warmup_final_state == "blocked"
+    assert payload.active_ml_artifact_hash == "a" * 64
+    assert payload.active_ml_artifact_id == "ml-active"
+    assert payload.active_regime_detector_artifact_hash == "b" * 64
+    assert payload.active_regime_detector_artifact_id == "regime-active"
+    assert payload.active_regime_detector_shadow_audit_bundle_ref.endswith(
+        "regime_detector_shadow_audit_bundle.json"
+    )
+    assert payload.dashboard_control_halted is True
+    assert payload.dashboard_control_target_profile == "light"
+    assert payload.dashboard_control_target_deployment_state == "rollback"
+    assert payload.dashboard_control_suspended_pair_count == 1
+    assert payload.dashboard_control_suspended_engine_count == 1
+    assert payload.dashboard_control_suspended_pairs == ("BTCUSDT",)
+    assert payload.dashboard_control_suspended_engines == ("engine_c",)
+    assert payload.dashboard_control_last_request_id == "req-queue-1"
+    assert payload.dashboard_control_last_command_kind == "set_halted"
+    assert payload.dashboard_control_last_result_status == "completed"
     assert (
         payload.execution_runtime_bootstrap_reconciliation_boot_divergence_count == 0
     )
@@ -293,6 +351,10 @@ def test_shadow_vps_service_monitoring_payload_projects_state_and_process_metric
     assert "info_stress=assessment_only@extreme@cli" in payload.detail
     assert "telegram=sent@shadow_day_completed@live_websocket_config" in payload.detail
     assert "exec_bootstrap=ready@live_websocket_config@cli/div=0" in payload.detail
+    assert "remote_orders=1/remote_positions=1" in payload.detail
+    assert "recovery=blocked/warmup=blocked" in payload.detail
+    assert "dashboard_halted=True/target=light:rollback/pair_susp=1/engine_susp=1" in payload.detail
+    assert "artifacts=ml:aaaaaaaaaaaa/regime:bbbbbbbbbbbb" in payload.detail
 
 
 def test_shadow_vps_service_observability_export_emits_process_and_service_metrics():
@@ -391,6 +453,16 @@ def test_shadow_vps_service_observability_export_emits_process_and_service_metri
     assert export.text_payload.startswith("# V5.3 Shadow VPS service observability export")
     sample_names = {sample.name for sample in export.samples}
     assert "v53_shadow_vps_service_status" in sample_names
+    assert "v53_shadow_vps_dashboard_control_halted" in sample_names
+    assert "v53_shadow_vps_dashboard_control_suspended_pair_count" in sample_names
+    assert "v53_shadow_vps_dashboard_control_suspended_engine_count" in sample_names
+    assert "v53_shadow_vps_recovery_status" in sample_names
+    assert "v53_shadow_vps_recovery_eligible_to_trade" in sample_names
+    assert "v53_shadow_vps_warmup_state" in sample_names
+    assert "v53_shadow_vps_warmup_eligible_to_trade" in sample_names
+    assert "v53_shadow_vps_active_ml_artifact" in sample_names
+    assert "v53_shadow_vps_active_regime_detector_artifact" in sample_names
+    assert "v53_shadow_vps_active_regime_detector_shadow_audit_bundle_present" in sample_names
     assert "v53_shadow_vps_process_cpu_pct" in sample_names
     assert "v53_shadow_vps_process_rss_mb" in sample_names
     assert "v53_shadow_vps_disk_used_pct" in sample_names
@@ -399,6 +471,9 @@ def test_shadow_vps_service_observability_export_emits_process_and_service_metri
     assert "v53_shadow_vps_execution_runtime_bootstrap_status" in sample_names
     assert "v53_shadow_vps_execution_runtime_bootstrap_divergence_count" in sample_names
     assert "v53_shadow_vps_execution_runtime_bootstrap_trading_blocked" in sample_names
+    assert "v53_shadow_vps_execution_runtime_bootstrap_remote_state_snapshot_captured" in sample_names
+    assert "v53_shadow_vps_execution_runtime_bootstrap_remote_open_order_count" in sample_names
+    assert "v53_shadow_vps_execution_runtime_bootstrap_remote_position_asset_count" in sample_names
     assert "v53_shadow_vps_execution_runtime_projection_ready" in sample_names
     assert "v53_shadow_vps_execution_runtime_projection_bridge_loaded" in sample_names
     assert "v53_shadow_vps_execution_runtime_projection_rate_limit_model_loaded" in sample_names
@@ -448,3 +523,22 @@ def test_shadow_vps_service_observability_export_emits_process_and_service_metri
         if sample.name == "v53_shadow_vps_execution_runtime_bootstrap_divergence_count"
     )
     assert bootstrap_divergence_sample.value == 0.0
+    recovery_status_sample = next(
+        sample for sample in export.samples if sample.name == "v53_shadow_vps_recovery_status"
+    )
+    assert recovery_status_sample.labels["recovery_status"] == "not_configured"
+    assert recovery_status_sample.labels["eligible_to_trade"] == "false"
+    warmup_status_sample = next(
+        sample for sample in export.samples if sample.name == "v53_shadow_vps_warmup_state"
+    )
+    assert warmup_status_sample.labels["warmup_final_state"] == "not_configured"
+    active_ml_sample = next(
+        sample for sample in export.samples if sample.name == "v53_shadow_vps_active_ml_artifact"
+    )
+    assert active_ml_sample.labels["artifact_hash"] == "none"
+    active_regime_sample = next(
+        sample
+        for sample in export.samples
+        if sample.name == "v53_shadow_vps_active_regime_detector_artifact"
+    )
+    assert active_regime_sample.labels["artifact_id"] == "none"

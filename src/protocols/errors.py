@@ -51,10 +51,26 @@ class LiveLightBudgetError(LiveLightProtocolError):
     """Raised when a Live-Light execution request exceeds the governed budget."""
 
 
-LiveProtocolError = LiveLightProtocolError
-LiveInputError = LiveLightInputError
-LiveGateError = LiveLightGateError
-LiveBudgetError = LiveLightBudgetError
+class LiveCompleteProtocolError(RuntimeError):
+    """Base error for the governed Build-17 Complete control surface."""
+
+
+class LiveCompleteInputError(LiveCompleteProtocolError):
+    """Raised when Build-17 Complete input is structurally invalid."""
+
+
+class LiveCompleteGateError(LiveCompleteProtocolError):
+    """Raised when Build-17 Complete gates are bypassed."""
+
+
+class LiveCompleteBudgetError(LiveCompleteProtocolError):
+    """Raised when Build-17 Complete carries an incoherent governed envelope."""
+
+
+LiveProtocolError = LiveCompleteProtocolError
+LiveInputError = LiveCompleteInputError
+LiveGateError = LiveCompleteGateError
+LiveBudgetError = LiveCompleteBudgetError
 
 
 __all__ = [
@@ -70,6 +86,10 @@ __all__ = [
     "LiveInputError",
     "LiveGateError",
     "LiveBudgetError",
+    "LiveCompleteProtocolError",
+    "LiveCompleteInputError",
+    "LiveCompleteGateError",
+    "LiveCompleteBudgetError",
     "LiveLightProtocolError",
     "LiveLightInputError",
     "LiveLightGateError",

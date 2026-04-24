@@ -170,20 +170,26 @@ def test_protocols_exports_expected_symbols():
 
 
 def test_protocols_export_canonical_live_aliases():
-    assert protocols.LiveInput is protocols.LiveLightInput
-    assert protocols.LiveDecision is protocols.LiveLightDecision
-    assert protocols.LiveExecutionIntent is protocols.LiveLightExecutionIntent
-    assert protocols.LiveRunSummary is protocols.LiveLightRunSummary
-    assert protocols.LiveRunState is protocols.LiveLightRunState
-    assert protocols.LiveVerdict is protocols.LiveLightVerdict
-    assert protocols.LiveProtocolError is protocols.LiveLightProtocolError
-    assert protocols.LiveInputError is protocols.LiveLightInputError
-    assert protocols.LiveGateError is protocols.LiveLightGateError
-    assert protocols.LiveBudgetError is protocols.LiveLightBudgetError
-    assert protocols.build_live_input_from_micro_live is protocols.build_live_light_input_from_micro_live
-    assert protocols.run_live_gate is protocols.run_live_light_gate
-    assert protocols.build_live_projection is protocols.build_live_light_projection
-    assert protocols.build_live_dashboard_section is protocols.build_live_light_dashboard_section
+    assert protocols.LiveInput is protocols.LiveCompleteInput
+    assert protocols.LiveDecision is protocols.LiveCompleteDecision
+    assert protocols.LiveExecutionIntent is protocols.LiveCompleteExecutionEnvelope
+    assert protocols.LiveRunSummary is protocols.LiveCompleteRunSummary
+    assert protocols.LiveRunState is protocols.LiveCompleteRunState
+    assert protocols.LiveVerdict is protocols.LiveCompleteVerdict
+    assert protocols.LiveProtocolError is protocols.LiveCompleteProtocolError
+    assert protocols.LiveInputError is protocols.LiveCompleteInputError
+    assert protocols.LiveGateError is protocols.LiveCompleteGateError
+    assert protocols.LiveBudgetError is protocols.LiveCompleteBudgetError
+    assert (
+        protocols.build_live_input_from_micro_live
+        is protocols.build_live_complete_input_from_live_light
+    )
+    assert protocols.run_live_gate is protocols.run_live_complete_gate
+    assert protocols.build_live_projection is protocols.build_live_complete_projection
+    assert (
+        protocols.build_live_dashboard_section
+        is protocols.build_live_complete_dashboard_section
+    )
 
 
 def test_shadow_input_rejects_wrong_runtime_mode():

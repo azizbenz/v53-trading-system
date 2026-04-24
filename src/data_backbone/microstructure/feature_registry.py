@@ -56,6 +56,10 @@ from data_backbone.microstructure.vpin import (
     VPIN_METHOD_VERSION,
     VPIN_METHOD_VERSION_HASH,
 )
+from data_backbone.microstructure.walls_and_spoofing import (
+    WALLS_AND_SPOOFING_METHOD_VERSION,
+    WALLS_AND_SPOOFING_METHOD_VERSION_HASH,
+)
 
 
 @unique
@@ -194,6 +198,34 @@ _IMPLEMENTATION_METHODS: Mapping[str, tuple[str, str]] = MappingProxyType(
             REALIZED_EFFECTIVE_SPREAD_METHOD_VERSION,
             REALIZED_EFFECTIVE_SPREAD_METHOD_VERSION_HASH,
         ),
+        **{
+            feature_id: (
+                WALLS_AND_SPOOFING_METHOD_VERSION,
+                WALLS_AND_SPOOFING_METHOD_VERSION_HASH,
+            )
+            for feature_id in (
+                "wall_strength_bid",
+                "wall_strength_ask",
+                "wall_persistence_bid",
+                "wall_persistence_ask",
+                "wall_persistence_conditional_bid",
+                "wall_persistence_conditional_ask",
+                "wall_pullaway_bid",
+                "wall_pullaway_ask",
+                "near_touch_cancel_ratio_bid",
+                "near_touch_cancel_ratio_ask",
+                "executed_vs_displayed_bid",
+                "executed_vs_displayed_ask",
+                "book_shape_skew",
+                "microprice_pressure",
+                "real_wall_score_bid",
+                "real_wall_score_ask",
+                "spoof_suspicion_score_bid",
+                "spoof_suspicion_score_ask",
+                "deceptive_liquidity_score",
+                "observation_coverage_ratio",
+            )
+        },
     }
 )
 
@@ -500,6 +532,48 @@ _FEATURE_SPECS: tuple[MicrostructureFeatureSpec, ...] = (
         ),
         method_version=REALIZED_EFFECTIVE_SPREAD_METHOD_VERSION,
         method_version_hash=REALIZED_EFFECTIVE_SPREAD_METHOD_VERSION_HASH,
+    ),
+    *tuple(
+        _spec(
+            feature_id=feature_id,
+            reference_paper=(
+                "Walls and spoof-like deceptive-liquidity detector for real-wall "
+                "presence, pull-away near touch, executed-vs-displayed gap, and "
+                "bounded deceptive-liquidity suspicion."
+            ),
+            default_window_events=None,
+            default_window_seconds=5.0,
+            calibration_seam_path="src/calibration_methods/walls_and_spoofing_calibration.py",
+            consumed_by=(
+                "local_replay_runtime",
+                "meta_learning",
+                "complete_enablers.regime_detector_runtime",
+            ),
+            method_version=WALLS_AND_SPOOFING_METHOD_VERSION,
+            method_version_hash=WALLS_AND_SPOOFING_METHOD_VERSION_HASH,
+        )
+        for feature_id in (
+            "wall_strength_bid",
+            "wall_strength_ask",
+            "wall_persistence_bid",
+            "wall_persistence_ask",
+            "wall_persistence_conditional_bid",
+            "wall_persistence_conditional_ask",
+            "wall_pullaway_bid",
+            "wall_pullaway_ask",
+            "near_touch_cancel_ratio_bid",
+            "near_touch_cancel_ratio_ask",
+            "executed_vs_displayed_bid",
+            "executed_vs_displayed_ask",
+            "book_shape_skew",
+            "microprice_pressure",
+            "real_wall_score_bid",
+            "real_wall_score_ask",
+            "spoof_suspicion_score_bid",
+            "spoof_suspicion_score_ask",
+            "deceptive_liquidity_score",
+            "observation_coverage_ratio",
+        )
     ),
 )
 

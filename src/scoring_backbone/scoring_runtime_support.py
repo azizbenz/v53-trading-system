@@ -35,6 +35,7 @@ class ScoringCandidateInput(BaseModel, frozen=True):
     engine_id: str
     pair: str
     raw_features: dict[str, float]
+    supplementary_refs: tuple[str, ...] = ()
     allowed_features: frozenset[str]
     weights: dict[str, float]
     scoring_version: str
@@ -82,6 +83,8 @@ class ScoringSoftPenaltyLayerInput(BaseModel, frozen=True):
     pair: str = Field(..., min_length=1)
     engine_id: str = Field(..., min_length=1)
     scoring_version: str = Field(..., min_length=1)
+    feature_values: dict[str, float] = Field(default_factory=dict)
+    supplementary_refs: tuple[str, ...] = ()
     expected_cost: float = 0.0
     expected_ce: float = 0.0
     corr_penalty: float = 0.0
@@ -91,6 +94,19 @@ class ScoringSoftPenaltyLayerInput(BaseModel, frozen=True):
     execution_survivability_score: float = 1.0
     micro_friction_score: float = 0.0
     pressure_state: str = "nominal"
+
+    @field_validator("feature_values")
+    @classmethod
+    def _validate_hook_feature_values(cls, value: dict[str, float]) -> dict[str, float]:
+        normalized: dict[str, float] = {}
+        for key, item in value.items():
+            normalized_key = key.strip()
+            if not normalized_key:
+                raise ValueError("ScoringSoftPenaltyLayerInput feature names must not be blank")
+            if not math.isfinite(item):
+                raise ValueError("ScoringSoftPenaltyLayerInput feature values must be finite")
+            normalized[normalized_key] = float(item)
+        return normalized
 
 
 class ScoringSoftPenaltyLayerOutcome(BaseModel, frozen=True):
@@ -432,6 +448,8 @@ def build_scoring_soft_penalty_hook_input(
         pair=candidate.pair,
         engine_id=candidate.engine_id,
         scoring_version=candidate.scoring_version,
+        feature_values=dict(candidate.raw_features),
+        supplementary_refs=candidate.supplementary_refs,
         expected_cost=candidate.expected_cost,
         expected_ce=candidate.expected_ce,
         corr_penalty=candidate.corr_penalty,

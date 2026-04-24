@@ -92,6 +92,15 @@ _SERVICE_PATH_ARGUMENTS: tuple[dict[str, object], ...] = (
             "will be written."
         ),
     },
+    {
+        "name": "--dashboard-command-queue-root",
+        "type": Path,
+        "default": None,
+        "help": (
+            "Optional governed dashboard command queue root. When set, the VPS "
+            "service consumes typed operator requests at the start of each cycle."
+        ),
+    },
 )
 
 _EXECUTION_RUNTIME_ARGUMENTS: tuple[dict[str, object], ...] = (

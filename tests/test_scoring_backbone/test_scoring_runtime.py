@@ -1,8 +1,18 @@
 """Runtime tests for Build-5 scoring backbone."""
 
+import base64
+from datetime import UTC, datetime
+import json
+from pathlib import Path
+import shutil
+from types import SimpleNamespace
+
 import pytest
 
 import scoring_backbone.scoring_runtime as scoring_runtime_module
+from backtest_artifact_import import package_ml_model_artifact_for_transport
+from complete_enablers import MlScoringSoftPenaltyHook, MlScoringSoftPenaltyHookConfig
+from interface_contracts import MlModelArtifact, MlModelWindow, PromotionState
 from scoring_backbone import ScoringCandidateInput, ScoringRuntime
 from scoring_backbone.hard_block_gate.blocker_evaluator import BlockerCondition
 from scoring_backbone.penalty_aggregator.penalty_registry import PenaltyDefinition, PenaltyRegistry, PenaltyType
@@ -11,6 +21,7 @@ from scoring_backbone.penalty_aggregator.score_penalty_builder import ScorePenal
 from scoring_backbone.penalty_aggregator.size_penalty_builder import SizePenaltyItem
 from scoring_backbone.ranking_router.portfolio_compatibility_checker import PortfolioState
 from scoring_backbone.ranking_router.selection_resolver import SelectionOutcome
+from tests.support_paths import make_repo_scratch_dir
 
 
 pytestmark = pytest.mark.build5
@@ -48,11 +59,13 @@ def _candidate(
     raw_score_add: float = 0.0,
     raw_score_cap: float | None = None,
     scoring_version: str = "5.0",
+    supplementary_refs: tuple[str, ...] = (),
 ) -> ScoringCandidateInput:
     return ScoringCandidateInput(
         engine_id=engine_id,
         pair=pair,
         raw_features=raw_features,
+        supplementary_refs=supplementary_refs,
         allowed_features=frozenset({"momentum", "flow"}),
         weights={"momentum": 2.0, "flow": 1.0},
         scoring_version=scoring_version,
@@ -77,7 +90,139 @@ def _candidate(
     )
 
 
+def _artifact(*, prediction: float) -> MlModelArtifact:
+    created_at = datetime(2026, 4, 22, 12, 0, tzinfo=UTC)
+    return MlModelArtifact.create(
+        feature_names=("momentum", "flow"),
+        feature_hash="1" * 64,
+        pair_universe=("BTCUSDT",),
+        train_window=MlModelWindow(
+            start_at=datetime(2025, 9, 24, tzinfo=UTC),
+            end_at=datetime(2026, 3, 22, tzinfo=UTC),
+        ),
+        validation_window=MlModelWindow(
+            start_at=datetime(2026, 3, 23, tzinfo=UTC),
+            end_at=datetime(2026, 4, 21, tzinfo=UTC),
+        ),
+        oos_sharpe=1.0,
+        backtest_sharpe=1.2,
+        ks_test_features_pvalue=0.4,
+        shadow_diff_pct=0.02,
+        promotion_state=PromotionState.REPLAY_ONLY,
+        training_seed=4,
+        created_at=created_at,
+        calibration_version="cal.v1",
+        dataset_hash="2" * 64,
+        model_bytes_b64=base64.b64encode(
+            json.dumps({"prediction": prediction}).encode("utf-8")
+        ).decode("ascii"),
+    )
+
+
+def _fake_lightgbm_module() -> SimpleNamespace:
+    class FakeBooster:
+        def __init__(self, *, model_str: str | None = None, model_file: str | None = None) -> None:
+            assert model_file is None
+            payload = json.loads(model_str or "{}")
+            self._prediction = float(payload.get("prediction", 0.5))
+
+        def predict(self, rows: list[list[float]]) -> list[float]:
+            assert rows
+            return [self._prediction]
+
+    return SimpleNamespace(Booster=FakeBooster)
+
+
+def _scratch_dir(label: str) -> Path:
+    return make_repo_scratch_dir(
+        "scoring_backbone_ml_scoring_runtime_tests",
+        label,
+    )
+
+
+def _packaged_artifact_refs(
+    *,
+    label: str,
+    prediction: float,
+) -> tuple[Path, Path, tuple[str, str]]:
+    export_dir = _scratch_dir(f"{label}_export")
+    source_dir = _scratch_dir(f"{label}_source")
+    source_path = source_dir / "ml_model_artifact.json"
+    artifact = _artifact(prediction=prediction)
+    source_path.write_text(artifact.model_dump_json(indent=2), encoding="utf-8")
+    transport_package = package_ml_model_artifact_for_transport(
+        export_dir,
+        source_artifact_ref=str(source_path),
+    )
+    return (
+        export_dir,
+        source_dir,
+        (
+            transport_package.transport_artifact_ref,
+            transport_package.summary_ref,
+        ),
+    )
+
+
 class TestScoringRuntime:
+    def test_runtime_accepts_ml_scoring_soft_penalty_hook_with_packaged_artifact(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            "complete_enablers.ml_confidence_enabler._load_lightgbm_module",
+            lambda: _fake_lightgbm_module(),
+        )
+        export_dir, source_dir, supplementary_refs = _packaged_artifact_refs(
+            label="runtime_ml_hook",
+            prediction=0.9,
+        )
+        runtime = ScoringRuntime(
+            _registry(),
+            soft_penalty_hook=MlScoringSoftPenaltyHook(
+                config=MlScoringSoftPenaltyHookConfig(alpha=0.3),
+            ),
+        )
+
+        try:
+            result = runtime.run_round(
+                (
+                    _candidate(
+                        engine_id="eng_a",
+                        pair="BTCUSDT",
+                        raw_features={"momentum": 1.0, "flow": 0.5},
+                        supplementary_refs=supplementary_refs,
+                        expected_ce=0.2,
+                        expected_cost=0.05,
+                        projected_size=10.0,
+                        projected_loss=1.0,
+                        projected_beta_impact=0.01,
+                        cluster_id="majors",
+                    ),
+                ),
+                portfolio=PortfolioState(
+                    remaining_gross_capacity=1000.0,
+                    remaining_loss_capacity=100.0,
+                    remaining_beta_capacity=1.0,
+                    remaining_cluster_capacity={"majors": 500.0},
+                ),
+                max_selections=1,
+                now=4.0,
+            )
+
+            audit = result.audits[0]
+            assert audit.raw_score_result.base_raw_score == pytest.approx(2.5)
+            assert audit.raw_score_result.raw_score_multiplier == pytest.approx(1.12)
+            assert audit.raw_score_result.raw_score == pytest.approx(2.8)
+            assert "ML_ARTIFACT_ACTIVE" in audit.explainability.artifact_hook_reason_codes
+            assert "ML_SCORE_MODULATION_ACTIVE" in audit.explainability.artifact_hook_reason_codes
+            assert audit.economics.artifact_raw_score_multiplier_delta == pytest.approx(0.12)
+            assert audit.selection_entry is not None
+            assert audit.selection_entry.outcome == SelectionOutcome.SELECTED
+        finally:
+            shutil.rmtree(export_dir, ignore_errors=True)
+            shutil.rmtree(source_dir, ignore_errors=True)
+
     def test_runtime_applies_scoring_soft_penalty_hook_before_raw_score_calculation(self):
         def _soft_penalty(_hook_input):
             return scoring_runtime_module.ScoringSoftPenaltyLayerOutcome(

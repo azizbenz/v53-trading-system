@@ -225,6 +225,21 @@ def _build_bootstrap_adapter_config(
     )
 
 
+def _count_remote_open_orders(bundle: ExecutionRuntimeBootstrapBundle) -> int:
+    remote_state = getattr(bundle, "remote_state_snapshot", None)
+    if remote_state is None:
+        return 0
+    return len(getattr(remote_state, "orders", {}) or {})
+
+
+def _count_remote_position_assets(bundle: ExecutionRuntimeBootstrapBundle) -> int:
+    remote_state = getattr(bundle, "remote_state_snapshot", None)
+    if remote_state is None:
+        return 0
+    positions = getattr(remote_state, "positions", {}) or {}
+    return sum(1 for quantity in positions.values() if abs(float(quantity)) > 1e-12)
+
+
 def _build_bootstrap_success_summary(
     *,
     bundle: ExecutionRuntimeBootstrapBundle,
@@ -236,6 +251,9 @@ def _build_bootstrap_success_summary(
     user_data_stream_enabled: bool,
 ) -> ShadowVpsExecutionRuntimeBootstrapSummary:
     reconciliation_boot_result = bundle.reconciliation_boot_result
+    remote_state_snapshot = getattr(bundle, "remote_state_snapshot", None)
+    remote_open_order_count = _count_remote_open_orders(bundle)
+    remote_position_asset_count = _count_remote_position_assets(bundle)
     return ShadowVpsExecutionRuntimeBootstrapSummary(
         status="ready",
         source=bootstrap_source,
@@ -284,6 +302,11 @@ def _build_bootstrap_success_summary(
             if reconciliation_boot_result is not None
             else 0
         ),
+        remote_state_snapshot_captured=remote_state_snapshot is not None,
+        remote_open_order_count=remote_open_order_count,
+        remote_position_asset_count=remote_position_asset_count,
+        remote_open_orders_present=remote_open_order_count > 0,
+        remote_positions_present=remote_position_asset_count > 0,
         error="",
     )
 
@@ -347,6 +370,7 @@ def _write_execution_runtime_bootstrap_summary(
             gatekeeper_audit_path=gatekeeper_audit_path,
             execution_runtime_projection_path=execution_runtime_projection_path,
             user_data_stream_enabled=bootstrap_config.user_data_stream_enabled,
+            capture_remote_state_snapshot=True,
         )
         summary = _build_bootstrap_success_summary(
             bundle=bundle,

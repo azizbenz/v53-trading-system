@@ -97,7 +97,128 @@ def _build_service_samples(
     )
 
 
-def _build_runtime_samples(
+def _build_control_plane_samples(
+    payload: ShadowVpsServiceMonitoringPayload,
+    base_labels: dict[str, str],
+) -> tuple[MetricSample, ...]:
+    return (
+        _sample(
+            "v53_shadow_vps_dashboard_control_halted",
+            kind="state",
+            value=1.0 if payload.dashboard_control_halted else 0.0,
+            labels={
+                **base_labels,
+                "target_profile": payload.dashboard_control_target_profile or "none",
+                "target_deployment_state": (
+                    payload.dashboard_control_target_deployment_state or "none"
+                ),
+                "last_command_kind": payload.dashboard_control_last_command_kind or "none",
+                "last_result_status": payload.dashboard_control_last_result_status or "none",
+            },
+        ),
+        _sample(
+            "v53_shadow_vps_dashboard_control_suspended_pair_count",
+            kind="gauge",
+            value=float(payload.dashboard_control_suspended_pair_count),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_shadow_vps_dashboard_control_suspended_engine_count",
+            kind="gauge",
+            value=float(payload.dashboard_control_suspended_engine_count),
+            unit="count",
+            labels=base_labels,
+        ),
+    )
+
+
+def _build_recovery_samples(
+    payload: ShadowVpsServiceMonitoringPayload,
+    base_labels: dict[str, str],
+) -> tuple[MetricSample, ...]:
+    return (
+        _sample(
+            "v53_shadow_vps_recovery_status",
+            kind="state",
+            value=1.0,
+            labels={
+                **base_labels,
+                "recovery_status": payload.vps_recovery_status,
+                "eligible_to_trade": "true" if payload.vps_recovery_eligible_to_trade else "false",
+                "readiness_report_ref": payload.vps_recovery_readiness_report_ref or "none",
+            },
+        ),
+        _sample(
+            "v53_shadow_vps_recovery_eligible_to_trade",
+            kind="state",
+            value=1.0 if payload.vps_recovery_eligible_to_trade else 0.0,
+            labels={
+                **base_labels,
+                "recovery_status": payload.vps_recovery_status,
+            },
+        ),
+        _sample(
+            "v53_shadow_vps_warmup_state",
+            kind="state",
+            value=1.0,
+            labels={
+                **base_labels,
+                "warmup_final_state": payload.vps_warmup_final_state,
+                "eligible_to_trade": "true" if payload.vps_warmup_eligible_to_trade else "false",
+                "warmup_summary_ref": payload.vps_warmup_summary_ref or "none",
+            },
+        ),
+        _sample(
+            "v53_shadow_vps_warmup_eligible_to_trade",
+            kind="state",
+            value=1.0 if payload.vps_warmup_eligible_to_trade else 0.0,
+            labels={
+                **base_labels,
+                "warmup_final_state": payload.vps_warmup_final_state,
+            },
+        ),
+    )
+
+
+def _build_artifact_samples(
+    payload: ShadowVpsServiceMonitoringPayload,
+    base_labels: dict[str, str],
+) -> tuple[MetricSample, ...]:
+    return (
+        _sample(
+            "v53_shadow_vps_active_ml_artifact",
+            kind="state",
+            value=1.0 if payload.active_ml_artifact_hash else 0.0,
+            labels={
+                **base_labels,
+                "artifact_hash": payload.active_ml_artifact_hash or "none",
+                "artifact_id": payload.active_ml_artifact_id or "none",
+            },
+        ),
+        _sample(
+            "v53_shadow_vps_active_regime_detector_artifact",
+            kind="state",
+            value=1.0 if payload.active_regime_detector_artifact_hash else 0.0,
+            labels={
+                **base_labels,
+                "artifact_hash": payload.active_regime_detector_artifact_hash or "none",
+                "artifact_id": payload.active_regime_detector_artifact_id or "none",
+            },
+        ),
+        _sample(
+            "v53_shadow_vps_active_regime_detector_shadow_audit_bundle_present",
+            kind="state",
+            value=1.0 if payload.active_regime_detector_shadow_audit_bundle_ref else 0.0,
+            labels={
+                **base_labels,
+                "bundle_ref": payload.active_regime_detector_shadow_audit_bundle_ref or "none",
+            },
+        ),
+    )
+
+
+def _build_bootstrap_runtime_samples(
     payload: ShadowVpsServiceMonitoringPayload,
     base_labels: dict[str, str],
 ) -> tuple[MetricSample, ...]:
@@ -149,6 +270,34 @@ def _build_runtime_samples(
             value=1.0 if payload.execution_runtime_bootstrap_reconciliation_boot_trading_blocked else 0.0,
             labels={**base_labels, "bootstrap_status": payload.execution_runtime_bootstrap_status, "bootstrap_source": payload.execution_runtime_bootstrap_source, "gatekeeper_audit_source": payload.execution_runtime_gatekeeper_audit_source},
         ),
+        _sample(
+            "v53_shadow_vps_execution_runtime_bootstrap_remote_state_snapshot_captured",
+            kind="state",
+            value=1.0 if payload.execution_runtime_bootstrap_remote_state_snapshot_captured else 0.0,
+            labels={**base_labels, "bootstrap_status": payload.execution_runtime_bootstrap_status},
+        ),
+        _sample(
+            "v53_shadow_vps_execution_runtime_bootstrap_remote_open_order_count",
+            kind="gauge",
+            value=float(payload.execution_runtime_bootstrap_remote_open_order_count),
+            unit="count",
+            labels={**base_labels, "bootstrap_status": payload.execution_runtime_bootstrap_status},
+        ),
+        _sample(
+            "v53_shadow_vps_execution_runtime_bootstrap_remote_position_asset_count",
+            kind="gauge",
+            value=float(payload.execution_runtime_bootstrap_remote_position_asset_count),
+            unit="count",
+            labels={**base_labels, "bootstrap_status": payload.execution_runtime_bootstrap_status},
+        ),
+    )
+
+
+def _build_projection_runtime_samples(
+    payload: ShadowVpsServiceMonitoringPayload,
+    base_labels: dict[str, str],
+) -> tuple[MetricSample, ...]:
+    return (
         _sample(
             "v53_shadow_vps_execution_runtime_projection_ready",
             kind="state",
@@ -203,7 +352,10 @@ def _build_runtime_samples(
     )
 
 
-def _build_governance_samples(payload: ShadowVpsServiceMonitoringPayload, base_labels: dict[str, str]) -> tuple[MetricSample, ...]:
+def _build_governance_samples(
+    payload: ShadowVpsServiceMonitoringPayload,
+    base_labels: dict[str, str],
+) -> tuple[MetricSample, ...]:
     return (
         _sample("v53_shadow_vps_regime_lite_safing_status", kind="state", value=1.0, labels={**base_labels, "governance_status": payload.regime_lite_governance_status, "severity": payload.regime_lite_safing_severity, "state": payload.regime_lite_state, "candidate_state": payload.regime_lite_candidate_state, "assessment_source": payload.regime_lite_assessment_source, "safing_source": payload.regime_lite_safing_recommendation_source, "recommended_action": payload.regime_lite_safing_recommended_operator_action or "none"}),
         _sample("v53_shadow_vps_regime_lite_entries_blocked", kind="state", value=1.0 if payload.regime_lite_entries_blocked else 0.0, labels={**base_labels, "governance_status": payload.regime_lite_governance_status, "severity": payload.regime_lite_safing_severity, "assessment_source": payload.regime_lite_assessment_source, "safing_source": payload.regime_lite_safing_recommendation_source}),
@@ -247,7 +399,11 @@ def build_shadow_vps_service_observability_export_support(
     base_labels = _build_base_labels(payload)
     samples = (
         _build_service_samples(payload, base_labels)
-        + _build_runtime_samples(payload, base_labels)
+        + _build_control_plane_samples(payload, base_labels)
+        + _build_recovery_samples(payload, base_labels)
+        + _build_artifact_samples(payload, base_labels)
+        + _build_bootstrap_runtime_samples(payload, base_labels)
+        + _build_projection_runtime_samples(payload, base_labels)
         + _build_governance_samples(payload, base_labels)
         + _build_resource_samples(payload, base_labels)
     )

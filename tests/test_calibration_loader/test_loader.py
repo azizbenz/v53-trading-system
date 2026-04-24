@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 import shutil
-from uuid import uuid4
 
 import pytest
 import yaml
@@ -17,12 +16,12 @@ from calibration_loader import (
     load_calibration_artifact,
     load_calibration_collection,
 )
+from tests.support_paths import make_repo_scratch_dir
 
 
 @pytest.fixture
 def calibration_tmpdir() -> Path:
-    root = Path("build/pytest-calibration-loader-fixtures") / uuid4().hex
-    root.mkdir(parents=True, exist_ok=False)
+    root = make_repo_scratch_dir("pytest-calibration-loader-fixtures")
     try:
         yield root
     finally:

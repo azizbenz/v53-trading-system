@@ -107,6 +107,32 @@ class ShadowVpsServiceMonitoringPayload(TimestampedModel):
         default=0,
         ge=0,
     )
+    execution_runtime_bootstrap_remote_state_snapshot_captured: bool = False
+    execution_runtime_bootstrap_remote_open_order_count: int = Field(default=0, ge=0)
+    execution_runtime_bootstrap_remote_position_asset_count: int = Field(default=0, ge=0)
+    execution_runtime_bootstrap_remote_open_orders_present: bool = False
+    execution_runtime_bootstrap_remote_positions_present: bool = False
+    vps_recovery_readiness_report_ref: str = ""
+    vps_recovery_status: str = "not_configured"
+    vps_recovery_eligible_to_trade: bool = False
+    vps_warmup_summary_ref: str = ""
+    vps_warmup_final_state: str = "not_configured"
+    vps_warmup_eligible_to_trade: bool = False
+    active_ml_artifact_hash: str = ""
+    active_ml_artifact_id: str = ""
+    active_regime_detector_artifact_hash: str = ""
+    active_regime_detector_artifact_id: str = ""
+    active_regime_detector_shadow_audit_bundle_ref: str = ""
+    dashboard_control_halted: bool = False
+    dashboard_control_target_profile: str = ""
+    dashboard_control_target_deployment_state: str = ""
+    dashboard_control_suspended_pair_count: int = Field(default=0, ge=0)
+    dashboard_control_suspended_engine_count: int = Field(default=0, ge=0)
+    dashboard_control_suspended_pairs: tuple[str, ...] = ()
+    dashboard_control_suspended_engines: tuple[str, ...] = ()
+    dashboard_control_last_request_id: str = ""
+    dashboard_control_last_command_kind: str = ""
+    dashboard_control_last_result_status: str = ""
     execution_runtime_projection_ref: str = ""
     execution_runtime_projection_source: str = "not_configured"
     regime_lite_assessment_ref: str = ""

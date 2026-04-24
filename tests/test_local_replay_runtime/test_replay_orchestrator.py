@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -20,11 +21,11 @@ from local_replay_runtime import (
     ReplayOrchestratorRequest,
     orchestrate_local_replay_export,
 )
+from tests.support_paths import repo_build_path
 
 
 def _scratch_dir(name: str) -> Path:
-    repo_root = Path(__file__).resolve().parents[2]
-    return repo_root / "build" / "replay_orchestrator_tests" / name
+    return repo_build_path("replay_orchestrator_tests", f"{name}_{uuid4().hex}")
 
 
 def _dataset() -> HistoricalReplayDataset:

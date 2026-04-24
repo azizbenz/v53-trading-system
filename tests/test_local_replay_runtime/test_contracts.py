@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
@@ -39,11 +40,11 @@ from local_replay_runtime import (
     LocalReplayRuntimeEvidence,
     SHARED_CORE_ID,
 )
+from tests.support_paths import repo_build_path
 
 
 def _scratch_dir(name: str) -> Path:
-    repo_root = Path(__file__).resolve().parents[2]
-    return repo_root / "build" / "local_replay_runtime_tests" / name
+    return repo_build_path("local_replay_runtime_tests", f"{name}_{uuid4().hex}")
 
 
 def test_local_replay_runtime_exports_expected_symbols():

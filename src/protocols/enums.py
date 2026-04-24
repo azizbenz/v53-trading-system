@@ -91,8 +91,24 @@ class LiveLightVerdict(StrEnum):
     BLOCKED = "blocked"
 
 
-LiveRunState = LiveLightRunState
-LiveVerdict = LiveLightVerdict
+class LiveCompleteRunState(StrEnum):
+    """Lifecycle state of the governed Build-17 Complete control surface."""
+
+    PREPARED = "prepared"
+    READY_FOR_COMPLETE_SUPERVISION = "ready_for_complete_supervision"
+    BLOCKED = "blocked"
+
+
+class LiveCompleteVerdict(StrEnum):
+    """Minimal gating verdict for the Build-17 Complete control surface."""
+
+    ALLOWED_COMPLETE_SUPERVISION = "allowed_complete_supervision"
+    REVIEW_ONLY = "review_only"
+    BLOCKED = "blocked"
+
+
+LiveRunState = LiveCompleteRunState
+LiveVerdict = LiveCompleteVerdict
 
 
 __all__ = [
@@ -107,6 +123,8 @@ __all__ = [
     "MicroLiveVerdict",
     "LiveRunState",
     "LiveVerdict",
+    "LiveCompleteRunState",
+    "LiveCompleteVerdict",
     "LiveLightRunState",
     "LiveLightVerdict",
 ]

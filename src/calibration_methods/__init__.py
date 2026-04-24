@@ -96,6 +96,53 @@ from calibration_methods.walkforward import (
     PurgedWalkForwardPlan,
     build_purged_walk_forward_plan,
 )
+from calibration_methods.ml_trainer import (
+    MlTrainerDataError,
+    MlTrainerDependencyError,
+    MlTrainerError,
+    MlTrainerRequest,
+    MlTrainerResult,
+    MlTrainingRow,
+    train_lightgbm_ml_artifact,
+)
+from calibration_methods.ml_backtest_projection import (
+    project_ml_training_row_from_ml_backtest_sample,
+    project_ml_training_rows_from_backtest_dataset,
+)
+from calibration_methods.regime_detector_trainer import (
+    RegimeDetectorTrainerDataError,
+    RegimeDetectorTrainerDependencyError,
+    RegimeDetectorTrainerError,
+    RegimeDetectorTrainerRequest,
+    RegimeDetectorTrainerResult,
+    RegimeDetectorTrainingRow,
+    train_lightgbm_regime_detector_artifact,
+)
+from calibration_methods.regime_detector_projection import (
+    project_regime_detector_training_row,
+    project_regime_detector_training_rows,
+)
+from calibration_methods.regime_detector_feature_calibration import (
+    REGIME_DETECTOR_FEATURE_PROFILE_VERSION,
+    REGIME_DETECTOR_FEATURE_PROFILE_VERSION_HASH,
+    REGIME_DETECTOR_BASE_V1_FEATURES,
+    REGIME_DETECTOR_EXTENDED_V2_OBSERVATION_FEATURES,
+    REGIME_DETECTOR_CORE_V1_FEATURES,
+    REGIME_DETECTOR_EXTENDED_V2_FEATURES,
+    REGIME_DETECTOR_FULL_V2_FEATURES,
+    RegimeDetectorFeatureProfile,
+    resolve_regime_detector_feature_set,
+    select_regime_detector_features,
+)
+from calibration_methods.walls_and_spoofing_calibration import (
+    WALLS_AND_SPOOFING_CORE_V1_FEATURES,
+    WALLS_AND_SPOOFING_EXTENDED_V2_FEATURES,
+    WALLS_AND_SPOOFING_FEATURE_SET_VERSION,
+    WALLS_AND_SPOOFING_FEATURE_SET_VERSION_HASH,
+    WallsAndSpoofingFeatureProfile,
+    resolve_walls_and_spoofing_feature_set,
+    select_walls_and_spoofing_features,
+)
 
 __all__ = [
     "EnergyDistanceError",
@@ -164,4 +211,39 @@ __all__ = [
     "compute_probabilistic_sharpe_ratio",
     "CURRENT_REPO_PAIR_UNIVERSE_COUNT",
     "V53_CANONICAL_SHADOW_PAIR_FLOOR",
+    "MlTrainerError",
+    "MlTrainerDependencyError",
+    "MlTrainerDataError",
+    "MlTrainingRow",
+    "MlTrainerRequest",
+    "MlTrainerResult",
+    "train_lightgbm_ml_artifact",
+    "project_ml_training_row_from_ml_backtest_sample",
+    "project_ml_training_rows_from_backtest_dataset",
+    "RegimeDetectorTrainerError",
+    "RegimeDetectorTrainerDependencyError",
+    "RegimeDetectorTrainerDataError",
+    "RegimeDetectorTrainingRow",
+    "RegimeDetectorTrainerRequest",
+    "RegimeDetectorTrainerResult",
+    "train_lightgbm_regime_detector_artifact",
+    "project_regime_detector_training_row",
+    "project_regime_detector_training_rows",
+    "REGIME_DETECTOR_FEATURE_PROFILE_VERSION",
+    "REGIME_DETECTOR_FEATURE_PROFILE_VERSION_HASH",
+    "REGIME_DETECTOR_BASE_V1_FEATURES",
+    "REGIME_DETECTOR_EXTENDED_V2_OBSERVATION_FEATURES",
+    "REGIME_DETECTOR_CORE_V1_FEATURES",
+    "REGIME_DETECTOR_EXTENDED_V2_FEATURES",
+    "REGIME_DETECTOR_FULL_V2_FEATURES",
+    "RegimeDetectorFeatureProfile",
+    "resolve_regime_detector_feature_set",
+    "select_regime_detector_features",
+    "WALLS_AND_SPOOFING_FEATURE_SET_VERSION",
+    "WALLS_AND_SPOOFING_FEATURE_SET_VERSION_HASH",
+    "WALLS_AND_SPOOFING_CORE_V1_FEATURES",
+    "WALLS_AND_SPOOFING_EXTENDED_V2_FEATURES",
+    "WallsAndSpoofingFeatureProfile",
+    "resolve_walls_and_spoofing_feature_set",
+    "select_walls_and_spoofing_features",
 ]

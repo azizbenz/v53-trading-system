@@ -7,13 +7,13 @@ import json
 from pathlib import Path
 import shutil
 import sys
-from uuid import uuid4
 
 import pytest
 import yaml
 
 from calibration_loader import CalibrationArtifact
 from interface_contracts import ProfileId
+from tests.support_paths import make_repo_scratch_dir
 
 
 def _load_launcher_module():
@@ -30,12 +30,7 @@ def _load_launcher_module():
 
 
 def _scratch_dir(label: str) -> Path:
-    repo_root = Path(__file__).resolve().parents[2]
-    base_dir = repo_root / "build" / "local_replay_export_launcher_tests"
-    base_dir.mkdir(parents=True, exist_ok=True)
-    output_dir = base_dir / f"{label}_{uuid4().hex}"
-    output_dir.mkdir(parents=True, exist_ok=False)
-    return output_dir
+    return make_repo_scratch_dir("local_replay_export_launcher_tests", label)
 
 
 def test_local_replay_export_launcher_writes_canonical_files():

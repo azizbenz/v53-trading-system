@@ -22,5 +22,8 @@ def test_render_shadow_vps_metric_guide_uses_canonical_terms() -> None:
     assert "## Metric guide" in markdown
     assert "v53_shadow_vps_service_promotion_gate_passed" in markdown
     assert "v53_shadow_vps_execution_runtime_projection_bridge_loaded" in markdown
+    assert "v53_shadow_vps_recovery_status" in markdown
+    assert "v53_shadow_vps_dashboard_control_halted" in markdown
+    assert "v53_shadow_vps_active_regime_detector_artifact" in markdown
     assert "v53_shadow_vps_regime_lite_safing_status" in markdown
     assert "Read labels and paired counters together" in markdown

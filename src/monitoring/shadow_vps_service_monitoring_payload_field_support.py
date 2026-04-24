@@ -208,6 +208,73 @@ def _resolve_bootstrap_reconciliation_fields(
     }
 
 
+def _resolve_bootstrap_runtime_state_fields(
+    state: ShadowVpsServiceState,
+) -> dict[str, object]:
+    return {
+        "execution_runtime_bootstrap_remote_state_snapshot_captured": (
+            state.last_execution_runtime_bootstrap_remote_state_snapshot_captured
+        ),
+        "execution_runtime_bootstrap_remote_open_order_count": (
+            state.last_execution_runtime_bootstrap_remote_open_order_count
+        ),
+        "execution_runtime_bootstrap_remote_position_asset_count": (
+            state.last_execution_runtime_bootstrap_remote_position_asset_count
+        ),
+        "execution_runtime_bootstrap_remote_open_orders_present": (
+            state.last_execution_runtime_bootstrap_remote_open_orders_present
+        ),
+        "execution_runtime_bootstrap_remote_positions_present": (
+            state.last_execution_runtime_bootstrap_remote_positions_present
+        ),
+        "vps_recovery_readiness_report_ref": state.last_vps_recovery_readiness_report_ref,
+        "vps_recovery_status": state.last_vps_recovery_status,
+        "vps_recovery_eligible_to_trade": state.last_vps_recovery_eligible_to_trade,
+        "vps_warmup_summary_ref": state.last_vps_warmup_summary_ref,
+        "vps_warmup_final_state": state.last_vps_warmup_final_state,
+        "vps_warmup_eligible_to_trade": state.last_vps_warmup_eligible_to_trade,
+        "active_ml_artifact_hash": (
+            ""
+            if state.active_ml_artifact is None
+            else state.active_ml_artifact.artifact_hash
+        ),
+        "active_ml_artifact_id": (
+            ""
+            if state.active_ml_artifact is None
+            else state.active_ml_artifact.artifact_id
+        ),
+        "active_regime_detector_artifact_hash": (
+            ""
+            if state.active_regime_detector_artifact is None
+            else state.active_regime_detector_artifact.artifact_hash
+        ),
+        "active_regime_detector_artifact_id": (
+            ""
+            if state.active_regime_detector_artifact is None
+            else state.active_regime_detector_artifact.artifact_id
+        ),
+        "active_regime_detector_shadow_audit_bundle_ref": (
+            state.active_regime_detector_shadow_audit_bundle_ref
+        ),
+        "dashboard_control_halted": state.dashboard_control_halted,
+        "dashboard_control_target_profile": state.dashboard_control_target_profile,
+        "dashboard_control_target_deployment_state": (
+            state.dashboard_control_target_deployment_state
+        ),
+        "dashboard_control_suspended_pair_count": len(
+            state.dashboard_control_suspended_pairs
+        ),
+        "dashboard_control_suspended_engine_count": len(
+            state.dashboard_control_suspended_engines
+        ),
+        "dashboard_control_suspended_pairs": state.dashboard_control_suspended_pairs,
+        "dashboard_control_suspended_engines": state.dashboard_control_suspended_engines,
+        "dashboard_control_last_request_id": state.dashboard_control_last_request_id,
+        "dashboard_control_last_command_kind": state.dashboard_control_last_command_kind,
+        "dashboard_control_last_result_status": state.dashboard_control_last_result_status,
+    }
+
+
 def resolve_bootstrap_fields(
     state: ShadowVpsServiceState,
     campaign_summary: ShadowVpsCampaignSummary | None,
@@ -226,6 +293,7 @@ def resolve_bootstrap_fields(
             runtime_evidence_bundle,
         )
     )
+    resolved_fields.update(_resolve_bootstrap_runtime_state_fields(state))
     return resolved_fields
 
 

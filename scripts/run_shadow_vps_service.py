@@ -19,10 +19,14 @@ for candidate in (SCRIPT_ROOT, SRC_ROOT):
 
 import shadow_vps_service_input_support as _shadow_vps_service_input_support  # noqa: E402
 import shadow_vps_service_io_support as _shadow_vps_service_io_support  # noqa: E402
+from interface_contracts import DashboardGovernedCommandKind  # noqa: E402
 from protocols import (  # noqa: E402
+    DashboardGovernedCommandExecutionContext,
     ShadowVpsServiceStatus,
+    ShadowVpsServiceEvent,
     build_binance_execution_runtime_bootstrap_bundle,
     capture_live_websocket_snapshot_batch,
+    process_dashboard_command_queue_once,
 )
 from shadow_vps_service_campaign_support import (  # noqa: E402
     _write_campaign_summary,
@@ -80,6 +84,9 @@ from shadow_vps_service_monitoring_support import (  # noqa: E402
 from shadow_vps_service_projection_support import (  # noqa: E402
     _last_run_str,
     _write_runtime_evidence_bundle,
+)
+from shadow_vps_service_recovery_support import (  # noqa: E402
+    _refresh_shadow_vps_recovery_artifacts,
 )
 from shadow_vps_service_runtime_support import (  # noqa: E402
     _emit_service_output,
@@ -164,6 +171,45 @@ def _refresh_shadow_vps_cycle_state(context: ShadowVpsServiceRuntimeContext) -> 
     _write_service_monitoring(context)
 
 
+def _dashboard_control_gate_result(
+    context: ShadowVpsServiceRuntimeContext,
+) -> str | None:
+    state = context.store.state
+    if not state.dashboard_control_halted:
+        return None
+    state.idle_count += 1
+    state.service_status = ShadowVpsServiceStatus.DEGRADED
+    context.store.persist()
+    _append_service_event(
+        store=context.store,
+        telegram_alerter=context.telegram_alerter,
+        event=ShadowVpsServiceEvent(
+            event_type="dashboard_control_halted_active",
+            message=(
+                "Governed dashboard control halt is active; Shadow VPS cycle skipped."
+            ),
+        ),
+    )
+    _write_service_monitoring(context)
+    return "sleep"
+
+
+def _process_dashboard_command_queue(
+    context: ShadowVpsServiceRuntimeContext,
+) -> None:
+    if context.dashboard_command_queue_root is None:
+        return
+    process_dashboard_command_queue_once(
+        context.dashboard_command_queue_root,
+        context=DashboardGovernedCommandExecutionContext(
+            allowed_commands=frozenset(DashboardGovernedCommandKind),
+            shadow_vps_service_state_dir=context.service_dir,
+        ),
+    )
+    context.store.reload()
+    _write_service_monitoring(context)
+
+
 def _resolve_shadow_vps_cycle_selection_inputs(
     context: ShadowVpsServiceRuntimeContext,
 ) -> ShadowVpsCycleSelection:
@@ -217,6 +263,10 @@ def _run_shadow_vps_orchestrator_cycle(
         runtime_evidence_bundle_path,
         last_run_str=_last_run_str,
     )
+    _refresh_shadow_vps_recovery_artifacts(
+        context,
+        live_capture_result=live_capture_result,
+    )
     execution_telemetry_status, execution_telemetry_artifact_path = (
         _write_shadow_vps_cycle_execution_telemetry(
             context,
@@ -247,6 +297,10 @@ def _run_shadow_vps_service_cycle(
     continue_on_error: bool,
 ) -> str:
     _refresh_shadow_vps_cycle_state(context)
+    _process_dashboard_command_queue(context)
+    dashboard_control_result = _dashboard_control_gate_result(context)
+    if dashboard_control_result is not None:
+        return dashboard_control_result
     try:
         selection = _resolve_shadow_vps_cycle_selection_inputs(context)
         if selection.next_slot is None:
@@ -278,6 +332,7 @@ def run_shadow_vps_service(
     execution_runtime_gatekeeper_audit_path: Path | None = None,
     execution_runtime_projection_path: Path | None = None, regime_lite_assessment_path: Path | None = None,
     regime_lite_safing_recommendation_path: Path | None = None, info_stress_assessment_path: Path | None = None,
+    dashboard_command_queue_root: Path | None = None,
     telegram_alert_config_path: Path | None = None, telegram_alert_key_path: Path | None = None,
     telegram_post_func: TelegramPostFunc | None = None, node_exporter_textfile_dir: Path | None = None,
     scrape_host: str = "", vps_id: str = "", node_exporter_port: int = 9100,
@@ -299,6 +354,7 @@ def run_shadow_vps_service(
         regime_lite_assessment_path=regime_lite_assessment_path,
         regime_lite_safing_recommendation_path=regime_lite_safing_recommendation_path,
         info_stress_assessment_path=info_stress_assessment_path,
+        dashboard_command_queue_root=dashboard_command_queue_root,
         telegram_alert_config_path=telegram_alert_config_path,
         telegram_alert_key_path=telegram_alert_key_path,
         telegram_post_func=telegram_post_func,
@@ -364,6 +420,7 @@ def main(argv: list[str] | None = None) -> int:
             args.regime_lite_safing_recommendation_path
         ),
         info_stress_assessment_path=args.info_stress_assessment_path,
+        dashboard_command_queue_root=args.dashboard_command_queue_root,
         telegram_alert_config_path=args.telegram_alert_config_path,
         telegram_alert_key_path=args.telegram_alert_key_path,
         node_exporter_textfile_dir=args.node_exporter_textfile_dir,
