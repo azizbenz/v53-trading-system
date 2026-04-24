@@ -7,6 +7,7 @@ from enum import StrEnum
 from pydantic import BaseModel, Field, model_validator
 
 from .dashboard_command_contracts import (
+    BinanceCredentialInventorySnapshot,
     DashboardArtifactTransferManifest,
     DashboardCommandQueueSnapshot,
 )
@@ -57,6 +58,9 @@ class VpsRecoveryReadinessReport(BaseModel, frozen=True):
     runtime_mode: RuntimeMode = RuntimeMode.LIVE
     deployment_state: DeploymentState = DeploymentState.LIVE_COMPLETE
     active_artifact: DashboardArtifactTransferManifest | None = None
+    binance_credential_inventory: BinanceCredentialInventorySnapshot | None = None
+    active_binance_profile_id: str = ""
+    binance_credential_validation_status: str = "unknown"
     command_queue_snapshot: DashboardCommandQueueSnapshot | None = None
     bootstrap_summary: ShadowVpsExecutionRuntimeBootstrapSummary | None = None
     websocket_ready: bool = False

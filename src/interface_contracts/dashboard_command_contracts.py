@@ -18,6 +18,30 @@ class DashboardArtifactKind(StrEnum):
     GENERIC_EXPORT_BUNDLE = "generic_export_bundle"
 
 
+class DashboardSecretKind(StrEnum):
+    """Secret bundle families handled by the governed command plane."""
+
+    BINANCE_SPOT_CREDENTIALS = "binance_spot_credentials"
+
+
+class DashboardSecretEnvironment(StrEnum):
+    """Venue credential environment carried without secret material."""
+
+    TESTNET = "testnet"
+    LIVE = "live"
+
+
+class BinanceCredentialValidationStatus(StrEnum):
+    """Non-sensitive credential validation status vocabulary."""
+
+    UNKNOWN = "unknown"
+    PENDING = "pending"
+    VALIDATED = "validated"
+    FAILED = "failed"
+    STALE = "stale"
+    DEACTIVATED = "deactivated"
+
+
 class DashboardGovernedCommandKind(StrEnum):
     """Minimal governed actions exposed by the Build-17 Complete surface."""
 
@@ -36,6 +60,18 @@ class DashboardGovernedCommandKind(StrEnum):
     REQUEST_PAIR_RESUME = "request_pair_resume"
     SUSPEND_ENGINE = "suspend_engine"
     REQUEST_ENGINE_RESUME = "request_engine_resume"
+    REQUEST_UPLOAD_BINANCE_CREDENTIALS_BUNDLE = (
+        "request_upload_binance_credentials_bundle"
+    )
+    REQUEST_ACTIVATE_BINANCE_CREDENTIALS_PROFILE = (
+        "request_activate_binance_credentials_profile"
+    )
+    REQUEST_EXPORT_BINANCE_CREDENTIAL_INVENTORY = (
+        "request_export_binance_credential_inventory"
+    )
+    REQUEST_DEACTIVATE_BINANCE_CREDENTIALS_PROFILE = (
+        "request_deactivate_binance_credentials_profile"
+    )
 
 
 class DashboardGovernedCommandStatus(StrEnum):
@@ -61,6 +97,17 @@ _UPLOAD_COMMANDS = frozenset(
         DashboardGovernedCommandKind.REQUEST_UPLOAD_REGIME_DETECTOR_ARTIFACT,
     }
 )
+_SECRET_UPLOAD_COMMANDS = frozenset(
+    {
+        DashboardGovernedCommandKind.REQUEST_UPLOAD_BINANCE_CREDENTIALS_BUNDLE,
+    }
+)
+_SECRET_PROFILE_COMMANDS = frozenset(
+    {
+        DashboardGovernedCommandKind.REQUEST_ACTIVATE_BINANCE_CREDENTIALS_PROFILE,
+        DashboardGovernedCommandKind.REQUEST_DEACTIVATE_BINANCE_CREDENTIALS_PROFILE,
+    }
+)
 _PAIR_TARGET_COMMANDS = frozenset(
     {
         DashboardGovernedCommandKind.SUSPEND_PAIR,
@@ -81,6 +128,9 @@ _REASON_REQUIRED_COMMANDS = frozenset(
         DashboardGovernedCommandKind.REQUEST_PAIR_RESUME,
         DashboardGovernedCommandKind.SUSPEND_ENGINE,
         DashboardGovernedCommandKind.REQUEST_ENGINE_RESUME,
+        DashboardGovernedCommandKind.REQUEST_UPLOAD_BINANCE_CREDENTIALS_BUNDLE,
+        DashboardGovernedCommandKind.REQUEST_ACTIVATE_BINANCE_CREDENTIALS_PROFILE,
+        DashboardGovernedCommandKind.REQUEST_DEACTIVATE_BINANCE_CREDENTIALS_PROFILE,
     }
 )
 
@@ -106,6 +156,135 @@ class DashboardArtifactTransferManifest(BaseModel, frozen=True):
         return self
 
 
+class DashboardSecretTransferManifest(BaseModel, frozen=True):
+    """Metadata-only descriptor for a sealed credential bundle.
+
+    The dashboard queue never carries API keys or decrypted credential payloads.
+    It only carries hashes, profile ids, lineage, and a sealed bundle reference.
+    """
+
+    secret_hash: str = Field(..., min_length=1)
+    secret_kind: DashboardSecretKind
+    profile_id: str = Field(..., min_length=1)
+    venue: str = Field(default="binance_spot", min_length=1)
+    environment: DashboardSecretEnvironment
+    sealed_ref: str = Field(..., min_length=1)
+    sealed_schema_version: str = Field(
+        default="binance_credentials_bundle.v1",
+        min_length=1,
+    )
+    backend: str = ""
+    lineage_version: str = ""
+    review_state: str = ""
+    validation_status: str = ""
+    source_ref: str = ""
+    payload_refs: tuple[str, ...] = ()
+    created_at_ms: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def validate_secret_manifest(self) -> "DashboardSecretTransferManifest":
+        if len(set(self.payload_refs)) != len(self.payload_refs):
+            raise ValueError("DashboardSecretTransferManifest payload_refs must be unique")
+        sealed_ref = self.sealed_ref.lower()
+        if not (sealed_ref.endswith(".sealed.json") or sealed_ref.startswith("sealed://")):
+            raise ValueError(
+                "DashboardSecretTransferManifest sealed_ref must reference a sealed bundle"
+            )
+        forbidden_plaintext_suffixes = (".env", ".yaml", ".yml")
+        if sealed_ref.endswith(forbidden_plaintext_suffixes):
+            raise ValueError(
+                "DashboardSecretTransferManifest must not reference plaintext secret files"
+            )
+        return self
+
+
+class BinanceCredentialProfileRef(BaseModel, frozen=True):
+    """Metadata-only reference to a governed Binance credential profile."""
+
+    profile_id: str = Field(..., min_length=1)
+    venue: str = Field(default="binance_spot", min_length=1)
+    environment: DashboardSecretEnvironment
+    secret_kind: DashboardSecretKind = DashboardSecretKind.BINANCE_SPOT_CREDENTIALS
+    secret_hash: str = Field(..., min_length=1)
+    sealed_ref: str = Field(..., min_length=1)
+    backend: str = ""
+
+
+class BinanceCredentialInventoryEntry(BaseModel, frozen=True):
+    """Safe inventory row for one sealed Binance credential profile."""
+
+    profile: BinanceCredentialProfileRef
+    active: bool = False
+    review_state: str = ""
+    validation_status: BinanceCredentialValidationStatus = (
+        BinanceCredentialValidationStatus.UNKNOWN
+    )
+    last_auth_check_ms: int = Field(default=0, ge=0)
+    last_failure_reason_codes: tuple[str, ...] = ()
+    source_ref: str = ""
+    lineage_version: str = ""
+    created_at_ms: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def validate_reason_codes(self) -> "BinanceCredentialInventoryEntry":
+        if len(set(self.last_failure_reason_codes)) != len(
+            self.last_failure_reason_codes
+        ):
+            raise ValueError(
+                "BinanceCredentialInventoryEntry reason codes must be unique"
+            )
+        return self
+
+
+class BinanceCredentialInventorySnapshot(BaseModel, frozen=True):
+    """Metadata-only export surface for Binance credential inventory."""
+
+    active_profile_id: str = ""
+    entries: tuple[BinanceCredentialInventoryEntry, ...] = ()
+    exported_at_ms: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def validate_inventory(self) -> "BinanceCredentialInventorySnapshot":
+        profile_ids = tuple(entry.profile.profile_id for entry in self.entries)
+        if len(set(profile_ids)) != len(profile_ids):
+            raise ValueError("Binance credential inventory profile ids must be unique")
+        active_count = sum(1 for entry in self.entries if entry.active)
+        if active_count > 1:
+            raise ValueError("Only one Binance credential inventory entry may be active")
+        if self.active_profile_id and self.active_profile_id not in set(profile_ids):
+            raise ValueError("active_profile_id must exist in Binance credential inventory")
+        return self
+
+
+def binance_credential_entry_from_manifest(
+    manifest: DashboardSecretTransferManifest,
+    *,
+    active: bool = False,
+    validation_status: BinanceCredentialValidationStatus = (
+        BinanceCredentialValidationStatus.PENDING
+    ),
+) -> BinanceCredentialInventoryEntry:
+    """Convert a sealed credential manifest into safe inventory metadata."""
+
+    return BinanceCredentialInventoryEntry(
+        profile=BinanceCredentialProfileRef(
+            profile_id=manifest.profile_id,
+            venue=manifest.venue,
+            environment=manifest.environment,
+            secret_kind=manifest.secret_kind,
+            secret_hash=manifest.secret_hash,
+            sealed_ref=manifest.sealed_ref,
+            backend=manifest.backend,
+        ),
+        active=active,
+        review_state=manifest.review_state,
+        validation_status=validation_status,
+        source_ref=manifest.source_ref,
+        lineage_version=manifest.lineage_version,
+        created_at_ms=manifest.created_at_ms,
+    )
+
+
 class DashboardGovernedCommandRequest(TimestampedModel):
     """One typed file-queue request emitted by Local or dashboard control."""
 
@@ -118,17 +297,22 @@ class DashboardGovernedCommandRequest(TimestampedModel):
     operator_reason: str = ""
     target_pair: str = ""
     target_engine: str = ""
+    target_secret_profile: str = ""
     artifact_manifest: DashboardArtifactTransferManifest | None = None
+    secret_manifest: DashboardSecretTransferManifest | None = None
     command_version: str = Field(default="dashboard_governed_command.v1", min_length=1)
 
     @property
     def idempotency_key(self) -> str:
-        artifact_hash = (
-            self.artifact_manifest.artifact_hash
-            if self.artifact_manifest is not None
-            else "no_artifact"
-        )
-        return f"{self.request_id}:{artifact_hash}:{self.command_kind.value}"
+        if self.artifact_manifest is not None:
+            payload_hash = self.artifact_manifest.artifact_hash
+        elif self.secret_manifest is not None:
+            payload_hash = self.secret_manifest.secret_hash
+        elif self.target_secret_profile:
+            payload_hash = self.target_secret_profile
+        else:
+            payload_hash = "no_artifact"
+        return f"{self.request_id}:{payload_hash}:{self.command_kind.value}"
 
     @model_validator(mode="after")
     def validate_request(self) -> "DashboardGovernedCommandRequest":
@@ -139,6 +323,14 @@ class DashboardGovernedCommandRequest(TimestampedModel):
         if self.command_kind in _UPLOAD_COMMANDS and self.artifact_manifest is None:
             raise ValueError(
                 f"{self.command_kind.value} requires an artifact_manifest"
+            )
+        if self.command_kind in _SECRET_UPLOAD_COMMANDS and self.secret_manifest is None:
+            raise ValueError(
+                f"{self.command_kind.value} requires a secret_manifest"
+            )
+        if self.command_kind not in _SECRET_UPLOAD_COMMANDS and self.secret_manifest is not None:
+            raise ValueError(
+                f"{self.command_kind.value} must not declare a secret_manifest"
             )
         if self.command_kind not in _UPLOAD_COMMANDS and self.artifact_manifest is not None:
             if self.command_kind not in {
@@ -170,6 +362,30 @@ class DashboardGovernedCommandRequest(TimestampedModel):
                 raise ValueError(
                     "request_upload_regime_detector_artifact requires artifact_kind=regime_detector_artifact"
                 )
+        if (
+            self.command_kind
+            == DashboardGovernedCommandKind.REQUEST_UPLOAD_BINANCE_CREDENTIALS_BUNDLE
+        ):
+            if self.secret_manifest is None:
+                raise ValueError(
+                    "request_upload_binance_credentials_bundle requires secret_manifest"
+                )
+            if (
+                self.secret_manifest.secret_kind
+                != DashboardSecretKind.BINANCE_SPOT_CREDENTIALS
+            ):
+                raise ValueError(
+                    "request_upload_binance_credentials_bundle requires secret_kind=binance_spot_credentials"
+                )
+            if (
+                self.target_secret_profile
+                and self.target_secret_profile != self.secret_manifest.profile_id
+            ):
+                raise ValueError(
+                    "target_secret_profile must match secret_manifest.profile_id"
+                )
+        if self.command_kind in _SECRET_PROFILE_COMMANDS and not self.target_secret_profile:
+            raise ValueError(f"{self.command_kind.value} requires target_secret_profile")
         if self.command_kind in _PAIR_TARGET_COMMANDS and not self.target_pair:
             raise ValueError(f"{self.command_kind.value} requires target_pair")
         if self.command_kind in _ENGINE_TARGET_COMMANDS and not self.target_engine:
@@ -213,6 +429,8 @@ class DashboardGovernedCommandResult(TimestampedModel, frozen=True):
     reason_codes: tuple[str, ...] = ()
     detail: str = ""
     artifact_manifest: DashboardArtifactTransferManifest | None = None
+    secret_manifest: DashboardSecretTransferManifest | None = None
+    credential_inventory: BinanceCredentialInventorySnapshot | None = None
     export_ref: str = ""
     failure_stage: str = ""
 
@@ -251,10 +469,18 @@ class DashboardCommandQueueSnapshot(BaseModel, frozen=True):
 
 __all__ = [
     "DashboardArtifactKind",
+    "DashboardSecretKind",
+    "DashboardSecretEnvironment",
+    "BinanceCredentialValidationStatus",
     "DashboardGovernedCommandKind",
     "DashboardGovernedCommandStatus",
     "DashboardCommandQueueStatus",
     "DashboardArtifactTransferManifest",
+    "DashboardSecretTransferManifest",
+    "BinanceCredentialProfileRef",
+    "BinanceCredentialInventoryEntry",
+    "BinanceCredentialInventorySnapshot",
+    "binance_credential_entry_from_manifest",
     "DashboardGovernedCommandRequest",
     "DashboardGovernedCommandAck",
     "DashboardGovernedCommandResult",

@@ -139,6 +139,10 @@ def test_build_complete_dashboard_sections_render_control_plane_cards() -> None:
             report=recovery,
             eligible_to_trade=True,
         ),
+        active_binance_profile_id="binance-live-001",
+        active_binance_environment="live",
+        binance_credential_validation_status="validated",
+        credential_inventory_count=1,
         operator_report_status="ready",
         operator_report_ref="build/live_complete_operator_audit_report.json",
     )
@@ -152,6 +156,7 @@ def test_build_complete_dashboard_sections_render_control_plane_cards() -> None:
     assert keys == {
         "complete_control_queue",
         "complete_control_artifacts",
+        "complete_control_binance_credentials",
         "complete_control_recovery",
         "complete_control_warmup",
         "complete_control_operator_report",
@@ -160,5 +165,12 @@ def test_build_complete_dashboard_sections_render_control_plane_cards() -> None:
     operator_card = next(
         card for card in control_plane.cards if card.key == "complete_control_operator_report"
     )
+    credential_card = next(
+        card
+        for card in control_plane.cards
+        if card.key == "complete_control_binance_credentials"
+    )
     assert queue_card.value == "healthy / pending=1"
+    assert credential_card.value == "profile=binance-live-001 / env=live"
+    assert "validation=validated" in credential_card.detail
     assert operator_card.detail == "build/live_complete_operator_audit_report.json"

@@ -36,6 +36,10 @@ _REQUIRED_ALLOWED_ACTIONS = frozenset(
         "request_export_active_ml_artifact",
         "request_export_active_regime_detector_artifact",
         "request_export_regime_detector_shadow_audit_bundle",
+        "request_upload_binance_credentials_bundle",
+        "request_activate_binance_credentials_profile",
+        "request_export_binance_credential_inventory",
+        "request_deactivate_binance_credentials_profile",
         "view_complete_gates",
     }
 )

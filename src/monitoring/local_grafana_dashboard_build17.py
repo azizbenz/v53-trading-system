@@ -230,7 +230,9 @@ def build_shadow_vps_recovery_and_control_panels(
             title="Active Artifact and Recovery Labels",
             expr=(
                 f"{{__name__=~\"v53_shadow_vps_(recovery_status|warmup_state|active_ml_artifact|"
-                f"active_regime_detector_artifact|active_regime_detector_shadow_audit_bundle_present)\",{job_filter},{instance_filter}}}"
+                f"active_regime_detector_artifact|active_regime_detector_shadow_audit_bundle_present|"
+                f"active_binance_credential_profile|binance_credential_inventory_count|"
+                f"binance_credential_last_failure_reason_count)\",{job_filter},{instance_filter}}}"
             ),
             x=0,
             y=76,

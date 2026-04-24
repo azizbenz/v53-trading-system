@@ -215,6 +215,34 @@ def _build_artifact_samples(
                 "bundle_ref": payload.active_regime_detector_shadow_audit_bundle_ref or "none",
             },
         ),
+        _sample(
+            "v53_shadow_vps_active_binance_credential_profile",
+            kind="state",
+            value=1.0 if payload.active_binance_credential_profile_id else 0.0,
+            labels={
+                **base_labels,
+                "profile_id": payload.active_binance_credential_profile_id or "none",
+                "environment": payload.active_binance_credential_environment or "none",
+                "validation_status": payload.binance_credential_validation_status,
+            },
+        ),
+        _sample(
+            "v53_shadow_vps_binance_credential_inventory_count",
+            kind="gauge",
+            value=float(payload.binance_credential_inventory_count),
+            unit="count",
+            labels=base_labels,
+        ),
+        _sample(
+            "v53_shadow_vps_binance_credential_last_failure_reason_count",
+            kind="gauge",
+            value=float(payload.binance_credential_last_failure_reason_count),
+            unit="count",
+            labels={
+                **base_labels,
+                "validation_status": payload.binance_credential_validation_status,
+            },
+        ),
     )
 
 

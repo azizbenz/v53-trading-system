@@ -103,6 +103,27 @@ def _artifact(kind: DashboardArtifactKind, hash_seed: str) -> DashboardArtifactT
     )
 
 
+def _allowed_actions() -> tuple[str, ...]:
+    return (
+        "set_halted",
+        "rollback_to_light",
+        "suspend_pair",
+        "request_pair_resume",
+        "suspend_engine",
+        "request_engine_resume",
+        "request_upload_ml_artifact",
+        "request_upload_regime_detector_artifact",
+        "request_export_active_ml_artifact",
+        "request_export_active_regime_detector_artifact",
+        "request_export_regime_detector_shadow_audit_bundle",
+        "request_upload_binance_credentials_bundle",
+        "request_activate_binance_credentials_profile",
+        "request_export_binance_credential_inventory",
+        "request_deactivate_binance_credentials_profile",
+        "view_complete_gates",
+    )
+
+
 def _recovery_report(*, eligible: bool) -> VpsRecoveryReadinessReport:
     check_status = VpsRecoveryCheckStatus.PASSED if eligible else VpsRecoveryCheckStatus.BLOCKED
     return VpsRecoveryReadinessReport(
@@ -141,7 +162,7 @@ def test_build_live_complete_input_from_live_light_maps_governed_surfaces() -> N
         complete_gates=("gate.shadow_to_live_complete",),
         selected_pairs=("BTCUSDT",),
         available_pairs=("BTCUSDT", "ETHUSDT"),
-        allowed_actions=("set_halted", "rollback_to_light", "suspend_pair", "request_pair_resume", "suspend_engine", "request_engine_resume", "request_upload_ml_artifact", "request_upload_regime_detector_artifact", "request_export_active_ml_artifact", "request_export_active_regime_detector_artifact", "request_export_regime_detector_shadow_audit_bundle", "view_complete_gates"),
+        allowed_actions=_allowed_actions(),
         forbidden_actions=("modify_risk_caps", "inject_unversioned_config", "bypass_hard_blocker"),
         command_queue_snapshot=_queue_snapshot(status=DashboardCommandQueueStatus.HEALTHY),
         active_ml_artifact=_artifact(DashboardArtifactKind.ML_MODEL_ARTIFACT, "a"),
@@ -165,7 +186,7 @@ def test_run_live_complete_gate_allows_supervision_when_all_surfaces_are_ready()
             complete_gates=("gate.shadow_to_live_complete",),
             selected_pairs=("BTCUSDT",),
             available_pairs=("BTCUSDT", "ETHUSDT"),
-            allowed_actions=("set_halted", "rollback_to_light", "suspend_pair", "request_pair_resume", "suspend_engine", "request_engine_resume", "request_upload_ml_artifact", "request_upload_regime_detector_artifact", "request_export_active_ml_artifact", "request_export_active_regime_detector_artifact", "request_export_regime_detector_shadow_audit_bundle", "view_complete_gates"),
+            allowed_actions=_allowed_actions(),
             forbidden_actions=("modify_risk_caps", "inject_unversioned_config", "bypass_hard_blocker"),
             command_queue_snapshot=_queue_snapshot(status=DashboardCommandQueueStatus.HEALTHY),
             active_ml_artifact=_artifact(DashboardArtifactKind.ML_MODEL_ARTIFACT, "a"),
@@ -202,7 +223,7 @@ def test_run_live_complete_gate_stays_review_only_during_warmup_shadow_only() ->
             complete_gates=("gate.shadow_to_live_complete",),
             selected_pairs=("BTCUSDT",),
             available_pairs=("BTCUSDT", "ETHUSDT"),
-            allowed_actions=("set_halted", "rollback_to_light", "suspend_pair", "request_pair_resume", "suspend_engine", "request_engine_resume", "request_upload_ml_artifact", "request_upload_regime_detector_artifact", "request_export_active_ml_artifact", "request_export_active_regime_detector_artifact", "request_export_regime_detector_shadow_audit_bundle", "view_complete_gates"),
+            allowed_actions=_allowed_actions(),
             forbidden_actions=("modify_risk_caps", "inject_unversioned_config", "bypass_hard_blocker"),
             command_queue_snapshot=_queue_snapshot(status=DashboardCommandQueueStatus.HEALTHY),
             active_ml_artifact=_artifact(DashboardArtifactKind.ML_MODEL_ARTIFACT, "a"),
@@ -228,7 +249,7 @@ def test_run_live_complete_gate_blocks_on_unhealthy_queue() -> None:
             complete_gates=("gate.shadow_to_live_complete",),
             selected_pairs=("BTCUSDT",),
             available_pairs=("BTCUSDT", "ETHUSDT"),
-            allowed_actions=("set_halted", "rollback_to_light", "suspend_pair", "request_pair_resume", "suspend_engine", "request_engine_resume", "request_upload_ml_artifact", "request_upload_regime_detector_artifact", "request_export_active_ml_artifact", "request_export_active_regime_detector_artifact", "request_export_regime_detector_shadow_audit_bundle", "view_complete_gates"),
+            allowed_actions=_allowed_actions(),
             forbidden_actions=("modify_risk_caps", "inject_unversioned_config", "bypass_hard_blocker"),
             command_queue_snapshot=_queue_snapshot(status=DashboardCommandQueueStatus.BLOCKED),
             active_ml_artifact=_artifact(DashboardArtifactKind.ML_MODEL_ARTIFACT, "a"),

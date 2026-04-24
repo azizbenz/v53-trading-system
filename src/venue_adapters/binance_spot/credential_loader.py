@@ -1,4 +1,4 @@
-"""Stub credential loader for Binance Spot before sealed-secrets land in T2."""
+"""Credential loaders for Binance Spot with runtime-safe policy seams."""
 
 from __future__ import annotations
 
@@ -10,12 +10,17 @@ from typing import Mapping
 import yaml
 from pydantic import ValidationError
 
+from interface_contracts import RuntimeMode
 from interface_contracts.binance_contracts import BinanceCredentials
 from secrets_manager import SecretManagerLoadError, load as load_sealed_mapping
 
 
 class BinanceCredentialLoadError(RuntimeError):
     """Raised when Binance credentials cannot be loaded safely."""
+
+
+def _is_sealed_credential_path(path: Path) -> bool:
+    return path.name.endswith(".sealed.json")
 
 
 def load_binance_credentials(payload: Mapping[str, object]) -> BinanceCredentials:
@@ -38,11 +43,7 @@ def load_binance_credentials(payload: Mapping[str, object]) -> BinanceCredential
 
 
 def load_binance_credentials_from_env(prefix: str = "V53_BINANCE_") -> BinanceCredentials:
-    """Load credentials from environment variables.
-
-    The sealed-secrets manager will replace this stub in T2. Until then, the
-    loader stays explicit and opt-in.
-    """
+    """Load credentials from environment variables for local/dev seams."""
 
     api_key = os.getenv(f"{prefix}API_KEY", "")
     secret_key = os.getenv(f"{prefix}SECRET_KEY", "")
@@ -75,8 +76,8 @@ def load_binance_credentials_from_file(
 ) -> BinanceCredentials:
     """Load credentials from a local file.
 
-    This is only a development stub. T2 will replace the plaintext path with a
-    sealed loader.
+    Plaintext files remain supported here for tests/local development only.
+    Runtime code must use :func:`load_binance_credentials_for_runtime`.
     """
 
     credential_path = Path(path)
@@ -86,7 +87,7 @@ def load_binance_credentials_from_file(
         raise BinanceCredentialLoadError(f"Binance credential path {credential_path} must be a file")
 
     try:
-        if credential_path.name.endswith(".sealed.json"):
+        if _is_sealed_credential_path(credential_path):
             if key_path is None:
                 raise BinanceCredentialLoadError(
                     f"Sealed Binance credential file {credential_path} requires key_path"
@@ -119,10 +120,45 @@ def load_binance_credentials_from_file(
     return load_binance_credentials(payload)
 
 
+def load_binance_credentials_for_runtime(
+    path: Path | str,
+    *,
+    runtime_mode: RuntimeMode,
+    key_path: Path | str | None = None,
+    allow_plaintext_local_replay: bool = False,
+) -> BinanceCredentials:
+    """Load Binance credentials with VPS/LIVE fail-closed plaintext policy."""
+
+    credential_path = Path(path)
+    if not _is_sealed_credential_path(credential_path):
+        if runtime_mode != RuntimeMode.LOCAL_REPLAY or not allow_plaintext_local_replay:
+            raise BinanceCredentialLoadError(
+                "Plaintext Binance credential files are forbidden for runtime loading"
+            )
+    return load_binance_credentials_from_file(credential_path, key_path=key_path)
+
+
+def load_binance_credentials_from_env_for_runtime(
+    *,
+    runtime_mode: RuntimeMode,
+    prefix: str = "V53_BINANCE_",
+    allow_env_local_replay: bool = False,
+) -> BinanceCredentials:
+    """Load env credentials only for explicit LOCAL_REPLAY development seams."""
+
+    if runtime_mode != RuntimeMode.LOCAL_REPLAY or not allow_env_local_replay:
+        raise BinanceCredentialLoadError(
+            "Environment Binance credentials are forbidden for runtime loading"
+        )
+    return load_binance_credentials_from_env(prefix=prefix)
+
+
 __all__ = [
     "BinanceCredentialLoadError",
     "load_binance_credentials",
     "load_binance_credentials_from_env",
+    "load_binance_credentials_from_env_for_runtime",
     "load_binance_credentials_from_file",
+    "load_binance_credentials_for_runtime",
     "load_testnet_credentials",
 ]

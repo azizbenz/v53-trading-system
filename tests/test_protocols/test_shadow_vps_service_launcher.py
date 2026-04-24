@@ -478,6 +478,44 @@ def _write_live_capture_result(
     )
 
 
+def _write_validated_binance_credential_state(service_dir: Path) -> None:
+    service_dir.mkdir(parents=True, exist_ok=False)
+    (service_dir / "shadow_vps_service.state.json").write_text(
+        json.dumps(
+            {
+                "loop_count": 1,
+                "binance_credential_inventory": [
+                    {
+                        "profile": {
+                            "profile_id": "binance-testnet-001",
+                            "venue": "binance_spot",
+                            "environment": "testnet",
+                            "secret_kind": "binance_spot_credentials",
+                            "secret_hash": "b" * 64,
+                            "sealed_ref": "secrets/binance-testnet-001.sealed.json",
+                            "backend": "dpapi",
+                        },
+                        "active": True,
+                        "review_state": "approved",
+                        "validation_status": "validated",
+                        "last_auth_check_ms": 1_700_000_000_000,
+                        "last_failure_reason_codes": [],
+                        "source_ref": "secrets/binance-testnet-001.sealed.json",
+                        "lineage_version": "credentials.v1",
+                        "created_at_ms": 1_700_000_000_000,
+                    }
+                ],
+                "active_binance_credential_profile_id": "binance-testnet-001",
+                "active_binance_credential_environment": "testnet",
+                "binance_credential_validation_status": "validated",
+                "binance_credential_last_auth_check_ms": 1_700_000_000_000,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
 def _write_execution_runtime_projection(path: Path) -> None:
     projection = build_local_lab_execution_runtime_projection(
         build_local_lab_execution_review(
@@ -1838,20 +1876,18 @@ def test_shadow_vps_service_startup_writes_eligible_recovery_report_from_persist
             accepted_message_count=2,
             time_sync_offsets_path=time_sync_offsets_path,
         )
-        service_dir.mkdir(parents=True, exist_ok=False)
-        (service_dir / "shadow_vps_service.state.json").write_text(
-            json.dumps(
-                {
-                    "loop_count": 1,
-                    "last_live_capture_dir_ref": str(live_capture_dir.resolve()),
-                    "last_live_capture_time_sync_offsets_ref": str(
-                        time_sync_offsets_path.resolve()
-                    ),
-                },
-                indent=2,
-            ),
-            encoding="utf-8",
+        _write_validated_binance_credential_state(service_dir)
+        state_path = service_dir / "shadow_vps_service.state.json"
+        state_payload = json.loads(state_path.read_text(encoding="utf-8"))
+        state_payload.update(
+            {
+                "last_live_capture_dir_ref": str(live_capture_dir.resolve()),
+                "last_live_capture_time_sync_offsets_ref": str(
+                    time_sync_offsets_path.resolve()
+                ),
+            }
         )
+        state_path.write_text(json.dumps(state_payload, indent=2), encoding="utf-8")
         _write_live_websocket_config(
             live_config_path,
             "2026-04-02",

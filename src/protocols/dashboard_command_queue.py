@@ -10,6 +10,8 @@ from typing import TypeVar
 from pydantic import BaseModel, ValidationError
 
 from interface_contracts import (
+    BinanceCredentialInventoryEntry,
+    BinanceCredentialValidationStatus,
     DashboardArtifactKind,
     DashboardArtifactTransferManifest,
     DashboardCommandQueueSnapshot,
@@ -21,6 +23,19 @@ from interface_contracts import (
     DashboardGovernedCommandResult,
     DashboardGovernedCommandStatus,
     ProfileId,
+)
+from .dashboard_command_result_support import (
+    completed_command_result,
+    deactivate_credential_entry,
+    find_credential_profile_entry,
+    replace_credential_entry,
+    result_for_active_export,
+    result_for_credential_inventory_export,
+    result_for_credential_profile_request,
+    result_for_secret_upload_request,
+    result_for_shadow_audit_export,
+    result_for_upload_request,
+    set_active_credential_entry,
 )
 from .shadow_vps_service import ShadowVpsServiceStore
 
@@ -45,6 +60,10 @@ class DashboardGovernedCommandExecutionContext:
     active_ml_artifact: DashboardArtifactTransferManifest | None = None
     active_regime_detector_artifact: DashboardArtifactTransferManifest | None = None
     regime_detector_shadow_audit_bundle_ref: str = ""
+    binance_credential_inventory: tuple[BinanceCredentialInventoryEntry, ...] = ()
+    binance_credential_inventory_export_ref: str = (
+        "exports/binance_credential_inventory.json"
+    )
     shadow_vps_service_state_dir: Path | None = None
 
 
@@ -179,113 +198,6 @@ def write_dashboard_command_result(
     return _write_model(paths.results_dir / _result_filename(result), result)
 
 
-def _result_for_active_export(
-    request: DashboardGovernedCommandRequest,
-    *,
-    result_id: str,
-    timestamp_ms: int,
-    manifest: DashboardArtifactTransferManifest | None,
-) -> DashboardGovernedCommandResult:
-    if manifest is None:
-        return DashboardGovernedCommandResult(
-            timestamp_ms=timestamp_ms,
-            correlation_id=request.correlation_id,
-            result_id=result_id,
-            request_id=request.request_id,
-            command_kind=request.command_kind,
-            status=DashboardGovernedCommandStatus.FAILED,
-            idempotency_key=request.idempotency_key,
-            reason_codes=("dashboard.command.active_artifact_missing",),
-            detail=f"{request.command_kind.value} could not find an active governed artifact",
-            failure_stage="lookup_active_artifact",
-        )
-    return DashboardGovernedCommandResult(
-        timestamp_ms=timestamp_ms,
-        correlation_id=request.correlation_id,
-        result_id=result_id,
-        request_id=request.request_id,
-        command_kind=request.command_kind,
-        status=DashboardGovernedCommandStatus.COMPLETED,
-        idempotency_key=request.idempotency_key,
-        reason_codes=(f"dashboard.command.{request.command_kind.value}.completed",),
-        detail=f"{request.command_kind.value} completed",
-        artifact_manifest=manifest,
-        export_ref=manifest.source_ref,
-    )
-
-
-def _completed_command_result(
-    request: DashboardGovernedCommandRequest,
-    *,
-    result_id: str,
-    timestamp_ms: int,
-    artifact_manifest: DashboardArtifactTransferManifest | None = None,
-    export_ref: str = "",
-) -> DashboardGovernedCommandResult:
-    return DashboardGovernedCommandResult(
-        timestamp_ms=timestamp_ms,
-        correlation_id=request.correlation_id,
-        result_id=result_id,
-        request_id=request.request_id,
-        command_kind=request.command_kind,
-        status=DashboardGovernedCommandStatus.COMPLETED,
-        idempotency_key=request.idempotency_key,
-        reason_codes=(f"dashboard.command.{request.command_kind.value}.completed",),
-        detail=f"{request.command_kind.value} completed",
-        artifact_manifest=artifact_manifest,
-        export_ref=export_ref,
-    )
-
-
-def _result_for_upload_request(
-    request: DashboardGovernedCommandRequest,
-    *,
-    result_id: str,
-    timestamp_ms: int,
-) -> DashboardGovernedCommandResult:
-    export_ref = "" if request.artifact_manifest is None else request.artifact_manifest.source_ref
-    return _completed_command_result(
-        request,
-        result_id=result_id,
-        timestamp_ms=timestamp_ms,
-        artifact_manifest=request.artifact_manifest,
-        export_ref=export_ref,
-    )
-
-
-def _result_for_shadow_audit_export(
-    request: DashboardGovernedCommandRequest,
-    *,
-    result_id: str,
-    timestamp_ms: int,
-    shadow_audit_bundle_ref: str,
-) -> DashboardGovernedCommandResult:
-    if not shadow_audit_bundle_ref:
-        return DashboardGovernedCommandResult(
-            timestamp_ms=timestamp_ms,
-            correlation_id=request.correlation_id,
-            result_id=result_id,
-            request_id=request.request_id,
-            command_kind=request.command_kind,
-            status=DashboardGovernedCommandStatus.FAILED,
-            idempotency_key=request.idempotency_key,
-            reason_codes=("dashboard.command.regime_detector_shadow_audit_missing",),
-            detail="No VPS RegimeDetector shadow audit bundle is available for export",
-            failure_stage="resolve_shadow_audit_bundle",
-        )
-    return _completed_command_result(
-        request,
-        result_id=result_id,
-        timestamp_ms=timestamp_ms,
-        artifact_manifest=DashboardArtifactTransferManifest(
-            artifact_hash="shadow_audit_bundle",
-            artifact_kind=DashboardArtifactKind.REGIME_DETECTOR_SHADOW_AUDIT_BUNDLE,
-            source_ref=shadow_audit_bundle_ref,
-        ),
-        export_ref=shadow_audit_bundle_ref,
-    )
-
-
 def _load_shadow_vps_service_store(
     context: DashboardGovernedCommandExecutionContext,
 ) -> ShadowVpsServiceStore | None:
@@ -317,6 +229,29 @@ def _resolve_shadow_audit_bundle_ref(
         else store.state.active_regime_detector_shadow_audit_bundle_ref
     )
     return persisted or context.regime_detector_shadow_audit_bundle_ref
+
+
+def _credential_inventory(
+    context: DashboardGovernedCommandExecutionContext,
+) -> tuple[BinanceCredentialInventoryEntry, ...]:
+    store = _load_shadow_vps_service_store(context)
+    persisted = () if store is None else store.state.binance_credential_inventory
+    return persisted or context.binance_credential_inventory
+
+
+def _credential_state_allows_profile_change(
+    context: DashboardGovernedCommandExecutionContext,
+) -> bool:
+    store = _load_shadow_vps_service_store(context)
+    if store is None:
+        return False
+    state = store.state
+    return (
+        state.dashboard_control_halted
+        or state.dashboard_control_target_deployment_state == DeploymentState.HALTED.value
+        or state.last_vps_warmup_final_state == "blocked"
+        or state.last_vps_recovery_status == "blocked"
+    )
 
 
 def _sorted_unique(values: tuple[str, ...], new_value: str) -> tuple[str, ...]:
@@ -352,6 +287,54 @@ def _build_state_updates(
         == DashboardGovernedCommandKind.REQUEST_UPLOAD_REGIME_DETECTOR_ARTIFACT
     ):
         updates["active_regime_detector_artifact"] = request.artifact_manifest
+    elif (
+        request.command_kind
+        == DashboardGovernedCommandKind.REQUEST_UPLOAD_BINANCE_CREDENTIALS_BUNDLE
+    ):
+        if request.secret_manifest is not None:
+            updates["binance_credential_inventory"] = replace_credential_entry(
+                store.state.binance_credential_inventory,
+                request.secret_manifest,
+            )
+    elif (
+        request.command_kind
+        == DashboardGovernedCommandKind.REQUEST_ACTIVATE_BINANCE_CREDENTIALS_PROFILE
+    ):
+        entry = find_credential_profile_entry(
+            store.state.binance_credential_inventory,
+            profile_id=request.target_secret_profile,
+        )
+        if entry is not None:
+            updates["binance_credential_inventory"] = set_active_credential_entry(
+                store.state.binance_credential_inventory,
+                profile_id=request.target_secret_profile,
+            )
+            updates["active_binance_credential_profile_id"] = request.target_secret_profile
+            updates["active_binance_credential_environment"] = (
+                entry.profile.environment.value
+            )
+            updates["binance_credential_validation_status"] = (
+                BinanceCredentialValidationStatus.PENDING.value
+            )
+            updates["binance_credential_last_failure_reason_codes"] = ()
+    elif (
+        request.command_kind
+        == DashboardGovernedCommandKind.REQUEST_DEACTIVATE_BINANCE_CREDENTIALS_PROFILE
+    ):
+        if (
+            store.state.active_binance_credential_profile_id
+            == request.target_secret_profile
+        ):
+            updates["binance_credential_inventory"] = deactivate_credential_entry(
+                store.state.binance_credential_inventory,
+                profile_id=request.target_secret_profile,
+            )
+            updates["active_binance_credential_profile_id"] = ""
+            updates["active_binance_credential_environment"] = ""
+            updates["binance_credential_validation_status"] = (
+                BinanceCredentialValidationStatus.DEACTIVATED.value
+            )
+            updates["binance_credential_last_failure_reason_codes"] = ()
     elif request.command_kind == DashboardGovernedCommandKind.SET_HALTED:
         updates["dashboard_control_halted"] = True
         updates["dashboard_control_target_deployment_state"] = (
@@ -432,13 +415,52 @@ def execute_dashboard_governed_command(
             DashboardGovernedCommandKind.REQUEST_UPLOAD_REGIME_DETECTOR_ARTIFACT,
         }
     ):
-        return _result_for_upload_request(
+        return result_for_upload_request(
             request,
             result_id=result_id,
             timestamp_ms=timestamp_ms,
         )
+    if (
+        request.command_kind
+        == DashboardGovernedCommandKind.REQUEST_UPLOAD_BINANCE_CREDENTIALS_BUNDLE
+    ):
+        return result_for_secret_upload_request(
+            request,
+            result_id=result_id,
+            timestamp_ms=timestamp_ms,
+        )
+    if (
+        request.command_kind
+        in {
+            DashboardGovernedCommandKind.REQUEST_ACTIVATE_BINANCE_CREDENTIALS_PROFILE,
+            DashboardGovernedCommandKind.REQUEST_DEACTIVATE_BINANCE_CREDENTIALS_PROFILE,
+        }
+    ):
+        return result_for_credential_profile_request(
+            request,
+            result_id=result_id,
+            timestamp_ms=timestamp_ms,
+            inventory=_credential_inventory(context),
+            profile_change_allowed=_credential_state_allows_profile_change(context),
+        )
+    if (
+        request.command_kind
+        == DashboardGovernedCommandKind.REQUEST_EXPORT_BINANCE_CREDENTIAL_INVENTORY
+    ):
+        store = _load_shadow_vps_service_store(context)
+        active_profile_id = (
+            "" if store is None else store.state.active_binance_credential_profile_id
+        )
+        return result_for_credential_inventory_export(
+            request,
+            result_id=result_id,
+            timestamp_ms=timestamp_ms,
+            inventory=_credential_inventory(context),
+            active_profile_id=active_profile_id,
+            export_ref=context.binance_credential_inventory_export_ref,
+        )
     if request.command_kind == DashboardGovernedCommandKind.REQUEST_EXPORT_ACTIVE_ML_ARTIFACT:
-        return _result_for_active_export(
+        return result_for_active_export(
             request,
             result_id=result_id,
             timestamp_ms=timestamp_ms,
@@ -451,7 +473,7 @@ def execute_dashboard_governed_command(
         request.command_kind
         == DashboardGovernedCommandKind.REQUEST_EXPORT_ACTIVE_REGIME_DETECTOR_ARTIFACT
     ):
-        return _result_for_active_export(
+        return result_for_active_export(
             request,
             result_id=result_id,
             timestamp_ms=timestamp_ms,
@@ -464,13 +486,13 @@ def execute_dashboard_governed_command(
         request.command_kind
         == DashboardGovernedCommandKind.REQUEST_EXPORT_REGIME_DETECTOR_SHADOW_AUDIT_BUNDLE
     ):
-        return _result_for_shadow_audit_export(
+        return result_for_shadow_audit_export(
             request,
             result_id=result_id,
             timestamp_ms=timestamp_ms,
             shadow_audit_bundle_ref=_resolve_shadow_audit_bundle_ref(context),
         )
-    return _completed_command_result(
+    return completed_command_result(
         request,
         result_id=result_id,
         timestamp_ms=timestamp_ms,

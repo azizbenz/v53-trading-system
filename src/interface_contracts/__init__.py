@@ -142,9 +142,14 @@ __all__ = [
     "ShadowVpsRuntimeEvidenceBundle", "ShadowVpsCampaignSummary",
     "ShadowVpsServiceEvent", "ShadowVpsExecutionRuntimeBootstrapSummary",
     # dashboard_command_contracts
-    "DashboardArtifactKind", "DashboardGovernedCommandKind",
+    "DashboardArtifactKind", "DashboardSecretKind", "DashboardSecretEnvironment",
+    "BinanceCredentialValidationStatus",
+    "DashboardGovernedCommandKind",
     "DashboardGovernedCommandStatus", "DashboardCommandQueueStatus",
-    "DashboardArtifactTransferManifest", "DashboardGovernedCommandRequest",
+    "DashboardArtifactTransferManifest", "DashboardSecretTransferManifest",
+    "BinanceCredentialProfileRef", "BinanceCredentialInventoryEntry",
+    "BinanceCredentialInventorySnapshot", "binance_credential_entry_from_manifest",
+    "DashboardGovernedCommandRequest",
     "DashboardGovernedCommandAck", "DashboardGovernedCommandResult",
     "DashboardCommandQueueSnapshot",
     # vps_recovery_contracts

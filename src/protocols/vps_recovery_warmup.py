@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from interface_contracts import (
+    BinanceCredentialInventorySnapshot,
     DashboardArtifactTransferManifest,
     DashboardCommandQueueSnapshot,
     DeploymentState,
@@ -46,6 +47,11 @@ def build_vps_recovery_readiness_report(
     regime_lite_ready: bool,
     info_stress_ready: bool,
     pending_ambiguous_command_count: int = 0,
+    binance_credential_inventory: BinanceCredentialInventorySnapshot | None = None,
+    active_binance_profile_id: str = "",
+    binance_credentials_decryptable: bool = False,
+    binance_credentials_authenticated: bool = False,
+    binance_time_sync_ok: bool = False,
 ) -> VpsRecoveryReadinessReport:
     """Build the bounded pre-trading go/no-go report after crash or restart."""
 
@@ -61,6 +67,14 @@ def build_vps_recovery_readiness_report(
         and command_queue_snapshot.drainable
         and pending_ambiguous_command_count == 0
         and command_queue_snapshot.ambiguous_pending_count == 0
+    )
+    credential_ready = (
+        binance_credential_inventory is not None
+        and bool(active_binance_profile_id)
+        and binance_credential_inventory.active_profile_id == active_binance_profile_id
+        and binance_credentials_decryptable
+        and binance_credentials_authenticated
+        and binance_time_sync_ok
     )
     checks = (
         _build_check(
@@ -91,6 +105,11 @@ def build_vps_recovery_readiness_report(
             blocked_reason="dashboard command queue is not writable/drainable or has ambiguous pending requests",
         ),
         _build_check(
+            check_id="binance_credentials",
+            passed=credential_ready,
+            blocked_reason="active Binance credential profile is missing, invalid, unauthenticated, or time-sync unsafe",
+        ),
+        _build_check(
             check_id="regime_dependencies",
             passed=regime_lite_ready and info_stress_ready,
             blocked_reason="regime-lite or info-stress dependencies are not ready",
@@ -112,6 +131,11 @@ def build_vps_recovery_readiness_report(
         runtime_mode=runtime_mode,
         deployment_state=deployment_state,
         active_artifact=active_artifact_manifest,
+        binance_credential_inventory=binance_credential_inventory,
+        active_binance_profile_id=active_binance_profile_id,
+        binance_credential_validation_status=(
+            "validated" if credential_ready else "blocked"
+        ),
         command_queue_snapshot=command_queue_snapshot,
         bootstrap_summary=bootstrap_summary,
         websocket_ready=websocket_ready,

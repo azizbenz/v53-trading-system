@@ -7,10 +7,15 @@ from interface_contracts import (
     DashboardArtifactKind,
     DashboardArtifactTransferManifest,
     DashboardCommandQueueStatus,
+    BinanceCredentialValidationStatus,
     DashboardGovernedCommandKind,
     DashboardGovernedCommandRequest,
     DashboardGovernedCommandStatus,
+    DashboardSecretEnvironment,
+    DashboardSecretKind,
+    DashboardSecretTransferManifest,
     RuntimeMode,
+    binance_credential_entry_from_manifest,
 )
 from protocols import (
     DashboardGovernedCommandExecutionContext,
@@ -42,6 +47,19 @@ def _manifest(*, kind: DashboardArtifactKind, source_ref: str) -> DashboardArtif
         feature_profile="extended_v2",
         lineage_version="a.v1.0.r1",
         source_ref=source_ref,
+    )
+
+
+def _secret_manifest() -> DashboardSecretTransferManifest:
+    return DashboardSecretTransferManifest(
+        secret_hash="b" * 64,
+        secret_kind=DashboardSecretKind.BINANCE_SPOT_CREDENTIALS,
+        profile_id="binance-live-001",
+        environment=DashboardSecretEnvironment.LIVE,
+        sealed_ref="secrets/binance-live-001.sealed.json",
+        backend="dpapi",
+        review_state="approved",
+        validation_status="accepted",
     )
 
 
@@ -239,6 +257,193 @@ def test_upload_and_export_regime_detector_artifact_use_persisted_state() -> Non
         assert len(results) == 2
         assert results[-1].status == DashboardGovernedCommandStatus.COMPLETED
         assert results[-1].export_ref == "exports/persisted_regime_detector_artifact.json"
+    finally:
+        shutil.rmtree(queue_root, ignore_errors=True)
+        shutil.rmtree(service_dir, ignore_errors=True)
+
+
+def test_binance_credential_upload_activate_export_and_deactivate_use_persisted_state() -> None:
+    queue_root = _queue_root("binance_credentials_lifecycle")
+    service_dir = _service_dir("binance_credentials_lifecycle")
+    try:
+        initialize_dashboard_command_queue(queue_root)
+        ShadowVpsServiceStore(service_dir).update_state(
+            dashboard_control_halted=True,
+            dashboard_control_target_deployment_state="halted",
+        )
+        upload_request = DashboardGovernedCommandRequest(
+            timestamp_ms=1_700_000_000_000,
+            correlation_id="corr-queue-credentials-upload",
+            request_id="req-credentials-upload",
+            command_kind=(
+                DashboardGovernedCommandKind.REQUEST_UPLOAD_BINANCE_CREDENTIALS_BUNDLE
+            ),
+            source_runtime_mode=RuntimeMode.LOCAL_REPLAY,
+            target_runtime_mode=RuntimeMode.LIVE,
+            operator_reason="upload reviewed sealed credentials",
+            secret_manifest=_secret_manifest(),
+        )
+        activate_request = DashboardGovernedCommandRequest(
+            timestamp_ms=1_700_000_000_100,
+            correlation_id="corr-queue-credentials-activate",
+            request_id="req-credentials-activate",
+            command_kind=(
+                DashboardGovernedCommandKind.REQUEST_ACTIVATE_BINANCE_CREDENTIALS_PROFILE
+            ),
+            source_runtime_mode=RuntimeMode.LOCAL_REPLAY,
+            target_runtime_mode=RuntimeMode.LIVE,
+            operator_reason="activate reviewed sealed credentials",
+            target_secret_profile="binance-live-001",
+        )
+        export_request = DashboardGovernedCommandRequest(
+            timestamp_ms=1_700_000_000_200,
+            correlation_id="corr-queue-credentials-export",
+            request_id="req-credentials-export",
+            command_kind=DashboardGovernedCommandKind.REQUEST_EXPORT_BINANCE_CREDENTIAL_INVENTORY,
+            source_runtime_mode=RuntimeMode.LOCAL_REPLAY,
+            target_runtime_mode=RuntimeMode.LIVE,
+        )
+        deactivate_request = DashboardGovernedCommandRequest(
+            timestamp_ms=1_700_000_000_300,
+            correlation_id="corr-queue-credentials-deactivate",
+            request_id="req-credentials-deactivate",
+            command_kind=(
+                DashboardGovernedCommandKind.REQUEST_DEACTIVATE_BINANCE_CREDENTIALS_PROFILE
+            ),
+            source_runtime_mode=RuntimeMode.LOCAL_REPLAY,
+            target_runtime_mode=RuntimeMode.LIVE,
+            operator_reason="deactivate reviewed sealed credentials",
+            target_secret_profile="binance-live-001",
+        )
+        for request in (
+            upload_request,
+            activate_request,
+            export_request,
+            deactivate_request,
+        ):
+            write_dashboard_command_request(queue_root, request)
+
+        process_dashboard_command_queue_once(
+            queue_root,
+            context=DashboardGovernedCommandExecutionContext(
+                allowed_commands=frozenset(
+                    {
+                        upload_request.command_kind,
+                        activate_request.command_kind,
+                        export_request.command_kind,
+                        deactivate_request.command_kind,
+                    }
+                ),
+                shadow_vps_service_state_dir=service_dir,
+            ),
+        )
+
+        persisted = ShadowVpsServiceStore(service_dir).state
+        assert len(persisted.binance_credential_inventory) == 1
+        assert persisted.binance_credential_inventory[0].profile.secret_hash == "b" * 64
+        assert (
+            persisted.binance_credential_inventory[0].validation_status
+            == BinanceCredentialValidationStatus.DEACTIVATED
+        )
+        assert persisted.active_binance_credential_profile_id == ""
+        assert persisted.active_binance_credential_environment == ""
+        assert persisted.binance_credential_validation_status == "deactivated"
+        results = load_dashboard_command_results(queue_root)
+        assert len(results) == 4
+        assert results[1].status == DashboardGovernedCommandStatus.COMPLETED
+        assert results[2].credential_inventory is not None
+        assert results[2].credential_inventory.active_profile_id == "binance-live-001"
+        assert results[2].export_ref.endswith("binance_credential_inventory.json")
+        for result in results:
+            dumped = result.model_dump_json()
+            assert "api-key" not in dumped
+            assert "secret-key" not in dumped
+    finally:
+        shutil.rmtree(queue_root, ignore_errors=True)
+        shutil.rmtree(service_dir, ignore_errors=True)
+
+
+def test_binance_credential_activation_fails_when_profile_missing() -> None:
+    queue_root = _queue_root("binance_credentials_missing")
+    service_dir = _service_dir("binance_credentials_missing")
+    try:
+        initialize_dashboard_command_queue(queue_root)
+        ShadowVpsServiceStore(service_dir).update_state(
+            dashboard_control_halted=True,
+            dashboard_control_target_deployment_state="halted",
+        )
+        request = DashboardGovernedCommandRequest(
+            timestamp_ms=1_700_000_000_000,
+            correlation_id="corr-queue-credentials-missing",
+            request_id="req-credentials-missing",
+            command_kind=(
+                DashboardGovernedCommandKind.REQUEST_ACTIVATE_BINANCE_CREDENTIALS_PROFILE
+            ),
+            source_runtime_mode=RuntimeMode.LOCAL_REPLAY,
+            target_runtime_mode=RuntimeMode.LIVE,
+            operator_reason="activate missing profile",
+            target_secret_profile="missing-profile",
+        )
+        write_dashboard_command_request(queue_root, request)
+
+        process_dashboard_command_queue_once(
+            queue_root,
+            context=DashboardGovernedCommandExecutionContext(
+                allowed_commands=frozenset({request.command_kind}),
+                shadow_vps_service_state_dir=service_dir,
+            ),
+        )
+
+        results = load_dashboard_command_results(queue_root)
+        assert len(results) == 1
+        assert results[0].status == DashboardGovernedCommandStatus.FAILED
+        assert results[0].reason_codes == (
+            "dashboard.command.binance_credentials_profile_missing",
+        )
+    finally:
+        shutil.rmtree(queue_root, ignore_errors=True)
+        shutil.rmtree(service_dir, ignore_errors=True)
+
+
+def test_binance_credential_activation_rejected_when_vps_not_halted_or_blocked() -> None:
+    queue_root = _queue_root("binance_credentials_state_forbidden")
+    service_dir = _service_dir("binance_credentials_state_forbidden")
+    try:
+        initialize_dashboard_command_queue(queue_root)
+        store = ShadowVpsServiceStore(service_dir)
+        store.update_state(
+            binance_credential_inventory=(
+                binance_credential_entry_from_manifest(_secret_manifest()),
+            )
+        )
+        request = DashboardGovernedCommandRequest(
+            timestamp_ms=1_700_000_000_000,
+            correlation_id="corr-queue-credentials-state-forbidden",
+            request_id="req-credentials-state-forbidden",
+            command_kind=(
+                DashboardGovernedCommandKind.REQUEST_ACTIVATE_BINANCE_CREDENTIALS_PROFILE
+            ),
+            source_runtime_mode=RuntimeMode.LOCAL_REPLAY,
+            target_runtime_mode=RuntimeMode.LIVE,
+            operator_reason="activate while running",
+            target_secret_profile="binance-live-001",
+        )
+        write_dashboard_command_request(queue_root, request)
+
+        process_dashboard_command_queue_once(
+            queue_root,
+            context=DashboardGovernedCommandExecutionContext(
+                allowed_commands=frozenset({request.command_kind}),
+                shadow_vps_service_state_dir=service_dir,
+            ),
+        )
+
+        results = load_dashboard_command_results(queue_root)
+        assert len(results) == 1
+        assert results[0].status == DashboardGovernedCommandStatus.REJECTED
+        assert results[0].reason_codes == (
+            "dashboard.command.binance_credentials_state_forbidden",
+        )
     finally:
         shutil.rmtree(queue_root, ignore_errors=True)
         shutil.rmtree(service_dir, ignore_errors=True)

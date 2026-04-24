@@ -7,7 +7,9 @@ from venue_adapters.binance_spot.credential_loader import (
     BinanceCredentialLoadError,
     load_binance_credentials,
     load_binance_credentials_from_env,
+    load_binance_credentials_from_env_for_runtime,
     load_binance_credentials_from_file,
+    load_binance_credentials_for_runtime,
 )
 from venue_adapters.binance_spot.bootstrap import build_binance_spot_execution_adapter
 from venue_adapters.binance_spot.execution_adapter import BinanceSpotExecutionAdapter
@@ -90,7 +92,9 @@ __all__ = [
     "load_binance_adapter_config",
     "load_binance_credentials",
     "load_binance_credentials_from_env",
+    "load_binance_credentials_from_env_for_runtime",
     "load_binance_credentials_from_file",
+    "load_binance_credentials_for_runtime",
     "parse_binance_user_data_payload",
     "parse_binance_user_data_payloads",
     "resolve_time_sync_threshold_ms",

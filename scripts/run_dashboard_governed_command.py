@@ -21,6 +21,9 @@ from interface_contracts import (  # noqa: E402
     DashboardArtifactTransferManifest,
     DashboardGovernedCommandKind,
     DashboardGovernedCommandRequest,
+    DashboardSecretEnvironment,
+    DashboardSecretKind,
+    DashboardSecretTransferManifest,
     RuntimeMode,
 )
 from protocols import (  # noqa: E402
@@ -56,6 +59,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--target-pair", default="", help="Canonical pair target when required.")
     parser.add_argument("--target-engine", default="", help="Canonical engine target when required.")
     parser.add_argument(
+        "--target-secret-profile",
+        default="",
+        help="Credential profile id for activate/deactivate requests.",
+    )
+    parser.add_argument(
         "--requested-by",
         default="grafana_operator",
         help="Operator/source label recorded in the request.",
@@ -82,6 +90,24 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--review-state", default="", help="Artifact review state.")
     parser.add_argument("--validation-status", default="", help="Artifact validation state.")
     parser.add_argument("--source-ref", default="", help="Artifact source/export ref.")
+    parser.add_argument("--secret-hash", default="", help="Sealed credential bundle hash.")
+    parser.add_argument("--secret-profile-id", default="", help="Sealed credential profile id.")
+    parser.add_argument(
+        "--secret-environment",
+        default=DashboardSecretEnvironment.TESTNET.value,
+        choices=[environment.value for environment in DashboardSecretEnvironment],
+        help="Credential environment carried as metadata only.",
+    )
+    parser.add_argument(
+        "--secret-sealed-ref",
+        default="",
+        help="Reference to the sealed credential bundle. Never pass plaintext secrets.",
+    )
+    parser.add_argument(
+        "--secret-backend",
+        default="",
+        help="Non-sensitive sealed secret backend label.",
+    )
     parser.add_argument(
         "--payload-ref",
         action="append",
@@ -119,6 +145,31 @@ def _build_artifact_manifest(
     )
 
 
+def _build_secret_manifest(
+    args: argparse.Namespace,
+    command_kind: DashboardGovernedCommandKind,
+) -> DashboardSecretTransferManifest | None:
+    if (
+        command_kind
+        != DashboardGovernedCommandKind.REQUEST_UPLOAD_BINANCE_CREDENTIALS_BUNDLE
+    ):
+        return None
+    return DashboardSecretTransferManifest(
+        secret_hash=args.secret_hash,
+        secret_kind=DashboardSecretKind.BINANCE_SPOT_CREDENTIALS,
+        profile_id=args.secret_profile_id or args.target_secret_profile,
+        environment=DashboardSecretEnvironment(args.secret_environment),
+        sealed_ref=args.secret_sealed_ref,
+        backend=args.secret_backend,
+        lineage_version=args.lineage_version,
+        review_state=args.review_state,
+        validation_status=args.validation_status,
+        source_ref=args.source_ref,
+        payload_refs=tuple(args.payload_ref),
+        created_at_ms=_timestamp_ms(),
+    )
+
+
 def _build_request(args: argparse.Namespace) -> DashboardGovernedCommandRequest:
     timestamp_ms = _timestamp_ms()
     command_kind = DashboardGovernedCommandKind(args.command_kind)
@@ -135,7 +186,9 @@ def _build_request(args: argparse.Namespace) -> DashboardGovernedCommandRequest:
         operator_reason=args.operator_reason,
         target_pair=args.target_pair,
         target_engine=args.target_engine,
+        target_secret_profile=args.target_secret_profile,
         artifact_manifest=_build_artifact_manifest(args, command_kind),
+        secret_manifest=_build_secret_manifest(args, command_kind),
     )
 
 

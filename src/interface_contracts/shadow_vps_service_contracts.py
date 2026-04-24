@@ -8,7 +8,11 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field, model_validator
 
-from .dashboard_command_contracts import DashboardArtifactTransferManifest
+from .dashboard_command_contracts import (
+    BinanceCredentialInventoryEntry,
+    BinanceCredentialValidationStatus,
+    DashboardArtifactTransferManifest,
+)
 from .domain_types import DeploymentState, ProfileId
 
 class ShadowVpsServiceStatus(StrEnum):
@@ -82,6 +86,14 @@ class ShadowVpsServiceState(BaseModel):
     active_ml_artifact: DashboardArtifactTransferManifest | None = None
     active_regime_detector_artifact: DashboardArtifactTransferManifest | None = None
     active_regime_detector_shadow_audit_bundle_ref: str = ""
+    binance_credential_inventory: tuple[BinanceCredentialInventoryEntry, ...] = ()
+    active_binance_credential_profile_id: str = ""
+    active_binance_credential_environment: str = ""
+    binance_credential_validation_status: str = (
+        BinanceCredentialValidationStatus.UNKNOWN.value
+    )
+    binance_credential_last_auth_check_ms: int = Field(default=0, ge=0)
+    binance_credential_last_failure_reason_codes: tuple[str, ...] = ()
     dashboard_control_halted: bool = False
     dashboard_control_target_profile: str = ""
     dashboard_control_target_deployment_state: str = ""
@@ -119,6 +131,23 @@ class ShadowVpsServiceState(BaseModel):
             ProfileId(self.dashboard_control_target_profile)
         if self.dashboard_control_target_deployment_state:
             DeploymentState(self.dashboard_control_target_deployment_state)
+        profile_ids = tuple(
+            item.profile.profile_id for item in self.binance_credential_inventory
+        )
+        if len(set(profile_ids)) != len(profile_ids):
+            raise ValueError("binance_credential_inventory profile_id values must be unique")
+        if self.active_binance_credential_profile_id:
+            if self.active_binance_credential_profile_id not in set(profile_ids):
+                raise ValueError(
+                    "active_binance_credential_profile_id must exist in inventory"
+                )
+        if len(set(self.binance_credential_last_failure_reason_codes)) != len(
+            self.binance_credential_last_failure_reason_codes
+        ):
+            raise ValueError(
+                "binance_credential_last_failure_reason_codes must be unique"
+            )
+        BinanceCredentialValidationStatus(self.binance_credential_validation_status)
         return self
 
 

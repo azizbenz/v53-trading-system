@@ -97,6 +97,10 @@ def test_build_local_shadow_vps_grafana_dashboard_contains_expected_panels() -> 
         in guide_panel["options"]["content"]
     )
     assert (
+        "v53_shadow_vps_active_binance_credential_profile"
+        in guide_panel["options"]["content"]
+    )
+    assert (
         "v53_shadow_vps_regime_lite_safing_status"
         in guide_panel["options"]["content"]
     )
@@ -118,6 +122,16 @@ def test_build_local_shadow_vps_grafana_dashboard_contains_expected_panels() -> 
         "request_export_regime_detector_shadow_audit_bundle"
         in bridge_panel["options"]["content"]
     )
+    assert (
+        "request_upload_binance_credentials_bundle"
+        in bridge_panel["options"]["content"]
+    )
+    assert (
+        "request_activate_binance_credentials_profile"
+        in bridge_panel["options"]["content"]
+    )
+    assert "api_key" not in bridge_panel["options"]["content"]
+    assert "secret_key" not in bridge_panel["options"]["content"]
 
 
 def test_build_local_shadow_vps_grafana_dashboard_contains_expected_queries() -> None:
@@ -194,6 +208,10 @@ def test_build_local_shadow_vps_grafana_dashboard_contains_expected_queries() ->
     )
     assert any(
         "active_regime_detector_artifact" in expr
+        for expr in all_exprs
+    )
+    assert any(
+        "active_binance_credential_profile" in expr
         for expr in all_exprs
     )
     assert any(

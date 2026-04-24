@@ -256,6 +256,22 @@ def _resolve_bootstrap_runtime_state_fields(
         "active_regime_detector_shadow_audit_bundle_ref": (
             state.active_regime_detector_shadow_audit_bundle_ref
         ),
+        "binance_credential_inventory_count": len(state.binance_credential_inventory),
+        "active_binance_credential_profile_id": (
+            state.active_binance_credential_profile_id
+        ),
+        "active_binance_credential_environment": (
+            state.active_binance_credential_environment
+        ),
+        "binance_credential_validation_status": (
+            state.binance_credential_validation_status
+        ),
+        "binance_credential_last_auth_check_ms": (
+            state.binance_credential_last_auth_check_ms
+        ),
+        "binance_credential_last_failure_reason_count": len(
+            state.binance_credential_last_failure_reason_codes
+        ),
         "dashboard_control_halted": state.dashboard_control_halted,
         "dashboard_control_target_profile": state.dashboard_control_target_profile,
         "dashboard_control_target_deployment_state": (

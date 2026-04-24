@@ -197,6 +197,21 @@ _SHADOW_VPS_SECTIONS = (
                     "VPS is running the expected artifact."
                 ),
             ),
+            MetricGuideEntry(
+                metric_name="v53_shadow_vps_active_binance_credential_profile",
+                explanation=(
+                    "Metadata-only Binance credential profile state. Labels carry "
+                    "`profile_id`, `environment`, and `validation_status`; API "
+                    "keys are never exported."
+                ),
+            ),
+            MetricGuideEntry(
+                metric_name="v53_shadow_vps_binance_credential_inventory_count",
+                explanation=(
+                    "Count of governed sealed Binance credential profiles known "
+                    "to the VPS state store."
+                ),
+            ),
         ),
         notes=(
             "Recovery and warm-up must both be eligible before any trading progression is treated as healthy.",

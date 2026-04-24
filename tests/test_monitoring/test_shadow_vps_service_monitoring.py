@@ -6,6 +6,11 @@ from monitoring.shadow_vps_service_monitoring import (
     build_shadow_vps_service_observability_export,
 )
 from interface_contracts import (
+    BinanceCredentialValidationStatus,
+    DashboardSecretEnvironment,
+    DashboardSecretKind,
+    DashboardSecretTransferManifest,
+    binance_credential_entry_from_manifest,
     DashboardArtifactKind,
     DashboardArtifactTransferManifest,
 )
@@ -68,6 +73,25 @@ def test_shadow_vps_service_monitoring_payload_projects_state_and_process_metric
             source_ref="E:/shadow/active_regime_detector_artifact.json",
         ),
         active_regime_detector_shadow_audit_bundle_ref="E:/shadow/regime_detector_shadow_audit_bundle.json",
+        binance_credential_inventory=(
+            binance_credential_entry_from_manifest(
+                DashboardSecretTransferManifest(
+                    secret_hash="c" * 64,
+                    secret_kind=DashboardSecretKind.BINANCE_SPOT_CREDENTIALS,
+                    profile_id="binance-live-001",
+                    environment=DashboardSecretEnvironment.LIVE,
+                    sealed_ref="secrets/binance-live-001.sealed.json",
+                    review_state="approved",
+                    validation_status="validated",
+                ),
+                active=True,
+                validation_status=BinanceCredentialValidationStatus.VALIDATED,
+            ),
+        ),
+        active_binance_credential_profile_id="binance-live-001",
+        active_binance_credential_environment="live",
+        binance_credential_validation_status="validated",
+        binance_credential_last_auth_check_ms=1_800_000_000_000,
         dashboard_control_halted=True,
         dashboard_control_target_profile="light",
         dashboard_control_target_deployment_state="rollback",
@@ -298,6 +322,10 @@ def test_shadow_vps_service_monitoring_payload_projects_state_and_process_metric
     assert payload.active_regime_detector_shadow_audit_bundle_ref.endswith(
         "regime_detector_shadow_audit_bundle.json"
     )
+    assert payload.binance_credential_inventory_count == 1
+    assert payload.active_binance_credential_profile_id == "binance-live-001"
+    assert payload.active_binance_credential_environment == "live"
+    assert payload.binance_credential_validation_status == "validated"
     assert payload.dashboard_control_halted is True
     assert payload.dashboard_control_target_profile == "light"
     assert payload.dashboard_control_target_deployment_state == "rollback"
@@ -355,6 +383,7 @@ def test_shadow_vps_service_monitoring_payload_projects_state_and_process_metric
     assert "recovery=blocked/warmup=blocked" in payload.detail
     assert "dashboard_halted=True/target=light:rollback/pair_susp=1/engine_susp=1" in payload.detail
     assert "artifacts=ml:aaaaaaaaaaaa/regime:bbbbbbbbbbbb" in payload.detail
+    assert "binance_profile=binance-live-001@live@validated" in payload.detail
 
 
 def test_shadow_vps_service_observability_export_emits_process_and_service_metrics():
@@ -463,6 +492,8 @@ def test_shadow_vps_service_observability_export_emits_process_and_service_metri
     assert "v53_shadow_vps_active_ml_artifact" in sample_names
     assert "v53_shadow_vps_active_regime_detector_artifact" in sample_names
     assert "v53_shadow_vps_active_regime_detector_shadow_audit_bundle_present" in sample_names
+    assert "v53_shadow_vps_active_binance_credential_profile" in sample_names
+    assert "v53_shadow_vps_binance_credential_inventory_count" in sample_names
     assert "v53_shadow_vps_process_cpu_pct" in sample_names
     assert "v53_shadow_vps_process_rss_mb" in sample_names
     assert "v53_shadow_vps_disk_used_pct" in sample_names

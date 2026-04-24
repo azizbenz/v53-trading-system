@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 
 from interface_contracts import (
+    BinanceCredentialInventorySnapshot,
+    BinanceCredentialValidationStatus,
     DeploymentState,
     RuntimeMode,
     VpsRecoveryCheck,
@@ -235,6 +237,47 @@ def _build_user_data_check(
     return _review_only("account_user_data", "shadow.user_data.not_authenticated")
 
 
+def _credential_inventory_snapshot(
+    context: ShadowVpsServiceRuntimeContext,
+) -> BinanceCredentialInventorySnapshot:
+    return BinanceCredentialInventorySnapshot(
+        active_profile_id=context.store.state.active_binance_credential_profile_id,
+        entries=context.store.state.binance_credential_inventory,
+    )
+
+
+def _build_binance_credentials_check(
+    context: ShadowVpsServiceRuntimeContext,
+) -> VpsRecoveryCheck:
+    state = context.store.state
+    active_profile_id = state.active_binance_credential_profile_id
+    if not active_profile_id:
+        return _blocked("binance_credentials", "shadow.binance_credentials.profile_missing")
+    entry = next(
+        (
+            item
+            for item in state.binance_credential_inventory
+            if item.profile.profile_id == active_profile_id
+        ),
+        None,
+    )
+    if entry is None:
+        return _blocked("binance_credentials", "shadow.binance_credentials.profile_unknown")
+    sealed_ref = entry.profile.sealed_ref.lower()
+    if not (sealed_ref.endswith(".sealed.json") or sealed_ref.startswith("sealed://")):
+        return _blocked("binance_credentials", "shadow.binance_credentials.not_sealed")
+    if (
+        state.binance_credential_validation_status
+        != BinanceCredentialValidationStatus.VALIDATED.value
+    ):
+        return _blocked("binance_credentials", "shadow.binance_credentials.not_validated")
+    if state.binance_credential_last_auth_check_ms <= 0:
+        return _blocked("binance_credentials", "shadow.binance_credentials.auth_missing")
+    if state.binance_credential_last_failure_reason_codes:
+        return _blocked("binance_credentials", "shadow.binance_credentials.last_failure")
+    return _passed("binance_credentials")
+
+
 def _build_projection_check(context: ShadowVpsServiceRuntimeContext) -> VpsRecoveryCheck:
     projection_path = context.execution_runtime_projection_path
     if projection_path is None:
@@ -277,6 +320,7 @@ def _build_readiness_report(
             live_config=live_config,
         ),
         _build_user_data_check(capture_result=capture_result, live_config=live_config),
+        _build_binance_credentials_check(context),
         _build_projection_check(context),
         _build_dependency_check(
             check_id="regime_lite_dependency",
@@ -306,6 +350,13 @@ def _build_readiness_report(
         report_id=f"shadow-vps-recovery:{context.store.state.loop_count}",
         runtime_mode=RuntimeMode.SHADOW,
         deployment_state=DeploymentState.SHADOW,
+        binance_credential_inventory=_credential_inventory_snapshot(context),
+        active_binance_profile_id=(
+            context.store.state.active_binance_credential_profile_id
+        ),
+        binance_credential_validation_status=(
+            context.store.state.binance_credential_validation_status
+        ),
         bootstrap_summary=context.bootstrap_summary,
         websocket_ready=(
             capture_result is not None and capture_result.accepted_message_count > 0

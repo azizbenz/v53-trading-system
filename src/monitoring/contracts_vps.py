@@ -123,6 +123,12 @@ class ShadowVpsServiceMonitoringPayload(TimestampedModel):
     active_regime_detector_artifact_hash: str = ""
     active_regime_detector_artifact_id: str = ""
     active_regime_detector_shadow_audit_bundle_ref: str = ""
+    binance_credential_inventory_count: int = Field(default=0, ge=0)
+    active_binance_credential_profile_id: str = ""
+    active_binance_credential_environment: str = ""
+    binance_credential_validation_status: str = "unknown"
+    binance_credential_last_auth_check_ms: int = Field(default=0, ge=0)
+    binance_credential_last_failure_reason_count: int = Field(default=0, ge=0)
     dashboard_control_halted: bool = False
     dashboard_control_target_profile: str = ""
     dashboard_control_target_deployment_state: str = ""

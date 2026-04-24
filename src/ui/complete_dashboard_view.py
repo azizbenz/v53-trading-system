@@ -83,6 +83,10 @@ class CompleteDashboardSupplement(BaseModel, frozen=True):
         "request_export_active_ml_artifact",
         "request_export_active_regime_detector_artifact",
         "request_export_regime_detector_shadow_audit_bundle",
+        "request_upload_binance_credentials_bundle",
+        "request_activate_binance_credentials_profile",
+        "request_export_binance_credential_inventory",
+        "request_deactivate_binance_credentials_profile",
         "view_complete_gates",
     )
     forbidden_actions: tuple[str, ...] = (
@@ -97,6 +101,10 @@ class CompleteDashboardSupplement(BaseModel, frozen=True):
     active_regime_detector_artifact: DashboardArtifactTransferManifest | None = None
     recovery_readiness_report: VpsRecoveryReadinessReport | None = None
     warmup_run_summary: VpsWarmupRunSummary | None = None
+    active_binance_profile_id: str = ""
+    active_binance_environment: str = ""
+    binance_credential_validation_status: str = "unknown"
+    credential_inventory_count: int = Field(default=0, ge=0)
     operator_report_status: str = "not_available"
     operator_report_ref: str = ""
     pair_metadata: tuple[CompletePairMetadata, ...] = ()

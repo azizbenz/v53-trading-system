@@ -21,6 +21,10 @@ class CompleteControlPlaneSupplement(Protocol):
     active_regime_detector_artifact: DashboardArtifactTransferManifest | None
     recovery_readiness_report: VpsRecoveryReadinessReport | None
     warmup_run_summary: VpsWarmupRunSummary | None
+    active_binance_profile_id: str
+    active_binance_environment: str
+    binance_credential_validation_status: str
+    credential_inventory_count: int
     operator_report_status: str
     operator_report_ref: str
 
@@ -38,6 +42,7 @@ def build_complete_control_plane_section(
         cards=(
             _queue_card(queue),
             _artifact_card(supplement),
+            _credential_card(supplement),
             _recovery_card(recovery),
             _warmup_card(warmup),
             _operator_report_card(supplement),
@@ -79,6 +84,22 @@ def _artifact_card(supplement: CompleteControlPlaneSupplement) -> DashboardCard:
         detail=(
             f"ml_hash={_artifact_hash(supplement.active_ml_artifact)} / "
             f"regime_hash={_artifact_hash(supplement.active_regime_detector_artifact)}"
+        ),
+    )
+
+
+def _credential_card(supplement: CompleteControlPlaneSupplement) -> DashboardCard:
+    active_profile = supplement.active_binance_profile_id or "none"
+    environment = supplement.active_binance_environment or "none"
+    validation_status = supplement.binance_credential_validation_status or "unknown"
+    return DashboardCard(
+        key="complete_control_binance_credentials",
+        label="Binance Credentials",
+        value=f"profile={active_profile} / env={environment}",
+        status="healthy" if validation_status == "validated" else "warning",
+        detail=(
+            f"validation={validation_status} / "
+            f"inventory_count={supplement.credential_inventory_count}"
         ),
     )
 
