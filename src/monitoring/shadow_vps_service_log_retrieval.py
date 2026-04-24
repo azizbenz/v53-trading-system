@@ -32,6 +32,7 @@ def _project_event(event: ShadowVpsServiceEvent) -> ShadowVpsServiceLogEventProj
         rejected_message_count=event.rejected_message_count,
         pair_scope=event.pair_scope,
         event_types=event.event_types,
+        reason_codes=event.reason_codes,
         error=event.error,
     )
 
@@ -55,6 +56,7 @@ def _event_matches_query(
             event.error.casefold(),
             event.event_type.casefold(),
             event.session_date.casefold(),
+            " ".join(reason.casefold() for reason in event.reason_codes),
         )
         if not any(needle in haystack for haystack in haystacks):
             return False

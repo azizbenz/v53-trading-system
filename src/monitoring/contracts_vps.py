@@ -118,6 +118,14 @@ class ShadowVpsServiceMonitoringPayload(TimestampedModel):
     vps_warmup_summary_ref: str = ""
     vps_warmup_final_state: str = "not_configured"
     vps_warmup_eligible_to_trade: bool = False
+    last_live_complete_summary_ref: str = ""
+    last_live_complete_status: str = "not_configured"
+    last_live_complete_verdict: str = "not_configured"
+    last_live_complete_run_state: str = "not_configured"
+    last_live_complete_blocking_reason_count: int = Field(default=0, ge=0)
+    last_live_complete_operator_report_ref: str = ""
+    last_live_complete_operator_report_status: str = "not_available"
+    last_live_complete_operator_report_recommendation: str = ""
     active_ml_artifact_hash: str = ""
     active_ml_artifact_id: str = ""
     active_regime_detector_artifact_hash: str = ""
@@ -180,6 +188,9 @@ class ShadowVpsServiceMonitoringPayload(TimestampedModel):
     info_stress_detail: str = ""
     export_dir_ref: str = ""
     recent_events_summary_ref: str = ""
+    latest_event_type: str = ""
+    latest_error: str = ""
+    parse_error_count: int = Field(default=0, ge=0)
     node_exporter_textfile_ref: str = ""
     scrape_manifest_ref: str = ""
     prometheus_file_sd_ref: str = ""
@@ -237,6 +248,7 @@ class ShadowVpsServiceLogEventProjection(BaseModel, frozen=True):
     rejected_message_count: int | None = Field(default=None, ge=0)
     pair_scope: tuple[str, ...] = ()
     event_types: tuple[str, ...] = ()
+    reason_codes: tuple[str, ...] = ()
     error: str = ""
 
 

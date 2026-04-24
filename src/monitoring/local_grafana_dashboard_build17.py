@@ -232,7 +232,8 @@ def build_shadow_vps_recovery_and_control_panels(
                 f"{{__name__=~\"v53_shadow_vps_(recovery_status|warmup_state|active_ml_artifact|"
                 f"active_regime_detector_artifact|active_regime_detector_shadow_audit_bundle_present|"
                 f"active_binance_credential_profile|binance_credential_inventory_count|"
-                f"binance_credential_last_failure_reason_count)\",{job_filter},{instance_filter}}}"
+                f"binance_credential_last_failure_reason_count|live_complete_summary|"
+                f"live_complete_operator_report|recent_log_summary|recent_log_parse_error_count)\",{job_filter},{instance_filter}}}"
             ),
             x=0,
             y=76,

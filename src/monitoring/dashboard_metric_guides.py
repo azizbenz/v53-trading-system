@@ -206,6 +206,30 @@ _SHADOW_VPS_SECTIONS = (
                 ),
             ),
             MetricGuideEntry(
+                metric_name="v53_shadow_vps_live_complete_summary",
+                explanation=(
+                    "Synthetic Build-17 supervision summary attached to the Shadow "
+                    "service. Labels carry the current `status`, `run_state`, and "
+                    "`verdict` for the persisted summary surface."
+                ),
+            ),
+            MetricGuideEntry(
+                metric_name="v53_shadow_vps_live_complete_operator_report",
+                explanation=(
+                    "Operator-facing Build-17 report surface. Labels carry the "
+                    "current `status`, final recommendation, and persisted report "
+                    "reference."
+                ),
+            ),
+            MetricGuideEntry(
+                metric_name="v53_shadow_vps_recent_log_summary",
+                explanation=(
+                    "Summary of the bounded recent JSONL tail. Labels carry the "
+                    "latest event type, whether the latest error is present, and "
+                    "the recent-summary reference."
+                ),
+            ),
+            MetricGuideEntry(
                 metric_name="v53_shadow_vps_binance_credential_inventory_count",
                 explanation=(
                     "Count of governed sealed Binance credential profiles known "

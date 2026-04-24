@@ -100,6 +100,12 @@ def test_build_local_shadow_vps_grafana_dashboard_contains_expected_panels() -> 
         "v53_shadow_vps_active_binance_credential_profile"
         in guide_panel["options"]["content"]
     )
+    assert "v53_shadow_vps_live_complete_summary" in guide_panel["options"]["content"]
+    assert (
+        "v53_shadow_vps_live_complete_operator_report"
+        in guide_panel["options"]["content"]
+    )
+    assert "v53_shadow_vps_recent_log_summary" in guide_panel["options"]["content"]
     assert (
         "v53_shadow_vps_regime_lite_safing_status"
         in guide_panel["options"]["content"]
@@ -214,6 +220,9 @@ def test_build_local_shadow_vps_grafana_dashboard_contains_expected_queries() ->
         "active_binance_credential_profile" in expr
         for expr in all_exprs
     )
+    assert any("live_complete_summary" in expr for expr in all_exprs)
+    assert any("live_complete_operator_report" in expr for expr in all_exprs)
+    assert any("recent_log_summary" in expr for expr in all_exprs)
     assert any(
         "v53_shadow_vps_regime_lite_entries_blocked" in expr
         for expr in all_exprs

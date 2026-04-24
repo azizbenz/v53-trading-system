@@ -1,18 +1,23 @@
 from __future__ import annotations
 
-from monitoring.contracts import DiskUsageSample, ProcessMetricsSample
+from monitoring.contracts import (
+    DiskUsageSample,
+    ObservabilityExport,
+    ProcessMetricsSample,
+    ShadowVpsServiceMonitoringPayload,
+)
 from monitoring.shadow_vps_service_monitoring import (
     build_shadow_vps_service_monitoring_payload,
     build_shadow_vps_service_observability_export,
 )
 from interface_contracts import (
     BinanceCredentialValidationStatus,
+    DashboardArtifactKind,
+    DashboardArtifactTransferManifest,
     DashboardSecretEnvironment,
     DashboardSecretKind,
     DashboardSecretTransferManifest,
     binance_credential_entry_from_manifest,
-    DashboardArtifactKind,
-    DashboardArtifactTransferManifest,
 )
 from protocols.shadow_vps_service import (
     ShadowVpsCampaignSummary,
@@ -22,8 +27,8 @@ from protocols.shadow_vps_service import (
 )
 
 
-def test_shadow_vps_service_monitoring_payload_projects_state_and_process_metrics():
-    state = ShadowVpsServiceState(
+def _build_rich_monitoring_state() -> ShadowVpsServiceState:
+    return ShadowVpsServiceState(
         service_status=ShadowVpsServiceStatus.RUNNING,
         last_heartbeat_at=1_800_000_000.0,
         loop_count=4,
@@ -34,7 +39,9 @@ def test_shadow_vps_service_monitoring_payload_projects_state_and_process_metric
         last_selected_session_date="2026-04-10",
         last_completed_session_date="2026-04-09",
         last_campaign_summary_ref="E:/shadow/shadow_vps_service.campaign_summary.json",
-        last_runtime_evidence_bundle_ref="E:/shadow/runtime_evidence/2026-04-09.shadow_vps_runtime_evidence.json",
+        last_runtime_evidence_bundle_ref=(
+            "E:/shadow/runtime_evidence/2026-04-09.shadow_vps_runtime_evidence.json"
+        ),
         last_execution_telemetry_ref="E:/shadow/shadow_vps_service_execution_telemetry.json",
         last_execution_telemetry_status="written",
         last_telegram_alert_delivery_status="sent",
@@ -60,6 +67,14 @@ def test_shadow_vps_service_monitoring_payload_projects_state_and_process_metric
         last_vps_warmup_summary_ref="E:/shadow/vps_warmup_run.summary.json",
         last_vps_warmup_final_state="blocked",
         last_vps_warmup_eligible_to_trade=False,
+        last_live_complete_summary_ref="E:/shadow/live_complete_run.summary.json",
+        last_live_complete_status="blocked",
+        last_live_complete_verdict="blocked",
+        last_live_complete_run_state="blocked",
+        last_live_complete_blocking_reason_count=3,
+        last_live_complete_operator_report_ref="E:/shadow/live_complete_operator_audit_report.json",
+        last_live_complete_operator_report_status="blocked",
+        last_live_complete_operator_report_recommendation="investigate_live_complete_blockers",
         active_ml_artifact=DashboardArtifactTransferManifest(
             artifact_hash="a" * 64,
             artifact_kind=DashboardArtifactKind.ML_MODEL_ARTIFACT,
@@ -72,7 +87,9 @@ def test_shadow_vps_service_monitoring_payload_projects_state_and_process_metric
             artifact_id="regime-active",
             source_ref="E:/shadow/active_regime_detector_artifact.json",
         ),
-        active_regime_detector_shadow_audit_bundle_ref="E:/shadow/regime_detector_shadow_audit_bundle.json",
+        active_regime_detector_shadow_audit_bundle_ref=(
+            "E:/shadow/regime_detector_shadow_audit_bundle.json"
+        ),
         binance_credential_inventory=(
             binance_credential_entry_from_manifest(
                 DashboardSecretTransferManifest(
@@ -104,13 +121,18 @@ def test_shadow_vps_service_monitoring_payload_projects_state_and_process_metric
         last_execution_runtime_projection_source="cli",
         last_regime_lite_assessment_ref="E:/shadow/regime_lite_assessment.json",
         last_regime_lite_assessment_source="live_websocket_config",
-        last_regime_lite_safing_recommendation_ref="E:/shadow/regime_lite_safing_recommendation.json",
+        last_regime_lite_safing_recommendation_ref=(
+            "E:/shadow/regime_lite_safing_recommendation.json"
+        ),
         last_regime_lite_safing_recommendation_source="cli",
         last_info_stress_assessment_ref="E:/shadow/info_stress_assessment.json",
         last_info_stress_assessment_source="cli",
         last_export_dir_ref="E:/shadow/exports/2026-04-09",
     )
-    campaign_summary = ShadowVpsCampaignSummary(
+
+
+def _build_rich_monitoring_campaign_summary() -> ShadowVpsCampaignSummary:
+    return ShadowVpsCampaignSummary(
         service_status=ShadowVpsServiceStatus.RUNNING,
         loop_count=4,
         success_count=3,
@@ -142,7 +164,9 @@ def test_shadow_vps_service_monitoring_payload_projects_state_and_process_metric
         execution_runtime_bootstrap_reconciliation_boot_executed=True,
         execution_runtime_bootstrap_reconciliation_boot_trading_blocked=False,
         execution_runtime_bootstrap_reconciliation_boot_circuit_breaker_tripped=False,
-        execution_runtime_bootstrap_reconciliation_boot_detail="boot reconciliation aligned local and remote state",
+        execution_runtime_bootstrap_reconciliation_boot_detail=(
+            "boot reconciliation aligned local and remote state"
+        ),
         execution_runtime_bootstrap_reconciliation_boot_recovery_action="none",
         execution_runtime_bootstrap_reconciliation_boot_divergence_count=0,
         execution_runtime_projection_ref="E:/shadow/local_lab_execution_runtime_projection.json",
@@ -185,7 +209,10 @@ def test_shadow_vps_service_monitoring_payload_projects_state_and_process_metric
         info_stress_reason_codes=("INFO_STRESS_SPREAD_EXPLOSION",),
         info_stress_detail="info_stress reached EXTREME with 3 active anomaly signal(s)",
     )
-    runtime_bundle = ShadowVpsRuntimeEvidenceBundle(
+
+
+def _build_rich_monitoring_runtime_bundle() -> ShadowVpsRuntimeEvidenceBundle:
+    return ShadowVpsRuntimeEvidenceBundle(
         session_date="2026-04-09",
         acquisition_mode="dated_export",
         runtime_data_source="recorded_replay",
@@ -203,7 +230,9 @@ def test_shadow_vps_service_monitoring_payload_projects_state_and_process_metric
         execution_runtime_bootstrap_reconciliation_boot_executed=True,
         execution_runtime_bootstrap_reconciliation_boot_trading_blocked=False,
         execution_runtime_bootstrap_reconciliation_boot_circuit_breaker_tripped=False,
-        execution_runtime_bootstrap_reconciliation_boot_detail="boot reconciliation aligned local and remote state",
+        execution_runtime_bootstrap_reconciliation_boot_detail=(
+            "boot reconciliation aligned local and remote state"
+        ),
         execution_runtime_bootstrap_reconciliation_boot_recovery_action="none",
         execution_runtime_bootstrap_reconciliation_boot_divergence_count=0,
         accepted=False,
@@ -249,7 +278,10 @@ def test_shadow_vps_service_monitoring_payload_projects_state_and_process_metric
         info_stress_reason_codes=("INFO_STRESS_SPREAD_EXPLOSION",),
         info_stress_detail="info_stress reached EXTREME with 3 active anomaly signal(s)",
     )
-    process = ProcessMetricsSample(
+
+
+def _build_rich_monitoring_process() -> ProcessMetricsSample:
+    return ProcessMetricsSample(
         pid=4321,
         cpu_pct=6.5,
         ram_pct=12.5,
@@ -258,10 +290,12 @@ def test_shadow_vps_service_monitoring_payload_projects_state_and_process_metric
         sampling_mode="test_mode",
     )
 
-    payload = build_shadow_vps_service_monitoring_payload(
+
+def _build_rich_monitoring_payload() -> ShadowVpsServiceMonitoringPayload:
+    return build_shadow_vps_service_monitoring_payload(
         timestamp_ms=1_800_000_002_500,
-        state=state,
-        process=process,
+        state=_build_rich_monitoring_state(),
+        process=_build_rich_monitoring_process(),
         disk=DiskUsageSample(
             path="E:/shadow",
             total_gb=100.0,
@@ -269,14 +303,21 @@ def test_shadow_vps_service_monitoring_payload_projects_state_and_process_metric
             used_pct=60.0,
             sampling_mode="test_mode",
         ),
-        campaign_summary=campaign_summary,
-        runtime_evidence_bundle=runtime_bundle,
+        campaign_summary=_build_rich_monitoring_campaign_summary(),
+        runtime_evidence_bundle=_build_rich_monitoring_runtime_bundle(),
         state_path="E:/shadow/shadow_vps_service.state.json",
         events_path="E:/shadow/shadow_vps_service.events.jsonl",
         recent_events_summary_ref="E:/shadow/shadow_vps_service_recent_events.json",
+        latest_event_type="recovery_gate_blocked",
+        latest_error="network timeout",
+        parse_error_count=2,
         node_exporter_textfile_ref="E:/node-textfile/v53_shadow_vps_service.prom",
     )
 
+
+def _assert_projected_payload_fields(
+    payload: ShadowVpsServiceMonitoringPayload,
+) -> None:
     assert payload.status == "critical"
     assert payload.service_status == "running"
     assert payload.heartbeat_age_ms == 2_500
@@ -287,12 +328,8 @@ def test_shadow_vps_service_monitoring_payload_projects_state_and_process_metric
     assert payload.disk.used_pct == 60.0
     assert payload.state_path.endswith("shadow_vps_service.state.json")
     assert payload.events_path.endswith("shadow_vps_service.events.jsonl")
-    assert payload.recent_events_summary_ref.endswith(
-        "shadow_vps_service_recent_events.json"
-    )
-    assert payload.execution_telemetry_ref.endswith(
-        "shadow_vps_service_execution_telemetry.json"
-    )
+    assert payload.recent_events_summary_ref.endswith("shadow_vps_service_recent_events.json")
+    assert payload.execution_telemetry_ref.endswith("shadow_vps_service_execution_telemetry.json")
     assert payload.execution_telemetry_status == "written"
     assert payload.telegram_alert_delivery_status == "sent"
     assert payload.telegram_alert_delivery_event_type == "shadow_day_completed"
@@ -301,9 +338,7 @@ def test_shadow_vps_service_monitoring_payload_projects_state_and_process_metric
     assert payload.telegram_alert_config_source == "live_websocket_config"
     assert payload.telegram_alert_key_ref.endswith("telegram_alert.key")
     assert payload.telegram_alert_key_source == "cli"
-    assert payload.execution_runtime_bootstrap_ref.endswith(
-        "execution_runtime_bootstrap.summary.json"
-    )
+    assert payload.execution_runtime_bootstrap_ref.endswith("execution_runtime_bootstrap.summary.json")
     assert payload.execution_runtime_bootstrap_status == "ready"
     assert payload.execution_runtime_bootstrap_source == "live_websocket_config"
     assert payload.execution_runtime_gatekeeper_audit_ref.endswith("audit.jsonl")
@@ -315,13 +350,17 @@ def test_shadow_vps_service_monitoring_payload_projects_state_and_process_metric
     assert payload.execution_runtime_bootstrap_remote_position_asset_count == 1
     assert payload.vps_recovery_status == "blocked"
     assert payload.vps_warmup_final_state == "blocked"
+    assert payload.last_live_complete_status == "blocked"
+    assert payload.last_live_complete_verdict == "blocked"
+    assert payload.last_live_complete_run_state == "blocked"
+    assert payload.last_live_complete_operator_report_status == "blocked"
+    assert payload.latest_event_type == "recovery_gate_blocked"
+    assert payload.latest_error == "network timeout"
+    assert payload.parse_error_count == 2
     assert payload.active_ml_artifact_hash == "a" * 64
     assert payload.active_ml_artifact_id == "ml-active"
     assert payload.active_regime_detector_artifact_hash == "b" * 64
     assert payload.active_regime_detector_artifact_id == "regime-active"
-    assert payload.active_regime_detector_shadow_audit_bundle_ref.endswith(
-        "regime_detector_shadow_audit_bundle.json"
-    )
     assert payload.binance_credential_inventory_count == 1
     assert payload.active_binance_credential_profile_id == "binance-live-001"
     assert payload.active_binance_credential_environment == "live"
@@ -336,12 +375,13 @@ def test_shadow_vps_service_monitoring_payload_projects_state_and_process_metric
     assert payload.dashboard_control_last_request_id == "req-queue-1"
     assert payload.dashboard_control_last_command_kind == "set_halted"
     assert payload.dashboard_control_last_result_status == "completed"
-    assert (
-        payload.execution_runtime_bootstrap_reconciliation_boot_divergence_count == 0
-    )
-    assert payload.execution_runtime_projection_ref.endswith(
-        "local_lab_execution_runtime_projection.json"
-    )
+    assert payload.execution_runtime_bootstrap_reconciliation_boot_divergence_count == 0
+
+
+def _assert_projected_payload_detail(
+    payload: ShadowVpsServiceMonitoringPayload,
+) -> None:
+    assert payload.execution_runtime_projection_ref.endswith("local_lab_execution_runtime_projection.json")
     assert payload.execution_runtime_projection_source == "cli"
     assert payload.regime_lite_assessment_ref.endswith("regime_lite_assessment.json")
     assert payload.regime_lite_assessment_source == "live_websocket_config"
@@ -369,25 +409,27 @@ def test_shadow_vps_service_monitoring_payload_projects_state_and_process_metric
     assert payload.info_stress_level == "extreme"
     assert payload.info_stress_alert_count == 3
     assert payload.info_stress_entries_blocked is True
-    assert payload.node_exporter_textfile_ref.endswith(
-        "v53_shadow_vps_service.prom"
-    )
+    assert payload.node_exporter_textfile_ref.endswith("v53_shadow_vps_service.prom")
     assert (
-        "regime_lite=halt_recommended@extreme@live_websocket_config/cli"
-        in payload.detail
+        payload.active_regime_detector_shadow_audit_bundle_ref.endswith(
+            "regime_detector_shadow_audit_bundle.json"
+        )
     )
+    assert "regime_lite=halt_recommended@extreme@live_websocket_config/cli" in payload.detail
     assert "info_stress=assessment_only@extreme@cli" in payload.detail
     assert "telegram=sent@shadow_day_completed@live_websocket_config" in payload.detail
     assert "exec_bootstrap=ready@live_websocket_config@cli/div=0" in payload.detail
     assert "remote_orders=1/remote_positions=1" in payload.detail
     assert "recovery=blocked/warmup=blocked" in payload.detail
     assert "dashboard_halted=True/target=light:rollback/pair_susp=1/engine_susp=1" in payload.detail
+    assert "live_complete=blocked@blocked@blocked/report=blocked" in payload.detail
+    assert "log=recovery_gate_blocked/log_errs=2/latest_error=network timeout" in payload.detail
     assert "artifacts=ml:aaaaaaaaaaaa/regime:bbbbbbbbbbbb" in payload.detail
     assert "binance_profile=binance-live-001@live@validated" in payload.detail
 
 
-def test_shadow_vps_service_observability_export_emits_process_and_service_metrics():
-    payload = build_shadow_vps_service_monitoring_payload(
+def _build_observability_payload() -> ShadowVpsServiceMonitoringPayload:
+    return build_shadow_vps_service_monitoring_payload(
         timestamp_ms=1_800_000_003_000,
         state=ShadowVpsServiceState(
             service_status=ShadowVpsServiceStatus.STOPPED,
@@ -476,8 +518,8 @@ def test_shadow_vps_service_observability_export_emits_process_and_service_metri
         ),
     )
 
-    export = build_shadow_vps_service_observability_export(payload)
 
+def _assert_observability_export(export: ObservabilityExport) -> None:
     assert export.correlation_id == "shadow-vps-service"
     assert export.text_payload.startswith("# V5.3 Shadow VPS service observability export")
     sample_names = {sample.name for sample in export.samples}
@@ -489,6 +531,11 @@ def test_shadow_vps_service_observability_export_emits_process_and_service_metri
     assert "v53_shadow_vps_recovery_eligible_to_trade" in sample_names
     assert "v53_shadow_vps_warmup_state" in sample_names
     assert "v53_shadow_vps_warmup_eligible_to_trade" in sample_names
+    assert "v53_shadow_vps_live_complete_summary" in sample_names
+    assert "v53_shadow_vps_live_complete_blocking_reason_count" in sample_names
+    assert "v53_shadow_vps_live_complete_operator_report" in sample_names
+    assert "v53_shadow_vps_recent_log_summary" in sample_names
+    assert "v53_shadow_vps_recent_log_parse_error_count" in sample_names
     assert "v53_shadow_vps_active_ml_artifact" in sample_names
     assert "v53_shadow_vps_active_regime_detector_artifact" in sample_names
     assert "v53_shadow_vps_active_regime_detector_shadow_audit_bundle_present" in sample_names
@@ -563,6 +610,16 @@ def test_shadow_vps_service_observability_export_emits_process_and_service_metri
         sample for sample in export.samples if sample.name == "v53_shadow_vps_warmup_state"
     )
     assert warmup_status_sample.labels["warmup_final_state"] == "not_configured"
+    live_complete_sample = next(
+        sample for sample in export.samples if sample.name == "v53_shadow_vps_live_complete_summary"
+    )
+    assert live_complete_sample.labels["status"] == "not_configured"
+    operator_report_sample = next(
+        sample
+        for sample in export.samples
+        if sample.name == "v53_shadow_vps_live_complete_operator_report"
+    )
+    assert operator_report_sample.labels["status"] == "not_available"
     active_ml_sample = next(
         sample for sample in export.samples if sample.name == "v53_shadow_vps_active_ml_artifact"
     )
@@ -573,3 +630,14 @@ def test_shadow_vps_service_observability_export_emits_process_and_service_metri
         if sample.name == "v53_shadow_vps_active_regime_detector_artifact"
     )
     assert active_regime_sample.labels["artifact_id"] == "none"
+
+
+def test_shadow_vps_service_monitoring_payload_projects_state_and_process_metrics() -> None:
+    payload = _build_rich_monitoring_payload()
+    _assert_projected_payload_fields(payload)
+    _assert_projected_payload_detail(payload)
+
+
+def test_shadow_vps_service_observability_export_emits_process_and_service_metrics() -> None:
+    export = build_shadow_vps_service_observability_export(_build_observability_payload())
+    _assert_observability_export(export)

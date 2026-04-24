@@ -379,6 +379,10 @@ def _build_detail(
     process: ProcessMetricsSample,
     disk: DiskUsageSample,
     resolved_fields: dict[str, object],
+    *,
+    latest_event_type: str,
+    latest_error: str,
+    parse_error_count: int,
 ) -> str:
     return (
         f"status={state.service_status.value} / "
@@ -401,6 +405,14 @@ def _build_detail(
         f":{resolved_fields['dashboard_control_target_deployment_state'] or 'none'}"
         f"/pair_susp={resolved_fields['dashboard_control_suspended_pair_count']}"
         f"/engine_susp={resolved_fields['dashboard_control_suspended_engine_count']} / "
+        f"live_complete={resolved_fields['last_live_complete_status']}"
+        f"@{resolved_fields['last_live_complete_run_state']}"
+        f"@{resolved_fields['last_live_complete_verdict']}"
+        f"/report={resolved_fields['last_live_complete_operator_report_status']}"
+        f"/log={latest_event_type or 'none'}"
+        f"/log_errs={parse_error_count}"
+        f"{'/latest_error' if latest_error else ''}"
+        f"{'=' + latest_error if latest_error else ''} / "
         f"artifacts=ml:{resolved_fields['active_ml_artifact_hash'][:12] or 'none'}"
         f"/regime:{resolved_fields['active_regime_detector_artifact_hash'][:12] or 'none'} / "
         f"binance_profile={resolved_fields['active_binance_credential_profile_id'] or 'none'}"
@@ -432,6 +444,9 @@ def build_shadow_vps_service_monitoring_payload_support(
     state_path: str = "",
     events_path: str = "",
     recent_events_summary_ref: str = "",
+    latest_event_type: str = "",
+    latest_error: str = "",
+    parse_error_count: int = 0,
     node_exporter_textfile_ref: str = "",
     scrape_manifest_ref: str = "",
     prometheus_file_sd_ref: str = "",
@@ -452,7 +467,15 @@ def build_shadow_vps_service_monitoring_payload_support(
     resolved_fields.update(_resolve_regime_lite_fields(campaign_summary, runtime_evidence_bundle))
     resolved_fields.update(_resolve_info_stress_fields(campaign_summary, runtime_evidence_bundle))
 
-    detail = _build_detail(state, process, disk, resolved_fields)
+    detail = _build_detail(
+        state,
+        process,
+        disk,
+        resolved_fields,
+        latest_event_type=latest_event_type,
+        latest_error=latest_error,
+        parse_error_count=parse_error_count,
+    )
     resolved_fields.pop("execution_runtime_projection_source_detail", None)
 
     payload_fields: dict[str, object] = {
@@ -498,6 +521,9 @@ def build_shadow_vps_service_monitoring_payload_support(
         ),
         "export_dir_ref": state.last_export_dir_ref,
         "recent_events_summary_ref": recent_events_summary_ref,
+        "latest_event_type": latest_event_type,
+        "latest_error": latest_error,
+        "parse_error_count": parse_error_count,
         "node_exporter_textfile_ref": node_exporter_textfile_ref,
         "scrape_manifest_ref": scrape_manifest_ref,
         "prometheus_file_sd_ref": prometheus_file_sd_ref,

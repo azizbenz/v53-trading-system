@@ -83,6 +83,14 @@ class ShadowVpsServiceState(BaseModel):
     last_vps_warmup_summary_ref: str = ""
     last_vps_warmup_final_state: str = "not_configured"
     last_vps_warmup_eligible_to_trade: bool = False
+    last_live_complete_summary_ref: str = ""
+    last_live_complete_status: str = "not_configured"
+    last_live_complete_verdict: str = "not_configured"
+    last_live_complete_run_state: str = "not_configured"
+    last_live_complete_blocking_reason_count: int = Field(default=0, ge=0)
+    last_live_complete_operator_report_ref: str = ""
+    last_live_complete_operator_report_status: str = "not_available"
+    last_live_complete_operator_report_recommendation: str = ""
     active_ml_artifact: DashboardArtifactTransferManifest | None = None
     active_regime_detector_artifact: DashboardArtifactTransferManifest | None = None
     active_regime_detector_shadow_audit_bundle_ref: str = ""
@@ -382,6 +390,7 @@ class ShadowVpsServiceEvent(BaseModel, frozen=True):
     rejected_message_count: int | None = Field(default=None, ge=0)
     pair_scope: tuple[str, ...] = ()
     event_types: tuple[str, ...] = ()
+    reason_codes: tuple[str, ...] = ()
     error: str = ""
 
 

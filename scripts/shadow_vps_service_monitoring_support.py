@@ -83,6 +83,24 @@ def _resolve_monitoring_artifact_paths(
     )
 
 
+def _write_recent_events_summary(
+    *,
+    events_path: Path,
+    recent_events_summary_path: Path,
+    timestamp_ms: int,
+) -> object:
+    recent_events_summary = build_shadow_vps_service_recent_events_summary(
+        events_path,
+        max_events=20,
+        timestamp_ms=timestamp_ms,
+    )
+    atomic_write_json(
+        recent_events_summary_path,
+        recent_events_summary.model_dump(mode="json"),
+    )
+    return recent_events_summary
+
+
 def _write_monitoring_artifacts(
     *,
     service_dir: Path,
@@ -108,6 +126,11 @@ def _write_monitoring_artifacts(
         node_exporter_textfile_dir=node_exporter_textfile_dir,
         scrape_host=scrape_host,
     )
+    recent_events_summary = _write_recent_events_summary(
+        events_path=store.events_path,
+        recent_events_summary_path=recent_events_summary_path,
+        timestamp_ms=timestamp_ms,
+    )
     payload = build_shadow_vps_service_monitoring_payload(
         timestamp_ms=timestamp_ms,
         state=state,
@@ -120,6 +143,9 @@ def _write_monitoring_artifacts(
         state_path=str(store.state_path.resolve()),
         events_path=str(store.events_path.resolve()),
         recent_events_summary_ref=str(recent_events_summary_path.resolve()),
+        latest_event_type=recent_events_summary.latest_event_type,
+        latest_error=recent_events_summary.latest_error,
+        parse_error_count=recent_events_summary.parse_error_count,
         node_exporter_textfile_ref=(
             str(node_exporter_textfile_path.resolve())
             if node_exporter_textfile_path is not None
@@ -156,14 +182,6 @@ def _write_monitoring_artifacts(
             node_exporter_textfile_dir,
             filename="v53_shadow_vps_service.prom",
         )
-    atomic_write_json(
-        recent_events_summary_path,
-        build_shadow_vps_service_recent_events_summary(
-            store.events_path,
-            max_events=20,
-            timestamp_ms=timestamp_ms,
-        ).model_dump(mode="json"),
-    )
     if scrape_manifest_path is not None and prometheus_file_sd_path is not None:
         scrape_manifest = build_shadow_vps_service_scrape_manifest(
             payload,

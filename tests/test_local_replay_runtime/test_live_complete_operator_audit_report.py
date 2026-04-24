@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import base64
+from datetime import datetime, timezone
+
 from interface_contracts import (
     DashboardArtifactKind,
     DashboardArtifactTransferManifest,
     DashboardCommandQueueSnapshot,
     DashboardCommandQueueStatus,
     DeploymentState,
+    MlModelArtifact,
     RegimeDetectorFeatureSetVersion,
     ReviewState,
     RuntimeMode,
@@ -17,6 +21,8 @@ from interface_contracts import (
 )
 from local_replay_runtime import (
     LiveCompleteOperatorAuditReport,
+    LocalLabMlArtifactTrainingReport,
+    LocalLabMlFinalAuditReport,
     LocalLabRegimeDetectorFinalAuditReport,
     LocalLabRegimeDetectorProfileComparisonReport,
     build_live_complete_operator_audit_report,
@@ -154,17 +160,83 @@ def _regime_report(*, status: str, audit_ready: bool) -> LocalLabRegimeDetectorF
     )
 
 
+def _ml_artifact(seed: str) -> MlModelArtifact:
+    return MlModelArtifact.create(
+        feature_names=("spread_bps", "depth_imbalance"),
+        feature_hash=seed * 64,
+        pair_universe=("BTCUSDT",),
+        train_window={
+            "start_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+            "end_at": datetime(2026, 1, 31, tzinfo=timezone.utc),
+        },
+        validation_window={
+            "start_at": datetime(2026, 2, 1, tzinfo=timezone.utc),
+            "end_at": datetime(2026, 2, 28, tzinfo=timezone.utc),
+        },
+        oos_sharpe=1.1,
+        backtest_sharpe=1.4,
+        shadow_diff_pct=1.0,
+        training_seed=17,
+        created_at=datetime(2026, 3, 1, tzinfo=timezone.utc),
+        calibration_version="ml.v1",
+        dataset_hash="d" * 64,
+        model_bytes_b64=base64.b64encode(b"ml-model").decode("ascii"),
+    )
+
+
+def _training_report() -> LocalLabMlArtifactTrainingReport:
+    artifact = _ml_artifact("a")
+    return LocalLabMlArtifactTrainingReport(
+        correlation_id="corr-operator-audit",
+        export_dir="build/ml",
+        status="ready",
+        ready=True,
+        replay_sample_count=16,
+        training_row_count=16,
+        recognized_feature_key_count=2,
+        pair_scope=("BTCUSDT",),
+        engine_scope=("engine_a",),
+        artifact=artifact,
+        artifact_hash=artifact.artifact_hash,
+        oos_sharpe=artifact.oos_sharpe,
+        backtest_sharpe=artifact.backtest_sharpe,
+    )
+
+
+def _ml_report(*, status: str, audit_ready: bool) -> LocalLabMlFinalAuditReport:
+    training_report = _training_report()
+    return LocalLabMlFinalAuditReport(
+        correlation_id="corr-operator-audit",
+        status=status,
+        audit_ready=audit_ready,
+        uploaded_artifact_present=True,
+        recommended_artifact_hash=training_report.artifact_hash or "",
+        uploaded_artifact_hash=training_report.artifact_hash or "",
+        uploaded_artifact_id="ml-1",
+        uploaded_lineage_version="a.v1.0.r1",
+        uploaded_feature_set_version="ml_feature_set.v1",
+        feature_set_compatible=True,
+        artifact_matches_lab_recommendation=audit_ready,
+        final_recommendation=(
+            "uploaded_ml_artifact_matches_lab_recommendation"
+            if audit_ready
+            else "uploaded_ml_artifact_differs_from_lab_recommendation"
+        ),
+        training_report=training_report,
+    )
+
+
 def test_live_complete_operator_audit_report_requires_regime_report_for_full_readiness() -> None:
     report = build_live_complete_operator_audit_report(
         live_complete_summary=_live_complete_summary(
             final_state=VpsWarmupState.ELIGIBLE_TO_TRADE
-        )
+        ),
     )
 
     assert isinstance(report, LiveCompleteOperatorAuditReport)
     assert report.status == "partial"
     assert report.operator_ready is False
-    assert report.final_recommendation == "collect_regime_detector_final_audit_report"
+    assert report.final_recommendation == "collect_ml_final_audit_report"
 
 
 def test_live_complete_operator_audit_report_is_ready_when_all_surfaces_are_ready() -> None:
@@ -172,6 +244,7 @@ def test_live_complete_operator_audit_report_is_ready_when_all_surfaces_are_read
         live_complete_summary=_live_complete_summary(
             final_state=VpsWarmupState.ELIGIBLE_TO_TRADE
         ),
+        ml_final_audit_report=_ml_report(status="ready", audit_ready=True),
         regime_detector_final_audit_report=_regime_report(status="ready", audit_ready=True),
     )
 
@@ -185,6 +258,7 @@ def test_live_complete_operator_audit_report_stays_partial_until_warmup_is_compl
         live_complete_summary=_live_complete_summary(
             final_state=VpsWarmupState.WARMUP_SHADOW_ONLY
         ),
+        ml_final_audit_report=_ml_report(status="ready", audit_ready=True),
         regime_detector_final_audit_report=_regime_report(status="ready", audit_ready=True),
     )
 
@@ -198,6 +272,7 @@ def test_live_complete_operator_audit_report_can_be_persisted() -> None:
         live_complete_summary=_live_complete_summary(
             final_state=VpsWarmupState.ELIGIBLE_TO_TRADE
         ),
+        ml_final_audit_report=_ml_report(status="ready", audit_ready=True),
         regime_detector_final_audit_report=_regime_report(status="ready", audit_ready=True),
     )
     scratch_dir = make_repo_scratch_dir("live_complete_operator_audit", "persist")
@@ -208,3 +283,19 @@ def test_live_complete_operator_audit_report_can_be_persisted() -> None:
 
     assert path.exists()
     assert '"status": "ready"' in path.read_text(encoding="utf-8")
+
+
+def test_live_complete_operator_audit_report_downgrades_when_ml_audit_is_not_ready() -> None:
+    report = build_live_complete_operator_audit_report(
+        live_complete_summary=_live_complete_summary(
+            final_state=VpsWarmupState.ELIGIBLE_TO_TRADE
+        ),
+        ml_final_audit_report=_ml_report(status="partial", audit_ready=False),
+        regime_detector_final_audit_report=_regime_report(status="ready", audit_ready=True),
+    )
+
+    assert report.status == "partial"
+    assert report.operator_ready is False
+    assert report.ml_audit_present is True
+    assert report.ml_audit_status == "partial"
+    assert report.final_recommendation == "uploaded_ml_artifact_differs_from_lab_recommendation"

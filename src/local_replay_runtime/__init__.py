@@ -124,6 +124,10 @@ from local_replay_runtime.local_lab_ml_artifact_training import (
     LocalLabMlArtifactTrainingReport,
     build_local_lab_ml_artifact_training_report,
 )
+from local_replay_runtime.ml_final_audit_report import (
+    LocalLabMlFinalAuditReport,
+    build_local_lab_ml_final_audit_report_from_vps_command_result,
+)
 from local_replay_runtime.local_lab_regime_detector_artifact_training import (
     LocalLabRegimeDetectorArtifactTrainingReport,
     build_local_lab_regime_detector_artifact_training_report,
@@ -354,6 +358,8 @@ __all__ = [
     "build_local_lab_replay_workflow_manifest",
     "LocalLabMlArtifactTrainingReport",
     "build_local_lab_ml_artifact_training_report",
+    "LocalLabMlFinalAuditReport",
+    "build_local_lab_ml_final_audit_report_from_vps_command_result",
     "LocalLabRegimeDetectorArtifactTrainingReport",
     "build_local_lab_regime_detector_artifact_training_report",
     "LocalLabRegimeDetectorProfileComparisonEntry",

@@ -2942,8 +2942,6 @@ def test_shadow_vps_service_consumes_dashboard_command_queue_before_cycle() -> N
         assert state["last_selected_session_date"] == ""
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)
-
-
 def test_shadow_vps_service_persists_user_data_stream_metadata(monkeypatch):
     service = _load_service_module()
     output_dir = _scratch_dir("live_websocket_user_data")

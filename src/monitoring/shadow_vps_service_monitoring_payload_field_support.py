@@ -233,6 +233,22 @@ def _resolve_bootstrap_runtime_state_fields(
         "vps_warmup_summary_ref": state.last_vps_warmup_summary_ref,
         "vps_warmup_final_state": state.last_vps_warmup_final_state,
         "vps_warmup_eligible_to_trade": state.last_vps_warmup_eligible_to_trade,
+        "last_live_complete_summary_ref": state.last_live_complete_summary_ref,
+        "last_live_complete_status": state.last_live_complete_status,
+        "last_live_complete_verdict": state.last_live_complete_verdict,
+        "last_live_complete_run_state": state.last_live_complete_run_state,
+        "last_live_complete_blocking_reason_count": (
+            state.last_live_complete_blocking_reason_count
+        ),
+        "last_live_complete_operator_report_ref": (
+            state.last_live_complete_operator_report_ref
+        ),
+        "last_live_complete_operator_report_status": (
+            state.last_live_complete_operator_report_status
+        ),
+        "last_live_complete_operator_report_recommendation": (
+            state.last_live_complete_operator_report_recommendation
+        ),
         "active_ml_artifact_hash": (
             ""
             if state.active_ml_artifact is None

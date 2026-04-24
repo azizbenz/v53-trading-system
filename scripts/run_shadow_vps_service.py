@@ -20,6 +20,9 @@ for candidate in (SCRIPT_ROOT, SRC_ROOT):
 import shadow_vps_service_input_support as _shadow_vps_service_input_support  # noqa: E402
 import shadow_vps_service_io_support as _shadow_vps_service_io_support  # noqa: E402
 from interface_contracts import DashboardGovernedCommandKind  # noqa: E402
+from interface_contracts.shadow_vps_service_contracts import (  # noqa: E402
+    ShadowVpsServiceState,
+)
 from protocols import (  # noqa: E402
     DashboardGovernedCommandExecutionContext,
     ShadowVpsServiceStatus,
@@ -43,6 +46,10 @@ from shadow_vps_service_cycle_support import (  # noqa: E402
     _prepare_shadow_vps_selected_cycle,
     _record_shadow_vps_idle_cycle,
     _resolve_shadow_vps_cycle_selection,
+)
+from shadow_vps_service_complete_support import (  # noqa: E402
+    ShadowVpsBuild17Refresh,
+    refresh_shadow_vps_build17_supervision,
 )
 from shadow_vps_service_event_support import (  # noqa: E402
     _append_service_event,
@@ -199,6 +206,7 @@ def _process_dashboard_command_queue(
 ) -> None:
     if context.dashboard_command_queue_root is None:
         return
+    previous_state = context.store.state.model_copy(deep=True)
     process_dashboard_command_queue_once(
         context.dashboard_command_queue_root,
         context=DashboardGovernedCommandExecutionContext(
@@ -207,7 +215,160 @@ def _process_dashboard_command_queue(
         ),
     )
     context.store.reload()
+    _append_dashboard_control_change_events(context, previous_state=previous_state)
     _write_service_monitoring(context)
+
+
+def _append_dashboard_control_change_events(
+    context: ShadowVpsServiceRuntimeContext,
+    *,
+    previous_state: ShadowVpsServiceState,
+) -> None:
+    state = context.store.state
+    if (
+        (
+            previous_state.dashboard_control_target_profile,
+            previous_state.dashboard_control_target_deployment_state,
+        )
+        != (
+            state.dashboard_control_target_profile,
+            state.dashboard_control_target_deployment_state,
+        )
+        and (
+            state.dashboard_control_target_profile == "light"
+            or state.dashboard_control_target_deployment_state == "rollback"
+        )
+    ):
+        _append_service_event(
+            store=context.store,
+            telegram_alerter=context.telegram_alerter,
+            event=ShadowVpsServiceEvent(
+                event_type="rollback_active",
+                message="Governed rollback_to_light is active on the Shadow control surface.",
+                reason_codes=("shadow.dashboard_control.rollback_active",),
+            ),
+        )
+    if (
+        previous_state.dashboard_control_suspended_pairs
+        != state.dashboard_control_suspended_pairs
+        and state.dashboard_control_suspended_pairs
+    ):
+        _append_service_event(
+            store=context.store,
+            telegram_alerter=context.telegram_alerter,
+            event=ShadowVpsServiceEvent(
+                event_type="suspended_pair_active",
+                message=(
+                    "Governed suspended pair surface refreshed: "
+                    f"{', '.join(state.dashboard_control_suspended_pairs)}."
+                ),
+                reason_codes=("shadow.dashboard_control.suspended_pairs_active",),
+            ),
+        )
+    if (
+        previous_state.dashboard_control_suspended_engines
+        != state.dashboard_control_suspended_engines
+        and state.dashboard_control_suspended_engines
+    ):
+        _append_service_event(
+            store=context.store,
+            telegram_alerter=context.telegram_alerter,
+            event=ShadowVpsServiceEvent(
+                event_type="suspended_engine_active",
+                message=(
+                    "Governed suspended engine surface refreshed: "
+                    f"{', '.join(state.dashboard_control_suspended_engines)}."
+                ),
+                reason_codes=("shadow.dashboard_control.suspended_engines_active",),
+            ),
+        )
+
+
+def _skip_shadow_vps_cycle(
+    context: ShadowVpsServiceRuntimeContext,
+    *,
+    event_type: str,
+    message: str,
+    reason_codes: tuple[str, ...],
+) -> str:
+    state = context.store.state
+    state.idle_count += 1
+    state.service_status = ShadowVpsServiceStatus.DEGRADED
+    context.store.persist()
+    _append_service_event(
+        store=context.store,
+        telegram_alerter=context.telegram_alerter,
+        event=ShadowVpsServiceEvent(
+            event_type=event_type,
+            message=message,
+            reason_codes=reason_codes,
+        ),
+    )
+    _write_service_monitoring(context)
+    return "sleep"
+
+
+def _recovery_gate_enabled(context: ShadowVpsServiceRuntimeContext) -> bool:
+    return (
+        bool(context.store.state.active_binance_credential_profile_id)
+        or bool(context.store.state.last_live_capture_dir_ref)
+    )
+
+
+def _governed_runtime_gate_result(
+    context: ShadowVpsServiceRuntimeContext,
+    *,
+    supervision: ShadowVpsBuild17Refresh,
+) -> str | None:
+    state = context.store.state
+    dashboard_result = _dashboard_control_gate_result(context)
+    if dashboard_result is not None:
+        return dashboard_result
+    if (
+        (
+            _recovery_gate_enabled(context)
+            and (
+                state.last_vps_recovery_status == "blocked"
+                or state.last_vps_warmup_final_state == "blocked"
+            )
+        )
+        or "shadow.dashboard_control.all_pairs_suspended"
+        in supervision.control_surface.reason_codes
+        or "shadow.dashboard_control.all_engines_suspended"
+        in supervision.control_surface.reason_codes
+    ):
+        reason_codes = list(supervision.control_surface.reason_codes)
+        if state.last_vps_recovery_status == "blocked":
+            reason_codes.append("shadow.recovery.blocked")
+        if state.last_vps_warmup_final_state == "blocked":
+            reason_codes.append("shadow.warmup.blocked")
+        return _skip_shadow_vps_cycle(
+            context,
+            event_type="recovery_gate_blocked",
+            message=(
+                "Governed Shadow VPS cycle skipped because recovery, warm-up, "
+                "or the controlled execution surface remains blocked."
+            ),
+            reason_codes=tuple(dict.fromkeys(reason_codes)),
+        )
+    if supervision.control_surface.rollback_active:
+        return _skip_shadow_vps_cycle(
+            context,
+            event_type="rollback_active",
+            message="Governed rollback_to_light remains active; Shadow VPS cycle skipped.",
+            reason_codes=supervision.control_surface.reason_codes,
+        )
+    if (
+        _recovery_gate_enabled(context)
+        and state.last_vps_warmup_final_state == "warmup_shadow_only"
+    ):
+        return _skip_shadow_vps_cycle(
+            context,
+            event_type="warmup_review_only",
+            message="Governed warmup_shadow_only remains active; Shadow VPS cycle skipped.",
+            reason_codes=("shadow.warmup.shadow_only",),
+        )
+    return None
 
 
 def _resolve_shadow_vps_cycle_selection_inputs(
@@ -289,6 +450,11 @@ def _run_shadow_vps_orchestrator_cycle(
         append_service_event=_append_service_event,
         last_run_str=_last_run_str,
     )
+    refresh_shadow_vps_build17_supervision(
+        context,
+        append_service_event=_append_service_event,
+    )
+    _write_service_monitoring(context)
 
 
 def _run_shadow_vps_service_cycle(
@@ -298,9 +464,18 @@ def _run_shadow_vps_service_cycle(
 ) -> str:
     _refresh_shadow_vps_cycle_state(context)
     _process_dashboard_command_queue(context)
-    dashboard_control_result = _dashboard_control_gate_result(context)
-    if dashboard_control_result is not None:
-        return dashboard_control_result
+    _refresh_shadow_vps_recovery_artifacts(context)
+    supervision = refresh_shadow_vps_build17_supervision(
+        context,
+        append_service_event=_append_service_event,
+    )
+    _write_service_monitoring(context)
+    governed_gate_result = _governed_runtime_gate_result(
+        context,
+        supervision=supervision,
+    )
+    if governed_gate_result is not None:
+        return governed_gate_result
     try:
         selection = _resolve_shadow_vps_cycle_selection_inputs(context)
         if selection.next_slot is None:
@@ -365,6 +540,11 @@ def run_shadow_vps_service(
     signal_controller = _ShadowVpsSignalController()
     restore_signal_handlers = _install_shadow_vps_signal_handlers(signal_controller)
     try:
+        refresh_shadow_vps_build17_supervision(
+            context,
+            append_service_event=_append_service_event,
+        )
+        _write_service_monitoring(context)
         _run_shadow_vps_service_main_loop(
             context,
             poll_interval_s=poll_interval_s,

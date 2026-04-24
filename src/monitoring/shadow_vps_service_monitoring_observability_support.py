@@ -181,6 +181,68 @@ def _build_recovery_samples(
     )
 
 
+def _build_build17_samples(
+    payload: ShadowVpsServiceMonitoringPayload,
+    base_labels: dict[str, str],
+) -> tuple[MetricSample, ...]:
+    return (
+        _sample(
+            "v53_shadow_vps_live_complete_summary",
+            kind="state",
+            value=1.0 if payload.last_live_complete_summary_ref else 0.0,
+            labels={
+                **base_labels,
+                "status": payload.last_live_complete_status,
+                "run_state": payload.last_live_complete_run_state,
+                "verdict": payload.last_live_complete_verdict,
+                "summary_ref": payload.last_live_complete_summary_ref or "none",
+            },
+        ),
+        _sample(
+            "v53_shadow_vps_live_complete_blocking_reason_count",
+            kind="gauge",
+            value=float(payload.last_live_complete_blocking_reason_count),
+            unit="count",
+            labels={
+                **base_labels,
+                "status": payload.last_live_complete_status,
+                "verdict": payload.last_live_complete_verdict,
+            },
+        ),
+        _sample(
+            "v53_shadow_vps_live_complete_operator_report",
+            kind="state",
+            value=1.0 if payload.last_live_complete_operator_report_ref else 0.0,
+            labels={
+                **base_labels,
+                "status": payload.last_live_complete_operator_report_status,
+                "recommendation": (
+                    payload.last_live_complete_operator_report_recommendation or "none"
+                ),
+                "report_ref": payload.last_live_complete_operator_report_ref or "none",
+            },
+        ),
+        _sample(
+            "v53_shadow_vps_recent_log_summary",
+            kind="state",
+            value=1.0 if payload.recent_events_summary_ref else 0.0,
+            labels={
+                **base_labels,
+                "latest_event_type": payload.latest_event_type or "none",
+                "latest_error_present": "true" if payload.latest_error else "false",
+                "summary_ref": payload.recent_events_summary_ref or "none",
+            },
+        ),
+        _sample(
+            "v53_shadow_vps_recent_log_parse_error_count",
+            kind="gauge",
+            value=float(payload.parse_error_count),
+            unit="count",
+            labels=base_labels,
+        ),
+    )
+
+
 def _build_artifact_samples(
     payload: ShadowVpsServiceMonitoringPayload,
     base_labels: dict[str, str],
@@ -429,6 +491,7 @@ def build_shadow_vps_service_observability_export_support(
         _build_service_samples(payload, base_labels)
         + _build_control_plane_samples(payload, base_labels)
         + _build_recovery_samples(payload, base_labels)
+        + _build_build17_samples(payload, base_labels)
         + _build_artifact_samples(payload, base_labels)
         + _build_bootstrap_runtime_samples(payload, base_labels)
         + _build_projection_runtime_samples(payload, base_labels)
