@@ -1,4 +1,4 @@
-"""Pure equations for the Build-3 hybrid router."""
+"""Pure equations for the Build-3 hybrid router V2."""
 
 from __future__ import annotations
 
@@ -12,9 +12,15 @@ from .hybrid_router_calibration import HybridRouterCalibration
 def sigmoid(x: float) -> float:
     if x >= 0.0:
         exp_term = math.exp(-x)
-        return 1.0 / (1.0 + exp_term)
+        value = 1.0 / (1.0 + exp_term)
+        if value >= 1.0:
+            return math.nextafter(1.0, 0.0)
+        return value
     exp_term = math.exp(x)
-    return exp_term / (1.0 + exp_term)
+    value = exp_term / (1.0 + exp_term)
+    if value <= 0.0:
+        return math.nextafter(0.0, 1.0)
+    return value
 
 
 def compute_same_side_signals(
@@ -34,11 +40,7 @@ def compute_participation_ratio(
     *,
     eps_notional: float,
 ) -> float:
-    opposite_side_notional = (
-        float(snap.top_n_ask_notional)
-        if snap.side == "BUY"
-        else float(snap.top_n_bid_notional)
-    )
+    opposite_side_notional = float(snap.top_n_ask_notional) if snap.side == "BUY" else float(snap.top_n_bid_notional)
     return float(snap.candidate_notional) / max(opposite_side_notional, eps_notional)
 
 
@@ -68,8 +70,11 @@ def compute_expected_miss_cost_bps(
     expected_wait_s: float,
     tau_alpha_s: float,
 ) -> float:
-    alpha_decay_factor = 1.0 - math.exp(-expected_wait_s / tau_alpha_s)
-    return expected_edge_bps * alpha_decay_factor
+    return expected_edge_bps * compute_alpha_decay_factor(expected_wait_s=expected_wait_s, tau_alpha_s=tau_alpha_s)
+
+
+def compute_alpha_decay_factor(*, expected_wait_s: float, tau_alpha_s: float) -> float:
+    return 1.0 - math.exp(-expected_wait_s / tau_alpha_s)
 
 
 def compute_expected_adverse_selection_bps(
@@ -106,7 +111,26 @@ def compute_expected_latency_staleness_bps(
     return scale_bps * max(short_window_volatility_z, 0.0)
 
 
-def compute_ev_maker_bps(
+def compute_ev_maker_raw_bps(
+    *,
+    expected_edge_bps: float,
+    maker_fee_bps: float,
+    expected_miss_cost_bps: float,
+    expected_adverse_selection_bps: float,
+    capital_opportunity_cost_bps: float,
+    expected_latency_staleness_bps: float,
+) -> float:
+    return (
+        expected_edge_bps
+        - maker_fee_bps
+        - expected_miss_cost_bps
+        - expected_adverse_selection_bps
+        - capital_opportunity_cost_bps
+        - expected_latency_staleness_bps
+    )
+
+
+def compute_ev_maker_weighted_bps(
     *,
     expected_edge_bps: float,
     p_fill_proxy: float,
@@ -136,8 +160,10 @@ def compute_ev_taker_bps(
 
 
 __all__ = [
+    "compute_alpha_decay_factor",
     "compute_capital_opportunity_cost_bps",
-    "compute_ev_maker_bps",
+    "compute_ev_maker_raw_bps",
+    "compute_ev_maker_weighted_bps",
     "compute_ev_taker_bps",
     "compute_expected_adverse_selection_bps",
     "compute_expected_latency_staleness_bps",

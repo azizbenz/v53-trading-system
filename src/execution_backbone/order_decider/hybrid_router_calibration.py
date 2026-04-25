@@ -1,8 +1,9 @@
-"""Governed calibration for the Build-3 hybrid router."""
+"""Governed calibration for the Build-3 hybrid router V2."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 import math
 from pathlib import Path
 
@@ -14,21 +15,22 @@ from calibration_loader.loader import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+CALIBRATION_SCHEMA_VERSION = "hybrid_router_v1.0.0"
+
+
 @dataclass(frozen=True)
 class HybridRouterCalibration:
-    # Mode
+    schema_version: str
+    profile_name: str
     live_mode_enabled: bool
-
-    # Decision thresholds
     maker_timeout_s: float
     route_edge_floor_bps: float
     maker_advantage_min_bps: float
     maker_fill_probability_min: float
     maker_min_fill_progress_ratio: float
     max_signal_age_for_fallback_s: float
-    inv003_max_participation_ratio: float
-
-    # Logistic p_fill proxy
     beta_0: float
     beta_dir: float
     beta_toxic: float
@@ -38,26 +40,34 @@ class HybridRouterCalibration:
     w_obi: float
     w_micro: float
     w_aggr: float
-
-    # Costs
     tau_alpha_s: float
     adverse_selection_scale_bps: float
     lambda_impact_bps: float
     capital_opportunity_rate_bps_per_s: float
     latency_staleness_scale_bps: float
-
-    # Sanity
     eps_notional_eur: float
     vol_z_clip: float
     vol_zscore_window_s: float
+    min_coverage_ratio: float
+    max_snapshot_age_s: float
+
+    @property
+    def calibration_version(self) -> str:
+        return f"{self.schema_version}:{self.profile_name}"
 
     def validate(self) -> None:
+        if self.schema_version != CALIBRATION_SCHEMA_VERSION:
+            raise ValueError(
+                f"schema_version must equal {CALIBRATION_SCHEMA_VERSION!r}"
+            )
         positive_fields = {
             "maker_timeout_s": self.maker_timeout_s,
             "tau_alpha_s": self.tau_alpha_s,
             "eps_notional_eur": self.eps_notional_eur,
             "vol_z_clip": self.vol_z_clip,
             "vol_zscore_window_s": self.vol_zscore_window_s,
+            "min_coverage_ratio": self.min_coverage_ratio,
+            "max_snapshot_age_s": self.max_snapshot_age_s,
         }
         non_negative_fields = {
             "route_edge_floor_bps": self.route_edge_floor_bps,
@@ -75,15 +85,10 @@ class HybridRouterCalibration:
         for name, value in non_negative_fields.items():
             if not math.isfinite(value) or value < 0.0:
                 raise ValueError(f"{name} must be finite and >= 0")
-        probability_fields = {
-            "maker_fill_probability_min": self.maker_fill_probability_min,
-            "maker_min_fill_progress_ratio": self.maker_min_fill_progress_ratio,
-        }
-        for name, value in probability_fields.items():
-            if not math.isfinite(value) or not 0.0 <= value <= 1.0:
-                raise ValueError(f"{name} must be in [0, 1]")
-        if not math.isfinite(self.inv003_max_participation_ratio) or not 0.0 < self.inv003_max_participation_ratio <= 1.0:
-            raise ValueError("inv003_max_participation_ratio must be in (0, 1]")
+        if not 0.0 <= self.maker_fill_probability_min <= 1.0:
+            raise ValueError("maker_fill_probability_min must be in [0, 1]")
+        if not 0.0 <= self.maker_min_fill_progress_ratio <= 1.0:
+            raise ValueError("maker_min_fill_progress_ratio must be in [0, 1]")
         for name in (
             "beta_0",
             "beta_dir",
@@ -95,15 +100,17 @@ class HybridRouterCalibration:
             "w_micro",
             "w_aggr",
         ):
-            value = getattr(self, name)
-            if not math.isfinite(value):
+            if not math.isfinite(getattr(self, name)):
                 raise ValueError(f"{name} must be finite")
+        w_sum = self.w_obi + self.w_micro + self.w_aggr
+        if not 0.99 <= w_sum <= 1.01:
+            raise ValueError("w_obi + w_micro + w_aggr must stay in [0.99, 1.01]")
 
     @classmethod
-    def default(cls) -> "HybridRouterCalibration":
-        """Return the conservative shadow-only starting point for Build-3 hybrid routing."""
-
+    def default_shadow(cls) -> "HybridRouterCalibration":
         calibration = cls(
+            schema_version=CALIBRATION_SCHEMA_VERSION,
+            profile_name="default_shadow",
             live_mode_enabled=False,
             maker_timeout_s=2.0,
             route_edge_floor_bps=2.0,
@@ -111,7 +118,6 @@ class HybridRouterCalibration:
             maker_fill_probability_min=0.55,
             maker_min_fill_progress_ratio=0.25,
             max_signal_age_for_fallback_s=1.5,
-            inv003_max_participation_ratio=0.25,
             beta_0=0.0,
             beta_dir=1.2,
             beta_toxic=1.5,
@@ -129,6 +135,8 @@ class HybridRouterCalibration:
             eps_notional_eur=1.0,
             vol_z_clip=5.0,
             vol_zscore_window_s=300.0,
+            min_coverage_ratio=0.80,
+            max_snapshot_age_s=0.5,
         )
         calibration.validate()
         return calibration
@@ -141,6 +149,8 @@ class HybridRouterCalibrationConfig:
 
 
 _THRESHOLD_IDS: dict[str, str] = {
+    "schema_version": "HYBRID_ROUTER_V1_SCHEMA_VERSION",
+    "profile_name": "HYBRID_ROUTER_V1_PROFILE_NAME",
     "live_mode_enabled": "HYBRID_ROUTER_V1_LIVE_MODE_ENABLED",
     "maker_timeout_s": "HYBRID_ROUTER_V1_MAKER_TIMEOUT_S",
     "route_edge_floor_bps": "HYBRID_ROUTER_V1_ROUTE_EDGE_FLOOR_BPS",
@@ -148,7 +158,6 @@ _THRESHOLD_IDS: dict[str, str] = {
     "maker_fill_probability_min": "HYBRID_ROUTER_V1_MAKER_FILL_PROBABILITY_MIN",
     "maker_min_fill_progress_ratio": "HYBRID_ROUTER_V1_MAKER_MIN_FILL_PROGRESS_RATIO",
     "max_signal_age_for_fallback_s": "HYBRID_ROUTER_V1_MAX_SIGNAL_AGE_FOR_FALLBACK_S",
-    "inv003_max_participation_ratio": "HYBRID_ROUTER_V1_INV003_MAX_PARTICIPATION_RATIO",
     "beta_0": "HYBRID_ROUTER_V1_BETA_0",
     "beta_dir": "HYBRID_ROUTER_V1_BETA_DIR",
     "beta_toxic": "HYBRID_ROUTER_V1_BETA_TOXIC",
@@ -166,6 +175,8 @@ _THRESHOLD_IDS: dict[str, str] = {
     "eps_notional_eur": "HYBRID_ROUTER_V1_EPS_NOTIONAL_EUR",
     "vol_z_clip": "HYBRID_ROUTER_V1_VOL_Z_CLIP",
     "vol_zscore_window_s": "HYBRID_ROUTER_V1_VOL_ZSCORE_WINDOW_S",
+    "min_coverage_ratio": "HYBRID_ROUTER_V1_MIN_COVERAGE_RATIO",
+    "max_snapshot_age_s": "HYBRID_ROUTER_V1_MAX_SNAPSHOT_AGE_S",
 }
 
 
@@ -176,16 +187,22 @@ def resolve_hybrid_router_calibration(
     loader = CalibrationLoader(calibration_config.calibration_root)
     try:
         collection = loader.load(version=calibration_config.calibration_version)
-    except (CalibrationLoaderError, OSError):
-        return HybridRouterCalibration.default()
+    except (CalibrationLoaderError, OSError, CalibrationArtifactNotFoundError):
+        logger.info("hybrid_router_v1_missing; using default_shadow calibration")
+        return HybridRouterCalibration.default_shadow()
+
     try:
         raw_values = {
             field_name: loader.get_value(collection, threshold_id)
             for field_name, threshold_id in _THRESHOLD_IDS.items()
         }
     except (CalibrationArtifactNotFoundError, CalibrationArtifactValidationError, CalibrationLoaderError):
-        return HybridRouterCalibration.default()
+        logger.info("hybrid_router_v1_incomplete; using default_shadow calibration")
+        return HybridRouterCalibration.default_shadow()
+
     calibration = HybridRouterCalibration(
+        schema_version=str(raw_values["schema_version"]),
+        profile_name=str(raw_values["profile_name"]),
         live_mode_enabled=_coerce_bool(raw_values["live_mode_enabled"]),
         maker_timeout_s=float(raw_values["maker_timeout_s"]),
         route_edge_floor_bps=float(raw_values["route_edge_floor_bps"]),
@@ -193,7 +210,6 @@ def resolve_hybrid_router_calibration(
         maker_fill_probability_min=float(raw_values["maker_fill_probability_min"]),
         maker_min_fill_progress_ratio=float(raw_values["maker_min_fill_progress_ratio"]),
         max_signal_age_for_fallback_s=float(raw_values["max_signal_age_for_fallback_s"]),
-        inv003_max_participation_ratio=float(raw_values["inv003_max_participation_ratio"]),
         beta_0=float(raw_values["beta_0"]),
         beta_dir=float(raw_values["beta_dir"]),
         beta_toxic=float(raw_values["beta_toxic"]),
@@ -211,6 +227,8 @@ def resolve_hybrid_router_calibration(
         eps_notional_eur=float(raw_values["eps_notional_eur"]),
         vol_z_clip=float(raw_values["vol_z_clip"]),
         vol_zscore_window_s=float(raw_values["vol_zscore_window_s"]),
+        min_coverage_ratio=float(raw_values["min_coverage_ratio"]),
+        max_snapshot_age_s=float(raw_values["max_snapshot_age_s"]),
     )
     calibration.validate()
     return calibration
@@ -230,6 +248,7 @@ def _coerce_bool(value: bool | int | float | str) -> bool:
 
 
 __all__ = [
+    "CALIBRATION_SCHEMA_VERSION",
     "HybridRouterCalibration",
     "HybridRouterCalibrationConfig",
     "resolve_hybrid_router_calibration",

@@ -5,6 +5,7 @@ from __future__ import annotations
 from execution_backbone.order_decider.hybrid_router_metrics import (
     HybridRouterCalibrationMetricProjection,
     HybridRouterDistributionSummary,
+    HybridRouterFullTraceProjection,
     HybridRouterMetricsProjection,
     HybridRouterMetricsSink,
     HybridRouterTraceProjection,
@@ -13,6 +14,7 @@ from execution_backbone.order_decider.hybrid_router_metrics import (
 __all__ = [
     "HybridRouterCalibrationMetricProjection",
     "HybridRouterDistributionSummary",
+    "HybridRouterFullTraceProjection",
     "HybridRouterMetricsProjection",
     "HybridRouterMetricsSink",
     "HybridRouterTraceProjection",

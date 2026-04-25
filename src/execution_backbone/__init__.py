@@ -60,6 +60,7 @@ from .slippage_model import (
 )
 from .order_decider.hybrid_router import HybridRouter
 from .order_decider.hybrid_router_calibration import (
+    CALIBRATION_SCHEMA_VERSION,
     HybridRouterCalibration,
     HybridRouterCalibrationConfig,
     resolve_hybrid_router_calibration,
@@ -70,6 +71,9 @@ from .order_decider.hybrid_router_types import (
     HybridRoutingAction,
     HybridRoutingDecision,
     HybridRoutingPlan,
+    RoutingTraceCompact,
+    RoutingTraceFull,
+    SanitizedField,
 )
 from .venue_constraints_provider import (
     BinanceExchangeInfoVenueConstraintProvider,
@@ -95,11 +99,15 @@ __all__ = [
     "ExecutionVenueNormalizationResult",
     "HybridFallbackAction",
     "HybridRouter",
+    "CALIBRATION_SCHEMA_VERSION",
     "HybridRouterCalibration",
     "HybridRouterCalibrationConfig",
     "HybridRoutingAction",
     "HybridRoutingDecision",
     "HybridRoutingPlan",
+    "RoutingTraceCompact",
+    "RoutingTraceFull",
+    "SanitizedField",
     "ShadowRoutingLogger",
     "ExecutionOpportunity",
     "ExecutionRateLimitDecision",

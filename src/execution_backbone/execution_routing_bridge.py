@@ -15,13 +15,26 @@ from .execution_routing_features import (
     RoutingFeatureProjectionError,
     attach_snapshot_reason_codes,
 )
+from .order_decider.hybrid_router_calibration import HybridRouterCalibration
+from .order_decider.hybrid_router_metrics import HybridRouterMetricsSink
 
 
 @dataclass(frozen=True)
 class ExecutionRoutingBridgeConfig:
-    min_coverage_ratio: float = 0.5
-    max_snapshot_age_s: float = 2.0
-    vol_zscore_window_s: float = 300.0
+    min_coverage_ratio: float
+    max_snapshot_age_s: float
+    vol_zscore_window_s: float
+
+    @classmethod
+    def from_calibration(
+        cls,
+        calibration: HybridRouterCalibration,
+    ) -> "ExecutionRoutingBridgeConfig":
+        return cls(
+            min_coverage_ratio=calibration.min_coverage_ratio,
+            max_snapshot_age_s=calibration.max_snapshot_age_s,
+            vol_zscore_window_s=calibration.vol_zscore_window_s,
+        )
 
 
 class ExecutionRoutingBridge:
@@ -29,16 +42,46 @@ class ExecutionRoutingBridge:
 
     def __init__(
         self,
+        calib: HybridRouterCalibration,
+        metrics_sink: HybridRouterMetricsSink | None,
         *,
-        config: ExecutionRoutingBridgeConfig | None = None,
         resolve_current_time_ns: Callable[[], int] | None = None,
         resolve_volatility_stats: Callable[[str, float], tuple[float, float] | None] | None = None,
     ) -> None:
-        self._config = config or ExecutionRoutingBridgeConfig()
+        self._config = ExecutionRoutingBridgeConfig.from_calibration(calib)
+        self._metrics_sink = metrics_sink
         self._resolve_current_time_ns = resolve_current_time_ns or time.monotonic_ns
         self._resolve_volatility_stats = resolve_volatility_stats
 
     def project(
+        self,
+        *,
+        opportunity: ExecutionOpportunity,
+        lob_regime_snapshot: object,
+        regime_signal: object,
+        top_of_book: ExecutionRoutingTopOfBookSnapshot,
+        venue_fees: ExecutionRoutingVenueFees,
+    ) -> ExecutionRoutingFeatureSnapshot:
+        try:
+            snapshot = self._project_impl(
+                opportunity=opportunity,
+                lob_regime_snapshot=lob_regime_snapshot,
+                regime_signal=regime_signal,
+                top_of_book=top_of_book,
+                venue_fees=venue_fees,
+            )
+        except RoutingFeatureProjectionError as exc:
+            if self._metrics_sink is not None:
+                self._metrics_sink.record_bridge_projection(
+                    rejected=True,
+                    reason=exc.rejection_reason,
+                )
+            raise
+        if self._metrics_sink is not None:
+            self._metrics_sink.record_bridge_projection(rejected=False)
+        return snapshot
+
+    def _project_impl(
         self,
         *,
         opportunity: ExecutionOpportunity,
@@ -53,11 +96,13 @@ class ExecutionRoutingBridge:
         age_s = max(0.0, (current_time_ns - computed_at_ns) / 1_000_000_000.0)
         if age_s > self._config.max_snapshot_age_s:
             raise RoutingFeatureProjectionError(
-                f"LOB snapshot is stale: age_s={age_s:.6f} > {self._config.max_snapshot_age_s:.6f}"
+                "stale_snapshot",
+                f"LOB snapshot is stale: age_s={age_s:.6f} > {self._config.max_snapshot_age_s:.6f}",
             )
         if observation_coverage_ratio < self._config.min_coverage_ratio:
             raise RoutingFeatureProjectionError(
-                "LOB snapshot observation_coverage_ratio below governed minimum"
+                "low_coverage",
+                "LOB snapshot observation_coverage_ratio below governed minimum",
             )
 
         side = _normalize_side(opportunity.side)
@@ -101,10 +146,14 @@ class ExecutionRoutingBridge:
 
 def _require_attr(source: object, name: str) -> object:
     if not hasattr(source, name):
-        raise RoutingFeatureProjectionError(f"Missing live routing attribute: {name}")
+        raise RoutingFeatureProjectionError("missing_field", f"Missing live routing attribute: {name}")
     value = getattr(source, name)
-    if isinstance(value, (int, float)) and not math.isfinite(float(value)):
-        raise RoutingFeatureProjectionError(f"Non-finite live routing attribute: {name}")
+    if isinstance(value, (int, float)):
+        numeric_value = float(value)
+        if math.isnan(numeric_value):
+            raise RoutingFeatureProjectionError("nan_input", f"NaN live routing attribute: {name}")
+        if math.isinf(numeric_value):
+            raise RoutingFeatureProjectionError("inf_input", f"Infinite live routing attribute: {name}")
     return value
 
 
@@ -120,7 +169,7 @@ def _normalize_side(side: str) -> str:
         return "BUY"
     if normalized == "sell":
         return "SELL"
-    raise RoutingFeatureProjectionError(f"Unsupported execution side: {side!r}")
+    raise RoutingFeatureProjectionError("missing_field", f"Unsupported execution side: {side!r}")
 
 
 def _resolve_candidate_notional(
@@ -129,10 +178,16 @@ def _resolve_candidate_notional(
 ) -> float:
     anchor = opportunity.reference_price if opportunity.reference_price is not None else opportunity.price_limit
     if anchor is None:
-        anchor = top_of_book.best_ask_price if opportunity.side.strip().casefold() == "buy" else top_of_book.best_bid_price
+        anchor = (
+            top_of_book.best_ask_price
+            if opportunity.side.strip().casefold() == "buy"
+            else top_of_book.best_bid_price
+        )
     notional = float(opportunity.quantity) * float(anchor)
-    if not math.isfinite(notional) or notional <= 0.0:
-        raise RoutingFeatureProjectionError("candidate_notional must be finite and > 0")
+    if not math.isfinite(notional):
+        raise RoutingFeatureProjectionError("nan_input", "candidate_notional must be finite")
+    if notional <= 0.0:
+        raise RoutingFeatureProjectionError("missing_field", "candidate_notional must be > 0")
     return notional
 
 
@@ -142,7 +197,7 @@ def _resolve_signal_age_s(opportunity: ExecutionOpportunity, current_time_ns: in
     current_time_s = current_time_ns / 1_000_000_000.0
     age_s = current_time_s - float(opportunity.signal_arrival_monotonic_s)
     if not math.isfinite(age_s):
-        raise RoutingFeatureProjectionError("signal_age_s must be finite")
+        raise RoutingFeatureProjectionError("nan_input", "signal_age_s must be finite")
     return max(0.0, age_s)
 
 

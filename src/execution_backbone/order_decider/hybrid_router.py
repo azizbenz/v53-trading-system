@@ -1,13 +1,11 @@
-"""Deterministic Build-3 hybrid router.
+"""Deterministic Build-3 hybrid router V2.
 
-This router is shadow-first and does not model queue position. Its `p_fill_proxy`
-is a governed routing proxy, not a calibrated real-world probability until the
-shadow calibration wave has converged.
+This router is shadow-first and does not model queue position. Its
+`p_fill_proxy` is a governed routing proxy, not a calibrated real-world
+probability until the shadow calibration wave has converged.
 """
 
 from __future__ import annotations
-
-import math
 
 from execution_backbone.execution_routing_features import (
     ExecutionRoutingFeatureSnapshot,
@@ -16,8 +14,10 @@ from execution_backbone.execution_routing_features import (
 
 from .hybrid_router_calibration import HybridRouterCalibration
 from .hybrid_router_equations import (
+    compute_alpha_decay_factor,
     compute_capital_opportunity_cost_bps,
-    compute_ev_maker_bps,
+    compute_ev_maker_raw_bps,
+    compute_ev_maker_weighted_bps,
     compute_ev_taker_bps,
     compute_expected_adverse_selection_bps,
     compute_expected_latency_staleness_bps,
@@ -28,11 +28,18 @@ from .hybrid_router_equations import (
     compute_same_side_signals,
 )
 from .hybrid_router_metrics import HybridRouterMetricsSink
+from .hybrid_router_sanitization import (
+    collect_reason_codes,
+    sanitize_unit_interval,
+    sanitize_vol_z,
+)
 from .hybrid_router_types import (
     HybridFallbackAction,
     HybridRoutingAction,
     HybridRoutingDecision,
+    HybridRoutingDecisionDiagnostics,
     HybridRoutingPlan,
+    SanitizedField,
 )
 
 
@@ -48,39 +55,12 @@ class HybridRouter:
         if self._metrics_sink is not None:
             self._metrics_sink.live_mode_enabled = calib.live_mode_enabled
 
-    def decide(
-        self,
-        snap: ExecutionRoutingFeatureSnapshot,
-    ) -> HybridRoutingDecision:
+    def decide(self, snap: ExecutionRoutingFeatureSnapshot) -> HybridRoutingDecision:
         sign_side = 1 if snap.side == "BUY" else -1
-        same_side_obi, same_side_micro, same_side_aggr = compute_same_side_signals(
-            snap,
-            sign_side=sign_side,
-        )
-        participation_ratio = compute_participation_ratio(
-            snap,
-            eps_notional=self._calib.eps_notional_eur,
-        )
-        reason_codes = list(snapshot_reason_codes(snap))
-        market_toxicity_score = _sanitize_zero_to_one(
-            float(snap.market_toxicity_score),
-            "market_toxicity_score",
-            reason_codes,
-        )
-        regime_transition_risk = _sanitize_zero_to_one(
-            float(snap.regime_transition_risk),
-            "regime_transition_risk",
-            reason_codes,
-        )
-        regime_stability_score = _sanitize_zero_to_one(
-            float(snap.regime_stability_score),
-            "regime_stability_score",
-            reason_codes,
-        )
-        short_window_volatility_z = _sanitize_vol_z(
-            float(snap.short_window_volatility_z),
-            self._calib.vol_z_clip,
-            reason_codes,
+        same_side_obi, same_side_micro, same_side_aggr = compute_same_side_signals(snap, sign_side=sign_side)
+        participation_ratio = compute_participation_ratio(snap, eps_notional=self._calib.eps_notional_eur)
+        market_toxicity, regime_transition_risk, regime_stability, short_window_volatility_z, reason_codes = (
+            _sanitize_decision_inputs(snap, vol_z_clip=self._calib.vol_z_clip)
         )
         composite_dir = (
             self._calib.w_obi * same_side_obi
@@ -89,21 +69,25 @@ class HybridRouter:
         )
         p_fill_proxy = compute_p_fill_proxy(
             composite_dir=composite_dir,
-            market_toxicity_score=market_toxicity_score,
-            regime_transition_risk=regime_transition_risk,
-            short_window_volatility_z=short_window_volatility_z,
+            market_toxicity_score=market_toxicity.sanitized_value,
+            regime_transition_risk=regime_transition_risk.sanitized_value,
+            short_window_volatility_z=short_window_volatility_z.sanitized_value,
             participation_ratio=participation_ratio,
             calib=self._calib,
         )
         expected_wait_s = self._calib.maker_timeout_s * (1.0 - p_fill_proxy)
+        alpha_decay_factor = compute_alpha_decay_factor(
+            expected_wait_s=expected_wait_s,
+            tau_alpha_s=self._calib.tau_alpha_s,
+        )
         expected_miss_cost_bps = compute_expected_miss_cost_bps(
             expected_edge_bps=float(snap.expected_edge_bps),
             expected_wait_s=expected_wait_s,
             tau_alpha_s=self._calib.tau_alpha_s,
         )
         expected_adverse_selection_bps = compute_expected_adverse_selection_bps(
-            market_toxicity_score=market_toxicity_score,
-            regime_stability_score=regime_stability_score,
+            market_toxicity_score=market_toxicity.sanitized_value,
+            regime_stability_score=regime_stability.sanitized_value,
             scale_bps=self._calib.adverse_selection_scale_bps,
         )
         expected_taker_slippage_bps = compute_expected_taker_slippage_bps(
@@ -116,10 +100,18 @@ class HybridRouter:
             rate_bps_per_s=self._calib.capital_opportunity_rate_bps_per_s,
         )
         expected_latency_staleness_bps = compute_expected_latency_staleness_bps(
-            short_window_volatility_z=short_window_volatility_z,
+            short_window_volatility_z=short_window_volatility_z.sanitized_value,
             scale_bps=self._calib.latency_staleness_scale_bps,
         )
-        ev_maker_bps = compute_ev_maker_bps(
+        ev_maker_raw_bps = compute_ev_maker_raw_bps(
+            expected_edge_bps=float(snap.expected_edge_bps),
+            maker_fee_bps=float(snap.maker_fee_bps),
+            expected_miss_cost_bps=expected_miss_cost_bps,
+            expected_adverse_selection_bps=expected_adverse_selection_bps,
+            capital_opportunity_cost_bps=capital_opportunity_cost_bps,
+            expected_latency_staleness_bps=expected_latency_staleness_bps,
+        )
+        ev_maker_weighted_bps = compute_ev_maker_weighted_bps(
             expected_edge_bps=float(snap.expected_edge_bps),
             p_fill_proxy=p_fill_proxy,
             maker_fee_bps=float(snap.maker_fee_bps),
@@ -134,44 +126,55 @@ class HybridRouter:
             expected_taker_slippage_bps=expected_taker_slippage_bps,
         )
         action = _decide_action(
-            ev_maker_bps=ev_maker_bps,
+            ev_maker_weighted_bps=ev_maker_weighted_bps,
             ev_taker_bps=ev_taker_bps,
             p_fill_proxy=p_fill_proxy,
             calib=self._calib,
         )
         reason_codes.extend(_action_reason_codes(action))
-        decision = HybridRoutingDecision(
-            action=action,
-            ev_maker_bps=ev_maker_bps,
-            ev_taker_bps=ev_taker_bps,
-            p_fill_proxy=p_fill_proxy,
+        diagnostics = _build_diagnostics(
+            market_toxicity=market_toxicity,
+            regime_transition_risk=regime_transition_risk,
+            regime_stability=regime_stability,
+            short_window_volatility_z=short_window_volatility_z,
+            composite_dir=composite_dir,
             participation_ratio=participation_ratio,
             expected_wait_s=expected_wait_s,
+            alpha_decay_factor=alpha_decay_factor,
+            capital_opportunity_rate_bps_per_s=self._calib.capital_opportunity_rate_bps_per_s,
+            capital_opportunity_cost_bps=capital_opportunity_cost_bps,
+            ev_maker_raw_bps=ev_maker_raw_bps,
+            ev_maker_weighted_bps=ev_maker_weighted_bps,
+            ev_taker_bps=ev_taker_bps,
+        )
+        decision = _build_decision(
+            action=action,
+            p_fill_proxy=p_fill_proxy,
+            ev_maker_weighted_bps=ev_maker_weighted_bps,
+            ev_taker_bps=ev_taker_bps,
             expected_miss_cost_bps=expected_miss_cost_bps,
             expected_adverse_selection_bps=expected_adverse_selection_bps,
             expected_taker_slippage_bps=expected_taker_slippage_bps,
-            capital_opportunity_cost_bps=capital_opportunity_cost_bps,
             expected_latency_staleness_bps=expected_latency_staleness_bps,
+            diagnostics=diagnostics,
             reason_codes=tuple(reason_codes),
         )
         if self._metrics_sink is not None:
             self._metrics_sink.record_decision(
                 decision,
                 shadow_only=not self._calib.live_mode_enabled,
+                calibration_version=self._calib.calibration_version,
             )
         return decision
 
-    def build_plan(
-        self,
-        decision: HybridRoutingDecision,
-    ) -> HybridRoutingPlan:
+    def build_plan(self, decision: HybridRoutingDecision) -> HybridRoutingPlan:
         return HybridRoutingPlan(
             decision=decision,
             maker_timeout_s=self._calib.maker_timeout_s,
             max_signal_age_for_fallback_s=self._calib.max_signal_age_for_fallback_s,
             maker_min_fill_progress_ratio=self._calib.maker_min_fill_progress_ratio,
-            inv003_max_participation_ratio=self._calib.inv003_max_participation_ratio,
             shadow_only=not self._calib.live_mode_enabled,
+            calibration_version=self._calib.calibration_version,
         )
 
     def evaluate_fallback(
@@ -183,12 +186,6 @@ class HybridRouter:
         elapsed_s: float,
     ) -> tuple[HybridFallbackAction, tuple[str, ...]]:
         _ = elapsed_s
-        participation_ratio_current = compute_participation_ratio(
-            current_snapshot,
-            eps_notional=self._calib.eps_notional_eur,
-        )
-        if participation_ratio_current > initial_plan.inv003_max_participation_ratio:
-            return HybridFallbackAction.CANCEL, ("inv003_depth_degraded",)
         current_decision = self.decide(current_snapshot)
         if current_snapshot.signal_age_s > initial_plan.max_signal_age_for_fallback_s:
             return HybridFallbackAction.CANCEL, ("signal_too_old",)
@@ -199,37 +196,44 @@ class HybridRouter:
         return HybridFallbackAction.CONVERT_TO_MARKET, ("fallback_convert_to_market",)
 
 
-def _sanitize_zero_to_one(value: float, name: str, reason_codes: list[str]) -> float:
-    if not math.isfinite(value):
-        reason_codes.append(f"regime_input_clamped:{name}")
-        return 0.0
-    clamped = min(1.0, max(0.0, value))
-    if clamped != value:
-        reason_codes.append(f"regime_input_clamped:{name}")
-    return clamped
-
-
-def _sanitize_vol_z(value: float, clip_value: float, reason_codes: list[str]) -> float:
-    if not math.isfinite(value):
-        reason_codes.append("vol_zscore_unavailable")
-        return 0.0
-    clamped = min(clip_value, max(-clip_value, value))
-    if clamped != value:
-        reason_codes.append("vol_zscore_clipped")
-    return clamped
+def _build_decision(
+    *,
+    action: HybridRoutingAction,
+    p_fill_proxy: float,
+    ev_maker_weighted_bps: float,
+    ev_taker_bps: float,
+    expected_miss_cost_bps: float,
+    expected_adverse_selection_bps: float,
+    expected_taker_slippage_bps: float,
+    expected_latency_staleness_bps: float,
+    diagnostics: HybridRoutingDecisionDiagnostics,
+    reason_codes: tuple[str, ...],
+) -> HybridRoutingDecision:
+    return HybridRoutingDecision(
+            action=action,
+            p_fill_proxy=p_fill_proxy,
+            ev_maker_bps=ev_maker_weighted_bps,
+            ev_taker_bps=ev_taker_bps,
+            expected_miss_cost_bps=expected_miss_cost_bps,
+            expected_adverse_selection_bps=expected_adverse_selection_bps,
+            expected_taker_slippage_bps=expected_taker_slippage_bps,
+            expected_latency_staleness_bps=expected_latency_staleness_bps,
+            diagnostics=diagnostics,
+            reason_codes=reason_codes,
+        )
 
 
 def _decide_action(
     *,
-    ev_maker_bps: float,
+    ev_maker_weighted_bps: float,
     ev_taker_bps: float,
     p_fill_proxy: float,
     calib: HybridRouterCalibration,
 ) -> HybridRoutingAction:
-    if max(ev_maker_bps, ev_taker_bps) <= calib.route_edge_floor_bps:
+    if max(ev_maker_weighted_bps, ev_taker_bps) <= calib.route_edge_floor_bps:
         return HybridRoutingAction.NO_TRADE
     if (
-        ev_maker_bps >= ev_taker_bps + calib.maker_advantage_min_bps
+        ev_maker_weighted_bps >= ev_taker_bps + calib.maker_advantage_min_bps
         and p_fill_proxy >= calib.maker_fill_probability_min
     ):
         return HybridRoutingAction.LIMIT_MAKER
@@ -244,6 +248,88 @@ def _action_reason_codes(action: HybridRoutingAction) -> tuple[str, ...]:
     if action == HybridRoutingAction.LIMIT_MAKER:
         return ("hybrid_router_limit_maker",)
     return ("hybrid_router_market_taker",)
+
+
+def _sanitize_decision_inputs(
+    snap: ExecutionRoutingFeatureSnapshot,
+    *,
+    vol_z_clip: float,
+) -> tuple[
+    SanitizedField,
+    SanitizedField,
+    SanitizedField,
+    SanitizedField,
+    list[str],
+]:
+    market_toxicity = sanitize_unit_interval(
+        "market_toxicity_score",
+        float(snap.market_toxicity_score),
+    )
+    regime_transition_risk = sanitize_unit_interval(
+        "regime_transition_risk",
+        float(snap.regime_transition_risk),
+    )
+    regime_stability = sanitize_unit_interval(
+        "regime_stability_score",
+        float(snap.regime_stability_score),
+    )
+    short_window_volatility_z = sanitize_vol_z(
+        float(snap.short_window_volatility_z),
+        clip=vol_z_clip,
+    )
+    reason_codes = list(snapshot_reason_codes(snap))
+    reason_codes.extend(
+        collect_reason_codes(
+            {
+                "market_toxicity_score": market_toxicity,
+                "regime_transition_risk": regime_transition_risk,
+                "regime_stability_score": regime_stability,
+                "short_window_volatility_z": short_window_volatility_z,
+            }
+        )
+    )
+    return (
+        market_toxicity,
+        regime_transition_risk,
+        regime_stability,
+        short_window_volatility_z,
+        reason_codes,
+    )
+
+
+def _build_diagnostics(
+    *,
+    market_toxicity: SanitizedField,
+    regime_transition_risk: SanitizedField,
+    regime_stability: SanitizedField,
+    short_window_volatility_z: SanitizedField,
+    composite_dir: float,
+    participation_ratio: float,
+    expected_wait_s: float,
+    alpha_decay_factor: float,
+    capital_opportunity_rate_bps_per_s: float,
+    capital_opportunity_cost_bps: float,
+    ev_maker_raw_bps: float,
+    ev_maker_weighted_bps: float,
+    ev_taker_bps: float,
+) -> HybridRoutingDecisionDiagnostics:
+    return HybridRoutingDecisionDiagnostics(
+        market_toxicity=market_toxicity,
+        regime_transition_risk=regime_transition_risk,
+        regime_stability=regime_stability,
+        short_window_volatility_z=short_window_volatility_z,
+        composite_dir=composite_dir,
+        participation_ratio=participation_ratio,
+        expected_wait_s=expected_wait_s,
+        alpha_decay_factor=alpha_decay_factor,
+        capital_opportunity_rate_bps_per_s=capital_opportunity_rate_bps_per_s,
+        capital_opportunity_cost_bps=capital_opportunity_cost_bps,
+        ev_maker_raw_bps=ev_maker_raw_bps,
+        ev_maker_weighted_bps=ev_maker_weighted_bps,
+        ev_taker_bps=ev_taker_bps,
+        ev_maker_raw_minus_taker_bps=ev_maker_raw_bps - ev_taker_bps,
+        ev_maker_weighted_minus_taker_bps=ev_maker_weighted_bps - ev_taker_bps,
+    )
 
 
 __all__ = ["HybridRouter"]

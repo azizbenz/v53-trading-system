@@ -64,9 +64,14 @@ from monitoring.health_dashboard_backend import build_health_dashboard_payload
 from monitoring.hybrid_router_metrics import (
     HybridRouterCalibrationMetricProjection,
     HybridRouterDistributionSummary,
+    HybridRouterFullTraceProjection,
     HybridRouterMetricsProjection,
     HybridRouterMetricsSink,
     HybridRouterTraceProjection,
+)
+from monitoring.hybrid_router_trace import (
+    RoutingTraceCompact,
+    RoutingTraceFull,
 )
 from monitoring.metrics_collector import (
     collect_engine_metrics,
@@ -180,9 +185,12 @@ __all__ = [
     "FleetOverviewProjection",
     "HybridRouterCalibrationMetricProjection",
     "HybridRouterDistributionSummary",
+    "HybridRouterFullTraceProjection",
     "HybridRouterMetricsProjection",
     "HybridRouterMetricsSink",
     "HybridRouterTraceProjection",
+    "RoutingTraceCompact",
+    "RoutingTraceFull",
     "RuntimeHookBridgeProjection",
     "ExecutionNoTradeBridgeProjection",
     "ExecutionRuntimeProjectionBridgeProjection",

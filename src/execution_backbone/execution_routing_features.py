@@ -12,6 +12,10 @@ Side = Literal["BUY", "SELL"]
 class RoutingFeatureProjectionError(ValueError):
     """Raised when live routing features cannot be projected safely."""
 
+    def __init__(self, rejection_reason: str, detail: str) -> None:
+        super().__init__(detail)
+        self.rejection_reason = rejection_reason
+
 
 @dataclass(frozen=True)
 class ExecutionRoutingFeatureSnapshot:

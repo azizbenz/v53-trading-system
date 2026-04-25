@@ -45,7 +45,7 @@ from .order_decider.hybrid_router_types import (
     HybridRoutingAction,
     HybridRoutingDecision,
     HybridRoutingPlan,
-    build_routing_trace_payload,
+    build_compact_routing_trace_payload,
 )
 from .order_decider.decision_reporter import DecisionReporter, DecisionStats
 from .order_decider.intent_builder import ExecutionIntent, NoTradeDecision, NoTradeReason
@@ -159,6 +159,7 @@ class ExecutionRuntime(ExecutionRuntimeSupportMixin):
         self._terminal_order_sequence: deque[str] = deque()
         self._hybrid_plans_by_order_id: dict[str, HybridRoutingPlan] = {}
         self._hybrid_decisions_by_order_id: dict[str, HybridRoutingDecision] = {}
+        self._hybrid_shadow_record_id_by_order_id: dict[str, str] = {}
         self._gatekeeper = ExecutionGatekeeper(
             resolve_spread_guard=self._run_spread_guard,
             resolve_fee_aware_edge=self._run_fee_aware_edge_gate,
@@ -190,11 +191,16 @@ class ExecutionRuntime(ExecutionRuntimeSupportMixin):
                 self._hybrid_router_shadow_logger is not None
                 and opportunity.routing_features is not None
             ):
-                self._hybrid_router_shadow_logger.record(
+                shadow_record = self._hybrid_router_shadow_logger.record(
                     snapshot=opportunity.routing_features,
                     predicted_decision=decision,
-                    runtime_actual_decision=self._resolve_runtime_actual_decision(routed_submission),
+                    runtime_actual_action=self._resolve_runtime_actual_action(routed_submission),
+                    calibration_version=plan.calibration_version,
                 )
+                if routed_submission.order_id is not None:
+                    self._hybrid_shadow_record_id_by_order_id[
+                        routed_submission.order_id
+                    ] = self._hybrid_router_shadow_logger.resolve_record_id(shadow_record)
             if (
                 routed_submission.status == ExecutionSubmissionStatus.SUBMITTED
                 and routed_submission.order_id is not None
@@ -203,7 +209,11 @@ class ExecutionRuntime(ExecutionRuntimeSupportMixin):
             return routed_submission
 
         if decision.action == HybridRoutingAction.NO_TRADE:
-            trace_payload = build_routing_trace_payload(decision, shadow_only=False)
+            trace_payload = build_compact_routing_trace_payload(
+                decision,
+                calibration_version=plan.calibration_version,
+                shadow_only=False,
+            )
             return ExecutionSubmission(
                 status=ExecutionSubmissionStatus.NO_TRADE,
                 no_trade=NoTradeDecision(
@@ -219,12 +229,20 @@ class ExecutionRuntime(ExecutionRuntimeSupportMixin):
                 routing_trace=trace_payload,
             )
 
-        active_opportunity = self._build_hybrid_runtime_opportunity(
-            opportunity=opportunity,
-            decision=decision,
-            plan=plan,
-        )
-        routed_submission = self._submit_opportunity_via_gatekeeper(active_opportunity, now=now)
+        if decision.action == HybridRoutingAction.LIMIT_MAKER:
+            routed_submission = self.submit_limit_maker_order(
+                opportunity,
+                now=now,
+                decision=decision,
+                plan=plan,
+            )
+        else:
+            routed_submission = self.submit_market_order(
+                opportunity,
+                now=now,
+                decision=decision,
+                plan=plan,
+            )
         if (
             routed_submission.status == ExecutionSubmissionStatus.SUBMITTED
             and routed_submission.order_id is not None
@@ -233,6 +251,41 @@ class ExecutionRuntime(ExecutionRuntimeSupportMixin):
             if decision.action == HybridRoutingAction.LIMIT_MAKER:
                 self._hybrid_plans_by_order_id[routed_submission.order_id] = plan
         return routed_submission
+
+    def submit_market_order(
+        self,
+        opportunity: ExecutionOpportunity,
+        *,
+        now: float,
+        decision: HybridRoutingDecision | None = None,
+        plan: HybridRoutingPlan | None = None,
+    ) -> ExecutionSubmission:
+        market_opportunity = self._build_hybrid_runtime_opportunity(
+            opportunity=opportunity,
+            forced_action=HybridRoutingAction.MARKET_TAKER,
+            decision=decision,
+            plan=plan,
+        )
+        return self._submit_opportunity_via_gatekeeper(
+            self._apply_runtime_slippage_model(market_opportunity),
+            now=now,
+        )
+
+    def submit_limit_maker_order(
+        self,
+        opportunity: ExecutionOpportunity,
+        *,
+        now: float,
+        decision: HybridRoutingDecision,
+        plan: HybridRoutingPlan,
+    ) -> ExecutionSubmission:
+        maker_opportunity = self._build_hybrid_runtime_opportunity(
+            opportunity=opportunity,
+            forced_action=HybridRoutingAction.LIMIT_MAKER,
+            decision=decision,
+            plan=plan,
+        )
+        return self._submit_opportunity_via_gatekeeper(maker_opportunity, now=now)
 
     def replace_order(
         self,
@@ -597,11 +650,12 @@ class ExecutionRuntime(ExecutionRuntimeSupportMixin):
         self,
         *,
         opportunity: ExecutionOpportunity,
-        decision: HybridRoutingDecision,
-        plan: HybridRoutingPlan,
+        forced_action: HybridRoutingAction,
+        decision: HybridRoutingDecision | None,
+        plan: HybridRoutingPlan | None,
     ) -> ExecutionOpportunity:
         metadata = dict(opportunity.metadata)
-        if decision.action == HybridRoutingAction.LIMIT_MAKER:
+        if forced_action == HybridRoutingAction.LIMIT_MAKER:
             forced_order_type = "limit"
             price_limit = (
                 opportunity.routing_features.best_bid_price
@@ -613,18 +667,18 @@ class ExecutionRuntime(ExecutionRuntimeSupportMixin):
         else:
             forced_order_type = "market"
             price_limit = None
-        metadata.update(
-            {
-                "hybrid_router_forced_order_type": forced_order_type,
-                "hybrid_router_forced_reason": f"hybrid_router:{decision.action.value}",
-                "hybrid_router_timeout_s": plan.maker_timeout_s,
-                "hybrid_router_original_signal_arrival_monotonic_s": opportunity.signal_arrival_monotonic_s,
-                "routing_trace": build_routing_trace_payload(
-                    decision,
-                    shadow_only=plan.shadow_only,
-                ),
-            }
-        )
+        metadata["hybrid_router_forced_order_type"] = forced_order_type
+        metadata["hybrid_router_forced_reason"] = f"hybrid_router:{forced_action.value}"
+        if plan is not None:
+            metadata["hybrid_router_timeout_s"] = plan.maker_timeout_s
+            metadata["hybrid_router_calibration_version"] = plan.calibration_version
+        metadata["hybrid_router_original_signal_arrival_monotonic_s"] = opportunity.signal_arrival_monotonic_s
+        if decision is not None and plan is not None:
+            metadata["routing_trace"] = build_compact_routing_trace_payload(
+                decision,
+                calibration_version=plan.calibration_version,
+                shadow_only=plan.shadow_only,
+            )
         return opportunity.model_copy(
             update={
                 "price_limit": price_limit,
@@ -640,10 +694,13 @@ class ExecutionRuntime(ExecutionRuntimeSupportMixin):
         return {}
 
     @staticmethod
-    def _resolve_runtime_actual_decision(submission: ExecutionSubmission) -> str:
+    def _resolve_runtime_actual_action(submission: ExecutionSubmission) -> str:
         if submission.intent is not None:
-            return submission.intent.order_type.value.upper()
-        return submission.status.value.upper()
+            if submission.intent.order_type.value == "limit":
+                return HybridRoutingAction.LIMIT_MAKER.value
+            if submission.intent.order_type.value == "market":
+                return HybridRoutingAction.MARKET_TAKER.value
+        return HybridRoutingAction.NO_TRADE.value
 
     def _project_current_routing_features(
         self,
@@ -722,10 +779,6 @@ class ExecutionRuntime(ExecutionRuntimeSupportMixin):
         updated_metadata["hybrid_router_forced_order_type"] = "market"
         updated_metadata["hybrid_router_forced_reason"] = "hybrid_router:CONVERT_TO_MARKET"
         updated_metadata["hybrid_router_fallback_reason_codes"] = reason_codes
-        updated_metadata["routing_trace"] = build_routing_trace_payload(
-            self._hybrid_decisions_by_order_id.get(order_id),
-            shadow_only=False,
-        ) if order_id in self._hybrid_decisions_by_order_id else updated_metadata.get("routing_trace", {})
         market_opportunity = ExecutionOpportunity(
             intent_id=f"{intent.intent_id}:fallback",
             pair=intent.pair,
@@ -742,10 +795,21 @@ class ExecutionRuntime(ExecutionRuntimeSupportMixin):
             routing_features=current_snapshot,
             metadata=updated_metadata,
         )
-        submission = self._submit_opportunity_via_gatekeeper(market_opportunity, now=now)
+        plan = self._hybrid_plans_by_order_id.get(order_id)
+        decision = self._hybrid_decisions_by_order_id.get(order_id)
+        submission = self.submit_market_order(
+            market_opportunity,
+            now=now,
+            decision=decision,
+            plan=plan,
+        )
         if submission.status == ExecutionSubmissionStatus.SUBMITTED and submission.order_id is not None:
             self._hybrid_plans_by_order_id.pop(order_id, None)
+            if decision is not None:
+                self._hybrid_decisions_by_order_id[submission.order_id] = decision
             return True
+        if self._hybrid_router_metrics_sink is not None:
+            self._hybrid_router_metrics_sink.record_fallback_blocked_by_runtime()
         return False
 
     def _register_live_order(self, order_id: str, intent: ExecutionIntent, submitted_at: float) -> None:
@@ -886,22 +950,33 @@ class ExecutionRuntime(ExecutionRuntimeSupportMixin):
         self._cost_recorded.add(order_id)
 
     def _record_hybrid_router_terminal_outcome(self, order_id: str, record: OrderRecord) -> None:
-        if self._hybrid_router_metrics_sink is None:
-            return
         decision = self._hybrid_decisions_by_order_id.get(order_id)
-        if decision is None:
+        shadow_record_id = self._hybrid_shadow_record_id_by_order_id.get(order_id)
+        if decision is None and shadow_record_id is None:
             return
-        realized_fill = 1.0 if record.filled_quantity > 0.0 else 0.0
+        realized_fill_ratio = 0.0 if record.quantity <= 0.0 else record.filled_quantity / record.quantity
         realized_wait_s = (
             max(0.0, record.first_fill_time - record.sent_time)
             if record.first_fill_time is not None and record.sent_time is not None
             else None
         )
-        self._hybrid_router_metrics_sink.record_realized_outcome(
-            predicted_decision=decision,
-            realized_fill=realized_fill,
-            realized_wait_s=realized_wait_s,
-        )
+        if self._hybrid_router_metrics_sink is not None and decision is not None:
+            self._hybrid_router_metrics_sink.record_realized_outcome(
+                predicted_decision=decision,
+                realized_fill_ratio=realized_fill_ratio,
+                realized_wait_s=realized_wait_s,
+            )
+        if (
+            self._hybrid_router_shadow_logger is not None
+            and shadow_record_id is not None
+        ):
+            self._hybrid_router_shadow_logger.attach_outcome(
+                shadow_record_id,
+                fill_ratio=realized_fill_ratio,
+                time_to_fill_s=realized_wait_s,
+                slippage_bps=None,
+                alpha_decay_bps=None,
+            )
 
 
 def _resolve_original_signal_arrival(intent: ExecutionIntent, now: float) -> float:
