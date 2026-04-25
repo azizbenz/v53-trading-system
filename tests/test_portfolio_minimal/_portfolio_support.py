@@ -26,6 +26,11 @@ def build_candidate(
     cluster: str = "btc_cluster",
     estimated_loss: float = 0.0,
     beta_impact: float = 0.0,
+    holding_hours: float = 1.0,
+    forecast_strength: float | None = None,
+    instrument_price: float | None = None,
+    instrument_pct_vol: float | None = None,
+    point_value: float = 1.0,
 ) -> OpportunityCandidate:
     return OpportunityCandidate(
         pair=pair,
@@ -42,6 +47,11 @@ def build_candidate(
         cluster_id=cluster,
         estimated_loss=estimated_loss,
         beta_impact=beta_impact,
+        holding_hours=holding_hours,
+        forecast_strength=forecast_strength,
+        instrument_price=instrument_price,
+        instrument_pct_vol=instrument_pct_vol,
+        point_value=point_value,
     )
 
 
@@ -87,6 +97,7 @@ def build_config(
     cluster_cap: float = 500.0,
     loss_cap: float = 50.0,
     beta_cap: float = 1.0,
+    vol_target_profile: object | None = None,
 ) -> OrchestratorConfig:
     return OrchestratorConfig(
         size_profile=SizeProfile(available_capital=capital),
@@ -100,4 +111,5 @@ def build_config(
             beta_cap=beta_cap,
         ),
         freshness_policy=CANDIDATE_POOL_FRESHNESS_DISABLED,
+        vol_target_profile=vol_target_profile,
     )

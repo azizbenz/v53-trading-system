@@ -32,6 +32,10 @@ class OpportunityCandidate(BaseModel, frozen=True):
     beta_impact: float = 0.0  # β impact at candidate_size
     holding_hours: float = 0.0
     scoring_version: str = ""
+    forecast_strength: float | None = None
+    instrument_price: float | None = None
+    instrument_pct_vol: float | None = None
+    point_value: float = 1.0
 
 
 class CandidatePoolRejectReason(StrEnum):

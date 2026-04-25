@@ -8,6 +8,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from portfolio_minimal.allocation_router.phantom_trade_guard import PhantomVerdict
+from portfolio_minimal.arbitration_record import PortfolioArbitrationRecord
 
 
 class AllocationEntry(BaseModel, frozen=True):
@@ -23,6 +24,9 @@ class AllocationEntry(BaseModel, frozen=True):
     is_phantom: bool = False
     cap_reason: str = ""
     viability_reason: str = ""
+    sizing_method: str = "fixed_fraction"
+    vol_target_position_size: float | None = None
+    arbitration_record: PortfolioArbitrationRecord | None = None
 
 
 class AllocationReport(BaseModel, frozen=True):

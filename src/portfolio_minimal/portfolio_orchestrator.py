@@ -35,12 +35,21 @@ from portfolio_minimal.opportunity_selector.correlation_conflict_checker import 
     ConflictCheckResult,
     check_conflicts,
 )
-from portfolio_minimal.opportunity_selector.comparative_ranker import rank_candidates
+from portfolio_minimal.opportunity_selector.comparative_ranker import (
+    RankedCandidate,
+    rank_candidates,
+)
 from portfolio_minimal.opportunity_selector.selection_resolver import (
     SelectionResult,
     resolve_selection,
 )
 from portfolio_minimal.opportunity_selector.eligibility_filter import PortfolioSnapshot
+from portfolio_minimal.arbitration_record import (
+    PortfolioArbitrationRecord,
+    PortfolioArbitrationVerdict,
+    build_arbitration_record,
+    build_arbitration_snapshot,
+)
 from portfolio_minimal.allocation_router.base_size_builder import (
     SizeProfile,
     compute_base_size,
@@ -59,6 +68,12 @@ from portfolio_minimal.allocation_router.allocation_reporter import (
     AllocationReport,
     build_report,
 )
+from portfolio_minimal.allocation_router.vol_target_sizer import (
+    VolTargetCandidateInput,
+    VolTargetProfile,
+    VolTargetSizeResult,
+    compute_vol_target_size,
+)
 
 
 class OrchestratorConfig(BaseModel, frozen=True):
@@ -70,6 +85,7 @@ class OrchestratorConfig(BaseModel, frozen=True):
     position_cap: float = 500.0
     min_viable_size: float = 10.0
     cluster_crowding_threshold: int = 3
+    vol_target_profile: VolTargetProfile | None = None
 
 
 class OrchestratorResult(BaseModel, frozen=True):
@@ -81,6 +97,7 @@ class OrchestratorResult(BaseModel, frozen=True):
     conflicts: ConflictCheckResult | None = None
     selection: SelectionResult | None = None
     report: AllocationReport = AllocationReport()
+    arbitration_records: tuple[PortfolioArbitrationRecord, ...] = ()
 
 
 class PortfolioRelativeRankAdjustmentInput(BaseModel, frozen=True):
@@ -127,6 +144,9 @@ def _build_allocation_entry(
     capped: CapApplicationResult,
     is_phantom: bool,
     viability_reason: str,
+    sizing_method: str,
+    vol_target_result: VolTargetSizeResult | None,
+    arbitration_record: PortfolioArbitrationRecord | None = None,
 ) -> AllocationEntry:
     return AllocationEntry(
         pair=candidate.pair,
@@ -139,6 +159,11 @@ def _build_allocation_entry(
         is_phantom=is_phantom,
         cap_reason=capped.cap_reason,
         viability_reason=viability_reason,
+        sizing_method=sizing_method,
+        vol_target_position_size=(
+            None if vol_target_result is None else vol_target_result.position_size
+        ),
+        arbitration_record=arbitration_record,
     )
 
 
@@ -164,6 +189,133 @@ def _consume_viable_budgets(
         if abs(candidate.beta_impact) > 0.0:
             remaining_beta -= abs(candidate.beta_impact) * size_ratio
     return remaining_gross, remaining_loss, remaining_beta
+
+
+def _resolve_base_size(
+    *,
+    candidate: OpportunityCandidate,
+    config: OrchestratorConfig,
+) -> tuple[float, str, VolTargetSizeResult | None]:
+    if (
+        config.vol_target_profile is not None
+        and candidate.forecast_strength is not None
+        and candidate.instrument_price is not None
+        and candidate.instrument_pct_vol is not None
+    ):
+        vol_target_result = compute_vol_target_size(
+            VolTargetCandidateInput(
+                pair=candidate.pair,
+                available_capital=config.size_profile.available_capital,
+                forecast_strength=candidate.forecast_strength,
+                instrument_price=candidate.instrument_price,
+                instrument_pct_vol=candidate.instrument_pct_vol,
+                point_value=candidate.point_value,
+            ),
+            config.vol_target_profile,
+        )
+        return (
+            vol_target_result.position_size,
+            "carver_vol_target",
+            vol_target_result,
+        )
+
+    base = compute_base_size(candidate.pair, config.size_profile)
+    return base.base_size, "fixed_fraction", None
+
+
+def _compose_arbitration_reason_codes(
+    *,
+    promoted: bool,
+    selection_reason: str = "",
+    selection_verdict: str = "",
+    cap_reason: str = "",
+    viability_reason: str = "",
+) -> tuple[str, ...]:
+    reason_codes: list[str] = []
+    if promoted:
+        reason_codes.append("portfolio.promoted")
+    else:
+        reason_codes.append("portfolio_rejected")
+    for value in (selection_verdict, selection_reason, cap_reason, viability_reason):
+        if value:
+            reason_codes.append(value)
+    return tuple(reason_codes)
+
+
+def _build_arbitration_records(
+    *,
+    selection: SelectionResult,
+    entries: tuple[AllocationEntry, ...],
+    config: OrchestratorConfig,
+) -> tuple[PortfolioArbitrationRecord, ...]:
+    entry_map = {
+        (entry.pair, entry.engine_id): entry
+        for entry in entries
+    }
+
+    selected_snapshots = tuple(
+        build_arbitration_snapshot(
+            candidate=selected.candidate,
+            rank=selected.rank,
+            ranking_score=selected.ranking_score,
+            final_size=entry_map[(selected.pair, selected.engine_id)].final_size,
+            initial_snapshot=config.initial_snapshot,
+        )
+        for selected in selection.selected
+        if (selected.pair, selected.engine_id) in entry_map
+    )
+
+    records: list[PortfolioArbitrationRecord] = []
+    for selected in selection.selected:
+        entry = entry_map[(selected.pair, selected.engine_id)]
+        snapshot = build_arbitration_snapshot(
+            candidate=selected.candidate,
+            rank=selected.rank,
+            ranking_score=selected.ranking_score,
+            final_size=entry.final_size,
+            initial_snapshot=config.initial_snapshot,
+        )
+        promoted = not entry.is_phantom and entry.final_size > 0.0
+        verdict = (
+            PortfolioArbitrationVerdict.PROMOTED
+            if promoted
+            else PortfolioArbitrationVerdict.REJECTED_ALLOCATION
+        )
+        records.append(
+            build_arbitration_record(
+                snapshot=snapshot,
+                peers=selected_snapshots,
+                verdict=verdict,
+                reason_codes=_compose_arbitration_reason_codes(
+                    promoted=promoted,
+                    cap_reason=entry.cap_reason,
+                    viability_reason=entry.viability_reason,
+                ),
+            )
+        )
+
+    for rejected in selection.rejected:
+        snapshot = build_arbitration_snapshot(
+            candidate=rejected.candidate,
+            rank=rejected.rank,
+            ranking_score=rejected.ranking_score,
+            final_size=0.0,
+            initial_snapshot=config.initial_snapshot,
+        )
+        records.append(
+            build_arbitration_record(
+                snapshot=snapshot,
+                peers=selected_snapshots,
+                verdict=PortfolioArbitrationVerdict.REJECTED_SELECTION,
+                reason_codes=_compose_arbitration_reason_codes(
+                    promoted=False,
+                    selection_reason=rejected.reason,
+                    selection_verdict=rejected.verdict.value,
+                ),
+            )
+        )
+
+    return tuple(records)
 
 
 def run_portfolio_pipeline(
@@ -212,15 +364,18 @@ def run_portfolio_pipeline(
     for se in selection.selected:
         c = se.candidate
 
-        # 5. Base size
-        base = compute_base_size(c.pair, config.size_profile)
+        # 5. Base size (fixed-fraction or Carver-style vol-target)
+        base_size, sizing_method, vol_target_result = _resolve_base_size(
+            candidate=c,
+            config=config,
+        )
 
         # 6. Score modulation
         modulated = compute_modulated_size(
             c.pair,
-            base.base_size,
+            base_size,
             c.tier_suggestion,
-            ranking_score=se.ranking_score,
+            ranking_score=0.0 if vol_target_result is not None else se.ranking_score,
         )
 
         # 7. Apply all caps (gross, cluster, loss, beta)
@@ -252,11 +407,13 @@ def run_portfolio_pipeline(
         entry = _build_allocation_entry(
             candidate=c,
             ranking_score=se.ranking_score,
-            base_size=base.base_size,
+            base_size=base_size,
             modulated_size=modulated.modulated_size,
             capped=capped,
             is_phantom=is_phantom,
             viability_reason=phantom.reason,
+            sizing_method=sizing_method,
+            vol_target_result=vol_target_result,
         )
         entries.append(entry)
 
@@ -271,6 +428,24 @@ def run_portfolio_pipeline(
         )
 
     # ── 9. Final report ──
+    arbitration_records = _build_arbitration_records(
+        selection=selection,
+        entries=tuple(entries),
+        config=config,
+    )
+    record_map = {
+        (record.pair, record.engine_id): record
+        for record in arbitration_records
+        if record.verdict != PortfolioArbitrationVerdict.REJECTED_SELECTION
+    }
+    entries = [
+        entry.model_copy(
+            update={
+                "arbitration_record": record_map.get((entry.pair, entry.engine_id))
+            }
+        )
+        for entry in entries
+    ]
     report = build_report(
         tuple(entries),
         capital_remaining=remaining_gross,
@@ -285,6 +460,7 @@ def run_portfolio_pipeline(
         conflicts=conflict_result,
         selection=selection,
         report=report,
+        arbitration_records=arbitration_records,
     )
 
 

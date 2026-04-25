@@ -9,14 +9,26 @@ from portfolio import (
     OpportunityCandidate as FacadeOpportunityCandidate,
     OrchestratorConfig,
     OrchestratorResult,
+    PortfolioArbitrationRecord,
+    PortfolioArbitrationVerdict,
     SelectionEntry,
     SelectionResult,
     SelectionVerdict,
+    VolTargetProfile,
+    VolTargetSizeResult,
     run_portfolio_pipeline,
 )
 from portfolio_minimal.allocation_router.allocation_reporter import (
     AllocationEntry as ImplAllocationEntry,
     AllocationReport as ImplAllocationReport,
+)
+from portfolio_minimal.allocation_router.vol_target_sizer import (
+    VolTargetProfile as ImplVolTargetProfile,
+    VolTargetSizeResult as ImplVolTargetSizeResult,
+)
+from portfolio_minimal.arbitration_record import (
+    PortfolioArbitrationRecord as ImplPortfolioArbitrationRecord,
+    PortfolioArbitrationVerdict as ImplPortfolioArbitrationVerdict,
 )
 from portfolio_minimal.allocation_router.base_size_builder import SizeProfile
 from portfolio_minimal.opportunity_selector.candidate_pool_builder import (
@@ -45,9 +57,13 @@ def test_portfolio_facade_exports_expected_symbols():
         "OrchestratorConfig",
         "OrchestratorResult",
         "OpportunityCandidate",
+        "PortfolioArbitrationRecord",
+        "PortfolioArbitrationVerdict",
         "SelectionEntry",
         "SelectionResult",
         "SelectionVerdict",
+        "VolTargetProfile",
+        "VolTargetSizeResult",
         "run_portfolio_pipeline",
     ]
 
@@ -59,9 +75,13 @@ def test_portfolio_facade_reexports_impl_symbols():
     assert AllocationEntry is ImplAllocationEntry
     assert AllocationReport is ImplAllocationReport
     assert FacadeOpportunityCandidate is OpportunityCandidate
+    assert PortfolioArbitrationRecord is ImplPortfolioArbitrationRecord
+    assert PortfolioArbitrationVerdict is ImplPortfolioArbitrationVerdict
     assert SelectionEntry is ImplSelectionEntry
     assert SelectionResult is ImplSelectionResult
     assert SelectionVerdict is ImplSelectionVerdict
+    assert VolTargetProfile is ImplVolTargetProfile
+    assert VolTargetSizeResult is ImplVolTargetSizeResult
 
 
 def test_portfolio_facade_runs_minimal_pipeline():

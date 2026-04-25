@@ -13,6 +13,14 @@ from portfolio_minimal.allocation_router.allocation_reporter import (
     AllocationEntry,
     AllocationReport,
 )
+from portfolio_minimal.allocation_router.vol_target_sizer import (
+    VolTargetProfile,
+    VolTargetSizeResult,
+)
+from portfolio_minimal.arbitration_record import (
+    PortfolioArbitrationRecord,
+    PortfolioArbitrationVerdict,
+)
 from portfolio_minimal.opportunity_selector.candidate_pool_builder import (
     OpportunityCandidate,
 )
@@ -35,8 +43,12 @@ __all__ = [
     "OrchestratorConfig",
     "OrchestratorResult",
     "OpportunityCandidate",
+    "PortfolioArbitrationRecord",
+    "PortfolioArbitrationVerdict",
     "SelectionEntry",
     "SelectionResult",
     "SelectionVerdict",
+    "VolTargetProfile",
+    "VolTargetSizeResult",
     "run_portfolio_pipeline",
 ]

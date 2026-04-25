@@ -16,12 +16,24 @@ from .portfolio_orchestrator import (
     PortfolioRelativeRankAdjustmentOutcome,
     run_portfolio_pipeline,
 )
+from .arbitration_record import (
+    PortfolioArbitrationRecord,
+    PortfolioArbitrationVerdict,
+)
+from .allocation_router.vol_target_sizer import (
+    VolTargetProfile,
+    VolTargetSizeResult,
+)
 
 __all__ = [
     "OrchestratorConfig",
     "OrchestratorResult",
+    "PortfolioArbitrationRecord",
+    "PortfolioArbitrationVerdict",
     "PortfolioRelativeRankAdjustmentHook",
     "PortfolioRelativeRankAdjustmentInput",
     "PortfolioRelativeRankAdjustmentOutcome",
+    "VolTargetProfile",
+    "VolTargetSizeResult",
     "run_portfolio_pipeline",
 ]
