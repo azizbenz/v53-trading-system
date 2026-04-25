@@ -65,54 +65,40 @@ class ExecutionOpportunityLike(Protocol):
     profile: str
     venue_constraints: VenueConstraintSnapshot | None
     metadata: dict[str, object]
-
-
 class ExecutionNoTradeFilterOutcomeLike(Protocol):
     blocked: bool
     block_reason_codes: tuple[str, ...]
     detail: str
-
-
 class SpreadGuardResolver(Protocol):
     def __call__(
         self,
         opportunity: ExecutionOpportunityLike,
     ) -> ExecutionSpreadGuardDecision | None:
         ...
-
-
 class FeeAwareEdgeResolver(Protocol):
     def __call__(
         self,
         opportunity: ExecutionOpportunityLike,
     ) -> FeeAwareEdgeDecision | None:
         ...
-
-
 class ShariaTradeAuthorizerResolver(Protocol):
     def __call__(
         self,
         opportunity: ExecutionOpportunityLike,
     ) -> ShariaPermit | ShariaRejection | None:
         ...
-
-
 class RateLimitResolver(Protocol):
     def __call__(
         self,
         opportunity: ExecutionOpportunityLike,
     ) -> ExecutionRateLimitDecision | None:
         ...
-
-
 class VenueConstraintResolver(Protocol):
     def __call__(
         self,
         opportunity: ExecutionOpportunityLike,
     ) -> VenueConstraintSnapshot | None:
         ...
-
-
 class VenueOrderNormalizer(Protocol):
     def __call__(
         self,
@@ -125,21 +111,15 @@ class VenueOrderNormalizer(Protocol):
         constraints: VenueConstraintSnapshot,
     ) -> "ExecutionVenueNormalizationResult":
         ...
-
-
 class MaxSpreadForMarketResolver(Protocol):
     def __call__(self, opportunity: ExecutionOpportunityLike) -> float:
         ...
-
-
 class ExecutionNoTradeFilterResolver(Protocol):
     def __call__(
         self,
         opportunity: ExecutionOpportunityLike,
     ) -> ExecutionNoTradeFilterOutcomeLike | None:
         ...
-
-
 class ExecutionGateName(StrEnum):
     SPREAD_GUARD = "spread_guard"
     ORDER_TYPE = "order_type"
@@ -150,40 +130,28 @@ class ExecutionGateName(StrEnum):
     PRICE_LIMIT = "price_limit"
     VENUE_CONSTRAINTS = "venue_constraints"
     EXECUTION_NO_TRADE_FILTER = "execution_no_trade_filter"
-
-
 class ExecutionGateTraceVerdict(StrEnum):
     PASSED = "passed"
     REFUSED = "refused"
-
-
 class ExecutionGateRefusalDisposition(StrEnum):
     NO_TRADE = "no_trade"
     BLOCKED = "blocked"
-
-
 class ExecutionGateTrace(BaseModel, frozen=True):
     gate_name: ExecutionGateName
     verdict: ExecutionGateTraceVerdict
     reason_code: str = ""
     detail: str = ""
-
-
 class ExecutionVenueNormalizationResult(BaseModel, frozen=True):
     quantity: float
     quantity_exact: str
     price_limit: float | None = None
     price_limit_exact: str | None = None
     error_detail: str | None = None
-
-
 class ExecutionPermit(BaseModel, frozen=True):
     intent: ExecutionIntent
     detail: str = ""
     order_decision: OrderTypeDecision
     trace: tuple[ExecutionGateTrace, ...] = ()
-
-
 class ExecutionRefusal(BaseModel, frozen=True):
     disposition: ExecutionGateRefusalDisposition
     gate_name: ExecutionGateName
@@ -261,7 +229,10 @@ class ExecutionGatekeeper:
             return venue_state
         resolved_constraints, quantity, quantity_exact, price_limit, price_limit_exact = venue_state
 
-        timeout_policy = select_timeout_policy(order_decision.order_type)
+        timeout_policy = select_timeout_policy(
+            order_decision.order_type,
+            custom_timeout_s=_resolve_forced_timeout_s(opportunity.metadata),
+        )
         intent = build_intent(
             intent_id=opportunity.intent_id,
             pair=opportunity.pair,
@@ -330,13 +301,31 @@ class ExecutionGatekeeper:
         opportunity: ExecutionOpportunityLike,
         trace: list[ExecutionGateTrace],
     ) -> OrderTypeDecision | ExecutionRefusal:
-        order_decision = select_order_type(
-            expected_gain=opportunity.expected_gain,
-            expected_cost=opportunity.expected_cost,
-            safety_margin=opportunity.safety_margin,
-            spread_bps=opportunity.spread_bps,
-            max_spread_for_market=self._resolve_max_spread_for_market(opportunity),
-        )
+        forced_order_type = _resolve_forced_order_type(opportunity.metadata)
+        if forced_order_type is not None:
+            order_decision = OrderTypeDecision(
+                order_type=forced_order_type,
+                reason=str(
+                    opportunity.metadata.get(
+                        "hybrid_router_forced_reason",
+                        "forced by hybrid router",
+                    )
+                ),
+                expected_cost=opportunity.expected_cost,
+                expected_gain=opportunity.expected_gain,
+                safety_margin=opportunity.safety_margin,
+                net_expected=opportunity.expected_gain
+                - opportunity.expected_cost
+                - opportunity.safety_margin,
+            )
+        else:
+            order_decision = select_order_type(
+                expected_gain=opportunity.expected_gain,
+                expected_cost=opportunity.expected_cost,
+                safety_margin=opportunity.safety_margin,
+                spread_bps=opportunity.spread_bps,
+                max_spread_for_market=self._resolve_max_spread_for_market(opportunity),
+            )
         if order_decision.order_type == OrderType.NO_TRADE:
             reason = (
                 NoTradeReason.COST_EXCEEDS_EDGE
@@ -672,6 +661,30 @@ class ExecutionGatekeeper:
             guard=guard,
             trace=tuple(trace),
         )
+
+
+def _resolve_forced_order_type(metadata: dict[str, object]) -> OrderType | None:
+    raw_value = metadata.get("hybrid_router_forced_order_type")
+    if raw_value is None:
+        return None
+    normalized = str(raw_value).strip().casefold()
+    if normalized == "market":
+        return OrderType.MARKET
+    if normalized == "limit":
+        return OrderType.LIMIT
+    if normalized == "no_trade":
+        return OrderType.NO_TRADE
+    raise ValueError(f"Unsupported hybrid_router_forced_order_type: {raw_value!r}")
+
+
+def _resolve_forced_timeout_s(metadata: dict[str, object]) -> float | None:
+    raw_value = metadata.get("hybrid_router_timeout_s")
+    if raw_value is None:
+        return None
+    timeout_s = float(raw_value)
+    if timeout_s < 0.0:
+        raise ValueError("hybrid_router_timeout_s must be >= 0")
+    return timeout_s
 
 __all__ = [
     "ExecutionGateName",

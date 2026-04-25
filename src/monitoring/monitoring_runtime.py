@@ -26,6 +26,7 @@ from monitoring.contracts import (
     ExecutionNoTradeBridgeProjection,
     ExecutionRuntimeProjectionBridgeProjection,
     HealthDashboardPayload,
+    HybridRouterMetricsProjection,
     InfraMetrics,
     LiveProjection,
     LiveLightProjection,
@@ -140,6 +141,7 @@ class MonitoringRuntime:
         execution_no_trade_bridge_projection: ExecutionNoTradeBridgeProjection | None = None,
         execution_runtime_projection_bridge_projection: ExecutionRuntimeProjectionBridgeProjection
         | None = None,
+        hybrid_router_projection: HybridRouterMetricsProjection | None = None,
         runtime_hook_bridge_projections: tuple[RuntimeHookBridgeProjection, ...] | None = None,
         replay_projection: ReplayImportProjection | None = None,
     ) -> MonitoringRuntimeResult:
@@ -214,6 +216,7 @@ class MonitoringRuntime:
             execution_runtime_projection_bridge_projection=(
                 execution_runtime_projection_bridge_projection
             ),
+            hybrid_router_projection=hybrid_router_projection,
             runtime_hook_bridge_projections=runtime_hook_bridge_projections,
             replay_projection=replay_projection,
             operator_runtime=operator_runtime,

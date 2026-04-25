@@ -58,6 +58,19 @@ from .slippage_model import (
     ExecutionSlippageModel,
     predict_execution_slippage,
 )
+from .order_decider.hybrid_router import HybridRouter
+from .order_decider.hybrid_router_calibration import (
+    HybridRouterCalibration,
+    HybridRouterCalibrationConfig,
+    resolve_hybrid_router_calibration,
+)
+from .order_decider.hybrid_router_shadow import ShadowRoutingLogger
+from .order_decider.hybrid_router_types import (
+    HybridFallbackAction,
+    HybridRoutingAction,
+    HybridRoutingDecision,
+    HybridRoutingPlan,
+)
 from .venue_constraints_provider import (
     BinanceExchangeInfoVenueConstraintProvider,
     VenueConstraintProvider,
@@ -80,6 +93,14 @@ __all__ = [
     "ExecutionPermit",
     "ExecutionRefusal",
     "ExecutionVenueNormalizationResult",
+    "HybridFallbackAction",
+    "HybridRouter",
+    "HybridRouterCalibration",
+    "HybridRouterCalibrationConfig",
+    "HybridRoutingAction",
+    "HybridRoutingDecision",
+    "HybridRoutingPlan",
+    "ShadowRoutingLogger",
     "ExecutionOpportunity",
     "ExecutionRateLimitDecision",
     "ExecutionRateLimitModel",
@@ -104,6 +125,7 @@ __all__ = [
     "evaluate_execution_spread_guard",
     "BinanceExchangeInfoVenueConstraintProvider",
     "predict_execution_slippage",
+    "resolve_hybrid_router_calibration",
     "VenueConstraintProvider",
     "parse_binance_exchange_info_payload",
 ]

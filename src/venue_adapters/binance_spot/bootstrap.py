@@ -6,7 +6,7 @@ from collections.abc import Callable
 
 import httpx
 
-from execution_backbone import VenueConstraintProvider
+from execution_backbone.venue_constraints_provider import VenueConstraintProvider
 from interface_contracts.binance_contracts import BinanceCredentials
 from venue_adapters.binance_spot.execution_adapter import BinanceSpotExecutionAdapter
 from venue_adapters.binance_spot.rest_client import BinanceRestClient

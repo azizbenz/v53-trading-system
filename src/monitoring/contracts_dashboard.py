@@ -26,6 +26,7 @@ from .contracts_live_complete import (
     LiveCompleteGateGroupProjection,
     LiveCompleteProjection,
 )
+from .hybrid_router_metrics import HybridRouterMetricsProjection
 
 
 class EngineJudgmentCard(BaseModel, frozen=True):
@@ -512,6 +513,7 @@ class TechnicalDashboardPayload(TimestampedModel):
     execution_runtime_projection_bridge: ExecutionRuntimeProjectionBridgeProjection = (
         ExecutionRuntimeProjectionBridgeProjection()
     )
+    hybrid_router: HybridRouterMetricsProjection = HybridRouterMetricsProjection()
     runtime_hook_bridges: tuple[RuntimeHookBridgeProjection, ...] = ()
     replay_import: ReplayImportProjection
     alerts: AlertProjection
@@ -676,6 +678,7 @@ __all__ = [
     "EngineJudgmentProjection",
     "ExecutionNoTradeBridgeProjection",
     "ExecutionRuntimeProjectionBridgeProjection",
+    "HybridRouterMetricsProjection",
     "LiveCompleteGateGroupProjection",
     "LiveCompleteProjection",
     "LiveLightGateGroupProjection",

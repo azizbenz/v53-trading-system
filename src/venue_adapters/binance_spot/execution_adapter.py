@@ -6,14 +6,14 @@ import asyncio
 from collections.abc import Awaitable
 from typing import cast
 
-from execution_backbone import (
+from execution_backbone.execution_runtime_models import (
     ExecutionVenueAdapter,
     RemoteExecutionState,
     ReplaceReceipt,
     SubmitReceipt,
-    VenueConstraintProvider,
 )
 from execution_backbone.order_decider.intent_builder import ExecutionIntent, VenueConstraintSnapshot
+from execution_backbone.venue_constraints_provider import VenueConstraintProvider
 from interface_contracts import execution_decimal
 from interface_contracts.binance_contracts import BinanceAccountSnapshot, BinanceOpenOrder, BinanceOrderAck
 from venue_adapters.binance_spot.order_translator import translate_execution_intent_to_binance_order

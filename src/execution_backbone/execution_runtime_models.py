@@ -6,9 +6,14 @@ from enum import StrEnum
 from typing import Protocol
 
 from pydantic import BaseModel, Field
-from sharia_compliance.contracts import ShariaPermit, ShariaRejection, ShariaTradeRequest
 from interface_contracts import RefusalRecord
+from sharia_compliance.contracts import ShariaPermit, ShariaRejection, ShariaTradeRequest
 
+from .execution_routing_features import (
+    ExecutionRoutingFeatureSnapshot,
+    ExecutionRoutingTopOfBookSnapshot,
+    ExecutionRoutingVenueFees,
+)
 from .execution_cost_meter.cost_aggregator import CostAggregate
 from .fill_tracker.fill_reporter import FillStats
 from .fill_tracker.latency_meter import LatencyStats
@@ -53,6 +58,7 @@ class ExecutionOpportunity(BaseModel, frozen=True):
     scoring_completed_monotonic_s: float | None = Field(default=None, ge=0.0)
     risk_completed_monotonic_s: float | None = Field(default=None, ge=0.0)
     portfolio_completed_monotonic_s: float | None = Field(default=None, ge=0.0)
+    routing_features: ExecutionRoutingFeatureSnapshot | None = None
     metadata: dict[str, object] = Field(default_factory=dict)
 
 
@@ -132,12 +138,14 @@ class ExecutionSubmission(BaseModel, frozen=True):
     portfolio_to_submit_s: float | None = None
     detail: str = ""
     gate_trace: tuple[ExecutionGateTrace, ...] = ()
+    routing_trace: dict[str, object] = Field(default_factory=dict)
 
 
 class TimeoutSweepResult(BaseModel, frozen=True):
     """Result of a timeout sweep across open orders."""
 
     cancelled_order_ids: tuple[str, ...] = ()
+    converted_order_ids: tuple[str, ...] = ()
 
 
 class RuntimeProcessingSummary(BaseModel, frozen=True):
@@ -206,6 +214,26 @@ class ExecutionNoTradeFilter(Protocol):
     """Bounded pre-submit veto surface for the execution edge."""
 
     def __call__(self, hook_input: ExecutionNoTradeFilterInput) -> ExecutionNoTradeFilterOutcome:
+        ...
+
+
+class ExecutionRoutingLobSnapshotResolver(Protocol):
+    def __call__(self, pair: str) -> object | None:
+        ...
+
+
+class ExecutionRoutingRegimeSignalResolver(Protocol):
+    def __call__(self, pair: str) -> object | None:
+        ...
+
+
+class ExecutionRoutingTopOfBookResolver(Protocol):
+    def __call__(self, pair: str) -> ExecutionRoutingTopOfBookSnapshot | None:
+        ...
+
+
+class ExecutionRoutingVenueFeesResolver(Protocol):
+    def __call__(self, pair: str) -> ExecutionRoutingVenueFees | None:
         ...
 
 

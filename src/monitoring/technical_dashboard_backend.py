@@ -14,6 +14,7 @@ from monitoring.contracts import (
     EngineJudgmentProjection,
     ExecutionNoTradeBridgeProjection,
     ExecutionRuntimeProjectionBridgeProjection,
+    HybridRouterMetricsProjection,
     LiveProjection,
     LiveLightProjection,
     MicroLiveProjection,
@@ -451,6 +452,7 @@ def build_technical_dashboard_payload(
     execution_no_trade_bridge_projection: ExecutionNoTradeBridgeProjection | None = None,
     execution_runtime_projection_bridge_projection: ExecutionRuntimeProjectionBridgeProjection
     | None = None,
+    hybrid_router_projection: HybridRouterMetricsProjection | None = None,
     runtime_hook_bridge_projections: tuple[RuntimeHookBridgeProjection, ...] | None = None,
     replay_projection: ReplayImportProjection | None = None,
     operator_runtime: OperatorRuntimeProjection | None = None,
@@ -501,6 +503,11 @@ def build_technical_dashboard_payload(
         account_user_data=state.account_user_data,
         execution_no_trade_bridge=state.execution_no_trade_bridge,
         execution_runtime_projection_bridge=state.execution_runtime_projection_bridge,
+        hybrid_router=(
+            hybrid_router_projection
+            if hybrid_router_projection is not None
+            else HybridRouterMetricsProjection()
+        ),
         runtime_hook_bridges=state.runtime_hook_bridges,
         replay_import=state.replay_import,
         alerts=_build_alert_projection(

@@ -6,7 +6,7 @@ import math
 
 from pydantic import BaseModel, Field, model_validator
 
-from execution_backbone import ExecutionOpportunity
+from execution_backbone.execution_runtime_models import ExecutionOpportunity
 from execution_backbone.order_decider.intent_builder import VenueConstraintSnapshot
 from portfolio import (
     AllocationEntry,

@@ -23,6 +23,7 @@ from monitoring.contracts import (
     DiskUsageSample,
     FleetNodeProjection,
     FleetOverviewProjection,
+    HybridRouterMetricsProjection,
     ExecutionNoTradeBridgeProjection,
     ExecutionRuntimeProjectionBridgeProjection,
     RuntimeHookBridgeProjection,
@@ -60,6 +61,13 @@ from monitoring.contracts import (
     TechnicalDashboardPayload,
 )
 from monitoring.health_dashboard_backend import build_health_dashboard_payload
+from monitoring.hybrid_router_metrics import (
+    HybridRouterCalibrationMetricProjection,
+    HybridRouterDistributionSummary,
+    HybridRouterMetricsProjection,
+    HybridRouterMetricsSink,
+    HybridRouterTraceProjection,
+)
 from monitoring.metrics_collector import (
     collect_engine_metrics,
     collect_infra_metrics,
@@ -170,6 +178,11 @@ __all__ = [
     "DiskUsageSample",
     "FleetNodeProjection",
     "FleetOverviewProjection",
+    "HybridRouterCalibrationMetricProjection",
+    "HybridRouterDistributionSummary",
+    "HybridRouterMetricsProjection",
+    "HybridRouterMetricsSink",
+    "HybridRouterTraceProjection",
     "RuntimeHookBridgeProjection",
     "ExecutionNoTradeBridgeProjection",
     "ExecutionRuntimeProjectionBridgeProjection",

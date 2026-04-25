@@ -6,7 +6,7 @@ from collections import deque
 from collections.abc import Iterable, Mapping
 from typing import Protocol
 
-from execution_backbone import VenueOrderEvent, VenueOrderEventType
+from execution_backbone.execution_runtime_models import VenueOrderEvent, VenueOrderEventType
 from interface_contracts import execution_decimal
 from interface_contracts.binance_contracts import BinanceUserDataExecutionReport
 

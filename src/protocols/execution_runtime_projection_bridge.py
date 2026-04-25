@@ -6,11 +6,9 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from execution_backbone import (
-    ExecutionRateLimitModel,
-    ExecutionSpreadGuardModel,
-    ExecutionSlippageModel,
-)
+from execution_backbone.rate_limiter import ExecutionRateLimitModel
+from execution_backbone.slippage_model import ExecutionSlippageModel
+from execution_backbone.spread_guard import ExecutionSpreadGuardModel
 from local_replay_runtime.local_lab_execution_runtime_projection import (
     LocalLabExecutionRuntimeConsumerProjection,
     LocalLabExecutionRuntimeProjection,

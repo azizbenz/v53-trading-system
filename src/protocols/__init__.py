@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from importlib import import_module
+
 from protocols.contracts import (
     InfoStressGovernanceSummary,
     LiveCompleteDecision,
@@ -285,36 +287,6 @@ from protocols.portfolio_relative_rank_adjustment_bridge import (
     PortfolioRelativeRankAdjustmentBridgeStatus,
     inspect_portfolio_relative_rank_adjustment_bridge,
 )
-from protocols.execution_no_trade_filter_bridge import ExecutionNoTradeFilterBridge
-from protocols.execution_no_trade_filter_bridge import (
-    ExecutionNoTradeFilterBridgeStatus,
-    inspect_execution_no_trade_filter_bridge,
-)
-from protocols.execution_runtime_projection_bridge import (
-    ExecutionRuntimeProjectionBridgeStatus,
-    inspect_execution_runtime_projection_bridge,
-    load_execution_runtime_consumer_models,
-)
-from protocols.execution_runtime_bootstrap import (
-    ExecutionRuntimeBootstrapBundle,
-    build_binance_execution_runtime_bootstrap_bundle,
-    build_binance_execution_runtime,
-    build_execution_runtime_bootstrap_bundle,
-    build_execution_runtime,
-    inspect_execution_runtime_bootstrap,
-)
-from protocols.execution_runtime_dashboard import (
-    build_execution_no_trade_bridge_projection,
-    build_execution_runtime_projection_bridge_projection,
-    build_runtime_hook_bridge_projections,
-)
-from protocols.execution_opportunity_bridge import (
-    ExecutionOpportunityBridgeContext,
-    PortfolioExecutionSelection,
-    build_execution_opportunity_from_orchestrator_result,
-    build_execution_opportunity_from_portfolio_selection,
-    resolve_portfolio_execution_selection,
-)
 from protocols.closed_episode_journal import (
     ClosedEpisodeJournal,
     ClosedEpisodeJournalManifest,
@@ -334,6 +306,100 @@ build_live_input_from_micro_live = build_live_complete_input_from_live_light
 run_live_gate = run_live_complete_gate
 build_live_projection = build_live_complete_projection
 build_live_dashboard_section = build_live_complete_dashboard_section
+
+_LAZY_EXPORTS: dict[str, tuple[str, str]] = {
+    "ExecutionNoTradeFilterBridge": (
+        "protocols.execution_no_trade_filter_bridge",
+        "ExecutionNoTradeFilterBridge",
+    ),
+    "ExecutionNoTradeFilterBridgeStatus": (
+        "protocols.execution_no_trade_filter_bridge",
+        "ExecutionNoTradeFilterBridgeStatus",
+    ),
+    "inspect_execution_no_trade_filter_bridge": (
+        "protocols.execution_no_trade_filter_bridge",
+        "inspect_execution_no_trade_filter_bridge",
+    ),
+    "ExecutionRuntimeProjectionBridgeStatus": (
+        "protocols.execution_runtime_projection_bridge",
+        "ExecutionRuntimeProjectionBridgeStatus",
+    ),
+    "inspect_execution_runtime_projection_bridge": (
+        "protocols.execution_runtime_projection_bridge",
+        "inspect_execution_runtime_projection_bridge",
+    ),
+    "load_execution_runtime_consumer_models": (
+        "protocols.execution_runtime_projection_bridge",
+        "load_execution_runtime_consumer_models",
+    ),
+    "ExecutionRuntimeBootstrapBundle": (
+        "protocols.execution_runtime_bootstrap",
+        "ExecutionRuntimeBootstrapBundle",
+    ),
+    "build_execution_runtime_bootstrap_bundle": (
+        "protocols.execution_runtime_bootstrap",
+        "build_execution_runtime_bootstrap_bundle",
+    ),
+    "build_execution_runtime": (
+        "protocols.execution_runtime_bootstrap",
+        "build_execution_runtime",
+    ),
+    "build_binance_execution_runtime_bootstrap_bundle": (
+        "protocols.execution_runtime_bootstrap",
+        "build_binance_execution_runtime_bootstrap_bundle",
+    ),
+    "build_binance_execution_runtime": (
+        "protocols.execution_runtime_bootstrap",
+        "build_binance_execution_runtime",
+    ),
+    "inspect_execution_runtime_bootstrap": (
+        "protocols.execution_runtime_bootstrap",
+        "inspect_execution_runtime_bootstrap",
+    ),
+    "build_execution_no_trade_bridge_projection": (
+        "protocols.execution_runtime_dashboard",
+        "build_execution_no_trade_bridge_projection",
+    ),
+    "build_execution_runtime_projection_bridge_projection": (
+        "protocols.execution_runtime_dashboard",
+        "build_execution_runtime_projection_bridge_projection",
+    ),
+    "build_runtime_hook_bridge_projections": (
+        "protocols.execution_runtime_dashboard",
+        "build_runtime_hook_bridge_projections",
+    ),
+    "ExecutionOpportunityBridgeContext": (
+        "protocols.execution_opportunity_bridge",
+        "ExecutionOpportunityBridgeContext",
+    ),
+    "PortfolioExecutionSelection": (
+        "protocols.execution_opportunity_bridge",
+        "PortfolioExecutionSelection",
+    ),
+    "resolve_portfolio_execution_selection": (
+        "protocols.execution_opportunity_bridge",
+        "resolve_portfolio_execution_selection",
+    ),
+    "build_execution_opportunity_from_portfolio_selection": (
+        "protocols.execution_opportunity_bridge",
+        "build_execution_opportunity_from_portfolio_selection",
+    ),
+    "build_execution_opportunity_from_orchestrator_result": (
+        "protocols.execution_opportunity_bridge",
+        "build_execution_opportunity_from_orchestrator_result",
+    ),
+}
+
+
+def __getattr__(name: str) -> object:
+    target = _LAZY_EXPORTS.get(name)
+    if target is None:
+        raise AttributeError(f"module 'protocols' has no attribute {name!r}")
+    module_name, attr_name = target
+    module = import_module(module_name)
+    value = getattr(module, attr_name)
+    globals()[name] = value
+    return value
 
 __all__ = [
     "LiveInput",

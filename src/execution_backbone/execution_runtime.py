@@ -12,6 +12,8 @@ from collections import deque
 import logging
 
 from interface_contracts import VenueRateLimitExceededError
+from .execution_routing_bridge import ExecutionRoutingBridge
+from .execution_routing_features import ExecutionRoutingFeatureSnapshot
 from .fee_aware_edge_gate import (
     FeeAwareEdgeGateConfig,
 )
@@ -35,8 +37,18 @@ from .gatekeeper import (
     GatekeeperAuditLogger,
     ExecutionRefusal,
 )
+from .order_decider.hybrid_router import HybridRouter
+from .order_decider.hybrid_router_metrics import HybridRouterMetricsSink
+from .order_decider.hybrid_router_shadow import ShadowRoutingLogger
+from .order_decider.hybrid_router_types import (
+    HybridFallbackAction,
+    HybridRoutingAction,
+    HybridRoutingDecision,
+    HybridRoutingPlan,
+    build_routing_trace_payload,
+)
 from .order_decider.decision_reporter import DecisionReporter, DecisionStats
-from .order_decider.intent_builder import ExecutionIntent
+from .order_decider.intent_builder import ExecutionIntent, NoTradeDecision, NoTradeReason
 from .rate_limiter import ExecutionRateLimitModel
 from .spread_guard import ExecutionSpreadGuardModel
 
@@ -51,6 +63,10 @@ from .execution_runtime_models import (
     ExecutionNoTradeFilterInput,
     ExecutionNoTradeFilterOutcome,
     ExecutionOpportunity,
+    ExecutionRoutingLobSnapshotResolver,
+    ExecutionRoutingRegimeSignalResolver,
+    ExecutionRoutingTopOfBookResolver,
+    ExecutionRoutingVenueFeesResolver,
     ExecutionRefusalSink,
     ExecutionSubmission,
     ExecutionSubmissionStatus,
@@ -93,6 +109,14 @@ class ExecutionRuntime(ExecutionRuntimeSupportMixin):
         slippage_model: ExecutionSlippageModel | None = None,
         gatekeeper_audit_logger: GatekeeperAuditLogger | None = None,
         refusal_sink: ExecutionRefusalSink | None = None,
+        hybrid_router: HybridRouter | None = None,
+        hybrid_router_shadow_logger: ShadowRoutingLogger | None = None,
+        hybrid_router_metrics_sink: HybridRouterMetricsSink | None = None,
+        execution_routing_bridge: ExecutionRoutingBridge | None = None,
+        routing_lob_snapshot_resolver: ExecutionRoutingLobSnapshotResolver | None = None,
+        routing_regime_signal_resolver: ExecutionRoutingRegimeSignalResolver | None = None,
+        routing_top_of_book_resolver: ExecutionRoutingTopOfBookResolver | None = None,
+        routing_venue_fees_resolver: ExecutionRoutingVenueFeesResolver | None = None,
     ) -> None:
         if terminal_order_retention <= 0:
             raise ValueError("terminal_order_retention must be > 0")
@@ -109,6 +133,14 @@ class ExecutionRuntime(ExecutionRuntimeSupportMixin):
         self._slippage_model = slippage_model
         self._gatekeeper_audit_logger = gatekeeper_audit_logger
         self._refusal_sink = refusal_sink
+        self._hybrid_router = hybrid_router
+        self._hybrid_router_shadow_logger = hybrid_router_shadow_logger
+        self._hybrid_router_metrics_sink = hybrid_router_metrics_sink
+        self._execution_routing_bridge = execution_routing_bridge
+        self._routing_lob_snapshot_resolver = routing_lob_snapshot_resolver
+        self._routing_regime_signal_resolver = routing_regime_signal_resolver
+        self._routing_top_of_book_resolver = routing_top_of_book_resolver
+        self._routing_venue_fees_resolver = routing_venue_fees_resolver
         self._decision_reporter = DecisionReporter()
         self._state_tracker = OrderStateTracker()
         self._fill_aggregator = FillAggregator()
@@ -125,6 +157,8 @@ class ExecutionRuntime(ExecutionRuntimeSupportMixin):
         self._local_positions: dict[str, float] = {}
         self._terminal_orders: dict[str, _TerminalOrderSnapshot] = {}
         self._terminal_order_sequence: deque[str] = deque()
+        self._hybrid_plans_by_order_id: dict[str, HybridRoutingPlan] = {}
+        self._hybrid_decisions_by_order_id: dict[str, HybridRoutingDecision] = {}
         self._gatekeeper = ExecutionGatekeeper(
             resolve_spread_guard=self._run_spread_guard,
             resolve_fee_aware_edge=self._run_fee_aware_edge_gate,
@@ -138,119 +172,67 @@ class ExecutionRuntime(ExecutionRuntimeSupportMixin):
 
     def submit_opportunity(self, opportunity: ExecutionOpportunity, now: float) -> ExecutionSubmission:
         """Turn an execution opportunity into a real submitted order or an explicit no-trade."""
-        opportunity = self._apply_runtime_slippage_model(opportunity)
-        authorization = self._gatekeeper.authorize(opportunity)
-        if isinstance(authorization, ExecutionRefusal):
-            self._decision_reporter.record_no_trade(authorization.no_trade, timestamp=now)
-            self._log_gatekeeper_refusal(authorization, opportunity, now)
-            self._record_runtime_refusal(
-                refusal=authorization,
-                opportunity=opportunity,
+        if opportunity.routing_features is None or self._hybrid_router is None:
+            routed_submission = self._submit_opportunity_via_gatekeeper(
+                self._apply_runtime_slippage_model(opportunity),
                 now=now,
             )
-            self._record_gatekeeper_refusal_audit(
-                refusal=authorization,
-                opportunity=opportunity,
+            return routed_submission
+
+        decision = self._hybrid_router.decide(opportunity.routing_features)
+        plan = self._hybrid_router.build_plan(decision)
+        if plan.shadow_only:
+            routed_submission = self._submit_opportunity_via_gatekeeper(
+                self._apply_runtime_slippage_model(opportunity),
                 now=now,
             )
-            status = (
-                ExecutionSubmissionStatus.BLOCKED
-                if authorization.disposition == ExecutionGateRefusalDisposition.BLOCKED
-                else ExecutionSubmissionStatus.NO_TRADE
-            )
+            if (
+                self._hybrid_router_shadow_logger is not None
+                and opportunity.routing_features is not None
+            ):
+                self._hybrid_router_shadow_logger.record(
+                    snapshot=opportunity.routing_features,
+                    predicted_decision=decision,
+                    runtime_actual_decision=self._resolve_runtime_actual_decision(routed_submission),
+                )
+            if (
+                routed_submission.status == ExecutionSubmissionStatus.SUBMITTED
+                and routed_submission.order_id is not None
+            ):
+                self._hybrid_decisions_by_order_id[routed_submission.order_id] = decision
+            return routed_submission
+
+        if decision.action == HybridRoutingAction.NO_TRADE:
+            trace_payload = build_routing_trace_payload(decision, shadow_only=False)
             return ExecutionSubmission(
-                status=status,
-                no_trade=authorization.no_trade,
-                guard=authorization.guard,
-                detail=authorization.detail,
-                gate_trace=authorization.trace,
+                status=ExecutionSubmissionStatus.NO_TRADE,
+                no_trade=NoTradeDecision(
+                    pair=opportunity.pair,
+                    engine_id=opportunity.engine_id,
+                    reason=NoTradeReason.COST_EXCEEDS_EDGE,
+                    detail="hybrid router selected NO_TRADE",
+                    expected_cost=opportunity.expected_cost,
+                    expected_gain=opportunity.expected_gain,
+                    score=opportunity.score,
+                ),
+                detail="hybrid router selected NO_TRADE",
+                routing_trace=trace_payload,
             )
-        intent = authorization.intent
-        try:
-            receipt = self._adapter.submit_order(intent, now)
-        except VenueRateLimitExceededError as exc:
-            logger.warning(
-                "execution_submission_rate_limited",
-                extra={
-                    "intent_id": intent.intent_id,
-                    "pair": intent.pair,
-                    "engine_id": intent.engine_id,
-                    "error": str(exc),
-                    "timestamp": now,
-                },
-            )
-            return ExecutionSubmission(
-                status=ExecutionSubmissionStatus.BLOCKED,
-                no_trade=f"RATE_LIMIT: {exc}",
-                guard="venue_rate_limiter",
-                detail=str(exc),
-                gate_trace=authorization.trace,
-            )
-        submit_latency = self._latency_meter.record_submit(
-            receipt.order_id,
-            signal_arrival_time=opportunity.signal_arrival_monotonic_s,
-            scoring_completed_time=opportunity.scoring_completed_monotonic_s,
-            risk_completed_time=opportunity.risk_completed_monotonic_s,
-            portfolio_completed_time=opportunity.portfolio_completed_monotonic_s,
-            submit_time=now,
-        )
-        self._register_live_order(receipt.order_id, intent, receipt.submitted_at)
-        self._decision_reporter.record_trade(intent, timestamp=now)
-        self._record_gatekeeper_submission_audit(
-            permit=authorization,
+
+        active_opportunity = self._build_hybrid_runtime_opportunity(
             opportunity=opportunity,
-            order_id=receipt.order_id,
-            now=now,
+            decision=decision,
+            plan=plan,
         )
-        logger.info(
-            "execution_submission_submitted",
-            extra={
-                "intent_id": intent.intent_id,
-                "order_id": receipt.order_id,
-                "pair": intent.pair,
-                "engine_id": intent.engine_id,
-                "order_type": intent.order_type.value,
-                "signal_to_submit_s": (
-                    None if submit_latency is None else submit_latency.signal_to_submit_s
-                ),
-                "signal_to_scoring_s": (
-                    None if submit_latency is None else submit_latency.signal_to_scoring_s
-                ),
-                "scoring_to_risk_s": (
-                    None if submit_latency is None else submit_latency.scoring_to_risk_s
-                ),
-                "risk_to_portfolio_s": (
-                    None if submit_latency is None else submit_latency.risk_to_portfolio_s
-                ),
-                "portfolio_to_submit_s": (
-                    None if submit_latency is None else submit_latency.portfolio_to_submit_s
-                ),
-                "gate_trace": tuple(step.model_dump(mode="json") for step in authorization.trace),
-                "timestamp": now,
-            },
-        )
-        return ExecutionSubmission(
-            status=ExecutionSubmissionStatus.SUBMITTED,
-            order_id=receipt.order_id,
-            intent=intent,
-            signal_to_submit_s=(
-                None if submit_latency is None else submit_latency.signal_to_submit_s
-            ),
-            signal_to_scoring_s=(
-                None if submit_latency is None else submit_latency.signal_to_scoring_s
-            ),
-            scoring_to_risk_s=(
-                None if submit_latency is None else submit_latency.scoring_to_risk_s
-            ),
-            risk_to_portfolio_s=(
-                None if submit_latency is None else submit_latency.risk_to_portfolio_s
-            ),
-            portfolio_to_submit_s=(
-                None if submit_latency is None else submit_latency.portfolio_to_submit_s
-            ),
-            detail=authorization.detail,
-            gate_trace=authorization.trace,
-        )
+        routed_submission = self._submit_opportunity_via_gatekeeper(active_opportunity, now=now)
+        if (
+            routed_submission.status == ExecutionSubmissionStatus.SUBMITTED
+            and routed_submission.order_id is not None
+        ):
+            self._hybrid_decisions_by_order_id[routed_submission.order_id] = decision
+            if decision.action == HybridRoutingAction.LIMIT_MAKER:
+                self._hybrid_plans_by_order_id[routed_submission.order_id] = plan
+        return routed_submission
 
     def replace_order(
         self,
@@ -321,6 +303,7 @@ class ExecutionRuntime(ExecutionRuntimeSupportMixin):
     def sweep_timeouts(self, now: float) -> TimeoutSweepResult:
         """Request cancellations for open orders whose timeout has elapsed."""
         cancelled_order_ids: list[str] = []
+        converted_order_ids: list[str] = []
         for record in self._state_tracker.get_open_orders():
             if record.order_id in self._pending_cancels:
                 continue
@@ -329,6 +312,36 @@ class ExecutionRuntime(ExecutionRuntimeSupportMixin):
                 continue
             if now - record.sent_time < timeout_s:
                 continue
+            hybrid_plan = self._hybrid_plans_by_order_id.get(record.order_id)
+            if (
+                hybrid_plan is not None
+                and self._hybrid_router is not None
+                and not hybrid_plan.shadow_only
+            ):
+                current_snapshot = self._project_current_routing_features(record.order_id, now=now)
+                if current_snapshot is not None:
+                    observed_fill_ratio = 0.0 if record.quantity <= 0.0 else record.filled_quantity / record.quantity
+                    fallback_action, reason_codes = self._hybrid_router.evaluate_fallback(
+                        initial_plan=hybrid_plan,
+                        current_snapshot=current_snapshot,
+                        observed_fill_ratio=observed_fill_ratio,
+                        elapsed_s=now - record.sent_time,
+                    )
+                    if self._hybrid_router_metrics_sink is not None:
+                        self._hybrid_router_metrics_sink.record_fallback(
+                            fallback_action,
+                            reason_codes=reason_codes,
+                        )
+                    if fallback_action == HybridFallbackAction.CONVERT_TO_MARKET:
+                        converted = self._convert_timed_out_order_to_market(
+                            order_id=record.order_id,
+                            current_snapshot=current_snapshot,
+                            now=now,
+                            reason_codes=reason_codes,
+                        )
+                        if converted:
+                            converted_order_ids.append(record.order_id)
+                            continue
             self._adapter.cancel_order(record.order_id, now, reason="timeout")
             self._pending_cancels.add(record.order_id)
             cancelled_order_ids.append(record.order_id)
@@ -336,7 +349,10 @@ class ExecutionRuntime(ExecutionRuntimeSupportMixin):
                 "execution_timeout_cancel_requested",
                 extra={"order_id": record.order_id, "timestamp": now, "timeout_s": timeout_s},
             )
-        return TimeoutSweepResult(cancelled_order_ids=tuple(cancelled_order_ids))
+        return TimeoutSweepResult(
+            cancelled_order_ids=tuple(cancelled_order_ids),
+            converted_order_ids=tuple(converted_order_ids),
+        )
 
     def process_events(self) -> RuntimeProcessingSummary:
         """Consume venue events and update local execution state."""
@@ -454,6 +470,284 @@ class ExecutionRuntime(ExecutionRuntimeSupportMixin):
     def get_local_positions(self) -> dict[str, float]:
         return dict(self._local_positions)
 
+    def get_hybrid_router_metrics_projection(self) -> object:
+        if self._hybrid_router_metrics_sink is None:
+            return HybridRouterMetricsSink().build_projection()
+        return self._hybrid_router_metrics_sink.build_projection()
+
+    def _submit_opportunity_via_gatekeeper(
+        self,
+        opportunity: ExecutionOpportunity,
+        *,
+        now: float,
+    ) -> ExecutionSubmission:
+        authorization = self._gatekeeper.authorize(opportunity)
+        if isinstance(authorization, ExecutionRefusal):
+            self._decision_reporter.record_no_trade(authorization.no_trade, timestamp=now)
+            self._log_gatekeeper_refusal(authorization, opportunity, now)
+            self._record_runtime_refusal(
+                refusal=authorization,
+                opportunity=opportunity,
+                now=now,
+            )
+            self._record_gatekeeper_refusal_audit(
+                refusal=authorization,
+                opportunity=opportunity,
+                now=now,
+            )
+            status = ExecutionSubmissionStatus.BLOCKED if authorization.disposition == ExecutionGateRefusalDisposition.BLOCKED else ExecutionSubmissionStatus.NO_TRADE
+            return ExecutionSubmission(
+                status=status,
+                no_trade=authorization.no_trade,
+                guard=authorization.guard,
+                detail=authorization.detail,
+                gate_trace=authorization.trace,
+                routing_trace=self._routing_trace_from_metadata(opportunity.metadata),
+            )
+        intent = authorization.intent
+        try:
+            receipt = self._adapter.submit_order(intent, now)
+        except VenueRateLimitExceededError as exc:
+            logger.warning(
+                "execution_submission_rate_limited",
+                extra={
+                    "intent_id": intent.intent_id,
+                    "pair": intent.pair,
+                    "engine_id": intent.engine_id,
+                    "error": str(exc),
+                    "timestamp": now,
+                },
+            )
+            return ExecutionSubmission(
+                status=ExecutionSubmissionStatus.BLOCKED,
+                detail=str(exc),
+                gate_trace=authorization.trace,
+                routing_trace=self._routing_trace_from_metadata(opportunity.metadata),
+            )
+        submit_latency = self._latency_meter.record_submit(
+            receipt.order_id,
+            signal_arrival_time=opportunity.signal_arrival_monotonic_s,
+            scoring_completed_time=opportunity.scoring_completed_monotonic_s,
+            risk_completed_time=opportunity.risk_completed_monotonic_s,
+            portfolio_completed_time=opportunity.portfolio_completed_monotonic_s,
+            submit_time=now,
+        )
+        self._register_live_order(receipt.order_id, intent, receipt.submitted_at)
+        self._decision_reporter.record_trade(intent, timestamp=now)
+        self._record_gatekeeper_submission_audit(
+            permit=authorization,
+            opportunity=opportunity,
+            order_id=receipt.order_id,
+            now=now,
+        )
+        routing_trace = self._routing_trace_from_metadata(opportunity.metadata)
+        logger.info(
+            "execution_submission_submitted",
+            extra={
+                "intent_id": intent.intent_id,
+                "order_id": receipt.order_id,
+                "pair": intent.pair,
+                "engine_id": intent.engine_id,
+                "order_type": intent.order_type.value,
+                "signal_to_submit_s": (
+                    None if submit_latency is None else submit_latency.signal_to_submit_s
+                ),
+                "signal_to_scoring_s": (
+                    None if submit_latency is None else submit_latency.signal_to_scoring_s
+                ),
+                "scoring_to_risk_s": (
+                    None if submit_latency is None else submit_latency.scoring_to_risk_s
+                ),
+                "risk_to_portfolio_s": (
+                    None if submit_latency is None else submit_latency.risk_to_portfolio_s
+                ),
+                "portfolio_to_submit_s": (
+                    None if submit_latency is None else submit_latency.portfolio_to_submit_s
+                ),
+                "gate_trace": tuple(step.model_dump(mode="json") for step in authorization.trace),
+                "routing_trace": routing_trace,
+                "timestamp": now,
+            },
+        )
+        return ExecutionSubmission(
+            status=ExecutionSubmissionStatus.SUBMITTED,
+            order_id=receipt.order_id,
+            intent=intent,
+            signal_to_submit_s=(
+                None if submit_latency is None else submit_latency.signal_to_submit_s
+            ),
+            signal_to_scoring_s=(
+                None if submit_latency is None else submit_latency.signal_to_scoring_s
+            ),
+            scoring_to_risk_s=(
+                None if submit_latency is None else submit_latency.scoring_to_risk_s
+            ),
+            risk_to_portfolio_s=(
+                None if submit_latency is None else submit_latency.risk_to_portfolio_s
+            ),
+            portfolio_to_submit_s=(
+                None if submit_latency is None else submit_latency.portfolio_to_submit_s
+            ),
+            detail=authorization.detail,
+            gate_trace=authorization.trace,
+            routing_trace=routing_trace,
+        )
+
+    def _build_hybrid_runtime_opportunity(
+        self,
+        *,
+        opportunity: ExecutionOpportunity,
+        decision: HybridRoutingDecision,
+        plan: HybridRoutingPlan,
+    ) -> ExecutionOpportunity:
+        metadata = dict(opportunity.metadata)
+        if decision.action == HybridRoutingAction.LIMIT_MAKER:
+            forced_order_type = "limit"
+            price_limit = (
+                opportunity.routing_features.best_bid_price
+                if opportunity.routing_features is not None and opportunity.routing_features.side == "BUY"
+                else opportunity.routing_features.best_ask_price
+                if opportunity.routing_features is not None
+                else opportunity.price_limit
+            )
+        else:
+            forced_order_type = "market"
+            price_limit = None
+        metadata.update(
+            {
+                "hybrid_router_forced_order_type": forced_order_type,
+                "hybrid_router_forced_reason": f"hybrid_router:{decision.action.value}",
+                "hybrid_router_timeout_s": plan.maker_timeout_s,
+                "hybrid_router_original_signal_arrival_monotonic_s": opportunity.signal_arrival_monotonic_s,
+                "routing_trace": build_routing_trace_payload(
+                    decision,
+                    shadow_only=plan.shadow_only,
+                ),
+            }
+        )
+        return opportunity.model_copy(
+            update={
+                "price_limit": price_limit,
+                "reference_price": price_limit if price_limit is not None else opportunity.reference_price,
+                "metadata": metadata,
+            }
+        )
+
+    def _routing_trace_from_metadata(self, metadata: dict[str, object]) -> dict[str, object]:
+        raw_value = metadata.get("routing_trace")
+        if isinstance(raw_value, dict):
+            return dict(raw_value)
+        return {}
+
+    @staticmethod
+    def _resolve_runtime_actual_decision(submission: ExecutionSubmission) -> str:
+        if submission.intent is not None:
+            return submission.intent.order_type.value.upper()
+        return submission.status.value.upper()
+
+    def _project_current_routing_features(
+        self,
+        order_id: str,
+        *,
+        now: float,
+    ) -> ExecutionRoutingFeatureSnapshot | None:
+        if (
+            self._execution_routing_bridge is None
+            or self._routing_lob_snapshot_resolver is None
+            or self._routing_regime_signal_resolver is None
+            or self._routing_top_of_book_resolver is None
+            or self._routing_venue_fees_resolver is None
+        ):
+            return None
+        intent = self._intents.get(order_id)
+        if intent is None:
+            return None
+        opportunity = self._build_opportunity_from_intent(intent=intent, now=now)
+        lob_snapshot = self._routing_lob_snapshot_resolver(intent.pair)
+        regime_signal = self._routing_regime_signal_resolver(intent.pair)
+        top_of_book = self._routing_top_of_book_resolver(intent.pair)
+        venue_fees = self._routing_venue_fees_resolver(intent.pair)
+        if any(item is None for item in (lob_snapshot, regime_signal, top_of_book, venue_fees)):
+            return None
+        try:
+            return self._execution_routing_bridge.project(
+                opportunity=opportunity,
+                lob_regime_snapshot=lob_snapshot,
+                regime_signal=regime_signal,
+                top_of_book=top_of_book,
+                venue_fees=venue_fees,
+            )
+        except Exception as exc:
+            _ = exc
+            return None
+
+    def _build_opportunity_from_intent(
+        self,
+        *,
+        intent: ExecutionIntent,
+        now: float,
+    ) -> ExecutionOpportunity:
+        return ExecutionOpportunity(
+            intent_id=intent.intent_id,
+            pair=intent.pair,
+            engine_id=intent.engine_id,
+            side=intent.side,
+            quantity=intent.quantity,
+            expected_gain=intent.expected_gain,
+            expected_cost=intent.expected_cost,
+            score=intent.score,
+            justification=intent.justification,
+            reference_price=intent.price_limit,
+            price_limit=intent.price_limit,
+            profile=intent.profile,
+            venue_constraints=intent.venue_constraints,
+            signal_arrival_monotonic_s=_resolve_original_signal_arrival(intent, now),
+            metadata=dict(intent.metadata),
+        )
+
+    def _convert_timed_out_order_to_market(
+        self,
+        *,
+        order_id: str,
+        current_snapshot: ExecutionRoutingFeatureSnapshot,
+        now: float,
+        reason_codes: tuple[str, ...],
+    ) -> bool:
+        intent = self._intents.get(order_id)
+        if intent is None:
+            return False
+        self._adapter.cancel_order(order_id, now, reason="hybrid_router_convert_to_market")
+        self._pending_cancels.add(order_id)
+        updated_metadata = dict(intent.metadata)
+        updated_metadata["hybrid_router_forced_order_type"] = "market"
+        updated_metadata["hybrid_router_forced_reason"] = "hybrid_router:CONVERT_TO_MARKET"
+        updated_metadata["hybrid_router_fallback_reason_codes"] = reason_codes
+        updated_metadata["routing_trace"] = build_routing_trace_payload(
+            self._hybrid_decisions_by_order_id.get(order_id),
+            shadow_only=False,
+        ) if order_id in self._hybrid_decisions_by_order_id else updated_metadata.get("routing_trace", {})
+        market_opportunity = ExecutionOpportunity(
+            intent_id=f"{intent.intent_id}:fallback",
+            pair=intent.pair,
+            engine_id=intent.engine_id,
+            side=intent.side,
+            quantity=intent.quantity,
+            expected_gain=intent.expected_gain,
+            expected_cost=intent.expected_cost,
+            score=intent.score,
+            justification=intent.justification,
+            spread_bps=float(current_snapshot.spread_bps),
+            profile=intent.profile,
+            venue_constraints=intent.venue_constraints,
+            routing_features=current_snapshot,
+            metadata=updated_metadata,
+        )
+        submission = self._submit_opportunity_via_gatekeeper(market_opportunity, now=now)
+        if submission.status == ExecutionSubmissionStatus.SUBMITTED and submission.order_id is not None:
+            self._hybrid_plans_by_order_id.pop(order_id, None)
+            return True
+        return False
+
     def _register_live_order(self, order_id: str, intent: ExecutionIntent, submitted_at: float) -> None:
         self._intents[order_id] = intent
         self._timeout_by_order_id[order_id] = intent.timeout_s
@@ -519,6 +813,7 @@ class ExecutionRuntime(ExecutionRuntimeSupportMixin):
         )
         if record.filled_quantity > 0.0:
             self._record_trade_cost(order_id, record)
+        self._record_hybrid_router_terminal_outcome(order_id, record)
         self._retain_terminal_snapshot(order_id, filled_quantity=record.filled_quantity)
         self._release_terminal_order_state(order_id)
         return resolution
@@ -589,3 +884,28 @@ class ExecutionRuntime(ExecutionRuntimeSupportMixin):
             ),
         )
         self._cost_recorded.add(order_id)
+
+    def _record_hybrid_router_terminal_outcome(self, order_id: str, record: OrderRecord) -> None:
+        if self._hybrid_router_metrics_sink is None:
+            return
+        decision = self._hybrid_decisions_by_order_id.get(order_id)
+        if decision is None:
+            return
+        realized_fill = 1.0 if record.filled_quantity > 0.0 else 0.0
+        realized_wait_s = (
+            max(0.0, record.first_fill_time - record.sent_time)
+            if record.first_fill_time is not None and record.sent_time is not None
+            else None
+        )
+        self._hybrid_router_metrics_sink.record_realized_outcome(
+            predicted_decision=decision,
+            realized_fill=realized_fill,
+            realized_wait_s=realized_wait_s,
+        )
+
+
+def _resolve_original_signal_arrival(intent: ExecutionIntent, now: float) -> float:
+    raw_value = intent.metadata.get("hybrid_router_original_signal_arrival_monotonic_s")
+    if isinstance(raw_value, int | float):
+        return max(0.0, float(raw_value))
+    return max(0.0, now - intent.timeout_s)

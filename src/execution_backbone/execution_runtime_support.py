@@ -503,6 +503,10 @@ class ExecutionRuntimeSupportMixin:
         self._timeout_by_order_id.pop(order_id, None)
         self._cost_context.pop(order_id, None)
         self._cost_recorded.discard(order_id)
+        if hasattr(self, "_hybrid_plans_by_order_id"):
+            self._hybrid_plans_by_order_id.pop(order_id, None)
+        if hasattr(self, "_hybrid_decisions_by_order_id"):
+            self._hybrid_decisions_by_order_id.pop(order_id, None)
         self._intents.pop(order_id, None)
         self._fill_aggregator.evict_order(order_id)
         self._state_tracker.evict_order(order_id)
