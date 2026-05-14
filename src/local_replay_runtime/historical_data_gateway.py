@@ -9,12 +9,19 @@ from pathlib import Path
 from pydantic import BaseModel, Field, model_validator
 
 from interface_contracts import (
+    CANONICAL_PHYSICS_FEATURE_DICTIONARY,
     CANONICAL_FEATURE_SET_VERSION,
     CANONICAL_TRANSFORM_SET_VERSION,
     CANONICAL_TRANSFORM_WHITELIST,
     FeatureLineageLock,
+    FeatureLineageRecord,
+    PhysicsFeatureFamily,
+    TransformWhitelistId,
+    TransformWhitelistLock,
     canonical_feature_ids,
+    canonical_transform_ids,
     validate_feature_lineage_lock,
+    validate_transform_whitelist_lock,
 )
 from meta_minimal.dtr_core.decision_state_encoder import DecisionState
 
@@ -37,13 +44,37 @@ class HistoricalReplayOpportunity(BaseModel, frozen=True):
     final_score: float | None = None
     expected_edge_bps: float = 0.0
     spread_bps: float = Field(default=0.0, ge=0.0)
+    # Audit 2026-05-14 P3-A wiring : tier-aware spread provenance.
+    # Valeurs : "MEASURED_FROM_BOOK_SNAPSHOT", "MEASURED_FROM_BOOK_RECONSTRUCTION",
+    # "MEASURED_FROM_BOOK_SNAPSHOT_STALE" (audit-only, gate reste actif),
+    # "DEFAULT_BY_BOOK_STATUS", ou "" (legacy/missing). Consomme par
+    # _build_row_component_sources pour determiner spread_model_source au
+    # manifest level.
+    spread_provenance: str = ""
     slippage_bps: float = Field(default=0.0, ge=0.0)
     latency_penalty_bps: float = Field(default=0.0, ge=0.0)
     fill_ratio: float = Field(default=1.0, ge=0.0, le=1.0)
+    side: str = "buy"
+    maker_fee_rate: float | None = Field(default=None, ge=0.0)
+    taker_fee_rate: float | None = Field(default=None, ge=0.0)
+    tick_size: float | None = Field(default=None, gt=0.0)
+    step_size: float | None = Field(default=None, gt=0.0)
+    min_notional: float | None = Field(default=None, ge=0.0)
+    mid_price: float | None = Field(default=None, gt=0.0)
+    post_fill_mid_price: float | None = Field(default=None, gt=0.0)
+    adverse_selection_delay_s: float | None = Field(default=None, gt=0.0)
+    fill_prices: tuple[float, ...] = ()
+    fill_quantities: tuple[float, ...] = ()
     target_decision_state: DecisionState | None = None
     production_decision_state: DecisionState | None = None
     production_final_score: float | None = None
     production_expected_cost: float | None = None
+    book_depth_levels: int | None = Field(default=None, ge=0)
+    book_depth_source_status: str = "BOOK_DEPTH_NOT_PROVEN"
+    book_depth_snapshot_count: int | None = Field(default=None, ge=0)
+    book_depth_event_count: int | None = Field(default=None, ge=0)
+    book_depth_missing_count: int | None = Field(default=None, ge=0)
+    book_depth_staleness_status: str = "BOOK_DEPTH_NOT_PROVEN"
     hard_block_reasons: tuple[str, ...] = ()
     ranking_position: int = Field(default=0, ge=0)
     candidate_size: float = Field(default=0.0, ge=0.0)
@@ -77,6 +108,13 @@ class HistoricalReplayOpportunity(BaseModel, frozen=True):
         if isinstance(data.get("feature_values"), str):
             raw_features = data["feature_values"].strip()
             data["feature_values"] = json.loads(raw_features) if raw_features else {}
+        for field_name in ("fill_prices", "fill_quantities"):
+            if isinstance(data.get(field_name), str):
+                raw_items = data[field_name].strip()
+                data[field_name] = tuple(
+                    float(item)
+                    for item in (json.loads(raw_items) if raw_items else [])
+                )
         return data
 
     @model_validator(mode="after")
@@ -84,6 +122,12 @@ class HistoricalReplayOpportunity(BaseModel, frozen=True):
         if self.candidate_size > 0.0 and self.final_size > self.candidate_size:
             raise ValueError(
                 "HistoricalReplayOpportunity final_size must stay <= candidate_size"
+            )
+        if self.fill_prices and self.fill_quantities and (
+            len(self.fill_prices) != len(self.fill_quantities)
+        ):
+            raise ValueError(
+                "HistoricalReplayOpportunity fill_prices and fill_quantities must align"
             )
         return self
 
@@ -228,6 +272,8 @@ def build_feature_bridge_payload(
     dataset: HistoricalReplayDataset,
     *,
     feature_lineage_lock: FeatureLineageLock | None = None,
+    transform_whitelist_lock: TransformWhitelistLock | None = None,
+    auto_materialize_feature_locks: bool = False,
 ) -> FeatureBridgePayload:
     """Summarize whether the historical dataset materialized the feature bridge."""
 
@@ -236,9 +282,28 @@ def build_feature_bridge_payload(
         if dataset.shared_core_match and dataset.missing_feature_rows == 0
         else "warning"
     )
+    resolved_feature_lineage_lock = feature_lineage_lock
+    resolved_transform_whitelist_lock = transform_whitelist_lock
+    if resolved_feature_lineage_lock is None and auto_materialize_feature_locks:
+        (
+            resolved_feature_lineage_lock,
+            resolved_transform_whitelist_lock,
+        ) = _materialize_feature_locks(dataset.feature_keys)
+    elif (
+        resolved_feature_lineage_lock is not None
+        and resolved_transform_whitelist_lock is None
+    ):
+        resolved_transform_whitelist_lock = _build_transform_whitelist_lock_from_lineage(
+            resolved_feature_lineage_lock
+        )
     lineage_reasons = validate_feature_lineage_lock(
         dataset.feature_keys,
-        feature_lineage_lock,
+        resolved_feature_lineage_lock,
+    )
+    transform_ids = _transform_ids_for_feature_keys(dataset.feature_keys)
+    transform_reasons = validate_transform_whitelist_lock(
+        transform_ids,
+        resolved_transform_whitelist_lock,
     )
     canonical_ids = set(canonical_feature_ids())
     recognized_feature_keys = tuple(
@@ -265,12 +330,153 @@ def build_feature_bridge_payload(
         "rows_with_features": dataset.rows_with_features,
         "missing_feature_rows": dataset.missing_feature_rows,
         "shared_core_match": dataset.shared_core_match,
-        "lineage_lock_present": feature_lineage_lock is not None,
+        "lineage_lock_present": resolved_feature_lineage_lock is not None,
         "lineage_lock_status": "ok" if not lineage_reasons else "missing",
         "lineage_lock_reasons": list(lineage_reasons),
+        "feature_lineage_lock": (
+            resolved_feature_lineage_lock.model_dump(mode="json")
+            if resolved_feature_lineage_lock is not None
+            else None
+        ),
+        "transform_whitelist_present": resolved_transform_whitelist_lock is not None,
+        "transform_whitelist_status": "ok" if not transform_reasons else "missing",
+        "transform_whitelist_reasons": list(transform_reasons),
+        "transform_whitelist_lock": (
+            resolved_transform_whitelist_lock.model_dump(mode="json")
+            if resolved_transform_whitelist_lock is not None
+            else None
+        ),
         "path_materialized": dataset.rows_with_features > 0,
         "feature_to_engine_path": "historical_prices -> computed_features -> engines -> scoring",
     }
+
+
+def _materialize_feature_locks(
+    feature_keys: tuple[str, ...],
+) -> tuple[FeatureLineageLock, TransformWhitelistLock]:
+    records = tuple(
+        _build_feature_lineage_record(feature_id)
+        for feature_id in feature_keys
+    )
+    feature_lineage_lock = FeatureLineageLock(
+        feature_set_version=CANONICAL_FEATURE_SET_VERSION,
+        transform_set_version=CANONICAL_TRANSFORM_SET_VERSION,
+        records=records,
+    )
+    return (
+        feature_lineage_lock,
+        _build_transform_whitelist_lock_from_lineage(feature_lineage_lock),
+    )
+
+
+def _build_transform_whitelist_lock_from_lineage(
+    feature_lineage_lock: FeatureLineageLock,
+) -> TransformWhitelistLock:
+    transform_ids = tuple(
+        dict.fromkeys(
+            transform_id
+            for record in feature_lineage_lock.records
+            for transform_id in record.transform_ids
+        )
+    ) or canonical_transform_ids()
+    return TransformWhitelistLock(
+        transform_set_version=feature_lineage_lock.transform_set_version,
+        allowed_transform_ids=transform_ids,
+    )
+
+
+def _build_feature_lineage_record(feature_id: str) -> FeatureLineageRecord:
+    canonical_entry = CANONICAL_PHYSICS_FEATURE_DICTIONARY.get(feature_id)
+    if canonical_entry is not None:
+        return FeatureLineageRecord(
+            feature_id=feature_id,
+            family=canonical_entry.family,
+            source_inputs=("historical_prices",),
+            transform_ids=canonical_entry.default_transform_ids,
+            equation_id=canonical_entry.equation_id,
+            feature_set_version=CANONICAL_FEATURE_SET_VERSION,
+            transform_set_version=CANONICAL_TRANSFORM_SET_VERSION,
+        )
+    family, transform_ids, source_inputs = _fallback_lineage_spec(feature_id)
+    return FeatureLineageRecord(
+        feature_id=feature_id,
+        family=family,
+        source_inputs=source_inputs,
+        transform_ids=transform_ids,
+        equation_id=f"shadow.live.derived.{feature_id}",
+        feature_set_version=CANONICAL_FEATURE_SET_VERSION,
+        transform_set_version=CANONICAL_TRANSFORM_SET_VERSION,
+    )
+
+
+def _transform_ids_for_feature_keys(
+    feature_keys: tuple[str, ...],
+) -> tuple[TransformWhitelistId, ...]:
+    return tuple(
+        dict.fromkeys(
+            transform_id
+            for feature_id in feature_keys
+            for transform_id in _lineage_transform_ids(feature_id)
+        )
+    )
+
+
+def _lineage_transform_ids(feature_id: str) -> tuple[TransformWhitelistId, ...]:
+    canonical_entry = CANONICAL_PHYSICS_FEATURE_DICTIONARY.get(feature_id)
+    if canonical_entry is not None:
+        return canonical_entry.default_transform_ids
+    _, transform_ids, _ = _fallback_lineage_spec(feature_id)
+    return transform_ids
+
+
+def _fallback_lineage_spec(
+    feature_id: str,
+) -> tuple[
+    PhysicsFeatureFamily,
+    tuple[TransformWhitelistId, ...],
+    tuple[str, ...],
+]:
+    normalized = feature_id.strip().lower()
+    if normalized.startswith("snapshot_"):
+        source_inputs = ("snapshot_event",)
+    elif normalized.startswith("depth_"):
+        source_inputs = ("depth_event",)
+    elif normalized.startswith("trade_"):
+        source_inputs = ("trade_event",)
+    elif normalized.startswith("kline_"):
+        source_inputs = ("kline_event",)
+    else:
+        source_inputs = ("route_hint_feature_values",)
+
+    if "spread" in normalized:
+        return (
+            PhysicsFeatureFamily.SPREAD_REGIME,
+            (TransformWhitelistId.CLIP01,),
+            source_inputs,
+        )
+    if "volume" in normalized or "notional" in normalized or "quantity" in normalized:
+        return (
+            PhysicsFeatureFamily.VOLUME_PROFILE,
+            (TransformWhitelistId.CAPRATIO,),
+            source_inputs,
+        )
+    if "maker" in normalized or "imbalance" in normalized:
+        return (
+            PhysicsFeatureFamily.ORDER_FLOW_IMBALANCE,
+            (TransformWhitelistId.ZPLUS,),
+            source_inputs,
+        )
+    if "price" in normalized or "bid" in normalized or "ask" in normalized:
+        return (
+            PhysicsFeatureFamily.MICROPRICE_DEVIATION,
+            (TransformWhitelistId.CAPRATIO,),
+            source_inputs,
+        )
+    return (
+        PhysicsFeatureFamily.REGIME_HURST_CONTEXT_ENRICHMENT,
+        (TransformWhitelistId.CLIP01,),
+        source_inputs,
+    )
 
 
 __all__ = [

@@ -105,6 +105,13 @@ def test_build_parity_diagnostics_payload_reports_ok_when_baselines_match():
     assert payload["score_alignment"] == "within_prudent_tolerance"
     assert payload["cost_alignment"] == "within_prudent_tolerance"
     assert payload["baseline_status"] == "sufficient"
+    assert payload["book_depth_source_status"] == "BOOK_DEPTH_NOT_PROVEN"
+    assert payload["impact_source_status"] == "IMPACT_SOURCE_NOT_PROVEN"
+    assert payload["fill_ratio_source"] == "REPLAY_MODEL"
+    assert payload["fill_realism_status"] == "FILL_REALISM_MODEL_ONLY"
+    assert payload["fill_source_status"] == "FILL_SOURCE_REPLAY_MODEL"
+    assert payload["realized_slippage_status"] == "NOT_PROVEN"
+    assert payload["cost_parity_status"] == "REPLAY_LIVE_COST_PARITY_BLOCKED_BY_TELEMETRY"
     assert payload["parity_policy"]["float_precision"] == "binary64"
 
 
@@ -121,3 +128,168 @@ def test_build_parity_diagnostics_payload_warns_when_policy_is_stricter_than_dat
 
     assert payload["parity_status"] == "warning"
     assert payload["baseline_status"] == "insufficient"
+
+
+def test_build_parity_diagnostics_payload_distinguishes_depth20_limited_top_of_book_and_missing() -> None:
+    def build_depth_dataset(levels: int | None) -> HistoricalReplayDataset:
+        return HistoricalReplayDataset.from_records(
+            dataset_id=f"dataset-depth-{levels}",
+            source_path="inmemory://depth",
+            records=(
+                HistoricalReplayOpportunity(
+                    opportunity_id="op-depth",
+                    timestamp_ms=1_700_000_000_000,
+                    pair="BTCUSDT",
+                    engine_id="engine_a",
+                    raw_score=0.9,
+                    final_score=0.84,
+                    expected_edge_bps=18.0,
+                    spread_bps=3.0,
+                    slippage_bps=2.0,
+                    latency_penalty_bps=1.0,
+                    fill_ratio=1.0,
+                    target_decision_state="executed",
+                    candidate_size=1.0,
+                    final_size=1.0,
+                    gross_return_bps=22.0,
+                    feature_values={"spread_bps": 3.0},
+                    book_depth_levels=levels,
+                ),
+            ),
+        )
+
+    depth20_payload = build_parity_diagnostics_payload(
+        build_depth_dataset(20),
+        simulate_shadow_compatible_dtrs(build_depth_dataset(20)),
+    )
+    assert depth20_payload["impact_source_status"] == "IMPACT_SOURCE_DEPTH20_MODEL"
+    assert depth20_payload["impact_depth_readiness_status"] == "DEPTH20_AVAILABLE"
+    assert depth20_payload["shadow_extension_required"] is False
+
+    limited_payload = build_parity_diagnostics_payload(
+        build_depth_dataset(10),
+        simulate_shadow_compatible_dtrs(build_depth_dataset(10)),
+    )
+    assert limited_payload["impact_source_status"] == "IMPACT_SOURCE_LIMITED_DEPTH_MODEL"
+    assert limited_payload["impact_depth_readiness_status"] == "LIMITED_DEPTH_PARTIAL"
+    assert limited_payload["shadow_extension_required"] is True
+
+    top_payload = build_parity_diagnostics_payload(
+        build_depth_dataset(1),
+        simulate_shadow_compatible_dtrs(build_depth_dataset(1)),
+    )
+    assert top_payload["impact_source_status"] == "IMPACT_SOURCE_TOP_OF_BOOK_PROXY"
+    assert top_payload["impact_depth_readiness_status"] == "TOP_OF_BOOK_PROXY_ONLY"
+    assert top_payload["shadow_extension_status"] == "SHADOW_DIAGNOSTIC_ONLY"
+
+    missing_payload = build_parity_diagnostics_payload(
+        build_depth_dataset(None),
+        simulate_shadow_compatible_dtrs(build_depth_dataset(None)),
+    )
+    assert missing_payload["impact_source_status"] == "IMPACT_SOURCE_NOT_PROVEN"
+    assert missing_payload["book_depth_source_status"] == "BOOK_DEPTH_NOT_PROVEN"
+
+
+# ---------------------------------------------------------------------------
+# Audit 2026-05-14 P3-A wiring : spread_model_source tier-aware mapping
+# ---------------------------------------------------------------------------
+
+
+def test_classify_spread_model_source_fresh_measurement_is_canonical() -> None:
+    """tier-1 (`MEASURED_FROM_BOOK_SNAPSHOT`) → `CANONICAL_BOOK_MEASURED`."""
+    from local_replay_runtime.shadow_execution_simulator import (
+        _classify_spread_model_source,
+    )
+    assert (
+        _classify_spread_model_source(
+            spread_provenance="MEASURED_FROM_BOOK_SNAPSHOT",
+            has_spread_guard=False,
+        )
+        == "CANONICAL_BOOK_MEASURED"
+    )
+
+
+def test_classify_spread_model_source_reconstruction_is_canonical() -> None:
+    """tier-2 (`MEASURED_FROM_BOOK_RECONSTRUCTION`) → `CANONICAL_BOOK_RECONSTRUCTED`."""
+    from local_replay_runtime.shadow_execution_simulator import (
+        _classify_spread_model_source,
+    )
+    assert (
+        _classify_spread_model_source(
+            spread_provenance="MEASURED_FROM_BOOK_RECONSTRUCTION",
+            has_spread_guard=False,
+        )
+        == "CANONICAL_BOOK_RECONSTRUCTED"
+    )
+
+
+def test_classify_spread_model_source_stale_is_audit_only_not_canonical() -> None:
+    """tier-3 STALE → `MEASURED_STALE_AUDIT_ONLY` (NE leve PAS le gate
+    `SPREAD_MODEL_PROXY` par directive utilisateur).
+
+    Audit 2026-05-14 P3-A wiring verrouille la directive :
+    > "STALE = audit-only, gate reste active.
+    >  Do not clear execution fidelity from stale spread."
+    """
+    from local_replay_runtime.shadow_execution_simulator import (
+        _classify_spread_model_source,
+        _PURE_CANONICAL_EXECUTION_SOURCES,
+    )
+    classified = _classify_spread_model_source(
+        spread_provenance="MEASURED_FROM_BOOK_SNAPSHOT_STALE",
+        has_spread_guard=False,
+    )
+    assert classified == "MEASURED_STALE_AUDIT_ONLY"
+    # Contrat critique : STALE n'est PAS dans la liste canonique → le gate
+    # SPREAD_MODEL_PROXY restera actif sur les records concernes.
+    assert classified not in _PURE_CANONICAL_EXECUTION_SOURCES
+
+
+def test_classify_spread_model_source_default_falls_back_to_replay_proxy() -> None:
+    """Sans provenance ni spread_guard, retombe sur `REPLAY_PROXY`."""
+    from local_replay_runtime.shadow_execution_simulator import (
+        _classify_spread_model_source,
+    )
+    assert (
+        _classify_spread_model_source(
+            spread_provenance="",
+            has_spread_guard=False,
+        )
+        == "REPLAY_PROXY"
+    )
+    assert (
+        _classify_spread_model_source(
+            spread_provenance="DEFAULT_BY_BOOK_STATUS",
+            has_spread_guard=False,
+        )
+        == "REPLAY_PROXY"
+    )
+
+
+def test_classify_spread_model_source_spread_guard_overrides_when_unset() -> None:
+    """Sans provenance mais avec spread_guard configure, retourne
+    `CANONICAL_SPREAD_GUARD` (mecanisme legacy preserve)."""
+    from local_replay_runtime.shadow_execution_simulator import (
+        _classify_spread_model_source,
+    )
+    assert (
+        _classify_spread_model_source(
+            spread_provenance="",
+            has_spread_guard=True,
+        )
+        == "CANONICAL_SPREAD_GUARD"
+    )
+
+
+def test_pure_canonical_execution_sources_does_not_include_stale() -> None:
+    """Audit 2026-05-14 P3-A : `MEASURED_STALE_AUDIT_ONLY` ne DOIT PAS
+    apparaitre dans la frozenset canonique — sinon le gate
+    SPREAD_MODEL_PROXY serait leve par un spread stale (violation directive
+    utilisateur)."""
+    from local_replay_runtime.shadow_execution_simulator import (
+        _PURE_CANONICAL_EXECUTION_SOURCES,
+    )
+    assert "MEASURED_STALE_AUDIT_ONLY" not in _PURE_CANONICAL_EXECUTION_SOURCES
+    # En contrepartie, fresh et reconstructed DOIVENT y etre.
+    assert "CANONICAL_BOOK_MEASURED" in _PURE_CANONICAL_EXECUTION_SOURCES
+    assert "CANONICAL_BOOK_RECONSTRUCTED" in _PURE_CANONICAL_EXECUTION_SOURCES

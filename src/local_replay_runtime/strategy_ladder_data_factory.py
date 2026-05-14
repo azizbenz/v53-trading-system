@@ -1932,6 +1932,10 @@ def _write_gold_features(
                 economic_spread_bps = spread_bps
                 economic_slippage_bps = 2.0
                 economic_latency_penalty_bps = 1.0
+                # Audit 2026-05-14 P3-A : tier-aware spread_provenance defaut
+                # quand `use_measured_economic_provenance` est off ; sinon
+                # ecrase par prov.spread_provenance (cf. bloc plus bas).
+                economic_spread_provenance = "DEFAULT_BY_BOOK_STATUS"
                 if getattr(request, "use_measured_economic_provenance", False):
                     snapshot_book_path: Path | None = None
                     # Audit 2026-05-14 W1 fix : extraire venue/market_type depuis
@@ -1977,6 +1981,7 @@ def _write_gold_features(
                     economic_spread_bps = prov.spread_bps
                     economic_slippage_bps = prov.slippage_bps
                     economic_latency_penalty_bps = prov.latency_penalty_bps
+                    economic_spread_provenance = prov.spread_provenance
 
                 feature_row = StrategyLadderFeatureRow.model_validate(
                     {
@@ -2004,6 +2009,7 @@ def _write_gold_features(
                         "economic_provenance": economic_provenance,
                         "economic_measurement_warnings": economic_measurement_warnings,
                         "spread_bps": economic_spread_bps,
+                        "spread_provenance": economic_spread_provenance,
                         "slippage_bps": economic_slippage_bps,
                         "latency_penalty_bps": economic_latency_penalty_bps,
                         "fill_ratio": 1.0,
