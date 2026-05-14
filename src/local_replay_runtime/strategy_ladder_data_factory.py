@@ -1936,6 +1936,10 @@ def _write_gold_features(
                 # quand `use_measured_economic_provenance` est off ; sinon
                 # ecrase par prov.spread_provenance (cf. bloc plus bas).
                 economic_spread_provenance = "DEFAULT_BY_BOOK_STATUS"
+                # Audit 2026-05-14 P3-B : tier-aware slippage provenance defaut
+                # quand `use_measured_economic_provenance` est off ; sinon
+                # ecrase par prov.slippage_provenance (cf. bloc plus bas).
+                economic_slippage_provenance = "DEFAULT_TO_CALIBRATE"
                 if getattr(request, "use_measured_economic_provenance", False):
                     snapshot_book_path: Path | None = None
                     # Audit 2026-05-14 W1 fix : extraire venue/market_type depuis
@@ -1970,7 +1974,16 @@ def _write_gold_features(
                         raw_book_path=snapshot_book_path,
                         raw_trade_path=raw_trade_path,
                         raw_ohlcv_path=Path(entry.path),
-                        measure_slippage_from_trades=False,
+                        # Audit 2026-05-14 P3-B : flip de False → True. Le
+                        # service Kyle lambda est implemente dans
+                        # _measure_slippage_from_kyle_lambda ; le flag etait
+                        # reste False pendant le design "SLIPPAGE_DEFERRED_TO_
+                        # RAW_WINDOW_REPLAY" (stop-gap historique). Active
+                        # maintenant pour que slippage_provenance devienne
+                        # MEASURED_FROM_KYLE_LAMBDA quand suffisamment de
+                        # trades existent, sinon fallback DEFAULT_TO_CALIBRATE
+                        # (pas de false READY : echec Kyle ne leve pas le gate).
+                        measure_slippage_from_trades=True,
                         silver_exchange=silver_exchange_for_call,
                         silver_market_type=silver_market_type_for_call,
                     )
@@ -1982,6 +1995,7 @@ def _write_gold_features(
                     economic_slippage_bps = prov.slippage_bps
                     economic_latency_penalty_bps = prov.latency_penalty_bps
                     economic_spread_provenance = prov.spread_provenance
+                    economic_slippage_provenance = prov.slippage_provenance
 
                 feature_row = StrategyLadderFeatureRow.model_validate(
                     {
@@ -2011,6 +2025,7 @@ def _write_gold_features(
                         "spread_bps": economic_spread_bps,
                         "spread_provenance": economic_spread_provenance,
                         "slippage_bps": economic_slippage_bps,
+                        "slippage_provenance": economic_slippage_provenance,
                         "latency_penalty_bps": economic_latency_penalty_bps,
                         "fill_ratio": 1.0,
                         "tick_size": _optional_float(

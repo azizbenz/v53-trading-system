@@ -176,6 +176,11 @@ class StrategyLadderFeatureRow(BaseModel, frozen=True):
     # SPREAD_MODEL_PROXY), "DEFAULT_BY_BOOK_STATUS", ou
     # "SPREAD_PROVENANCE_NOT_PROVEN" (legacy/missing).
     spread_provenance: str = "SPREAD_PROVENANCE_NOT_PROVEN"
+    # Audit 2026-05-14 P3-B wiring : tier-aware slippage provenance (per-row).
+    # Valeurs : "MEASURED_FROM_KYLE_LAMBDA" (canonical), "MEASURED_FROM_KYLE_LAMBDA_OVERRIDE"
+    # (caller-supplied, e.g. live API), "DEFAULT_TO_CALIBRATE" (fallback), ou
+    # "SLIPPAGE_PROVENANCE_NOT_PROVEN" (legacy/missing).
+    slippage_provenance: str = "SLIPPAGE_PROVENANCE_NOT_PROVEN"
     fill_ratio: float = Field(default=1.0, ge=0.0, le=1.0)
     side: str = "buy"
     tick_size: float | None = Field(default=None, gt=0.0)

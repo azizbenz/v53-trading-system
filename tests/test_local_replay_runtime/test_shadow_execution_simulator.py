@@ -293,3 +293,86 @@ def test_pure_canonical_execution_sources_does_not_include_stale() -> None:
     # En contrepartie, fresh et reconstructed DOIVENT y etre.
     assert "CANONICAL_BOOK_MEASURED" in _PURE_CANONICAL_EXECUTION_SOURCES
     assert "CANONICAL_BOOK_RECONSTRUCTED" in _PURE_CANONICAL_EXECUTION_SOURCES
+
+
+# ---------------------------------------------------------------------------
+# Audit 2026-05-14 P3-B wiring : slippage_model_source tier-aware mapping
+# ---------------------------------------------------------------------------
+
+
+def test_classify_slippage_model_source_kyle_measurement_is_canonical() -> None:
+    """tier-1 (`MEASURED_FROM_KYLE_LAMBDA`) → `CANONICAL_KYLE_LAMBDA_METER`."""
+    from local_replay_runtime.shadow_execution_simulator import (
+        _classify_slippage_model_source,
+    )
+    assert (
+        _classify_slippage_model_source(
+            slippage_provenance="MEASURED_FROM_KYLE_LAMBDA",
+            has_slippage_model=False,
+        )
+        == "CANONICAL_KYLE_LAMBDA_METER"
+    )
+
+
+def test_classify_slippage_model_source_caller_override_is_canonical() -> None:
+    """`MEASURED_FROM_KYLE_LAMBDA_OVERRIDE` (caller-supplied, e.g. live API) →
+    `CANONICAL_KYLE_LAMBDA_OVERRIDE`."""
+    from local_replay_runtime.shadow_execution_simulator import (
+        _classify_slippage_model_source,
+    )
+    assert (
+        _classify_slippage_model_source(
+            slippage_provenance="MEASURED_FROM_KYLE_LAMBDA_OVERRIDE",
+            has_slippage_model=False,
+        )
+        == "CANONICAL_KYLE_LAMBDA_OVERRIDE"
+    )
+
+
+def test_classify_slippage_model_source_default_falls_back_to_replay_proxy() -> None:
+    """`DEFAULT_TO_CALIBRATE` (Kyle measurement echec ou non tente) +
+    sans `config.slippage_model` → `REPLAY_PROXY`."""
+    from local_replay_runtime.shadow_execution_simulator import (
+        _classify_slippage_model_source,
+    )
+    assert (
+        _classify_slippage_model_source(
+            slippage_provenance="DEFAULT_TO_CALIBRATE",
+            has_slippage_model=False,
+        )
+        == "REPLAY_PROXY"
+    )
+    assert (
+        _classify_slippage_model_source(
+            slippage_provenance="",
+            has_slippage_model=False,
+        )
+        == "REPLAY_PROXY"
+    )
+
+
+def test_classify_slippage_model_source_legacy_backbone_when_model_present() -> None:
+    """Sans provenance Kyle mais avec `config.slippage_model` configure,
+    retourne `CANONICAL_EXECUTION_BACKBONE` (mecanisme legacy preserve)."""
+    from local_replay_runtime.shadow_execution_simulator import (
+        _classify_slippage_model_source,
+    )
+    assert (
+        _classify_slippage_model_source(
+            slippage_provenance="DEFAULT_TO_CALIBRATE",
+            has_slippage_model=True,
+        )
+        == "CANONICAL_EXECUTION_BACKBONE"
+    )
+
+
+def test_pure_canonical_execution_sources_includes_kyle() -> None:
+    """Audit 2026-05-14 P3-B : `CANONICAL_KYLE_LAMBDA_METER` et
+    `CANONICAL_KYLE_LAMBDA_OVERRIDE` doivent etre dans la frozenset
+    canonique pour que le gate `SLIPPAGE_MODEL_PROXY` se leve quand Kyle
+    est mesure (ou override valide upstream)."""
+    from local_replay_runtime.shadow_execution_simulator import (
+        _PURE_CANONICAL_EXECUTION_SOURCES,
+    )
+    assert "CANONICAL_KYLE_LAMBDA_METER" in _PURE_CANONICAL_EXECUTION_SOURCES
+    assert "CANONICAL_KYLE_LAMBDA_OVERRIDE" in _PURE_CANONICAL_EXECUTION_SOURCES

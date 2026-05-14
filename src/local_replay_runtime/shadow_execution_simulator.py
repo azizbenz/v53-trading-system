@@ -513,6 +513,36 @@ def _resolve_fee_fraction(
     return fee_amount / planned_notional
 
 
+def _classify_slippage_model_source(
+    *,
+    slippage_provenance: str,
+    has_slippage_model: bool,
+) -> str:
+    """Map per-record `slippage_provenance` (tier-aware) to manifest-level
+    `slippage_model_source`.
+
+    Audit 2026-05-14 P3-B wiring : Kyle lambda measurement (microstructure
+    canonique) leve le gate `SLIPPAGE_MODEL_PROXY`. L'override caller
+    (live API account dynamique) est valide upstream donc canonical aussi.
+    Fallback `DEFAULT_TO_CALIBRATE` ou vide retombe sur le mecanisme legacy
+    `CANONICAL_EXECUTION_BACKBONE` si `config.slippage_model` present,
+    sinon `REPLAY_PROXY`.
+
+    Mapping :
+      - "MEASURED_FROM_KYLE_LAMBDA"          → "CANONICAL_KYLE_LAMBDA_METER"
+      - "MEASURED_FROM_KYLE_LAMBDA_OVERRIDE" → "CANONICAL_KYLE_LAMBDA_OVERRIDE"
+      - "DEFAULT_TO_CALIBRATE" / "" / autre  → "CANONICAL_EXECUTION_BACKBONE"
+        si has_slippage_model, sinon "REPLAY_PROXY"
+    """
+    if slippage_provenance == "MEASURED_FROM_KYLE_LAMBDA":
+        return "CANONICAL_KYLE_LAMBDA_METER"
+    if slippage_provenance == "MEASURED_FROM_KYLE_LAMBDA_OVERRIDE":
+        return "CANONICAL_KYLE_LAMBDA_OVERRIDE"
+    if has_slippage_model:
+        return "CANONICAL_EXECUTION_BACKBONE"
+    return "REPLAY_PROXY"
+
+
 def _classify_spread_model_source(
     *,
     spread_provenance: str,
@@ -557,6 +587,7 @@ def _build_row_component_sources(
     order_type_source_active: bool,
     venue_constraints: VenueConstraintSnapshot | None,
     spread_provenance: str = "",
+    slippage_provenance: str = "",
 ) -> dict[str, str]:
     return {
         "fee_model_source": (
@@ -566,10 +597,9 @@ def _build_row_component_sources(
             spread_provenance=spread_provenance,
             has_spread_guard=config.spread_guard_model is not None,
         ),
-        "slippage_model_source": (
-            "CANONICAL_EXECUTION_BACKBONE"
-            if config.slippage_model is not None
-            else "REPLAY_PROXY"
+        "slippage_model_source": _classify_slippage_model_source(
+            slippage_provenance=slippage_provenance,
+            has_slippage_model=config.slippage_model is not None,
         ),
         "partial_fill_model_source": (
             "CANONICAL_PARTIAL_FILL_COST_METER"
@@ -746,6 +776,9 @@ def _build_row_execution_profile(
             # Audit 2026-05-14 P3-A : passe le tier-aware spread_provenance
             # per-row pour decider spread_model_source au manifest level.
             spread_provenance=getattr(row, "spread_provenance", "") or "",
+            # Audit 2026-05-14 P3-B : passe le tier-aware slippage_provenance
+            # per-row pour decider slippage_model_source au manifest level.
+            slippage_provenance=getattr(row, "slippage_provenance", "") or "",
         ),
         replay_cost_components=tuple(dict.fromkeys(replay_cost_components)),
         order_type=order_type_decision.order_type,
@@ -767,6 +800,12 @@ _PURE_CANONICAL_EXECUTION_SOURCES = frozenset(
         # et le gate SPREAD_MODEL_PROXY DOIT rester actif.
         "CANONICAL_BOOK_MEASURED",
         "CANONICAL_BOOK_RECONSTRUCTED",
+        # Audit 2026-05-14 P3-B wiring : Kyle lambda measurement
+        # (microstructure canonique) leve le gate SLIPPAGE_MODEL_PROXY.
+        # L'override caller-supplied (live API account dynamique) compte
+        # egalement comme canonique car son origine est validee upstream.
+        "CANONICAL_KYLE_LAMBDA_METER",
+        "CANONICAL_KYLE_LAMBDA_OVERRIDE",
         "CANONICAL_EXECUTION_BACKBONE",
         "CANONICAL_PARTIAL_FILL_COST_METER",
         "CANONICAL_ADVERSE_SELECTION_METER",

@@ -154,6 +154,8 @@ def _row_from_candidate(
         # depuis le compatibility_payload (qui le tient du feature_row data_factory).
         "spread_provenance": str(payload.get("spread_provenance") or ""),
         "slippage_bps": _coalesce_numeric(payload, "slippage_bps", 0.0),
+        # Audit 2026-05-14 P3-B : propage le tier-aware slippage provenance.
+        "slippage_provenance": str(payload.get("slippage_provenance") or ""),
         "latency_penalty_bps": _coalesce_numeric(payload, "latency_penalty_bps", 0.0),
         "fill_ratio": _coalesce_numeric(payload, "fill_ratio", 1.0),
         "side": str(payload.get("side") or "buy"),

@@ -302,17 +302,25 @@ def test_data_factory_filters_timeframes_limits_gold_and_defers_trade_slippage(
         def _fake_compute_economic_provenance(**kwargs):
             calls.append(kwargs)
             assert kwargs["raw_trade_path"] is not None
-            assert kwargs["measure_slippage_from_trades"] is False
+            # Audit 2026-05-14 P3-B : le flag est passe a True par
+            # data_factory pour activer la mesure Kyle lambda canonique.
+            # Le warning "SLIPPAGE_DEFERRED_TO_RAW_WINDOW_REPLAY" devient
+            # obsolete — la mesure se fait au feature_row time.
+            assert kwargs["measure_slippage_from_trades"] is True
             return SimpleNamespace(
                 expected_edge_bps=5.0,
                 expected_edge_provenance="DEFAULT_TO_CALIBRATE",
                 aggregated_provenance="PARTIALLY_MEASURED",
-                measurement_warnings=("SLIPPAGE_DEFERRED_TO_RAW_WINDOW_REPLAY",),
+                measurement_warnings=(),
                 spread_bps=0.0,
                 # Audit 2026-05-14 P3-A : tier-aware spread_provenance dans le
                 # contrat EconomicProvenance ; le fake doit le fournir aussi.
                 spread_provenance="DEFAULT_BY_BOOK_STATUS",
                 slippage_bps=2.0,
+                # Audit 2026-05-14 P3-B : tier-aware slippage_provenance.
+                # Fake retourne DEFAULT_TO_CALIBRATE (Kyle echoue dans test
+                # synthetique sans trade tape suffisant).
+                slippage_provenance="DEFAULT_TO_CALIBRATE",
                 latency_penalty_bps=1.0,
             )
 

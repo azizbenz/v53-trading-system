@@ -52,6 +52,12 @@ class HistoricalReplayOpportunity(BaseModel, frozen=True):
     # manifest level.
     spread_provenance: str = ""
     slippage_bps: float = Field(default=0.0, ge=0.0)
+    # Audit 2026-05-14 P3-B wiring : tier-aware slippage provenance.
+    # Valeurs : "MEASURED_FROM_KYLE_LAMBDA" (canonical), "MEASURED_FROM_KYLE_LAMBDA_OVERRIDE"
+    # (caller, e.g. live API), "DEFAULT_TO_CALIBRATE" (fallback), ou "" (legacy/missing).
+    # Consomme par _build_row_component_sources pour determiner
+    # slippage_model_source au manifest level.
+    slippage_provenance: str = ""
     latency_penalty_bps: float = Field(default=0.0, ge=0.0)
     fill_ratio: float = Field(default=1.0, ge=0.0, le=1.0)
     side: str = "buy"

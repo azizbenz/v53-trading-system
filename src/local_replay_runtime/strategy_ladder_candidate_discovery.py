@@ -57,6 +57,10 @@ def _compatibility_payload(
         # MEASURED_STALE_AUDIT_ONLY vs REPLAY_PROXY).
         "spread_provenance": row.spread_provenance,
         "slippage_bps": row.slippage_bps,
+        # Audit 2026-05-14 P3-B : tier-aware slippage provenance pour
+        # mapping downstream slippage_model_source (CANONICAL_KYLE_LAMBDA_METER
+        # vs REPLAY_PROXY).
+        "slippage_provenance": row.slippage_provenance,
         "latency_penalty_bps": row.latency_penalty_bps,
         "fill_ratio": row.fill_ratio,
         "side": row.side,
