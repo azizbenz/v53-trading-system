@@ -376,3 +376,58 @@ def test_pure_canonical_execution_sources_includes_kyle() -> None:
     )
     assert "CANONICAL_KYLE_LAMBDA_METER" in _PURE_CANONICAL_EXECUTION_SOURCES
     assert "CANONICAL_KYLE_LAMBDA_OVERRIDE" in _PURE_CANONICAL_EXECUTION_SOURCES
+
+
+# ---------------------------------------------------------------------------
+# Audit 2026-05-14 P3-C wiring : adverse_selection_source blocker traceability
+# ---------------------------------------------------------------------------
+
+
+def test_classify_adverse_selection_source_measured_is_canonical() -> None:
+    """Avec adverse_selection_fraction != None (meter a tourne), retourne
+    `CANONICAL_ADVERSE_SELECTION_METER`."""
+    from local_replay_runtime.shadow_execution_simulator import (
+        _classify_adverse_selection_source,
+    )
+    assert (
+        _classify_adverse_selection_source(adverse_selection_fraction=0.0001)
+        == "CANONICAL_ADVERSE_SELECTION_METER"
+    )
+    # adverse_selection_fraction = 0.0 (favorable post-fill) reste canonical
+    assert (
+        _classify_adverse_selection_source(adverse_selection_fraction=0.0)
+        == "CANONICAL_ADVERSE_SELECTION_METER"
+    )
+
+
+def test_classify_adverse_selection_source_none_emits_blocked_by_dependency() -> None:
+    """Audit 2026-05-14 P3-C : per directive utilisateur,
+    > 'If dependency is missing, keep the blocker and emit
+    >  ADVERSE_SELECTION_CANONICAL_METER_BLOCKED_BY_DEPENDENCY.'
+
+    Quand adverse_selection_fraction is None (pas de trade execute / pas de
+    post_fill_mid_price / pas de fill data), retourne le blocker code
+    explicite plutot que le generique REPLAY_PROXY."""
+    from local_replay_runtime.shadow_execution_simulator import (
+        _classify_adverse_selection_source,
+    )
+    assert (
+        _classify_adverse_selection_source(adverse_selection_fraction=None)
+        == "ADVERSE_SELECTION_CANONICAL_METER_BLOCKED_BY_DEPENDENCY"
+    )
+
+
+def test_blocked_by_dependency_keeps_gate_active() -> None:
+    """Audit 2026-05-14 P3-C : `ADVERSE_SELECTION_CANONICAL_METER_BLOCKED_BY_DEPENDENCY`
+    NE DOIT PAS apparaitre dans `_PURE_CANONICAL_EXECUTION_SOURCES` — le gate
+    `ADVERSE_SELECTION_PROXY` doit rester actif tant que la mesure n'est pas
+    realisee (no false READY)."""
+    from local_replay_runtime.shadow_execution_simulator import (
+        _PURE_CANONICAL_EXECUTION_SOURCES,
+    )
+    assert (
+        "ADVERSE_SELECTION_CANONICAL_METER_BLOCKED_BY_DEPENDENCY"
+        not in _PURE_CANONICAL_EXECUTION_SOURCES
+    )
+    # CANONICAL_ADVERSE_SELECTION_METER reste canonical pour les cas mesures
+    assert "CANONICAL_ADVERSE_SELECTION_METER" in _PURE_CANONICAL_EXECUTION_SOURCES

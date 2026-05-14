@@ -513,6 +513,36 @@ def _resolve_fee_fraction(
     return fee_amount / planned_notional
 
 
+def _classify_adverse_selection_source(
+    *,
+    adverse_selection_fraction: float | None,
+) -> str:
+    """Map per-record adverse_selection availability to manifest-level
+    `adverse_selection_source`.
+
+    Audit 2026-05-14 P3-C wiring : adverse_selection est une mesure POST-FILL.
+    Le meter (`adverse_selection_meter.compute_adverse_selection`) requiert un
+    trade execute (exec_price + post_fill_mid_price + fill quantities). Sur un
+    run avec `executed_count = 0` (e.g. run B2), aucune mesure n'est possible
+    car la dependance amont (executed trade) manque.
+
+    Per directive utilisateur :
+    > "If dependency is missing, keep the blocker and emit
+    >  ADVERSE_SELECTION_CANONICAL_METER_BLOCKED_BY_DEPENDENCY."
+
+    Le code `ADVERSE_SELECTION_CANONICAL_METER_BLOCKED_BY_DEPENDENCY` n'est
+    PAS dans `_PURE_CANONICAL_EXECUTION_SOURCES` donc le gate
+    `ADVERSE_SELECTION_PROXY` reste actif — pas de false READY.
+
+    Mapping :
+      - adverse_selection_fraction is not None → "CANONICAL_ADVERSE_SELECTION_METER"
+      - adverse_selection_fraction is None     → "ADVERSE_SELECTION_CANONICAL_METER_BLOCKED_BY_DEPENDENCY"
+    """
+    if adverse_selection_fraction is not None:
+        return "CANONICAL_ADVERSE_SELECTION_METER"
+    return "ADVERSE_SELECTION_CANONICAL_METER_BLOCKED_BY_DEPENDENCY"
+
+
 def _classify_slippage_model_source(
     *,
     slippage_provenance: str,
@@ -606,10 +636,8 @@ def _build_row_component_sources(
             if partial_fill_cost_fraction is not None
             else "REPLAY_PROXY"
         ),
-        "adverse_selection_source": (
-            "CANONICAL_ADVERSE_SELECTION_METER"
-            if adverse_selection_fraction is not None
-            else "REPLAY_PROXY"
+        "adverse_selection_source": _classify_adverse_selection_source(
+            adverse_selection_fraction=adverse_selection_fraction,
         ),
         "order_type_selection_source": (
             "CANONICAL_ORDER_DECIDER" if order_type_source_active else "REPLAY_PROXY"
