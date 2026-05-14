@@ -408,6 +408,46 @@ def test_compute_economic_provenance_venue_autodetect_from_book_path(
     assert prov.fee_provenance == "MEASURED_FROM_VENUE_METADATA_BYBIT_RESEARCH"
 
 
+def test_compute_economic_provenance_silver_exchange_overrides_undetectable_path(
+    tmp_path,
+) -> None:
+    r"""Audit 2026-05-14 W1 fix : `silver_exchange='bybit'` venant du
+    silver_index canonique doit prendre precedence sur l'auto-detect path,
+    notamment sur les raw_windows B2 ou le path
+    `...\raw_windows\{pair}\{candidate_id}\orderbook_snapshot.jsonl` ne
+    contient pas le segment `silver/{venue}/spot/...` et echoue auto-detect.
+
+    Sans le cablage W1 au call site (data_factory:1947), 100 % des records
+    refusal_ledger du run B2 portaient `fee_source_status =
+    DEGRADED_FALLBACK_UNKNOWN_VENUE` malgre la pair Bybit. Ce test verrouille
+    le contrat : `silver_exchange` doit resoudre la venue meme quand le
+    path est indechiffrable.
+    """
+    # Path style raw_windows extracts (pas silver/{venue}/) — auto-detect echouerait
+    book_path = tmp_path / "raw_windows" / "BTCUSDT" / "cand-0001" / "orderbook_snapshot.jsonl"
+    book_path.parent.mkdir(parents=True, exist_ok=True)
+    book_path.write_text(
+        '{"timestamp_ms": 1700000000000, "bids": [["100","10"]], "asks": [["100.01","10"]]}\n',
+        encoding="utf-8",
+    )
+    prov = compute_economic_provenance(
+        timestamp_ms=1_700_000_000_000,
+        book_status="BOOK_DEPTH20_AVAILABLE",
+        pair="BTCUSDT",
+        raw_book_path=book_path,
+        silver_exchange="bybit",
+        silver_market_type="spot",
+    )
+    # Venue resolue depuis silver_index → fee Bybit research (10 bps), pas
+    # le fallback degraded 25 bps.
+    assert prov.fee_provenance == "MEASURED_FROM_VENUE_METADATA_BYBIT_RESEARCH"
+    assert prov.fee_bps == 10.0
+    # Warning trace l'origine de la resolution venue
+    assert any(
+        w.startswith("VENUE_FROM_SILVER_INDEX") for w in prov.measurement_warnings
+    )
+
+
 def test_compute_economic_provenance_venue_unknown_warning() -> None:
     """venue inconnu → fallback degraded + warning audit-ready."""
     prov = compute_economic_provenance(
