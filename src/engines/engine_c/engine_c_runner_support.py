@@ -463,27 +463,220 @@ def evaluate_engine_c_input_guards(
     structure: EngineCStructure,
     logs: list[EngineCLogEntry],
     no_trade_reasons: list[NoTradeReasonC],
+    *,
+    continuation_validation: EngineCContinuationValidationResult | None = None,
+    continuation_score: float = 0.0,
 ) -> EngineCOutput | None:
     if inputs.entry_price <= 0.0:
         no_trade_reasons.append(NoTradeReasonC.INVALID_ENTRY_PRICE)
-        append_engine_c_log(logs, inputs, structure, event="engine_c_no_trade", reasons=("entry_price must be > 0",))
-        return build_engine_c_no_trade_output(inputs, structure, logs, no_trade_reasons)
+        append_engine_c_log(
+            logs,
+            inputs,
+            structure,
+            event="engine_c_no_trade",
+            continuation_score=continuation_score,
+            microstructure_gate_applied=(
+                False
+                if continuation_validation is None
+                else continuation_validation.microstructure_gate_applied
+            ),
+            reasons=("entry_price must be > 0",),
+        )
+        return build_engine_c_no_trade_output(
+            inputs,
+            structure,
+            logs,
+            no_trade_reasons,
+            continuation_score=continuation_score,
+            microstructure_gate_applied=(
+                False
+                if continuation_validation is None
+                else continuation_validation.microstructure_gate_applied
+            ),
+            microstructure_required=(
+                False
+                if continuation_validation is None
+                else continuation_validation.microstructure_required
+            ),
+            microstructure_missing=(
+                False
+                if continuation_validation is None
+                else continuation_validation.microstructure_missing
+            ),
+            microstructure_contradictory=(
+                False
+                if continuation_validation is None
+                else continuation_validation.microstructure_contradictory
+            ),
+        )
     if inputs.candidate_size <= 0.0:
         no_trade_reasons.append(NoTradeReasonC.INVALID_CANDIDATE_SIZE)
-        append_engine_c_log(logs, inputs, structure, event="engine_c_no_trade", reasons=("candidate_size must be > 0",))
-        return build_engine_c_no_trade_output(inputs, structure, logs, no_trade_reasons)
+        append_engine_c_log(
+            logs,
+            inputs,
+            structure,
+            event="engine_c_no_trade",
+            continuation_score=continuation_score,
+            microstructure_gate_applied=(
+                False
+                if continuation_validation is None
+                else continuation_validation.microstructure_gate_applied
+            ),
+            reasons=("candidate_size must be > 0",),
+        )
+        return build_engine_c_no_trade_output(
+            inputs,
+            structure,
+            logs,
+            no_trade_reasons,
+            continuation_score=continuation_score,
+            microstructure_gate_applied=(
+                False
+                if continuation_validation is None
+                else continuation_validation.microstructure_gate_applied
+            ),
+            microstructure_required=(
+                False
+                if continuation_validation is None
+                else continuation_validation.microstructure_required
+            ),
+            microstructure_missing=(
+                False
+                if continuation_validation is None
+                else continuation_validation.microstructure_missing
+            ),
+            microstructure_contradictory=(
+                False
+                if continuation_validation is None
+                else continuation_validation.microstructure_contradictory
+            ),
+        )
     if inputs.holding_period <= 0.0:
         no_trade_reasons.append(NoTradeReasonC.INVALID_HOLDING_PERIOD)
-        append_engine_c_log(logs, inputs, structure, event="engine_c_no_trade", reasons=("holding_period must be > 0",))
-        return build_engine_c_no_trade_output(inputs, structure, logs, no_trade_reasons)
+        append_engine_c_log(
+            logs,
+            inputs,
+            structure,
+            event="engine_c_no_trade",
+            continuation_score=continuation_score,
+            microstructure_gate_applied=(
+                False
+                if continuation_validation is None
+                else continuation_validation.microstructure_gate_applied
+            ),
+            reasons=("holding_period must be > 0",),
+        )
+        return build_engine_c_no_trade_output(
+            inputs,
+            structure,
+            logs,
+            no_trade_reasons,
+            continuation_score=continuation_score,
+            microstructure_gate_applied=(
+                False
+                if continuation_validation is None
+                else continuation_validation.microstructure_gate_applied
+            ),
+            microstructure_required=(
+                False
+                if continuation_validation is None
+                else continuation_validation.microstructure_required
+            ),
+            microstructure_missing=(
+                False
+                if continuation_validation is None
+                else continuation_validation.microstructure_missing
+            ),
+            microstructure_contradictory=(
+                False
+                if continuation_validation is None
+                else continuation_validation.microstructure_contradictory
+            ),
+        )
     if inputs.breakout_level <= 0.0:
         no_trade_reasons.append(NoTradeReasonC.INVALID_BREAKOUT_LEVEL)
-        append_engine_c_log(logs, inputs, structure, event="engine_c_no_trade", reasons=("breakout_level must be > 0",))
-        return build_engine_c_no_trade_output(inputs, structure, logs, no_trade_reasons)
+        append_engine_c_log(
+            logs,
+            inputs,
+            structure,
+            event="engine_c_no_trade",
+            continuation_score=continuation_score,
+            microstructure_gate_applied=(
+                False
+                if continuation_validation is None
+                else continuation_validation.microstructure_gate_applied
+            ),
+            reasons=("breakout_level must be > 0",),
+        )
+        return build_engine_c_no_trade_output(
+            inputs,
+            structure,
+            logs,
+            no_trade_reasons,
+            continuation_score=continuation_score,
+            microstructure_gate_applied=(
+                False
+                if continuation_validation is None
+                else continuation_validation.microstructure_gate_applied
+            ),
+            microstructure_required=(
+                False
+                if continuation_validation is None
+                else continuation_validation.microstructure_required
+            ),
+            microstructure_missing=(
+                False
+                if continuation_validation is None
+                else continuation_validation.microstructure_missing
+            ),
+            microstructure_contradictory=(
+                False
+                if continuation_validation is None
+                else continuation_validation.microstructure_contradictory
+            ),
+        )
     if inputs.atr < 0.0:
         no_trade_reasons.append(NoTradeReasonC.INVALID_ATR)
-        append_engine_c_log(logs, inputs, structure, event="engine_c_no_trade", reasons=("atr must be >= 0",))
-        return build_engine_c_no_trade_output(inputs, structure, logs, no_trade_reasons)
+        append_engine_c_log(
+            logs,
+            inputs,
+            structure,
+            event="engine_c_no_trade",
+            continuation_score=continuation_score,
+            microstructure_gate_applied=(
+                False
+                if continuation_validation is None
+                else continuation_validation.microstructure_gate_applied
+            ),
+            reasons=("atr must be >= 0",),
+        )
+        return build_engine_c_no_trade_output(
+            inputs,
+            structure,
+            logs,
+            no_trade_reasons,
+            continuation_score=continuation_score,
+            microstructure_gate_applied=(
+                False
+                if continuation_validation is None
+                else continuation_validation.microstructure_gate_applied
+            ),
+            microstructure_required=(
+                False
+                if continuation_validation is None
+                else continuation_validation.microstructure_required
+            ),
+            microstructure_missing=(
+                False
+                if continuation_validation is None
+                else continuation_validation.microstructure_missing
+            ),
+            microstructure_contradictory=(
+                False
+                if continuation_validation is None
+                else continuation_validation.microstructure_contradictory
+            ),
+        )
     return None
 
 

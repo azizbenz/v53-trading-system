@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from pydantic import BaseModel, Field, model_validator
@@ -15,6 +17,7 @@ from interface_contracts.shadow_vps_service_contracts import (
     ShadowVpsServiceStatus,
 )
 from interface_contracts.atomic_io import atomic_write_json
+from .shadow_live_plan import canonical_shadow_pair_universe
 
 
 class ShadowVpsRawInputConfig(BaseModel, frozen=True):
@@ -63,7 +66,10 @@ class ShadowLiveWebSocketConfig(BaseModel, frozen=True):
         default="wss://stream.binance.com:9443/ws",
         min_length=1,
     )
-    pairs: tuple[str, ...] = Field(default=("BTCUSDT", "ETHUSDT"), min_length=1)
+    pairs: tuple[str, ...] = Field(
+        default=canonical_shadow_pair_universe(),
+        min_length=1,
+    )
     stream_types: tuple[str, ...] = Field(default=("trade", "depth"), min_length=1)
     connect_timeout_s: float = Field(default=5.0, gt=0.0)
     recv_timeout_s: float = Field(default=1.0, gt=0.0)
@@ -102,7 +108,7 @@ class ShadowLiveWebSocketConfig(BaseModel, frozen=True):
     user_data_idle_poll_limit: int = Field(default=20, ge=1)
     user_data_event_limit: int = Field(default=20, ge=1)
     session_date_override: str = ""
-    route_hints_by_pair: dict[str, dict[str, object]] = Field(default_factory=dict)
+    route_hints_by_pair: dict[str, object] = Field(default_factory=dict)
     config: ShadowVpsRawInputConfig = Field(default_factory=ShadowVpsRawInputConfig)
 
 
@@ -152,10 +158,20 @@ class ShadowVpsServiceStore:
         *,
         state_filename: str = "shadow_vps_service.state.json",
         events_filename: str = "shadow_vps_service.events.jsonl",
+        events_max_bytes: int = 5 * 1024 * 1024,
+        events_backup_count: int = 5,
     ) -> None:
         self._state_dir = state_dir
         self._state_path = state_dir / state_filename
         self._events_path = state_dir / events_filename
+        self._event_handler = RotatingFileHandler(
+            filename=str(self._events_path),
+            maxBytes=events_max_bytes,
+            backupCount=events_backup_count,
+            encoding="utf-8",
+            delay=True,
+        )
+        self._event_handler.setFormatter(logging.Formatter("%(message)s"))
         self._state = self._load_or_create()
 
     @property
@@ -205,9 +221,25 @@ class ShadowVpsServiceStore:
 
     def append_event(self, event: ShadowVpsServiceEvent) -> None:
         self._state_dir.mkdir(parents=True, exist_ok=True)
-        with self._events_path.open("a", encoding="utf-8") as handle:
-            handle.write(event.model_dump_json())
-            handle.write("\n")
+        record = logging.LogRecord(
+            name="shadow_vps_service.events",
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=0,
+            msg=event.model_dump_json(),
+            args=(),
+            exc_info=None,
+        )
+        self._event_handler.emit(record)
+
+    def close(self) -> None:
+        self._event_handler.close()
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            return
 
 
 __all__ = [

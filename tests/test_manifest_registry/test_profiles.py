@@ -106,6 +106,7 @@ class TestModuleProfileMapping:
         assert "ui" in light_names
         assert "local_replay_runtime" in light_names
         assert "backtest_artifact_import" in light_names
+        assert "cockpit" not in light_names
         assert "complete_enablers" not in light_names
         assert "engine_c" not in light_names
         assert "engine_d" not in light_names
@@ -119,6 +120,7 @@ class TestModuleProfileMapping:
         assert "ui" in complete_names
         assert "local_replay_runtime" in complete_names
         assert "backtest_artifact_import" in complete_names
+        assert "cockpit" in complete_names
         assert "complete_enablers" in complete_names
         assert "engine_c" in complete_names
         assert "engine_d" in complete_names
@@ -126,6 +128,7 @@ class TestModuleProfileMapping:
     def test_complete_only_modules_are_declared_and_runtime_active_only_in_complete(self):
         complete_only = get_complete_only_modules()
         assert {m.module_name for m in complete_only} == {
+            "cockpit",
             "complete_enablers",
             "engine_c",
             "engine_d",

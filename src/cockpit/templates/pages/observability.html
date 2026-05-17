@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+
+{% block title %}Observability - {{ vm.welcome_message }}{% endblock %}
+
+{% block content %}
+
+<section class="welcome-banner">
+    <div class="welcome-banner__inner">
+        <div>
+            <h1 class="welcome-banner__title">Observability</h1>
+            <p class="welcome-banner__sub">
+                Prometheus, Grafana, bridge readiness, and imported dashboard visibility.
+            </p>
+        </div>
+        <div class="welcome-banner__amount">
+            <span class="welcome-banner__label">Source</span>
+            <span class="welcome-banner__value">{{ vm.runtime.observability.source_status }}</span>
+        </div>
+    </div>
+</section>
+
+<section class="stat-row">
+    <div class="stat-card">
+        <div class="stat-card__head"><span class="stat-card__pair">Grafana</span></div>
+        <div class="stat-card__price">{{ vm.runtime.observability.grafana_status }}</div>
+        <div class="stat-card__foot"><a href="{{ vm.grafana_url }}" target="_blank">Open Grafana (open)</a></div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-card__head"><span class="stat-card__pair">Prometheus</span></div>
+        <div class="stat-card__price">{{ vm.runtime.observability.prometheus_status }}</div>
+        <div class="stat-card__foot"><a href="{{ vm.prometheus_url }}" target="_blank">Open Prometheus (open)</a></div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-card__head"><span class="stat-card__pair">Bridge</span></div>
+        <div class="stat-card__price">{{ vm.runtime.observability.bridge_status }}</div>
+        <div class="stat-card__foot"><a href="{{ vm.runtime.observability.bridge_url }}" target="_blank">Metrics bridge (open)</a></div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-card__head"><span class="stat-card__pair">Prom text</span></div>
+        <div class="stat-card__price">{% if vm.runtime.observability.prom_text_path %}ready{% else %}missing{% endif %}</div>
+        <div class="stat-card__foot"><code>{{ vm.runtime.observability.prom_text_path or 'n/a' }}</code></div>
+    </div>
+</section>
+
+<section class="grid-2">
+    <div class="card">
+        <div class="card__head">
+            <h3>Stack Summary</h3>
+            <span class="card__sub">Local launcher outputs</span>
+        </div>
+        <div class="card__body">
+            <table class="data-table data-table--compact">
+                <tbody>
+                    <tr><th>Output dir</th><td><code>{{ vm.runtime.observability.output_dir or 'n/a' }}</code></td></tr>
+                    <tr><th>Bootstrap summary</th><td><code>{{ vm.runtime.observability.bootstrap_summary_path or 'n/a' }}</code></td></tr>
+                    <tr><th>Dashboard summary</th><td><code>{{ vm.runtime.observability.dashboard_summary_path or 'n/a' }}</code></td></tr>
+                    <tr><th>Bridge URL</th><td><a href="{{ vm.runtime.observability.bridge_url }}" target="_blank">{{ vm.runtime.observability.bridge_url or 'n/a' }}</a></td></tr>
+                    <tr><th>Grafana URL</th><td><a href="{{ vm.grafana_url }}" target="_blank">{{ vm.grafana_url }}</a></td></tr>
+                    <tr><th>Prometheus URL</th><td><a href="{{ vm.prometheus_url }}" target="_blank">{{ vm.prometheus_url }}</a></td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card__head">
+            <h3>Imported Dashboards</h3>
+            <span class="card__sub">Grafana bootstrap state</span>
+        </div>
+        <div class="card__body">
+            <table class="data-table data-table--compact">
+                <thead>
+                    <tr><th>Surface</th><th>Status code</th><th>UID</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>Shadow VPS</td><td>{{ vm.runtime.observability.shadow_dashboard_status_code }}</td><td><code>{{ vm.runtime.observability.shadow_dashboard_uid or 'n/a' }}</code></td></tr>
+                    <tr><td>IA Lab</td><td>{{ vm.runtime.observability.lab_dashboard_status_code }}</td><td><code>{{ vm.runtime.observability.lab_dashboard_uid or 'n/a' }}</code></td></tr>
+                    <tr>
+                        <td>Build-17{% if vm.runtime.observability.build17_embedded_in_shadow %} (embedded in Shadow VPS){% endif %}</td>
+                        <td>{{ vm.runtime.observability.build17_dashboard_status_code }}</td>
+                        <td><code>{{ vm.runtime.observability.build17_dashboard_uid or 'n/a' }}</code></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+
+{% endblock %}

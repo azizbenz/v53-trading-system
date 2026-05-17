@@ -4,8 +4,32 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import uuid
 from pathlib import Path
+
+
+def _replace_with_retry(
+    tmp: Path,
+    path: Path,
+    *,
+    attempts: int = 8,
+    initial_delay_s: float = 0.05,
+) -> None:
+    delay_s = initial_delay_s
+    last_exc: PermissionError | None = None
+    for attempt in range(attempts):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError as exc:
+            last_exc = exc
+            if attempt + 1 >= attempts:
+                break
+            time.sleep(delay_s)
+            delay_s = min(delay_s * 2.0, 0.25)
+    if last_exc is not None:
+        raise last_exc
 
 
 def atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> None:
@@ -23,7 +47,7 @@ def atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> None
             fh.write(text)
             fh.flush()
             os.fsync(fh.fileno())
-        os.replace(tmp, path)
+        _replace_with_retry(tmp, path)
     except Exception as exc:
         _ = exc
         tmp.unlink(missing_ok=True)
@@ -55,7 +79,7 @@ def atomic_write_bytes(path: Path, data: bytes) -> None:
             fh.write(data)
             fh.flush()
             os.fsync(fh.fileno())
-        os.replace(tmp, path)
+        _replace_with_retry(tmp, path)
     except Exception as exc:
         _ = exc
         tmp.unlink(missing_ok=True)

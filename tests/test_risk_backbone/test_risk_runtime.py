@@ -117,6 +117,44 @@ class TestRiskRuntime:
         assert runtime.get_loss_stats().current_budget == pytest.approx(40.0)
         assert runtime.get_beta_stats().current_portfolio_beta == pytest.approx(0.8)
         assert runtime.get_cluster_stats().cluster_exposures["eth_ecosystem"] == pytest.approx(100.0)
+        assert evaluation.explainability.execution_fragility_status == "UNKNOWN"
+        assert evaluation.explainability.participation_penalty_status == "NOT_PROVEN"
+        assert evaluation.explainability.risk_input_completeness_status == "PARTIAL"
+        assert "RISK_PARTICIPATION_PENALTY_NOT_PROVEN" in evaluation.explainability.input_reason_codes
+        assert evaluation.explainability.execution_ready is False
+        assert evaluation.explainability.promotion_ready is False
+
+    def test_runtime_exposes_explicit_carriage_metadata_when_fields_are_missing_or_carried(self) -> None:
+        runtime = _runtime(
+            PortfolioRiskSnapshot(
+                current_equity=1000.0,
+                session_peak_equity=1000.0,
+            ),
+        )
+
+        evaluation = runtime.evaluate_candidate(
+            RiskCandidate(
+                pair="ETHUSDT",
+                engine_id="eng-a",
+                size=100.0,
+                planned_loss=20.0,
+                carriage_statuses=("risk_micro_friction_carried",),
+                carriage_reason_codes=(
+                    "RISK_INFO_STRESS_FIELD_MISSING",
+                    "RISK_REGIME_STATE_MISSING",
+                ),
+                execution_fragility=0.8,
+                market_toxicity=0.7,
+                spread_regime_penalty=0.6,
+            ),
+            now=10.0,
+        )
+
+        assert evaluation.explainability.carriage_statuses == ("risk_micro_friction_carried",)
+        assert evaluation.explainability.carriage_reason_codes == (
+            "RISK_INFO_STRESS_FIELD_MISSING",
+            "RISK_REGIME_STATE_MISSING",
+        )
 
     def test_runtime_requires_explicit_now(self):
         runtime = _runtime(
@@ -375,6 +413,42 @@ class TestRiskRuntime:
         assert evaluation.explain_summary.startswith("risk=accept / physics=elevated")
         assert evaluation.explainability.execution_survivability_score < 1.0
         assert evaluation.explainability.micro_friction_score > 0.0
+
+    def test_runtime_distinguishes_measured_zero_from_missing_micro_risk_inputs(self):
+        runtime = _runtime(
+            PortfolioRiskSnapshot(
+                current_equity=1000.0,
+                session_peak_equity=1000.0,
+            ),
+        )
+        evaluation = runtime.evaluate_candidate(
+            RiskCandidate(
+                pair="ETHUSDT",
+                engine_id="eng-a",
+                size=40.0,
+                planned_loss=5.0,
+                execution_fragility=0.0,
+                execution_fragility_status="MEASURED",
+                market_toxicity=0.0,
+                market_toxicity_status="MEASURED",
+                spread_regime_penalty=0.0,
+                spread_regime_penalty_status="NEUTRAL_BY_DESIGN",
+                participation_penalty=0.0,
+                participation_penalty_status="MEASURED",
+                micro_friction_source_status="GOVERNED_SOURCE",
+                risk_input_completeness_status="GOVERNED_SOURCE",
+                cost_model_completeness_status="COMPLETE",
+            ),
+            now=60.1,
+        )
+
+        assert evaluation.action == RiskRuntimeAction.ACCEPT
+        assert evaluation.explainability.execution_fragility_status == "MEASURED"
+        assert evaluation.explainability.participation_penalty_status == "MEASURED"
+        assert evaluation.explainability.risk_input_completeness_status == "GOVERNED_SOURCE"
+        assert "RISK_PARTICIPATION_PENALTY_NOT_PROVEN" not in evaluation.explainability.input_reason_codes
+        assert evaluation.explainability.execution_ready is True
+        assert evaluation.explainability.promotion_ready is True
 
     def test_runtime_rejects_when_micro_friction_precheck_hook_blocks(self):
         def _block_micro_friction(_hook_input):

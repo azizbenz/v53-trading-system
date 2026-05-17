@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}V5.3 Cockpit - Benz Family{% endblock %}</title>
+    <link rel="stylesheet" href="/static/cockpit.css">
+    {% if vm.current_page != "backtest" %}
+    <meta http-equiv="refresh" content="30">
+    {% endif %}
+</head>
+<body data-page="{{ vm.current_page }}">
+    <div class="layout">
+        {% include "partials/_sidebar.html" %}
+
+        <div class="main">
+            {% include "partials/_topbar.html" %}
+
+            <main class="content">
+                {% if vm.notice_message %}
+                <section class="notice notice--{{ vm.notice_status }}">
+                    <strong>{{ vm.notice_status|upper }}</strong>
+                    <span>{{ vm.notice_message }}</span>
+                </section>
+                {% endif %}
+                {% block content %}{% endblock %}
+            </main>
+
+            <footer class="footer">
+                <span>V5.3 Cockpit - rendered {{ vm.rendered_at_iso }}</span>
+            </footer>
+        </div>
+    </div>
+</body>
+</html>

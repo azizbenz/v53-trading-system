@@ -5,9 +5,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from monitoring.alert_manager import build_monitoring_alerts
+from monitoring.challenger_evidence_alerts import (
+    build_shadow_challenger_alerts,
+    merge_alert_records,
+)
 from monitoring.contracts import (
     AccountUserDataProjection,
     AlertProjection,
+    ArtifactComparisonProjection,
+    ArtifactRuntimeVisibilityProjection,
+    ArtifactThresholdConsumerProjection,
+    ArtifactVerdictBundleProjection,
     Build14Projection,
     Build9MetaProjection,
     Build9XProjection,
@@ -453,14 +461,37 @@ def build_technical_dashboard_payload(
     execution_runtime_projection_bridge_projection: ExecutionRuntimeProjectionBridgeProjection
     | None = None,
     hybrid_router_projection: HybridRouterMetricsProjection | None = None,
+    artifact_runtime_visibility: tuple[ArtifactRuntimeVisibilityProjection, ...] | None = None,
+    artifact_threshold_consumers: tuple[ArtifactThresholdConsumerProjection, ...] | None = None,
+    artifact_comparisons: tuple[ArtifactComparisonProjection, ...] | None = None,
+    artifact_verdict_bundle: ArtifactVerdictBundleProjection | None = None,
+    shadow_last_completed_session_date: str = "",
     runtime_hook_bridge_projections: tuple[RuntimeHookBridgeProjection, ...] | None = None,
     replay_projection: ReplayImportProjection | None = None,
     operator_runtime: OperatorRuntimeProjection | None = None,
 ) -> TechnicalDashboardPayload:
     """Normalize runtime supervision truth into a typed Build-10 payload."""
 
+    resolved_snapshot = _resolve_snapshot(snapshot)
+    resolved_artifact_runtime_visibility = artifact_runtime_visibility or ()
+    resolved_artifact_comparisons = artifact_comparisons or ()
+    challenger_alerts = build_shadow_challenger_alerts(
+        resolved_snapshot,
+        artifact_runtime_visibility=resolved_artifact_runtime_visibility,
+        artifact_comparisons=resolved_artifact_comparisons,
+        artifact_verdict_bundle=artifact_verdict_bundle,
+        shadow_last_completed_session_date=shadow_last_completed_session_date,
+    )
+    snapshot_with_challenger_alerts = resolved_snapshot.model_copy(
+        update={
+            "alerts": merge_alert_records(
+                resolved_snapshot.alerts,
+                challenger_alerts,
+            )
+        }
+    )
     state = _resolve_dashboard_state(
-        snapshot,
+        snapshot_with_challenger_alerts,
         active_modules=active_modules,
         build9x_projection=build9x_projection,
         engine_judgment_projection=engine_judgment_projection,
@@ -508,6 +539,15 @@ def build_technical_dashboard_payload(
             if hybrid_router_projection is not None
             else HybridRouterMetricsProjection()
         ),
+        artifact_runtime_visibility=resolved_artifact_runtime_visibility,
+        artifact_threshold_consumers=(
+            artifact_threshold_consumers
+            if artifact_threshold_consumers is not None
+            else state.execution_runtime_projection_bridge.consumers
+        ),
+        artifact_comparisons=resolved_artifact_comparisons,
+        artifact_verdict_bundle=artifact_verdict_bundle,
+        shadow_last_completed_session_date=shadow_last_completed_session_date,
         runtime_hook_bridges=state.runtime_hook_bridges,
         replay_import=state.replay_import,
         alerts=_build_alert_projection(

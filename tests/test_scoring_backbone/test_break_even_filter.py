@@ -110,3 +110,46 @@ def test_break_even_filter_rejects_invalid_candidate_size() -> None:
             expected_cost=0.0010,
             candidate_size=0.0,
         )
+
+
+def test_break_even_filter_rejects_incomplete_cost_model_when_strict_completeness_required() -> None:
+    decision = evaluate_break_even_filter(
+        expected_gain=0.0030,
+        expected_cost=0.0010,
+        candidate_size=100.0,
+        cost_model_completeness_status="PARTIAL_NO_FEE_NO_IMPACT",
+        config=BreakEvenFilterConfig(require_complete_cost_model=True),
+    )
+
+    assert decision.allowed is False
+    assert decision.reason_code == "COST_MODEL_INCOMPLETE"
+    assert decision.partial_cost_model is True
+    assert decision.cost_gate_status == "COST_MODEL_INCOMPLETE"
+
+
+def test_break_even_filter_labels_partial_cost_model_without_changing_math_when_not_strict() -> None:
+    decision = evaluate_break_even_filter(
+        expected_gain=0.0030,
+        expected_cost=0.0010,
+        candidate_size=100.0,
+        cost_model_completeness_status="PARTIAL_NO_FEE_NO_IMPACT",
+        config=BreakEvenFilterConfig(require_complete_cost_model=False),
+    )
+
+    assert decision.allowed is True
+    assert decision.expected_break_even == pytest.approx(0.0010)
+    assert decision.ev_net == pytest.approx(0.2)
+    assert decision.partial_cost_model is True
+    assert decision.cost_gate_status == "PARTIAL_COST_MODEL"
+
+
+def test_break_even_filter_defaults_missing_cost_status_to_unknown_not_complete() -> None:
+    decision = evaluate_break_even_filter(
+        expected_gain=0.0030,
+        expected_cost=0.0010,
+        candidate_size=100.0,
+    )
+
+    assert decision.cost_model_completeness_status == "UNKNOWN"
+    assert decision.partial_cost_model is True
+    assert decision.cost_gate_status == "PARTIAL_COST_MODEL"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import time
@@ -49,10 +50,18 @@ class BinanceRestClient:
         self._clock_ms = clock_ms or (lambda: time.time_ns() // 1_000_000)
         self._rate_limiter = rate_limiter or BinanceApiRateLimiter(clock_ms=self._clock_ms)
         self._owns_client = client is None
+        self._base_url = base_url.rstrip("/")
+        self._timeout_s = timeout_s
         self._client = client or httpx.AsyncClient(
-            base_url=base_url.rstrip("/"),
+            base_url=self._base_url,
             timeout=timeout_s,
         )
+        # Tracks which event loop the current client is attached to.
+        # asyncio.run() creates *and closes* a new loop on each call; if this
+        # client is reused across calls the old client's transport is bound to
+        # a now-closed loop.  _get_client() uses this to detect the stale state
+        # and silently recreate the client for the new loop.
+        self._client_loop: asyncio.AbstractEventLoop | None = None
 
     async def __aenter__(self) -> "BinanceRestClient":
         return self
@@ -62,7 +71,62 @@ class BinanceRestClient:
 
     async def aclose(self) -> None:
         if self._owns_client:
-            await self._client.aclose()
+            # The client may have been used in a different (now-closed) event
+            # loop — e.g. when build_binance_execution_runtime_bootstrap_bundle
+            # runs reconciliation via asyncio.run() and the caller then calls
+            # close() via another asyncio.run().  The httpcore transport holds
+            # asyncio primitives (Semaphore/Lock) from the old loop, so
+            # attempting aclose() raises "Event loop is closed".  In that case
+            # the OS will reclaim the underlying sockets; we just drop the
+            # reference and move on.
+            try:
+                await self._client.aclose()
+            except RuntimeError as exc:
+                if "Event loop is closed" not in str(exc):
+                    raise
+            self._client_loop = None
+
+    def _get_client(self) -> httpx.AsyncClient:
+        """Return the HTTP client, recreating it when the event loop has changed.
+
+        ``asyncio.run()`` creates and *closes* a new event loop on each call.
+        An ``httpx.AsyncClient`` whose transport was initialised inside a
+        previous ``asyncio.run()`` context will raise "Event loop is closed"
+        on the next async request because the transport holds references
+        (asyncio Semaphore, Lock, …) that are bound to the old, now-closed
+        loop.  ``is_closed`` is NOT a reliable signal here — it only becomes
+        True after an explicit ``aclose()`` call.
+
+        Instead we track ``_client_loop``: the running loop that was active
+        when the client was last used.  On the first request inside a new
+        ``asyncio.run()`` the loop identity changes → we drop the stale client
+        and create a fresh one that is clean w.r.t. the new loop.
+
+        When the caller supplied their own ``client`` (``_owns_client=False``)
+        we never recreate — the caller is responsible for lifecycle.
+        """
+        if not self._owns_client:
+            return self._client
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # Called outside any async context — return as-is (will fail on
+            # actual IO anyway, which is the correct behaviour).
+            return self._client
+        if self._client_loop is None:
+            # First use — record which loop owns this client.
+            self._client_loop = current_loop
+        elif self._client_loop is not current_loop:
+            # The event loop was replaced (previous asyncio.run() closed the
+            # old one).  The old client's transport is stale; make a fresh one.
+            # We intentionally skip awaiting aclose() on the old client because
+            # its loop is already closed — the OS will reclaim the sockets.
+            self._client = httpx.AsyncClient(
+                base_url=self._base_url,
+                timeout=self._timeout_s,
+            )
+            self._client_loop = current_loop
+        return self._client
 
     @property
     def rate_limiter(self) -> BinanceApiRateLimiter:
@@ -236,7 +300,7 @@ class BinanceRestClient:
             cost=request_cost,
             now_ms=self._clock_ms(),
         )
-        response = await self._client.request(method, path, params=request_params, headers=headers)
+        response = await self._get_client().request(method, path, params=request_params, headers=headers)
         self._rate_limiter.observe_response(
             headers=response.headers,
             status_code=response.status_code,

@@ -1,0 +1,31 @@
+<section class="card">
+    <div class="card__head">
+        <h3>Capacity Guard</h3>
+        <span class="card__sub">{{ vm.capacity_guard.source_status }}</span>
+    </div>
+    <div class="card__body">
+        {% if vm.capacity_guard.source_status != 'ok' %}
+            <p class="muted">No capacity snapshot available yet.</p>
+        {% else %}
+        <div class="capacity-grid">
+            <div><span class="muted">queue depth</span><strong>{{ vm.capacity_guard.queue_depth }}</strong></div>
+            <div><span class="muted">oldest age (ms)</span><strong>{{ vm.capacity_guard.queue_oldest_age_ms }}</strong></div>
+            <div><span class="muted">CPU %</span><strong>{{ "%.1f"|format(vm.capacity_guard.worker_cpu_pct) }}</strong></div>
+            <div><span class="muted">RSS MB</span><strong>{{ "%.1f"|format(vm.capacity_guard.worker_rss_mb) }}</strong></div>
+            <div><span class="muted">unprocessed</span><strong>{{ vm.capacity_guard.unprocessed_items_count }}</strong></div>
+            <div><span class="muted">export fails</span><strong>{{ vm.capacity_guard.export_failures_total }}</strong></div>
+        </div>
+        <div class="capacity-state">
+            backlog state:
+            <span class="badge badge--{% if vm.capacity_guard.blocked %}down{% else %}up{% endif %}">
+                {{ vm.capacity_guard.backlog_state or "normal" }}
+            </span>
+        </div>
+        {% if vm.capacity_guard.block_reasons %}
+        <ul class="muted small-list">
+            {% for r in vm.capacity_guard.block_reasons %}<li>{{ r }}</li>{% endfor %}
+        </ul>
+        {% endif %}
+        {% endif %}
+    </div>
+</section>

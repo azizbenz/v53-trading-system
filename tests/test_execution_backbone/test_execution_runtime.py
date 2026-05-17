@@ -650,6 +650,58 @@ class TestExecutionRuntime:
         assert submission.status == ExecutionSubmissionStatus.SUBMITTED
         assert len(adapter.submissions) == 1
 
+    def test_runtime_blocks_live_submission_when_rate_limit_telemetry_is_missing(self):
+        adapter = FakeExecutionVenue()
+        runtime = ExecutionRuntime(
+            adapter,
+            rate_limit_model=ExecutionRateLimitModel(
+                method="little_law_burst_margin_capped",
+                quota_ratio_ceiling=0.80,
+            ),
+        )
+
+        submission = runtime.submit_opportunity(
+            _opportunity(
+                intent_id="rate-limit-live-missing",
+                metadata={"target_runtime_mode": "live"},
+            ),
+            now=12.31,
+        )
+
+        assert submission.status == ExecutionSubmissionStatus.NO_TRADE
+        assert submission.no_trade is not None
+        assert submission.no_trade.context["reason_code"] == "RATE_LIMIT_TELEMETRY_MISSING_NO_SUBMIT"
+        assert submission.no_trade.context["telemetry_status"] == "missing"
+        assert "current_quota_ratio" not in submission.no_trade.context
+        assert len(adapter.submissions) == 0
+
+    def test_runtime_blocks_shadow_submission_when_rate_limit_telemetry_is_invalid(self):
+        adapter = FakeExecutionVenue()
+        runtime = ExecutionRuntime(
+            adapter,
+            rate_limit_model=ExecutionRateLimitModel(
+                method="little_law_burst_margin_capped",
+                quota_ratio_ceiling=0.80,
+            ),
+        )
+
+        submission = runtime.submit_opportunity(
+            _opportunity(
+                intent_id="rate-limit-shadow-invalid",
+                metadata={
+                    "target_runtime_mode": "shadow",
+                    "rest_quota_ratio_current": "not-a-number",
+                },
+            ),
+            now=12.32,
+        )
+
+        assert submission.status == ExecutionSubmissionStatus.NO_TRADE
+        assert submission.no_trade is not None
+        assert submission.no_trade.context["reason_code"] == "RATE_LIMIT_TELEMETRY_MISSING_NO_SUBMIT"
+        assert submission.no_trade.context["telemetry_status"] == "invalid"
+        assert len(adapter.submissions) == 0
+
     def test_runtime_blocks_submission_from_spread_guard_model(self):
         adapter = FakeExecutionVenue()
         runtime = ExecutionRuntime(
@@ -696,6 +748,32 @@ class TestExecutionRuntime:
 
         assert submission.status == ExecutionSubmissionStatus.SUBMITTED
         assert len(adapter.submissions) == 1
+
+    def test_runtime_blocks_live_submission_when_spread_is_invalid(self):
+        adapter = FakeExecutionVenue()
+        runtime = ExecutionRuntime(
+            adapter,
+            spread_guard_model=ExecutionSpreadGuardModel(
+                method="lognormal_mu_plus_2sigma_capped",
+                max_spread_bps=12.0,
+            ),
+        )
+
+        submission = runtime.submit_opportunity(
+            _opportunity(
+                intent_id="spread-guard-live-invalid",
+                spread_bps=float("nan"),
+                metadata={"target_runtime_mode": "live"},
+            ),
+            now=12.37,
+        )
+
+        assert submission.status == ExecutionSubmissionStatus.NO_TRADE
+        assert submission.no_trade is not None
+        assert submission.no_trade.context["reason_code"] == "SPREAD_INVALID_NO_SUBMIT"
+        assert submission.no_trade.context["telemetry_status"] == "invalid"
+        assert "current_spread_bps" not in submission.no_trade.context
+        assert len(adapter.submissions) == 0
 
     def test_runtime_augments_expected_cost_from_slippage_model(self):
         adapter = FakeExecutionVenue()

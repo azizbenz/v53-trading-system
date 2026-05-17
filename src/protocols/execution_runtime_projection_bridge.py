@@ -27,6 +27,7 @@ class ExecutionRuntimeProjectionBridgeStatus(BaseModel, frozen=True):
     ready_consumer_count: int = 0
     partial_consumer_count: int = 0
     blocked_consumer_count: int = 0
+    consumers: tuple[LocalLabExecutionRuntimeConsumerProjection, ...] = ()
     rate_limit_model_loaded: bool = False
     spread_guard_model_loaded: bool = False
     slippage_model_loaded: bool = False
@@ -90,6 +91,7 @@ def inspect_execution_runtime_projection_bridge(
         ready_consumer_count=projection.ready_consumer_count,
         partial_consumer_count=projection.partial_consumer_count,
         blocked_consumer_count=projection.blocked_consumer_count,
+        consumers=projection.consumers,
         rate_limit_model_loaded=rate_limit_model is not None,
         spread_guard_model_loaded=spread_guard_model is not None,
         slippage_model_loaded=slippage_model is not None,

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import backtest_artifact_import.ml_model_transport as import_ml_model_transport
 from datetime import UTC, date, datetime
+import local_replay_runtime.ml_model_transport as replay_ml_model_transport
 from pathlib import Path
 import shutil
 
@@ -8,6 +10,7 @@ from backtest_artifact_import import (
     ArtifactUploadContext,
     build_import_request_from_upload_request,
     build_lab_fixture_signature_envelope,
+    build_ml_supplementary_refs_source_summary,
     build_replay_plan_from_export_dir,
     build_upload_request_from_replay_plan_with_ml_model_artifact,
     build_ml_model_source_artifact_summary,
@@ -33,6 +36,13 @@ from interface_contracts import (
     TransformWhitelistLock,
 )
 from local_replay_runtime import ReplayExecutionInput, ReplayRunManifest, execute_local_replay_export
+from local_replay_runtime.ml_governance_sidecars import (
+    ML_ANTI_LEAKAGE_PROOF_FILENAME,
+    ML_LIVE_DRIFT_SNAPSHOT_FILENAME,
+    build_ml_anti_leakage_proof_artifact,
+    build_ml_live_drift_snapshot,
+    write_ml_governance_sidecars,
+)
 from meta_minimal.dtr_core.decision_state_encoder import DecisionState
 from meta_minimal.dtr_core.dtr_record_builder import build_dtr
 from tests.support_paths import make_repo_scratch_dir
@@ -194,6 +204,21 @@ def _ml_artifact_path() -> Path:
     return path
 
 
+def _write_governance_sidecars(source_path: Path) -> None:
+    artifact = load_ml_model_artifact(str(source_path))
+    proof = build_ml_anti_leakage_proof_artifact(
+        artifact,
+        test_start=date(2026, 4, 29),
+        test_end=date(2026, 5, 6),
+    )
+    snapshot = build_ml_live_drift_snapshot(artifact)
+    write_ml_governance_sidecars(
+        source_path.parent,
+        anti_leakage_proof=proof,
+        live_drift_snapshot=snapshot,
+    )
+
+
 def test_build_ml_model_source_artifact_summary_projects_typed_fields() -> None:
     source_path = _ml_artifact_path()
     try:
@@ -208,11 +233,32 @@ def test_build_ml_model_source_artifact_summary_projects_typed_fields() -> None:
         shutil.rmtree(source_path.parent, ignore_errors=True)
 
 
+def test_build_ml_supplementary_refs_source_summary_projects_fresh_governed_refs() -> None:
+    source_path = _ml_artifact_path()
+    try:
+        artifact = load_ml_model_artifact(str(source_path))
+        summary = build_ml_model_source_artifact_summary(str(source_path))
+        source_summary = build_ml_supplementary_refs_source_summary(
+            artifact=artifact,
+            transport_artifact_ref=str(source_path.resolve()),
+            summary_ref=str(source_path.with_name("ml_model_artifact.summary.json").resolve()),
+        )
+
+        assert source_summary.target_artifact_hash == artifact.artifact_hash
+        assert source_summary.source_status == "SUPPLEMENTARY_REFS_SOURCE_GOVERNED"
+        assert source_summary.non_empty_refs_status == "NON_EMPTY_SUPPLEMENTARY_REFS_PROVEN"
+        assert source_summary.summary_ref.endswith("ml_model_artifact.summary.json")
+        assert source_summary.target_artifact_hash == summary.artifact_hash
+    finally:
+        shutil.rmtree(source_path.parent, ignore_errors=True)
+
+
 def test_package_ml_model_artifact_for_transport_materializes_packaged_refs() -> None:
     export_dir = _export_dir()
     source_path = _ml_artifact_path()
 
     try:
+        _write_governance_sidecars(source_path)
         transport_package = package_ml_model_artifact_for_transport(
             export_dir,
             source_artifact_ref=str(source_path),
@@ -221,8 +267,14 @@ def test_package_ml_model_artifact_for_transport_materializes_packaged_refs() ->
 
         assert Path(transport_package.transport_artifact_ref).parent == export_dir.resolve()
         assert Path(transport_package.summary_ref).parent == export_dir.resolve()
+        assert Path(transport_package.source_summary_ref).parent == export_dir.resolve()
+        assert Path(export_dir / ML_ANTI_LEAKAGE_PROOF_FILENAME).is_file()
+        assert Path(export_dir / ML_LIVE_DRIFT_SNAPSHOT_FILENAME).is_file()
         assert packaged_artifact.artifact_hash == transport_package.summary.artifact_hash
         assert transport_package.summary.source_artifact_ref == str(source_path.resolve())
+        assert transport_package.source_summary.target_artifact_hash == packaged_artifact.artifact_hash
+        assert transport_package.source_summary.supplementary_refs_count == 5
+        assert len(transport_package.supplementary_refs) == 5
     finally:
         shutil.rmtree(export_dir, ignore_errors=True)
         shutil.rmtree(source_path.parent, ignore_errors=True)
@@ -234,6 +286,7 @@ def test_build_upload_request_from_replay_plan_with_ml_model_artifact_preserves_
 
     try:
         discovery, replay_plan = build_replay_plan_from_export_dir(export_dir)
+        _write_governance_sidecars(source_path)
         transport_package = package_ml_model_artifact_for_transport(
             export_dir,
             source_artifact_ref=str(source_path),
@@ -251,13 +304,40 @@ def test_build_upload_request_from_replay_plan_with_ml_model_artifact_preserves_
         import_request = build_import_request_from_upload_request(upload_request)
         decision = validate_import_request(import_request)
 
-        assert upload_request.payload_bundle.supplementary_refs == (
-            transport_package.transport_artifact_ref,
-            transport_package.summary_ref,
-        )
+        assert transport_package.transport_artifact_ref in upload_request.payload_bundle.supplementary_refs
+        assert transport_package.summary_ref in upload_request.payload_bundle.supplementary_refs
+        assert transport_package.source_summary_ref in upload_request.payload_bundle.supplementary_refs
+        assert str((export_dir / ML_ANTI_LEAKAGE_PROOF_FILENAME).resolve()) in upload_request.payload_bundle.supplementary_refs
+        assert str((export_dir / ML_LIVE_DRIFT_SNAPSHOT_FILENAME).resolve()) in upload_request.payload_bundle.supplementary_refs
         assert transport_package.transport_artifact_ref in import_request.payload_refs
         assert transport_package.summary_ref in import_request.payload_refs
+        assert transport_package.source_summary_ref in import_request.payload_refs
+        assert str((export_dir / ML_ANTI_LEAKAGE_PROOF_FILENAME).resolve()) in import_request.payload_refs
+        assert str((export_dir / ML_LIVE_DRIFT_SNAPSHOT_FILENAME).resolve()) in import_request.payload_refs
         assert decision.accepted is True
     finally:
         shutil.rmtree(export_dir, ignore_errors=True)
         shutil.rmtree(source_path.parent, ignore_errors=True)
+
+
+def test_backtest_artifact_import_ml_transport_reuses_local_replay_packaging_ownership() -> None:
+    assert (
+        import_ml_model_transport.MlModelTransportPackage
+        is replay_ml_model_transport.MlModelTransportPackage
+    )
+    assert (
+        import_ml_model_transport.load_ml_model_artifact
+        is replay_ml_model_transport.load_ml_model_artifact
+    )
+    assert (
+        import_ml_model_transport.build_ml_model_source_artifact_summary
+        is replay_ml_model_transport.build_ml_model_source_artifact_summary
+    )
+    assert (
+        import_ml_model_transport.build_ml_supplementary_refs_source_summary
+        is replay_ml_model_transport.build_ml_supplementary_refs_source_summary
+    )
+    assert (
+        import_ml_model_transport.package_ml_model_artifact_for_transport
+        is replay_ml_model_transport.package_ml_model_artifact_for_transport
+    )

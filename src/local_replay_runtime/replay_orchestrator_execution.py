@@ -18,6 +18,14 @@ from local_replay_runtime.performance_mode_guard import (
     build_performance_mode_guard_report,
 )
 from local_replay_runtime.replay_clock import build_replay_clock
+from local_replay_runtime.replay_execution_contracts import (
+    ReplayExecutionEvaluationRequest,
+    ReplayExecutionEvaluationResult,
+)
+from local_replay_runtime.replay_execution_runtime import (
+    build_replay_parity_diagnostics,
+    evaluate_replay_execution,
+)
 from local_replay_runtime.replay_executor import (
     ReplayExecutionInput,
     ReplayExecutionResult,
@@ -60,11 +68,22 @@ from local_replay_runtime.run_consistency_guard import (
     RunConsistencyGuardReport,
     compare_replay_runs,
 )
-from local_replay_runtime.shadow_execution_simulator import (
-    build_parity_diagnostics_payload,
-    simulate_shadow_compatible_dtrs,
-)
 from meta_minimal.dtr_core.dtr_record_builder import DTRRecord
+
+
+def _evaluate_dataset_execution(
+    dataset: HistoricalReplayDataset,
+    *,
+    execution_label: str,
+    execution_runtime_projection_path: str | None = None,
+) -> ReplayExecutionEvaluationResult:
+    return evaluate_replay_execution(
+        ReplayExecutionEvaluationRequest(
+            dataset=dataset,
+            execution_label=execution_label,
+            execution_runtime_projection_path=execution_runtime_projection_path,
+        )
+    )
 
 
 def build_execution_input_from_dataset(
@@ -77,6 +96,7 @@ def build_execution_input_from_dataset(
     performance_mode: str,
     profile_scope: ProfileId,
     dataset: HistoricalReplayDataset,
+    execution_runtime_projection_path: str | None = None,
 ) -> ReplayExecutionInput:
     """Build the governed replay execution payload directly from a normalized dataset."""
 
@@ -85,9 +105,18 @@ def build_execution_input_from_dataset(
         clock_id=f"clock-{run_id}",
         mode=performance_mode,
     )
-    dtr_records = simulate_shadow_compatible_dtrs(dataset)
-    feature_bridge_payload = build_feature_bridge_payload(dataset)
-    parity_diagnostics_payload = build_parity_diagnostics_payload(dataset, dtr_records)
+    execution_evaluation = _evaluate_dataset_execution(
+        dataset,
+        execution_label=performance_mode,
+        execution_runtime_projection_path=execution_runtime_projection_path,
+    )
+    dtr_records = execution_evaluation.dtr_records
+    auto_materialize_feature_locks = dataset.source == "historical_snapshot_router"
+    feature_bridge_payload = build_feature_bridge_payload(
+        dataset,
+        auto_materialize_feature_locks=auto_materialize_feature_locks,
+    )
+    parity_diagnostics_payload = execution_evaluation.parity_diagnostics_payload
     return ReplayExecutionInput(
         run_manifest=ReplayRunManifest(
             run_id=run_id,
@@ -124,6 +153,15 @@ def build_execution_input_from_dataset(
             f"strategy_version={strategy_version}",
             f"lineage_version={lineage_version}",
             f"performance_mode={performance_mode}",
+            "execution_provider="
+            f"{execution_evaluation.request.provider.provider_kind.value}:"
+            f"{execution_evaluation.request.provider.provider_version}",
+            (
+                "execution_runtime_projection="
+                f"{execution_runtime_projection_path}"
+            )
+            if execution_runtime_projection_path is not None
+            else "execution_runtime_projection=none",
             f"dataset_source={dataset.source_path}",
             f"record_count={dataset.record_count}",
         ),
@@ -182,6 +220,11 @@ def _orchestrate_single_chunk_export(
         performance_mode=request.performance_mode,
         profile_scope=request.profile_scope,
         dataset=processed_dataset,
+        execution_runtime_projection_path=(
+            None
+            if request.execution_runtime_projection_path is None
+            else str(request.execution_runtime_projection_path)
+        ),
     )
     session_config = build_replay_session_config(
         execution_input.run_manifest,
@@ -209,7 +252,15 @@ def _orchestrate_single_chunk_export(
     if not performance_mode_guard.guard_passed:
         raise ValueError("LOCAL_REPLAY performance_mode_guard failed")
 
-    reference_dtr_records = simulate_shadow_compatible_dtrs(processed_dataset)
+    reference_dtr_records = _evaluate_dataset_execution(
+        processed_dataset,
+        execution_label="shadow_fidelity_mode",
+        execution_runtime_projection_path=(
+            None
+            if request.execution_runtime_projection_path is None
+            else str(request.execution_runtime_projection_path)
+        ),
+    ).dtr_records
     run_consistency_guard = compare_replay_runs(
         reference_dtr_records,
         execution_input.dtr_records,
@@ -333,16 +384,26 @@ def _build_aggregate_execution_input(
         performance_mode=request.performance_mode,
         profile_scope=request.profile_scope,
         dataset=aggregate_dataset,
+        execution_runtime_projection_path=(
+            None
+            if request.execution_runtime_projection_path is None
+            else str(request.execution_runtime_projection_path)
+        ),
     )
     aggregate_input = ReplayExecutionInput(
         run_manifest=aggregate_seed.run_manifest,
         total_opportunities=aggregate_dataset.record_count,
         dtr_records=combined_dtr_records,
-        feature_bridge_payload=build_feature_bridge_payload(aggregate_dataset),
-        parity_diagnostics_payload=build_parity_diagnostics_payload(
+        feature_bridge_payload=build_feature_bridge_payload(
+            aggregate_dataset,
+            auto_materialize_feature_locks=(
+                aggregate_dataset.source == "historical_snapshot_router"
+            ),
+        ),
+        parity_diagnostics_payload=build_replay_parity_diagnostics(
             aggregate_dataset,
             combined_dtr_records,
-        ),
+        ).model_dump(mode="json"),
         review_notes=(
             "session_scope=multi_chunk",
             f"chunk_count={request.chunk_count}",
@@ -409,7 +470,15 @@ def _persist_aggregate_session_state(
     if not performance_mode_guard.guard_passed:
         raise ValueError("LOCAL_REPLAY aggregate performance_mode_guard failed")
 
-    reference_dtr_records = simulate_shadow_compatible_dtrs(aggregate_dataset)
+    reference_dtr_records = _evaluate_dataset_execution(
+        aggregate_dataset,
+        execution_label="shadow_fidelity_mode",
+        execution_runtime_projection_path=(
+            None
+            if request.execution_runtime_projection_path is None
+            else str(request.execution_runtime_projection_path)
+        ),
+    ).dtr_records
     run_consistency_guard = compare_replay_runs(
         reference_dtr_records,
         combined_dtr_records,

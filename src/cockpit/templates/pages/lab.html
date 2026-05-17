@@ -1,0 +1,859 @@
+{% extends "base.html" %}
+
+{% block title %}IA Lab - {{ vm.welcome_message }}{% endblock %}
+
+{% block content %}
+{% set handoff = vm.runtime.strategy_ladder_ml_handoff %}
+{% set handoff_form = vm.lab_ml_handoff_form %}
+
+<section class="welcome-banner">
+    <div class="welcome-banner__inner">
+        <div>
+            <h1 class="welcome-banner__title">IA Lab</h1>
+            <p class="welcome-banner__sub">
+                Review, merge gates, governed artifact transfer, feature-family visibility, and shadow export controls.
+            </p>
+        </div>
+        <div class="welcome-banner__amount">
+            <span class="welcome-banner__label">Queue status</span>
+            <span class="welcome-banner__value">
+                {{ vm.runtime.queue_snapshot.queue_status.value if vm.runtime.queue_snapshot else 'not_configured' }}
+            </span>
+        </div>
+    </div>
+</section>
+
+<section class="card">
+    <div class="card__head">
+        <h3>PHASE 2.5 - Operational Proof Metrics</h3>
+        <span class="card__sub">Current run vs previous run, feature families used, and whether Local IA Lab outputs are really visible on the VPS side</span>
+    </div>
+</section>
+
+<section class="grid-2">
+    {% include "partials/_run_comparison.html" %}
+    {% include "partials/_lab_vps_transfer.html" %}
+</section>
+
+<section class="card" id="strategy-ladder-ml-handoff">
+    <div class="card__head">
+        <h3>Strategy Ladder ML Handoff</h3>
+        <span class="card__sub">{{ vm.runtime.strategy_ladder_ml_handoff.status }}</span>
+    </div>
+    <div class="card__body">
+        <p class="muted">
+            LAB_ONLY expected-edge training with explicit provenance. This surface keeps the artifact frozen for backtest,
+            exposes the exact data roots and equations used, and stays fail-closed on stale or overlapping windows.
+        </p>
+        <div class="patch6-layout">
+            <div class="patch6-form-column">
+                <form method="post" action="/lab/strategy-ladder-ml-handoff">
+                    <div class="operator-token-row">
+                        <span class="operator-token operator-token--info">{{ handoff.status or 'not_run' }}</span>
+                        <span class="operator-token {% if handoff.ready %}operator-token--ok{% else %}operator-token--warn{% endif %}">{{ 'frozen-artifact-ready' if handoff.ready else 'fail-closed' }}</span>
+                        <span class="operator-token {% if handoff.anti_leakage_status == 'NO_FUTURE_DATA_LEAK_PROVEN' %}operator-token--ok{% else %}operator-token--warn{% endif %}">{{ handoff.anti_leakage_status or 'anti_leakage_unproven' }}</span>
+                    </div>
+
+                    <div class="operator-panel">
+                        <div class="operator-panel__head">
+                            <div>
+                                <h4>Stage 1 - Training identity and scientific controls</h4>
+                                <div class="operator-panel__sub">Lock the pair, timeframe, feature set, and core training hyperparameters before launching the bounded ML rail.</div>
+                            </div>
+                        </div>
+                        <div class="form-grid form-grid--wide">
+                            <label>Pair
+                                <input type="text" name="pair" value="{{ handoff_form.pair or handoff.pair or 'BTCUSDT' }}">
+                            </label>
+                            <label>Timeframe
+                                <input type="text" name="timeframe" value="{{ handoff_form.timeframe or handoff.timeframe or '1m' }}">
+                            </label>
+                            <label>Calibration version
+                                <input type="text" name="calibration_version" value="{{ handoff_form.calibration_version or handoff.calibration_version or 'strategy_ladder_expected_edge.v1' }}">
+                            </label>
+                            <label>Feature names (CSV)
+                                <input type="text" name="feature_names" value="{{ handoff_form.feature_names or (handoff.feature_names|join(',')) or 'close_return,high_low_range,volume' }}">
+                            </label>
+                            <label>Sample stride (minutes)
+                                <input type="number" name="sample_stride_minutes" value="{{ handoff_form.sample_stride_minutes or handoff.sample_stride_minutes or 60 }}" min="1">
+                            </label>
+                            <label>Target horizon (minutes)
+                                <input type="number" name="target_horizon_minutes" value="{{ handoff_form.target_horizon_minutes or handoff.target_horizon_minutes or 1 }}" min="1">
+                            </label>
+                            <label>Training seed
+                                <input type="number" name="training_seed" value="{{ handoff_form.training_seed or handoff.training_seed or 5307 }}">
+                            </label>
+                            <label>Max Optuna trials
+                                <input type="number" name="max_optuna_trials" value="{{ handoff_form.max_optuna_trials or handoff.optuna_trials_used or 0 }}" min="0">
+                            </label>
+                            <label>Minimum training rows
+                                <input type="number" name="min_training_rows" value="{{ handoff_form.min_training_rows or 210 }}" min="10">
+                            </label>
+                            <label>SHAP summary ref (optional)
+                                <input type="text" name="shap_summary_ref" value="{{ handoff_form.shap_summary_ref }}" placeholder="optional audit artifact ref">
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="operator-panel">
+                        <div class="operator-panel__head">
+                            <div>
+                                <h4>Stage 2 - Historical training and audit sources</h4>
+                                <div class="operator-panel__sub">Klines are consumed by the current expected-edge rail. Orderbook, trades, and metadata are surfaced for audit traceability and future execution-grounded ML slices.</div>
+                            </div>
+                        </div>
+                        <div class="operator-field-stack">
+                            <label>Kline root (required) → current trainer input
+                                <div class="field-row">
+                                    <input id="lab_kline_root" type="text" name="kline_root" placeholder="L:\klines\BTCUSDT\1 or L:\klines" value="{{ handoff_form.kline_root or vm.selected_form.klines_path or handoff.kline_root }}" required>
+                                    <button class="button button--ghost js-browse-folder" type="button" data-target="lab_kline_root">Browse...</button>
+                                </div>
+                            </label>
+                            <label>B2 run root (optional, enables replay-grounded labels)
+                                <div class="field-row">
+                                    <input id="lab_b2_run_root" type="text" name="b2_run_root" placeholder="path to one B2 backtest_strategy_ladder run root" value="{{ handoff_form.b2_run_root }}">
+                                    <button class="button button--ghost js-browse-folder" type="button" data-target="lab_b2_run_root">Browse...</button>
+                                </div>
+                            </label>
+                            <label>Orderbook root (optional, not yet consumed by this trainer)
+                                <div class="field-row">
+                                    <input id="lab_orderbook_root" type="text" name="orderbook_root" placeholder="L:\ordrebookpart1" value="{{ handoff_form.orderbook_root or vm.selected_form.orderbook_path }}">
+                                    <button class="button button--ghost js-browse-folder" type="button" data-target="lab_orderbook_root">Browse...</button>
+                                </div>
+                            </label>
+                            <label>Trades root (optional, not yet consumed by this trainer)
+                                <div class="field-row">
+                                    <input id="lab_trades_root" type="text" name="trades_root" placeholder="L:\trades" value="{{ handoff_form.trades_root or vm.selected_form.trades_path }}">
+                                    <button class="button button--ghost js-browse-folder" type="button" data-target="lab_trades_root">Browse...</button>
+                                </div>
+                            </label>
+                            <label>Historical metadata root (optional)
+                                <div class="field-row">
+                                    <input id="lab_metadata_root" type="text" name="metadata_root" placeholder="metadata cache root" value="{{ handoff_form.metadata_root or vm.selected_form.metadata_path }}">
+                                    <button class="button button--ghost js-browse-folder" type="button" data-target="lab_metadata_root">Browse...</button>
+                                </div>
+                            </label>
+                            <label>Handoff export dir (optional)
+                                <div class="field-row">
+                                    <input id="lab_handoff_export_dir" type="text" name="handoff_export_dir" placeholder="optional; defaults to job output" value="{{ handoff_form.handoff_export_dir }}">
+                                    <button class="button button--ghost js-browse-folder" type="button" data-target="lab_handoff_export_dir">Browse...</button>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="operator-panel">
+                        <div class="operator-panel__head">
+                            <div>
+                                <h4>Stage 3 - Windows and governed launch</h4>
+                                <div class="operator-panel__sub">Refresh source-scope proof first when roots or dates change, then launch only when the rail remains scientifically identifiable.</div>
+                            </div>
+                        </div>
+                        <div class="form-grid form-grid--wide">
+                            <label>ML train start
+                                <input type="date" name="train_start" value="{{ handoff_form.train_start or handoff.train_start }}" required>
+                            </label>
+                            <label>ML train end
+                                <input type="date" name="train_end" value="{{ handoff_form.train_end or handoff.train_end }}" required>
+                            </label>
+                            <label>Requested backtest start
+                                <input type="date" name="requested_backtest_start" value="{{ handoff_form.requested_backtest_start or handoff.requested_backtest_start }}">
+                            </label>
+                            <label>Requested backtest days
+                                <input type="number" name="requested_backtest_days" value="{{ handoff_form.requested_backtest_days or 130 }}" min="1">
+                            </label>
+                            <label>Rolling train days
+                                <input type="number" name="train_days" value="{{ handoff_form.train_days or handoff.rolling_train_days or 180 }}" min="1">
+                            </label>
+                            <label>Rolling validation days
+                                <input type="number" name="validation_days" value="{{ handoff_form.validation_days or handoff.rolling_validation_days or 30 }}" min="1">
+                            </label>
+                            <label>Freshness days
+                                <input type="number" name="freshness_days" value="{{ handoff_form.freshness_days or handoff.rolling_freshness_days or 30 }}" min="1">
+                            </label>
+                            <label>Chunk days
+                                <input type="number" name="chunk_days" value="{{ handoff_form.chunk_days or handoff.rolling_chunk_days or 30 }}" min="1">
+                            </label>
+                            <label>Signed by
+                                <input type="text" name="signed_by" value="{{ handoff_form.signed_by or 'cockpit_operator' }}">
+                            </label>
+                        </div>
+                        <div class="form-actions form-actions--dual">
+                            <button class="button button--info" type="submit" name="intent" value="preview">Refresh Source Scope</button>
+                            <button class="button button--primary" type="submit" name="intent" value="launch">Train + Export Frozen ML Input</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+
+            <div class="patch6-preview-column">
+                <div class="operator-panel">
+                    <div class="preview-hero">
+                        <div>
+                            <h4>Training provenance snapshot</h4>
+                            <p class="muted">Every field below is intended to stay traceable to a typed artifact, report, or explicit source module.</p>
+                        </div>
+                        <span class="preview-badge {% if handoff.ready %}preview-badge--ok{% elif handoff.blocking_reasons %}preview-badge--danger{% else %}preview-badge--warn{% endif %}">{{ handoff.status or 'not_run' }}</span>
+                    </div>
+                    <div class="preview-stat-grid" style="margin-top: 12px;">
+                        <div class="preview-stat">
+                            <span class="preview-stat__label">Artifact ID</span>
+                            <span class="preview-stat__value"><code>{{ handoff.artifact_id or 'not_run' }}</code></span>
+                        </div>
+                        <div class="preview-stat">
+                            <span class="preview-stat__label">Job ID</span>
+                            <span class="preview-stat__value"><code>{{ handoff.job_id or 'not_run' }}</code></span>
+                        </div>
+                        <div class="preview-stat">
+                            <span class="preview-stat__label">Feature count</span>
+                            <span class="preview-stat__value">{{ handoff.feature_names|length }}</span>
+                        </div>
+                        <div class="preview-stat">
+                            <span class="preview-stat__label">Kline files</span>
+                            <span class="preview-stat__value">{{ handoff.kline_file_count }}</span>
+                        </div>
+                        <div class="preview-stat">
+                            <span class="preview-stat__label">Training rows</span>
+                            <span class="preview-stat__value">{{ handoff.training_row_count }}</span>
+                        </div>
+                        <div class="preview-stat">
+                            <span class="preview-stat__label">Governance drift</span>
+                            <span class="preview-stat__value">{{ handoff.live_drift_status or 'not_proven' }}</span>
+                        </div>
+                    </div>
+                    <table class="data-table data-table--compact" style="margin-top:0.75rem;">
+                        <tbody>
+                            <tr><th>Source</th><td>{{ handoff.source_status }}</td></tr>
+                            <tr><th>Ready</th><td>{{ handoff.ready }}</td></tr>
+                            <tr><th>ML train window</th><td>{{ handoff.train_start or 'n/a' }} → {{ handoff.train_end or 'n/a' }}</td></tr>
+                            <tr><th>Trainer rows</th><td>train={{ handoff.trainer_train_row_count }}, validation={{ handoff.trainer_validation_row_count }}</td></tr>
+                            <tr><th>Backtest window</th><td>{{ handoff.requested_backtest_start or 'n/a' }} → {{ handoff.requested_backtest_end or 'n/a' }}</td></tr>
+                            <tr><th>Target policy</th><td>{{ handoff.target_policy or 'not_available' }}</td></tr>
+                            <tr><th>Label source type</th><td>{{ handoff.label_source or 'not_available' }}</td></tr>
+                            <tr><th>Replay-grounded / proxy labels</th><td>{{ handoff.replay_grounded_label_count }} / {{ handoff.proxy_execution_label_count }}</td></tr>
+                            <tr><th>Replay-backed coverage</th><td>{{ "%.6f"|format(handoff.replay_backed_label_coverage) if handoff.replay_backed_label_coverage is not none else 'n/a' }}</td></tr>
+                            <tr><th>Sample stride / horizon</th><td>{{ handoff.sample_stride_minutes or 'n/a' }}m / {{ handoff.target_horizon_minutes or 'n/a' }}m</td></tr>
+                            <tr><th>Artifact stale after</th><td>{{ handoff.artifact_stale_after or 'n/a' }}</td></tr>
+                            <tr><th>Max valid backtest end</th><td>{{ handoff.max_valid_backtest_end or 'n/a' }}</td></tr>
+                            <tr><th>Rolling plan status</th><td>{{ handoff.rolling_ml_window_plan_status or 'not_generated' }}</td></tr>
+                            <tr><th>Rolling plan artifact count</th><td>{{ handoff.rolling_ml_required_artifact_count or 'n/a' }}</td></tr>
+                            <tr><th>Rolling plan params</th><td>train={{ handoff.rolling_train_days or 'n/a' }}, validation={{ handoff.rolling_validation_days or 'n/a' }}, freshness={{ handoff.rolling_freshness_days or 'n/a' }}, chunk={{ handoff.rolling_chunk_days or 'n/a' }}</td></tr>
+                            <tr><th>Blocking reasons</th><td>{{ handoff.blocking_reasons|join(', ') if handoff.blocking_reasons else 'none' }}</td></tr>
+                            <tr><th>Backtest input</th><td><code>{{ handoff.backtest_input_ref or 'not_available' }}</code></td></tr>
+                            <tr><th>Rolling plan JSON</th><td><code>{{ handoff.rolling_ml_window_plan_ref or 'not_available' }}</code></td></tr>
+                            <tr><th>Artifact hash</th><td><code>{{ handoff.artifact_hash or 'not_available' }}</code></td></tr>
+                            <tr><th>Feature hash</th><td><code>{{ handoff.feature_hash or 'not_available' }}</code></td></tr>
+                            <tr><th>Dataset hash</th><td><code>{{ handoff.dataset_hash or 'not_available' }}</code></td></tr>
+                            <tr><th>Label-store dataset</th><td><code>{{ handoff.label_store_dataset_path or 'not_available' }}</code></td></tr>
+                        </tbody>
+                    </table>
+                    {% if handoff.backtest_cli_args %}
+                    <div class="operator-note-surface operator-note-surface--info" style="margin-top:12px;">
+                        <h5>Backtest CLI args</h5>
+                        <pre class="operator-code-box">{{ handoff.backtest_cli_args|join(' ') }}</pre>
+                    </div>
+                    {% endif %}
+                </div>
+
+                <div class="operator-panel">
+                    <div class="operator-panel__head">
+                        <div>
+                            <h4>Rolling ML coverage plan</h4>
+                            <div class="operator-panel__sub">This is the causal chunk schedule the frozen-ML rail requires. Long backtests may need multiple artifacts even when training itself stays LAB_ONLY.</div>
+                        </div>
+                    </div>
+                    {% if handoff.rolling_plan_chunks %}
+                    <table class="data-table data-table--compact">
+                        <thead>
+                            <tr><th>Chunk</th><th>Backtest</th><th>Train</th><th>Validation</th><th>Stale after</th><th>Expected artifact ID</th><th>Status</th></tr>
+                        </thead>
+                        <tbody>
+                            {% for chunk in handoff.rolling_plan_chunks %}
+                            <tr>
+                                <td>{{ chunk.chunk_index }}</td>
+                                <td>{{ chunk.backtest_chunk_start }} &rarr; {{ chunk.backtest_chunk_end }}</td>
+                                <td>{{ chunk.train_start }} &rarr; {{ chunk.train_end }}</td>
+                                <td>{{ chunk.validation_start }} &rarr; {{ chunk.validation_end }}</td>
+                                <td>{{ chunk.artifact_stale_after }}</td>
+                                <td><code>{{ chunk.artifact_id_expected }}</code></td>
+                                <td>{{ chunk.status }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    {% else %}
+                    <p class="muted">Set a requested backtest start and days to generate the rolling ML window plan.</p>
+                    {% endif %}
+                </div>
+
+                <div class="operator-panel">
+                    <div class="operator-panel__head">
+                        <div>
+                            <h4>Training source readiness</h4>
+                            <div class="operator-panel__sub">This preview reuses the backtest source-scope scanner so the IA Lab stays aligned with existing raw-data proof rails.</div>
+                        </div>
+                    </div>
+                    <table class="data-table data-table--compact">
+                        <thead>
+                            <tr><th>Source</th><th>Selected path</th><th>Preview status</th><th>Matched files</th><th>Matched dates</th><th>Current trainer use</th></tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <th>klines</th>
+                                <td><code>{{ handoff_form.kline_root or vm.selected_form.klines_path or 'not_selected' }}</code></td>
+                                <td>{{ vm.backtest_preflight.klines.preview_status or 'PREVIEW_NOT_GENERATED' }}</td>
+                                <td>{{ vm.backtest_preflight.klines.files_matched }}</td>
+                                <td>{{ vm.backtest_preflight.klines.matched_min_date or 'n/a' }} → {{ vm.backtest_preflight.klines.matched_max_date or 'n/a' }}</td>
+                                <td>YES_CURRENT_EXPECTED_EDGE_RAIL</td>
+                            </tr>
+                            <tr>
+                                <th>orderbook</th>
+                                <td><code>{{ handoff_form.orderbook_root or vm.selected_form.orderbook_path or 'not_selected' }}</code></td>
+                                <td>{{ vm.backtest_preflight.orderbook.preview_status or 'PREVIEW_NOT_GENERATED' }}</td>
+                                <td>{{ vm.backtest_preflight.orderbook.files_matched }}</td>
+                                <td>{{ vm.backtest_preflight.orderbook.matched_min_date or 'n/a' }} → {{ vm.backtest_preflight.orderbook.matched_max_date or 'n/a' }}</td>
+                                <td>NOT_YET_WIRED_TO_THIS_TRAINER</td>
+                            </tr>
+                            <tr>
+                                <th>trades</th>
+                                <td><code>{{ handoff_form.trades_root or vm.selected_form.trades_path or 'not_selected' }}</code></td>
+                                <td>{{ vm.backtest_preflight.trades.preview_status or 'PREVIEW_NOT_GENERATED' }}</td>
+                                <td>{{ vm.backtest_preflight.trades.files_matched }}</td>
+                                <td>{{ vm.backtest_preflight.trades.matched_min_date or 'n/a' }} → {{ vm.backtest_preflight.trades.matched_max_date or 'n/a' }}</td>
+                                <td>NOT_YET_WIRED_TO_THIS_TRAINER</td>
+                            </tr>
+                            <tr>
+                                <th>metadata</th>
+                                <td><code>{{ handoff_form.metadata_root or vm.selected_form.metadata_path or 'not_selected' }}</code></td>
+                                <td>{{ vm.backtest_preflight.metadata.preview_status or 'PREVIEW_NOT_GENERATED' }}</td>
+                                <td>{{ vm.backtest_preflight.metadata.files_matched }}</td>
+                                <td>{{ vm.backtest_preflight.metadata.matched_min_date or 'n/a' }} → {{ vm.backtest_preflight.metadata.matched_max_date or 'n/a' }}</td>
+                                <td>AUDIT_ONLY_FOR_THIS_RAIL</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    {% if vm.backtest_preflight.inspection_status == 'PREVIEW_NOT_GENERATED' %}
+                    <div class="operator-note-surface operator-note-surface--warn" style="margin-top:12px;">
+                        <h5>Source scan pending</h5>
+                        <ul class="small-list">
+                            <li>Use <strong>Refresh Source Scope</strong> after changing roots or dates.</li>
+                            <li>The current expected-edge trainer is still kline-only even if orderbook/trades are selected here.</li>
+                        </ul>
+                    </div>
+                    {% endif %}
+                    {% if vm.backtest_preflight.blockers %}
+                    <div class="operator-note-surface operator-note-surface--danger" style="margin-top:12px;">
+                        <h5>Preview blockers</h5>
+                        <ul class="small-list">
+                            {% for blocker in vm.backtest_preflight.blockers %}
+                            <li>{{ blocker }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="grid-2">
+    <div class="card">
+        <div class="card__head">
+            <h3>Artifact Identity and Metrics</h3>
+            <span class="card__sub">{{ handoff.calibration_version or 'not_available' }}</span>
+        </div>
+        <div class="card__body">
+            <table class="data-table data-table--compact">
+                <tbody>
+                    <tr><th>Calibration version</th><td><code>{{ handoff.calibration_version or handoff_form.calibration_version or 'n/a' }}</code></td></tr>
+                    <tr><th>Artifact train window</th><td>{{ handoff.artifact_train_window_start or 'n/a' }} → {{ handoff.artifact_train_window_end or 'n/a' }}</td></tr>
+                    <tr><th>Artifact validation window</th><td>{{ handoff.artifact_validation_window_start or 'n/a' }} → {{ handoff.artifact_validation_window_end or 'n/a' }}</td></tr>
+                    <tr><th>Promotion state</th><td>{{ handoff.promotion_state or 'n/a' }}</td></tr>
+                    <tr><th>OOS Sharpe</th><td>{{ "%.6f"|format(handoff.oos_sharpe) if handoff.oos_sharpe is not none else 'n/a' }}</td></tr>
+                    <tr><th>Backtest Sharpe</th><td>{{ "%.6f"|format(handoff.backtest_sharpe) if handoff.backtest_sharpe is not none else 'n/a' }}</td></tr>
+                    <tr><th>KS test features p-value</th><td>{{ "%.6f"|format(handoff.ks_test_features_pvalue) if handoff.ks_test_features_pvalue is not none else 'n/a' }}</td></tr>
+                    <tr><th>Label source</th><td>{{ handoff.label_source or 'n/a' }}</td></tr>
+                    <tr><th>Label fidelity</th><td>{{ handoff.label_fidelity or 'n/a' }}</td></tr>
+                    <tr><th>Replay-grounded labels</th><td>{{ handoff.replay_grounded_label_count }}</td></tr>
+                    <tr><th>Proxy execution labels</th><td>{{ handoff.proxy_execution_label_count }}</td></tr>
+                    <tr><th>Net positive rate</th><td>{{ "%.6f"|format(handoff.net_positive_rate) if handoff.net_positive_rate is not none else 'n/a' }}</td></tr>
+                    <tr><th>Break-even clearance rate</th><td>{{ "%.6f"|format(handoff.break_even_clearance_rate) if handoff.break_even_clearance_rate is not none else 'n/a' }}</td></tr>
+                    <tr><th>MFE / MAE availability</th><td>{{ "%.6f"|format(handoff.mfe_availability_rate) if handoff.mfe_availability_rate is not none else 'n/a' }} / {{ "%.6f"|format(handoff.mae_availability_rate) if handoff.mae_availability_rate is not none else 'n/a' }}</td></tr>
+                    <tr><th>Walk-forward status</th><td>{{ handoff.walkforward_status or 'n/a' }}</td></tr>
+                    <tr><th>Purge / embargo</th><td>{{ handoff.purge_window_minutes or 'n/a' }}m / {{ handoff.embargo_window_minutes or 'n/a' }}m</td></tr>
+                    <tr><th>Drift baseline sample count</th><td>{{ handoff.drift_baseline_sample_count or 'n/a' }}</td></tr>
+                </tbody>
+            </table>
+            {% if handoff.best_params_json %}
+            <div class="operator-note-surface operator-note-surface--info" style="margin-top:12px;">
+                <h5>Best training params</h5>
+                <pre class="operator-code-box">{{ handoff.best_params_json }}</pre>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card__head">
+            <h3>Governance Evidence</h3>
+            <span class="card__sub">{{ handoff.live_drift_status or 'not_available' }}</span>
+        </div>
+        <div class="card__body">
+            <table class="data-table data-table--compact">
+                <tbody>
+                    <tr><th>Anti-leakage status</th><td>{{ handoff.anti_leakage_status }}</td></tr>
+                    <tr><th>Timestamp alignment</th><td>{{ handoff.anti_leakage_alignment_status }}</td></tr>
+                    <tr><th>Random split forbidden</th><td>{{ handoff.anti_leakage_random_split_forbidden }}</td></tr>
+                    <tr><th>Anti-leakage promotion-ready proof</th><td>{{ handoff.anti_leakage_promotion_ready }}</td></tr>
+                    <tr><th>Live drift status</th><td>{{ handoff.live_drift_status }}</td></tr>
+                    <tr><th>Live drift stage</th><td>{{ handoff.live_drift_stage or 'n/a' }}</td></tr>
+                    <tr><th>Live drift expires at</th><td>{{ handoff.live_drift_expires_at or 'n/a' }}</td></tr>
+                    <tr><th>Live drift stale</th><td>{{ handoff.live_drift_stale }}</td></tr>
+                    <tr><th>Live drift promotion-ready</th><td>{{ handoff.live_drift_promotion_ready }}</td></tr>
+                    <tr><th>Training report</th><td><code>{{ handoff.training_report_ref or 'not_available' }}</code></td></tr>
+                    <tr><th>Anti-leakage proof ref</th><td><code>{{ handoff.anti_leakage_proof_ref or 'not_available' }}</code></td></tr>
+                    <tr><th>Live drift snapshot ref</th><td><code>{{ handoff.live_drift_snapshot_ref or 'not_available' }}</code></td></tr>
+                    <tr><th>Transport summary ref</th><td><code>{{ handoff.transport_summary_ref or 'not_available' }}</code></td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+
+<section class="grid-2">
+    <div class="card">
+        <div class="card__head">
+            <h3>Features and Equations</h3>
+            <span class="card__sub">{{ handoff.feature_rows|length }} traced features</span>
+        </div>
+        <div class="card__body">
+            {% if handoff.feature_rows %}
+            <table class="data-table data-table--compact">
+                <thead>
+                    <tr><th>Feature</th><th>Family</th><th>Equation ID</th><th>Expression</th></tr>
+                </thead>
+                <tbody>
+                {% for row in handoff.feature_rows %}
+                    <tr>
+                        <td><code>{{ row.feature_name }}</code></td>
+                        <td>{{ row.family }}</td>
+                        <td><code>{{ row.equation_id }}</code></td>
+                        <td><code>{{ row.expression }}</code></td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            <div class="operator-note-surface operator-note-surface--info" style="margin-top:12px;">
+                <h5>Quant / governance equations used</h5>
+                <table class="data-table data-table--compact">
+                    <thead>
+                        <tr><th>Equation ID</th><th>Category</th><th>Expression</th><th>Source module</th></tr>
+                    </thead>
+                    <tbody>
+                    {% for row in handoff.equation_rows %}
+                        <tr>
+                            <td><code>{{ row.equation_id }}</code></td>
+                            <td>{{ row.category }}</td>
+                            <td><code>{{ row.expression }}</code></td>
+                            <td><code>{{ row.source_module }}</code></td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="muted">No feature provenance is available yet for the current handoff.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card__head">
+            <h3>Modules Used</h3>
+            <span class="card__sub">{{ handoff.module_rows|length }} canonical connections</span>
+        </div>
+        <div class="card__body">
+            <table class="data-table data-table--compact">
+                <thead>
+                    <tr><th>Module</th><th>Responsibility</th><th>Interface</th></tr>
+                </thead>
+                <tbody>
+                {% for row in handoff.module_rows %}
+                    <tr>
+                        <td><code>{{ row.module_path }}</code></td>
+                        <td>{{ row.responsibility }}</td>
+                        <td><code>{{ row.interface_surface }}</code></td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+
+<section class="grid-2">
+    <div class="card">
+        <div class="card__head">
+            <h3>Import Artifacts to VPS</h3>
+            <span class="card__sub">Governed queue + file picker</span>
+        </div>
+        <div class="card__body">
+            <div class="form-grid">
+                <form class="action-form" method="post" action="/lab/import/ml" enctype="multipart/form-data">
+                    <label>ML artifact bundle</label>
+                    <input type="file" name="artifact_file" required>
+                    <button class="button button--primary" type="submit">Import ML to VPS</button>
+                </form>
+                <form class="action-form" method="post" action="/lab/import/regime" enctype="multipart/form-data">
+                    <label>Regime detector bundle</label>
+                    <input type="file" name="artifact_file" required>
+                    <button class="button button--primary" type="submit">Import Regime to VPS</button>
+                </form>
+                <form class="action-form" method="post" action="/lab/import/shadow-ml" enctype="multipart/form-data">
+                    <label>Shadow ML challenger</label>
+                    <input type="file" name="artifact_file" required>
+                    <button class="button button--secondary" type="submit">Import Shadow ML</button>
+                </form>
+                <form class="action-form" method="post" action="/lab/import/shadow-regime" enctype="multipart/form-data">
+                    <label>Shadow regime challenger</label>
+                    <input type="file" name="artifact_file" required>
+                    <button class="button button--secondary" type="submit">Import Shadow Regime</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card__head">
+            <h3>Export from VPS</h3>
+            <span class="card__sub">Governed requests back to IA Lab</span>
+        </div>
+        <div class="card__body">
+            <div class="button-stack">
+                <form method="post" action="/lab/export/active-ml">
+                    <button class="button button--primary" type="submit">Export Active ML Artifact</button>
+                </form>
+                <form method="post" action="/lab/export/active-regime">
+                    <button class="button button--primary" type="submit">Export Active Regime Artifact</button>
+                </form>
+                <form method="post" action="/lab/export/shadow-ml-comparison">
+                    <button class="button" type="submit">Export Shadow ML Comparison</button>
+                </form>
+                <form method="post" action="/lab/export/shadow-regime-comparison">
+                    <button class="button" type="submit">Export Shadow Regime Comparison</button>
+                </form>
+                <form method="post" action="/lab/export/shadow-verdict">
+                    <button class="button button--secondary" type="submit">Export Shadow Verdict Bundle</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="grid-2">
+    <div class="card">
+        <div class="card__head">
+            <h3>Feature Families Used</h3>
+            <span class="card__sub">{{ vm.feature_bridge.source_status }}</span>
+        </div>
+        <div class="card__body">
+            {% if vm.feature_bridge.source_status != 'ok' %}
+            <p class="muted">No feature bridge export for the latest day.</p>
+            {% else %}
+            <table class="data-table data-table--compact">
+                <tbody>
+                    <tr><th>Feature set version</th><td>{{ vm.feature_bridge.feature_set_version or 'n/a' }}</td></tr>
+                    <tr><th>Families</th><td>{{ vm.feature_bridge.feature_families|join(', ') if vm.feature_bridge.feature_families else 'none' }}</td></tr>
+                    <tr><th>Recognized families</th><td>{{ vm.feature_bridge.recognized_feature_families|join(', ') if vm.feature_bridge.recognized_feature_families else 'none' }}</td></tr>
+                    <tr><th>Unrecognized families</th><td>{{ vm.feature_bridge.unrecognized_feature_families|join(', ') if vm.feature_bridge.unrecognized_feature_families else 'none' }}</td></tr>
+                    <tr><th>Feature count</th><td>{{ vm.feature_bridge.feature_keys|length }}</td></tr>
+                    <tr><th>Rows with features</th><td>{{ vm.feature_bridge.rows_with_features }}</td></tr>
+                    <tr><th>Missing feature rows</th><td>{{ vm.feature_bridge.missing_feature_rows }}</td></tr>
+                </tbody>
+            </table>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card__head">
+            <h3>Artifact Families Visible on VPS</h3>
+            <span class="card__sub">{{ vm.runtime.artifact_family_visibility|length }} slots</span>
+        </div>
+        <div class="card__body">
+            {% if vm.runtime.artifact_family_visibility %}
+            <table class="data-table data-table--compact">
+                <thead>
+                    <tr><th>Family</th><th>ID</th><th>Feature set</th><th>Validation</th><th>Influence</th></tr>
+                </thead>
+                <tbody>
+                {% for item in vm.runtime.artifact_family_visibility %}
+                    <tr>
+                        <td>{{ item.family_id }}</td>
+                        <td><code>{{ item.artifact_id }}</code></td>
+                        <td>{{ item.feature_set_version or 'n/a' }}</td>
+                        <td>{{ item.validation_status or 'n/a' }}</td>
+                        <td>{{ item.influence_detail or 'n/a' }}</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="muted">No VPS artifact families projected yet.</p>
+            {% endif %}
+        </div>
+    </div>
+</section>
+
+<section class="grid-2">
+    <div class="card">
+        <div class="card__head">
+            <h3>Transfer Queue Proof</h3>
+            <span class="card__sub">Governed queue consumption, not just visibility</span>
+        </div>
+        <div class="card__body">
+            <table class="data-table data-table--compact">
+                <tbody>
+                    <tr><th>Queue status</th><td>{{ vm.runtime.queue_snapshot.queue_status.value if vm.runtime.queue_snapshot else 'not_configured' }}</td></tr>
+                    <tr><th>Consumption</th><td>{{ vm.operational_proof.queue_trace.consumption_status }}</td></tr>
+                    <tr><th>Pending</th><td>{{ vm.operational_proof.queue_trace.pending_count }}</td></tr>
+                    <tr><th>Completed</th><td>{{ vm.operational_proof.queue_trace.completed_count }}</td></tr>
+                    <tr><th>Failed</th><td>{{ vm.operational_proof.queue_trace.failed_count }}</td></tr>
+                    <tr><th>Last request</th><td><code>{{ vm.operational_proof.queue_trace.last_command_id or 'n/a' }}</code></td></tr>
+                    <tr><th>Service last request</th><td><code>{{ vm.operational_proof.queue_trace.service_last_request_id or 'n/a' }}</code></td></tr>
+                    <tr><th>Service last result</th><td>{{ vm.operational_proof.queue_trace.service_last_result_status or 'n/a' }}</td></tr>
+                    <tr><th>Backlog stalled</th><td>{{ vm.operational_proof.queue_trace.queue_backlog_stalled }}</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card__head">
+            <h3>Artifact Family Metrics</h3>
+            <span class="card__sub">{{ vm.runtime.artifact_verdict_bundle.overall_verdict if vm.runtime.artifact_verdict_bundle else 'not_available' }}</span>
+        </div>
+        <div class="card__body">
+            {% if vm.runtime.artifact_family_comparisons %}
+            <table class="data-table data-table--compact">
+                <thead>
+                    <tr><th>Family</th><th>Status</th><th>Events</th><th>Gain delta</th><th>CE delta</th></tr>
+                </thead>
+                <tbody>
+                {% for item in vm.runtime.artifact_family_comparisons %}
+                    <tr>
+                        <td>{{ item.family_id }}</td>
+                        <td>{{ item.comparison_status }}</td>
+                        <td>{{ item.event_count }}</td>
+                        <td>{{ "%.6f"|format(item.expected_gain_delta_mean) }}</td>
+                        <td>{{ "%.6f"|format(item.expected_ce_delta_mean) }}</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="muted">No artifact family metrics projected yet.</p>
+            {% endif %}
+        </div>
+    </div>
+</section>
+
+<section class="grid-2">
+    {% include "partials/_lab_review.html" %}
+    {% include "partials/_refusal_journal.html" %}
+</section>
+
+<section class="grid-2">
+    {% include "partials/_model_risk.html" %}
+    {% include "partials/_hlz_guard.html" %}
+</section>
+
+{% include "partials/_calibration_thresholds.html" %}
+
+<div id="folder-picker-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:9999; padding:2rem;">
+    <div style="background:#111; border:1px solid #444; max-width:960px; margin:0 auto; padding:1rem; max-height:85vh; overflow:auto;">
+        <div style="display:flex; justify-content:space-between; gap:1rem; align-items:center;">
+            <strong>Browse folders</strong>
+            <button class="button button--ghost" id="folder-picker-close" type="button">Close</button>
+        </div>
+        <div style="margin-top:0.75rem;">
+            <div><strong>Current folder:</strong> <code id="folder-picker-current">n/a</code></div>
+            <div style="margin-top:0.5rem; display:flex; gap:0.5rem;">
+                <button class="button button--ghost" id="folder-picker-up" type="button">Up</button>
+                <button class="button button--primary" id="folder-picker-select" type="button">Select This Folder</button>
+            </div>
+        </div>
+        <div style="margin-top:1rem;">
+            <strong>Drives</strong>
+            <div id="folder-picker-drives" style="display:flex; flex-wrap:wrap; gap:0.5rem; margin-top:0.5rem;"></div>
+        </div>
+        <div style="margin-top:1rem;">
+            <strong>Directories</strong>
+            <div id="folder-picker-directories" style="display:grid; gap:0.5rem; margin-top:0.5rem;"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+(() => {
+    const modal = document.getElementById("folder-picker-modal");
+    const drivesHost = document.getElementById("folder-picker-drives");
+    const dirsHost = document.getElementById("folder-picker-directories");
+    const currentHost = document.getElementById("folder-picker-current");
+    const closeBtn = document.getElementById("folder-picker-close");
+    const upBtn = document.getElementById("folder-picker-up");
+    const selectBtn = document.getElementById("folder-picker-select");
+    const pickerStateKey = "lab_folder_picker_state";
+    let currentTargetId = "";
+    let currentPath = "";
+
+    if (!modal || !drivesHost || !dirsHost || !currentHost || !closeBtn || !upBtn || !selectBtn) {
+        return;
+    }
+
+    async function fetchJson(url) {
+        const response = await fetch(url, {headers: {"Accept": "application/json"}});
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        return response.json();
+    }
+
+    function savePickerState() {
+        if (!currentTargetId) {
+            return;
+        }
+        window.sessionStorage.setItem(
+            pickerStateKey,
+            JSON.stringify({targetId: currentTargetId, currentPath}),
+        );
+    }
+
+    function clearPickerState() {
+        window.sessionStorage.removeItem(pickerStateKey);
+    }
+
+    function openModal(targetId, initialPath = "") {
+        currentTargetId = targetId;
+        modal.style.display = "block";
+        savePickerState();
+        loadDrives();
+        const input = document.getElementById(targetId);
+        const initial = initialPath || (input && input.value ? input.value : "");
+        if (initial) {
+            loadDirectory(initial);
+        } else {
+            currentHost.textContent = "select a drive";
+            dirsHost.innerHTML = "";
+            currentPath = "";
+            savePickerState();
+        }
+    }
+
+    function closeModal() {
+        modal.style.display = "none";
+        currentTargetId = "";
+        currentPath = "";
+        clearPickerState();
+    }
+
+    async function loadDrives() {
+        const payload = await fetchJson("/backtest/picker/drives");
+        drivesHost.innerHTML = "";
+        for (const drive of payload.drives || []) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "button button--ghost";
+            button.textContent = drive.label || drive.path;
+            button.addEventListener("click", () => loadDirectory(drive.path));
+            drivesHost.appendChild(button);
+        }
+    }
+
+    async function loadDirectory(path) {
+        const payload = await fetchJson(`/backtest/picker/browse?path=${encodeURIComponent(path)}`);
+        currentPath = payload.current_path || "";
+        currentHost.textContent = currentPath || "n/a";
+        dirsHost.innerHTML = "";
+        savePickerState();
+        for (const directory of payload.directories || []) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "button button--ghost";
+            button.style.textAlign = "left";
+            button.textContent = directory.name;
+            button.addEventListener("click", () => loadDirectory(directory.path));
+            dirsHost.appendChild(button);
+        }
+        upBtn.dataset.parentPath = payload.parent_path || "";
+    }
+
+    async function tryNativePicker(targetId) {
+        const input = document.getElementById(targetId);
+        const initial = input && input.value ? input.value : currentPath;
+        const payload = await fetchJson(`/backtest/picker/native?path=${encodeURIComponent(initial || "")}`);
+        if (payload.status === "FOLDER_PICKER_SELECTED" && payload.selected_path && input) {
+            input.value = payload.selected_path;
+            clearPickerState();
+            return true;
+        }
+        if (payload.status === "FOLDER_PICKER_CANCELLED") {
+            clearPickerState();
+            return true;
+        }
+        return false;
+    }
+
+    document.querySelectorAll(".js-browse-folder").forEach((button) => {
+        button.addEventListener("click", async () => {
+            const targetId = button.dataset.target || "";
+            if (!targetId) {
+                return;
+            }
+            try {
+                const handled = await tryNativePicker(targetId);
+                if (handled) {
+                    return;
+                }
+            } catch (error) {
+                console.warn("native folder picker unavailable", error);
+            }
+            openModal(targetId);
+        });
+    });
+    closeBtn.addEventListener("click", closeModal);
+    modal.addEventListener("click", (event) => {
+        if (event.target === modal) {
+            closeModal();
+        }
+    });
+    upBtn.addEventListener("click", () => {
+        const parentPath = upBtn.dataset.parentPath || "";
+        if (parentPath) {
+            loadDirectory(parentPath);
+        }
+    });
+    selectBtn.addEventListener("click", () => {
+        if (!currentTargetId || !currentPath) {
+            return;
+        }
+        const input = document.getElementById(currentTargetId);
+        if (input) {
+            input.value = currentPath;
+        }
+        closeModal();
+    });
+    try {
+        const persisted = JSON.parse(window.sessionStorage.getItem(pickerStateKey) || "null");
+        if (persisted && persisted.targetId) {
+            openModal(persisted.targetId, persisted.currentPath || "");
+        }
+    } catch (error) {
+        console.warn("folder picker state restore failed", error);
+        clearPickerState();
+    }
+})();
+</script>
+
+{% endblock %}

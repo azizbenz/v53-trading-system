@@ -1,0 +1,1436 @@
+[
+  {
+    "metric_path": "calibration.artifact_id",
+    "pages": [
+      "lab",
+      "overview",
+      "trading"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "calibration.signature_mode",
+    "pages": [
+      "lab",
+      "overview",
+      "trading"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "calibration.signed_at",
+    "pages": [
+      "lab",
+      "overview",
+      "trading"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "calibration.signed_by",
+    "pages": [
+      "lab",
+      "overview",
+      "trading"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "calibration.source_status",
+    "pages": [
+      "lab",
+      "overview",
+      "trading"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "calibration.thresholds",
+    "pages": [
+      "lab",
+      "overview",
+      "trading"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "calibration.version",
+    "pages": [
+      "lab",
+      "overview",
+      "trading"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "capacity_guard.backlog_state",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "logs",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "capacity_guard.block_reasons",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "overview",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "capacity_guard.blocked",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "overview",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "capacity_guard.export_failures_total",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "overview",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "capacity_guard.queue_depth",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "overview",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "capacity_guard.queue_oldest_age_ms",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "overview",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "capacity_guard.source_status",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "overview",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "capacity_guard.unprocessed_items_count",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "overview",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "capacity_guard.worker_cpu_pct",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "overview",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "capacity_guard.worker_rss_mb",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "overview",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "engines.engines",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "trading",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "feature_bridge.bridge_status",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "trading",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "feature_bridge.engines",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "trading",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "feature_bridge.feature_families",
+    "pages": [
+      "lab",
+      "overview",
+      "trading"
+    ],
+    "owner_page": "trading",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "feature_bridge.feature_keys",
+    "pages": [
+      "lab",
+      "overview",
+      "trading"
+    ],
+    "owner_page": "trading",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "feature_bridge.feature_to_engine_path",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "trading",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "feature_bridge.lineage_lock_reasons",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "trading",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "feature_bridge.lineage_lock_status",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "trading",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "feature_bridge.pairs",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "trading",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "feature_bridge.recognition_rate",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "trading",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "feature_bridge.recognized_feature_keys",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "trading",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "feature_bridge.source_status",
+    "pages": [
+      "lab",
+      "overview",
+      "trading"
+    ],
+    "owner_page": "trading",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "feature_bridge.unrecognized_feature_families",
+    "pages": [
+      "lab",
+      "overview",
+      "trading"
+    ],
+    "owner_page": "trading",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "grafana_url",
+    "pages": [
+      "observability",
+      "overview"
+    ],
+    "owner_page": "observability",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "lab_review.candidates",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "lab_review.correlation_id",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "lab_review.lifecycle_transitions",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "lab_review.merge_gates",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "lab_review.merge_gates_all_passed",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "lab_review.mistake_classes",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "lab_review.source_status",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "lab_review.summary",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "metrics",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "overview",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "model_risk.active_ml",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "model_risk.active_ml.drift_score",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "model_risk.active_ml.profile_id",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "model_risk.active_ml.version",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "model_risk.active_regime_detector",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "model_risk.active_regime_detector.profile_id",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "model_risk.active_regime_detector.version",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "model_risk.info_message",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "model_risk.promotion_eligible",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "model_risk.shadow_ml_challenger",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "model_risk.shadow_ml_challenger.profile_id",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "model_risk.shadow_regime_detector_challenger",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "model_risk.shadow_regime_detector_challenger.profile_id",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "model_risk.source_status",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "multiple_testing.dsr_floor",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "multiple_testing.dsr_pass",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "multiple_testing.dsr_trial_count",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "multiple_testing.record_count",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "multiple_testing.source_status",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "multiple_testing.stationarity_status",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "multiple_testing.walk_forward_plan_status",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "lab",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.data_quality.pairs",
+    "pages": [
+      "shadow",
+      "trading"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.data_quality.source_status",
+    "pages": [
+      "shadow",
+      "trading"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.disk_growth.artifacts_size_mb",
+    "pages": [
+      "overview",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.disk_growth.auto_exports_size_mb",
+    "pages": [
+      "overview",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.disk_growth.cleanup_needed",
+    "pages": [
+      "overview",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.disk_growth.disk_used_percent",
+    "pages": [
+      "overview",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.disk_growth.logs_size_mb",
+    "pages": [
+      "overview",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.disk_growth.oldest_log_date",
+    "pages": [
+      "overview",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.disk_growth.retention_policy_present",
+    "pages": [
+      "overview",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.disk_growth.status",
+    "pages": [
+      "overview",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.queue_trace.completed_at",
+    "pages": [
+      "overview",
+      "shadow",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.queue_trace.completed_count",
+    "pages": [
+      "lab",
+      "overview",
+      "shadow",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.queue_trace.consumer_service_pid",
+    "pages": [
+      "overview",
+      "shadow",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.queue_trace.consumption_status",
+    "pages": [
+      "lab",
+      "overview",
+      "shadow",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.queue_trace.created_at",
+    "pages": [
+      "overview",
+      "shadow",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.queue_trace.failed_count",
+    "pages": [
+      "lab",
+      "overview",
+      "shadow",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.queue_trace.last_command_id",
+    "pages": [
+      "lab",
+      "overview",
+      "shadow",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.queue_trace.last_kind",
+    "pages": [
+      "overview",
+      "shadow",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.queue_trace.latency_ms",
+    "pages": [
+      "overview",
+      "shadow",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.queue_trace.pending_count",
+    "pages": [
+      "lab",
+      "overview",
+      "shadow",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.queue_trace.picked_at",
+    "pages": [
+      "overview",
+      "shadow",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.queue_trace.queue_backlog_stalled",
+    "pages": [
+      "lab",
+      "overview",
+      "shadow",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.queue_trace.queue_status",
+    "pages": [
+      "overview",
+      "shadow",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.queue_trace.service_last_command_kind",
+    "pages": [
+      "overview",
+      "shadow",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.queue_trace.service_last_request_id",
+    "pages": [
+      "lab",
+      "overview",
+      "shadow",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.queue_trace.service_last_result_status",
+    "pages": [
+      "lab",
+      "overview",
+      "shadow",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.service_liveness.archive_reader_only",
+    "pages": [
+      "overview",
+      "shadow",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.service_liveness.cockpit_alive",
+    "pages": [
+      "overview",
+      "shadow",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.service_liveness.control_ready",
+    "pages": [
+      "overview",
+      "shadow",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.service_liveness.heartbeat_age_seconds",
+    "pages": [
+      "overview",
+      "shadow",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.service_liveness.last_heartbeat_at",
+    "pages": [
+      "overview",
+      "shadow",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.service_liveness.main_loop_count",
+    "pages": [
+      "overview",
+      "shadow",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.service_liveness.pid",
+    "pages": [
+      "overview",
+      "shadow",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.service_liveness.pid_file_present",
+    "pages": [
+      "overview",
+      "shadow",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.service_liveness.pid_is_alive",
+    "pages": [
+      "overview",
+      "shadow",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.service_liveness.runtime_mode",
+    "pages": [
+      "overview",
+      "shadow",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.service_liveness.service_status",
+    "pages": [
+      "overview",
+      "shadow",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.service_liveness.shadow_service_running",
+    "pages": [
+      "overview",
+      "shadow",
+      "vps"
+    ],
+    "owner_page": "vps",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.system_flow.operability_score.economics",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "overview",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.warmup_explainer.blocking_reasons",
+    "pages": [
+      "overview",
+      "shadow"
+    ],
+    "owner_page": "shadow",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.warmup_explainer.checks",
+    "pages": [
+      "overview",
+      "shadow"
+    ],
+    "owner_page": "shadow",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.warmup_explainer.eligible_to_trade",
+    "pages": [
+      "overview",
+      "shadow"
+    ],
+    "owner_page": "shadow",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.warmup_explainer.final_state",
+    "pages": [
+      "overview",
+      "shadow"
+    ],
+    "owner_page": "shadow",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.warmup_explainer.readiness_status",
+    "pages": [
+      "overview",
+      "shadow"
+    ],
+    "owner_page": "shadow",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.warmup_explainer.required_checks_passed",
+    "pages": [
+      "overview",
+      "shadow"
+    ],
+    "owner_page": "shadow",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.warmup_explainer.review_only_checks",
+    "pages": [
+      "overview",
+      "shadow"
+    ],
+    "owner_page": "shadow",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "operational_proof.warmup_explainer.source_status",
+    "pages": [
+      "overview",
+      "shadow"
+    ],
+    "owner_page": "shadow",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "pairs.active_pairs",
+    "pages": [
+      "overview",
+      "shadow"
+    ],
+    "owner_page": "overview",
+    "duplication_status": "acceptable_badge",
+    "notes": "shared compact reminder"
+  },
+  {
+    "metric_path": "pairs.configured_pairs",
+    "pages": [
+      "overview",
+      "shadow"
+    ],
+    "owner_page": "overview",
+    "duplication_status": "acceptable_badge",
+    "notes": "shared compact reminder"
+  },
+  {
+    "metric_path": "refusal_journal.info_message",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "shadow",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "refusal_journal.quadruple_filter_bayes_evidence",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "shadow",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "refusal_journal.quadruple_filter_oos_validation",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "shadow",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "refusal_journal.quadruple_filter_regime_stationarity",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "shadow",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "refusal_journal.quadruple_filter_tail_risk_audit",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "shadow",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "refusal_journal.source_status",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "shadow",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "refusal_journal.tail_risk_meter",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "shadow",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "refusal_journal.top_motifs",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "shadow",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "replay.ce_net",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "trading",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "replay.drawdown_proxy",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "trading",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "replay.engine_aggregates",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "trading",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "replay.exec_rate",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "trading",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "replay.gross_return_mean",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "trading",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "replay.pair_aggregates",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "trading",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "replay.source_status",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "trading",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "runtime.alerts",
+    "pages": [
+      "overview",
+      "shadow",
+      "vps"
+    ],
+    "owner_page": "overview",
+    "duplication_status": "acceptable_badge",
+    "notes": "shared compact reminder"
+  },
+  {
+    "metric_path": "runtime.artifact_verdict_bundle",
+    "pages": [
+      "lab",
+      "shadow"
+    ],
+    "owner_page": "overview",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "runtime.artifact_verdict_bundle.overall_verdict",
+    "pages": [
+      "lab",
+      "shadow"
+    ],
+    "owner_page": "overview",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "selected_pair",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "overview",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "sizing_chain.avg_final_score",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "trading",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "sizing_chain.avg_final_size",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "trading",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "sizing_chain.avg_penalized_score",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "trading",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "sizing_chain.avg_raw_score",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "trading",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "sizing_chain.rows",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "trading",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "sizing_chain.source_status",
+    "pages": [
+      "overview",
+      "trading"
+    ],
+    "owner_page": "trading",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "tail_risk.breakers",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "shadow",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "tail_risk.source_status",
+    "pages": [
+      "lab",
+      "overview"
+    ],
+    "owner_page": "shadow",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  },
+  {
+    "metric_path": "welcome_message",
+    "pages": [
+      "backtest",
+      "lab",
+      "logs",
+      "observability",
+      "overview",
+      "shadow",
+      "trading",
+      "vps"
+    ],
+    "owner_page": "overview",
+    "duplication_status": "duplicate_non_owner",
+    "notes": "review page ownership"
+  }
+]

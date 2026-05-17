@@ -1,0 +1,16 @@
+<header class="topbar">
+    <div class="topbar-search">
+        <input type="search" placeholder="Search pair, artifact, command..." disabled>
+    </div>
+    <div class="topbar-actions">
+        <div class="topbar-status" id="shadow-service-status">
+            {% if vm.service.running %}
+                <span id="shadow-service-dot" class="status-dot status-dot--up"></span>
+                <span id="shadow-service-text">Shadow Service | PID {{ vm.service.pid }}</span>
+            {% else %}
+                <span id="shadow-service-dot" class="status-dot status-dot--down"></span>
+                <span id="shadow-service-text">Shadow Service offline</span>
+            {% endif %}
+        </div>
+    </div>
+</header>

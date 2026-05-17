@@ -1,0 +1,182 @@
+"""CLI entrypoint for Patch 6 Strategy Ladder Data Factory."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+import sys
+from uuid import uuid4
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_ROOT = REPO_ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
+from data_backbone.feature_timeframes import DEFAULT_GOLD_TIMEFRAMES
+from local_replay_runtime.strategy_ladder_data_factory import run_strategy_ladder_data_factory
+from local_replay_runtime.strategy_ladder_data_factory_models import (
+    StrategyLadderDataFactoryRequest,
+)
+
+
+def _csv_tuple(raw_value: str) -> tuple[str, ...]:
+    return tuple(part.strip() for part in (raw_value or "").split(",") if part.strip())
+
+
+def _raw_roots_tuple(raw_root_list: list[str], raw_roots: str) -> tuple[Path, ...]:
+    values = [*raw_root_list, *_csv_tuple(raw_roots)]
+    unique = tuple(dict.fromkeys(str(Path(item).resolve()) for item in values if item))
+    return tuple(Path(item) for item in unique)
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Run the Patch 6 Strategy Ladder Data Factory.")
+    parser.add_argument("--run-id", default="", help="Deterministic run id.")
+    parser.add_argument("--raw-root", dest="raw_root_list", action="append", default=[], help="Raw data root. May be repeated.")
+    parser.add_argument("--raw-roots", default="", help="Comma-separated raw data roots.")
+    parser.add_argument("--raw-source-manifest", default="", help="Optional raw source manifest path.")
+    parser.add_argument(
+        "--historical-metadata-root",
+        default="",
+        help="Optional local Bybit historical metadata cache root (symbol_metadata.csv/jsonl).",
+    )
+    parser.add_argument(
+        "--output-root",
+        default="",
+        help=(
+            "Optional explicit output root. When supplied, reports go directly under this "
+            "directory and --silver-root / --gold-root default to <output-root>/silver and "
+            "<output-root>/gold if not specified."
+        ),
+    )
+    parser.add_argument(
+        "--silver-root",
+        default="",
+        help="Silver normalization output root. Defaults to <output-root>/silver when --output-root is supplied.",
+    )
+    parser.add_argument(
+        "--gold-root",
+        default="",
+        help="Gold feature store output root. Defaults to <output-root>/gold when --output-root is supplied.",
+    )
+    parser.add_argument("--pairs", default="", help="Comma-separated requested pairs.")
+    parser.add_argument("--start", default="", help="Inclusive start boundary.")
+    parser.add_argument("--end", default="", help="Inclusive end boundary.")
+    parser.add_argument("--data-types", default="trades,klines,orderbook,metadata", help="Comma-separated data types.")
+    parser.add_argument(
+        "--timeframes",
+        default=",".join(DEFAULT_GOLD_TIMEFRAMES),
+        help=(
+            "Comma-separated gold feature timeframes. Defaults to the canonical "
+            "registry ({0}). Pass a strict subset to prune explicitly; pruned "
+            "timeframes appear in the manifest with TIMEFRAME_PRUNED_NOT_REQUESTED."
+        ).format(",".join(DEFAULT_GOLD_TIMEFRAMES)),
+    )
+    parser.add_argument("--compression", default="zstd", help="Preferred compression target.")
+    parser.add_argument("--resume", action="store_true", help="Resume Data Factory output if possible.")
+    parser.add_argument("--dry-run", action="store_true", help="Write reports only.")
+    parser.add_argument("--small-scope", action="store_true", help="Allow debug-sized materialization scope.")
+    # Patch 6 batch 1 — silver storage governance.
+    parser.add_argument(
+        "--storage-format",
+        choices=("jsonl", "jsonl-gz", "jsonl_debug", "jsonl-debug"),
+        default="jsonl",
+        help="Silver storage format. ``jsonl-gz`` is ~7-10x smaller and recommended for production.",
+    )
+    parser.add_argument(
+        "--allow-broad-run",
+        action="store_true",
+        help="Explicitly allow non-dry-run scans without --start/--end (default: blocked).",
+    )
+    parser.add_argument(
+        "--debug-storage-override",
+        action="store_true",
+        help="Allow debug JSONL mode outside small-scope when the operator explicitly overrides storage bloat safeguards.",
+    )
+    parser.add_argument(
+        "--storage-budget-limit-bytes",
+        type=int,
+        default=53_687_091_200,
+        help="Hard limit for combined silver+gold output size. Default: 50 GB.",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    explicit_output_root = (args.output_root or "").strip()
+    explicit_silver = (args.silver_root or "").strip()
+    explicit_gold = (args.gold_root or "").strip()
+    if not explicit_output_root and not explicit_silver:
+        parser.error("--silver-root is required when --output-root is not supplied")
+    if not explicit_output_root and not explicit_gold:
+        parser.error("--gold-root is required when --output-root is not supplied")
+    if explicit_output_root:
+        output_root = Path(explicit_output_root).resolve()
+        silver_root = (
+            Path(explicit_silver).resolve()
+            if explicit_silver
+            else (output_root / "silver").resolve()
+        )
+        gold_root = (
+            Path(explicit_gold).resolve()
+            if explicit_gold
+            else (output_root / "gold").resolve()
+        )
+        report_root = output_root
+    else:
+        silver_root = Path(explicit_silver).resolve()
+        gold_root = Path(explicit_gold).resolve()
+        report_root = silver_root.parent.resolve()
+    raw_roots = _raw_roots_tuple(args.raw_root_list, args.raw_roots)
+    request = StrategyLadderDataFactoryRequest(
+        run_id=args.run_id.strip() or f"strategy-ladder-data-factory-{uuid4().hex[:12]}",
+        input_root=report_root,
+        raw_roots=raw_roots,
+        raw_source_manifest_path=(
+            Path(args.raw_source_manifest).resolve()
+            if args.raw_source_manifest
+            else None
+        ),
+        historical_metadata_root=(
+            Path(args.historical_metadata_root).resolve()
+            if args.historical_metadata_root
+            else None
+        ),
+        silver_root=silver_root,
+        gold_root=gold_root,
+        pairs=_csv_tuple(args.pairs),
+        timeframes=_csv_tuple(args.timeframes) or DEFAULT_GOLD_TIMEFRAMES,
+        start=args.start,
+        end=args.end,
+        data_types=_csv_tuple(args.data_types),
+        compression=args.compression,
+        resume=args.resume,
+        dry_run=args.dry_run,
+        storage_format=args.storage_format,
+        allow_broad_run=args.allow_broad_run,
+        small_scope=args.small_scope,
+        debug_storage_override=args.debug_storage_override,
+        storage_budget_limit_bytes=args.storage_budget_limit_bytes,
+    )
+    result = run_strategy_ladder_data_factory(request)
+    payload = {
+        "run_id": result.manifest.run_id,
+        "report_root": str(report_root),
+        "data_factory_status": result.manifest.data_factory_status,
+        "raw_source_status": result.manifest.raw_source_status,
+        "pair_universe_status": result.manifest.pair_universe_status,
+        "silver_index_status": result.manifest.silver_index_status,
+        "gold_feature_store_status": result.manifest.gold_feature_store_status,
+        "files_processed": result.manifest.files_processed,
+        "rows_processed": result.manifest.rows_processed,
+    }
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

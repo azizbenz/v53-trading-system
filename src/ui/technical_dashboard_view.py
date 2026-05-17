@@ -1021,6 +1021,125 @@ def _governed_extensions_status(payload: TechnicalDashboardPayload) -> str:
     return "info"
 
 
+def _artifact_visibility_section(
+    payload: TechnicalDashboardPayload,
+) -> DashboardSection:
+    visibility = payload.artifact_runtime_visibility
+    challengers = tuple(item for item in visibility if item.slot == "shadow_challenger")
+    champions = tuple(item for item in visibility if item.slot == "active")
+    threshold_ids = tuple(
+        consumer.threshold_id for consumer in payload.artifact_threshold_consumers
+    )
+    compare_status = tuple(
+        comparison.comparison_status for comparison in payload.artifact_comparisons
+    )
+    verdict = payload.artifact_verdict_bundle
+    return DashboardSection(
+        title="Artifact Visibility",
+        cards=(
+            DashboardCard(
+                key="artifact_visibility_presence",
+                label="Champion / Challenger",
+                value=(
+                    f"champions={len(champions)} / challengers={len(challengers)}"
+                ),
+                status="healthy" if champions else "planned",
+                detail=(
+                    f"compare={len(payload.artifact_comparisons)} / "
+                    f"thresholds={len(payload.artifact_threshold_consumers)}"
+                ),
+            ),
+            DashboardCard(
+                key="artifact_visibility_ids",
+                label="Artifacts",
+                value=(
+                    _join(
+                        tuple(
+                            f"{item.slot}:{item.artifact_id or 'none'}"
+                            for item in visibility[:4]
+                        ),
+                        empty="No artifact visibility projected",
+                    )
+                ),
+                status="info" if visibility else "planned",
+                detail=_join(
+                    tuple(item.artifact_hash[:12] for item in visibility if item.artifact_hash),
+                    empty="No artifact hash projected",
+                ),
+            ),
+            DashboardCard(
+                key="artifact_visibility_thresholds",
+                label="Thresholds",
+                value=str(len(payload.artifact_threshold_consumers)),
+                status="healthy" if payload.artifact_threshold_consumers else "planned",
+                detail=_join(threshold_ids, empty="No runtime threshold consumer projected"),
+            ),
+            DashboardCard(
+                key="artifact_visibility_features",
+                label="Feature Visibility",
+                value=(
+                    _join(
+                        tuple(
+                            f"{item.artifact_id}:{item.feature_hash[:12] or 'none'}"
+                            for item in visibility[:3]
+                        ),
+                        empty="No feature visibility projected",
+                    )
+                ),
+                status="info" if visibility else "planned",
+                detail=_join(
+                    tuple(
+                        (
+                            f"pairs={item.pair_universe_count} / "
+                            f"features={item.feature_count} / "
+                            f"ref={item.top_feature_names_ref or item.summary_ref or 'none'}"
+                        )
+                        for item in visibility[:3]
+                    ),
+                    empty="No bounded feature reference projected",
+                ),
+            ),
+            DashboardCard(
+                key="artifact_visibility_compare",
+                label="Compare",
+                value=_join(compare_status, empty="No comparison projected"),
+                status="info" if payload.artifact_comparisons else "planned",
+                detail=_join(
+                    tuple(
+                        (
+                            f"{item.champion_artifact_id}->{item.challenger_artifact_id} / "
+                            f"events={item.event_count} / "
+                            f"ce_delta={item.expected_ce_delta_mean:.6f} / "
+                            f"gain_delta={item.expected_gain_delta_mean:.6f} / "
+                            f"halal={item.halal_eligible_event_count}/"
+                            f"{item.halal_excluded_event_count}"
+                        )
+                        for item in payload.artifact_comparisons
+                    ),
+                    empty="No champion/challenger comparison projected",
+                ),
+            ),
+            DashboardCard(
+                key="artifact_visibility_verdict",
+                label="Daily Verdict",
+                value="not available" if verdict is None else verdict.overall_verdict,
+                status="planned" if verdict is None else _artifact_verdict_status(verdict.overall_verdict),
+                detail=(
+                    "No daily challenger verdict bundle projected"
+                    if verdict is None
+                    else (
+                        f"recommendation={verdict.operator_recommendation} / "
+                        f"events_ready={verdict.ready_family_count} / "
+                        f"gain_delta={_artifact_verdict_gain_delta(payload):.6f} / "
+                        f"ce_delta={_artifact_verdict_ce_delta(payload):.6f} / "
+                        f"halal={_artifact_verdict_halal_counts(payload)}"
+                    )
+                ),
+            ),
+        ),
+    )
+
+
 def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> LockedOperatorDashboardView:
     """Project normalized monitoring truth into the locked Build-10 UI surface."""
 
@@ -1718,6 +1837,7 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> Locked
             title="Artifact Hooks",
             cards=_runtime_hook_bridge_cards(payload),
         ),
+        _artifact_visibility_section(payload),
         _operator_controls_section(payload),
         DashboardSection(
             title="Replay & Import",
@@ -1927,6 +2047,35 @@ def build_technical_dashboard_view(payload: TechnicalDashboardPayload) -> Locked
         sections=sections,
         future_panels=payload.future_panels,
     )
+
+
+def _artifact_verdict_status(verdict: str) -> str:
+    if verdict == "shadow_validated":
+        return "healthy"
+    if verdict in {"shadow_inconclusive", "shadow_runtime_inputs_missing"}:
+        return "warning"
+    if verdict in {"sharia_scope_blocked", "invalid_evidence"}:
+        return "critical"
+    return "info"
+
+
+def _artifact_verdict_gain_delta(payload: TechnicalDashboardPayload) -> float:
+    if not payload.artifact_comparisons:
+        return 0.0
+    return payload.artifact_comparisons[0].expected_gain_delta_mean
+
+
+def _artifact_verdict_ce_delta(payload: TechnicalDashboardPayload) -> float:
+    if not payload.artifact_comparisons:
+        return 0.0
+    return payload.artifact_comparisons[0].expected_ce_delta_mean
+
+
+def _artifact_verdict_halal_counts(payload: TechnicalDashboardPayload) -> str:
+    if not payload.artifact_comparisons:
+        return "0/0"
+    comparison = payload.artifact_comparisons[0]
+    return f"{comparison.halal_eligible_event_count}/{comparison.halal_excluded_event_count}"
 
 
 __all__ = [

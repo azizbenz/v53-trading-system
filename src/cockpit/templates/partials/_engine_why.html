@@ -1,0 +1,77 @@
+<section class="card" id="engine-why-state">
+    <div class="card__head">
+        <h3>Engine Why State</h3>
+        <span class="card__sub">{{ vm.operational_proof.engine_why.active_count }}/4 active</span>
+    </div>
+    <div class="card__body">
+        <table class="data-table data-table--compact">
+            <thead>
+                <tr><th>Engine</th><th>Status</th><th>Why</th><th>Records</th><th>Selected</th><th>Blocked</th><th>Expected CE net</th><th>Costs</th><th>Warning</th></tr>
+            </thead>
+            <tbody>
+            {% for engine in vm.operational_proof.engine_why.engines %}
+                <tr>
+                    <td>
+                        <code>{{ engine.engine_id }}</code>
+                        {% if engine.engine_role %}
+                        <div class="muted small">{{ engine.engine_role }}</div>
+                        {% endif %}
+                    </td>
+                    <td>{{ engine.status }}</td>
+                    <td>
+                        {{ engine.why_status }}
+                        {% if engine.shared_physics_mapping_status and engine.shared_physics_mapping_status != 'NOT_APPLICABLE' %}
+                        <div class="muted small">{{ engine.shared_physics_mapping_status }}</div>
+                        {% endif %}
+                        {% if engine.partial_by_design_caveat %}
+                        <div class="muted small">{{ engine.partial_by_design_caveat }}</div>
+                        {% endif %}
+                    </td>
+                    <td>{{ engine.records }}</td>
+                    <td>{{ engine.selected }}</td>
+                    <td>
+                        {{ engine.blocked }}
+                        {% if engine.blocked_reasons_top3 %}
+                        <div class="muted small">{{ engine.blocked_reasons_top3|join(', ') }}</div>
+                        {% endif %}
+                    </td>
+                    <td>{{ "%.6f"|format(engine.ce_net) }}</td>
+                    <td>
+                        {% if engine.expected_cost is not none %}
+                        expected={{ "%.6f"|format(engine.expected_cost) }}
+                        {% else %}
+                        expected=n/a
+                        {% endif %}
+                        <div class="muted small">
+                            {% if engine.realized_cost is not none %}
+                            realized={{ "%.6f"|format(engine.realized_cost) }}
+                            {% else %}
+                            realized=n/a
+                            {% endif %}
+                        </div>
+                        <div class="muted small">{{ engine.expected_cost_status }} / {{ engine.cost_model_completeness_status }}</div>
+                    </td>
+                    <td>
+                        {{ engine.sample_warning or '-' }}
+                        {% if engine.promotion_readiness_status %}
+                        <div class="muted small">{{ engine.promotion_readiness_status }}</div>
+                        {% endif %}
+                        {% if engine.executed_only_return_status %}
+                        <div class="muted small">executed_return={{ engine.executed_only_return_status }}</div>
+                        {% endif %}
+                        {% if engine.true_drawdown_status %}
+                        <div class="muted small">true_drawdown={{ engine.true_drawdown_status }}</div>
+                        {% endif %}
+                        {% if engine.shadow_confirmation_status %}
+                        <div class="muted small">shadow_confirmation={{ engine.shadow_confirmation_status }}</div>
+                        {% endif %}
+                        {% if engine.missing_promotion_evidence %}
+                        <div class="muted small">{{ engine.missing_promotion_evidence|join(', ') }}</div>
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>

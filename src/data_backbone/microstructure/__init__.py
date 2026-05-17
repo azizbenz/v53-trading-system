@@ -17,7 +17,11 @@ from data_backbone.microstructure.feature_registry import (
 )
 from data_backbone.microstructure.engine_input_provenance import (
     ENGINE_C_MICROSTRUCTURE_INPUT_FIELDS,
+    ENGINE_C_MICROSTRUCTURE_DOCTRINE,
+    ENGINE_C_SHARED_SCORING_PHYSICS_STATUS,
     ENGINE_D_MICROSTRUCTURE_INPUT_FIELDS,
+    ENGINE_D_MICROSTRUCTURE_DOCTRINE,
+    ENGINE_D_SHARED_SCORING_PHYSICS_STATUS,
     EngineAMicrostructureProvenance,
     EngineCMicrostructureProvenance,
     EngineDMicrostructureProvenance,
@@ -33,10 +37,12 @@ from data_backbone.microstructure.engine_input_provenance import (
 from data_backbone.microstructure.order_flow_imbalance import (
     DEFAULT_OFI_WINDOW_EVENTS,
     MAX_OFI_WINDOW_EVENTS,
+    OFI_DEPTH_EPS,
     ORDER_FLOW_IMBALANCE_METHOD_VERSION,
     ORDER_FLOW_IMBALANCE_METHOD_VERSION_HASH,
     OrderBookTopLevelPoint,
     OrderFlowImbalanceRecord,
+    compute_depth_adjusted_ofi,
     compute_order_book_event_contribution,
     compute_order_flow_imbalance,
 )
@@ -115,6 +121,7 @@ from data_backbone.microstructure.realized_kernel_vol import (
 )
 from data_backbone.microstructure.kyle_lambda import (
     DEFAULT_KYLE_BUCKET_SECONDS,
+    DEFAULT_KYLE_STANDARD_QUOTE_NOTIONAL,
     DEFAULT_KYLE_WINDOW_SECONDS,
     KYLE_LAMBDA_METHOD_VERSION,
     KYLE_LAMBDA_METHOD_VERSION_HASH,
@@ -124,6 +131,7 @@ from data_backbone.microstructure.kyle_lambda import (
     MAX_KYLE_WINDOW_SECONDS,
     build_kyle_intervals,
     classify_trade_direction,
+    compute_normalized_kyle_impact_bps,
     compute_kyle_lambda,
 )
 from data_backbone.microstructure.roll_spread import (
@@ -184,7 +192,11 @@ __all__ = [
     "reject_feature_spec",
     "restore_quarantined_feature_spec",
     "ENGINE_C_MICROSTRUCTURE_INPUT_FIELDS",
+    "ENGINE_C_MICROSTRUCTURE_DOCTRINE",
+    "ENGINE_C_SHARED_SCORING_PHYSICS_STATUS",
     "ENGINE_D_MICROSTRUCTURE_INPUT_FIELDS",
+    "ENGINE_D_MICROSTRUCTURE_DOCTRINE",
+    "ENGINE_D_SHARED_SCORING_PHYSICS_STATUS",
     "EngineAMicrostructureProvenance",
     "EngineCMicrostructureProvenance",
     "EngineDMicrostructureProvenance",
@@ -198,10 +210,12 @@ __all__ = [
     "compose_engine_d_input_payload",
     "DEFAULT_OFI_WINDOW_EVENTS",
     "MAX_OFI_WINDOW_EVENTS",
+    "OFI_DEPTH_EPS",
     "ORDER_FLOW_IMBALANCE_METHOD_VERSION",
     "ORDER_FLOW_IMBALANCE_METHOD_VERSION_HASH",
     "OrderBookTopLevelPoint",
     "OrderFlowImbalanceRecord",
+    "compute_depth_adjusted_ofi",
     "compute_order_book_event_contribution",
     "compute_order_flow_imbalance",
     "DEFAULT_LOB_REGIME_TOP_N",
@@ -264,6 +278,7 @@ __all__ = [
     "parzen_kernel_weight",
     "resolve_realized_kernel_bandwidth",
     "DEFAULT_KYLE_BUCKET_SECONDS",
+    "DEFAULT_KYLE_STANDARD_QUOTE_NOTIONAL",
     "DEFAULT_KYLE_WINDOW_SECONDS",
     "KYLE_LAMBDA_METHOD_VERSION",
     "KYLE_LAMBDA_METHOD_VERSION_HASH",
@@ -273,6 +288,7 @@ __all__ = [
     "MAX_KYLE_WINDOW_SECONDS",
     "build_kyle_intervals",
     "classify_trade_direction",
+    "compute_normalized_kyle_impact_bps",
     "compute_kyle_lambda",
     "DEFAULT_ROLL_WINDOW_SECONDS",
     "ROLL_SPREAD_METHOD_VERSION",

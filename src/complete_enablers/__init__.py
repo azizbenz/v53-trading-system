@@ -59,6 +59,12 @@ from complete_enablers.ml_runtime_artifact_loader import (
     MlRuntimeArtifactSelection,
     load_ml_runtime_artifact,
 )
+from complete_enablers.supplementary_refs_governance import (
+    FORBIDDEN_DIRECTIONAL_SUPPLEMENTARY_REF_KEYS,
+    SupplementaryRefsGovernanceResult,
+    validate_ml_supplementary_refs,
+    validate_regime_detector_supplementary_refs,
+)
 from complete_enablers.micro_edge_exit_governor import (
     build_micro_edge_exit_governor_snapshot,
 )
@@ -67,9 +73,12 @@ from complete_enablers.micro_edge_entry_timing_layer import (
 )
 from complete_enablers.order_book_imbalance import build_order_book_imbalance_snapshot
 from complete_enablers.regime_detector_runtime import (
+    DIRECTIONAL_RUNTIME_KEYS_FORBIDDEN,
     RegimeDetectorRuntime,
     RegimeDetectorSignal,
     RegimeDetectorSignalStatus,
+    RUNTIME_REGIME_OUTPUT_MODE,
+    RUNTIME_REGIME_OUTPUTS,
 )
 from complete_enablers.regime_detector_runtime_loader import (
     RegimeDetectorArtifactLoadStatus,
@@ -107,6 +116,10 @@ __all__ = [
     "MlRuntimeArtifactLoadStatus",
     "MlRuntimeArtifactSelection",
     "load_ml_runtime_artifact",
+    "FORBIDDEN_DIRECTIONAL_SUPPLEMENTARY_REF_KEYS",
+    "SupplementaryRefsGovernanceResult",
+    "validate_ml_supplementary_refs",
+    "validate_regime_detector_supplementary_refs",
     "build_micro_edge_exit_governor_snapshot",
     "build_micro_edge_entry_timing_snapshot",
     "build_execution_fragility_score",
@@ -114,9 +127,12 @@ __all__ = [
     "build_hurst_regime_snapshot",
     "build_lob_deep_filter_vwa_snapshot",
     "build_order_book_imbalance_snapshot",
+    "DIRECTIONAL_RUNTIME_KEYS_FORBIDDEN",
     "RegimeDetectorSignalStatus",
     "RegimeDetectorSignal",
     "RegimeDetectorRuntime",
+    "RUNTIME_REGIME_OUTPUT_MODE",
+    "RUNTIME_REGIME_OUTPUTS",
     "RegimeDetectorArtifactLoadStatus",
     "RegimeDetectorArtifactSelection",
     "load_regime_detector_runtime_artifact",

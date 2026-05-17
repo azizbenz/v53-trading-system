@@ -1,0 +1,39 @@
+<section class="card">
+    <div class="card__head">
+        <h3>HLZ · Multiple Testing Guard</h3>
+        <span class="card__sub">{{ vm.multiple_testing.source_status }}</span>
+    </div>
+    <div class="card__body">
+        {% if vm.multiple_testing.source_status != 'ok' %}
+            <p class="muted">No DSR / stationarity review available.</p>
+        {% else %}
+        <div class="kpi-row">
+            <div class="kpi-mega">
+                <span class="kpi-mega__label">DSR floor</span>
+                <span class="kpi-mega__value value-info">{{ "%.3f"|format(vm.multiple_testing.dsr_floor) }}</span>
+            </div>
+            <div class="kpi-mega">
+                <span class="kpi-mega__label">DSR pass</span>
+                <span class="kpi-mega__value">
+                    {% if vm.multiple_testing.dsr_pass is none %}
+                        <span class="muted">—</span>
+                    {% else %}
+                        <span class="badge badge--{% if vm.multiple_testing.dsr_pass %}up{% else %}down{% endif %}">
+                            {{ "yes" if vm.multiple_testing.dsr_pass else "no" }}
+                        </span>
+                    {% endif %}
+                </span>
+            </div>
+            <div class="kpi-mega">
+                <span class="kpi-mega__label">Trial count</span>
+                <span class="kpi-mega__value">{{ vm.multiple_testing.dsr_trial_count }}</span>
+            </div>
+        </div>
+        <p class="muted small">
+            Walk-forward: <code>{{ vm.multiple_testing.walk_forward_plan_status }}</code>
+            · Stationarity: <code>{{ vm.multiple_testing.stationarity_status }}</code>
+            · Records: {{ vm.multiple_testing.record_count }}
+        </p>
+        {% endif %}
+    </div>
+</section>

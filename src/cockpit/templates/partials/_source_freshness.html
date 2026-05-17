@@ -1,0 +1,23 @@
+<section class="card" id="source-freshness">
+    <div class="card__head">
+        <h3>Source Freshness</h3>
+        <span class="card__sub">{{ vm.operational_proof.freshness.source_status }}</span>
+    </div>
+    <div class="card__body">
+        <table class="data-table data-table--compact">
+            <thead>
+                <tr><th>Source</th><th>Status</th><th>Age</th><th>Path</th></tr>
+            </thead>
+            <tbody>
+            {% for source in vm.operational_proof.freshness.sources %}
+                <tr>
+                    <td><code>{{ source.source_name }}</code></td>
+                    <td>{{ source.status }}</td>
+                    <td>{{ "%.1fs"|format(source.age_seconds) if source.age_seconds is not none else 'n/a' }}</td>
+                    <td><code>{{ source.path or 'n/a' }}</code></td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>

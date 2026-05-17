@@ -89,6 +89,9 @@ def test_walls_and_spoofing_identifies_persistent_real_bid_wall() -> None:
     assert snapshot.wall_persistence_conditional_bid >= snapshot.wall_persistence_bid
     assert snapshot.observation_coverage_ratio == pytest.approx(1.0)
     assert snapshot.dominant_side == "bid"
+    assert snapshot.real_wall_score_method == "HEURISTIC_WEIGHTED_SCORE"
+    assert snapshot.spoof_suspicion_score_method == "HEURISTIC_WEIGHTED_SCORE"
+    assert snapshot.calibration_status == "CALIBRATION_REQUIRED_FOR_STRONG_PRODUCTION_CLAIM"
     assert "micro.wall.bid.strong" in snapshot.reason_codes
 
 

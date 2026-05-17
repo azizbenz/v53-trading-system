@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import math
 
 import pytest
 
@@ -120,3 +121,53 @@ def test_pot_gpd_coles_compatible_simulation_anchor() -> None:
     assert result_95.bootstrap_success_count >= 30
     assert result_95.bootstrap_dispersion_ratio < 0.30
     assert result_99.var_estimate > result_95.var_estimate
+
+
+def test_pot_var_matches_standard_conditional_tail_probability_formula() -> None:
+    from calibration_methods.pot_gpd import _pot_var
+
+    threshold_u = 1.0
+    xi_hat = 0.3
+    beta_hat = 1.0
+    exceedance_count = 500
+    observation_count = 1_000
+    var_confidence = 0.95
+
+    conditional_tail_probability = (1.0 - var_confidence) / (
+        exceedance_count / observation_count
+    )
+    expected = threshold_u + (
+        (beta_hat / xi_hat) * ((conditional_tail_probability ** (-xi_hat)) - 1.0)
+    )
+
+    assert _pot_var(
+        threshold_u=threshold_u,
+        xi_hat=xi_hat,
+        beta_hat=beta_hat,
+        exceedance_count=exceedance_count,
+        observation_count=observation_count,
+        var_confidence=var_confidence,
+    ) == pytest.approx(expected)
+
+
+def test_pot_var_matches_exponential_limit_when_xi_is_zero() -> None:
+    from calibration_methods.pot_gpd import _pot_var
+
+    threshold_u = 0.75
+    beta_hat = 1.2
+    exceedance_count = 120
+    observation_count = 800
+    var_confidence = 0.99
+    conditional_tail_probability = (1.0 - var_confidence) / (
+        exceedance_count / observation_count
+    )
+    expected = threshold_u + beta_hat * math.log(1.0 / conditional_tail_probability)
+
+    assert _pot_var(
+        threshold_u=threshold_u,
+        xi_hat=0.0,
+        beta_hat=beta_hat,
+        exceedance_count=exceedance_count,
+        observation_count=observation_count,
+        var_confidence=var_confidence,
+    ) == pytest.approx(expected)

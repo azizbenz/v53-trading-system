@@ -37,6 +37,9 @@ def test_queue_pressure_zero_when_both_sides_empty() -> None:
     assert result.value == pytest.approx(0.0)
     assert result.top_k_used == 2
     assert result.window_used == (1, None)
+    assert result.low_sample_confidence is True
+    assert result.measurement_status == "QUEUE_PRESSURE_INSUFFICIENT_DEPTH"
+    assert result.reason_codes == ("QUEUE_PRESSURE_INSUFFICIENT_DEPTH",)
 
 
 def test_queue_pressure_uses_available_levels_when_top_k_exceeds_depth() -> None:

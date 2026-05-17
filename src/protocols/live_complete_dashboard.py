@@ -36,10 +36,32 @@ def build_live_complete_projection(
         selected_pairs=summary.execution_envelope.selected_pairs,
         allowed_actions=summary.execution_envelope.allowed_actions,
         forbidden_actions=summary.execution_envelope.forbidden_actions,
+        active_ml_artifact_id=""
+        if summary.active_ml_artifact is None
+        else summary.active_ml_artifact.artifact_id,
         active_ml_artifact_hash=summary.execution_envelope.active_ml_artifact_hash,
+        active_regime_detector_artifact_id=""
+        if summary.active_regime_detector_artifact is None
+        else summary.active_regime_detector_artifact.artifact_id,
         active_regime_detector_artifact_hash=(
             summary.execution_envelope.active_regime_detector_artifact_hash
         ),
+        shadow_ml_challenger_artifact_id=""
+        if summary.shadow_ml_challenger_artifact is None
+        else summary.shadow_ml_challenger_artifact.artifact_id,
+        shadow_ml_challenger_artifact_hash=(
+            summary.execution_envelope.shadow_ml_challenger_artifact_hash
+        ),
+        shadow_regime_detector_challenger_artifact_id=""
+        if summary.shadow_regime_detector_challenger_artifact is None
+        else summary.shadow_regime_detector_challenger_artifact.artifact_id,
+        shadow_regime_detector_challenger_artifact_hash=(
+            summary.execution_envelope.shadow_regime_detector_challenger_artifact_hash
+        ),
+        artifact_runtime_visibility=summary.artifact_runtime_visibility,
+        artifact_threshold_consumers=summary.artifact_threshold_consumers,
+        artifact_comparisons=summary.artifact_comparisons,
+        artifact_verdict_bundle=summary.artifact_verdict_bundle,
         command_queue_status=""
         if summary.command_queue_snapshot is None
         else summary.command_queue_snapshot.queue_status.value,
@@ -110,7 +132,81 @@ def build_live_complete_dashboard_section(
                     f"regime={'set' if projection.active_regime_detector_artifact_hash else 'none'}"
                 ),
                 status="info",
-                detail=f"lineage={projection.import_lineage_version}",
+                detail=(
+                    f"lineage={projection.import_lineage_version} / "
+                    f"challengers={sum(1 for item in projection.artifact_runtime_visibility if item.slot == 'shadow_challenger')}"
+                ),
+            ),
+            DashboardCard(
+                key="live_complete_shadow_challengers",
+                label="Shadow Challengers",
+                value=(
+                    f"ml={'set' if projection.shadow_ml_challenger_artifact_hash else 'none'} / "
+                    f"regime={'set' if projection.shadow_regime_detector_challenger_artifact_hash else 'none'}"
+                ),
+                status="info",
+                detail=(
+                    f"compare={len(projection.artifact_comparisons)} / "
+                    f"visibility={len(projection.artifact_runtime_visibility)} / "
+                    f"statuses={_comparison_statuses(projection)}"
+                ),
+            ),
+            DashboardCard(
+                key="live_complete_threshold_consumers",
+                label="Threshold Consumers",
+                value=str(len(projection.artifact_threshold_consumers)),
+                status="healthy" if projection.artifact_threshold_consumers else "planned",
+                detail=(
+                    (
+                        ", ".join(
+                            consumer.threshold_id
+                            for consumer in projection.artifact_threshold_consumers
+                        )
+                        or "No runtime threshold consumer projected"
+                    )
+                    + (
+                        ""
+                        if not projection.artifact_comparisons
+                        else " / "
+                        + ", ".join(
+                            (
+                                f"{item.challenger_artifact_id}:"
+                                f"events={item.event_count}:"
+                                f"halal={item.halal_eligible_event_count}/"
+                                f"{item.halal_excluded_event_count}"
+                            )
+                            for item in projection.artifact_comparisons
+                        )
+                    )
+                ),
+            ),
+            DashboardCard(
+                key="live_complete_shadow_verdict_bundle",
+                label="Shadow Verdict Bundle",
+                value=(
+                    "not_available"
+                    if projection.artifact_verdict_bundle is None
+                    else (
+                        f"{projection.artifact_verdict_bundle.overall_verdict} / "
+                        f"{projection.artifact_verdict_bundle.operator_recommendation}"
+                    )
+                ),
+                status=(
+                    "planned"
+                    if projection.artifact_verdict_bundle is None
+                    else _verdict_status(projection.artifact_verdict_bundle.overall_verdict)
+                ),
+                detail=(
+                    "No bounded daily verdict bundle projected"
+                    if projection.artifact_verdict_bundle is None
+                    else (
+                        f"configured={projection.artifact_verdict_bundle.configured_family_count} / "
+                        f"ready={projection.artifact_verdict_bundle.ready_family_count} / "
+                        f"invalid={projection.artifact_verdict_bundle.invalid_family_count} / "
+                        f"blocked={projection.artifact_verdict_bundle.sharia_blocked_family_count} / "
+                        f"runtime_inputs={projection.artifact_verdict_bundle.runtime_inputs_missing_family_count}"
+                    )
+                ),
             ),
             DashboardCard(
                 key="live_complete_warmup",
@@ -129,7 +225,25 @@ def build_live_complete_dashboard_section(
                 detail=", ".join(projection.blocking_reasons) or "No blocking reason",
             ),
         ),
+)
+
+
+def _comparison_statuses(projection: LiveCompleteProjection) -> str:
+    if not projection.artifact_comparisons:
+        return "none"
+    return ",".join(
+        comparison.comparison_status for comparison in projection.artifact_comparisons
     )
+
+
+def _verdict_status(verdict: str) -> str:
+    if verdict == "shadow_validated":
+        return "healthy"
+    if verdict in {"shadow_inconclusive", "shadow_runtime_inputs_missing"}:
+        return "warning"
+    if verdict in {"sharia_scope_blocked", "invalid_evidence"}:
+        return "critical"
+    return "info"
 
 
 __all__ = [

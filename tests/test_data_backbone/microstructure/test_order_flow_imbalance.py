@@ -4,8 +4,10 @@ import pytest
 
 from data_backbone.microstructure.order_flow_imbalance import (
     MAX_OFI_WINDOW_EVENTS,
+    OFI_DEPTH_EPS,
     ORDER_FLOW_IMBALANCE_METHOD_VERSION_HASH,
     OrderBookTopLevelPoint,
+    compute_depth_adjusted_ofi,
     compute_order_book_event_contribution,
     compute_order_flow_imbalance,
 )
@@ -69,6 +71,14 @@ def test_order_flow_imbalance_cumulates_last_n_events_only() -> None:
     assert result.n_events_used == 3
     assert result.pair == "BTCUSDT"
     assert result.method_version_hash == ORDER_FLOW_IMBALANCE_METHOD_VERSION_HASH
+    assert result.raw_ofi == pytest.approx(result.value)
+    assert result.unit_status == "RAW_SIGNED_SIZE_IMBALANCE"
+    assert result.cross_pair_comparable is False
+    assert result.normalization_status == "ENGINE_LOCAL_THRESHOLDS"
+    assert result.ofi_depth_adjusted == pytest.approx(result.value / (14.0 + 9.0))
+    assert result.depth_adjusted_unit_status == "DEPTH_ADJUSTED_RATIO"
+    assert result.depth_adjusted_cross_pair_comparable is True
+    assert result.depth_adjustment_status == "DEPTH_ADJUSTED_RATIO"
 
 
 def test_order_flow_imbalance_uses_available_events_when_window_is_larger() -> None:
@@ -119,3 +129,40 @@ def test_order_flow_imbalance_rejects_invalid_inputs() -> None:
 
     with pytest.raises(ValueError, match="non-decreasing"):
         compute_order_flow_imbalance(points, pair="BTCUSDT")
+
+
+def test_depth_adjusted_ofi_returns_none_on_zero_depth() -> None:
+    assert (
+        compute_depth_adjusted_ofi(
+            10.0,
+            top_k_bid_depth=0.0,
+            top_k_ask_depth=0.0,
+            eps=OFI_DEPTH_EPS,
+        )
+        is None
+    )
+
+
+def test_order_flow_imbalance_marks_zero_depth_as_insufficient() -> None:
+    points = [
+        OrderBookTopLevelPoint(
+            timestamp_ns=1_000_000_000,
+            bid_price=100.0,
+            bid_size=10.0,
+            ask_price=101.0,
+            ask_size=10.0,
+        ),
+        OrderBookTopLevelPoint(
+            timestamp_ns=2_000_000_000,
+            bid_price=100.0,
+            bid_size=0.0,
+            ask_price=101.0,
+            ask_size=0.0,
+        ),
+    ]
+
+    result = compute_order_flow_imbalance(points, pair="BTCUSDT", window_events=1)
+
+    assert result.ofi_depth_adjusted is None
+    assert result.depth_adjusted_cross_pair_comparable is False
+    assert result.depth_adjustment_status == "OFI_INSUFFICIENT_DEPTH"

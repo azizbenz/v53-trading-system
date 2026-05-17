@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+from datetime import date
 import json
 from pathlib import Path
+import time
 
 from interface_contracts import (
     BinanceCredentialInventorySnapshot,
@@ -19,7 +21,11 @@ from interface_contracts import (
     VpsWarmupState,
 )
 from interface_contracts.atomic_io import atomic_write_json
-from protocols import ShadowLiveWebSocketCaptureResult, ShadowLiveWebSocketConfig
+from protocols import (
+    ShadowLiveWebSocketCaptureResult,
+    ShadowLiveWebSocketConfig,
+    capture_live_websocket_snapshot_batch,
+)
 from shadow_vps_service_io_support import (
     _build_bootstrap_adapter_config,
     _read_live_websocket_config,
@@ -33,6 +39,7 @@ from venue_adapters.binance_spot.time_sync import (
 
 
 _EPS = 1e-12
+_LIVE_CAPTURE_REFRESH_AFTER_SECONDS = 20.0
 
 
 def _passed(check_id: str) -> VpsRecoveryCheck:
@@ -68,6 +75,87 @@ def _load_capture_result(
     if not capture_dir_ref:
         return None
     return _read_live_capture_result(Path(capture_dir_ref))
+
+
+def _recovery_session_date(live_config: ShadowLiveWebSocketConfig) -> str:
+    return live_config.session_date_override or date.today().isoformat()
+
+
+def _capture_result_requires_refresh(
+    capture_result: ShadowLiveWebSocketCaptureResult | None,
+    *,
+    live_config: ShadowLiveWebSocketConfig | None,
+) -> bool:
+    if live_config is None:
+        return False
+    if capture_result is None:
+        return True
+    if capture_result.session_date != _recovery_session_date(live_config):
+        return True
+    snapshot_path = capture_result.snapshot_batch_path_ref.strip()
+    summary_path = capture_result.summary_path_ref.strip()
+    if not snapshot_path or not Path(snapshot_path).is_file():
+        return True
+    if not summary_path or not Path(summary_path).is_file():
+        return True
+    if _path_is_stale(
+        Path(snapshot_path),
+        stale_after_seconds=_LIVE_CAPTURE_REFRESH_AFTER_SECONDS,
+    ):
+        return True
+    if _path_is_stale(
+        Path(summary_path),
+        stale_after_seconds=_LIVE_CAPTURE_REFRESH_AFTER_SECONDS,
+    ):
+        return True
+    return False
+
+
+def _path_is_stale(path: Path, *, stale_after_seconds: float) -> bool:
+    try:
+        age_seconds = max(time.time() - path.stat().st_mtime, 0.0)
+    except OSError:
+        return True
+    return age_seconds > stale_after_seconds
+
+
+def _apply_recovery_capture_state(
+    context: ShadowVpsServiceRuntimeContext,
+    capture_result: ShadowLiveWebSocketCaptureResult,
+) -> None:
+    state = context.store.state
+    state.last_live_capture_dir_ref = capture_result.live_capture_dir_ref
+    state.last_live_capture_snapshot_batch_ref = capture_result.snapshot_batch_path_ref
+    state.last_live_capture_summary_ref = capture_result.summary_path_ref
+    state.last_live_capture_time_sync_offsets_ref = capture_result.time_sync_offsets_path_ref
+    state.last_live_user_data_summary_ref = capture_result.user_data_summary_path_ref
+    context.store.persist()
+
+
+def _refresh_recovery_capture_if_needed(
+    context: ShadowVpsServiceRuntimeContext,
+    *,
+    capture_result: ShadowLiveWebSocketCaptureResult | None,
+    live_config: ShadowLiveWebSocketConfig | None,
+) -> ShadowLiveWebSocketCaptureResult | None:
+    if not _capture_result_requires_refresh(
+        capture_result,
+        live_config=live_config,
+    ):
+        return capture_result
+    if live_config is None:
+        return capture_result
+    session_date = _recovery_session_date(live_config)
+    live_capture_dir = context.resolved_live_captures_root / session_date
+    try:
+        refreshed_capture = capture_live_websocket_snapshot_batch(
+            live_config,
+            output_dir=live_capture_dir,
+        )
+    except Exception:
+        return capture_result
+    _apply_recovery_capture_state(context, refreshed_capture)
+    return refreshed_capture
 
 
 def _load_time_sync_payload(path: Path | None) -> dict[str, object] | None:
@@ -455,6 +543,11 @@ def _refresh_shadow_vps_recovery_artifacts(
 ) -> tuple[VpsRecoveryReadinessReport | None, VpsWarmupRunSummary | None]:
     capture_result = _load_capture_result(context, live_capture_result)
     live_config = _resolve_live_config(context)
+    capture_result = _refresh_recovery_capture_if_needed(
+        context,
+        capture_result=capture_result,
+        live_config=live_config,
+    )
     if not _has_recovery_scope(
         context,
         capture_result=capture_result,

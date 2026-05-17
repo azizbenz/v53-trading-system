@@ -142,6 +142,66 @@ def result_for_shadow_audit_export(
     )
 
 
+def result_for_shadow_artifact_comparison_export(
+    request: DashboardGovernedCommandRequest,
+    *,
+    result_id: str,
+    timestamp_ms: int,
+    comparison_ref: str,
+    artifact_id: str,
+) -> DashboardGovernedCommandResult:
+    return result_for_generic_export_bundle(
+        request,
+        result_id=result_id,
+        timestamp_ms=timestamp_ms,
+        export_ref=comparison_ref,
+        artifact_id=artifact_id,
+        missing_reason_code="dashboard.command.shadow_artifact_comparison_missing",
+        missing_detail="No Shadow challenger comparison evidence is available for export",
+        missing_failure_stage="resolve_shadow_artifact_comparison_evidence",
+        artifact_hash="shadow_artifact_comparison_evidence",
+    )
+
+
+def result_for_generic_export_bundle(
+    request: DashboardGovernedCommandRequest,
+    *,
+    result_id: str,
+    timestamp_ms: int,
+    export_ref: str,
+    artifact_id: str,
+    missing_reason_code: str,
+    missing_detail: str,
+    missing_failure_stage: str,
+    artifact_hash: str = "generic_export_bundle",
+) -> DashboardGovernedCommandResult:
+    if not export_ref:
+        return DashboardGovernedCommandResult(
+            timestamp_ms=timestamp_ms,
+            correlation_id=request.correlation_id,
+            result_id=result_id,
+            request_id=request.request_id,
+            command_kind=request.command_kind,
+            status=DashboardGovernedCommandStatus.FAILED,
+            idempotency_key=request.idempotency_key,
+            reason_codes=(missing_reason_code,),
+            detail=missing_detail,
+            failure_stage=missing_failure_stage,
+        )
+    return completed_command_result(
+        request,
+        result_id=result_id,
+        timestamp_ms=timestamp_ms,
+        artifact_manifest=DashboardArtifactTransferManifest(
+            artifact_hash=artifact_hash,
+            artifact_kind=DashboardArtifactKind.GENERIC_EXPORT_BUNDLE,
+            artifact_id=artifact_id,
+            source_ref=export_ref,
+        ),
+        export_ref=export_ref,
+    )
+
+
 def find_credential_profile_entry(
     inventory: tuple[BinanceCredentialInventoryEntry, ...],
     *,

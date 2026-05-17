@@ -24,6 +24,12 @@ from .allocation_router.vol_target_sizer import (
     VolTargetProfile,
     VolTargetSizeResult,
 )
+from .allocation_router.capital_viability import (
+    CapitalFragmentationAssessment,
+    PairMinNotionalAssessment,
+    analyze_capital_fragmentation,
+    assess_pair_min_notional_viability,
+)
 
 __all__ = [
     "OrchestratorConfig",
@@ -33,7 +39,11 @@ __all__ = [
     "PortfolioRelativeRankAdjustmentHook",
     "PortfolioRelativeRankAdjustmentInput",
     "PortfolioRelativeRankAdjustmentOutcome",
+    "CapitalFragmentationAssessment",
+    "PairMinNotionalAssessment",
     "VolTargetProfile",
     "VolTargetSizeResult",
+    "analyze_capital_fragmentation",
+    "assess_pair_min_notional_viability",
     "run_portfolio_pipeline",
 ]

@@ -23,6 +23,7 @@ class ExecutionSpreadGuardDecision(BaseModel, frozen=True):
     blocked: bool = False
     reason_code: str = ""
     detail: str = ""
+    telemetry_status: str = ""
     current_spread_bps: float | None = Field(default=None, ge=0.0)
     max_spread_bps: float | None = Field(default=None, gt=0.0)
 
@@ -42,6 +43,7 @@ def evaluate_execution_spread_guard(
     if current_spread_bps <= model.max_spread_bps:
         return ExecutionSpreadGuardDecision(
             blocked=False,
+            telemetry_status="measured",
             current_spread_bps=current_spread_bps,
             max_spread_bps=model.max_spread_bps,
         )
@@ -53,6 +55,7 @@ def evaluate_execution_spread_guard(
             f"spread {current_spread_bps:.6f} bps > "
             f"allowed ceiling {model.max_spread_bps:.6f} bps"
         ),
+        telemetry_status="measured",
         current_spread_bps=current_spread_bps,
         max_spread_bps=model.max_spread_bps,
     )

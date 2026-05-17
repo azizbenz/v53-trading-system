@@ -40,3 +40,10 @@ v53_probe_*/
 V53_TRADING_SYSTEM_FILE_AUDIT_*.md
 entities.json
 mempalace.yaml
+
+# Publication safety
+secrets/
+**/~$*
+docs/production_deployment_plan/Claude Code Cheat Sheet.html
+docs/production_deployment_plan/Claude Code Cheat Sheet_files/
+publish_snapshot/

@@ -144,3 +144,18 @@ def test_buffered_user_data_event_source_drains_once():
 
     assert source.poll_events() == ({"e": "executionReport", "i": 1},)
     assert source.poll_events() == ()
+
+
+def test_buffered_user_data_event_source_is_bounded() -> None:
+    source = BufferedBinanceUserDataEventSource(max_events=2)
+
+    source.push(
+        {"e": "executionReport", "i": 1},
+        {"e": "executionReport", "i": 2},
+        {"e": "executionReport", "i": 3},
+    )
+
+    assert source.poll_events() == (
+        {"e": "executionReport", "i": 2},
+        {"e": "executionReport", "i": 3},
+    )

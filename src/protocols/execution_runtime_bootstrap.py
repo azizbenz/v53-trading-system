@@ -46,6 +46,9 @@ class ExecutionRuntimeBootstrapBundle:
     reconciliation_boot_result: ReconciliationSchedulerRunResult | None = None
     remote_state_snapshot: RemoteExecutionState | None = None
 
+    def close(self) -> None:
+        self.runtime.close()
+
 
 def build_execution_runtime_bootstrap_bundle(
     adapter: ExecutionVenueAdapter,

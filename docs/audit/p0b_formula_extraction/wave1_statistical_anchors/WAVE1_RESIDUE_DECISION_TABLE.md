@@ -1,0 +1,8 @@
+# Wave 1 Residue Decision Table
+
+| Residue | Current status | Why blocked / partial | What decision is needed | Patch allowed now? | Next safe action |
+|---|---|---|---|---|---|
+| `PSR 0.9505` | `BLOCKED_BY_MISSING_REFERENCE_DATASET` | Current implementation matches the returns-based Bailey-Lopez de Prado Eq. 3 seam, but no in-repo reference dataset proves the literal `0.9505` target under the public API. | Choose direct closed-form synthetic anchor vs returns-API equivalence anchor. | `no` | keep docs only; add TODO/decision record, no formula patch |
+| `DSR Table 1` | `HUMAN_DECISION_REQUIRED` | Current API accepts `returns` and `trial_count`, not the Table 1 parameterization verbatim. | Choose API extension for literal Table 1 vs explicit mapping to current API. | `no` | keep docs only; record `trial_count` source semantics |
+| `POT-GPD Denmark/Coles` | `MISMATCH_CONFIRMED` | The Denmark/Coles dataset is still absent, but the `_pot_var` implementation contradicted the standard conditional-tail probability formula while still being named and consumed as VaR. No internal V5.3 convention or downstream compensation was found. | No further doctrinal decision required for the formula fix itself; dataset/licensing decision still remains for a Denmark/Coles-literal anchor. | `yes` | patch `_pot_var`, add direct formula tests, keep external-dataset anchor classified partial |
+| `Energy same-dist < 0.05` | `HUMAN_DECISION_REQUIRED` | Current seam is a scaled statistic; the `< 0.05` target belongs to the unscaled raw statistic or a separately calibrated null. | Choose raw `E_{n,m}` seam vs scaled-statistic null threshold convention. | `no` | keep docs only; do not force raw threshold onto the scaled seam |

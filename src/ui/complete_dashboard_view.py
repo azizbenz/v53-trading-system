@@ -12,7 +12,20 @@ from interface_contracts import (
     VpsRecoveryReadinessReport,
     VpsWarmupRunSummary,
 )
+from monitoring.contracts_artifacts import (
+    ArtifactComparisonProjection,
+    ArtifactRuntimeVisibilityProjection,
+    ArtifactThresholdConsumerProjection,
+    ArtifactVerdictBundleProjection,
+)
 from monitoring.contracts import TechnicalDashboardPayload
+from ui.complete_dashboard_artifact_sections import (
+    build_artifact_challengers_section,
+    build_artifact_champions_section,
+    build_artifact_forecast_section,
+    build_artifact_threshold_compare_section,
+    build_artifact_verdict_section,
+)
 from ui.complete_dashboard_control_plane import build_complete_control_plane_section
 from ui.contracts import DashboardCard, DashboardSection
 
@@ -82,8 +95,14 @@ class CompleteDashboardSupplement(BaseModel, frozen=True):
         LiveCompleteAllowedAction.ROLLBACK_TO_LIGHT,
         LiveCompleteAllowedAction.REQUEST_UPLOAD_ML_ARTIFACT,
         LiveCompleteAllowedAction.REQUEST_UPLOAD_REGIME_DETECTOR_ARTIFACT,
+        LiveCompleteAllowedAction.REQUEST_UPLOAD_SHADOW_ML_CHALLENGER_ARTIFACT,
+        LiveCompleteAllowedAction.REQUEST_UPLOAD_SHADOW_REGIME_DETECTOR_CHALLENGER_ARTIFACT,
+        LiveCompleteAllowedAction.REQUEST_CLEAR_SHADOW_ML_CHALLENGER_ARTIFACT,
+        LiveCompleteAllowedAction.REQUEST_CLEAR_SHADOW_REGIME_DETECTOR_CHALLENGER_ARTIFACT,
         LiveCompleteAllowedAction.REQUEST_EXPORT_ACTIVE_ML_ARTIFACT,
         LiveCompleteAllowedAction.REQUEST_EXPORT_ACTIVE_REGIME_DETECTOR_ARTIFACT,
+        LiveCompleteAllowedAction.REQUEST_EXPORT_SHADOW_ML_ARTIFACT_COMPARISON_EVIDENCE,
+        LiveCompleteAllowedAction.REQUEST_EXPORT_SHADOW_REGIME_DETECTOR_ARTIFACT_COMPARISON_EVIDENCE,
         LiveCompleteAllowedAction.REQUEST_EXPORT_REGIME_DETECTOR_SHADOW_AUDIT_BUNDLE,
         LiveCompleteAllowedAction.REQUEST_UPLOAD_BINANCE_CREDENTIALS_BUNDLE,
         LiveCompleteAllowedAction.REQUEST_ACTIVATE_BINANCE_CREDENTIALS_PROFILE,
@@ -101,6 +120,14 @@ class CompleteDashboardSupplement(BaseModel, frozen=True):
     command_queue_snapshot: DashboardCommandQueueSnapshot | None = None
     active_ml_artifact: DashboardArtifactTransferManifest | None = None
     active_regime_detector_artifact: DashboardArtifactTransferManifest | None = None
+    shadow_ml_challenger_artifact: DashboardArtifactTransferManifest | None = None
+    shadow_regime_detector_challenger_artifact: DashboardArtifactTransferManifest | None = (
+        None
+    )
+    artifact_runtime_visibility: tuple[ArtifactRuntimeVisibilityProjection, ...] = ()
+    artifact_threshold_consumers: tuple[ArtifactThresholdConsumerProjection, ...] = ()
+    artifact_comparisons: tuple[ArtifactComparisonProjection, ...] = ()
+    artifact_verdict_bundle: ArtifactVerdictBundleProjection | None = None
     recovery_readiness_report: VpsRecoveryReadinessReport | None = None
     warmup_run_summary: VpsWarmupRunSummary | None = None
     active_binance_profile_id: str = ""
@@ -131,6 +158,11 @@ def build_complete_dashboard_sections(
         _build_execution_section(payload, supplement, engine_meta_by_id),
         _build_infra_section(payload, supplement),
         _build_meta_section(payload, supplement),
+        build_artifact_champions_section(supplement),
+        build_artifact_challengers_section(supplement),
+        build_artifact_forecast_section(supplement),
+        build_artifact_threshold_compare_section(supplement),
+        build_artifact_verdict_section(supplement),
         _build_covariance_section(supplement),
         _build_diversity_section(payload, supplement),
         build_complete_control_plane_section(supplement),

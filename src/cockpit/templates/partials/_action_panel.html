@@ -1,0 +1,22 @@
+<div class="action-panel">
+    <div class="action-panel__head">
+        <h3>Governed Actions</h3>
+        <span class="action-panel__sub">audit-trailed</span>
+    </div>
+    <button class="action action--danger" disabled title="Phase 2 — wire to /kill">
+        🛑 Kill All <span class="action__hint">&lt;1s</span>
+    </button>
+    <button class="action action--warn" disabled title="Phase 2 — wire to /command/suspend-pair">
+        ⏸ Suspend {{ vm.selected_pair }}
+    </button>
+    <button class="action action--ok" disabled title="Phase 2 — wire to /command/resume-pair">
+        ▶ Resume {{ vm.selected_pair }}
+    </button>
+    <button class="action action--neutral" disabled title="Phase 2 — wire to /command/export-credential-inventory">
+        📦 Export Credentials Inventory
+    </button>
+    <p class="action-panel__note">
+        Phase 1 displays state only. Phase 2 wires these buttons to the
+        governed command queue (audit-trailed, signed-by tracked).
+    </p>
+</div>

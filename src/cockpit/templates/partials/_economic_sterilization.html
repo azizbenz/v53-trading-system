@@ -1,0 +1,54 @@
+<section class="card" id="economic-sterilization">
+    <div class="card__head">
+        <h3>Economic Sterilization Monitor</h3>
+        <span class="card__sub">{{ vm.operational_proof.economic_sterilization.status }}</span>
+    </div>
+    <div class="card__body">
+        <table class="data-table data-table--compact">
+            <tbody>
+                <tr><th>Opportunities</th><td>{{ vm.operational_proof.economic_sterilization.opportunities_seen }}</td></tr>
+                <tr><th>Selected</th><td>{{ vm.operational_proof.economic_sterilization.selected_count }}</td></tr>
+                <tr><th>Hard blocked</th><td>{{ vm.operational_proof.economic_sterilization.hard_blocked_count }}</td></tr>
+                <tr><th>Cost blocked</th><td>{{ vm.operational_proof.economic_sterilization.cost_blocked_count if vm.operational_proof.economic_sterilization.cost_blocked_count is not none else vm.operational_proof.economic_sterilization.cost_blocked_count_status }}</td></tr>
+                <tr><th>Min notional blocked</th><td>{{ vm.operational_proof.economic_sterilization.min_notional_blocked_count if vm.operational_proof.economic_sterilization.min_notional_blocked_count is not none else vm.operational_proof.economic_sterilization.min_notional_blocked_count_status }}</td></tr>
+                <tr><th>Slippage blocked</th><td>{{ vm.operational_proof.economic_sterilization.slippage_blocked_count if vm.operational_proof.economic_sterilization.slippage_blocked_count is not none else vm.operational_proof.economic_sterilization.slippage_blocked_count_status }}</td></tr>
+                <tr><th>{{ vm.operational_proof.economic_sterilization.ce_net_label }}</th><td>{{ "%.6f"|format(vm.operational_proof.economic_sterilization.ce_net) }}</td></tr>
+                <tr><th>Executed-only net return</th><td>{{ "%.6f"|format(vm.operational_proof.economic_sterilization.executed_only_net_return) if vm.operational_proof.economic_sterilization.executed_only_net_return is not none else vm.operational_proof.economic_sterilization.executed_only_net_return_status }}</td></tr>
+                <tr><th>Missing realized cost count</th><td>{{ vm.operational_proof.economic_sterilization.missing_realized_cost_count }}</td></tr>
+                <tr><th>{{ vm.operational_proof.economic_sterilization.exec_rate_label }}</th><td>{{ "%.2f%%"|format(vm.operational_proof.economic_sterilization.exec_rate * 100) }}</td></tr>
+                <tr><th>Sterilization ratio</th><td>{{ "%.2f%%"|format(vm.operational_proof.economic_sterilization.economic_sterilization_ratio * 100) }}</td></tr>
+                <tr><th>Promotion economics</th><td>{{ vm.operational_proof.economic_sterilization.promotion_economics_status }}</td></tr>
+                <tr><th>Cost model completeness</th><td>{{ vm.operational_proof.economic_sterilization.cost_model_completeness_status }}</td></tr>
+                <tr><th>Book depth</th><td>{{ vm.operational_proof.economic_sterilization.book_depth_source_status }} / {{ vm.operational_proof.economic_sterilization.impact_depth_readiness_status }}</td></tr>
+                <tr><th>Shadow extension</th><td>{{ vm.operational_proof.economic_sterilization.shadow_extension_status }} / days={{ vm.operational_proof.economic_sterilization.minimum_shadow_days_required if vm.operational_proof.economic_sterilization.minimum_shadow_days_required is not none else 'n/a' }}</td></tr>
+                <tr><th>Fill realism</th><td>{{ vm.operational_proof.economic_sterilization.fill_realism_status }} / {{ vm.operational_proof.economic_sterilization.fill_source_status }}</td></tr>
+                <tr><th>Cost parity</th><td>{{ vm.operational_proof.economic_sterilization.cost_parity_status }}</td></tr>
+                <tr><th>Small-capital viability</th><td>{{ vm.operational_proof.economic_sterilization.small_capital_viability_status }}</td></tr>
+                <tr><th>Min-notional viability</th><td>{{ vm.operational_proof.economic_sterilization.min_notional_viability_status }}</td></tr>
+                <tr><th>Capital fragmentation</th><td>{{ vm.operational_proof.economic_sterilization.capital_fragmentation_status }}</td></tr>
+                <tr><th>Sizing doctrine</th><td>{{ vm.operational_proof.economic_sterilization.sizing_doctrine_status }} / {{ vm.operational_proof.economic_sterilization.kelly_status }}</td></tr>
+                <tr><th>Portfolio multi-asset</th><td>{{ vm.operational_proof.economic_sterilization.portfolio_multi_asset_status }} / {{ vm.operational_proof.economic_sterilization.covariance_model_status }}</td></tr>
+                <tr><th>True drawdown</th><td>{{ vm.operational_proof.economic_sterilization.true_drawdown_status }} / proxy_promotion_grade={{ vm.operational_proof.economic_sterilization.drawdown_proxy_promotion_grade }}</td></tr>
+            </tbody>
+        </table>
+
+        {% if vm.replay.pair_aggregates %}
+        <h4>Pair expected CE summary</h4>
+        <table class="data-table data-table--compact">
+            <thead>
+                <tr><th>Pair</th><th>Records</th><th>Selected</th><th>Expected CE net</th></tr>
+            </thead>
+            <tbody>
+            {% for pair in vm.replay.pair_aggregates %}
+                <tr>
+                    <td><code>{{ pair.pair }}</code></td>
+                    <td>{{ pair.record_count }}</td>
+                    <td>{{ pair.selected_count }}</td>
+                    <td class="{% if vm.replay.allow_positive_economics_tone %}{% if pair.ce_net >= 0 %}value-up{% else %}value-down{% endif %}{% else %}{% if pair.ce_net >= 0 %}value-warn{% else %}value-down{% endif %}{% endif %}">{{ "%.6f"|format(pair.ce_net) }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+    </div>
+</section>

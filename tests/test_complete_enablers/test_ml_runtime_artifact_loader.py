@@ -10,7 +10,12 @@ from complete_enablers import (
     load_ml_runtime_artifact,
 )
 from backtest_artifact_import import package_ml_model_artifact_for_transport
-from interface_contracts import MlModelArtifact, MlModelWindow, PromotionState
+from interface_contracts import (
+    MlModelArtifact,
+    MlModelWindow,
+    MlSupplementaryRefsSourceSummary,
+    PromotionState,
+)
 from tests.support_paths import make_repo_scratch_dir
 
 
@@ -70,6 +75,7 @@ def test_runtime_loader_loads_packaged_ml_artifact() -> None:
             (
                 transport_package.transport_artifact_ref,
                 transport_package.summary_ref,
+                transport_package.source_summary_ref,
             )
         )
 
@@ -119,7 +125,12 @@ def test_runtime_loader_requires_transport_artifact_to_be_declared() -> None:
             source_artifact_ref=str(source_path),
         )
 
-        selection = load_ml_runtime_artifact((transport_package.summary_ref,))
+        selection = load_ml_runtime_artifact(
+            (
+                transport_package.summary_ref,
+                transport_package.source_summary_ref,
+            )
+        )
 
         assert selection.status == MlRuntimeArtifactLoadStatus.TRANSPORT_ARTIFACT_NOT_DECLARED
         assert selection.artifact_ready is False
@@ -145,11 +156,24 @@ def test_runtime_loader_detects_hash_mismatch() -> None:
             json.dumps(summary_payload, indent=2),
             encoding="utf-8",
         )
+        source_summary_payload = json.loads(
+            Path(transport_package.source_summary_ref).read_text(encoding="utf-8")
+        )
+        source_summary_payload["target_artifact_hash"] = "f" * 64
+        source_summary_payload.pop("artifact_hash", None)
+        refreshed_source_summary = MlSupplementaryRefsSourceSummary.create(
+            **source_summary_payload
+        )
+        Path(transport_package.source_summary_ref).write_text(
+            refreshed_source_summary.model_dump_json(indent=2),
+            encoding="utf-8",
+        )
 
         selection = load_ml_runtime_artifact(
             (
                 transport_package.transport_artifact_ref,
                 transport_package.summary_ref,
+                transport_package.source_summary_ref,
             )
         )
 
@@ -177,11 +201,73 @@ def test_runtime_loader_marks_stale_artifact() -> None:
             (
                 transport_package.transport_artifact_ref,
                 transport_package.summary_ref,
+                transport_package.source_summary_ref,
             ),
             as_of=datetime(2026, 4, 28, 12, 6, tzinfo=UTC),
         )
 
         assert selection.status == MlRuntimeArtifactLoadStatus.STALE
+        assert selection.artifact_ready is False
+    finally:
+        shutil.rmtree(export_dir, ignore_errors=True)
+        shutil.rmtree(source_path.parent, ignore_errors=True)
+
+
+def test_runtime_loader_requires_governed_source_summary_ref() -> None:
+    export_dir = _scratch_dir("source_summary_missing_export")
+    source_path = _write_ml_artifact(label="source_summary_missing_source")
+
+    try:
+        transport_package = package_ml_model_artifact_for_transport(
+            export_dir,
+            source_artifact_ref=str(source_path),
+        )
+
+        selection = load_ml_runtime_artifact(
+            (
+                transport_package.transport_artifact_ref,
+                transport_package.summary_ref,
+            )
+        )
+
+        assert selection.status == MlRuntimeArtifactLoadStatus.SOURCE_SUMMARY_NOT_FOUND
+        assert selection.artifact_ready is False
+    finally:
+        shutil.rmtree(export_dir, ignore_errors=True)
+        shutil.rmtree(source_path.parent, ignore_errors=True)
+
+
+def test_runtime_loader_marks_stale_source_summary_neutral() -> None:
+    export_dir = _scratch_dir("source_summary_stale_export")
+    source_path = _write_ml_artifact(label="source_summary_stale_source")
+
+    try:
+        transport_package = package_ml_model_artifact_for_transport(
+            export_dir,
+            source_artifact_ref=str(source_path),
+        )
+        source_summary_payload = json.loads(
+            Path(transport_package.source_summary_ref).read_text(encoding="utf-8")
+        )
+        source_summary_payload["generated_at"] = "2026-04-28T11:55:00+00:00"
+        source_summary_payload["source_stale_after"] = "2026-04-28T12:00:00+00:00"
+        source_summary_payload.pop("artifact_hash", None)
+        refreshed = MlSupplementaryRefsSourceSummary.create(**source_summary_payload)
+        Path(transport_package.source_summary_ref).write_text(
+            refreshed.model_dump_json(indent=2),
+            encoding="utf-8",
+        )
+
+        selection = load_ml_runtime_artifact(
+            (
+                transport_package.transport_artifact_ref,
+                transport_package.summary_ref,
+                transport_package.source_summary_ref,
+            ),
+            as_of=datetime(2026, 4, 28, 12, 1, tzinfo=UTC),
+        )
+
+        assert selection.status == MlRuntimeArtifactLoadStatus.SOURCE_SUMMARY_STALE
         assert selection.artifact_ready is False
     finally:
         shutil.rmtree(export_dir, ignore_errors=True)

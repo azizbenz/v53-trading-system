@@ -201,6 +201,111 @@ def test_capture_live_websocket_snapshot_batch_materializes_snapshot_batch():
         shutil.rmtree(output_dir, ignore_errors=True)
 
 
+def test_capture_live_websocket_snapshot_batch_materializes_multiple_engine_route_hints_per_pair():
+    output_dir = _scratch_dir("capture_multi_engine_hints")
+    try:
+        socket = _FakeSocket(
+            [
+                json.dumps({"result": None, "id": 1}),
+                json.dumps(
+                    {
+                        "stream": "btcusdt@trade",
+                        "data": {
+                            "e": "trade",
+                            "s": "BTCUSDT",
+                            "t": 101,
+                            "p": "43250.1",
+                            "q": "0.250",
+                            "m": False,
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "stream": "btcusdt@ticker",
+                        "data": {
+                            "e": "24hrTicker",
+                            "s": "BTCUSDT",
+                            "c": "43255.0",
+                            "b": "43254.5",
+                            "a": "43255.5",
+                            "v": "125000.0",
+                            "h": "44000.0",
+                            "l": "42000.0",
+                        },
+                    }
+                ),
+            ]
+        )
+        config = ShadowLiveWebSocketConfig(
+            endpoint="wss://stream.binance.com:9443/ws",
+            pairs=("BTCUSDT",),
+            stream_types=("trade", "ticker"),
+            capture_frame_limit=2,
+            idle_poll_limit=3,
+            capture_timeout_s=5.0,
+            session_date_override="2026-04-02",
+            route_hints_by_pair={
+                "BTCUSDT": [
+                    {
+                        "route_id": "btc-live-engine-a",
+                        "engine_id": "engine_a",
+                        "raw_score": 0.91,
+                        "penalized_score": 0.88,
+                        "final_score": 0.86,
+                        "expected_edge_bps": 17.0,
+                        "target_decision_state": "executed",
+                        "production_decision_state": "executed",
+                        "production_final_score": 0.86,
+                        "production_expected_cost": 0.00086,
+                        "candidate_size": 1.0,
+                        "final_size": 1.0,
+                        "gross_return_bps": 21.0,
+                        "feature_values": {"spread_bps": 3.0},
+                    },
+                    {
+                        "route_id": "btc-live-engine-c",
+                        "engine_id": "engine_c",
+                        "raw_score": 0.73,
+                        "penalized_score": 0.71,
+                        "final_score": 0.69,
+                        "expected_edge_bps": 9.0,
+                        "target_decision_state": "rejected_ranking",
+                        "production_decision_state": "rejected_ranking",
+                        "production_final_score": 0.69,
+                        "production_expected_cost": 0.00091,
+                        "candidate_size": 1.0,
+                        "final_size": 0.0,
+                        "gross_return_bps": 6.0,
+                        "ranking_position": 2,
+                        "feature_values": {"spread_bps": 3.2},
+                    },
+                ]
+            },
+        )
+
+        result = capture_live_websocket_snapshot_batch(
+            config,
+            output_dir=output_dir,
+            adapter_factory=lambda cfg: BinanceSpotLiveWebSocketAdapter(
+                cfg,
+                socket_factory=lambda endpoint, connect_timeout_s, recv_timeout_s: socket,
+                clock=lambda: 1_700_000_000.0,
+            ),
+            clock=lambda: 1_700_000_000.0,
+        )
+
+        batch = load_historical_snapshot_batch(Path(result.snapshot_batch_path_ref))
+        route_ids = {event.route_hint.route_id for event in batch.events}
+        engine_ids = {event.route_hint.engine_id for event in batch.events}
+
+        assert batch.event_count == 4
+        assert route_ids == {"btc-live-engine-a", "btc-live-engine-c"}
+        assert engine_ids == {"engine_a", "engine_c"}
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
 def test_capture_live_websocket_snapshot_batch_writes_time_sync_offsets_sidecar():
     output_dir = _scratch_dir("capture_time_sync")
     try:

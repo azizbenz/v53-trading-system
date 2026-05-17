@@ -83,6 +83,7 @@ class EngineARuntimeInput(BaseModel, frozen=True):
     score_penalties: tuple[ScorePenaltyItem, ...] = ()
     size_penalties: tuple[SizePenaltyItem, ...] = ()
     blocker_conditions: BlockerCondition = Field(default_factory=BlockerCondition)
+    supplementary_refs: tuple[str, ...] = ()
     peer_candidates: tuple[ScoringCandidateInput, ...] = ()
     max_selections: int = Field(default=1, ge=1)
     corr_penalty: float = 0.0
@@ -373,6 +374,14 @@ class EngineARuntime:
                 size=runtime_input.projected_size * size_multiplier,
                 planned_loss=planned_loss,
                 pair_beta=runtime_input.pair_beta,
+                carriage_statuses=("risk_micro_friction_carried",),
+                carriage_reason_codes=(
+                    "RISK_INFO_STRESS_FIELD_MISSING",
+                    "RISK_REGIME_STATE_MISSING",
+                ),
+                execution_fragility=runtime_input.engine_inputs.execution_fragility,
+                market_toxicity=runtime_input.engine_inputs.market_toxicity,
+                spread_regime_penalty=runtime_input.engine_inputs.spread_regime_penalty,
             ),
             now=timestamp,
         )

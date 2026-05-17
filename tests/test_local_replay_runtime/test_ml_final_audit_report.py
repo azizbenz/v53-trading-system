@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import base64
-from datetime import datetime, timezone
+from datetime import UTC, date, datetime, timezone
 from pathlib import Path
 import shutil
 
@@ -18,6 +18,15 @@ from interface_contracts import (
 from local_replay_runtime import (
     LocalLabMlArtifactTrainingReport,
     build_local_lab_ml_final_audit_report_from_vps_command_result,
+)
+from local_replay_runtime.ml_governance_sidecars import (
+    build_ml_anti_leakage_proof_artifact,
+    build_ml_live_drift_snapshot,
+    write_ml_governance_sidecars,
+)
+from meta_learning.model_risk_registry import (
+    MlModelDriftSnapshot as RuntimeDriftSnapshot,
+    MlModelRuntimeStage,
 )
 
 
@@ -96,6 +105,40 @@ def _command_result(export_ref: Path, artifact: MlModelArtifact) -> DashboardGov
     )
 
 
+def _write_governance_sidecars(
+    artifact_path: Path,
+    artifact: MlModelArtifact,
+    *,
+    governed_live: bool,
+) -> None:
+    proof = build_ml_anti_leakage_proof_artifact(
+        artifact,
+        test_start=date(2026, 4, 29),
+        test_end=date(2026, 5, 6),
+    )
+    runtime_snapshot = None
+    if governed_live:
+        runtime_snapshot = RuntimeDriftSnapshot(
+            stage=MlModelRuntimeStage.LIVE,
+            created_at=datetime(2026, 4, 29, 12, 0, tzinfo=UTC),
+            feature_ks_pvalue=0.42,
+            shadow_diff_pct=0.02,
+            live_diff_pct=0.03,
+            win_rate_delta=-0.01,
+            ce_delta=-0.002,
+        )
+    snapshot = build_ml_live_drift_snapshot(
+        artifact,
+        runtime_snapshot=runtime_snapshot,
+        created_at=datetime(2026, 4, 29, 12, 0, tzinfo=UTC),
+    )
+    write_ml_governance_sidecars(
+        artifact_path.parent,
+        anti_leakage_proof=proof,
+        live_drift_snapshot=snapshot,
+    )
+
+
 def test_build_local_lab_ml_final_audit_report_blocks_when_formalism_is_unresolved() -> None:
     scratch_dir = _scratch_dir("ready")
     try:
@@ -113,8 +156,13 @@ def test_build_local_lab_ml_final_audit_report_blocks_when_formalism_is_unresolv
         assert report.audit_ready is False
         assert report.feature_set_compatible is True
         assert report.artifact_matches_lab_recommendation is True
+        assert report.anti_leakage_proof_present is False
+        assert report.live_drift_snapshot_present is False
+        assert report.promotion_gate_status == "blocked"
         assert report.final_recommendation == "resolve_ml_final_audit_blockers"
         assert "ml.formalism.unresolved" in report.blocking_reasons
+        assert "ML_ANTI_LEAKAGE_PROOF_MISSING" in report.blocking_reasons
+        assert "ML_LIVE_DRIFT_SNAPSHOT_MISSING" in report.blocking_reasons
     finally:
         shutil.rmtree(scratch_dir, ignore_errors=True)
 
@@ -139,6 +187,32 @@ def test_build_local_lab_ml_final_audit_report_stays_blocked_when_hash_differs()
         assert report.final_recommendation == "resolve_ml_final_audit_blockers"
         assert "ml.final_audit.upload_differs_from_lab_recommendation" in report.caution_flags
         assert "ml.formalism.unresolved" in report.blocking_reasons
+    finally:
+        shutil.rmtree(scratch_dir, ignore_errors=True)
+
+
+def test_build_local_lab_ml_final_audit_report_reads_sidecars_and_replaces_missing_blockers() -> None:
+    scratch_dir = _scratch_dir("with_sidecars")
+    try:
+        artifact = _artifact("a")
+        artifact_path = scratch_dir / "active_ml_artifact.json"
+        artifact_path.write_text(artifact.model_dump_json(indent=2), encoding="utf-8")
+        _write_governance_sidecars(artifact_path, artifact, governed_live=True)
+
+        report = build_local_lab_ml_final_audit_report_from_vps_command_result(
+            correlation_id="corr-ml-final-audit",
+            training_report=_training_report(artifact),
+            command_result=_command_result(artifact_path, artifact),
+        )
+
+        assert report.status == "blocked"
+        assert report.anti_leakage_proof_present is True
+        assert report.live_drift_snapshot_present is True
+        assert report.promotion_gate_status == "blocked"
+        assert "ml.formalism.unresolved" in report.blocking_reasons
+        assert "ML_ANTI_LEAKAGE_PROOF_MISSING" not in report.blocking_reasons
+        assert "ML_LIVE_DRIFT_SNAPSHOT_MISSING" not in report.blocking_reasons
+        assert "ML_LIVE_DRIFT_SOURCE_NOT_READY" not in report.blocking_reasons
     finally:
         shutil.rmtree(scratch_dir, ignore_errors=True)
 

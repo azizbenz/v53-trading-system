@@ -192,5 +192,11 @@ class BinanceSpotExecutionAdapter(ExecutionVenueAdapter):
                 return order.symbol
         raise KeyError(f"Unknown Binance open order id '{order_id}'")
 
+    def close(self) -> None:
+        close_user_data = getattr(self._user_data_event_source, "close", None)
+        if callable(close_user_data):
+            close_user_data()
+        _run_async(self._rest_client.aclose())
+
 
 __all__ = ["BinanceSpotExecutionAdapter"]

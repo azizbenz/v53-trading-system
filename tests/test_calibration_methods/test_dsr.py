@@ -5,7 +5,11 @@ from statistics import NormalDist
 
 import pytest
 
-from calibration_methods import DeflatedSharpeRatioError, compute_deflated_sharpe_ratio
+from calibration_methods import (
+    DeflatedSharpeRatioError,
+    compute_deflated_sharpe_ratio,
+    compute_deflated_sharpe_ratio_from_moments,
+)
 
 
 def _positive_return_series(length: int = 200) -> tuple[float, ...]:
@@ -132,3 +136,69 @@ def test_dsr_matches_current_api_reference_mapping() -> None:
     assert result.benchmark_sharpe == pytest.approx(expected_benchmark)
     assert result.dsr == pytest.approx(expected_dsr)
     assert result.passes_floor is (expected_dsr >= 0.95)
+
+
+def test_dsr_from_moments_matches_returns_api_reference_mapping() -> None:
+    returns = _moderate_return_series(length=160)
+    trial_count = 20
+
+    (
+        expected_mean,
+        expected_std,
+        expected_sr,
+        _expected_variance,
+        _expected_benchmark,
+        _expected_dsr,
+    ) = _reference_dsr(returns, trial_count=trial_count)
+    standardized = tuple((value - expected_mean) / expected_std for value in returns)
+    skewness = sum(value**3 for value in standardized) / len(standardized)
+    kurtosis = sum(value**4 for value in standardized) / len(standardized)
+
+    returns_result = compute_deflated_sharpe_ratio(
+        returns,
+        trial_count=trial_count,
+        acceptance_floor=0.95,
+    )
+    moments_result = compute_deflated_sharpe_ratio_from_moments(
+        observation_count=len(returns),
+        trial_count=trial_count,
+        sharpe_ratio=expected_sr,
+        skewness=skewness,
+        kurtosis=kurtosis,
+        sample_std=expected_std,
+        acceptance_floor=0.95,
+    )
+
+    assert moments_result.method_version == "deflated_sharpe_ratio_from_moments_v1"
+    assert moments_result.mean_return == pytest.approx(returns_result.mean_return)
+    assert moments_result.sample_std == pytest.approx(returns_result.sample_std)
+    assert moments_result.sharpe_ratio == pytest.approx(returns_result.sharpe_ratio)
+    assert moments_result.sharpe_variance == pytest.approx(returns_result.sharpe_variance)
+    assert moments_result.benchmark_sharpe == pytest.approx(returns_result.benchmark_sharpe)
+    assert moments_result.dsr == pytest.approx(returns_result.dsr)
+    assert moments_result.passes_floor is returns_result.passes_floor
+
+
+def test_dsr_from_moments_table1_style_anchor_documents_trial_count_semantics() -> None:
+    """Table-1-style seam: direct moments input, no raw returns required.
+
+    `trial_count` remains the effective number of tested strategies / promotion
+    trials. The seam is additive and does not alter the production returns API.
+    """
+
+    result = compute_deflated_sharpe_ratio_from_moments(
+        observation_count=1_000,
+        trial_count=20,
+        sharpe_ratio=0.10,
+        skewness=0.0,
+        kurtosis=3.0,
+        acceptance_floor=0.95,
+    )
+
+    assert result.observation_count == 1_000
+    assert result.trial_count == 20
+    assert result.sample_std == 1.0
+    assert result.mean_return == pytest.approx(0.10)
+    assert result.benchmark_sharpe > 0.0
+    assert result.dsr < 0.95
+    assert result.passes_floor is False

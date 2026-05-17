@@ -23,6 +23,7 @@ class ExecutionRateLimitDecision(BaseModel, frozen=True):
     blocked: bool = False
     reason_code: str = ""
     detail: str = ""
+    telemetry_status: str = ""
     current_quota_ratio: float | None = Field(default=None, ge=0.0)
     quota_ratio_ceiling: float | None = Field(default=None, gt=0.0)
 
@@ -42,6 +43,7 @@ def evaluate_execution_rate_limit(
     if current_quota_ratio < model.quota_ratio_ceiling:
         return ExecutionRateLimitDecision(
             blocked=False,
+            telemetry_status="measured",
             current_quota_ratio=current_quota_ratio,
             quota_ratio_ceiling=model.quota_ratio_ceiling,
         )
@@ -53,6 +55,7 @@ def evaluate_execution_rate_limit(
             f"rest quota ratio {current_quota_ratio:.6f} >= "
             f"allowed ceiling {model.quota_ratio_ceiling:.6f}"
         ),
+        telemetry_status="measured",
         current_quota_ratio=current_quota_ratio,
         quota_ratio_ceiling=model.quota_ratio_ceiling,
     )

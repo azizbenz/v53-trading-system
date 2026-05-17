@@ -5,6 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from interface_contracts import HookId, RUNTIME_OPEN_HOOK_IDS
+from monitoring.artifact_visibility import (
+    build_artifact_threshold_consumer_projections,
+)
 from monitoring import (
     ExecutionNoTradeBridgeProjection,
     ExecutionRuntimeProjectionBridgeProjection,
@@ -244,6 +247,9 @@ def build_execution_runtime_projection_bridge_projection(
         rate_limit_model_loaded=status.rate_limit_model_loaded,
         spread_guard_model_loaded=status.spread_guard_model_loaded,
         slippage_model_loaded=status.slippage_model_loaded,
+        consumers=build_artifact_threshold_consumer_projections(
+            execution_runtime_projection_path=execution_runtime_projection_path
+        ),
         caution_flags=status.caution_flags,
         blocking_reasons=status.blocking_reasons,
         error_type=status.error_type,

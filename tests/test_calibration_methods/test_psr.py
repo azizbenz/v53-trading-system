@@ -5,6 +5,8 @@ Reference values derived from Bailey & López de Prado (2012).
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 from statistics import NormalDist
 
@@ -32,6 +34,34 @@ def _flat_returns(n: int, mean: float, std: float) -> tuple[float, ...]:
     low = tuple(mean - step for _ in range(half))
     high = tuple(mean + step for _ in range(n - half))
     return low + high
+
+
+def _returns_api_anchor_fixture() -> tuple[float, ...]:
+    return (
+        0.012,
+        -0.006,
+        0.009,
+        0.004,
+        -0.003,
+        0.011,
+        -0.008,
+        0.006,
+        0.015,
+        -0.002,
+        0.007,
+        0.003,
+        -0.005,
+        0.010,
+        0.002,
+        -0.004,
+        0.008,
+        0.005,
+    )
+
+
+def _fixture_hash(values: tuple[float, ...]) -> str:
+    payload = json.dumps(list(values), separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _reference_psr(
@@ -180,33 +210,14 @@ def test_psr_rejects_zero_std() -> None:
 
 
 def test_psr_matches_closed_form_reference_for_fixed_return_series() -> None:
-    """PSR closure path B: verify the current returns-based seam against Eq. 3 directly.
+    """PSR returns-API equivalence anchor over a deterministic hashed fixture.
 
-    This is intentionally not a literal 0.9505 paper-reproduction target. The
-    public API accepts a return series, so the proof is: deterministic returns ->
-    independently recomputed Bailey-López de Prado Eq. 3 -> identical API result.
+    Literal `0.9505` is not accepted as a standalone anchor without an in-repo
+    deterministic fixture/hash. The production seam accepts a return series, so
+    the anchor is: hashed fixture -> independently recomputed Bailey-López de
+    Prado Eq. 3 -> identical API result.
     """
-
-    returns = (
-        0.012,
-        -0.006,
-        0.009,
-        0.004,
-        -0.003,
-        0.011,
-        -0.008,
-        0.006,
-        0.015,
-        -0.002,
-        0.007,
-        0.003,
-        -0.005,
-        0.010,
-        0.002,
-        -0.004,
-        0.008,
-        0.005,
-    )
+    returns = _returns_api_anchor_fixture()
     benchmark_sharpe = 0.10
 
     expected_sr, expected_skew, expected_kurt, expected_psr = _reference_psr(
@@ -219,6 +230,7 @@ def test_psr_matches_closed_form_reference_for_fixed_return_series() -> None:
         acceptance_floor=0.95,
     )
 
+    assert _fixture_hash(returns) == "b607ebb7651dfe516d59b53d10a90d48d74f18394734c1e67a9465721d77ae18"
     assert result.observation_count == len(returns)
     assert result.sample_sharpe == pytest.approx(expected_sr)
     assert result.skewness == pytest.approx(expected_skew)

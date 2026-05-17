@@ -176,12 +176,15 @@ def _pot_var(
     observation_count: int,
     var_confidence: float,
 ) -> float:
-    tail_probability = (exceedance_count / observation_count) * (1.0 - var_confidence)
-    if tail_probability <= 0.0 or tail_probability >= 1.0:
-        raise PotGpdError("POT-GPD tail probability must be in (0, 1)")
+    exceedance_fraction = exceedance_count / observation_count
+    conditional_tail_probability = (1.0 - var_confidence) / exceedance_fraction
+    if conditional_tail_probability <= 0.0 or conditional_tail_probability >= 1.0:
+        raise PotGpdError("POT-GPD conditional tail probability must be in (0, 1)")
     if abs(xi_hat) < 1e-9:
-        return threshold_u + (beta_hat * math.log(1.0 / tail_probability))
-    return threshold_u + ((beta_hat / xi_hat) * ((tail_probability ** (-xi_hat)) - 1.0))
+        return threshold_u + (beta_hat * math.log(1.0 / conditional_tail_probability))
+    return threshold_u + (
+        (beta_hat / xi_hat) * ((conditional_tail_probability ** (-xi_hat)) - 1.0)
+    )
 
 
 __all__ = [

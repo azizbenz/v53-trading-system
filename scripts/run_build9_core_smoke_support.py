@@ -281,6 +281,7 @@ def measure_smoke_submission_latency(
             return "indicative pre-submit latency unavailable (timestamps not populated)"
         return ", ".join(parts)
     finally:
+        bundle.close()
         asyncio.run(http_client.aclose())
 
 
@@ -303,4 +304,5 @@ def run_execution_bootstrap_smoke_with_projection(
             gatekeeper_audit_path=gatekeeper_audit_path,
         )
     finally:
+        bundle.close()
         asyncio.run(http_client.aclose())

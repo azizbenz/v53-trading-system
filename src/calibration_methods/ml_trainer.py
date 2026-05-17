@@ -117,6 +117,10 @@ def _load_optuna() -> Any | None:  # noqa: Any
         return None
 
 
+def _load_numpy() -> Any:  # noqa: Any
+    return importlib.import_module("numpy")
+
+
 def _hash_json_payload(payload: Any) -> str:  # noqa: Any
     return hashlib.sha256(
         json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -204,6 +208,18 @@ def _bootstrap_bags(
     return tuple(bags)
 
 
+def _to_numpy_matrix(matrix: list[list[float]]) -> Any:  # noqa: Any
+    return _load_numpy().asarray(matrix, dtype=float)
+
+
+def _to_numpy_vector(values: list[float]) -> Any:  # noqa: Any
+    return _load_numpy().asarray(values, dtype=float)
+
+
+def _predict_booster(booster: Any, matrix: list[list[float]]) -> list[float]:  # noqa: Any
+    return [float(value) for value in booster.predict(_to_numpy_matrix(matrix))]
+
+
 def _strategy_sharpe(predictions: list[float], targets: list[float]) -> float:
     realized = [prediction * target for prediction, target in zip(predictions, targets, strict=True)]
     if len(realized) < 2 or all(value == realized[0] for value in realized):
@@ -239,15 +255,19 @@ def _train_booster(
     feature_names: tuple[str, ...],
     early_stopping_rounds: int,
 ) -> Any:  # noqa: Any
+    train_matrix_array = _to_numpy_matrix(train_matrix)
+    train_targets_array = _to_numpy_vector(train_targets)
+    valid_matrix_array = _to_numpy_matrix(valid_matrix)
+    valid_targets_array = _to_numpy_vector(valid_targets)
     train_set = lightgbm.Dataset(
-        train_matrix,
-        label=train_targets,
+        train_matrix_array,
+        label=train_targets_array,
         feature_name=list(feature_names),
         free_raw_data=False,
     )
     valid_set = lightgbm.Dataset(
-        valid_matrix,
-        label=valid_targets,
+        valid_matrix_array,
+        label=valid_targets_array,
         feature_name=list(feature_names),
         free_raw_data=False,
         reference=train_set,
@@ -291,7 +311,7 @@ def _evaluate_params_with_bagging(
             feature_names=feature_names,
             early_stopping_rounds=early_stopping_rounds,
         )
-        predictions = list(booster.predict(validation_matrix))
+        predictions = _predict_booster(booster, validation_matrix)
         bag_scores.append(_strategy_sharpe(predictions, validation_targets))
     return statistics.mean(bag_scores) if bag_scores else 0.0
 
@@ -382,8 +402,8 @@ def train_lightgbm_ml_artifact(
         feature_names=feature_names,
         early_stopping_rounds=request.early_stopping_rounds,
     )
-    train_predictions = list(booster.predict(train_matrix))
-    validation_predictions = list(booster.predict(validation_matrix))
+    train_predictions = _predict_booster(booster, train_matrix)
+    validation_predictions = _predict_booster(booster, validation_matrix)
     training_metrics: dict[str, float | int | str | bool] = {
         "optuna_trials_used": optuna_trials_used,
         "bagging_folds_used": request.bagging_folds,

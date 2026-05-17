@@ -8,9 +8,14 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from interface_contracts import MlModelArtifact, MlModelSourceArtifactSummary
+from interface_contracts import (
+    MlModelArtifact,
+    MlModelSourceArtifactSummary,
+    MlSupplementaryRefsSourceSummary,
+)
 
 _SUMMARY_FILENAME = "ml_model_artifact.summary.json"
+_SOURCE_SUMMARY_FILENAME = "ml_supplementary_refs_source_summary.json"
 
 
 class MlRuntimeArtifactLoadStatus(StrEnum):
@@ -19,6 +24,9 @@ class MlRuntimeArtifactLoadStatus(StrEnum):
     MISSING_SUPPLEMENTARY_REFS = "missing_supplementary_refs"
     SUMMARY_NOT_FOUND = "summary_not_found"
     SUMMARY_INVALID = "summary_invalid"
+    SOURCE_SUMMARY_NOT_FOUND = "source_summary_not_found"
+    SOURCE_SUMMARY_INVALID = "source_summary_invalid"
+    SOURCE_SUMMARY_STALE = "source_summary_stale"
     TRANSPORT_ARTIFACT_NOT_DECLARED = "transport_artifact_not_declared"
     TRANSPORT_ARTIFACT_UNREADABLE = "transport_artifact_unreadable"
     TRANSPORT_ARTIFACT_INVALID = "transport_artifact_invalid"
@@ -33,7 +41,9 @@ class MlRuntimeArtifactSelection(BaseModel, frozen=True):
     status: MlRuntimeArtifactLoadStatus
     artifact: MlModelArtifact | None = None
     summary: MlModelSourceArtifactSummary | None = None
+    source_summary: MlSupplementaryRefsSourceSummary | None = None
     summary_ref: str | None = None
+    source_summary_ref: str | None = None
     transport_artifact_ref: str | None = None
     reasons: tuple[str, ...] = Field(default_factory=tuple)
 
@@ -59,6 +69,17 @@ def _read_summary(summary_ref: str) -> MlModelSourceArtifactSummary:
         raise ValueError(f"summary_invalid:{summary_ref}") from exc
 
 
+def _read_source_summary(source_summary_ref: str) -> MlSupplementaryRefsSourceSummary:
+    try:
+        payload = Path(source_summary_ref).resolve().read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"source_summary_unreadable:{source_summary_ref}") from exc
+    try:
+        return MlSupplementaryRefsSourceSummary.model_validate_json(payload)
+    except ValueError as exc:
+        raise ValueError(f"source_summary_invalid:{source_summary_ref}") from exc
+
+
 def _read_artifact(artifact_ref: str) -> MlModelArtifact:
     try:
         payload = Path(artifact_ref).resolve().read_text(encoding="utf-8")
@@ -73,6 +94,13 @@ def _read_artifact(artifact_ref: str) -> MlModelArtifact:
 def _find_summary_ref(supplementary_refs: tuple[str, ...]) -> str | None:
     for ref in supplementary_refs:
         if Path(ref).name == _SUMMARY_FILENAME:
+            return ref
+    return None
+
+
+def _find_source_summary_ref(supplementary_refs: tuple[str, ...]) -> str | None:
+    for ref in supplementary_refs:
+        if Path(ref).name == _SOURCE_SUMMARY_FILENAME:
             return ref
     return None
 
@@ -96,6 +124,13 @@ def load_ml_runtime_artifact(
             status=MlRuntimeArtifactLoadStatus.SUMMARY_NOT_FOUND,
             reasons=("ML_RUNTIME_ARTIFACT_SUMMARY_NOT_FOUND",),
         )
+    source_summary_ref = _find_source_summary_ref(supplementary_refs)
+    if source_summary_ref is None:
+        return MlRuntimeArtifactSelection(
+            status=MlRuntimeArtifactLoadStatus.SOURCE_SUMMARY_NOT_FOUND,
+            summary_ref=summary_ref,
+            reasons=("ML_SUPPLEMENTARY_REFS_SOURCE_SUMMARY_NOT_FOUND",),
+        )
 
     try:
         summary = _read_summary(summary_ref)
@@ -105,13 +140,65 @@ def load_ml_runtime_artifact(
             summary_ref=summary_ref,
             reasons=("ML_RUNTIME_ARTIFACT_SUMMARY_INVALID",),
         )
+    try:
+        source_summary = _read_source_summary(source_summary_ref)
+    except ValueError:
+        return MlRuntimeArtifactSelection(
+            status=MlRuntimeArtifactLoadStatus.SOURCE_SUMMARY_INVALID,
+            summary=summary,
+            summary_ref=summary_ref,
+            source_summary_ref=source_summary_ref,
+            reasons=("ML_SUPPLEMENTARY_REFS_SOURCE_SUMMARY_INVALID",),
+        )
+    if source_summary.summary_ref != summary_ref:
+        return MlRuntimeArtifactSelection(
+            status=MlRuntimeArtifactLoadStatus.SOURCE_SUMMARY_INVALID,
+            summary=summary,
+            source_summary=source_summary,
+            summary_ref=summary_ref,
+            source_summary_ref=source_summary_ref,
+            transport_artifact_ref=summary.transport_artifact_ref,
+            reasons=("ML_SUPPLEMENTARY_REFS_SOURCE_SUMMARY_SUMMARY_REF_MISMATCH",),
+        )
+    if source_summary.transport_artifact_ref != summary.transport_artifact_ref:
+        return MlRuntimeArtifactSelection(
+            status=MlRuntimeArtifactLoadStatus.SOURCE_SUMMARY_INVALID,
+            summary=summary,
+            source_summary=source_summary,
+            summary_ref=summary_ref,
+            source_summary_ref=source_summary_ref,
+            transport_artifact_ref=summary.transport_artifact_ref,
+            reasons=("ML_SUPPLEMENTARY_REFS_SOURCE_SUMMARY_TRANSPORT_REF_MISMATCH",),
+        )
+    if source_summary.target_artifact_hash != summary.artifact_hash:
+        return MlRuntimeArtifactSelection(
+            status=MlRuntimeArtifactLoadStatus.SOURCE_SUMMARY_INVALID,
+            summary=summary,
+            source_summary=source_summary,
+            summary_ref=summary_ref,
+            source_summary_ref=source_summary_ref,
+            transport_artifact_ref=summary.transport_artifact_ref,
+            reasons=("ML_SUPPLEMENTARY_REFS_SOURCE_SUMMARY_ARTIFACT_HASH_MISMATCH",),
+        )
+    if source_summary.is_stale(as_of=_normalize_as_of(as_of)):
+        return MlRuntimeArtifactSelection(
+            status=MlRuntimeArtifactLoadStatus.SOURCE_SUMMARY_STALE,
+            summary=summary,
+            source_summary=source_summary,
+            summary_ref=summary_ref,
+            source_summary_ref=source_summary_ref,
+            transport_artifact_ref=summary.transport_artifact_ref,
+            reasons=("ML_SUPPLEMENTARY_REFS_SOURCE_SUMMARY_STALE",),
+        )
 
     transport_artifact_ref = summary.transport_artifact_ref
     if transport_artifact_ref not in supplementary_refs:
         return MlRuntimeArtifactSelection(
             status=MlRuntimeArtifactLoadStatus.TRANSPORT_ARTIFACT_NOT_DECLARED,
             summary=summary,
+            source_summary=source_summary,
             summary_ref=summary_ref,
+            source_summary_ref=source_summary_ref,
             transport_artifact_ref=transport_artifact_ref,
             reasons=("ML_RUNTIME_ARTIFACT_TRANSPORT_NOT_DECLARED",),
         )
@@ -122,7 +209,9 @@ def load_ml_runtime_artifact(
         return MlRuntimeArtifactSelection(
             status=MlRuntimeArtifactLoadStatus.TRANSPORT_ARTIFACT_UNREADABLE,
             summary=summary,
+            source_summary=source_summary,
             summary_ref=summary_ref,
+            source_summary_ref=source_summary_ref,
             transport_artifact_ref=transport_artifact_ref,
             reasons=("ML_RUNTIME_ARTIFACT_UNREADABLE",),
         )
@@ -130,7 +219,9 @@ def load_ml_runtime_artifact(
         return MlRuntimeArtifactSelection(
             status=MlRuntimeArtifactLoadStatus.TRANSPORT_ARTIFACT_INVALID,
             summary=summary,
+            source_summary=source_summary,
             summary_ref=summary_ref,
+            source_summary_ref=source_summary_ref,
             transport_artifact_ref=transport_artifact_ref,
             reasons=("ML_RUNTIME_ARTIFACT_INVALID",),
         )
@@ -140,7 +231,9 @@ def load_ml_runtime_artifact(
             status=MlRuntimeArtifactLoadStatus.HASH_MISMATCH,
             artifact=artifact,
             summary=summary,
+            source_summary=source_summary,
             summary_ref=summary_ref,
+            source_summary_ref=source_summary_ref,
             transport_artifact_ref=transport_artifact_ref,
             reasons=("ML_RUNTIME_ARTIFACT_HASH_MISMATCH",),
         )
@@ -150,7 +243,9 @@ def load_ml_runtime_artifact(
             status=MlRuntimeArtifactLoadStatus.STALE,
             artifact=artifact,
             summary=summary,
+            source_summary=source_summary,
             summary_ref=summary_ref,
+            source_summary_ref=source_summary_ref,
             transport_artifact_ref=transport_artifact_ref,
             reasons=("ML_RUNTIME_ARTIFACT_STALE",),
         )
@@ -159,7 +254,9 @@ def load_ml_runtime_artifact(
         status=MlRuntimeArtifactLoadStatus.LOADED,
         artifact=artifact,
         summary=summary,
+        source_summary=source_summary,
         summary_ref=summary_ref,
+        source_summary_ref=source_summary_ref,
         transport_artifact_ref=transport_artifact_ref,
         reasons=("ML_RUNTIME_ARTIFACT_LOADED",),
     )

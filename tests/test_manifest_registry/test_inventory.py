@@ -180,6 +180,7 @@ class TestExpectedModules:
         "complete_enablers",
         "engine_c",
         "engine_d",
+        "cockpit",
     ])
     def test_module_exists(self, name: str):
         m = get_module(name)

@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+
+{% block title %}Logs - {{ vm.welcome_message }}{% endblock %}
+
+{% block content %}
+
+<section class="welcome-banner">
+    <div class="welcome-banner__inner">
+        <div>
+            <h1 class="welcome-banner__title">Logs</h1>
+            <p class="welcome-banner__sub">
+                Bounded tail over the durable Shadow VPS event log with compact filters.
+            </p>
+        </div>
+        <div class="welcome-banner__amount">
+            <span class="welcome-banner__label">Returned events</span>
+            <span class="welcome-banner__value">{{ vm.runtime.recent_logs.returned_event_count if vm.runtime.recent_logs else 0 }}</span>
+        </div>
+    </div>
+</section>
+
+<section class="card">
+    <div class="card__head">
+        <h3>Query</h3>
+        <span class="card__sub">Bounded search only</span>
+    </div>
+    <div class="card__body">
+        <form class="form-grid form-grid--wide" method="get" action="/logs">
+            <label>
+                Event type
+                <input type="text" name="event_type" value="{{ request.query_params.get('event_type', '') if request is defined else '' }}" placeholder="optional event type">
+            </label>
+            <label>
+                Contains text
+                <input type="text" name="contains_text" value="{{ request.query_params.get('contains_text', '') if request is defined else '' }}" placeholder="optional text match">
+            </label>
+            <label>
+                Max events
+                <input type="number" min="1" max="200" name="max_events" value="{{ request.query_params.get('max_events', '50') if request is defined else '50' }}">
+            </label>
+            <label class="checkbox-field">
+                <input type="checkbox" name="error_only" value="true" {% if request is defined and request.query_params.get('error_only') %}checked{% endif %}>
+                Error only
+            </label>
+            <div class="form-actions">
+                <button class="button button--primary" type="submit">Refresh Logs</button>
+            </div>
+        </form>
+    </div>
+</section>
+
+<section class="card">
+    <div class="card__head">
+        <h3>Recent Events</h3>
+        <span class="card__sub">Latest bounded tail</span>
+    </div>
+    <div class="card__body">
+        {% if vm.runtime.recent_logs %}
+        <table class="data-table data-table--compact">
+            <tbody>
+                <tr><th>Events path</th><td><code>{{ vm.runtime.recent_logs.events_path }}</code></td></tr>
+                <tr><th>Parse errors</th><td>{{ vm.runtime.recent_logs.parse_error_count }}</td></tr>
+                <tr><th>Truncated</th><td>{{ vm.runtime.recent_logs.truncated }}</td></tr>
+                <tr><th>Latest type</th><td>{{ vm.runtime.recent_logs.latest_event_type or 'n/a' }}</td></tr>
+            </tbody>
+        </table>
+        <table class="data-table data-table--compact">
+            <thead>
+                <tr><th>Type</th><th>Message</th><th>Session</th><th>Error</th></tr>
+            </thead>
+            <tbody>
+            {% for event in vm.runtime.recent_logs.events %}
+                <tr>
+                    <td><code>{{ event.event_type }}</code></td>
+                    <td>{{ event.message }}</td>
+                    <td>{{ event.session_date or 'n/a' }}</td>
+                    <td>{{ event.error or 'none' }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="muted">No durable Shadow VPS event log found yet.</p>
+        {% endif %}
+    </div>
+</section>
+
+{% endblock %}

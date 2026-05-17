@@ -43,9 +43,14 @@ from .dashboard_command_contracts import *
 from .live_complete_actions import *
 from .vps_recovery_contracts import *
 from .pair_catalog import *
+from .capital_profile_contracts import *
+from .promotion_artifact_contracts import *
+from .governed_audit_evidence_contracts import *
 from .ml_model_artifact import *
 from .ml_backtest_training_contracts import *
 from .ml_model_transport_contracts import *
+from .ml_governance_proof_contracts import *
+from .strategy_ladder_proxy_fidelity_surface import *
 from .regime_detector_artifact import *
 from .regime_detector_label_contracts import *
 from .regime_detector_shadow_audit_contracts import *
@@ -161,6 +166,20 @@ __all__ = [
     "VpsRecoveryReadinessReport", "VpsWarmupRunSummary",
     # pair_catalog
     "PairEntry", "PairCatalog", "V53_PAIR_CATALOG",
+    # capital_profile_contracts
+    "REQUIRED_CAPITAL_BUCKETS",
+    "CapitalBucketProfile", "CapitalProfileBlockedPair",
+    "CapitalProfileValidationResult", "CapitalProfileSelectionResult",
+    "CapitalProfileEnforcementResult", "capital_profile_artifact_hash",
+    # promotion_artifact_contracts
+    "REQUIRED_PROMOTION_ENGINE_IDS", "REQUIRED_SAMPLE_SIZE_SCOPES",
+    "EngineCPromotionLocalStatus", "EngineDPromotionLocalStatus",
+    "EnginePromotionArtifact", "PairPromotionArtifact",
+    "StrategyPromotionArtifact", "SampleSizeSurvivalArtifact",
+    "engine_promotion_artifact_hash", "pair_promotion_artifact_hash",
+    "strategy_promotion_artifact_hash", "sample_size_survival_artifact_hash",
+    # governed_audit_evidence_contracts
+    "GovernedAuditEvidenceClass", "GovernedAuditEvidenceEntry", "GovernedAuditEvidenceIndex",
     # ml_model_artifact
     "MlModelFamily", "MlModelWindow", "MlModelDriftBaseline", "MlModelArtifact",
     # regime_detector_artifact
@@ -185,4 +204,9 @@ __all__ = [
     "MlBacktestRouteFeatures", "MlBacktestOutcomeContext",
     "MlBacktestTrainingSample", "MlBacktestTrainingDataset",
     "MlModelSourceArtifactSummary",
+    # ml_governance_proof_contracts
+    "MlAntiLeakageProofArtifact", "MlLiveDriftSnapshot", "MlSupplementaryRefsSourceSummary",
+    # strategy_ladder_proxy_fidelity_surface
+    "StrategyLadderProxyFidelitySurface", "ThresholdCalibrationCounts",
+    "build_strategy_ladder_proxy_fidelity_surface", "classify_threshold_calibration_counts",
 ]

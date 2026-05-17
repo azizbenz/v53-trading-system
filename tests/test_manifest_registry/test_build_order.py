@@ -10,6 +10,7 @@ from manifest_registry.build_order_registry import (
     get_next_stage,
     get_prerequisite_modules,
     validate_build_order_coherent,
+    validate_modules_have_exactly_one_stage,
     validate_modules_have_stages,
 )
 from manifest_registry.dependency_registry import ALLOWED_DEPENDENCIES
@@ -27,6 +28,10 @@ class TestBuildOrderCoherent:
     def test_all_inventory_modules_have_stage(self):
         missing = validate_modules_have_stages()
         assert missing == [], f"Modules not in any build stage: {missing}"
+
+    def test_all_inventory_modules_have_exactly_one_stage(self):
+        errors = validate_modules_have_exactly_one_stage()
+        assert errors == [], f"Modules with non-unique build stage declaration: {errors}"
 
     def test_stages_are_ordered(self):
         stages = get_all_stages()
@@ -82,6 +87,7 @@ class TestBuildOrderCoherent:
         stage17 = get_build_stage(17)
         assert stage17 is not None
         assert stage17.name == "UI Complete + Live-Complete"
+        assert "cockpit" in stage17.modules
 
     def test_all_18_stages_present(self):
         """V5.3 plan defines 18 stages: 0-17."""

@@ -16,7 +16,9 @@ from engines.engine_d import (
     EngineDRuntimeInput,
     EngineDRuntimeStatus,
 )
-from engines.engine_d.engine_d_runner import EngineDInput, NoTradeReasonD
+from engines.engine_d.engine_d_runtime import _ENGINE_D_FEATURE_WEIGHTS
+from engines.engine_d.engine_d_runner import EngineDInput, NoTradeReasonD, run_engine_d
+from engines.engine_d.engine_d_runtime_support import build_scoring_candidate
 from interface_contracts import (
     BetStructure,
     ConditioningFamily,
@@ -269,6 +271,38 @@ def test_runtime_emits_signal_and_accepts_through_risk(repo_tmp_path: Path) -> N
     assert accepted_log.origin_context_id == "ctx-btc-01"
     assert accepted_log.duplication_overlap_with_engine_a == 0.24
     assert result.forecast_signal_candidate is None
+
+
+def test_scoring_candidate_marks_shared_physics_mapping_partial_for_engine_d() -> None:
+    runtime_input = _runtime_input(
+        supplementary_refs=("E:/shadow/regime_detector_artifact.summary.json",),
+    )
+    engine_output = run_engine_d(runtime_input.engine_inputs)
+
+    candidate = build_scoring_candidate(runtime_input, engine_output, _ENGINE_D_FEATURE_WEIGHTS)
+
+    assert candidate.supplementary_refs == ("E:/shadow/regime_detector_artifact.summary.json",)
+    assert candidate.carriage_statuses == ("local_math_only", "shared_scoring_physics_partial")
+    assert candidate.carriage_reason_codes == (
+        "SCORING_SHARED_PHYSICS_MAPPING_NOT_PROVEN",
+        "HUMAN_DECISION_REQUIRED_FOR_C_D_SHARED_CARRIAGE",
+        "REGIME_SCORING_REINJECTION_PARTIAL",
+    )
+    assert candidate.shared_physics_mapping_status == "PARTIAL_BY_DESIGN"
+    assert candidate.engine_role == (
+        "Re-entry / second-chance engine with first-episode linkage, anti-revenge, "
+        "reformation, and realized-vol context."
+    )
+    assert candidate.execution_fragility == pytest.approx(0.0)
+    assert candidate.market_toxicity == pytest.approx(0.0)
+    assert candidate.spread_regime_penalty == pytest.approx(0.0)
+    assert candidate.participation_penalty == pytest.approx(0.0)
+    assert candidate.risk_penalty == pytest.approx(0.0)
+    assert candidate.cost_model_completeness_status == "NOT_PROVEN"
+    assert candidate.fee_source_status == "NOT_PROVEN"
+    assert candidate.impact_source_status == "NOT_PROVEN"
+    assert candidate.fill_realism_status == "NOT_PROVEN"
+    assert candidate.realized_slippage_status == "NOT_PROVEN"
 
 
 def test_runtime_emits_additive_forecast_signal_when_strategy_id_is_provided(repo_tmp_path: Path) -> None:
@@ -563,6 +597,23 @@ def test_runtime_coordination_size_reduction_reaches_risk_candidate(repo_tmp_pat
     assert risk_runtime.candidate is not None
     assert risk_runtime.candidate.size == pytest.approx(400.0)
     assert risk_runtime.candidate.planned_loss == pytest.approx(20.0)
+    assert risk_runtime.candidate.shared_physics_mapping_status == "PARTIAL_BY_DESIGN"
+    assert risk_runtime.candidate.engine_role == (
+        "Re-entry / second-chance engine with first-episode linkage, anti-revenge, "
+        "reformation, and realized-vol context."
+    )
+    assert risk_runtime.candidate.execution_fragility == pytest.approx(0.0)
+    assert risk_runtime.candidate.market_toxicity == pytest.approx(0.0)
+    assert risk_runtime.candidate.spread_regime_penalty == pytest.approx(0.0)
+    assert risk_runtime.candidate.execution_fragility_status == "NOT_PROVEN"
+    assert risk_runtime.candidate.market_toxicity_status == "NOT_PROVEN"
+    assert risk_runtime.candidate.spread_regime_penalty_status == "NOT_PROVEN"
+    assert risk_runtime.candidate.participation_penalty_status == "NOT_PROVEN"
+    assert risk_runtime.candidate.cost_model_completeness_status == "NOT_PROVEN"
+    assert risk_runtime.candidate.fee_source_status == "NOT_PROVEN"
+    assert risk_runtime.candidate.impact_source_status == "NOT_PROVEN"
+    assert risk_runtime.candidate.fill_realism_status == "NOT_PROVEN"
+    assert risk_runtime.candidate.realized_slippage_status == "NOT_PROVEN"
     assert any(entry.event == "engine_d_coordination_size_reduced" for entry in result.log_entries)
 
 

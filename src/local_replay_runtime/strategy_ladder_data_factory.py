@@ -12,8 +12,25 @@ from pathlib import Path
 import re
 import zipfile
 
+from data_backbone.feature_timeframes import (
+    SUPPORTED_GOLD_TIMEFRAMES,
+    TIMEFRAME_FEATURE_BUILD_FAILED,
+    TIMEFRAME_FEATURE_GENERATION_NOT_SUPPORTED,
+    TIMEFRAME_FEATURE_INPUT_MISSING,
+    TIMEFRAME_PRUNED_NOT_REQUESTED,
+    normalize_timeframe,
+)
+from data_backbone.market_physics_math import (
+    capratio,
+    fragility_score_v1,
+    sweep_score_v1,
+)
 from interface_contracts.atomic_io import atomic_write_json, atomic_write_text
 from interface_contracts.storage_budget_support import normalize_silver_storage_format
+from local_replay_runtime.backtest_replay_dataset_adapter import (
+    build_backtest_replay_dataset_manifest,
+    write_backtest_replay_dataset_manifest,
+)
 from local_replay_runtime.bybit_historical_metadata import (
     BYBIT_HISTORICAL_METADATA_NOT_PROVEN,
     BYBIT_HISTORICAL_METADATA_READY,
@@ -25,6 +42,29 @@ from local_replay_runtime.bybit_historical_metadata import (
     METADATA_TEMPORAL_NOT_PROVEN,
     HistoricalMetadataCacheResult,
     load_historical_metadata_cache,
+)
+from local_replay_runtime.data_science_quality_gates import (
+    build_data_science_quality_report,
+    build_runtime_feature_parity_manifest,
+    write_quality_reports,
+)
+from local_replay_runtime.gold_microstructure_feature_builder import (
+    build_gold_microstructure_feature_manifest,
+    write_gold_feature_reports,
+)
+from local_replay_runtime.ia_lab_feature_dataset_adapter import (
+    build_expected_edge_feature_dataset,
+)
+from local_replay_runtime.raw_market_data_indexer import (
+    build_bronze_market_index,
+    scan_bybit_raw_root,
+    write_bronze_market_index,
+    write_bronze_market_index_markdown,
+    write_raw_market_file_manifest_bundle,
+)
+from local_replay_runtime.silver_market_synchronizer import (
+    build_silver_synchronized_market_manifest,
+    write_silver_market_reports,
 )
 from local_replay_runtime.strategy_ladder_data_factory_models import (
     StrategyLadderCompressionReport,
@@ -134,6 +174,80 @@ def _optional_float(value: object) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _book_resiliency_penalty(book_status: str) -> float:
+    if book_status == "BOOK_DEPTH20_AVAILABLE":
+        return 0.0
+    if book_status == "BOOK_LIMITED_DEPTH_AVAILABLE":
+        return 0.35
+    if book_status == "BOOK_TOP_OF_BOOK_ONLY":
+        return 0.65
+    return 1.0
+
+
+def _session_tag(timestamp_ms: int) -> str:
+    timestamp = datetime.fromtimestamp(max(timestamp_ms, 0) / 1000.0, tz=UTC)
+    if timestamp.hour < 8:
+        bucket = "ASIA"
+    elif timestamp.hour < 16:
+        bucket = "EUROPE"
+    else:
+        bucket = "US"
+    weekday = "WEEKEND" if timestamp.weekday() >= 5 else "WEEKDAY"
+    return f"UTC_{bucket}|{weekday}"
+
+
+def _false_breakout_context(
+    *,
+    open_price: float,
+    high_price: float,
+    low_price: float,
+    close_price: float,
+    volume: float,
+    trailing_mean_volume: float,
+) -> float:
+    epsilon = 1e-12
+    candle_range = max(high_price - low_price, epsilon)
+    candle_body = abs(close_price - open_price)
+    upper_wick = max(high_price - max(open_price, close_price), 0.0)
+    lower_wick = max(min(open_price, close_price) - low_price, 0.0)
+    wick_ratio = max(upper_wick, lower_wick) / max(candle_body, candle_range * 0.1, epsilon)
+    vol_burst = volume / max(trailing_mean_volume, epsilon)
+    reject_indicator = (
+        1.0
+        if candle_body <= candle_range * 0.35 and max(upper_wick, lower_wick) >= candle_range * 0.4
+        else 0.0
+    )
+    return float(
+        sweep_score_v1(
+            wick_ratio=wick_ratio,
+            vol_burst=vol_burst,
+            reject_indicator=reject_indicator,
+        )
+    )
+
+
+def _fragility_context(
+    *,
+    open_price: float,
+    high_price: float,
+    low_price: float,
+    spread_bps: float,
+    book_status: str,
+) -> float:
+    if open_price <= 0.0:
+        return 0.0
+    price_range_bps = abs((high_price - low_price) / open_price) * 10_000.0
+    base_fragility = capratio(price_range_bps, 35.0)
+    spread_regime_penalty = capratio(spread_bps, 8.0)
+    return float(
+        fragility_score_v1(
+            base_fragility,
+            spread_regime_penalty=spread_regime_penalty,
+            book_resiliency_penalty=_book_resiliency_penalty(book_status),
+        )
+    )
 
 
 def _date_in_range(
@@ -1760,6 +1874,7 @@ def _write_gold_features(
         "queue_pressure",
         "session_tags",
         "engine_feature_readiness_flags",
+        "fragility_false_breakout_features",
     }
     if request.dry_run:
         return finalize_hashed_model(
@@ -1775,10 +1890,22 @@ def _write_gold_features(
             )
         )
     requested_timeframes = {
-        str(timeframe).strip().lower()
+        normalize_timeframe(timeframe)
         for timeframe in request.timeframes
-        if str(timeframe).strip()
+        if normalize_timeframe(timeframe)
     }
+    # Patch 2026-05-15 (timeframe propagation audit) — track silver inputs and
+    # per-timeframe build outcomes so prunes between silver and gold are never
+    # silent. Reasons are emitted as `blocker_codes` and as the per-timeframe
+    # map `pruning_reason_by_timeframe` on the manifest.
+    silver_timeframes_set: set[str] = {
+        normalize_timeframe(entry.timeframe)
+        for entry in index_entries
+        if entry.data_type == "ohlcv"
+        and normalize_timeframe(entry.timeframe)
+    }
+    per_timeframe_row_count: dict[str, int] = {}
+    per_timeframe_errored: set[str] = set()
     gold_row_limit = (
         int(request.max_gold_feature_rows)
         if request.max_gold_feature_rows > 0
@@ -1893,6 +2020,11 @@ def _write_gold_features(
                 high_price = float(row.get("high") or 0.0)
                 low_price = float(row.get("low") or 0.0)
                 volume = float(row.get("volume") or 0.0)
+                trailing_rows = rows[max(0, index - 20) : index]
+                trailing_mean_volume = (
+                    sum(float(item.get("volume") or 0.0) for item in trailing_rows)
+                    / max(len(trailing_rows), 1)
+                )
                 spread_bps = 0.0
                 depth_levels = None
                 book_status = "BOOK_DEPTH_NOT_PROVEN"
@@ -1997,21 +2129,59 @@ def _write_gold_features(
                     economic_spread_provenance = prov.spread_provenance
                     economic_slippage_provenance = prov.slippage_provenance
 
+                execution_fragility = _fragility_context(
+                      open_price=open_price,
+                      high_price=high_price,
+                      low_price=low_price,
+                      spread_bps=economic_spread_bps,
+                      book_status=book_status,
+                  )
+                false_breakout_context = _false_breakout_context(
+                      open_price=open_price,
+                      high_price=high_price,
+                      low_price=low_price,
+                      close_price=close_price,
+                      volume=volume,
+                      trailing_mean_volume=trailing_mean_volume,
+                  )
+                maker_fee_rate = _optional_float(
+                      metadata_row.get("maker_fee_rate")
+                      or metadata_row.get("maker_fee")
+                      or metadata_row.get("makerFee")
+                  )
+                taker_fee_rate = _optional_float(
+                      metadata_row.get("taker_fee_rate")
+                      or metadata_row.get("taker_fee")
+                      or metadata_row.get("takerFee")
+                  )
+                break_even_bps = (
+                      economic_spread_bps
+                      + economic_slippage_bps
+                      + max((taker_fee_rate or 0.0) * 10_000.0, 0.0)
+                  )
+                feature_values = {
+                      "close_return": ((close_price - open_price) / open_price) if open_price > 0.0 else 0.0,
+                      "high_low_range": ((high_price - low_price) / open_price) if open_price > 0.0 else 0.0,
+                      "volume": volume,
+                      "trade_count_hint": trade_count,
+                      "sweep_score": false_breakout_context,
+                      "false_breakout_context": false_breakout_context,
+                      "fragility_score": execution_fragility,
+                      "fragility": execution_fragility,
+                      "break_even_bps": break_even_bps,
+                      "session_tags": _session_tag(timestamp_ms),
+                  }
+
                 feature_row = StrategyLadderFeatureRow.model_validate(
-                    {
-                        "timestamp_ms": timestamp_ms,
-                        "pair": pair,
-                        "timeframe": entry.timeframe or "1m",
-                        "engine_scope": request.engines,
-                        "feature_values": {
-                            "close_return": ((close_price - open_price) / open_price) if open_price > 0.0 else 0.0,
-                            "high_low_range": ((high_price - low_price) / open_price) if open_price > 0.0 else 0.0,
-                            "volume": volume,
-                            "trade_count_hint": trade_count,
-                        },
-                        "feature_version": "strategy_ladder.gold.v1",
-                        "input_data_hash": entry.file_hash,
-                        "method_version_hash": "strategy_ladder.gold.v1",
+                      {
+                          "timestamp_ms": timestamp_ms,
+                          "pair": pair,
+                          "timeframe": entry.timeframe or "1m",
+                          "engine_scope": request.engines,
+                          "feature_values": feature_values,
+                          "feature_version": "strategy_ladder.gold.v1",
+                          "input_data_hash": entry.file_hash,
+                          "method_version_hash": "strategy_ladder.gold.v1",
                         "source_ref": str(output_path.resolve()),
                         "available_at_timestamp_ms": timestamp_ms,
                         "close_price": close_price,
@@ -2028,50 +2198,84 @@ def _write_gold_features(
                         "slippage_provenance": economic_slippage_provenance,
                         "latency_penalty_bps": economic_latency_penalty_bps,
                         "fill_ratio": 1.0,
-                        "tick_size": _optional_float(
-                            metadata_row.get("tick_size") or metadata_row.get("tickSize")
-                        ),
-                        "step_size": _optional_float(
-                            metadata_row.get("qty_step")
-                            or metadata_row.get("step_size")
-                            or metadata_row.get("stepSize")
-                        ),
-                        "maker_fee_rate": _optional_float(
-                            metadata_row.get("maker_fee_rate")
-                            or metadata_row.get("maker_fee")
-                            or metadata_row.get("makerFee")
-                        ),
-                        "taker_fee_rate": _optional_float(
-                            metadata_row.get("taker_fee_rate")
-                            or metadata_row.get("taker_fee")
-                            or metadata_row.get("takerFee")
-                        ),
-                        "book_depth_levels": depth_levels,
-                        "book_depth_source_status": book_status,
-                        "book_depth_snapshot_count": len(entry_book_entries),
+                          "tick_size": _optional_float(
+                              metadata_row.get("tick_size") or metadata_row.get("tickSize")
+                          ),
+                          "step_size": _optional_float(
+                              metadata_row.get("qty_step")
+                              or metadata_row.get("step_size")
+                              or metadata_row.get("stepSize")
+                          ),
+                          "maker_fee_rate": maker_fee_rate,
+                          "taker_fee_rate": taker_fee_rate,
+                          "book_depth_levels": depth_levels,
+                          "book_depth_source_status": book_status,
+                          "book_depth_snapshot_count": len(entry_book_entries),
                         "book_depth_event_count": len(entry_book_entries),
                         "book_depth_missing_count": 0 if entry_book_entries else 1,
                         "book_depth_staleness_status": book_status,
                         "planned_notional": 100.0,
                         "allocation_fraction": 0.25,
                         "min_notional": pair_min_notional,
-                        "feature_sources_used": entry_feature_sources_used,
-                        "trade_feature_status": entry_trade_feature_status,
-                        "kline_feature_status": kline_feature_status,
-                        "orderbook_feature_status": entry_orderbook_feature_status,
-                        "candidate_data_source_label": entry_candidate_data_source_label,
-                        "compatibility_notes": ("NOT_LIVE_ENGINE_PARITY",),
-                    }
-                )
+                          "feature_sources_used": entry_feature_sources_used,
+                          "trade_feature_status": entry_trade_feature_status,
+                          "kline_feature_status": kline_feature_status,
+                          "orderbook_feature_status": entry_orderbook_feature_status,
+                          "candidate_data_source_label": entry_candidate_data_source_label,
+                          "compatibility_notes": (
+                              "NOT_LIVE_ENGINE_PARITY",
+                              "FRAGILITY_FALSE_BREAKOUT_DISCOVERY_GRADE",
+                          ),
+                      }
+                  )
                 feature_rows.append(feature_row.model_dump(mode="json"))
             if feature_rows:
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 atomic_write_text(output_path, _jsonl_dump_lines(feature_rows))
                 feature_paths.append(str(output_path.resolve()))
                 feature_row_count += len(feature_rows)
+                # Patch 2026-05-15 — per-timeframe row accounting for the
+                # manifest. Falls back to "1m" only when the silver entry
+                # itself carries no timeframe label (legacy paths).
+                tf_normalized_written = normalize_timeframe(entry.timeframe) or "1m"
+                per_timeframe_row_count[tf_normalized_written] = (
+                    per_timeframe_row_count.get(tf_normalized_written, 0)
+                    + len(feature_rows)
+                )
+    # Patch 2026-05-15 (timeframe propagation audit) — classify every silver
+    # and requested timeframe and emit an explicit reason code for any that
+    # did not materialize in gold. No prune may be silent.
+    gold_timeframes_generated_set: set[str] = {
+        tf for tf, count in per_timeframe_row_count.items() if count > 0
+    }
+    pruning_reason_by_timeframe: dict[str, str] = {}
+    for tf in silver_timeframes_set:
+        if tf in gold_timeframes_generated_set:
+            continue
+        if tf not in SUPPORTED_GOLD_TIMEFRAMES:
+            pruning_reason_by_timeframe[tf] = TIMEFRAME_FEATURE_GENERATION_NOT_SUPPORTED
+        elif requested_timeframes and tf not in requested_timeframes:
+            pruning_reason_by_timeframe[tf] = TIMEFRAME_PRUNED_NOT_REQUESTED
+        else:
+            # Silver had it, registry supports it, request did not exclude it,
+            # yet gold has zero rows. Treat as a build failure (empty silver
+            # file, validation reject, or row limit truncation).
+            pruning_reason_by_timeframe[tf] = TIMEFRAME_FEATURE_BUILD_FAILED
+    for tf in requested_timeframes:
+        if tf in gold_timeframes_generated_set or tf in silver_timeframes_set:
+            continue
+        if tf not in SUPPORTED_GOLD_TIMEFRAMES:
+            pruning_reason_by_timeframe[tf] = TIMEFRAME_FEATURE_GENERATION_NOT_SUPPORTED
+        else:
+            pruning_reason_by_timeframe[tf] = TIMEFRAME_FEATURE_INPUT_MISSING
+    timeframes_pruned = tuple(sorted(pruning_reason_by_timeframe))
+    silver_timeframes_detected = tuple(sorted(silver_timeframes_set))
+    gold_timeframes_generated = tuple(sorted(gold_timeframes_generated_set))
+    blocker_set: set[str] = set(pruning_reason_by_timeframe.values())
+    if feature_row_count == 0:
+        blocker_set.add("GOLD_FEATURE_STORE_NOT_READY")
+    blocker_codes = tuple(sorted(blocker_set))
     status = "FEATURE_STORE_READY" if feature_row_count > 0 else "GOLD_FEATURE_STORE_NOT_READY"
-    if status == "FEATURE_STORE_READY":
-        status = "FEATURE_STORE_READY"
     manifest = StrategyLadderGoldFeatureManifest(
         gold_feature_store_status=status,
         feature_paths=tuple(feature_paths),
@@ -2082,7 +2286,12 @@ def _write_gold_features(
         feature_groups_ready=(tuple(sorted(feature_groups)) if feature_row_count > 0 else ()),
         engines_encoded=request.engines,
         timeframes_encoded=request.timeframes,
-        blocker_codes=(() if feature_row_count > 0 else ("GOLD_FEATURE_STORE_NOT_READY",)),
+        silver_timeframes_detected=silver_timeframes_detected,
+        gold_timeframes_generated=gold_timeframes_generated,
+        timeframes_pruned=timeframes_pruned,
+        pruning_reason_by_timeframe=dict(pruning_reason_by_timeframe),
+        timeframe_feature_row_count=dict(per_timeframe_row_count),
+        blocker_codes=blocker_codes,
     )
     return finalize_hashed_model(manifest)
 
@@ -2754,8 +2963,9 @@ def run_strategy_ladder_data_factory(
     _write_report(report_root / "raw_source_report.json", enriched_source_report)
     _write_report(report_root / "pair_universe_report.json", pair_report)
     _write_report(report_root / "data_quality_report.json", data_quality)
+    silver_index_report_path = report_root / "silver_index.json"
     _write_report(
-        report_root / "silver_index.json",
+        silver_index_report_path,
         {
             "schema_version": "v1",
             "entries": [entry.model_dump(mode="json") for entry in silver_index],
@@ -2767,6 +2977,103 @@ def run_strategy_ladder_data_factory(
     )
     _write_report(report_root / "gold_feature_manifest.json", gold_manifest)
     _write_report(report_root / "compression_report.json", compression)
+    primary_symbol = next(
+        iter(
+            pair_report.available_pairs
+            or pair_report.discovered_pairs
+            or request.pairs
+            or source_report.active_pairs_after_pruning
+            or ("UNKNOWN",)
+        )
+    )
+    canonical_raw_roots = (
+        tuple(request.raw_roots)
+        + ((request.historical_metadata_root,) if request.historical_metadata_root is not None else ())
+    )
+    canonical_source_types = tuple(
+        dict.fromkeys(
+            (
+                *request.data_types,
+                *(
+                    ("metadata",)
+                    if request.historical_metadata_root is not None
+                    else ()
+                ),
+            )
+        )
+    )
+    canonical_raw_manifests = scan_bybit_raw_root(
+        raw_roots=canonical_raw_roots,
+        symbol=primary_symbol,
+        start=normalized_start,
+        end=normalized_end,
+        source_types=canonical_source_types,
+    )
+    write_raw_market_file_manifest_bundle(
+        report_root / "raw_file_manifest.jsonl.gz",
+        canonical_raw_manifests,
+    )
+    bronze_index = build_bronze_market_index(
+        canonical_raw_manifests,
+        symbol=primary_symbol,
+    )
+    write_bronze_market_index(report_root / "bronze_market_index.json", bronze_index)
+    write_bronze_market_index_markdown(report_root / "bronze_market_index.md", bronze_index)
+    silver_sync_manifest = build_silver_synchronized_market_manifest(
+        symbol=primary_symbol,
+        bronze_index=bronze_index,
+        silver_index=silver_index,
+    )
+    write_silver_market_reports(
+        report_root,
+        manifest=silver_sync_manifest,
+        bronze_index=bronze_index,
+    )
+    canonical_gold_manifest = build_gold_microstructure_feature_manifest(
+        gold_root=request.gold_root,
+        pairs=(primary_symbol,),
+        timeframes=request.timeframes,
+        start=normalized_start,
+        end=normalized_end,
+    )
+    write_gold_feature_reports(report_root, canonical_gold_manifest)
+    expected_edge_manifest = build_expected_edge_feature_dataset(
+        gold_root=request.gold_root,
+        output_dir=report_root,
+        dataset_id=f"{request.run_id}.expected_edge_features",
+        pairs=(primary_symbol,),
+        timeframes=request.timeframes,
+        start=normalized_start,
+        end=normalized_end,
+        feature_names=("close_return", "high_low_range", "volume"),
+        source_silver_index_ref=str(silver_index_report_path.resolve()),
+        gold_manifest=canonical_gold_manifest,
+    )
+    backtest_manifest = build_backtest_replay_dataset_manifest(
+        pair_scope=canonical_gold_manifest.symbol_scope or (primary_symbol,),
+        timeframe_scope=canonical_gold_manifest.timeframe_scope or request.timeframes,
+        silver_index=silver_index,
+        gold_manifest=canonical_gold_manifest,
+    )
+    write_backtest_replay_dataset_manifest(report_root, backtest_manifest)
+    runtime_parity_manifest = build_runtime_feature_parity_manifest(
+        gold_manifest=canonical_gold_manifest,
+        source_silver_index_ref=str(silver_index_report_path.resolve()),
+    )
+    data_science_report = build_data_science_quality_report(
+        expected_edge_manifest=expected_edge_manifest,
+    )
+    write_quality_reports(
+        report_root,
+        data_science_report=data_science_report,
+        runtime_parity_manifest=runtime_parity_manifest,
+        raw_manifests=canonical_raw_manifests,
+        bronze_index=bronze_index,
+        silver_manifest=silver_sync_manifest,
+        gold_manifest=canonical_gold_manifest,
+        expected_edge_manifest=expected_edge_manifest,
+        backtest_manifest=backtest_manifest,
+    )
     # Patch 6 batch 1 — emit the storage budget report from real silver sizes.
     from local_replay_runtime.storage_budget_report import (
         StorageBudgetReport,

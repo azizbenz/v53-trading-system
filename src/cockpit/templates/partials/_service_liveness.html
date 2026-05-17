@@ -1,0 +1,24 @@
+<section class="card" id="service-liveness">
+    <div class="card__head">
+        <h3>Service Liveness</h3>
+        <span class="card__sub">{{ vm.operational_proof.service_liveness.service_status }}</span>
+    </div>
+    <div class="card__body">
+        <table class="data-table data-table--compact">
+            <tbody>
+                <tr><th>Cockpit alive</th><td>{{ vm.operational_proof.service_liveness.cockpit_alive }}</td></tr>
+                <tr><th>Shadow service running</th><td>{{ vm.operational_proof.service_liveness.shadow_service_running }}</td></tr>
+                <tr><th>Control ready</th><td>{{ vm.operational_proof.service_liveness.control_ready }}</td></tr>
+                <tr><th>Archive reader only</th><td>{{ vm.operational_proof.service_liveness.archive_reader_only }}</td></tr>
+                <tr><th>Raw service status</th><td>{{ vm.operational_proof.service_liveness.service_status }}</td></tr>
+                <tr><th>PID file present</th><td>{{ vm.operational_proof.service_liveness.pid_file_present }}</td></tr>
+                <tr><th>PID</th><td>{{ vm.operational_proof.service_liveness.pid or 'n/a' }}</td></tr>
+                <tr><th>PID alive</th><td>{{ vm.operational_proof.service_liveness.pid_is_alive }}</td></tr>
+                <tr><th>Last heartbeat</th><td>{{ vm.operational_proof.service_liveness.last_heartbeat_at or 'n/a' }}</td></tr>
+                <tr><th>Heartbeat age</th><td>{{ "%.1fs"|format(vm.operational_proof.service_liveness.heartbeat_age_seconds) if vm.operational_proof.service_liveness.heartbeat_age_seconds is not none else 'n/a' }}</td></tr>
+                <tr><th>Main loop count</th><td>{{ vm.operational_proof.service_liveness.main_loop_count }}</td></tr>
+                <tr><th>Runtime mode</th><td>{{ vm.operational_proof.service_liveness.runtime_mode }}</td></tr>
+            </tbody>
+        </table>
+    </div>
+</section>

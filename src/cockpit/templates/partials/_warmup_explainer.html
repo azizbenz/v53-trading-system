@@ -1,0 +1,33 @@
+<section class="card" id="warmup-blocker-explainer">
+    <div class="card__head">
+        <h3>Warmup Blocker Explainer</h3>
+        <span class="card__sub">{{ vm.operational_proof.warmup_explainer.source_status }}</span>
+    </div>
+    <div class="card__body">
+        <table class="data-table data-table--compact">
+            <tbody>
+                <tr><th>Readiness</th><td>{{ vm.operational_proof.warmup_explainer.readiness_status }}</td></tr>
+                <tr><th>Final state</th><td>{{ vm.operational_proof.warmup_explainer.final_state }}</td></tr>
+                <tr><th>Eligible to trade</th><td>{{ vm.operational_proof.warmup_explainer.eligible_to_trade }}</td></tr>
+                <tr><th>Required checks passed</th><td>{{ vm.operational_proof.warmup_explainer.required_checks_passed }}</td></tr>
+                <tr><th>Blocking reasons</th><td>{{ vm.operational_proof.warmup_explainer.blocking_reasons|join(', ') if vm.operational_proof.warmup_explainer.blocking_reasons else 'none' }}</td></tr>
+                <tr><th>Review-only checks</th><td>{{ vm.operational_proof.warmup_explainer.review_only_checks|join(', ') if vm.operational_proof.warmup_explainer.review_only_checks else 'none' }}</td></tr>
+            </tbody>
+        </table>
+        <table class="data-table data-table--compact">
+            <thead>
+                <tr><th>Check</th><th>Status</th><th>Required action</th><th>Suggested command</th></tr>
+            </thead>
+            <tbody>
+            {% for check in vm.operational_proof.warmup_explainer.checks %}
+                <tr>
+                    <td><code>{{ check.check_id }}</code></td>
+                    <td>{{ check.status }}</td>
+                    <td>{{ check.required_action or 'none' }}</td>
+                    <td><code>{{ check.suggested_command or 'n/a' }}</code></td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>

@@ -472,6 +472,40 @@ def _route_hint_payload(
     return payload
 
 
+def _route_hint_payloads(
+    config: ShadowLiveWebSocketConfig,
+    *,
+    pair: str,
+    index: int,
+    timestamp_ms: int,
+) -> tuple[dict[str, object], ...]:
+    pair_key = pair.upper()
+    raw_payload = config.route_hints_by_pair.get(pair_key, {})
+    if isinstance(raw_payload, dict):
+        payloads = (raw_payload,)
+    elif isinstance(raw_payload, (list, tuple)):
+        payloads = tuple(
+            item
+            for item in raw_payload
+            if isinstance(item, dict)
+        )
+    else:
+        payloads = ()
+    if not payloads:
+        payloads = ({},)
+    normalized: list[dict[str, object]] = []
+    for hint_index, payload_source in enumerate(payloads, start=1):
+        payload = dict(payload_source)
+        engine_id = str(payload.get("engine_id", "")).strip() or "engine_a"
+        payload.setdefault(
+            "route_id",
+            f"live_ws:{pair_key}:{engine_id}:{timestamp_ms}:{index}:{hint_index}",
+        )
+        payload["engine_id"] = engine_id
+        normalized.append(payload)
+    return tuple(normalized)
+
+
 async def _collect_time_sync_offsets_ms(
     config: ShadowLiveWebSocketConfig,
     *,
@@ -573,11 +607,12 @@ def capture_live_websocket_snapshot_batch(
             f"Native live_websocket adapter failed to connect to {endpoint}: {message}"
         )
     observed_messages: list[ObservedWebSocketMessage] = []
+    accepted_frames = 0
     idle_polls = 0
     started_at = clock()
     try:
         while (
-            len(observed_messages) < config.capture_frame_limit
+            accepted_frames < config.capture_frame_limit
             and idle_polls < config.idle_poll_limit
             and (clock() - started_at) <= config.capture_timeout_s
         ):
@@ -587,22 +622,25 @@ def capture_live_websocket_snapshot_batch(
                 idle_polls += 1
                 continue
             idle_polls = 0
-            observed_messages.append(
-                ObservedWebSocketMessage(
-                    pair=raw_message.pair,
-                    stream_type=raw_message.stream_type,
-                    payload=dict(raw_message.payload),
-                    recv_time=raw_message.recv_time,
-                    source=raw_message.source or "binance_live",
-                    sequence=raw_message.sequence,
-                    route_hint=_route_hint_payload(
-                        config,
+            accepted_frames += 1
+            timestamp_ms = int(round(raw_message.recv_time * 1000.0))
+            for route_hint in _route_hint_payloads(
+                config,
+                pair=raw_message.pair,
+                index=accepted_frames,
+                timestamp_ms=timestamp_ms,
+            ):
+                observed_messages.append(
+                    ObservedWebSocketMessage(
                         pair=raw_message.pair,
-                        index=len(observed_messages) + 1,
-                        timestamp_ms=int(round(raw_message.recv_time * 1000.0)),
-                    ),
+                        stream_type=raw_message.stream_type,
+                        payload=dict(raw_message.payload),
+                        recv_time=raw_message.recv_time,
+                        source=raw_message.source or "binance_live",
+                        sequence=raw_message.sequence,
+                        route_hint=route_hint,
+                    )
                 )
-            )
     finally:
         runtime.disconnect(endpoint, now=clock(), error="capture_complete")
     build_result = build_snapshot_batch_from_observed_websocket_messages(

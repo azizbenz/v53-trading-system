@@ -136,6 +136,9 @@ def test_write_monitoring_artifacts_writes_vps_process_and_prometheus_outputs() 
         assert "v53_shadow_vps_process_ram_pct" in observability_export["text_payload"]
         assert "v53_shadow_vps_process_rss_mb" in observability_export["text_payload"]
         assert "v53_shadow_vps_service_status" in observability_export["text_payload"]
+        assert "v53_shadow_vps_host_cpu_alert_level" in observability_export["text_payload"]
+        assert "v53_shadow_vps_host_ram_alert_level" in observability_export["text_payload"]
+        assert "v53_shadow_vps_host_disk_alert_level" in observability_export["text_payload"]
 
         node_exporter_text = node_exporter_textfile_path.read_text(encoding="utf-8")
         assert "v53_shadow_vps_process_cpu_pct" in node_exporter_text

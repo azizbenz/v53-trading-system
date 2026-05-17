@@ -18,8 +18,15 @@ from interface_contracts import (
 )
 from interface_contracts.atomic_io import atomic_write_json
 from monitoring.alert_manager import AlertLifecycleTracker, build_monitoring_alerts
+from monitoring.challenger_evidence_alerts import (
+    build_shadow_challenger_alerts,
+    merge_alert_records,
+)
 from monitoring.contracts import (
     AlertHistoryEntry,
+    ArtifactComparisonProjection,
+    ArtifactRuntimeVisibilityProjection,
+    ArtifactVerdictBundleProjection,
     Build14Projection,
     Build9XProjection,
     EngineMetrics,
@@ -142,6 +149,10 @@ class MonitoringRuntime:
         execution_runtime_projection_bridge_projection: ExecutionRuntimeProjectionBridgeProjection
         | None = None,
         hybrid_router_projection: HybridRouterMetricsProjection | None = None,
+        artifact_runtime_visibility: tuple[ArtifactRuntimeVisibilityProjection, ...] = (),
+        artifact_comparisons: tuple[ArtifactComparisonProjection, ...] = (),
+        artifact_verdict_bundle: ArtifactVerdictBundleProjection | None = None,
+        shadow_last_completed_session_date: str = "",
         runtime_hook_bridge_projections: tuple[RuntimeHookBridgeProjection, ...] | None = None,
         replay_projection: ReplayImportProjection | None = None,
     ) -> MonitoringRuntimeResult:
@@ -166,6 +177,14 @@ class MonitoringRuntime:
             pairs=pairs,
         )
         alerts = build_monitoring_alerts(snapshot)
+        challenger_alerts = build_shadow_challenger_alerts(
+            snapshot.model_copy(update={"alerts": alerts}),
+            artifact_runtime_visibility=artifact_runtime_visibility,
+            artifact_comparisons=artifact_comparisons,
+            artifact_verdict_bundle=artifact_verdict_bundle,
+            shadow_last_completed_session_date=shadow_last_completed_session_date,
+        )
+        alerts = merge_alert_records(alerts, challenger_alerts)
         resolved_snapshot = snapshot.model_copy(update={"alerts": alerts})
         alert_history = self._alert_lifecycle_tracker.update(
             alerts=alerts,
@@ -217,6 +236,10 @@ class MonitoringRuntime:
                 execution_runtime_projection_bridge_projection
             ),
             hybrid_router_projection=hybrid_router_projection,
+            artifact_runtime_visibility=artifact_runtime_visibility,
+            artifact_comparisons=artifact_comparisons,
+            artifact_verdict_bundle=artifact_verdict_bundle,
+            shadow_last_completed_session_date=shadow_last_completed_session_date,
             runtime_hook_bridge_projections=runtime_hook_bridge_projections,
             replay_projection=replay_projection,
             operator_runtime=operator_runtime,

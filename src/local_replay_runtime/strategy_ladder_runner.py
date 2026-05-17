@@ -1,0 +1,6181 @@
+"""Canonical V5.3 Backtest Strategy Ladder runner."""
+
+from __future__ import annotations
+
+from collections import Counter, defaultdict
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+import hashlib
+import json
+from pathlib import Path
+from statistics import median
+
+from local_replay_runtime.capital_profile_builder import (
+    CapitalProfileBuildInput,
+    build_capital_bucket_profile,
+)
+from interface_contracts import (
+    ProfileId,
+    StrategyClassification,
+    build_strategy_ladder_proxy_fidelity_surface,
+)
+from interface_contracts.atomic_io import atomic_write_json, atomic_write_text
+from interface_contracts.capital_profile_contracts import (
+    CapitalBucketProfile,
+    CapitalProfileBlockedPair,
+)
+from interface_contracts.promotion_artifact_contracts import (
+    EnginePromotionArtifact,
+    PairPromotionArtifact,
+    SampleSizeSurvivalArtifact,
+    StrategyPromotionArtifact,
+)
+from interface_contracts.strategy_ladder_workflow_support import (
+    PHASE_B1,
+    PHASE_B2,
+    PHASE_STATUS_DISCOVERY_BLOCKED,
+    PHASE_STATUS_DISCOVERY_READY,
+    PHASE_STATUS_DISCOVERY_SAMPLED,
+    PHASE_STATUS_PROOF_BLOCKED,
+    PHASE_STATUS_PROMOTION_BLOCKED,
+    PHASE_STATUS_REPLAY_READY,
+    ensure_workflow_manifest,
+    read_workflow_manifest,
+    upsert_workflow_phase,
+)
+from local_replay_runtime.promotion_artifact_builder import (
+    ReplayPromotionArtifactBundle,
+    SampleSizeSurvivalBuildInput,
+    build_replay_promotion_artifact_bundle,
+    build_sample_size_survival_artifact,
+)
+from local_replay_runtime.governed_audit_evidence_index import (
+    build_governed_audit_evidence_entry,
+    build_governed_audit_evidence_index,
+    build_governed_audit_evidence_projection,
+)
+from local_replay_runtime.replay_metrics_collector import (
+    ReplayBookDepthAvailability,
+    ReplayCostParityEvidence,
+    ReplayFeeProvenance,
+    ReplayFillRealismEvidence,
+    ReplayImpactProvenance,
+    build_replay_metrics_summary,
+)
+from local_replay_runtime.replay_run_manifest import ReplayRunManifest
+from local_replay_runtime.strategy_ladder_b2_label_store_builder import (
+    StrategyLadderB2LabelStoreBuilderRequest,
+    build_strategy_ladder_b2_label_store,
+)
+from local_replay_runtime.strategy_ladder_operator_artifacts import (
+    write_strategy_ladder_operator_artifacts,
+)
+from local_replay_runtime.strategy_ladder_candidate_discovery import (
+    cap_strategy_ladder_candidates,
+    discover_strategy_ladder_candidates,
+    export_strategy_ladder_candidates,
+    load_strategy_ladder_candidate_events,
+    load_strategy_ladder_candidate_summary,
+)
+from local_replay_runtime.strategy_ladder_count_semantics import (
+    summarize_candidate_count_semantics,
+    summarize_replay_count_semantics,
+)
+from local_replay_runtime.strategy_ladder_complete_enabler_support import (
+    StrategyLadderBuild14Application,
+    apply_build14_shadow_context,
+)
+from local_replay_runtime.strategy_ladder_detailed_replay import (
+    StrategyLadderDetailedReplayStageResult,
+    run_strategy_ladder_detailed_replay,
+)
+from local_replay_runtime.strategy_ladder_economic_provenance import (
+    EconomicProvenance,
+    ExpectedEdgeModelProtocol,
+    compute_economic_provenance,
+    expected_edge_backtest_truth_status,
+    is_expected_edge_backtest_truth,
+)
+from local_replay_runtime.strategy_ladder_edge_model_provider import (
+    GovernedExpectedEdgeModelLoadResult,
+    load_governed_expected_edge_model_artifact,
+)
+from local_replay_runtime.strategy_ladder_engine_native_preselection import (
+    build_strategy_ladder_engine_native_preselection,
+)
+from local_replay_runtime.strategy_ladder_feature_store import (
+    load_strategy_ladder_feature_store,
+    parse_time_boundary_to_ms,
+)
+from local_replay_runtime.strategy_ladder_gate_waterfall_analysis import (
+    write_strategy_ladder_gate_waterfall_reports,
+)
+from local_replay_runtime.strategy_ladder_candidate_trade_semantics_audit import (
+    write_strategy_ladder_candidate_trade_semantics_audit,
+)
+from local_replay_runtime.strategy_ladder_models import (
+    StrategyLadderBucketReplayResult,
+    StrategyLadderCandidateEvent,
+    StrategyLadderReportSummary,
+    StrategyLadderRequest,
+    StrategyLadderRawWindowManifest,
+    StrategyLadderRunManifest,
+    deterministic_payload_hash,
+)
+from local_replay_runtime.strategy_ladder_raw_window_extractor import (
+    extract_strategy_ladder_raw_windows,
+    load_strategy_ladder_raw_window_manifests,
+)
+from local_replay_runtime.strategy_ladder_replay_performance_profile import (
+    StrategyLadderReplayPerformanceProfiler,
+)
+from meta_minimal.dtr_core.dtr_record_builder import DTRRecord
+from portfolio_minimal.allocation_router.capital_viability import (
+    analyze_capital_fragmentation,
+)
+
+
+_BOOK_STATUS_PRIORITY = (
+    "BOOK_DEPTH_MISSING",
+    "BOOK_DEPTH_STALE",
+    "BOOK_TOP_OF_BOOK_ONLY",
+    "BOOK_LIMITED_DEPTH_AVAILABLE",
+    "BOOK_DEPTH_NOT_PROVEN",
+    "BOOK_DEPTH20_AVAILABLE",
+)
+_ENGINE_NATIVE_PROGRESS_EVERY = 25
+_FEE_STATUS_PRIORITY = (
+    "FEE_SOURCE_MISSING",
+    "FEE_SOURCE_NOT_PROVEN",
+    "FEE_SOURCE_ESTIMATED",
+    "FEE_SOURCE_EXCHANGE_METADATA",
+    "FEE_SOURCE_CONFIGURED",
+    "FEE_SOURCE_PROVEN",
+)
+_IMPACT_STATUS_PRIORITY = (
+    "IMPACT_SOURCE_MISSING",
+    "IMPACT_SOURCE_NOT_PROVEN",
+    "IMPACT_SOURCE_SYNTHETIC",
+    "IMPACT_SOURCE_ESTIMATED",
+    "IMPACT_SOURCE_TOP_OF_BOOK_PROXY",
+    "IMPACT_SOURCE_LIMITED_DEPTH_MODEL",
+    "IMPACT_SOURCE_DEPTH20_MODEL",
+    "IMPACT_SOURCE_PROVEN",
+)
+_FILL_STATUS_PRIORITY = (
+    "FILL_REALISM_MISSING",
+    "FILL_REALISM_NOT_PROVEN",
+    "FILL_REALISM_MODEL_ONLY",
+    "FILL_REALISM_SYNTHETIC_ONLY",
+    "FILL_REALISM_PARTIAL",
+    "FILL_REALISM_SHADOW_MEASURED",
+    "FILL_REALISM_PROVEN",
+)
+_PARITY_STATUS_PRIORITY = (
+    "REPLAY_LIVE_COST_PARITY_MISSING",
+    "REPLAY_LIVE_COST_PARITY_NOT_PROVEN",
+    "REPLAY_LIVE_COST_PARITY_BLOCKED_BY_TELEMETRY",
+    "REPLAY_LIVE_COST_PARITY_PARTIAL",
+    "REPLAY_SHADOW_COST_PARITY_PROVEN",
+    "REPLAY_LIVE_COST_PARITY_PROVEN",
+)
+_EXECUTION_LABEL_SOURCE_PRIORITY = (
+    "REPLAY_PROXY_EXECUTION",
+    "PARTIAL_CANONICAL_EXECUTION",
+    "FULL_CANONICAL_EXECUTION",
+)
+_CAPITAL_PROFILE_TTL = timedelta(days=7)
+
+
+@dataclass(frozen=True)
+class StrategyLadderRunResult:
+    run_manifest: StrategyLadderRunManifest
+    report_summary: StrategyLadderReportSummary
+    capital_profiles: tuple[CapitalBucketProfile, ...]
+    engine_promotion_artifacts: tuple[EnginePromotionArtifact, ...]
+    pair_promotion_artifacts: tuple[PairPromotionArtifact, ...]
+    strategy_promotion_artifacts: tuple[StrategyPromotionArtifact, ...]
+    sample_size_survival_artifacts: tuple[SampleSizeSurvivalArtifact, ...]
+
+
+StrategyLadderProgressCallback = Callable[[StrategyLadderRunManifest], None]
+
+
+def _load_json_payload(path: Path) -> dict[str, object]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _load_jsonl_rows(path: Path) -> list[dict[str, object]]:
+    if not path.is_file():
+        return []
+    rows: list[dict[str, object]] = []
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    payload = json.loads(stripped)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(payload, dict):
+                    rows.append(payload)
+    except OSError:
+        return []
+    return rows
+
+
+def _resolve_data_factory_payloads(
+    request: StrategyLadderRequest,
+) -> dict[str, object]:
+    candidate_roots: list[Path] = []
+    if request.silver_index_path is not None:
+        candidate_roots.append(request.silver_index_path.resolve().parent)
+    candidate_roots.append(request.feature_store_root.resolve().parent)
+    candidate_roots.append(request.input_root.resolve())
+    if request.parent_workflow_ref:
+        workflow_root = Path(request.parent_workflow_ref).resolve().parent
+        candidate_roots.append(workflow_root / "phase_a2_data_factory")
+    base = next(
+        (
+            root
+            for root in candidate_roots
+            if (root / "data_factory_manifest.json").is_file()
+            or (root / "silver_index.json").is_file()
+            or (root / "gold_feature_manifest.json").is_file()
+        ),
+        request.input_root.resolve(),
+    )
+    manifest = _load_json_payload(base / "data_factory_manifest.json")
+    raw_source_report = _load_json_payload(base / "raw_source_report.json")
+    pair_report = _load_json_payload(base / "pair_universe_report.json")
+    quality_report = _load_json_payload(base / "data_quality_report.json")
+    silver_index_report = _load_json_payload(base / "silver_index.json")
+    gold_manifest = _load_json_payload(base / "gold_feature_manifest.json")
+    return {
+        "base_root": base.resolve(),
+        "manifest": manifest,
+        "raw_source_report": raw_source_report,
+        "pair_report": pair_report,
+        "quality_report": quality_report,
+        "silver_index_report": silver_index_report,
+        "gold_manifest": gold_manifest,
+        "silver_index_path": (
+            request.silver_index_path.resolve()
+            if request.silver_index_path is not None
+            else (base / "silver_index.json").resolve()
+        ),
+    }
+
+
+def _hash_file_bytes(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _workflow_phase_id_for_request(request: StrategyLadderRequest) -> str:
+    return PHASE_B1 if request.fast_only else PHASE_B2
+
+
+def _isoformat_or_empty(value: object) -> str:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, str):
+        return value
+    return ""
+
+
+def _workflow_request_hash_for_sync(
+    request: StrategyLadderRequest,
+    existing_request_hash: str,
+) -> str:
+    if existing_request_hash:
+        return existing_request_hash
+    payload = {
+        "workflow_run_id": request.workflow_run_id,
+        "phase_id": _workflow_phase_id_for_request(request),
+        "pairs": request.pairs,
+        "engines": request.engines,
+        "capital_buckets": request.capital_buckets,
+        "timeframes": request.timeframes,
+        "start": request.start,
+        "end": request.end,
+        "ml_mode": request.ml_mode,
+        "engine_native_sample_size": request.engine_native_sample_size,
+        "candidate_discovery_mode": request.candidate_discovery_mode,
+        "candidate_sample_cap": request.candidate_sample_cap,
+        "small_scope_enabled": request.small_scope_enabled,
+        "full_scan_enabled": request.full_scan_enabled,
+        "no_full_scan_enabled": request.no_full_scan_enabled,
+    }
+    return deterministic_payload_hash(payload)
+
+
+def _infer_silver_storage_mode_effective(
+    silver_index_report_payload: dict[str, object],
+    existing_mode: str,
+) -> str:
+    if existing_mode:
+        return existing_mode
+    entries = silver_index_report_payload.get("entries")
+    if isinstance(entries, list):
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            storage_format = str(entry.get("storage_format") or "").strip()
+            if storage_format:
+                return storage_format
+    return "jsonl_debug"
+
+
+def _infer_silver_exchange_from_index(
+    silver_index_report_payload: dict[str, object],
+) -> tuple[str | None, str]:
+    """Audit 2026-05-13 W1 fix : resoud (exchange, market_type) canonique
+    depuis le `silver_index.entries[i].exchange` produit par le data factory.
+
+    C'est la source d'autorite pour le venue routing : le `raw_book_path`
+    dans le replay pointe vers les raw_windows extraits (pas le silver
+    direct), donc l'auto-detect via path echoue. Resoudre une fois ici au
+    demarrage du runner et propager au call site `compute_economic_provenance`.
+
+    Retourne (exchange, market_type). exchange peut etre None si l'index est
+    vide ou degrade. market_type defaut "spot".
+    """
+    entries = silver_index_report_payload.get("entries")
+    if not isinstance(entries, list):
+        return None, "spot"
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        exchange = str(entry.get("exchange") or "").strip().lower()
+        if not exchange:
+            continue
+        market_type = str(entry.get("market_type") or "spot").strip().lower() or "spot"
+        return exchange, market_type
+    return None, "spot"
+
+
+def _workflow_phase_status_from_run_manifest(
+    request: StrategyLadderRequest,
+    run_manifest: StrategyLadderRunManifest,
+) -> str:
+    phase_id = _workflow_phase_id_for_request(request)
+    if phase_id == PHASE_B1:
+        if (
+            run_manifest.candidate_export_status == "CANDIDATE_EXPORT_READY"
+            and run_manifest.candidate_count > 0
+        ):
+            if (
+                run_manifest.candidate_discovery_cap_status
+                == "CANDIDATE_DISCOVERY_SAMPLE_CAPPED"
+            ):
+                return PHASE_STATUS_DISCOVERY_SAMPLED
+            return PHASE_STATUS_DISCOVERY_READY
+        return PHASE_STATUS_DISCOVERY_BLOCKED
+
+    blocker_codes = set(run_manifest.blocker_codes)
+    proof_blockers = {
+        "RAW_WINDOW_NOT_PROVEN",
+        "RAW_WINDOW_EXTRACTION_FAILED",
+        "DETAILED_REPLAY_NOT_PROVEN",
+        "NO_EXECUTED_TRADES",
+        "SAMPLE_SIZE_SURVIVAL_NOT_PROVEN",
+    }
+    if (
+        run_manifest.raw_window_extraction_status != "RAW_WINDOW_READY"
+        or run_manifest.detailed_replay_status != "DETAILED_REPLAY_READY"
+        or blocker_codes.intersection(proof_blockers)
+    ):
+        return PHASE_STATUS_PROOF_BLOCKED
+    if run_manifest.promotion_artifact_status == "PROMOTION_ARTIFACTS_BLOCKED_BY_FIDELITY":
+        return PHASE_STATUS_PROMOTION_BLOCKED
+    return PHASE_STATUS_REPLAY_READY
+
+
+def _workflow_consumed_artifact_refs(
+    request: StrategyLadderRequest,
+    *,
+    data_factory_root: Path,
+    candidate_events_source_path: Path | None,
+) -> dict[str, str]:
+    refs: dict[str, str] = {}
+    manifest_path = data_factory_root / "data_factory_manifest.json"
+    if manifest_path.is_file():
+        refs["phase_a2_data_factory_manifest"] = str(manifest_path.resolve())
+    silver_index_path = data_factory_root / "silver_index.json"
+    if silver_index_path.is_file():
+        refs["phase_a2_silver_index"] = str(silver_index_path.resolve())
+    gold_root = data_factory_root / "gold"
+    if gold_root.is_dir():
+        refs["phase_a2_gold_root"] = str(gold_root.resolve())
+    if candidate_events_source_path is not None and candidate_events_source_path.is_file():
+        refs["phase_b1_candidate_events"] = str(candidate_events_source_path.resolve())
+    return refs
+
+
+def _workflow_produced_artifact_refs(
+    request: StrategyLadderRequest,
+    *,
+    run_dir: Path,
+    fast_candidates_dir: Path,
+    reports_dir: Path,
+    operator_artifact_refs: dict[str, str],
+) -> dict[str, str]:
+    refs: dict[str, str] = {}
+    for path in (
+        run_dir / "run_manifest.json",
+        reports_dir / "strategy_ladder_summary.json",
+        reports_dir / "strategy_ladder_report.md",
+        reports_dir / "governed_audit_evidence_index.json",
+        reports_dir / "engine_matrix.json",
+        reports_dir / "pair_matrix.json",
+        reports_dir / "strategy_matrix.json",
+        reports_dir / "capital_bucket_matrix.json",
+        fast_candidates_dir / "candidate_events.jsonl",
+        fast_candidates_dir / "candidate_summary.json",
+    ):
+        if path.is_file():
+            refs[path.name] = str(path.resolve())
+    refs.update(operator_artifact_refs)
+    return refs
+
+
+def _workflow_artifact_hashes(artifact_refs: dict[str, str]) -> dict[str, str]:
+    hashes: dict[str, str] = {}
+    for name, ref in sorted(artifact_refs.items()):
+        path = Path(ref)
+        if not path.is_file():
+            continue
+        try:
+            hashes[name] = _hash_file_bytes(path)
+        except OSError:
+            continue
+    return hashes
+
+
+def _sync_parent_workflow_phase_record(
+    request: StrategyLadderRequest,
+    *,
+    run_manifest: StrategyLadderRunManifest,
+    data_factory_root: Path,
+    candidate_events_source_path: Path | None,
+    run_dir: Path,
+    fast_candidates_dir: Path,
+    reports_dir: Path,
+    operator_artifact_refs: dict[str, str],
+    silver_index_report_payload: dict[str, object],
+) -> None:
+    if not request.parent_workflow_ref:
+        return
+    workflow_root = Path(request.parent_workflow_ref).resolve().parent
+    phase_id = _workflow_phase_id_for_request(request)
+    existing = read_workflow_manifest(workflow_root)
+    request_hash = _workflow_request_hash_for_sync(
+        request,
+        existing.request_hash if existing is not None else "",
+    )
+    allow_broad_run = (
+        existing.allow_broad_run
+        if existing is not None
+        else (not request.small_scope_enabled and request.full_scan_enabled)
+    )
+    silver_storage_mode = _infer_silver_storage_mode_effective(
+        silver_index_report_payload,
+        existing.silver_storage_mode_effective if existing is not None else "",
+    )
+    ensure_workflow_manifest(
+        workflow_root=workflow_root,
+        workflow_run_id=request.workflow_run_id or run_manifest.workflow_run_id,
+        request_hash=request_hash,
+        phase_id=phase_id,
+        pairs=request.pairs,
+        start=request.start,
+        end=request.end,
+        ml_mode=request.ml_mode,
+        candidate_discovery_mode=run_manifest.candidate_discovery_mode,
+        engine_native_sample_size=run_manifest.effective_engine_native_sample_size,
+        b1_5_policy_mode=run_manifest.b1_5_policy_mode,
+        engine_count=run_manifest.engine_count,
+        allow_broad_run=allow_broad_run,
+        small_scope_enabled=run_manifest.small_scope_enabled,
+        full_scan_enabled=run_manifest.full_scan_enabled,
+        no_full_scan_enabled=run_manifest.no_full_scan_enabled,
+        silver_storage_mode_requested=(
+            existing.silver_storage_mode_requested
+            if existing is not None
+            else silver_storage_mode
+        ),
+        silver_storage_mode_effective=silver_storage_mode,
+    )
+    consumed_artifact_refs = _workflow_consumed_artifact_refs(
+        request,
+        data_factory_root=data_factory_root,
+        candidate_events_source_path=candidate_events_source_path,
+    )
+    produced_artifact_refs = _workflow_produced_artifact_refs(
+        request,
+        run_dir=run_dir,
+        fast_candidates_dir=fast_candidates_dir,
+        reports_dir=reports_dir,
+        operator_artifact_refs=operator_artifact_refs,
+    )
+    artifact_hashes = _workflow_artifact_hashes(produced_artifact_refs)
+    upsert_workflow_phase(
+        workflow_root=workflow_root,
+        workflow_run_id=request.workflow_run_id or run_manifest.workflow_run_id,
+        phase_id=phase_id,
+        phase_run_id=request.phase_run_id or run_manifest.phase_run_id or request.run_id,
+        phase_output_root=request.output_root.resolve(),
+        parent_workflow_ref=str(Path(request.parent_workflow_ref).resolve()),
+        job_id=request.phase_run_id or request.run_id,
+        request_hash=request_hash,
+        phase_status=_workflow_phase_status_from_run_manifest(request, run_manifest),
+        blocker_codes=run_manifest.blocker_codes,
+        error_code="",
+        stderr_ref="",
+        consumed_artifact_refs=consumed_artifact_refs,
+        produced_artifact_refs=produced_artifact_refs,
+        artifact_hashes=artifact_hashes,
+        phase_started_at=_isoformat_or_empty(run_manifest.created_at),
+        phase_completed_at=_isoformat_or_empty(run_manifest.updated_at),
+    )
+
+
+def _strategy_classification_for_engine(engine_id: str) -> StrategyClassification:
+    if engine_id == "engine_a":
+        return StrategyClassification.A_VARIANT
+    if engine_id == "engine_b":
+        return StrategyClassification.B_VARIANT
+    if engine_id == "engine_c":
+        return StrategyClassification.C_CANDIDATE
+    if engine_id == "engine_d":
+        return StrategyClassification.D_CANDIDATE
+    return StrategyClassification.OUT_OF_SCOPE_FOR_V5_3
+
+
+def _build_replay_manifest(
+    *,
+    request: StrategyLadderRequest,
+    run_id: str,
+    strategy_id: str,
+    engines: tuple[str, ...],
+    pairs: tuple[str, ...],
+    record_count: int,
+    start_timestamp_ms: int | None,
+    end_timestamp_ms: int | None,
+) -> ReplayRunManifest:
+    classification = (
+        _strategy_classification_for_engine(engines[0])
+        if len(engines) == 1
+        else StrategyClassification.OUT_OF_SCOPE_FOR_V5_3
+    )
+    timeframe_scope = (
+        ",".join(request.timeframes)
+        if request.timeframes
+        else f"{request.start or 'open'}/{request.end or 'open'}"
+    )
+    artifact_hash = deterministic_payload_hash(
+        {
+            "run_id": run_id,
+            "strategy_id": strategy_id,
+            "engines": engines,
+            "pairs": pairs,
+            "record_count": record_count,
+            "start_timestamp_ms": start_timestamp_ms,
+            "end_timestamp_ms": end_timestamp_ms,
+        }
+    )
+    return ReplayRunManifest(
+        run_id=run_id,
+        strategy_id=strategy_id,
+        strategy_version="strategy_ladder.v1",
+        strategy_classification=classification,
+        lineage_version="strategy_ladder.v1",
+        profile_scope=ProfileId.COMPLETE,
+        engine_scope=engines,
+        tested_pairs=pairs,
+        dataset_manifest_id=f"{request.run_id}-strategy-ladder",
+        timeframe_scope=timeframe_scope,
+        feature_set_version="strategy_ladder.feature_store.v1",
+        transform_set_version="strategy_ladder.transform.v1",
+        formula_set_version="strategy_ladder.formula.v1",
+        scoring_version="strategy_ladder.scoring.v1",
+        regime_version="strategy_ladder.regime.v1",
+        risk_policy_version="strategy_ladder.risk.v1",
+        cost_model_version="strategy_ladder.cost.v1",
+        performance_mode="research_fast_mode",
+        artifact_schema_version="v1",
+        artifact_hash=artifact_hash,
+        clock_id=f"strategy-ladder-{request.run_id}",
+        start_timestamp_ms=start_timestamp_ms or 0,
+        end_timestamp_ms=end_timestamp_ms or (start_timestamp_ms or 0),
+        tick_count=max(record_count, 1),
+        record_count=max(record_count, 1),
+    )
+
+
+def _select_status(values: tuple[str, ...], priority: tuple[str, ...], default: str) -> str:
+    unique = {value for value in values if value}
+    if not unique:
+        return default
+    for status in priority:
+        if status in unique:
+            return status
+    return sorted(unique)[0]
+
+
+def _build_fee_provenance(results: tuple[StrategyLadderBucketReplayResult, ...]) -> ReplayFeeProvenance:
+    status = _select_status(
+        tuple(result.fee_source_status for result in results),
+        _FEE_STATUS_PRIORITY,
+        "FEE_SOURCE_NOT_PROVEN",
+    )
+    return ReplayFeeProvenance(fee_source_status=status)
+
+
+def _build_impact_provenance(results: tuple[StrategyLadderBucketReplayResult, ...]) -> ReplayImpactProvenance:
+    status = _select_status(
+        tuple(result.impact_source_status for result in results),
+        _IMPACT_STATUS_PRIORITY,
+        "IMPACT_SOURCE_NOT_PROVEN",
+    )
+    levels = [
+        result.parity_payload.get("impact_depth_level_used")
+        for result in results
+        if result.parity_payload.get("impact_depth_level_used") is not None
+    ]
+    depth_level = max(int(level) for level in levels) if levels else None
+    return ReplayImpactProvenance(
+        impact_source_status=status,
+        impact_depth_level=depth_level,
+    )
+
+
+def _build_book_depth_availability(results: tuple[StrategyLadderBucketReplayResult, ...]) -> ReplayBookDepthAvailability:
+    status = _select_status(
+        tuple(result.book_depth_source_status for result in results),
+        _BOOK_STATUS_PRIORITY,
+        "BOOK_DEPTH_NOT_PROVEN",
+    )
+    levels = [
+        result.parity_payload.get("book_depth_levels")
+        for result in results
+        if result.parity_payload.get("book_depth_levels") is not None
+    ]
+    level = min(int(item) for item in levels) if levels else None
+    return ReplayBookDepthAvailability(
+        book_depth_available=None if status == "BOOK_DEPTH_NOT_PROVEN" else status != "BOOK_DEPTH_MISSING",
+        book_depth_levels=level,
+        book_depth_source_status=status,
+        impact_depth_level_used=level,
+        impact_depth_readiness_status=_select_status(
+            tuple(result.impact_depth_readiness_status for result in results),
+            (
+                "BOOK_DEPTH_STALE",
+                "MICRO_LIVE_BLOCKED_BY_DEPTH",
+                "TOP_OF_BOOK_PROXY_ONLY",
+                "LIMITED_DEPTH_PARTIAL",
+                "BOOK_DEPTH_NOT_PROVEN",
+                "DEPTH20_AVAILABLE",
+            ),
+            "BOOK_DEPTH_NOT_PROVEN",
+        ),
+        shadow_extension_required=any(
+            bool(result.parity_payload.get("shadow_extension_required", True))
+            for result in results
+        ),
+        shadow_extension_reason=_select_status(
+            tuple(
+                str(result.parity_payload.get("shadow_extension_reason") or "")
+                for result in results
+            ),
+            (
+                "MICRO_LIVE_BLOCKED_BY_DEPTH",
+                "BOOK_DEPTH_STALE",
+                "SHADOW_EXTENDED_REQUIRED",
+                "NO_PROMOTION_GRADE_REPLAY_IMPACT_PROOF",
+                "SHADOW_STANDARD_30D",
+            ),
+            "NO_PROMOTION_GRADE_REPLAY_IMPACT_PROOF",
+        ),
+        minimum_shadow_days_required=max(
+            (
+                int(value)
+                for value in (
+                    result.parity_payload.get("minimum_shadow_days_required")
+                    for result in results
+                )
+                if value is not None
+            ),
+            default=None,
+        ),
+        shadow_extension_status=_select_status(
+            tuple(
+                str(result.parity_payload.get("shadow_extension_status") or "")
+                for result in results
+            ),
+            (
+                "MICRO_LIVE_BLOCKED_BY_DEPTH",
+                "SHADOW_DIAGNOSTIC_ONLY",
+                "SHADOW_EXTENDED_60D",
+                "SHADOW_EXTENDED_45D",
+                "SHADOW_STANDARD_30D",
+            ),
+            "MICRO_LIVE_BLOCKED_BY_DEPTH",
+        ),
+    )
+
+
+def _rate(values: tuple[bool, ...]) -> float | None:
+    if not values:
+        return None
+    return round(sum(1 for value in values if value) / len(values), 6)
+
+
+def _build_fill_realism(results: tuple[StrategyLadderBucketReplayResult, ...]) -> ReplayFillRealismEvidence:
+    fill_status = _select_status(
+        tuple(result.fill_realism_status for result in results),
+        _FILL_STATUS_PRIORITY,
+        "FILL_REALISM_NOT_PROVEN",
+    )
+    no_fill_rate = _rate(tuple(result.no_fill_flag for result in results))
+    partial_fill_rate = _rate(tuple(result.partial_fill_flag for result in results))
+    observed_ratios = tuple(
+        0.0 if result.no_fill_flag else (1.0 - (result.size_reduction_rate or 0.0))
+        for result in results
+    )
+    fill_ratio_observed = (
+        round(sum(observed_ratios) / len(observed_ratios), 6)
+        if observed_ratios
+        else None
+    )
+    return ReplayFillRealismEvidence(
+        fill_realism_status=fill_status,
+        fill_source_status=(
+            "FILL_SOURCE_SHADOW_TELEMETRY"
+            if fill_status == "FILL_REALISM_SHADOW_MEASURED"
+            else "FILL_SOURCE_MODEL_ONLY"
+        ),
+        fill_model_name="strategy_ladder_candidate_window_replay",
+        fill_model_version="v1",
+        fill_ratio_observed=fill_ratio_observed,
+        partial_fill_rate_observed=partial_fill_rate,
+        no_fill_rate_observed=no_fill_rate,
+        synthetic_fill_flag=fill_status in {"FILL_REALISM_MODEL_ONLY", "FILL_REALISM_SYNTHETIC_ONLY"},
+        measured_fill_flag=fill_status in {"FILL_REALISM_PROVEN", "FILL_REALISM_SHADOW_MEASURED"},
+        fill_ratio_source="candidate_window_replay",
+    )
+
+
+def _build_cost_parity(results: tuple[StrategyLadderBucketReplayResult, ...]) -> ReplayCostParityEvidence:
+    status = _select_status(
+        tuple(result.cost_parity_status for result in results),
+        _PARITY_STATUS_PRIORITY,
+        "REPLAY_LIVE_COST_PARITY_NOT_PROVEN",
+    )
+    parity_payloads = tuple(result.parity_payload for result in results)
+    execution_label_source = _select_status(
+        tuple(
+            str(payload.get("execution_label_source") or "")
+            for payload in parity_payloads
+        ),
+        _EXECUTION_LABEL_SOURCE_PRIORITY,
+        "REPLAY_PROXY_EXECUTION",
+    )
+    def _source(field_name: str) -> str:
+        values = tuple(str(payload.get(field_name) or "") for payload in parity_payloads)
+        has_proxy = any(value == "REPLAY_PROXY" for value in values)
+        has_non_proxy = any(value and value != "REPLAY_PROXY" for value in values)
+        if has_proxy and has_non_proxy:
+            return "CANONICAL_OR_PROXY"
+        return _select_status(
+            values,
+            ("CANONICAL_OR_PROXY", "REPLAY_PROXY"),
+            "REPLAY_PROXY",
+        )
+
+    gap_codes: list[str] = []
+    for payload in parity_payloads:
+        gap_codes.extend(str(code) for code in (payload.get("execution_fidelity_gap_codes") or ()))
+    return ReplayCostParityEvidence(
+        cost_parity_status=status,
+        execution_label_source=execution_label_source,
+        fee_model_source=_source("fee_model_source"),
+        spread_model_source=_source("spread_model_source"),
+        slippage_model_source=_source("slippage_model_source"),
+        partial_fill_model_source=_source("partial_fill_model_source"),
+        adverse_selection_source=_source("adverse_selection_source"),
+        order_type_selection_source=_source("order_type_selection_source"),
+        venue_constraints_source=_source("venue_constraints_source"),
+        execution_fidelity_gap_codes=tuple(dict.fromkeys(gap_codes)),
+        replay_cost_components=("expected_cost", "realized_cost", "fill_ratio", "depth_status"),
+        shadow_cost_components=("expected_cost", "realized_cost", "fill_ratio"),
+        live_cost_components=(),
+        parity_sample_count=len(results),
+    )
+
+
+def _promotion_fidelity_blockers(
+    *,
+    candidate_truth_status: str,
+    expected_edge_truth_status: str,
+    economic_constants_provenance: str,
+    execution_fidelity_gap_codes: tuple[str, ...],
+) -> tuple[str, ...]:
+    blockers: list[str] = []
+    if candidate_truth_status != "CANDIDATE_ENGINE_NATIVE_READY":
+        blockers.append(candidate_truth_status)
+    if expected_edge_truth_status != "EXPECTED_EDGE_GOVERNED_BACKTEST_TRUTH":
+        blockers.append(expected_edge_truth_status)
+    if economic_constants_provenance != "FULLY_MEASURED":
+        blockers.append(economic_constants_provenance)
+    blockers.extend(str(code) for code in execution_fidelity_gap_codes if str(code))
+    return tuple(dict.fromkeys(code for code in blockers if code))
+
+
+def _derive_promotion_artifact_status(
+    *,
+    engine_artifact_count: int,
+    pair_artifact_count: int,
+    strategy_artifact_count: int,
+    promotion_fidelity_blockers: tuple[str, ...],
+) -> str:
+    if engine_artifact_count and pair_artifact_count and strategy_artifact_count:
+        if promotion_fidelity_blockers:
+            return "PROMOTION_ARTIFACTS_BLOCKED_BY_FIDELITY"
+        return "PROMOTION_ARTIFACTS_READY"
+    if engine_artifact_count or pair_artifact_count or strategy_artifact_count:
+        return "PROMOTION_ARTIFACTS_PARTIAL"
+    return "PROMOTION_ARTIFACTS_NOT_PROVEN"
+
+
+def _strategy_ids_from_results(results: tuple[StrategyLadderBucketReplayResult, ...]) -> tuple[str, ...]:
+    return tuple(sorted({result.strategy_id for result in results if result.strategy_id}))
+
+
+def _strategy_records_for_scope(
+    results: tuple[StrategyLadderBucketReplayResult, ...],
+    dtrs: tuple[DTRRecord, ...],
+    strategy_id: str,
+) -> tuple[DTRRecord, ...]:
+    selected_ids = {
+        str(result.dtr_record.get("dtr_id") or "")
+        for result in results
+        if result.strategy_id == strategy_id
+    }
+    return tuple(
+        record
+        for record in dtrs
+        if record.dtr_id in selected_ids
+    )
+
+
+def _build_strategy_bundle(
+    *,
+    request: StrategyLadderRequest,
+    strategy_id: str,
+    bucket_results: tuple[StrategyLadderBucketReplayResult, ...],
+    bucket_dtrs: tuple[DTRRecord, ...],
+    candidate_events: tuple[StrategyLadderCandidateEvent, ...] = (),
+) -> ReplayPromotionArtifactBundle:
+    start_ts = min((result.timestamp_ms for result in bucket_results), default=0)
+    end_ts = max((result.timestamp_ms for result in bucket_results), default=start_ts)
+    engines = tuple(sorted({result.engine_id for result in bucket_results}))
+    pairs = tuple(sorted({result.pair for result in bucket_results}))
+    manifest = _build_replay_manifest(
+        request=request,
+        run_id=request.run_id,
+        strategy_id=strategy_id,
+        engines=engines or request.engines,
+        pairs=pairs or request.pairs,
+        record_count=max(len(bucket_dtrs), 1),
+        start_timestamp_ms=start_ts,
+        end_timestamp_ms=end_ts,
+    )
+    metrics_summary = build_replay_metrics_summary(
+        bucket_dtrs,
+        total_opportunities=max(len(bucket_results), len(bucket_dtrs), 1),
+        initial_capital=max(request.capital_buckets) if request.capital_buckets else None,
+        fee_provenance=_build_fee_provenance(bucket_results),
+        impact_provenance=_build_impact_provenance(bucket_results),
+        book_depth_availability=_build_book_depth_availability(bucket_results),
+        fill_realism=_build_fill_realism(bucket_results),
+        cost_parity=_build_cost_parity(bucket_results),
+    )
+    return build_replay_promotion_artifact_bundle(
+        run_manifest=manifest,
+        metrics_summary=metrics_summary,
+        dtr_records=bucket_dtrs,
+        bucket_results=bucket_results,
+        candidate_events=candidate_events,
+        input_data_hash=manifest.artifact_hash,
+    )
+
+
+def _capital_profile_for_bucket(
+    *,
+    request: StrategyLadderRequest,
+    capital_bucket: int,
+    bucket_results: tuple[StrategyLadderBucketReplayResult, ...],
+    bucket_dtrs: tuple[DTRRecord, ...],
+) -> CapitalBucketProfile:
+    if not bucket_results or not bucket_dtrs:
+        created_at = datetime.now(tz=UTC)
+        return build_capital_bucket_profile(
+            CapitalProfileBuildInput(
+                capital_bucket=capital_bucket,
+                initial_capital=float(capital_bucket),
+                usable_sizing_capital=float(capital_bucket),
+                capital_source_status="CAPITAL_SOURCE_NOT_PROVEN",
+                pair_universe=request.pairs,
+                max_active_pairs=None,
+                record_count=0,
+                candidate_count=0,
+                promotion_status="CAPITAL_BUCKET_BLOCKED_BY_BACKTEST",
+                promotion_blockers=("BLOCKED_BY_BACKTEST",),
+                input_data_hash=deterministic_payload_hash(
+                    {"bucket": capital_bucket, "run_id": request.run_id}
+                ),
+                method_version_hash="strategy_ladder_runner.v1",
+                run_id=request.run_id,
+                strategy_ladder_manifest_ref=str((request.run_dir / "run_manifest.json").resolve()),
+                execution_fidelity_status="REPLAY_PROXY_EXECUTION",
+                execution_fidelity_gap_codes=(),
+                created_at=created_at,
+                expires_at=created_at + _CAPITAL_PROFILE_TTL,
+            )
+        )
+
+    fee_provenance = _build_fee_provenance(bucket_results)
+    impact_provenance = _build_impact_provenance(bucket_results)
+    book_depth = _build_book_depth_availability(bucket_results)
+    fill_realism = _build_fill_realism(bucket_results)
+    cost_parity = _build_cost_parity(bucket_results)
+    metrics_summary = build_replay_metrics_summary(
+        bucket_dtrs,
+        total_opportunities=len(bucket_results),
+        initial_capital=float(capital_bucket),
+        fee_provenance=fee_provenance,
+        impact_provenance=impact_provenance,
+        book_depth_availability=book_depth,
+        fill_realism=fill_realism,
+        cost_parity=cost_parity,
+    )
+    bucket_manifest = _build_replay_manifest(
+        request=request,
+        run_id=f"{request.run_id}-bucket-{capital_bucket}",
+        strategy_id=f"capital_bucket_{capital_bucket}",
+        engines=tuple(sorted({result.engine_id for result in bucket_results})),
+        pairs=tuple(sorted({result.pair for result in bucket_results})),
+        record_count=max(len(bucket_dtrs), 1),
+        start_timestamp_ms=min(result.timestamp_ms for result in bucket_results),
+        end_timestamp_ms=max(result.timestamp_ms for result in bucket_results),
+    )
+    bucket_bundle = build_replay_promotion_artifact_bundle(
+        run_manifest=bucket_manifest,
+        metrics_summary=metrics_summary,
+        dtr_records=bucket_dtrs,
+        bucket_results=bucket_results,
+        input_data_hash=bucket_manifest.artifact_hash,
+    )
+    all_pairs = tuple(sorted({result.pair for result in bucket_results}))
+    viable_pairs = tuple(
+        sorted(
+            {
+                result.pair
+                for result in bucket_results
+                if result.min_notional_viable is not False
+            }
+        )
+    )
+    pair_universe = viable_pairs or all_pairs
+    pair_result_map: dict[str, list[StrategyLadderBucketReplayResult]] = {}
+    for result in bucket_results:
+        pair_result_map.setdefault(result.pair, []).append(result)
+
+    planned_notionals = tuple(
+        result.planned_notional
+        for result in bucket_results
+        if result.planned_notional is not None and result.planned_notional > 0.0
+    )
+    median_notional = float(median(planned_notionals)) if planned_notionals else 0.0
+    if median_notional > 0.0:
+        provisional_max_active_pairs = max(
+            1,
+            min(
+                len(all_pairs),
+                int(float(capital_bucket) // max(median_notional, 1.0)),
+            ),
+        )
+    else:
+        provisional_max_active_pairs = max(1, min(len(all_pairs), 1))
+    fragmentation = analyze_capital_fragmentation(
+        capital_bucket=capital_bucket,
+        candidate_pair_count=len(all_pairs),
+        allocated_notionals=planned_notionals,
+        max_active_pairs=provisional_max_active_pairs,
+    )
+    allowed_pairs: list[str] = []
+    blocked_pairs: list[CapitalProfileBlockedPair] = []
+    for pair_artifact in bucket_bundle.pair_promotion_artifacts:
+        pair_results = pair_result_map.get(pair_artifact.pair, [])
+        planned_notional = next(
+            (item.planned_notional for item in pair_results if item.planned_notional is not None),
+            None,
+        )
+        min_notional = next(
+            (item.min_notional for item in pair_results if item.min_notional is not None),
+            None,
+        )
+        if pair_artifact.promotion_status == "PAIR_ALLOWED":
+            allowed_pairs.append(pair_artifact.pair)
+            continue
+        blocked_pairs.append(
+            CapitalProfileBlockedPair(
+                pair=pair_artifact.pair,
+                status=pair_artifact.promotion_status,
+                reason_codes=pair_artifact.promotion_blockers or (pair_artifact.promotion_status,),
+                planned_notional=planned_notional,
+                min_notional=min_notional,
+                metadata={
+                    "capital_bucket": capital_bucket,
+                    "executed_only_net_return_status": pair_artifact.executed_only_net_return_status,
+                    "true_drawdown_status": pair_artifact.true_net_equity_drawdown_status,
+                },
+            )
+        )
+    min_notional_block_rate = round(
+        sum(
+            1
+            for result in bucket_results
+            if result.min_notional_viable is False
+        )
+        / len(bucket_results),
+        6,
+    )
+    bucket_sample = next(
+        (
+            artifact
+            for artifact in bucket_bundle.sample_size_survival_artifacts
+            if artifact.scope == "capital_bucket" and artifact.id == str(capital_bucket)
+        ),
+        None,
+    )
+    size_reduction_values = tuple(
+        value
+        for value in (result.size_reduction_rate for result in bucket_results)
+        if value is not None
+    )
+    size_reduction_rate = (
+        round(sum(size_reduction_values) / len(size_reduction_values), 6)
+        if size_reduction_values
+        else None
+    )
+    total_records = max(metrics_summary.total_records, 1)
+    created_at = datetime.now(tz=UTC)
+    return build_capital_bucket_profile(
+        CapitalProfileBuildInput(
+            capital_bucket=capital_bucket,
+            initial_capital=float(capital_bucket),
+            usable_sizing_capital=float(capital_bucket),
+            reserve_buffer=0.0,
+            capital_source_status="BACKTEST_SCENARIO_FIXED_BUCKET",
+            pair_universe=pair_universe,
+            allowed_pairs=tuple(sorted(dict.fromkeys(allowed_pairs))),
+            blocked_pairs=tuple(blocked_pairs),
+            max_active_pairs=fragmentation.recommended_max_active_pairs or provisional_max_active_pairs,
+            record_count=metrics_summary.total_records,
+            candidate_count=metrics_summary.total_records,
+            selected_count=metrics_summary.selected_count,
+            executed_count=metrics_summary.executed_count,
+            reduced_count=metrics_summary.reduced_count,
+            no_fill_count=metrics_summary.no_fill_count,
+            hard_blocked_count=metrics_summary.hard_blocked_count,
+            rejected_count=metrics_summary.rejected_count,
+            min_notional_block_rate=min_notional_block_rate,
+            capital_fragmentation_rate=fragmentation.fragmentation_rate,
+            size_reduction_rate=size_reduction_rate,
+            pair_universe_too_wide_status=fragmentation.pair_universe_too_wide_status,
+            expected_ce_net=metrics_summary.ce_net,
+            executed_only_net_return=metrics_summary.executed_only_net_return,
+            executed_only_net_return_status=metrics_summary.executed_only_net_return_status,
+            true_net_equity_max_drawdown=metrics_summary.true_net_equity_max_drawdown,
+            true_net_equity_drawdown_status=metrics_summary.true_net_equity_drawdown_status,
+            fee_source_status=metrics_summary.fee_source_status,
+            impact_source_status=metrics_summary.impact_source_status,
+            fill_realism_status=metrics_summary.fill_realism_status,
+            cost_parity_status=metrics_summary.cost_parity_status,
+            cost_model_completeness_status=metrics_summary.cost_model_completeness_status,
+            book_depth_source_status=metrics_summary.book_depth_source_status,
+            impact_depth_readiness_status=metrics_summary.impact_depth_readiness_status,
+            execution_rate=round(metrics_summary.executed_count / total_records, 6),
+            partial_fill_rate=round(metrics_summary.reduced_count / total_records, 6),
+            no_fill_rate=round((metrics_summary.no_fill_count or 0) / total_records, 6),
+            sample_size_survival_status=(
+                bucket_sample.sample_size_survival_status
+                if bucket_sample is not None
+                else "SAMPLE_SIZE_NOT_PROVEN"
+            ),
+            input_data_hash=deterministic_payload_hash(
+                [result.candidate_id for result in bucket_results]
+            ),
+            method_version_hash="strategy_ladder_runner.v1",
+            run_id=request.run_id,
+            strategy_ladder_manifest_ref=str((request.run_dir / "run_manifest.json").resolve()),
+            execution_fidelity_status=metrics_summary.execution_label_source,
+            execution_fidelity_gap_codes=metrics_summary.execution_fidelity_gap_codes,
+            created_at=created_at,
+            expires_at=created_at + _CAPITAL_PROFILE_TTL,
+        )
+    )
+
+
+def _write_promotion_payloads(
+    root: Path,
+    *,
+    run_id: str,
+    engine_artifacts: tuple[EnginePromotionArtifact, ...],
+    pair_artifacts: tuple[PairPromotionArtifact, ...],
+    strategy_artifacts: tuple[StrategyPromotionArtifact, ...],
+    sample_artifacts: tuple[SampleSizeSurvivalArtifact, ...],
+) -> None:
+    for artifact in engine_artifacts:
+        path = root / "engine_promotion" / artifact.engine_id / f"{run_id}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(path, artifact.model_dump(mode="json"))
+    for artifact in pair_artifacts:
+        path = root / "pair_promotion" / artifact.pair / f"{run_id}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(path, artifact.model_dump(mode="json"))
+    for artifact in strategy_artifacts:
+        path = root / "strategy_promotion" / str(artifact.strategy_id) / f"{run_id}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(path, artifact.model_dump(mode="json"))
+    for artifact in sample_artifacts:
+        path = root / "sample_size_survival" / artifact.scope / artifact.id / f"{run_id}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(path, artifact.model_dump(mode="json"))
+
+
+def _stage_final_status(
+    *,
+    request: StrategyLadderRequest,
+    feature_store_status: str,
+    candidate_export_status: str,
+    raw_window_status: str,
+    detailed_replay_status: str,
+    capital_profile_count: int,
+    promotion_artifact_count: int,
+    executed_trade_count: int = -1,
+    detailed_replay_record_count: int = -1,
+) -> str:
+    # Audit 2026-05-06: gate ajoutée pour bloquer la promotion d'un run
+    # qui n'a produit AUCUN trade exécuté (cas typique du proxy
+    # COMPAT_FEATURE_DISCOVERY qui aboutit à 100% de PHANTOM
+    # "economically_absurd"). Sentinelle -1 = caller legacy, comportement
+    # historique préservé pour la rétro-compatibilité des tests.
+    if feature_store_status == "FEATURE_STORE_MISSING":
+        return "STRATEGY_LADDER_BLOCKED_BY_FEATURE_STORE"
+    if request.dry_run or request.fast_only:
+        return "STRATEGY_LADDER_READY_TO_RUN"
+    if raw_window_status == "RAW_WINDOW_NOT_PROVEN":
+        return "STRATEGY_LADDER_BLOCKED_BY_RAW_WINDOWS"
+    if detailed_replay_status == "DETAILED_REPLAY_NOT_PROVEN":
+        return "STRATEGY_LADDER_BLOCKED_BY_BACKTEST_DATA"
+    if capital_profile_count == 0 or promotion_artifact_count == 0:
+        return "STRATEGY_LADDER_BLOCKED_BY_BACKTEST_DATA"
+    if (
+        executed_trade_count == 0
+        and detailed_replay_record_count > 0
+    ):
+        return "STRATEGY_LADDER_BLOCKED_BY_NO_EXECUTED_TRADES"
+    if raw_window_status == "RAW_WINDOW_PARTIAL" or detailed_replay_status == "DETAILED_REPLAY_PARTIAL":
+        return "STRATEGY_LADDER_RAN_WITH_PARTIAL_EVIDENCE"
+    if candidate_export_status != "CANDIDATE_EXPORT_READY":
+        return "STRATEGY_LADDER_BLOCKED_BY_BACKTEST_DATA"
+    return "STRATEGY_LADDER_MEASURED_ARTIFACTS_PRODUCED"
+
+
+def _count_executed_trades(
+    bucket_results: tuple[StrategyLadderBucketReplayResult, ...],
+) -> int:
+    """Compte les records dont l'execution_state vaut EXECUTED ou REDUCED
+    avec une notional non-nul. Utilisé par la gate de promotion."""
+    return sum(
+        1
+        for result in bucket_results
+        if _enum_value(result.execution_state).lower() in {"executed", "reduced"}
+        and (
+            (result.executed_notional is not None and result.executed_notional > 0.0)
+            or (result.reduced_notional is not None and result.reduced_notional > 0.0)
+        )
+    )
+
+
+@dataclass(frozen=True)
+class _EngineNativeCandidateMaterialization:
+    candidate_events: tuple[StrategyLadderCandidateEvent, ...]
+    candidate_discovery_status: str
+    engine_native_status: str
+    engine_native_records_built: int
+    engine_native_runner_invocation_count: int
+    expected_edge_proxy_count: int
+    expected_edge_governed_count: int
+    blocker_codes: tuple[str, ...] = ()
+
+
+def _enum_value(value: object) -> str:
+    raw = getattr(value, "value", value)
+    return str(raw or "")
+
+
+def _coerce_float(value: object, default: float = 0.0) -> float:
+    try:
+        coerced = float(value)
+    except (TypeError, ValueError):
+        return default
+    return coerced
+
+
+def _payload_tuple(payload: dict[str, object], key: str) -> tuple[str, ...]:
+    raw = payload.get(key)
+    if raw is None:
+        return ()
+    if isinstance(raw, str):
+        return tuple(part for part in raw.split("|") if part)
+    if isinstance(raw, (list, tuple, set)):
+        return tuple(str(part) for part in raw if str(part))
+    return (str(raw),)
+
+
+def _merge_codes(*parts: tuple[str, ...] | list[str]) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            code
+            for part in parts
+            for code in part
+            if str(code).strip()
+        )
+    )
+
+
+def _planned_notional_from_payload(payload: dict[str, object]) -> float:
+    for key in ("planned_notional", "final_size", "candidate_size"):
+        value = _coerce_float(payload.get(key), 0.0)
+        if value > 0.0:
+            return value
+    return 0.0
+
+
+def _expected_cost_from_provenance(provenance: EconomicProvenance) -> float:
+    return (
+        provenance.spread_bps
+        + provenance.slippage_bps * 1.15
+        + provenance.latency_penalty_bps
+    ) / 10_000.0
+
+
+def _expected_edge_model_feature_maps(
+    candidate: StrategyLadderCandidateEvent,
+) -> tuple[dict[str, object], dict[str, object]]:
+    payload = dict(candidate.compatibility_payload or {})
+    raw_feature_values = payload.get("feature_values")
+    feature_values = (
+        dict(raw_feature_values)
+        if isinstance(raw_feature_values, dict)
+        else {}
+    )
+    route_features: dict[str, object] = {
+        "route_raw_score": _coerce_float(payload.get("raw_score"), 0.0),
+        "route_penalized_score": _coerce_float(payload.get("penalized_score"), 0.0),
+        "route_final_score": _coerce_float(payload.get("final_score"), 0.0),
+        "route_expected_edge_bps": _coerce_float(payload.get("expected_edge_bps"), 0.0),
+        "route_spread_bps": _coerce_float(payload.get("spread_bps"), 0.0),
+        "route_slippage_bps": _coerce_float(payload.get("slippage_bps"), 0.0),
+        "route_latency_penalty_bps": _coerce_float(
+            payload.get("latency_penalty_bps"),
+            0.0,
+        ),
+        "route_fill_ratio": _coerce_float(payload.get("fill_ratio"), 1.0),
+        "route_ranking_position": _coerce_float(payload.get("ranking_position"), 0.0),
+        "route_candidate_size": _coerce_float(payload.get("candidate_size"), 0.0),
+        "route_final_size": _coerce_float(payload.get("final_size"), 0.0),
+    }
+    return feature_values, route_features
+
+
+def _expected_edge_model_reference_at(
+    *,
+    created_at: datetime,
+    end_ms: int | None,
+) -> datetime:
+    """Evaluate frozen ML artifact freshness at the replay boundary, not wall clock."""
+
+    if end_ms is None:
+        return created_at
+    return datetime.fromtimestamp(end_ms / 1000.0, tz=UTC)
+
+
+def _economic_provenance_for_candidate(
+    candidate: StrategyLadderCandidateEvent,
+    window: StrategyLadderRawWindowManifest | None,
+    *,
+    expected_edge_model: ExpectedEdgeModelProtocol | None = None,
+    expected_edge_model_required: bool = False,
+    expected_edge_model_load_status: str = "",
+    silver_exchange: str | None = None,
+    silver_market_type: str = "spot",
+) -> EconomicProvenance:
+    payload = dict(candidate.compatibility_payload or {})
+    feature_values, route_features = _expected_edge_model_feature_maps(candidate)
+    return compute_economic_provenance(
+        timestamp_ms=candidate.resolved_timestamp_ms,
+        book_status=(
+            window.book_depth_source_status
+            if window is not None
+            else str(payload.get("book_depth_source_status") or "BOOK_DEPTH_NOT_PROVEN")
+        ),
+        pair=candidate.pair,
+        raw_book_path=window.raw_book_path if window is not None else None,
+        raw_trade_path=window.raw_trade_path if window is not None else None,
+        raw_ohlcv_path=window.raw_ohlcv_path if window is not None else None,
+        expected_edge_model=expected_edge_model,
+        expected_edge_model_required=expected_edge_model_required,
+        expected_edge_model_load_status=expected_edge_model_load_status,
+        expected_edge_feature_values=feature_values,
+        expected_edge_route_features=route_features,
+        silver_exchange=silver_exchange,
+        silver_market_type=silver_market_type,
+    )
+
+
+def _engine_output_reason_codes(output: object | None) -> tuple[str, ...]:
+    if output is None:
+        return ()
+    return tuple(
+        _enum_value(code)
+        for code in (getattr(output, "reason_codes", ()) or ())
+        if _enum_value(code)
+    )
+
+
+def _engine_output_no_trade_reasons(output: object | None) -> tuple[str, ...]:
+    if output is None:
+        return ()
+    return tuple(
+        _enum_value(code)
+        for code in (getattr(output, "no_trade_reasons", ()) or ())
+        if _enum_value(code)
+    )
+
+
+def _engine_output_payload(output: object | None) -> dict[str, object]:
+    if output is None:
+        return {}
+    if hasattr(output, "model_dump"):
+        dumped = output.model_dump(mode="json")
+        return dumped if isinstance(dumped, dict) else {"value": dumped}
+    return {"value": str(output)}
+
+
+def _build14_reader_observed_value(
+    build14_application: StrategyLadderBuild14Application | None,
+    *,
+    reader_name: str,
+) -> float | None:
+    if build14_application is None:
+        return None
+    snapshots = build14_application.shadow_report.model_dump(mode="json").get("snapshots") or ()
+    for snapshot in snapshots:
+        if not isinstance(snapshot, dict):
+            continue
+        if str(snapshot.get("reader_name") or "") != reader_name:
+            continue
+        try:
+            return float(snapshot.get("observed_value"))
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _selected_engine_payload_fields(
+    *,
+    candidate_payload: dict[str, object],
+    engine_input_payload: dict[str, object],
+    native_output: dict[str, object],
+    build14_application: StrategyLadderBuild14Application | None,
+) -> dict[str, object]:
+    feature_values = (
+        dict(candidate_payload.get("feature_values"))
+        if isinstance(candidate_payload.get("feature_values"), dict)
+        else {}
+    )
+    selected: dict[str, object] = {}
+    for key in (
+        "cumulative_ofi",
+        "queue_pressure",
+        "vpin",
+        "kyle_lambda",
+        "realized_vol_current",
+        "realized_vol_at_break",
+        "entry_price",
+        "breakout_level",
+        "range_low",
+        "range_high",
+        "first_episode_id",
+        "first_episode_engine_id",
+        "first_episode_close_reason",
+        "anti_revenge_state",
+        "history_score",
+        "marginal_value_score",
+        "reentry_lateness",
+        "concentration_headroom",
+        "origin_context_id",
+        "origin_trade_id",
+        "link_type",
+    ):
+        for source in (native_output, engine_input_payload):
+            if key in source and source[key] not in (None, "", (), [], {}):
+                selected[key] = source[key]
+                break
+    if "fragility_score" in feature_values and "fragility_score" not in selected:
+        selected["fragility_score"] = feature_values["fragility_score"]
+    if "false_breakout_context" in feature_values and "false_breakout_context" not in selected:
+        selected["false_breakout_context"] = feature_values["false_breakout_context"]
+    micro_edge_exit_governor = _build14_reader_observed_value(
+        build14_application,
+        reader_name="micro_edge_exit_governor",
+    )
+    if micro_edge_exit_governor is not None:
+        selected["micro_edge_exit_governor"] = micro_edge_exit_governor
+    micro_edge_entry_timing = _build14_reader_observed_value(
+        build14_application,
+        reader_name="micro_edge_entry_timing_layer",
+    )
+    if micro_edge_entry_timing is not None:
+        selected["micro_edge_entry_timing"] = micro_edge_entry_timing
+    execution_fragility_score = _build14_reader_observed_value(
+        build14_application,
+        reader_name="execution_fragility_score",
+    )
+    if execution_fragility_score is not None and "fragility_score" not in selected:
+        selected["fragility_score"] = execution_fragility_score
+    return selected
+
+
+def _native_production_decision_state(decision: str, target_state: str) -> str:
+    canonical_states = {
+        "not_evaluated",
+        "evaluated",
+        "hard_blocked",
+        "rejected_ranking",
+        "selected",
+        "reduced",
+        "phantom",
+        "executed",
+    }
+    normalized = (decision or "").strip().lower()
+    if normalized in canonical_states:
+        return normalized
+    if normalized in {"emit", "trade", "selected"}:
+        return "selected"
+    if normalized in {"no_trade", "reject", "rejected", "skip", "blocked"}:
+        return "hard_blocked"
+    return target_state if target_state in canonical_states else "evaluated"
+
+
+def _materialize_native_candidate_event(
+    *,
+    candidate: StrategyLadderCandidateEvent,
+    window: StrategyLadderRawWindowManifest | None,
+    economic_provenance: EconomicProvenance,
+    builder_status: str,
+    builder_warnings: tuple[str, ...],
+    builder_provenance: str,
+    engine_output: object | None,
+    engine_input_payload: dict[str, object],
+    build14_application: StrategyLadderBuild14Application | None,
+    records_built: int,
+    runner_invoked: bool,
+) -> StrategyLadderCandidateEvent:
+    payload = dict(candidate.compatibility_payload or {})
+    decision = _enum_value(getattr(engine_output, "decision", "not_invoked"))
+    is_emit = decision == "emit"
+    edge_truth_status = expected_edge_backtest_truth_status(
+        economic_provenance.expected_edge_provenance
+    )
+    edge_is_truth = is_expected_edge_backtest_truth(
+        economic_provenance.expected_edge_provenance
+    )
+    reason_codes = _engine_output_reason_codes(engine_output)
+    no_trade_reasons = _engine_output_no_trade_reasons(engine_output)
+    hard_block_reasons = _payload_tuple(payload, "hard_block_reasons")
+    lower_engine_id = str(candidate.engine_id).strip().lower()
+    engine_history_reason_set = {
+        str(code).strip().lower()
+        for code in (*reason_codes, *no_trade_reasons, *hard_block_reasons)
+        if str(code).strip()
+    }
+    native_blockers: tuple[str, ...] = ()
+    if not runner_invoked:
+        native_blockers = ("ENGINE_NATIVE_RUNNER_NOT_INVOKED",)
+    elif not is_emit:
+        native_blockers = ("ENGINE_NATIVE_NO_TRADE",)
+    if not edge_is_truth:
+        native_blockers = _merge_codes(
+            list(native_blockers),
+            [
+                "EXPECTED_EDGE_NOT_GOVERNED_FOR_BACKTEST_TRUTH",
+                "EXPECTED_EDGE_PROXY_BLOCKED",
+                "FEE_AWARE_EDGE_PROXY_BLOCKED",
+                "BREAK_EVEN_PROXY_BLOCKED",
+            ],
+        )
+    if lower_engine_id == "engine_d" and (
+        "history_weak" in engine_history_reason_set
+        or "engine_d.no_trade.history_weak" in engine_history_reason_set
+    ):
+        native_blockers = _merge_codes(
+            list(native_blockers),
+            ["ENGINE_D_HISTORY_BLOCKED_BY_MISSING_CLOSED_EPISODE_JOURNAL"],
+        )
+
+    target_state = "selected" if is_emit and edge_is_truth else "hard_blocked"
+    native_output = _engine_output_payload(engine_output)
+    native_output_hash = deterministic_payload_hash(native_output)
+    engine_input_hash = deterministic_payload_hash(engine_input_payload)
+    raw_score = _coerce_float(getattr(engine_output, "raw_score", payload.get("raw_score")), 0.0)
+    penalized_score = _coerce_float(
+        getattr(engine_output, "penalized_score", raw_score),
+        raw_score,
+    )
+    final_score = penalized_score
+
+    compatibility_notes = tuple(
+        note
+        for note in _payload_tuple(payload, "compatibility_notes")
+        if note not in {"COMPAT_FEATURE_DISCOVERY", "NOT_LIVE_ENGINE_PARITY"}
+    )
+    native_notes = _merge_codes(
+        list(compatibility_notes),
+        [
+            "ENGINE_NATIVE_RUNNER_INVOKED" if runner_invoked else "ENGINE_NATIVE_RUNNER_NOT_INVOKED",
+            edge_truth_status,
+            builder_provenance,
+            (
+                build14_application.activation_status
+                if build14_application is not None
+                else "BUILD14_NOT_APPLIED"
+            ),
+        ],
+    )
+    build14_payload = (
+        {
+            "build14_shadow_activation_status": build14_application.activation_status,
+            "build14_shadow_observation": build14_application.observation_input.model_dump(
+                mode="json"
+            ),
+            "build14_shadow_report": build14_application.shadow_report.model_dump(
+                mode="json"
+            ),
+            "build14_shadow_applied_fields": build14_application.applied_fields,
+            "build14_shadow_adjustment_factors": build14_application.adjustment_factors,
+            "build14_shadow_reason_codes": build14_application.reason_codes,
+        }
+        if build14_application is not None
+        else {}
+    )
+    selected_engine_fields = _selected_engine_payload_fields(
+        candidate_payload=payload,
+        engine_input_payload=engine_input_payload,
+        native_output=native_output,
+        build14_application=build14_application,
+    )
+    updated_payload = {
+        **payload,
+        **build14_payload,
+        **selected_engine_fields,
+        "candidate_source": "ENGINE_NATIVE" if runner_invoked else "ENGINE_NATIVE_UNAVAILABLE",
+        "candidate_data_source_label": "ENGINE_NATIVE_A_B_C_D_RUNNER",
+        "raw_score": raw_score,
+        "penalized_score": penalized_score,
+        "final_score": final_score,
+        "expected_edge_bps": economic_provenance.expected_edge_bps,
+        "expected_edge_provenance": economic_provenance.expected_edge_provenance,
+        "expected_edge_truth_status": edge_truth_status,
+        "expected_edge_model_status": economic_provenance.expected_edge_model_status,
+        "expected_edge_model_artifact_hash": (
+            economic_provenance.expected_edge_model_artifact_hash
+        ),
+        "expected_edge_model_feature_hash": (
+            economic_provenance.expected_edge_model_feature_hash
+        ),
+        "economic_provenance": economic_provenance.aggregated_provenance,
+        "economic_measurement_warnings": economic_provenance.measurement_warnings,
+        "spread_bps": economic_provenance.spread_bps,
+        "slippage_bps": economic_provenance.slippage_bps,
+        "latency_penalty_bps": economic_provenance.latency_penalty_bps,
+        "fee_bps": economic_provenance.fee_bps,
+        "fee_source_status": economic_provenance.fee_provenance,
+        "impact_source_status": economic_provenance.slippage_provenance,
+        "target_decision_state": target_state,
+        "production_decision_state": _native_production_decision_state(
+            decision,
+            target_state,
+        ),
+        "production_final_score": final_score,
+        "production_expected_cost": _expected_cost_from_provenance(economic_provenance),
+        "hard_block_reasons": _merge_codes(
+            list(hard_block_reasons),
+            list(native_blockers),
+            list(reason_codes),
+            list(no_trade_reasons),
+        ),
+        "compatibility_notes": native_notes,
+        "engine_native_status": (
+            "ENGINE_NATIVE_RUNNER_INVOKED" if runner_invoked else "ENGINE_NATIVE_RUNNER_NOT_INVOKED"
+        ),
+        "engine_native_builder_status": builder_status,
+        "engine_native_input_provenance": builder_provenance,
+        "engine_native_input_hash": engine_input_hash,
+        "engine_native_output_hash": native_output_hash,
+        "engine_native_decision": decision,
+        "engine_native_reason_codes": reason_codes,
+        "engine_native_no_trade_reasons": no_trade_reasons,
+        "engine_native_records_built": records_built,
+    }
+    preliminary_reasons = _merge_codes(
+        [
+            "ENGINE_NATIVE_RUNNER_INVOKED" if runner_invoked else "ENGINE_NATIVE_RUNNER_NOT_INVOKED",
+            f"ENGINE_NATIVE_DECISION:{decision.upper() or 'NOT_INVOKED'}",
+            builder_status,
+            edge_truth_status,
+        ],
+        list(build14_application.reason_codes) if build14_application is not None else [],
+        list(reason_codes),
+        list(no_trade_reasons),
+        list(builder_warnings),
+    )
+    source = "ENGINE_NATIVE" if runner_invoked else "ENGINE_NATIVE_UNAVAILABLE"
+    native_input_hash = deterministic_payload_hash(
+        {
+            "candidate_input": candidate.input_data_hash,
+            "window_input": window.input_data_hash if window is not None else None,
+            "engine_input": engine_input_hash,
+            "engine_output": native_output_hash,
+            "economic": economic_provenance.__dict__,
+            "build14_shadow": (
+                build14_application.shadow_report.model_dump(mode="json")
+                if build14_application is not None
+                else None
+            ),
+        }
+    )
+    return candidate.model_copy(
+        update={
+            "candidate_source": source,
+            "candidate_data_source_label": "ENGINE_NATIVE_A_B_C_D_RUNNER",
+            "preliminary_score": final_score,
+            "preliminary_reason_codes": preliminary_reasons,
+            "input_data_hash": native_input_hash,
+            "method_version_hash": deterministic_payload_hash(
+                {
+                    "method": "strategy_ladder.engine_native_materialization.v1",
+                    "engine_id": candidate.engine_id,
+                    "builder_provenance": builder_provenance,
+                    "build14_shadow_status": (
+                        build14_application.activation_status
+                        if build14_application is not None
+                        else "BUILD14_NOT_APPLIED"
+                    ),
+                }
+            ),
+            "compatibility_payload": updated_payload,
+        }
+    )
+
+
+def _run_native_engine_candidate(
+    *,
+    candidate: StrategyLadderCandidateEvent,
+    window: StrategyLadderRawWindowManifest | None,
+    economic_provenance: EconomicProvenance,
+) -> tuple[StrategyLadderCandidateEvent, int, bool]:
+    payload = dict(candidate.compatibility_payload or {})
+    edge_is_truth = is_expected_edge_backtest_truth(
+        economic_provenance.expected_edge_provenance
+    )
+    expected_gain = (
+        economic_provenance.expected_edge_bps / 10_000.0
+        if edge_is_truth
+        else 0.0
+    )
+    expected_cost = _expected_cost_from_provenance(economic_provenance)
+    candidate_size = _planned_notional_from_payload(payload)
+    builder_status = "ENGINE_NATIVE_INPUT_BUILDER_NOT_RUN"
+    builder_warnings: tuple[str, ...] = ()
+    builder_provenance = "ENGINE_NATIVE_INPUT_PROVENANCE_NOT_PROVEN"
+    engine_input_payload: dict[str, object] = {}
+    engine_output: object | None = None
+    records_built = 0
+    runner_invoked = False
+    build14_application: StrategyLadderBuild14Application | None = None
+
+    if window is None:
+        return (
+            _materialize_native_candidate_event(
+                candidate=candidate,
+                window=window,
+                economic_provenance=economic_provenance,
+                builder_status="ENGINE_NATIVE_INPUT_BUILDER_FAILED_NO_RAW_WINDOW",
+                builder_warnings=("RAW_WINDOW_NOT_AVAILABLE",),
+                builder_provenance=builder_provenance,
+                engine_output=None,
+                engine_input_payload={},
+                records_built=0,
+                runner_invoked=False,
+            ),
+            0,
+            False,
+        )
+
+    try:
+        engine_id = (candidate.engine_id or "").lower()
+        if engine_id == "engine_a":
+            from engines.engine_a.engine_a_runner import EngineAInput, run_engine_a
+            from local_replay_runtime.strategy_ladder_engine_a_input_builder import (
+                build_engine_a_input_from_window,
+            )
+            from local_replay_runtime.strategy_ladder_engine_native_adapter import (
+                build_engine_a_microstructure_inputs_from_window,
+            )
+
+            bridge = build_engine_a_microstructure_inputs_from_window(
+                candidate_id=candidate.candidate_id,
+                pair=candidate.pair,
+                window_start_ms=window.window_start_ms,
+                window_end_ms=window.window_end_ms,
+                raw_trade_path=window.raw_trade_path,
+                raw_book_path=window.raw_book_path,
+                raw_book_delta_path=window.raw_book_delta_path,
+            )
+            records_built = bridge.n_records_built
+            builder = build_engine_a_input_from_window(
+                candidate_id=candidate.candidate_id,
+                pair=candidate.pair,
+                window_start_ms=window.window_start_ms,
+                window_end_ms=window.window_end_ms,
+                raw_ohlcv_path=window.raw_ohlcv_path,
+                microstructure_updates=bridge.engine_a_microstructure_updates,
+                expected_gain=expected_gain,
+                expected_cost=expected_cost,
+                candidate_size=candidate_size,
+            )
+            builder_status = builder.builder_status
+            builder_warnings = _merge_codes(
+                list(bridge.bridge_warnings),
+                list(builder.builder_warnings),
+            )
+            builder_provenance = builder.engine_a_input_provenance
+            engine_input_payload = builder.engine_a_input_payload
+            if engine_input_payload:
+                engine_output = run_engine_a(EngineAInput.model_validate(engine_input_payload))
+                runner_invoked = True
+        elif engine_id == "engine_b":
+            from engines.engine_b.engine_b_runner import EngineBInput, run_engine_b
+            from local_replay_runtime.strategy_ladder_engine_b_input_builder import (
+                build_engine_b_input_from_window,
+            )
+
+            builder = build_engine_b_input_from_window(
+                candidate_id=candidate.candidate_id,
+                pair=candidate.pair,
+                window_start_ms=window.window_start_ms,
+                window_end_ms=window.window_end_ms,
+                raw_trade_path=window.raw_trade_path,
+                expected_gain=expected_gain,
+                expected_cost=expected_cost,
+                candidate_size=candidate_size,
+            )
+            records_built = (
+                builder.bridge_result.n_records_built
+                if builder.bridge_result is not None
+                else 0
+            )
+            builder_status = builder.builder_status
+            builder_warnings = builder.builder_warnings
+            builder_provenance = builder.engine_b_input_provenance
+            engine_input_payload = builder.engine_b_input_payload
+            if engine_input_payload:
+                engine_output = run_engine_b(EngineBInput.model_validate(engine_input_payload))
+                runner_invoked = True
+        elif engine_id == "engine_c":
+            from engines.engine_c.engine_c_runner import EngineCInput, run_engine_c
+            from local_replay_runtime.strategy_ladder_engine_c_input_builder import (
+                build_engine_c_input_from_window,
+            )
+            from local_replay_runtime.strategy_ladder_engine_native_adapter import (
+                build_engine_c_microstructure_inputs_from_window,
+            )
+
+            bridge = build_engine_c_microstructure_inputs_from_window(
+                candidate_id=candidate.candidate_id,
+                pair=candidate.pair,
+                window_start_ms=window.window_start_ms,
+                window_end_ms=window.window_end_ms,
+                raw_trade_path=window.raw_trade_path,
+                raw_book_path=window.raw_book_path,
+                raw_book_delta_path=window.raw_book_delta_path,
+            )
+            records_built = bridge.n_records_built
+            builder = build_engine_c_input_from_window(
+                candidate_id=candidate.candidate_id,
+                pair=candidate.pair,
+                window_start_ms=window.window_start_ms,
+                window_end_ms=window.window_end_ms,
+                raw_trade_path=window.raw_trade_path,
+                raw_ohlcv_path=window.raw_ohlcv_path,
+                microstructure_partial_payload=bridge.engine_c_partial_input_payload,
+                expected_gain=expected_gain,
+                expected_cost=expected_cost,
+                candidate_size=candidate_size,
+            )
+            builder_status = builder.builder_status
+            builder_warnings = _merge_codes(
+                list(bridge.bridge_warnings),
+                list(builder.builder_warnings),
+            )
+            builder_provenance = builder.engine_c_input_provenance
+            engine_input_payload = builder.engine_c_input_payload
+            if engine_input_payload:
+                build14_application = apply_build14_shadow_context(
+                    engine_id=engine_id,
+                    candidate_id=candidate.candidate_id,
+                    pair=candidate.pair,
+                    candidate_payload=payload,
+                    engine_input_payload=engine_input_payload,
+                )
+                engine_input_payload = build14_application.adjusted_engine_input_payload
+                builder_warnings = _merge_codes(
+                    list(builder_warnings),
+                    list(build14_application.reason_codes),
+                )
+                engine_output = run_engine_c(EngineCInput.model_validate(engine_input_payload))
+                runner_invoked = True
+        elif engine_id == "engine_d":
+            from engines.engine_d.engine_d_models import EngineDInput
+            from engines.engine_d.engine_d_runner import run_engine_d
+            from local_replay_runtime.strategy_ladder_engine_d_input_builder import (
+                build_engine_d_input_from_window,
+            )
+
+            builder = build_engine_d_input_from_window(
+                candidate_id=candidate.candidate_id,
+                pair=candidate.pair,
+                window_start_ms=window.window_start_ms,
+                window_end_ms=window.window_end_ms,
+                raw_trade_path=window.raw_trade_path,
+                raw_ohlcv_path=window.raw_ohlcv_path,
+                expected_gain=expected_gain,
+                expected_cost=expected_cost,
+                candidate_size=candidate_size,
+            )
+            records_built = (
+                builder.bridge_result.n_records_built
+                if builder.bridge_result is not None
+                else 0
+            )
+            builder_status = builder.builder_status
+            builder_warnings = builder.builder_warnings
+            builder_provenance = builder.engine_d_input_provenance
+            engine_input_payload = builder.engine_d_input_payload
+            if engine_input_payload:
+                build14_application = apply_build14_shadow_context(
+                    engine_id=engine_id,
+                    candidate_id=candidate.candidate_id,
+                    pair=candidate.pair,
+                    candidate_payload=payload,
+                    engine_input_payload=engine_input_payload,
+                )
+                engine_input_payload = build14_application.adjusted_engine_input_payload
+                builder_warnings = _merge_codes(
+                    list(builder_warnings),
+                    list(build14_application.reason_codes),
+                )
+                engine_output = run_engine_d(EngineDInput.model_validate(engine_input_payload))
+                runner_invoked = True
+        else:
+            builder_status = "ENGINE_NATIVE_INPUT_BUILDER_UNSUPPORTED_ENGINE"
+            builder_warnings = (f"UNSUPPORTED_ENGINE:{candidate.engine_id}",)
+    except Exception as exc:  # noqa: BLE001
+        builder_warnings = _merge_codes(
+            list(builder_warnings),
+            [f"ENGINE_NATIVE_RUN_FAILED:{type(exc).__name__}:{exc}"],
+        )
+        runner_invoked = False
+        engine_output = None
+
+    return (
+        _materialize_native_candidate_event(
+            candidate=candidate,
+            window=window,
+            economic_provenance=economic_provenance,
+            builder_status=builder_status,
+            builder_warnings=builder_warnings,
+            builder_provenance=builder_provenance,
+            engine_output=engine_output,
+            engine_input_payload=engine_input_payload,
+            build14_application=build14_application,
+            records_built=records_built,
+            runner_invoked=runner_invoked,
+        ),
+        records_built,
+        runner_invoked,
+    )
+
+
+def _materialize_engine_native_candidates(
+    *,
+    candidate_events: tuple[StrategyLadderCandidateEvent, ...],
+    raw_window_manifests: tuple[StrategyLadderRawWindowManifest, ...],
+    expected_edge_model: ExpectedEdgeModelProtocol | None = None,
+    expected_edge_model_required: bool = False,
+    expected_edge_model_load_status: str = "",
+    progress_callback: Callable[[int, int, int, int, int, int], None] | None = None,
+    silver_exchange: str | None = None,
+    silver_market_type: str = "spot",
+) -> _EngineNativeCandidateMaterialization:
+    if not candidate_events:
+        return _EngineNativeCandidateMaterialization(
+            candidate_events=(),
+            candidate_discovery_status="CANDIDATE_DISCOVERY_EMPTY",
+            engine_native_status="ENGINE_NATIVE_NO_CANDIDATES",
+            engine_native_records_built=0,
+            engine_native_runner_invocation_count=0,
+            expected_edge_proxy_count=0,
+            expected_edge_governed_count=0,
+        )
+
+    window_by_candidate = {
+        manifest.candidate_id: manifest for manifest in raw_window_manifests
+    }
+    native_events: list[StrategyLadderCandidateEvent] = []
+    records_built = 0
+    runner_invocations = 0
+    expected_edge_proxy_count = 0
+    expected_edge_governed_count = 0
+    expected_edge_blocker_codes: list[str] = []
+    total_candidates = len(candidate_events)
+    for processed_count, candidate in enumerate(candidate_events, start=1):
+        window = window_by_candidate.get(candidate.candidate_id)
+        economic_provenance = _economic_provenance_for_candidate(
+            candidate,
+            window,
+            expected_edge_model=expected_edge_model,
+            expected_edge_model_required=expected_edge_model_required,
+            expected_edge_model_load_status=expected_edge_model_load_status,
+            silver_exchange=silver_exchange,
+            silver_market_type=silver_market_type,
+        )
+        if is_expected_edge_backtest_truth(economic_provenance.expected_edge_provenance):
+            expected_edge_governed_count += 1
+        else:
+            expected_edge_proxy_count += 1
+            edge_status = expected_edge_backtest_truth_status(
+                economic_provenance.expected_edge_provenance
+            )
+            expected_edge_blocker_codes.append(
+                "EXPECTED_EDGE_MODEL_NOT_BACKTEST_TRUTH"
+                if edge_status == "EXPECTED_EDGE_MODEL_BLOCKED"
+                else "EXPECTED_EDGE_PROXY_NOT_BACKTEST_TRUTH"
+            )
+        native_event, built_count, invoked = _run_native_engine_candidate(
+            candidate=candidate,
+            window=window,
+            economic_provenance=economic_provenance,
+        )
+        native_events.append(native_event)
+        records_built += built_count
+        if invoked:
+            runner_invocations += 1
+        if progress_callback is not None and (
+            processed_count == total_candidates
+            or processed_count == 1
+            or processed_count % _ENGINE_NATIVE_PROGRESS_EVERY == 0
+        ):
+            progress_callback(
+                processed_count,
+                total_candidates,
+                records_built,
+                runner_invocations,
+                expected_edge_proxy_count,
+                expected_edge_governed_count,
+            )
+
+    if runner_invocations == len(candidate_events):
+        discovery_status = "CANDIDATE_DISCOVERY_ENGINE_NATIVE_READY"
+        native_status = "ENGINE_NATIVE_FULL_PATH_READY"
+        blockers: tuple[str, ...] = ()
+    elif runner_invocations > 0:
+        discovery_status = "CANDIDATE_DISCOVERY_ENGINE_NATIVE_PARTIAL"
+        native_status = "ENGINE_NATIVE_PARTIAL_WITH_BLOCKERS"
+        blockers = ("ENGINE_NATIVE_CANDIDATE_TRUTH_PARTIAL",)
+    else:
+        discovery_status = "CANDIDATE_DISCOVERY_ENGINE_NATIVE_NOT_PROVEN"
+        native_status = "ENGINE_NATIVE_CANDIDATES_PRESENT_NOT_INVOKED"
+        blockers = ("ENGINE_NATIVE_CANDIDATE_TRUTH_NOT_PROVEN",)
+    if expected_edge_proxy_count:
+        blockers = _merge_codes(list(blockers), expected_edge_blocker_codes)
+
+    return _EngineNativeCandidateMaterialization(
+        candidate_events=tuple(native_events),
+        candidate_discovery_status=discovery_status,
+        engine_native_status=native_status,
+        engine_native_records_built=records_built,
+        engine_native_runner_invocation_count=runner_invocations,
+        expected_edge_proxy_count=expected_edge_proxy_count,
+        expected_edge_governed_count=expected_edge_governed_count,
+        blocker_codes=blockers,
+    )
+
+
+def _invoke_engine_native_bridges_sample(
+    *,
+    request: StrategyLadderRequest,
+    candidate_events: tuple[StrategyLadderCandidateEvent, ...],
+    raw_window_manifests: tuple[StrategyLadderRawWindowManifest, ...],
+) -> int:
+    """Audit 2026-05-07 (P3a wire) — invoque les engine bridges sur un sample.
+
+    Quand `request.engine_native_mode` est True, parcourt jusqu'a
+    `request.engine_native_sample_size` candidats et invoque le bridge approprie
+    selon `candidate.engine_id` (engine_a/b/c/d). Compte les records canoniques
+    construits avec succes (Kyle/VPIN/OFI/QueuePressure/RealizedKernelVol pour
+    a/c, realized_vol_current/post_close pour d, current_price/local_mean/std/vpin
+    pour b).
+
+    Retourne 0 si engine_native_mode est False ou sample_size==0.
+
+    Note : cette fonction NE met PAS a jour candidate_count_engine_native parce
+    que le bridge produit des inputs partiels — pas encore d'invocation
+    `run_engine_X(EngineXInput)` finale (bloquee par les champs structurels
+    sans structure-resolver canonique).
+    """
+    if not request.engine_native_mode:
+        return 0
+    sample_size = request.engine_native_sample_size
+    if sample_size == 0:
+        # 0 = traiter tous les candidats (DANGER : peut prendre des heures)
+        sample_candidates = candidate_events
+    else:
+        sample_candidates = candidate_events[:sample_size]
+
+    # Import local pour eviter dependance hard sur l'adapter au top-level
+    # (l'adapter import data_backbone.microstructure qui peut avoir ses
+    # propres dependances).
+    try:
+        from local_replay_runtime.strategy_ladder_engine_native_adapter import (
+            build_engine_a_microstructure_inputs_from_window,
+            build_engine_b_microstructure_inputs_from_window,
+            build_engine_c_microstructure_inputs_from_window,
+            build_engine_d_microstructure_inputs_from_window,
+        )
+    except ImportError:
+        return 0
+
+    window_by_candidate = {
+        manifest.candidate_id: manifest for manifest in raw_window_manifests
+    }
+    total_records_built = 0
+
+    for candidate in sample_candidates:
+        window = window_by_candidate.get(candidate.candidate_id)
+        if window is None:
+            continue
+        common_kwargs = {
+            "candidate_id": candidate.candidate_id,
+            "pair": candidate.pair,
+            "window_start_ms": window.window_start_ms,
+            "window_end_ms": window.window_end_ms,
+            "raw_trade_path": window.raw_trade_path,
+        }
+        try:
+            engine_id = (candidate.engine_id or "").lower()
+            if engine_id == "engine_a":
+                result = build_engine_a_microstructure_inputs_from_window(
+                    **common_kwargs,
+                    raw_book_path=window.raw_book_path,
+                    raw_book_delta_path=window.raw_book_delta_path,
+                )
+                total_records_built += result.n_records_built
+            elif engine_id == "engine_b":
+                result_b = build_engine_b_microstructure_inputs_from_window(
+                    **common_kwargs,
+                )
+                total_records_built += result_b.n_records_built
+            elif engine_id == "engine_c":
+                result_c = build_engine_c_microstructure_inputs_from_window(
+                    **common_kwargs,
+                    raw_book_path=window.raw_book_path,
+                    raw_book_delta_path=window.raw_book_delta_path,
+                )
+                total_records_built += result_c.n_records_built
+            elif engine_id == "engine_d":
+                result_d = build_engine_d_microstructure_inputs_from_window(
+                    **common_kwargs,
+                    post_close_window_end_ms=window.window_end_ms + 60_000,
+                )
+                total_records_built += result_d.n_records_built
+            # engines inconnus : ignore silencieusement (pas de bridge dispo)
+        except Exception:  # noqa: BLE001
+            # On ne propage pas — le bridge est best-effort. Les warnings sont
+            # remontes dans chaque BridgeResult (perdus ici par design : ce
+            # wire est minimal, full reporting sera la session suivante).
+            continue
+
+    return total_records_built
+
+
+def _build_report_summary(
+    *,
+    request: StrategyLadderRequest,
+    run_manifest: StrategyLadderRunManifest,
+    capital_profiles: tuple[CapitalBucketProfile, ...],
+    engine_artifacts: tuple[EnginePromotionArtifact, ...],
+    pair_artifacts: tuple[PairPromotionArtifact, ...],
+    strategy_artifacts: tuple[StrategyPromotionArtifact, ...],
+    sample_artifacts: tuple[SampleSizeSurvivalArtifact, ...],
+    bucket_results: tuple[StrategyLadderBucketReplayResult, ...],
+    evidence_projection: dict[str, object],
+) -> StrategyLadderReportSummary:
+    promotion_blockers = tuple(
+        dict.fromkeys(
+            (
+                *run_manifest.blocker_codes,
+                *(
+                    blocker
+                    for profile in capital_profiles
+                    for blocker in profile.promotion_blockers
+                ),
+                *(
+                    blocker
+                    for artifact in (*engine_artifacts, *pair_artifacts, *strategy_artifacts)
+                    for blocker in artifact.promotion_blockers
+                ),
+                *(
+                    str(item)
+                    for item in evidence_projection.get(
+                        "evidence_audit_blocker_codes", ()
+                    )
+                ),
+            )
+        )
+    )
+    recommended_next_action = (
+        "RUN_SHADOW_CONFIRMATION"
+        if (
+            run_manifest.final_status == "STRATEGY_LADDER_MEASURED_ARTIFACTS_PRODUCED"
+            and run_manifest.promotion_artifact_status == "PROMOTION_ARTIFACTS_READY"
+            and not promotion_blockers
+        )
+        else "FIX_BLOCKERS_OR_PROVIDE_HIGHER_FIDELITY_DATA"
+    )
+    summary = StrategyLadderReportSummary(
+        run_id=request.run_id,
+        # STRATEGY_LADDER_READY remains an external audit verdict, not a runtime-emitted
+        # backtest status. The runner only emits measured / partial / blocked evidence.
+        backtest_architecture_status="PARTIALLY_UPDATED_REPLAY_BACKTEST",
+        data_factory_status=run_manifest.data_factory_status,
+        raw_source_status=run_manifest.raw_source_status,
+        pair_universe_status=run_manifest.pair_universe_status,
+        silver_index_status=run_manifest.silver_index_status,
+        gold_feature_store_status=run_manifest.gold_feature_store_status,
+        orderbook_reconstruction_status=run_manifest.orderbook_reconstruction_status,
+        ml_mode_status=run_manifest.ml_mode_status,
+        feature_store_status=run_manifest.feature_store_status,
+        candidate_discovery_status=run_manifest.candidate_discovery_status,
+        candidate_export_status=run_manifest.candidate_export_status,
+        raw_window_extraction_status=run_manifest.raw_window_extraction_status,
+        detailed_replay_status=run_manifest.detailed_replay_status,
+        capital_profile_generation_status=run_manifest.capital_profile_generation_status,
+        promotion_artifact_status=run_manifest.promotion_artifact_status,
+        sample_size_survival_status=run_manifest.sample_size_survival_status,
+        final_status=run_manifest.final_status,
+        blocker_codes=run_manifest.blocker_codes,
+        silver_index_path=run_manifest.silver_index_path,
+        workflow_run_id=run_manifest.workflow_run_id,
+        phase_run_id=run_manifest.phase_run_id,
+        parent_workflow_ref=run_manifest.parent_workflow_ref,
+        candidate_sample_cap=run_manifest.candidate_sample_cap,
+        effective_engine_native_sample_size=run_manifest.effective_engine_native_sample_size,
+        engine_count=run_manifest.engine_count,
+        candidate_cap_formula=run_manifest.candidate_cap_formula,
+        small_scope_enabled=run_manifest.small_scope_enabled,
+        full_scan_enabled=run_manifest.full_scan_enabled,
+        no_full_scan_enabled=run_manifest.no_full_scan_enabled,
+        candidate_discovery_limited=run_manifest.candidate_discovery_limited,
+        candidate_discovery_limit_reason=run_manifest.candidate_discovery_limit_reason,
+        candidate_discovery_mode=run_manifest.candidate_discovery_mode,
+        candidate_discovery_cap_status=run_manifest.candidate_discovery_cap_status,
+        preselection_status=run_manifest.preselection_status,
+        replay_input_mode_status=run_manifest.replay_input_mode_status,
+        preselected_only=run_manifest.preselected_only,
+        diagnostic_full_replay=run_manifest.diagnostic_full_replay,
+        b1_5_policy_mode=run_manifest.b1_5_policy_mode,
+        candidate_count=run_manifest.candidate_count,
+        unique_candidate_count=run_manifest.unique_candidate_count,
+        base_event_count=run_manifest.base_event_count,
+        per_engine_candidate_count=run_manifest.per_engine_candidate_count,
+        engine_native_candidate_count=run_manifest.engine_native_candidate_count,
+        discovery_pre_candidate_count=run_manifest.discovery_pre_candidate_count,
+        engine_native_preselected_count=run_manifest.engine_native_preselected_count,
+        preselection_hard_rejected_count=run_manifest.preselection_hard_rejected_count,
+        preselection_soft_flagged_count=run_manifest.preselection_soft_flagged_count,
+        preselection_passed_count=run_manifest.preselection_passed_count,
+        b2_replay_candidate_count=run_manifest.b2_replay_candidate_count,
+        trade_eligible_candidate_count=run_manifest.trade_eligible_candidate_count,
+        preselection_rejection_count=run_manifest.preselection_rejection_count,
+        replay_savings_estimate_count=run_manifest.replay_savings_estimate_count,
+        replay_record_count=run_manifest.replay_record_count,
+        evaluation_record_count=run_manifest.evaluation_record_count,
+        promotion_record_count=run_manifest.promotion_record_count,
+        capital_bucket_record_count=run_manifest.capital_bucket_record_count,
+        replay_expansion_factor=run_manifest.replay_expansion_factor,
+        replay_expansion_axis=run_manifest.replay_expansion_axis,
+        candidate_source_status=run_manifest.candidate_source_status,
+        count_semantics_validator_codes=run_manifest.count_semantics_validator_codes,
+        matrix_count_inflation_status=run_manifest.matrix_count_inflation_status,
+        raw_window_count=run_manifest.raw_window_count,
+        raw_windows_total=run_manifest.raw_windows_total,
+        trade_windows_found=run_manifest.trade_windows_found,
+        trade_windows_missing=run_manifest.trade_windows_missing,
+        book_windows_found=run_manifest.book_windows_found,
+        book_windows_missing=run_manifest.book_windows_missing,
+        ohlcv_windows_found=run_manifest.ohlcv_windows_found,
+        ohlcv_windows_missing=run_manifest.ohlcv_windows_missing,
+        depth20_found=run_manifest.depth20_found,
+        depth20_missing=run_manifest.depth20_missing,
+        detailed_replay_count=run_manifest.detailed_replay_count,
+        capital_profile_count=len(capital_profiles),
+        engine_promotion_count=len(engine_artifacts),
+        pair_promotion_count=len(pair_artifacts),
+        strategy_promotion_count=len(strategy_artifacts),
+        sample_size_survival_count=len(sample_artifacts),
+        economic_constants_provenance=run_manifest.economic_constants_provenance,
+        candidate_truth_status=run_manifest.candidate_truth_status,
+        expected_edge_truth_status=run_manifest.expected_edge_truth_status,
+        execution_label_source=run_manifest.execution_label_source,
+        fee_model_source=run_manifest.fee_model_source,
+        spread_model_source=run_manifest.spread_model_source,
+        slippage_model_source=run_manifest.slippage_model_source,
+        partial_fill_model_source=run_manifest.partial_fill_model_source,
+        adverse_selection_source=run_manifest.adverse_selection_source,
+        order_type_selection_source=run_manifest.order_type_selection_source,
+        venue_constraints_source=run_manifest.venue_constraints_source,
+        execution_fidelity_gap_codes=run_manifest.execution_fidelity_gap_codes,
+        expected_edge_proxy_count=run_manifest.expected_edge_proxy_count,
+        expected_edge_governed_count=run_manifest.expected_edge_governed_count,
+        expected_edge_model_status=run_manifest.expected_edge_model_status,
+        expected_edge_model_artifact_hash=run_manifest.expected_edge_model_artifact_hash,
+        expected_edge_model_feature_hash=run_manifest.expected_edge_model_feature_hash,
+        expected_edge_training_artifact_ref=run_manifest.expected_edge_training_artifact_ref,
+        expected_edge_label_source=run_manifest.expected_edge_label_source,
+        expected_edge_label_fidelity=run_manifest.expected_edge_label_fidelity,
+        expected_edge_anti_leakage_status=run_manifest.expected_edge_anti_leakage_status,
+        expected_edge_walkforward_status=run_manifest.expected_edge_walkforward_status,
+        expected_edge_horizon=run_manifest.expected_edge_horizon,
+        expected_edge_purge_window=run_manifest.expected_edge_purge_window,
+        expected_edge_embargo_window=run_manifest.expected_edge_embargo_window,
+        expected_edge_blocker_codes=run_manifest.expected_edge_blocker_codes,
+        candidate_engine_native_count=run_manifest.candidate_engine_native_count,
+        candidate_proxy_count=run_manifest.candidate_proxy_count,
+        engine_native_status=run_manifest.engine_native_status,
+        engine_native_records_built=run_manifest.engine_native_records_built,
+        depth_status_distribution={
+            status: sum(
+                1 for result in bucket_results if result.book_depth_source_status == status
+            )
+            for status in sorted({result.book_depth_source_status for result in bucket_results})
+        },
+        fill_realism_status_distribution={
+            status: sum(
+                1 for result in bucket_results if result.fill_realism_status == status
+            )
+            for status in sorted({result.fill_realism_status for result in bucket_results})
+        },
+        capital_bucket_verdicts={
+            str(profile.capital_bucket): profile.promotion_status
+            for profile in capital_profiles
+        },
+        engine_verdicts={
+            artifact.engine_id: artifact.promotion_status
+            for artifact in engine_artifacts
+        },
+        pair_verdicts={
+            artifact.pair: artifact.promotion_status
+            for artifact in pair_artifacts
+        },
+        strategy_verdicts={
+            str(artifact.strategy_id): artifact.promotion_status
+            for artifact in strategy_artifacts
+        },
+        governed_audit_evidence_index_path=str(
+            evidence_projection.get("governed_audit_evidence_index_path") or ""
+        ),
+        governed_evidence_status=str(
+            evidence_projection.get("governed_evidence_status")
+            or "EVIDENCE_CLASS_NOT_PROVEN"
+        ),
+        audited_evidence_count=int(
+            evidence_projection.get("audited_evidence_count") or 0
+        ),
+        scratch_only_evidence_count=int(
+            evidence_projection.get("scratch_only_evidence_count") or 0
+        ),
+        promotion_grade_evidence_count=int(
+            evidence_projection.get("promotion_grade_evidence_count") or 0
+        ),
+        run_manifest_evidence_class=str(
+            evidence_projection.get("run_manifest_evidence_class")
+            or "EVIDENCE_CLASS_NOT_PROVEN"
+        ),
+        capital_profiles_evidence_class=str(
+            evidence_projection.get("capital_profiles_evidence_class")
+            or "EVIDENCE_CLASS_NOT_PROVEN"
+        ),
+        engine_promotion_evidence_class=str(
+            evidence_projection.get("engine_promotion_evidence_class")
+            or "EVIDENCE_CLASS_NOT_PROVEN"
+        ),
+        pair_promotion_evidence_class=str(
+            evidence_projection.get("pair_promotion_evidence_class")
+            or "EVIDENCE_CLASS_NOT_PROVEN"
+        ),
+        strategy_promotion_evidence_class=str(
+            evidence_projection.get("strategy_promotion_evidence_class")
+            or "EVIDENCE_CLASS_NOT_PROVEN"
+        ),
+        sample_size_survival_evidence_class=str(
+            evidence_projection.get("sample_size_survival_evidence_class")
+            or "EVIDENCE_CLASS_NOT_PROVEN"
+        ),
+        trade_detail_ledger_evidence_class=str(
+            evidence_projection.get("trade_detail_ledger_evidence_class")
+            or "EVIDENCE_CLASS_NOT_PROVEN"
+        ),
+        refusal_ledger_evidence_class=str(
+            evidence_projection.get("refusal_ledger_evidence_class")
+            or "EVIDENCE_CLASS_NOT_PROVEN"
+        ),
+        loss_analysis_ledger_evidence_class=str(
+            evidence_projection.get("loss_analysis_ledger_evidence_class")
+            or "EVIDENCE_CLASS_NOT_PROVEN"
+        ),
+        evidence_audit_blocker_codes=tuple(
+            str(item)
+            for item in evidence_projection.get("evidence_audit_blocker_codes", ())
+        ),
+        promotion_blockers=promotion_blockers,
+        recommended_next_action=recommended_next_action,
+        created_at=datetime.now(tz=UTC),
+    )
+    return summary.model_copy(
+        update={"artifact_hash": deterministic_payload_hash(summary.model_dump(mode="json"))}
+    )
+
+
+def _write_reports(
+    reports_dir: Path,
+    *,
+    summary: StrategyLadderReportSummary,
+    run_manifest: StrategyLadderRunManifest,
+    gold_manifest_payload: dict[str, object],
+    capital_profiles: tuple[CapitalBucketProfile, ...],
+    engine_artifacts: tuple[EnginePromotionArtifact, ...],
+    pair_artifacts: tuple[PairPromotionArtifact, ...],
+    strategy_artifacts: tuple[StrategyPromotionArtifact, ...],
+    sample_artifacts: tuple[SampleSizeSurvivalArtifact, ...],
+    operator_artifact_refs: dict[str, str],
+) -> None:
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    atomic_write_json(
+        reports_dir / "strategy_ladder_summary.json",
+        summary.model_dump(mode="json"),
+    )
+    atomic_write_json(
+        reports_dir / "capital_bucket_matrix.json",
+        [profile.model_dump(mode="json") for profile in capital_profiles],
+    )
+    atomic_write_json(
+        reports_dir / "engine_matrix.json",
+        [artifact.model_dump(mode="json") for artifact in engine_artifacts],
+    )
+    atomic_write_json(
+        reports_dir / "pair_matrix.json",
+        [artifact.model_dump(mode="json") for artifact in pair_artifacts],
+    )
+    atomic_write_json(
+        reports_dir / "strategy_matrix.json",
+        [artifact.model_dump(mode="json") for artifact in strategy_artifacts],
+    )
+    output_root = reports_dir.parent.parent
+    proof_payload = _load_json_payload(output_root / "backtest_proof_matrix.json")
+    threshold_payload = _load_json_payload(output_root / "feature_threshold_manifest.json")
+    threshold_rows = threshold_payload.get("thresholds_used")
+    if not isinstance(threshold_rows, list):
+        threshold_rows = []
+    historical_replay_venue = str(
+        proof_payload.get("historical_replay_venue") or "BYBIT"
+    )
+    execution_target_venue = str(
+        proof_payload.get("execution_target_venue") or "BINANCE"
+    )
+    backtest_class = str(proof_payload.get("backtest_class") or "BYBIT_PROXY_BACKTEST")
+    silver_storage_status = str(
+        proof_payload.get("silver_storage_status") or "SILVER_STORAGE_NOT_PROVEN"
+    )
+    silver_bloat_ratio = proof_payload.get("silver_bloat_ratio")
+    if not isinstance(silver_bloat_ratio, (int, float)):
+        silver_bloat_ratio = None
+    overall_backtest_proof_status = str(
+        proof_payload.get("overall_backtest_proof_status")
+        or (
+            "BACKTEST_PROOF_BLOCKED"
+            if summary.promotion_artifact_status == "PROMOTION_ARTIFACTS_BLOCKED_BY_FIDELITY"
+            else "BACKTEST_PROOF_NOT_PROVEN"
+        )
+    )
+    proxy_surface = build_strategy_ladder_proxy_fidelity_surface(
+        feature_store_status=summary.feature_store_status,
+        feature_row_count=run_manifest.feature_row_count,
+        expected_edge_truth_status=summary.expected_edge_truth_status,
+        expected_edge_governed_count=summary.expected_edge_governed_count,
+        execution_fidelity_gap_codes=summary.execution_fidelity_gap_codes,
+        threshold_rows=(
+            tuple(dict(item) for item in threshold_rows if isinstance(item, dict))
+        ),
+        historical_replay_venue=historical_replay_venue,
+        execution_target_venue=execution_target_venue,
+        backtest_class=backtest_class,
+        venue_transfer_status=str(
+            proof_payload.get("venue_transfer_status") or "BINANCE_SHADOW_REQUIRED"
+        ),
+        promotion_artifact_status=summary.promotion_artifact_status,
+        overall_backtest_proof_status=overall_backtest_proof_status,
+    )
+    lines = [
+        "# Strategy Ladder Report",
+        "",
+        f"- run_id: {summary.run_id}",
+        f"- final_status: {summary.final_status}",
+        f"- feature_store_status: {summary.feature_store_status}",
+        f"- feature_row_count: {run_manifest.feature_row_count}",
+        f"- candidate_export_status: {summary.candidate_export_status}",
+        f"- raw_window_extraction_status: {summary.raw_window_extraction_status}",
+        f"- detailed_replay_status: {summary.detailed_replay_status}",
+        f"- capital_profile_generation_status: {summary.capital_profile_generation_status}",
+        f"- promotion_artifact_status: {proxy_surface.promotion_artifact_status}",
+        f"- sample_size_survival_status: {summary.sample_size_survival_status}",
+        f"- candidate_truth_status: {summary.candidate_truth_status}",
+        f"- expected_edge_truth_status: {summary.expected_edge_truth_status}",
+        f"- engine_native_status: {summary.engine_native_status}",
+        f"- economic_constants_provenance: {summary.economic_constants_provenance}",
+        f"- execution_label_source: {summary.execution_label_source}",
+        f"- fee_model_source: {summary.fee_model_source}",
+        f"- spread_model_source: {summary.spread_model_source}",
+        f"- slippage_model_source: {summary.slippage_model_source}",
+        f"- partial_fill_model_source: {summary.partial_fill_model_source}",
+        f"- adverse_selection_source: {summary.adverse_selection_source}",
+        f"- order_type_selection_source: {summary.order_type_selection_source}",
+        f"- venue_constraints_source: {summary.venue_constraints_source}",
+        (
+            f"- execution_fidelity_gap_codes: {', '.join(summary.execution_fidelity_gap_codes)}"
+            if summary.execution_fidelity_gap_codes
+            else "- execution_fidelity_gap_codes: none"
+        ),
+        f"- candidate_count: {summary.candidate_count}",
+        f"- unique_candidate_count: {summary.unique_candidate_count}",
+        f"- base_event_count: {summary.base_event_count}",
+        (
+            f"- per_engine_candidate_count: {summary.per_engine_candidate_count}"
+            if summary.per_engine_candidate_count is not None
+            else "- per_engine_candidate_count: NOT_UNIFORM"
+        ),
+        f"- engine_native_candidate_count: {summary.engine_native_candidate_count}",
+        f"- candidate_engine_native_count: {summary.candidate_engine_native_count}",
+        f"- candidate_proxy_count: {summary.candidate_proxy_count}",
+        f"- candidate_source_status: {summary.candidate_source_status}",
+        f"- raw_window_count: {summary.raw_window_count}",
+        f"- raw_windows_total: {summary.raw_windows_total}",
+        f"- trade_windows_found: {summary.trade_windows_found}",
+        f"- trade_windows_missing: {summary.trade_windows_missing}",
+        f"- book_windows_found: {summary.book_windows_found}",
+        f"- book_windows_missing: {summary.book_windows_missing}",
+        f"- ohlcv_windows_found: {summary.ohlcv_windows_found}",
+        f"- ohlcv_windows_missing: {summary.ohlcv_windows_missing}",
+        f"- depth20_found: {summary.depth20_found}",
+        f"- depth20_missing: {summary.depth20_missing}",
+        f"- expected_edge_proxy_count: {summary.expected_edge_proxy_count}",
+        f"- expected_edge_governed_count: {summary.expected_edge_governed_count}",
+        f"- expected_edge_model_status: {summary.expected_edge_model_status}",
+        f"- expected_edge_model_artifact_hash: {summary.expected_edge_model_artifact_hash}",
+        f"- expected_edge_model_feature_hash: {summary.expected_edge_model_feature_hash}",
+        f"- expected_edge_training_artifact_ref: {summary.expected_edge_training_artifact_ref or 'NOT_PROVEN'}",
+        f"- expected_edge_label_source: {summary.expected_edge_label_source}",
+        f"- expected_edge_label_fidelity: {summary.expected_edge_label_fidelity}",
+        f"- expected_edge_anti_leakage_status: {summary.expected_edge_anti_leakage_status}",
+        f"- expected_edge_walkforward_status: {summary.expected_edge_walkforward_status}",
+        (
+            f"- expected_edge_horizon: {summary.expected_edge_horizon}"
+            if summary.expected_edge_horizon is not None
+            else "- expected_edge_horizon: NOT_DECLARED"
+        ),
+        (
+            f"- expected_edge_purge_window: {summary.expected_edge_purge_window}"
+            if summary.expected_edge_purge_window is not None
+            else "- expected_edge_purge_window: NOT_DECLARED"
+        ),
+        (
+            f"- expected_edge_embargo_window: {summary.expected_edge_embargo_window}"
+            if summary.expected_edge_embargo_window is not None
+            else "- expected_edge_embargo_window: NOT_DECLARED"
+        ),
+        (
+            f"- expected_edge_blocker_codes: {', '.join(summary.expected_edge_blocker_codes)}"
+            if summary.expected_edge_blocker_codes
+            else "- expected_edge_blocker_codes: none"
+        ),
+        f"- detailed_replay_count: {summary.detailed_replay_count}",
+        f"- replay_record_count: {summary.replay_record_count}",
+        f"- evaluation_record_count: {summary.evaluation_record_count}",
+        f"- promotion_record_count: {summary.promotion_record_count}",
+        f"- capital_bucket_record_count: {summary.capital_bucket_record_count}",
+        (
+            f"- replay_expansion_factor: {summary.replay_expansion_factor}"
+            if summary.replay_expansion_factor is not None
+            else "- replay_expansion_factor: NOT_PROVEN"
+        ),
+        f"- replay_expansion_axis: {summary.replay_expansion_axis or 'NOT_DECLARED'}",
+        f"- matrix_count_inflation_status: {summary.matrix_count_inflation_status}",
+        (
+            f"- count_semantics_validator_codes: {', '.join(summary.count_semantics_validator_codes)}"
+            if summary.count_semantics_validator_codes
+            else "- count_semantics_validator_codes: none"
+        ),
+        f"- capital_profile_count: {summary.capital_profile_count}",
+        "",
+        "## Proxy & Fidelity Surface",
+        f"- feature_store_pipeline_status: {proxy_surface.feature_store_pipeline_status}",
+        f"- feature_row_sample_status: {proxy_surface.feature_row_sample_status}",
+        f"- expected_edge_governance_status: {proxy_surface.expected_edge_governance_status}",
+        f"- expected_edge_proxy_count: {summary.expected_edge_proxy_count}",
+        f"- expected_edge_governed_count: {summary.expected_edge_governed_count}",
+        f"- expected_edge_label_source: {summary.expected_edge_label_source}",
+        f"- expected_edge_label_fidelity: {summary.expected_edge_label_fidelity}",
+        f"- expected_edge_anti_leakage_status: {summary.expected_edge_anti_leakage_status}",
+        f"- expected_edge_walkforward_status: {summary.expected_edge_walkforward_status}",
+        (
+            f"- expected_edge_horizon: {summary.expected_edge_horizon}"
+            if summary.expected_edge_horizon is not None
+            else "- expected_edge_horizon: NOT_DECLARED"
+        ),
+        (
+            f"- expected_edge_purge_window: {summary.expected_edge_purge_window}"
+            if summary.expected_edge_purge_window is not None
+            else "- expected_edge_purge_window: NOT_DECLARED"
+        ),
+        (
+            f"- expected_edge_embargo_window: {summary.expected_edge_embargo_window}"
+            if summary.expected_edge_embargo_window is not None
+            else "- expected_edge_embargo_window: NOT_DECLARED"
+        ),
+        f"- execution_label_source: {summary.execution_label_source}",
+        f"- fee_model_source: {summary.fee_model_source}",
+        f"- spread_model_source: {summary.spread_model_source}",
+        f"- slippage_model_source: {summary.slippage_model_source}",
+        f"- partial_fill_model_source: {summary.partial_fill_model_source}",
+        f"- adverse_selection_source: {summary.adverse_selection_source}",
+        f"- order_type_selection_source: {summary.order_type_selection_source}",
+        f"- venue_constraints_source: {summary.venue_constraints_source}",
+        f"- execution_fidelity_status: {proxy_surface.execution_fidelity_status}",
+        (
+            f"- execution_fidelity_gap_codes: {', '.join(summary.execution_fidelity_gap_codes)}"
+            if summary.execution_fidelity_gap_codes
+            else "- execution_fidelity_gap_codes: none"
+        ),
+        f"- threshold_calibration_status: {proxy_surface.threshold_calibration_status}",
+        (
+            f"- threshold_counts: default={proxy_surface.threshold_counts.default_count}, "
+            f"calibrated={proxy_surface.threshold_counts.calibrated_count}, "
+            f"calibration_not_proven={proxy_surface.threshold_counts.calibration_not_proven_count}"
+        ),
+        f"- silver_storage_status: {silver_storage_status}",
+        (
+            f"- silver_bloat_ratio: {silver_bloat_ratio}"
+            if silver_bloat_ratio is not None
+            else "- silver_bloat_ratio: NOT_PROVEN"
+        ),
+        f"- historical_replay_venue: {historical_replay_venue}",
+        f"- execution_target_venue: {execution_target_venue}",
+        f"- venue_transfer_status: {proxy_surface.venue_transfer_status}",
+        f"- promotion_artifact_status: {proxy_surface.promotion_artifact_status}",
+        f"- overall_backtest_proof_status: {proxy_surface.overall_backtest_proof_status}",
+        (
+            f"- expected_edge_blocker_codes: {', '.join(summary.expected_edge_blocker_codes)}"
+            if summary.expected_edge_blocker_codes
+            else "- expected_edge_blocker_codes: none"
+        ),
+        "",
+        "## Governed Audit Evidence",
+        f"- governed_evidence_status: {summary.governed_evidence_status}",
+        f"- governed_audit_evidence_index_path: {summary.governed_audit_evidence_index_path or 'NOT_PROVEN'}",
+        f"- audited_evidence_count: {summary.audited_evidence_count}",
+        f"- scratch_only_evidence_count: {summary.scratch_only_evidence_count}",
+        f"- promotion_grade_evidence_count: {summary.promotion_grade_evidence_count}",
+        f"- run_manifest_evidence_class: {summary.run_manifest_evidence_class}",
+        f"- capital_profiles_evidence_class: {summary.capital_profiles_evidence_class}",
+        f"- engine_promotion_evidence_class: {summary.engine_promotion_evidence_class}",
+        f"- pair_promotion_evidence_class: {summary.pair_promotion_evidence_class}",
+        f"- strategy_promotion_evidence_class: {summary.strategy_promotion_evidence_class}",
+        f"- sample_size_survival_evidence_class: {summary.sample_size_survival_evidence_class}",
+        f"- trade_detail_ledger_evidence_class: {summary.trade_detail_ledger_evidence_class}",
+        f"- refusal_ledger_evidence_class: {summary.refusal_ledger_evidence_class}",
+        f"- loss_analysis_ledger_evidence_class: {summary.loss_analysis_ledger_evidence_class}",
+        (
+            f"- evidence_audit_blocker_codes: {', '.join(summary.evidence_audit_blocker_codes)}"
+            if summary.evidence_audit_blocker_codes
+            else "- evidence_audit_blocker_codes: none"
+        ),
+        "",
+        "## Blockers",
+        *(
+            [f"- {blocker}" for blocker in summary.promotion_blockers]
+            if summary.promotion_blockers
+            else ["- none"]
+        ),
+        "",
+        f"recommended_next_action: {summary.recommended_next_action}",
+    ]
+    atomic_write_text(reports_dir / "strategy_ladder_report.md", "\n".join(lines) + "\n")
+    post_b2_refusal_audit = _build_post_b2_refusal_audit_payload(
+        summary=summary,
+        run_manifest=run_manifest,
+        pair_artifacts=pair_artifacts,
+        engine_artifacts=engine_artifacts,
+        sample_artifacts=sample_artifacts,
+        operator_artifact_refs=operator_artifact_refs,
+    )
+    atomic_write_json(
+        reports_dir / "post_b2_refusal_audit.json",
+        post_b2_refusal_audit,
+    )
+    atomic_write_text(
+        reports_dir / "post_b2_refusal_audit.md",
+        _format_post_b2_refusal_audit_markdown(post_b2_refusal_audit),
+    )
+    engine_no_trade_diagnosis = _build_engine_no_trade_diagnosis_payload(
+        summary=summary,
+        run_manifest=run_manifest,
+        run_dir=reports_dir.parent,
+        operator_artifact_refs=operator_artifact_refs,
+        gold_manifest_payload=gold_manifest_payload,
+    )
+    atomic_write_json(
+        reports_dir / "engine_no_trade_diagnosis.json",
+        engine_no_trade_diagnosis,
+    )
+    atomic_write_text(
+        reports_dir / "engine_no_trade_diagnosis.md",
+        _format_engine_no_trade_diagnosis_markdown(engine_no_trade_diagnosis),
+    )
+
+
+def _build_governed_audit_evidence_entries(
+    *,
+    run_id: str,
+    run_dir: Path,
+    capital_profiles: tuple[CapitalBucketProfile, ...],
+    engine_artifacts: tuple[EnginePromotionArtifact, ...],
+    pair_artifacts: tuple[PairPromotionArtifact, ...],
+    strategy_artifacts: tuple[StrategyPromotionArtifact, ...],
+    sample_artifacts: tuple[SampleSizeSurvivalArtifact, ...],
+    operator_artifact_refs: dict[str, str],
+) -> tuple[object, ...]:
+    entries = [
+        build_governed_audit_evidence_entry(
+            rail_id=f"{run_id}:run_manifest",
+            artifact_kind="run_manifest",
+            artifact_ref=str((run_dir / "run_manifest.json").resolve()),
+        ),
+    ]
+    for profile in capital_profiles:
+        entries.append(
+            build_governed_audit_evidence_entry(
+                rail_id=f"{run_id}:capital_bucket:{profile.capital_bucket}",
+                artifact_kind="capital_profile",
+                artifact_ref=str((run_dir / "capital_profiles" / f"{profile.capital_bucket}.json").resolve()),
+            )
+        )
+    for artifact in engine_artifacts:
+        entries.append(
+            build_governed_audit_evidence_entry(
+                rail_id=f"{run_id}:engine:{artifact.engine_id}",
+                artifact_kind="engine_promotion",
+                artifact_ref=str((run_dir / "engine_promotion" / artifact.engine_id / f"{run_id}.json").resolve()),
+            )
+        )
+    for artifact in pair_artifacts:
+        entries.append(
+            build_governed_audit_evidence_entry(
+                rail_id=f"{run_id}:pair:{artifact.pair}",
+                artifact_kind="pair_promotion",
+                artifact_ref=str((run_dir / "pair_promotion" / artifact.pair / f"{run_id}.json").resolve()),
+            )
+        )
+    for artifact in strategy_artifacts:
+        strategy_id = str(artifact.strategy_id)
+        entries.append(
+            build_governed_audit_evidence_entry(
+                rail_id=f"{run_id}:strategy:{strategy_id}",
+                artifact_kind="strategy_promotion",
+                artifact_ref=str((run_dir / "strategy_promotion" / strategy_id / f"{run_id}.json").resolve()),
+            )
+        )
+    for artifact in sample_artifacts:
+        entries.append(
+            build_governed_audit_evidence_entry(
+                rail_id=f"{run_id}:sample:{artifact.scope}:{artifact.id}",
+                artifact_kind="sample_size_survival",
+                artifact_ref=str((run_dir / "sample_size_survival" / artifact.scope / artifact.id / f"{run_id}.json").resolve()),
+            )
+        )
+    for name, ref in sorted(operator_artifact_refs.items()):
+        entries.append(
+            build_governed_audit_evidence_entry(
+                rail_id=f"{run_id}:operator:{name}",
+                artifact_kind=name,
+                artifact_ref=ref,
+            )
+        )
+    return tuple(entries)
+
+
+def _reason_domain(reason_code: str) -> str:
+    upper = reason_code.upper()
+    lower = reason_code.lower()
+    if (
+        upper.startswith("EXPECTED_EDGE_")
+        or upper in {"FEE_AWARE_EDGE_PROXY_BLOCKED", "BREAK_EVEN_PROXY_BLOCKED"}
+    ):
+        return "governance"
+    if "non_long" in lower or ".direction." in lower:
+        return "direction"
+    if "cost" in lower or "break_even" in lower or "no_excess" in lower:
+        return "cost"
+    if "microstructure" in lower or "structured_breakout" in lower or "breakout" in lower:
+        return "microstructure"
+    if "history" in lower or "closed_episode_journal" in lower:
+        return "history"
+    if "not_applied" in lower or "missing" in lower or "wiring" in lower:
+        return "wiring"
+    return "unknown"
+
+
+def _first_blocking_layer(reason_codes: tuple[str, ...]) -> str:
+    if any(code.startswith("EXPECTED_EDGE_") for code in reason_codes):
+        return "expected_edge_governance_gate"
+    if "FEE_AWARE_EDGE_PROXY_BLOCKED" in reason_codes:
+        return "fee_aware_edge_gate"
+    if "BREAK_EVEN_PROXY_BLOCKED" in reason_codes:
+        return "break_even_filter"
+    if any("history" in code.lower() for code in reason_codes):
+        return "history_gate"
+    if any("microstructure" in code.lower() for code in reason_codes):
+        return "microstructure_gate"
+    if any("non_long" in code.lower() for code in reason_codes):
+        return "direction_gate"
+    return "execution_rejected"
+
+
+def _blocker_assessment(reason_codes: tuple[str, ...]) -> dict[str, object]:
+    joined = " ".join(reason_codes)
+    if "ENGINE_D_HISTORY_BLOCKED_BY_MISSING_CLOSED_EPISODE_JOURNAL" in reason_codes:
+        return {
+            "assessment": "SUSPECTED_WIRING_ISSUE",
+            "classification": "history",
+            "note": "Engine D is blocked by a missing required closed-episode history artifact.",
+        }
+    if "engine_c.microstructure.not_applied" in reason_codes:
+        return {
+            "assessment": "SUSPECTED_WIRING_ISSUE",
+            "classification": "microstructure",
+            "note": "Engine C reports microstructure.not_applied and should be audited for consumption/wiring.",
+        }
+    if any(code.startswith("EXPECTED_EDGE_") for code in reason_codes) or (
+        "FEE_AWARE_EDGE_PROXY_BLOCKED" in reason_codes
+        or "BREAK_EVEN_PROXY_BLOCKED" in reason_codes
+    ):
+        return {
+            "assessment": "HEALTHY_GOVERNANCE_BLOCKER",
+            "classification": "governance",
+            "note": "Expected-edge governance is fail-closed and blocks selection before backtest truth is proven.",
+        }
+    if any(token in joined.lower() for token in ("non_long_direction", ".direction.non_long")):
+        return {
+            "assessment": "HEALTHY_STRATEGY_MARKET_BLOCKER",
+            "classification": "direction",
+            "note": "Direction filters reject setup quality; audit only if it overtriggers abnormally.",
+        }
+    if any(token in joined.lower() for token in ("cost_infeasible", "break_even_not_cleared", "no_excess")):
+        return {
+            "assessment": "HEALTHY_COST_BLOCKER",
+            "classification": "cost",
+            "note": "Cost and break-even constraints block economically weak setups.",
+        }
+    return {
+        "assessment": "REVIEW_REQUIRED",
+        "classification": _reason_domain(reason_codes[0]) if reason_codes else "unknown",
+        "note": "Blocker needs manual review.",
+    }
+
+
+def _select_engine_specific_reason_counts(
+    *,
+    reason_counter: Counter[str],
+    common_reason_codes: set[str],
+) -> list[tuple[str, int]]:
+    specific_reason_counts = [
+        (code, count)
+        for code, count in reason_counter.items()
+        if code not in common_reason_codes
+    ]
+    non_build14_specific_reason_counts = [
+        (code, count)
+        for code, count in specific_reason_counts
+        if not code.startswith("BUILD14_APPLIED:")
+        and not code.startswith("BUILD14_READER:")
+        and code != "BUILD14_SHADOW_ENABLED_ACTIVE"
+    ]
+    preferred_reason_counts = (
+        non_build14_specific_reason_counts
+        or specific_reason_counts
+        or list(reason_counter.items())
+    )
+    preferred_reason_counts.sort(key=lambda item: (-item[1], item[0]))
+    return preferred_reason_counts
+
+
+def _build_post_b2_refusal_audit_payload(
+    *,
+    summary: StrategyLadderReportSummary,
+    run_manifest: StrategyLadderRunManifest,
+    pair_artifacts: tuple[PairPromotionArtifact, ...],
+    engine_artifacts: tuple[EnginePromotionArtifact, ...],
+    sample_artifacts: tuple[SampleSizeSurvivalArtifact, ...],
+    operator_artifact_refs: dict[str, str],
+) -> dict[str, object]:
+    refusal_rows = _load_jsonl_rows(Path(operator_artifact_refs.get("refusal_ledger", "")))
+    trade_rows = _load_jsonl_rows(Path(operator_artifact_refs.get("trade_detail_ledger", "")))
+    total_refusals = len(refusal_rows)
+    reason_counter: Counter[str] = Counter()
+    engine_reason_counter: dict[str, Counter[str]] = defaultdict(Counter)
+    engine_counts: Counter[str] = Counter()
+    bucket_counts: Counter[int] = Counter()
+    common_reason_codes: set[str] | None = None
+    for row in refusal_rows:
+        engine_id = str(row.get("engine_id") or "unknown")
+        engine_counts[engine_id] += 1
+        reason_codes = tuple(
+            str(code)
+            for code in (row.get("reason_codes") or ())
+            if isinstance(code, str) and code
+        )
+        current_set = set(reason_codes)
+        if common_reason_codes is None:
+            common_reason_codes = set(current_set)
+        else:
+            common_reason_codes &= current_set
+        for code in current_set:
+            reason_counter[code] += 1
+            engine_reason_counter[engine_id][code] += 1
+        capital_bucket = row.get("capital_bucket")
+        if isinstance(capital_bucket, int):
+            bucket_counts[capital_bucket] += 1
+    common_reason_counts = sorted(
+        (
+            {
+                "reason_code": code,
+                "count": reason_counter[code],
+                "pct_of_replay_records": round(
+                    reason_counter[code] / summary.replay_record_count,
+                    6,
+                )
+                if summary.replay_record_count > 0
+                else 0.0,
+            }
+            for code in sorted(common_reason_codes or set())
+        ),
+        key=lambda item: (-int(item["count"]), str(item["reason_code"])),
+    )
+    engine_rows: list[dict[str, object]] = []
+    for artifact in engine_artifacts:
+        reason_counts = _select_engine_specific_reason_counts(
+            reason_counter=engine_reason_counter.get(artifact.engine_id, Counter()),
+            common_reason_codes=common_reason_codes or set(),
+        )
+        top_reason_codes = tuple(code for code, _ in reason_counts[:6])
+        assessment = _blocker_assessment(top_reason_codes)
+        engine_rows.append(
+            {
+                "engine_id": artifact.engine_id,
+                "candidate_count": artifact.candidate_count,
+                "record_count": artifact.record_count,
+                "selected_count": artifact.selected_count,
+                "executed_count": artifact.executed_count,
+                "hard_blocked_count": artifact.hard_blocked_count,
+                "top_blockers": [
+                    {"reason_code": code, "count": count}
+                    for code, count in reason_counts[:8]
+                ],
+                "first_blocking_layer": _first_blocking_layer(top_reason_codes),
+                "blocker_classification": assessment["classification"],
+                "blocker_assessment": assessment["assessment"],
+                "assessment_note": assessment["note"],
+            }
+        )
+    next_actions = [
+        {
+            "rank": "A",
+            "action": "Run Backtest Circuit Coverage Scan",
+            "rationale": "Establish full expected-vs-consumed coverage before deeper engine surgery.",
+        },
+        {
+            "rank": "B",
+            "action": "Fix/implement closed_episode_journal for Engine D history",
+            "rationale": "Engine D shows a missing required history artifact, not just a healthy blocker.",
+        },
+        {
+            "rank": "C",
+            "action": "Audit Engine C microstructure consumption",
+            "rationale": "microstructure.not_applied suggests a possible consumption or wiring gap.",
+        },
+        {
+            "rank": "D",
+            "action": "Build expected-edge governed dataset",
+            "rationale": "Expected-edge governance blocks all 4000 records before selection.",
+        },
+        {
+            "rank": "E",
+            "action": "Upgrade execution realism for spread/slippage/adverse selection",
+            "rationale": "Execution realism remains a healthy promotion blocker after selection is restored.",
+        },
+    ]
+    pair_artifact = pair_artifacts[0] if pair_artifacts else None
+    first_gate_reason_codes = tuple(
+        code["reason_code"] for code in common_reason_counts[:5]
+    )
+    sample_size_status = next(
+        (
+            artifact.sample_size_survival_status
+            for artifact in sample_artifacts
+            if artifact.scope == "global"
+        ),
+        summary.sample_size_survival_status,
+    )
+    return {
+        "schema_version": "v1",
+        "run_id": summary.run_id,
+        "workflow_run_id": summary.workflow_run_id,
+        "phase_run_id": summary.phase_run_id,
+        "source_status": "ok" if total_refusals > 0 else "missing",
+        "final_status": summary.final_status,
+        "evidence": {
+            "governed_evidence_status": summary.governed_evidence_status,
+            "refusal_ledger_evidence_class": summary.refusal_ledger_evidence_class,
+            "sample_size_survival_evidence_class": summary.sample_size_survival_evidence_class,
+            "trade_detail_ledger_evidence_class": summary.trade_detail_ledger_evidence_class,
+        },
+        "candidate_funnel": {
+            "discovery_pre_candidates": summary.discovery_pre_candidate_count or summary.candidate_count,
+            "engine_native_candidates": summary.engine_native_candidate_count,
+            "engine_native_preselected": summary.engine_native_preselected_count,
+            "b2_replay_candidates": summary.b2_replay_candidate_count,
+            "trade_eligible_candidates": summary.trade_eligible_candidate_count,
+            "replay_records": summary.replay_record_count,
+            "selected_count": pair_artifact.selected_count if pair_artifact is not None else 0,
+            "executed_count": pair_artifact.executed_count if pair_artifact is not None else 0,
+            "hard_blocked_count": pair_artifact.hard_blocked_count if pair_artifact is not None else total_refusals,
+            "trade_rows": len(trade_rows),
+            "refusal_rows": total_refusals,
+        },
+        "common_blockers": common_reason_counts,
+        "first_gate_analysis": {
+            "gate_status": "FIRST_GATE_BLOCKS_BEFORE_SELECTION"
+            if pair_artifact is not None and pair_artifact.selected_count == 0
+            else "FIRST_GATE_NOT_PROVEN",
+            "first_gate_reason_codes": first_gate_reason_codes,
+            "explanation": (
+                "Selection collapses before execution because governance and proxy cost gates block all replay records."
+            ),
+        },
+        "engine_specific_blockers": engine_rows,
+        "capital_bucket_distribution": [
+            {
+                "capital_bucket": bucket,
+                "replay_record_count": bucket_counts[bucket],
+                "selected_count": 0,
+                "hard_blocked_count": bucket_counts[bucket],
+            }
+            for bucket in sorted(bucket_counts)
+        ],
+        "healthy_vs_suspected": [
+            {
+                "issue": "EXPECTED_EDGE_PROXY_BLOCKED",
+                "status": "HEALTHY_GOVERNANCE_BLOCKER",
+                "note": "Expected-edge proxy is discovery-only and must not clear backtest truth.",
+            },
+            {
+                "issue": "SPREAD/SLIPPAGE/ADVERSE_SELECTION_PROXY",
+                "status": "HEALTHY_PROMOTION_BLOCKER",
+                "note": "Execution realism remains promotion-blocked until measured fidelity exists.",
+            },
+            {
+                "issue": "ENGINE_D_HISTORY_BLOCKED_BY_MISSING_CLOSED_EPISODE_JOURNAL",
+                "status": "SUSPECTED_WIRING_ISSUE",
+                "note": "Engine D lacks the required history artifact for its decision path.",
+            },
+            {
+                "issue": "engine_c.microstructure.not_applied",
+                "status": "SUSPECTED_WIRING_ISSUE",
+                "note": "Engine C microstructure consumption should be audited explicitly.",
+            },
+            {
+                "issue": "non_long_direction",
+                "status": "HEALTHY_STRATEGY_MARKET_BLOCKER",
+                "note": "Direction filters are acceptable unless they overtrigger abnormally.",
+            },
+        ],
+        "next_action_ranking": next_actions,
+        "profitability_claim_allowed": False,
+        "profitability_claim_blocker": (
+            "SELECTED_COUNT_ZERO_NO_PROFITABILITY_CLAIM"
+            if pair_artifact is not None and pair_artifact.selected_count == 0
+            else "NOT_APPLICABLE"
+        ),
+        "sample_size_status": sample_size_status,
+        "request_window": {
+            "start": run_manifest.start,
+            "end": run_manifest.end,
+            "pair": (
+                run_manifest.pairs[0]
+                if run_manifest.pairs
+                else ""
+            ),
+        },
+    }
+
+
+def _format_post_b2_refusal_audit_markdown(payload: dict[str, object]) -> str:
+    funnel = dict(payload.get("candidate_funnel") or {})
+    common_blockers = tuple(payload.get("common_blockers") or ())
+    engine_rows = tuple(payload.get("engine_specific_blockers") or ())
+    bucket_rows = tuple(payload.get("capital_bucket_distribution") or ())
+    next_actions = tuple(payload.get("next_action_ranking") or ())
+    lines = [
+        "# Post-B2 Refusal Audit",
+        "",
+        f"- run_id: {payload.get('run_id')}",
+        f"- workflow_run_id: {payload.get('workflow_run_id')}",
+        f"- phase_run_id: {payload.get('phase_run_id')}",
+        f"- final_status: {payload.get('final_status')}",
+        f"- source_status: {payload.get('source_status')}",
+        f"- profitability_claim_allowed: {payload.get('profitability_claim_allowed')}",
+        f"- profitability_claim_blocker: {payload.get('profitability_claim_blocker')}",
+        "",
+        "## Candidate Funnel",
+        f"- discovery_pre_candidates: {funnel.get('discovery_pre_candidates', 0)}",
+        f"- engine_native_candidates: {funnel.get('engine_native_candidates', 0)}",
+        f"- engine_native_preselected: {funnel.get('engine_native_preselected', 0)}",
+        f"- b2_replay_candidates: {funnel.get('b2_replay_candidates', 0)}",
+        f"- trade_eligible_candidates: {funnel.get('trade_eligible_candidates', 0)}",
+        f"- replay_records: {funnel.get('replay_records', 0)}",
+        f"- selected_count: {funnel.get('selected_count', 0)}",
+        f"- executed_count: {funnel.get('executed_count', 0)}",
+        f"- hard_blocked_count: {funnel.get('hard_blocked_count', 0)}",
+        "",
+        "## Common Blockers",
+    ]
+    lines.extend(
+        f"- {row.get('reason_code')}: count={row.get('count')}, pct={row.get('pct_of_replay_records')}"
+        for row in common_blockers
+    )
+    lines.extend(
+        [
+            "",
+            "## Engine-Specific Blocker Analysis",
+        ]
+    )
+    for row in engine_rows:
+        lines.extend(
+            [
+                f"- {row.get('engine_id')}:",
+                f"  - first_blocking_layer: {row.get('first_blocking_layer')}",
+                f"  - blocker_classification: {row.get('blocker_classification')}",
+                f"  - blocker_assessment: {row.get('blocker_assessment')}",
+                f"  - assessment_note: {row.get('assessment_note')}",
+                "  - top_blockers: "
+                + ", ".join(
+                    f"{item.get('reason_code')}({item.get('count')})"
+                    for item in (row.get('top_blockers') or ())
+                ),
+            ]
+        )
+    lines.extend(["", "## Capital Bucket Distribution"])
+    lines.extend(
+        f"- bucket={row.get('capital_bucket')}: replay_records={row.get('replay_record_count')}, selected={row.get('selected_count')}, hard_blocked={row.get('hard_blocked_count')}"
+        for row in bucket_rows
+    )
+    first_gate = dict(payload.get("first_gate_analysis") or {})
+    lines.extend(
+        [
+            "",
+            "## First-Gate Analysis",
+            f"- gate_status: {first_gate.get('gate_status')}",
+            "- first_gate_reason_codes: "
+            + ", ".join(first_gate.get("first_gate_reason_codes") or ()),
+            f"- explanation: {first_gate.get('explanation')}",
+            "",
+            "## Healthy Blockers vs Suspected Wiring Issues",
+        ]
+    )
+    lines.extend(
+        f"- {item.get('issue')}: {item.get('status')} - {item.get('note')}"
+        for item in (payload.get("healthy_vs_suspected") or ())
+    )
+    lines.extend(["", "## Next Action Ranking"])
+    lines.extend(
+        f"- {item.get('rank')}. {item.get('action')}: {item.get('rationale')}"
+        for item in next_actions
+    )
+    evidence = dict(payload.get("evidence") or {})
+    lines.extend(
+        [
+            "",
+            "## Evidence",
+            f"- governed_evidence_status: {evidence.get('governed_evidence_status')}",
+            f"- refusal_ledger_evidence_class: {evidence.get('refusal_ledger_evidence_class')}",
+            f"- sample_size_survival_evidence_class: {evidence.get('sample_size_survival_evidence_class')}",
+            f"- trade_detail_ledger_evidence_class: {evidence.get('trade_detail_ledger_evidence_class')}",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
+def _candidate_compatibility_payload(candidate_row: dict[str, object]) -> dict[str, object]:
+    compatibility_payload = candidate_row.get("compatibility_payload")
+    return compatibility_payload if isinstance(compatibility_payload, dict) else {}
+
+
+def _row_reason_codes(row: dict[str, object], *, field_name: str = "reason_codes") -> tuple[str, ...]:
+    return tuple(
+        str(code)
+        for code in (row.get(field_name) or ())
+        if isinstance(code, str) and code
+    )
+
+
+def _reason_count_matches(reason_counter: Counter[str], *, tokens: tuple[str, ...]) -> int:
+    total = 0
+    lowered_tokens = tuple(token.lower() for token in tokens)
+    for code, count in reason_counter.items():
+        lowered_code = code.lower()
+        if any(token in lowered_code for token in lowered_tokens):
+            total += count
+    return total
+
+
+def _reason_row_count_matches(
+    refusal_rows: list[dict[str, object]],
+    *,
+    tokens: tuple[str, ...],
+) -> int:
+    lowered_tokens = tuple(token.lower() for token in tokens)
+    count = 0
+    for row in refusal_rows:
+        reason_codes = {
+            code.lower()
+            for code in _row_reason_codes(row)
+        }
+        if any(any(token in code for token in lowered_tokens) for code in reason_codes):
+            count += 1
+    return count
+
+
+def _top_reason_rows(
+    reason_counter: Counter[str],
+    *,
+    common_reason_codes: set[str],
+    limit: int = 10,
+) -> list[dict[str, object]]:
+    specific_reason_counts = [
+        (code, count)
+        for code, count in reason_counter.items()
+        if code not in common_reason_codes
+    ]
+    non_build14_reason_counts = [
+        (code, count)
+        for code, count in specific_reason_counts
+        if not code.startswith("BUILD14_APPLIED:")
+        and not code.startswith("BUILD14_READER:")
+        and code != "BUILD14_SHADOW_ENABLED_ACTIVE"
+    ]
+    preferred_reason_counts = (
+        non_build14_reason_counts
+        or specific_reason_counts
+        or list(reason_counter.items())
+    )
+    preferred_reason_counts.sort(key=lambda item: (-item[1], item[0]))
+    return [
+        {"reason_code": code, "count": count}
+        for code, count in preferred_reason_counts[:limit]
+    ]
+
+
+def _status_from_count(
+    *,
+    present_count: int,
+    ready_in_gold: bool,
+    present_status: str,
+    missing_from_payload_status: str,
+    group_not_ready_status: str,
+) -> str:
+    if present_count > 0:
+        return present_status
+    if ready_in_gold:
+        return missing_from_payload_status
+    return group_not_ready_status
+
+
+def _find_closed_episode_journal(workflow_root: Path) -> dict[str, object]:
+    manifest_candidates = sorted(workflow_root.rglob("closed_episode_manifest.json"))
+    jsonl_candidates = sorted(workflow_root.rglob("closed_episodes.jsonl"))
+    manifest_path = manifest_candidates[0] if manifest_candidates else None
+    jsonl_path = jsonl_candidates[0] if jsonl_candidates else None
+    if manifest_path is None and jsonl_path is None:
+        return {
+            "status": "CLOSED_EPISODE_JOURNAL_NOT_GENERATED",
+            "path": "",
+            "record_count": 0,
+            "source_status": "REQUIRED_FOR_ENGINE_D_BUT_NO_VALID_EPISODE_SOURCE",
+        }
+    manifest_payload = _load_json_payload(manifest_path) if manifest_path is not None else {}
+    record_count = int(manifest_payload.get("record_count") or 0)
+    if record_count <= 0 and jsonl_path is not None:
+        record_count = len(_load_jsonl_rows(jsonl_path))
+    status = str(manifest_payload.get("status") or "")
+    source_status = str(manifest_payload.get("source_status") or "")
+    if not status:
+        if manifest_path is not None and jsonl_path is not None:
+            status = (
+                "CLOSED_EPISODE_JOURNAL_READY"
+                if record_count > 0
+                else "CLOSED_EPISODE_JOURNAL_EMPTY_NO_VALID_EPISODES"
+            )
+        elif manifest_path is not None:
+            status = "CLOSED_EPISODE_JOURNAL_MANIFEST_ONLY"
+        else:
+            status = (
+                "CLOSED_EPISODE_JOURNAL_JSONL_ONLY"
+                if record_count > 0
+                else "CLOSED_EPISODE_JOURNAL_EMPTY_NO_VALID_EPISODES"
+            )
+    if not source_status:
+        source_status = (
+            "CLOSED_EPISODE_SOURCE_EXECUTED_TRADES"
+            if record_count > 0
+            else "REQUIRED_FOR_ENGINE_D_BUT_NO_VALID_EPISODE_SOURCE"
+        )
+    return {
+        "status": status,
+        "path": str((manifest_path or jsonl_path).resolve()),
+        "record_count": record_count,
+        "source_status": source_status,
+    }
+
+
+def _build_engine_d_diagnosis(
+    *,
+    candidate_rows: list[dict[str, object]],
+    reason_counter: Counter[str],
+    common_reason_codes: set[str],
+    workflow_root: Path,
+) -> dict[str, object]:
+    journal_state = _find_closed_episode_journal(workflow_root)
+    compat_rows = tuple(_candidate_compatibility_payload(row) for row in candidate_rows)
+    first_episode_present = any(
+        any(str(compat.get(field) or "").strip() for field in ("first_episode_id", "first_episode_engine_id", "first_episode_close_reason"))
+        for compat in compat_rows
+    )
+    history_score_present = any(isinstance(compat.get("history_score"), (int, float)) for compat in compat_rows)
+    marginal_value_present = any(
+        isinstance(compat.get("marginal_value_score"), (int, float)) for compat in compat_rows
+    )
+    anti_revenge_present = any(str(compat.get("anti_revenge_state") or "").strip() for compat in compat_rows)
+    reentry_age_present = any(isinstance(compat.get("reentry_lateness"), (int, float)) for compat in compat_rows)
+    if first_episode_present:
+        first_episode_ref_status = "FIRST_EPISODE_REF_PRESENT"
+    elif int(journal_state["record_count"]) > 0:
+        first_episode_ref_status = "FIRST_EPISODE_REF_NOT_LINKED"
+    else:
+        first_episode_ref_status = "FIRST_EPISODE_REF_MISSING"
+    if str(journal_state["status"]) == "CLOSED_EPISODE_JOURNAL_NOT_GENERATED":
+        history_input_status = "REQUIRED_FOR_ENGINE_D_BUT_NOT_AVAILABLE_IN_B2"
+    elif int(journal_state["record_count"]) <= 0:
+        history_input_status = "REQUIRED_FOR_ENGINE_D_BUT_NO_VALID_EPISODE_SOURCE"
+    elif not first_episode_present:
+        history_input_status = "ENGINE_D_HISTORY_INPUT_NOT_CONSUMED"
+    else:
+        history_input_status = "ENGINE_D_HISTORY_INPUT_READY"
+    suspected_wiring_gaps: list[str] = []
+    if history_input_status != "ENGINE_D_HISTORY_INPUT_READY":
+        suspected_wiring_gaps.extend(
+            [
+                "ENGINE_D_HISTORY_BLOCKED_BY_MISSING_CLOSED_EPISODE_JOURNAL",
+                str(journal_state["status"]),
+                history_input_status,
+            ]
+        )
+    top_reason_rows = _top_reason_rows(
+        reason_counter,
+        common_reason_codes=common_reason_codes,
+        limit=10,
+    )
+    top_reason_codes = tuple(str(item["reason_code"]) for item in top_reason_rows)
+    return {
+        "closed_episode_journal_status": str(journal_state["status"]),
+        "closed_episode_journal_path": str(journal_state["path"]),
+        "closed_episode_count": int(journal_state["record_count"]),
+        "closed_episode_source_status": str(journal_state.get("source_status") or ""),
+        "engine_d_history_input_status": history_input_status,
+        "first_episode_ref_status": first_episode_ref_status,
+        "history_score_status": (
+            "HISTORY_SCORE_PRESENT"
+            if history_score_present
+            else "HISTORY_SCORE_BLOCKED_BY_MISSING_FIRST_EPISODE"
+        ),
+        "marginal_value_score_status": (
+            "MARGINAL_VALUE_SCORE_PRESENT"
+            if marginal_value_present
+            else "MARGINAL_VALUE_SCORE_BLOCKED_BY_MISSING_FIRST_EPISODE"
+        ),
+        "anti_revenge_state_status": (
+            "ANTI_REVENGE_STATE_PRESENT"
+            if anti_revenge_present
+            else "ANTI_REVENGE_STATE_BLOCKED_BY_MISSING_FIRST_EPISODE"
+        ),
+        "reentry_age_status": (
+            "REENTRY_AGE_PRESENT"
+            if reentry_age_present
+            else "REENTRY_AGE_BLOCKED_BY_MISSING_FIRST_EPISODE"
+        ),
+        "first_blocking_layer": _first_blocking_layer(top_reason_codes),
+        "healthy_blockers": [
+            code
+            for code in sorted(common_reason_codes)
+            if code in reason_counter
+        ],
+        "suspected_wiring_gaps": tuple(dict.fromkeys(suspected_wiring_gaps)),
+        "recommended_next_action": "BUILD_CLOSED_EPISODE_JOURNAL_FOR_ENGINE_D",
+    }
+
+
+def _build_engine_c_diagnosis(
+    *,
+    candidate_rows: list[dict[str, object]],
+    reason_counter: Counter[str],
+    common_reason_codes: set[str],
+    gold_manifest_payload: dict[str, object],
+) -> dict[str, object]:
+    ready_groups = {
+        str(group)
+        for group in (gold_manifest_payload.get("feature_groups_ready") or ())
+        if isinstance(group, str) and group
+    }
+    micro_groups_ready = bool(
+        ready_groups
+        & {
+            "flow_microstructure_features",
+            "ofi_features",
+            "vpin_features",
+            "queue_pressure",
+        }
+    )
+    spread_group_ready = bool(
+        ready_groups & {"book_liquidity_features", "spread_features"}
+    )
+    depth_group_ready = bool(
+        ready_groups & {"book_liquidity_features", "depth_features"}
+    )
+    fragility_group_ready = bool(
+        ready_groups & {"fragility_false_breakout_features"}
+    )
+    compat_rows = tuple(_candidate_compatibility_payload(row) for row in candidate_rows)
+    vpin_present = sum(1 for compat in compat_rows if isinstance(compat.get("vpin"), (int, float)))
+    ofi_present = sum(
+        1
+        for compat in compat_rows
+        if isinstance(compat.get("cumulative_ofi"), (int, float))
+        or isinstance(compat.get("ofi"), (int, float))
+    )
+    queue_present = sum(
+        1 for compat in compat_rows if isinstance(compat.get("queue_pressure"), (int, float))
+    )
+    spread_present = sum(
+        1 for compat in compat_rows if isinstance(compat.get("spread_bps"), (int, float))
+    )
+    depth_present = sum(
+        1
+        for compat in compat_rows
+        if isinstance(compat.get("book_depth_levels"), int) and int(compat.get("book_depth_levels") or 0) > 0
+    )
+    fragility_present = sum(
+        1
+        for compat in compat_rows
+        if str(compat.get("build14_shadow_activation_status") or "") == "BUILD14_SHADOW_ENABLED_ACTIVE"
+        or any(
+            code.startswith("BUILD14_READER:execution_fragility_score:")
+            for code in _row_reason_codes(compat, field_name="build14_shadow_reason_codes")
+        )
+    )
+    false_breakout_present = sum(
+        1
+        for compat in compat_rows
+        if isinstance(compat.get("false_breakout_context"), (int, float))
+        or any(
+            "false_breakout_model" in code
+            for code in _row_reason_codes(compat, field_name="build14_shadow_reason_codes")
+        )
+    )
+    micro_edge_entry_timing_present = sum(
+        1
+        for compat in compat_rows
+        if isinstance(compat.get("micro_edge_entry_timing"), (int, float))
+    )
+    micro_edge_exit_governor_present = sum(
+        1
+        for compat in compat_rows
+        if isinstance(compat.get("micro_edge_exit_governor"), (int, float))
+    )
+    micro_not_applied = any("engine_c.microstructure.not_applied" in code for code in reason_counter)
+    fragility_blocked = any(
+        code.startswith("BUILD14_READER:execution_fragility_score:")
+        or code.startswith("BUILD14_READER:false_breakout_model:")
+        for compat in compat_rows
+        for code in _row_reason_codes(compat, field_name="build14_shadow_reason_codes")
+    )
+    core_present = any(count > 0 for count in (vpin_present, ofi_present, queue_present))
+    if core_present:
+        input_status = "ENGINE_C_MICROSTRUCTURE_INPUT_PRESENT_IN_REPLAY_PAYLOAD"
+    elif micro_groups_ready:
+        input_status = "ENGINE_C_MICROSTRUCTURE_MISSING_FROM_REPLAY_PAYLOAD"
+    else:
+        input_status = "ENGINE_C_MICROSTRUCTURE_GROUP_NOT_READY"
+    if micro_not_applied and core_present:
+        consumption_status = "ENGINE_C_MICROSTRUCTURE_PRESENT_BUT_NOT_CONSUMED"
+    elif micro_not_applied or not core_present:
+        consumption_status = "ENGINE_C_MICROSTRUCTURE_MISSING_FROM_REPLAY_PAYLOAD"
+    elif fragility_blocked:
+        consumption_status = "ENGINE_C_MICROSTRUCTURE_CONSUMED_BUT_BLOCKED_BY_FRAGILITY"
+    else:
+        consumption_status = "ENGINE_C_MICROSTRUCTURE_CONSUMED"
+    suspected_wiring_gaps: list[str] = []
+    if consumption_status in {
+        "ENGINE_C_MICROSTRUCTURE_PRESENT_BUT_NOT_CONSUMED",
+        "ENGINE_C_MICROSTRUCTURE_MISSING_FROM_REPLAY_PAYLOAD",
+    }:
+        suspected_wiring_gaps.append(consumption_status)
+    top_reason_rows = _top_reason_rows(
+        reason_counter,
+        common_reason_codes=common_reason_codes,
+        limit=10,
+    )
+    top_reason_codes = tuple(str(item["reason_code"]) for item in top_reason_rows)
+    return {
+        "engine_c_microstructure_input_status": input_status,
+        "engine_c_microstructure_consumption_status": consumption_status,
+        "vpin_context_status": _status_from_count(
+            present_count=vpin_present,
+            ready_in_gold=micro_groups_ready,
+            present_status="VPIN_PRESENT_IN_REPLAY_PAYLOAD",
+            missing_from_payload_status="VPIN_GROUP_READY_BUT_MISSING_FROM_REPLAY_PAYLOAD",
+            group_not_ready_status="VPIN_GROUP_NOT_READY",
+        ),
+        "ofi_context_status": _status_from_count(
+            present_count=ofi_present,
+            ready_in_gold=micro_groups_ready,
+            present_status="OFI_PRESENT_IN_REPLAY_PAYLOAD",
+            missing_from_payload_status="OFI_GROUP_READY_BUT_MISSING_FROM_REPLAY_PAYLOAD",
+            group_not_ready_status="OFI_GROUP_NOT_READY",
+        ),
+        "queue_pressure_context_status": _status_from_count(
+            present_count=queue_present,
+            ready_in_gold=micro_groups_ready,
+            present_status="QUEUE_PRESSURE_PRESENT_IN_REPLAY_PAYLOAD",
+            missing_from_payload_status="QUEUE_PRESSURE_GROUP_READY_BUT_MISSING_FROM_REPLAY_PAYLOAD",
+            group_not_ready_status="QUEUE_PRESSURE_GROUP_NOT_READY",
+        ),
+        "spread_context_status": _status_from_count(
+            present_count=spread_present,
+            ready_in_gold=spread_group_ready,
+            present_status="SPREAD_PRESENT_IN_REPLAY_PAYLOAD",
+            missing_from_payload_status="SPREAD_GROUP_READY_BUT_MISSING_FROM_REPLAY_PAYLOAD",
+            group_not_ready_status="SPREAD_GROUP_NOT_READY",
+        ),
+        "depth_context_status": _status_from_count(
+            present_count=depth_present,
+            ready_in_gold=depth_group_ready,
+            present_status="DEPTH_PRESENT_IN_REPLAY_PAYLOAD",
+            missing_from_payload_status="DEPTH_GROUP_READY_BUT_MISSING_FROM_REPLAY_PAYLOAD",
+            group_not_ready_status="DEPTH_GROUP_NOT_READY",
+        ),
+        "fragility_context_status": (
+            "FRAGILITY_PRESENT_IN_REPLAY_PAYLOAD"
+            if fragility_present > 0
+            else "FRAGILITY_GROUP_NOT_READY"
+            if not fragility_group_ready
+            else "FRAGILITY_NOT_PROVEN"
+        ),
+        "false_breakout_context_status": (
+            "FALSE_BREAKOUT_PRESENT_IN_REPLAY_PAYLOAD"
+            if false_breakout_present > 0
+            else "FALSE_BREAKOUT_GROUP_NOT_READY"
+            if not fragility_group_ready
+            else "FALSE_BREAKOUT_NOT_PROVEN"
+        ),
+        "micro_edge_entry_timing_status": (
+            "MICRO_EDGE_ENTRY_TIMING_PRESENT"
+            if micro_edge_entry_timing_present > 0
+            else "MICRO_EDGE_ENTRY_TIMING_NOT_PROVEN"
+        ),
+        "micro_edge_exit_governor_status": (
+            "MICRO_EDGE_EXIT_GOVERNOR_PRESENT"
+            if micro_edge_exit_governor_present > 0
+            else "MICRO_EDGE_EXIT_GOVERNOR_NOT_PROVEN"
+        ),
+        "fragility_block_status": (
+            "ENGINE_C_MICROSTRUCTURE_CONSUMED_BUT_BLOCKED_BY_FRAGILITY"
+            if consumption_status == "ENGINE_C_MICROSTRUCTURE_CONSUMED_BUT_BLOCKED_BY_FRAGILITY"
+            else "FRAGILITY_NOT_PROVEN"
+        ),
+        "first_blocking_layer": _first_blocking_layer(top_reason_codes),
+        "healthy_blockers": [
+            code
+            for code in sorted(common_reason_codes)
+            if code in reason_counter
+        ],
+        "suspected_wiring_gaps": tuple(dict.fromkeys(suspected_wiring_gaps)),
+        "recommended_next_action": (
+            "FIX_ENGINE_C_MICROSTRUCTURE_CONSUMPTION"
+            if suspected_wiring_gaps
+            else "BUILD_EXPECTED_EDGE_GOVERNED_DATASET"
+        ),
+    }
+
+
+def _build_engine_ab_direction_cost_diagnosis(
+    *,
+    engine_id: str,
+    candidate_rows: list[dict[str, object]],
+    refusal_rows: list[dict[str, object]],
+    reason_counter: Counter[str],
+    common_reason_codes: set[str],
+) -> dict[str, object]:
+    compat_rows = tuple(_candidate_compatibility_payload(row) for row in candidate_rows)
+    native_reason_codes = {
+        code
+        for compat in compat_rows
+        for code in _row_reason_codes(compat, field_name="engine_native_reason_codes")
+    }
+    non_long_direction_count = _reason_row_count_matches(
+        refusal_rows,
+        tokens=("non_long_direction", ".direction.non_long"),
+    )
+    cost_infeasible_count = _reason_row_count_matches(
+        refusal_rows,
+        tokens=("cost_infeasible", ".cost.infeasible"),
+    )
+    break_even_not_cleared_count = _reason_row_count_matches(
+        refusal_rows,
+        tokens=("break_even_not_cleared",),
+    )
+    structure_unfavorable_count = _reason_row_count_matches(
+        refusal_rows,
+        tokens=("structure.unfavorable",),
+    )
+    no_excess_count = _reason_row_count_matches(
+        refusal_rows,
+        tokens=("no_excess",),
+    )
+    if native_reason_codes and any("direction.non_long" in code for code in native_reason_codes):
+        direction_mapping_status = "ENGINE_A_B_DIRECTION_MAPPING_PROVEN_FROM_ENGINE_NATIVE_REASON_CODES"
+    else:
+        direction_mapping_status = "ENGINE_A_B_DIRECTION_MAPPING_NOT_PROVEN"
+    long_only_filter_status = (
+        "LONG_ONLY_GOVERNANCE_BLOCKED_NON_LONG_CONTEXT"
+        if non_long_direction_count > 0
+        and direction_mapping_status != "ENGINE_A_B_DIRECTION_MAPPING_NOT_PROVEN"
+        else "LONG_ONLY_FILTER_NOT_PROVEN"
+    )
+    top_reason_rows = _top_reason_rows(
+        reason_counter,
+        common_reason_codes=common_reason_codes,
+        limit=10,
+    )
+    top_reason_codes = tuple(str(item["reason_code"]) for item in top_reason_rows)
+    suspected_wiring_gaps = (
+        ("ENGINE_A_B_DIRECTION_MAPPING_NOT_PROVEN",)
+        if direction_mapping_status == "ENGINE_A_B_DIRECTION_MAPPING_NOT_PROVEN"
+        else ()
+    )
+    return {
+        "direction_input_status": (
+            "ENGINE_NATIVE_DIRECTION_INPUT_PRESENT"
+            if compat_rows
+            else "DIRECTION_INPUT_NOT_PROVEN"
+        ),
+        "long_only_filter_status": long_only_filter_status,
+        "direction_mapping_status": direction_mapping_status,
+        "break_even_gate_status": (
+            "BREAK_EVEN_GATE_BLOCKER_ONLY_PROXY"
+            if "BREAK_EVEN_PROXY_BLOCKED" in common_reason_codes
+            else "BREAK_EVEN_GATE_NOT_PROVEN"
+        ),
+        "fee_aware_edge_gate_status": (
+            "FEE_AWARE_EDGE_GATE_BLOCKER_ONLY_PROXY"
+            if "FEE_AWARE_EDGE_PROXY_BLOCKED" in common_reason_codes
+            else "FEE_AWARE_EDGE_GATE_NOT_PROVEN"
+        ),
+        "aggregated_blocker_counts": {
+            "non_long_direction": non_long_direction_count,
+            "cost_infeasible": cost_infeasible_count,
+            "break_even_not_cleared": break_even_not_cleared_count,
+            "structure_unfavorable": structure_unfavorable_count,
+            "no_excess": no_excess_count,
+        },
+        "first_blocking_layer": _first_blocking_layer(top_reason_codes),
+        "healthy_blockers": tuple(
+            dict.fromkeys(
+                [
+                    *sorted(code for code in common_reason_codes if code in reason_counter),
+                    *(
+                        ["LONG_ONLY_GOVERNANCE_BLOCKED_NON_LONG_CONTEXT"]
+                        if long_only_filter_status == "LONG_ONLY_GOVERNANCE_BLOCKED_NON_LONG_CONTEXT"
+                        else []
+                    ),
+                ]
+            )
+        ),
+        "suspected_wiring_gaps": suspected_wiring_gaps,
+        "recommended_next_action": (
+            "AUDIT_ENGINE_A_B_DIRECTION_MAPPING"
+            if suspected_wiring_gaps
+            else "BUILD_EXPECTED_EDGE_GOVERNED_DATASET"
+        ),
+        "engine_id": engine_id,
+    }
+
+
+def _build_engine_no_trade_diagnosis_payload(
+    *,
+    summary: StrategyLadderReportSummary,
+    run_manifest: StrategyLadderRunManifest,
+    run_dir: Path,
+    operator_artifact_refs: dict[str, str],
+    gold_manifest_payload: dict[str, object],
+) -> dict[str, object]:
+    candidate_rows = _load_jsonl_rows(run_dir / "fast_candidates" / "candidate_events.jsonl")
+    refusal_rows = _load_jsonl_rows(Path(operator_artifact_refs.get("refusal_ledger", "")))
+    try:
+        engine_matrix_payload = json.loads(
+            (run_dir / "reports" / "engine_matrix.json").read_text(encoding="utf-8")
+        )
+    except (OSError, TypeError, ValueError):
+        engine_matrix_payload = []
+    engine_matrix_rows = tuple(
+        row
+        for row in (engine_matrix_payload if isinstance(engine_matrix_payload, list) else ())
+        if isinstance(row, dict)
+    )
+    engine_matrix_index = {
+        str(row.get("engine_id") or ""): row
+        for row in engine_matrix_rows
+        if isinstance(row, dict) and str(row.get("engine_id") or "")
+    }
+    candidate_rows_by_engine: dict[str, list[dict[str, object]]] = defaultdict(list)
+    refusal_rows_by_engine: dict[str, list[dict[str, object]]] = defaultdict(list)
+    reason_counter: Counter[str] = Counter()
+    common_reason_codes: set[str] | None = None
+    for row in candidate_rows:
+        candidate_rows_by_engine[str(row.get("engine_id") or "unknown")].append(row)
+    for row in refusal_rows:
+        engine_id = str(row.get("engine_id") or "unknown")
+        refusal_rows_by_engine[engine_id].append(row)
+        reason_codes = _row_reason_codes(row)
+        current_set = set(reason_codes)
+        if common_reason_codes is None:
+            common_reason_codes = set(current_set)
+        else:
+            common_reason_codes &= current_set
+        for code in current_set:
+            reason_counter[code] += 1
+    resolved_common_codes = common_reason_codes or set()
+    common_blockers = [
+        {
+            "reason_code": code,
+            "count": reason_counter[code],
+            "pct_of_replay_records": round(
+                reason_counter[code] / summary.replay_record_count,
+                6,
+            )
+            if summary.replay_record_count > 0
+            else 0.0,
+        }
+        for code in sorted(
+            resolved_common_codes,
+            key=lambda item: (-reason_counter[item], item),
+        )
+    ]
+    engine_rows: list[dict[str, object]] = []
+    workflow_root = run_dir
+    for engine_id in ("engine_a", "engine_b", "engine_c", "engine_d"):
+        engine_candidate_rows = candidate_rows_by_engine.get(engine_id, [])
+        engine_refusal_rows = refusal_rows_by_engine.get(engine_id, [])
+        engine_reason_counter: Counter[str] = Counter()
+        for refusal_row in engine_refusal_rows:
+            for code in set(_row_reason_codes(refusal_row)):
+                engine_reason_counter[code] += 1
+        matrix_row = engine_matrix_index.get(engine_id, {})
+        candidate_count = len(
+            {
+                (
+                    str(row.get("candidate_id") or ""),
+                    int(row.get("timestamp_ms") or 0),
+                    str(row.get("pair") or ""),
+                    str(row.get("timeframe") or ""),
+                )
+                for row in engine_candidate_rows
+            }
+        )
+        top_reason_rows = _top_reason_rows(
+            engine_reason_counter,
+            common_reason_codes=resolved_common_codes,
+            limit=10,
+        )
+        top_reason_codes = tuple(str(item["reason_code"]) for item in top_reason_rows)
+        if engine_id == "engine_d":
+            engine_specific = _build_engine_d_diagnosis(
+                candidate_rows=engine_candidate_rows,
+                reason_counter=engine_reason_counter,
+                common_reason_codes=resolved_common_codes,
+                workflow_root=workflow_root,
+            )
+        elif engine_id == "engine_c":
+            engine_specific = _build_engine_c_diagnosis(
+                candidate_rows=engine_candidate_rows,
+                reason_counter=engine_reason_counter,
+                common_reason_codes=resolved_common_codes,
+                gold_manifest_payload=gold_manifest_payload,
+            )
+        else:
+            engine_specific = _build_engine_ab_direction_cost_diagnosis(
+                engine_id=engine_id,
+                candidate_rows=engine_candidate_rows,
+                refusal_rows=engine_refusal_rows,
+                reason_counter=engine_reason_counter,
+                common_reason_codes=resolved_common_codes,
+            )
+        engine_rows.append(
+            {
+                "engine_id": engine_id,
+                "candidate_count": candidate_count,
+                "replay_record_count": int(
+                    matrix_row.get("record_count") or len(engine_refusal_rows)
+                ),
+                "selected_count": int(matrix_row.get("selected_count") or 0),
+                "hard_blocked_count": int(
+                    matrix_row.get("hard_blocked_count") or len(engine_refusal_rows)
+                ),
+                "first_blocking_layer": str(
+                    engine_specific.get("first_blocking_layer")
+                    or _first_blocking_layer(top_reason_codes)
+                ),
+                "top_reason_codes": top_reason_rows,
+                "healthy_blockers": tuple(engine_specific.get("healthy_blockers") or ()),
+                "suspected_wiring_gaps": tuple(
+                    engine_specific.get("suspected_wiring_gaps") or ()
+                ),
+                "recommended_next_action": str(
+                    engine_specific.get("recommended_next_action")
+                    or "KEEP_BLOCKED_UNTIL_EDGE_GOVERNED"
+                ),
+                "diagnostics": {
+                    key: value
+                    for key, value in engine_specific.items()
+                    if key
+                    not in {
+                        "first_blocking_layer",
+                        "healthy_blockers",
+                        "suspected_wiring_gaps",
+                        "recommended_next_action",
+                        "engine_id",
+                    }
+                },
+            }
+        )
+    selected_count_total = sum(int(row.get("selected_count") or 0) for row in engine_rows)
+    hard_blocked_count_total = sum(
+        int(row.get("hard_blocked_count") or 0) for row in engine_rows
+    )
+    next_action_ranking = [
+        {
+            "rank": "A",
+            "action": "RUN_BACKTEST_CIRCUIT_COVERAGE_SCAN",
+            "rationale": "Measure feature-generation, payload transport, and engine-consumption coverage end to end.",
+        },
+        {
+            "rank": "B",
+            "action": "BUILD_CLOSED_EPISODE_JOURNAL_FOR_ENGINE_D",
+            "rationale": "Engine D requires closed-episode history and currently runs without a generated journal.",
+        },
+        {
+            "rank": "C",
+            "action": "FIX_ENGINE_C_MICROSTRUCTURE_CONSUMPTION",
+            "rationale": "Gold feature groups exist, but core Engine C microstructure inputs are missing or not consumed in replay payloads.",
+        },
+        {
+            "rank": "D",
+            "action": "BUILD_EXPECTED_EDGE_GOVERNED_DATASET",
+            "rationale": "Expected-edge governance stays fail-closed and blocks selection for every replay record.",
+        },
+        {
+            "rank": "E",
+            "action": "UPGRADE_EXECUTION_REALISM_FOR_SPREAD_SLIPPAGE_ADVERSE_SELECTION",
+            "rationale": "Execution realism remains a healthy blocker even after selection issues are understood.",
+        },
+    ]
+    return {
+        "schema_version": "v1",
+        "run_id": summary.run_id,
+        "workflow_run_id": summary.workflow_run_id,
+        "phase_run_id": summary.phase_run_id,
+        "source_status": "ok" if candidate_rows and refusal_rows else "missing",
+        "final_status": summary.final_status,
+        "candidate_funnel": {
+            "discovery_candidates": summary.candidate_count,
+            "engine_native_candidates": summary.engine_native_candidate_count,
+            "replay_records": summary.replay_record_count,
+            "selected_count": selected_count_total,
+            "executed_count": run_manifest.executed_trade_count,
+            "hard_blocked_count": hard_blocked_count_total,
+        },
+        "common_blockers": common_blockers,
+        "first_gate_analysis": {
+            "gate_status": (
+                "FIRST_GATE_BLOCKS_BEFORE_SELECTION"
+                if run_manifest.executed_trade_count == 0 and hard_blocked_count_total >= summary.replay_record_count
+                else "FIRST_GATE_NOT_PROVEN"
+            ),
+            "first_gate_reason_codes": tuple(item["reason_code"] for item in common_blockers),
+            "explanation": "Selection collapses before execution because common governance and proxy cost gates block every replay record.",
+        },
+        "engines": engine_rows,
+        "next_action_ranking": next_action_ranking,
+        "evidence": {
+            "governed_evidence_status": summary.governed_evidence_status,
+            "run_manifest_evidence_class": summary.run_manifest_evidence_class,
+            "refusal_ledger_evidence_class": summary.refusal_ledger_evidence_class,
+            "sample_size_survival_evidence_class": summary.sample_size_survival_evidence_class,
+            "audited_evidence_count": summary.audited_evidence_count,
+            "scratch_only_evidence_count": summary.scratch_only_evidence_count,
+            "promotion_grade_evidence_count": summary.promotion_grade_evidence_count,
+        },
+        "profitability_claim_allowed": False,
+        "profitability_claim_blocker": "SELECTED_COUNT_ZERO_NO_PROFITABILITY_CLAIM",
+        "request_window": {
+            "start": run_manifest.start,
+            "end": run_manifest.end,
+            "pair": run_manifest.pairs[0] if run_manifest.pairs else "",
+        },
+    }
+
+
+def _format_engine_no_trade_diagnosis_markdown(payload: dict[str, object]) -> str:
+    candidate_funnel = dict(payload.get("candidate_funnel") or {})
+    common_blockers = tuple(payload.get("common_blockers") or ())
+    engine_rows = tuple(payload.get("engines") or ())
+    next_actions = tuple(payload.get("next_action_ranking") or ())
+    first_gate = dict(payload.get("first_gate_analysis") or {})
+    evidence = dict(payload.get("evidence") or {})
+    lines = [
+        "# Engine No-Trade Diagnosis",
+        "",
+        f"- run_id: {payload.get('run_id')}",
+        f"- workflow_run_id: {payload.get('workflow_run_id')}",
+        f"- phase_run_id: {payload.get('phase_run_id')}",
+        f"- final_status: {payload.get('final_status')}",
+        f"- source_status: {payload.get('source_status')}",
+        f"- profitability_claim_allowed: {payload.get('profitability_claim_allowed')}",
+        f"- profitability_claim_blocker: {payload.get('profitability_claim_blocker')}",
+        "",
+        "## Candidate Funnel",
+        f"- discovery_candidates: {candidate_funnel.get('discovery_candidates', 0)}",
+        f"- engine_native_candidates: {candidate_funnel.get('engine_native_candidates', 0)}",
+        f"- replay_records: {candidate_funnel.get('replay_records', 0)}",
+        f"- selected_count: {candidate_funnel.get('selected_count', 0)}",
+        f"- executed_count: {candidate_funnel.get('executed_count', 0)}",
+        f"- hard_blocked_count: {candidate_funnel.get('hard_blocked_count', 0)}",
+        "",
+        "## Common Blockers",
+    ]
+    lines.extend(
+        f"- {row.get('reason_code')}: count={row.get('count')}, pct={row.get('pct_of_replay_records')}"
+        for row in common_blockers
+    )
+    lines.extend(
+        [
+            "",
+            "## First-Gate Analysis",
+            f"- gate_status: {first_gate.get('gate_status')}",
+            "- first_gate_reason_codes: "
+            + ", ".join(str(code) for code in (first_gate.get("first_gate_reason_codes") or ())),
+            f"- explanation: {first_gate.get('explanation')}",
+            "",
+            "## Unified Per-Engine Verdict",
+        ]
+    )
+    for row in engine_rows:
+        diagnostics = dict(row.get("diagnostics") or {})
+        lines.extend(
+            [
+                f"- {row.get('engine_id')}:",
+                f"  - candidate_count: {row.get('candidate_count')}",
+                f"  - replay_record_count: {row.get('replay_record_count')}",
+                f"  - selected_count: {row.get('selected_count')}",
+                f"  - hard_blocked_count: {row.get('hard_blocked_count')}",
+                f"  - first_blocking_layer: {row.get('first_blocking_layer')}",
+                "  - top_reason_codes: "
+                + ", ".join(
+                    f"{item.get('reason_code')}({item.get('count')})"
+                    for item in (row.get("top_reason_codes") or ())
+                ),
+                "  - healthy_blockers: "
+                + ", ".join(str(item) for item in (row.get("healthy_blockers") or ())),
+                "  - suspected_wiring_gaps: "
+                + ", ".join(str(item) for item in (row.get("suspected_wiring_gaps") or ())),
+                f"  - recommended_next_action: {row.get('recommended_next_action')}",
+            ]
+        )
+        for key, value in diagnostics.items():
+            lines.append(f"  - {key}: {value}")
+    lines.extend(["", "## Next Action Ranking"])
+    lines.extend(
+        f"- {item.get('rank')}. {item.get('action')}: {item.get('rationale')}"
+        for item in next_actions
+    )
+    lines.extend(
+        [
+            "",
+            "## Evidence",
+            f"- governed_evidence_status: {evidence.get('governed_evidence_status')}",
+            f"- run_manifest_evidence_class: {evidence.get('run_manifest_evidence_class')}",
+            f"- refusal_ledger_evidence_class: {evidence.get('refusal_ledger_evidence_class')}",
+            f"- sample_size_survival_evidence_class: {evidence.get('sample_size_survival_evidence_class')}",
+            f"- audited_evidence_count: {evidence.get('audited_evidence_count')}",
+            f"- scratch_only_evidence_count: {evidence.get('scratch_only_evidence_count')}",
+            f"- promotion_grade_evidence_count: {evidence.get('promotion_grade_evidence_count')}",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
+def _persist_progress_run_manifest(
+    run_dir: Path,
+    manifest: StrategyLadderRunManifest,
+    *,
+    progress_callback: StrategyLadderProgressCallback | None = None,
+) -> StrategyLadderRunManifest:
+    manifest = manifest.model_copy(
+        update={
+            "updated_at": datetime.now(tz=UTC),
+            "artifact_hash": deterministic_payload_hash(
+                manifest.model_dump(mode="json")
+            ),
+        }
+    )
+    atomic_write_json(run_dir / "run_manifest.json", manifest.model_dump(mode="json"))
+    if progress_callback is not None:
+        progress_callback(manifest)
+    return manifest
+
+
+def _merge_blocker_codes(
+    *parts: tuple[str, ...] | list[str] | tuple[str, str] | tuple[str, ...],
+) -> tuple[str, ...]:
+    merged: list[str] = []
+    for part in parts:
+        for item in part:
+            code = str(item).strip()
+            if code and code not in merged:
+                merged.append(code)
+    return tuple(merged)
+
+
+def _write_raw_window_failure_report(
+    run_dir: Path,
+    *,
+    request: StrategyLadderRequest,
+    candidate_count: int,
+    manifest_count: int,
+    raw_window_status: str,
+    error: Exception,
+    blocker_codes: tuple[str, ...],
+    linkage_counts: dict[str, int] | None = None,
+) -> Path:
+    payload = dict(linkage_counts or {})
+    path = run_dir / "raw_window_failure_report.json"
+    atomic_write_json(
+        path,
+        {
+            "run_id": request.run_id,
+            "stage": "raw_window_extraction",
+            "raw_window_status": raw_window_status,
+            "candidate_count": candidate_count,
+            "raw_window_count": manifest_count,
+            "raw_windows_total": int(payload.get("raw_windows_total", candidate_count)),
+            "trade_windows_found": int(payload.get("trade_windows_found", 0)),
+            "trade_windows_missing": int(payload.get("trade_windows_missing", candidate_count)),
+            "book_windows_found": int(payload.get("book_windows_found", 0)),
+            "book_windows_missing": int(payload.get("book_windows_missing", candidate_count)),
+            "ohlcv_windows_found": int(payload.get("ohlcv_windows_found", 0)),
+            "ohlcv_windows_missing": int(payload.get("ohlcv_windows_missing", candidate_count)),
+            "depth20_found": int(payload.get("depth20_found", 0)),
+            "depth20_missing": int(payload.get("depth20_missing", candidate_count)),
+            "error_type": error.__class__.__name__,
+            "error_message": str(error),
+            "blocker_codes": list(blocker_codes),
+            "stage_statuses": {
+                "raw_window_status": raw_window_status,
+                "raw_window_extraction_status": raw_window_status,
+            },
+            "raw_windows_root": str((run_dir / "raw_windows").resolve()),
+            "created_at": datetime.now(tz=UTC).isoformat(),
+        },
+        indent=2,
+    )
+    return path
+
+
+def _summarize_raw_window_linkage(
+    *,
+    candidate_events: tuple[StrategyLadderCandidateEvent, ...],
+    raw_window_manifests: tuple[StrategyLadderRawWindowManifest, ...],
+) -> dict[str, int]:
+    manifest_by_candidate = {
+        manifest.candidate_id: manifest for manifest in raw_window_manifests
+    }
+    summary = {
+        "raw_windows_total": len(candidate_events),
+        "trade_windows_found": 0,
+        "trade_windows_missing": 0,
+        "book_windows_found": 0,
+        "book_windows_missing": 0,
+        "ohlcv_windows_found": 0,
+        "ohlcv_windows_missing": 0,
+        "depth20_found": 0,
+        "depth20_missing": 0,
+    }
+    for candidate in candidate_events:
+        manifest = manifest_by_candidate.get(candidate.candidate_id)
+        trade_present = bool(
+            manifest is not None
+            and manifest.raw_trade_path
+            and Path(manifest.raw_trade_path).is_file()
+        )
+        book_present = bool(
+            manifest is not None
+            and (
+                (manifest.raw_book_path and Path(manifest.raw_book_path).is_file())
+                or (
+                    manifest.raw_book_delta_path
+                    and Path(manifest.raw_book_delta_path).is_file()
+                )
+            )
+        )
+        ohlcv_present = bool(
+            manifest is not None
+            and manifest.raw_ohlcv_path
+            and Path(manifest.raw_ohlcv_path).is_file()
+        )
+        depth20_present = bool(
+            manifest is not None
+            and manifest.book_depth_source_status == "BOOK_DEPTH20_AVAILABLE"
+        )
+        summary["trade_windows_found" if trade_present else "trade_windows_missing"] += 1
+        summary["book_windows_found" if book_present else "book_windows_missing"] += 1
+        summary["ohlcv_windows_found" if ohlcv_present else "ohlcv_windows_missing"] += 1
+        summary["depth20_found" if depth20_present else "depth20_missing"] += 1
+    return summary
+
+
+def _build_progress_manifest(
+    *,
+    request: StrategyLadderRequest,
+    run_dir: Path,
+    silver_index_path: Path,
+    silver_index_ready: bool,
+    data_factory_status: str,
+    raw_source_status: str,
+    pair_universe_status: str,
+    silver_index_status: str,
+    gold_feature_store_status: str,
+    orderbook_reconstruction_status: str,
+    feature_store_status: str,
+    candidate_discovery_status: str,
+    candidate_export_status: str,
+    raw_window_status: str,
+    detailed_replay_status: str,
+    capital_profile_generation_status: str,
+    promotion_artifact_status: str,
+    sample_size_status: str,
+    feature_row_count: int,
+    candidate_count: int,
+    raw_window_count: int,
+    detailed_replay_count: int,
+    capital_profile_count: int,
+    engine_promotion_count: int,
+    pair_promotion_count: int,
+    strategy_promotion_count: int,
+    sample_size_survival_count: int,
+    blocker_codes: tuple[str, ...],
+    created_at: datetime,
+    economic_constants_provenance: str = "UNKNOWN",
+    candidate_truth_status: str | None = None,
+    expected_edge_truth_status: str | None = None,
+    expected_edge_proxy_count: int = 0,
+    expected_edge_governed_count: int = 0,
+    expected_edge_model_status: str = "EXPECTED_EDGE_MODEL_NOT_REQUESTED",
+    expected_edge_model_artifact_hash: str | None = None,
+    expected_edge_model_feature_hash: str | None = None,
+    expected_edge_training_artifact_ref: str = "",
+    expected_edge_label_source: str = "EXPECTED_EDGE_LABEL_SOURCE_NOT_PROVEN",
+    expected_edge_label_fidelity: str = "EXPECTED_EDGE_PROXY_DISCOVERY_ONLY",
+    expected_edge_anti_leakage_status: str = "EXPECTED_EDGE_ANTI_LEAKAGE_NOT_PROVEN",
+    expected_edge_walkforward_status: str = "EXPECTED_EDGE_WALKFORWARD_NOT_DECLARED",
+    expected_edge_horizon: int | None = None,
+    expected_edge_purge_window: int | None = None,
+    expected_edge_embargo_window: int | None = None,
+    expected_edge_blocker_codes: tuple[str, ...] = (),
+    candidate_engine_native_count: int = 0,
+    candidate_proxy_count: int | None = None,
+    engine_native_status: str | None = None,
+    engine_native_records_built: int = 0,
+) -> StrategyLadderRunManifest:
+    if engine_native_status is None:
+        engine_native_status = (
+            "ENGINE_NATIVE_PENDING"
+            if request.engine_native_mode and candidate_count > 0 and not request.fast_only and not request.dry_run
+            else "ENGINE_NATIVE_NOT_REQUESTED"
+        )
+    if candidate_proxy_count is None:
+        candidate_proxy_count = (
+            candidate_count
+            if candidate_count > 0
+            and candidate_engine_native_count == 0
+            and candidate_discovery_status
+            in {
+                "CANDIDATE_DISCOVERY_READY",
+                "CANDIDATE_DISCOVERY_RESUMED",
+                "CANDIDATE_DISCOVERY_SAMPLE_CAPPED",
+                "CANDIDATE_DISCOVERY_EXHAUSTED",
+                "CANDIDATE_DISCOVERY_FULL_SCAN_ENABLED",
+            }
+            else 0
+        )
+    if candidate_truth_status is None:
+        if candidate_count == 0:
+            candidate_truth_status = "CANDIDATE_TRUTH_NOT_PROVEN"
+        elif engine_native_status == "ENGINE_NATIVE_MATERIALIZING":
+            candidate_truth_status = "CANDIDATE_ENGINE_NATIVE_IN_PROGRESS"
+        elif candidate_proxy_count > 0:
+            candidate_truth_status = "CANDIDATE_TRUTH_PROXY_PRESENT"
+        elif candidate_engine_native_count >= candidate_count:
+            candidate_truth_status = "CANDIDATE_ENGINE_NATIVE_READY"
+        elif candidate_engine_native_count > 0:
+            candidate_truth_status = "CANDIDATE_ENGINE_NATIVE_PARTIAL"
+        else:
+            candidate_truth_status = "CANDIDATE_ENGINE_NATIVE_NOT_PROVEN"
+    if expected_edge_truth_status is None:
+        if candidate_count == 0:
+            expected_edge_truth_status = "EXPECTED_EDGE_NOT_PROVEN"
+        elif expected_edge_proxy_count > 0 and expected_edge_governed_count > 0:
+            expected_edge_truth_status = "EXPECTED_EDGE_MIXED_PROXY_BLOCKED"
+        elif expected_edge_proxy_count > 0:
+            expected_edge_truth_status = "EXPECTED_EDGE_PROXY_BLOCKED"
+        elif expected_edge_governed_count > 0:
+            expected_edge_truth_status = "EXPECTED_EDGE_GOVERNED_BACKTEST_TRUTH"
+        else:
+            expected_edge_truth_status = "EXPECTED_EDGE_NOT_PROVEN"
+    effective_sample_cap = max(
+        int(request.candidate_sample_cap or request.engine_native_sample_size),
+        0,
+    )
+    engine_count = max(len(request.engines) or 4, 4)
+    candidate_sample_cap = effective_sample_cap * engine_count
+    if candidate_count > 0 and effective_sample_cap > 0 and candidate_count >= candidate_sample_cap:
+        candidate_discovery_cap_status = "CANDIDATE_DISCOVERY_SAMPLE_CAPPED"
+        candidate_discovery_limit_reason = "ENGINE_NATIVE_SAMPLE_CAP_ACTIVE"
+        candidate_discovery_limited = True
+    elif candidate_count > 0 and request.full_scan_enabled:
+        candidate_discovery_cap_status = "CANDIDATE_DISCOVERY_EXHAUSTED"
+        candidate_discovery_limit_reason = "DISCOVERY_EXHAUSTED_BEFORE_CAP"
+        candidate_discovery_limited = False
+    elif request.full_scan_enabled:
+        candidate_discovery_cap_status = "CANDIDATE_DISCOVERY_FULL_SCAN_ENABLED"
+        candidate_discovery_limit_reason = ""
+        candidate_discovery_limited = False
+    else:
+        candidate_discovery_cap_status = "CANDIDATE_DISCOVERY_LIMIT_NOT_PROVEN"
+        candidate_discovery_limit_reason = "ENGINE_NATIVE_SAMPLE_CAP_ACTIVE"
+        candidate_discovery_limited = True
+    final_status = _stage_final_status(
+        request=request,
+        feature_store_status=feature_store_status,
+        candidate_export_status=candidate_export_status,
+        raw_window_status=raw_window_status,
+        detailed_replay_status=detailed_replay_status,
+        capital_profile_count=capital_profile_count,
+        promotion_artifact_count=(
+            engine_promotion_count + pair_promotion_count + strategy_promotion_count
+        ),
+    )
+    manifest = StrategyLadderRunManifest(
+        run_id=request.run_id,
+        input_root=str(request.input_root.resolve()),
+        feature_store_root=str(request.feature_store_root.resolve()),
+        raw_root=str(request.raw_root.resolve()),
+        raw_roots=tuple(str(path.resolve()) for path in request.raw_roots),
+        raw_source_manifest_path=(
+            str(request.raw_source_manifest_path.resolve())
+            if request.raw_source_manifest_path is not None
+            else ""
+        ),
+        silver_index_path=str(silver_index_path.resolve()) if silver_index_ready else "",
+        output_root=str(run_dir.resolve()),
+        workflow_run_id=request.workflow_run_id,
+        phase_run_id=request.phase_run_id,
+        parent_workflow_ref=request.parent_workflow_ref,
+        pairs=request.pairs,
+        engines=request.engines,
+        capital_buckets=request.capital_buckets,
+        timeframes=request.timeframes,
+        start=request.start,
+        end=request.end,
+        fast_only=request.fast_only,
+        detailed_only=request.detailed_only,
+        resume=request.resume,
+        dry_run=request.dry_run,
+        ml_mode_status=request.ml_mode,
+        data_factory_status=data_factory_status,
+        raw_source_status=raw_source_status,
+        pair_universe_status=pair_universe_status,
+        silver_index_status=silver_index_status,
+        gold_feature_store_status=gold_feature_store_status,
+        orderbook_reconstruction_status=orderbook_reconstruction_status,
+        feature_store_status=feature_store_status,
+        candidate_discovery_status=candidate_discovery_status,
+        candidate_export_status=candidate_export_status,
+        raw_window_extraction_status=raw_window_status,
+        detailed_replay_status=detailed_replay_status,
+        capital_profile_generation_status=capital_profile_generation_status,
+        promotion_artifact_status=promotion_artifact_status,
+        sample_size_survival_status=sample_size_status,
+        final_status=final_status,
+        blocker_codes=blocker_codes,
+        feature_row_count=feature_row_count,
+        candidate_sample_cap=candidate_sample_cap,
+        effective_engine_native_sample_size=effective_sample_cap,
+        engine_count=engine_count,
+        candidate_cap_formula=(
+            f"{engine_count} engines x {effective_sample_cap}"
+        ),
+        small_scope_enabled=request.small_scope_enabled,
+        full_scan_enabled=request.full_scan_enabled,
+        no_full_scan_enabled=request.no_full_scan_enabled,
+        candidate_discovery_limited=candidate_discovery_limited,
+        candidate_discovery_limit_reason=candidate_discovery_limit_reason,
+        candidate_discovery_mode=request.candidate_discovery_mode,
+        candidate_discovery_cap_status=candidate_discovery_cap_status,
+        candidate_count=candidate_count,
+        raw_window_count=raw_window_count,
+        detailed_replay_count=detailed_replay_count,
+        capital_profile_count=capital_profile_count,
+        engine_promotion_count=engine_promotion_count,
+        pair_promotion_count=pair_promotion_count,
+        strategy_promotion_count=strategy_promotion_count,
+        sample_size_survival_count=sample_size_survival_count,
+        economic_constants_provenance=economic_constants_provenance,
+        candidate_truth_status=candidate_truth_status,
+        expected_edge_truth_status=expected_edge_truth_status,
+        expected_edge_proxy_count=expected_edge_proxy_count,
+        expected_edge_governed_count=expected_edge_governed_count,
+        expected_edge_model_status=expected_edge_model_status,
+        expected_edge_model_artifact_hash=expected_edge_model_artifact_hash,
+        expected_edge_model_feature_hash=expected_edge_model_feature_hash,
+        expected_edge_training_artifact_ref=expected_edge_training_artifact_ref,
+        expected_edge_label_source=expected_edge_label_source,
+        expected_edge_label_fidelity=expected_edge_label_fidelity,
+        expected_edge_anti_leakage_status=expected_edge_anti_leakage_status,
+        expected_edge_walkforward_status=expected_edge_walkforward_status,
+        expected_edge_horizon=expected_edge_horizon,
+        expected_edge_purge_window=expected_edge_purge_window,
+        expected_edge_embargo_window=expected_edge_embargo_window,
+        expected_edge_blocker_codes=expected_edge_blocker_codes,
+        candidate_engine_native_count=candidate_engine_native_count,
+        candidate_proxy_count=candidate_proxy_count,
+        engine_native_status=engine_native_status,
+        engine_native_records_built=engine_native_records_built,
+        created_at=created_at,
+        updated_at=datetime.now(tz=UTC),
+    )
+    return manifest.model_copy(
+        update={"artifact_hash": deterministic_payload_hash(manifest.model_dump(mode="json"))}
+    )
+
+
+def run_backtest_strategy_ladder(
+    request: StrategyLadderRequest,
+    *,
+    progress_callback: StrategyLadderProgressCallback | None = None,
+) -> StrategyLadderRunResult:
+    """Execute the canonical Strategy Ladder pipeline end to end."""
+
+    run_dir = request.run_dir
+    run_dir.mkdir(parents=True, exist_ok=True)
+    fast_candidates_dir = run_dir / "fast_candidates"
+    raw_windows_dir = run_dir / "raw_windows"
+    detailed_replay_dir = run_dir / "detailed_replay"
+    capital_profiles_dir = run_dir / "capital_profiles"
+    reports_dir = run_dir / "reports"
+    performance_profiler = StrategyLadderReplayPerformanceProfiler(run_id=request.run_id)
+
+    created_at = datetime.now(tz=UTC)
+    start_ms = parse_time_boundary_to_ms(request.start)
+    end_ms = parse_time_boundary_to_ms(request.end)
+    with performance_profiler.phase("feature_loading", status="OK"):
+        data_factory_payloads = _resolve_data_factory_payloads(request)
+    data_factory_root = Path(str(data_factory_payloads["base_root"]))
+    data_factory_manifest_payload = data_factory_payloads["manifest"]
+    raw_source_report_payload = data_factory_payloads["raw_source_report"]
+    pair_report_payload = data_factory_payloads["pair_report"]
+    quality_report_payload = data_factory_payloads["quality_report"]
+    gold_manifest_payload = data_factory_payloads["gold_manifest"]
+    silver_index_report_payload = data_factory_payloads["silver_index_report"]
+    silver_index_path = Path(str(data_factory_payloads["silver_index_path"]))
+    silver_index_ready = silver_index_path.is_file() and bool(
+        silver_index_report_payload.get("entries")
+    )
+    # Audit 2026-05-13 W1 fix : on resoud le venue (exchange + market_type)
+    # depuis le silver_index canonique ici, UNE seule fois. Le auto-detect via
+    # raw_book_path echoue car les raw_windows sont extraites dans le run dir
+    # (pas le silver path direct), donc on doit cabler explicitement le venue
+    # au call site `compute_economic_provenance`.
+    silver_exchange_resolved, silver_market_type_resolved = (
+        _infer_silver_exchange_from_index(silver_index_report_payload)
+    )
+    data_factory_status = str(
+        data_factory_manifest_payload.get("data_factory_status")
+        or "DATA_FACTORY_NOT_PROVEN"
+    )
+    raw_source_status = str(
+        raw_source_report_payload.get("raw_source_status")
+        or data_factory_manifest_payload.get("raw_source_status")
+        or "RAW_SOURCE_NOT_PROVEN"
+    )
+    pair_universe_status = str(
+        pair_report_payload.get("pair_universe_status")
+        or data_factory_manifest_payload.get("pair_universe_status")
+        or "PAIR_UNIVERSE_NOT_PROVEN"
+    )
+    silver_index_status = (
+        str(silver_index_report_payload.get("status") or "")
+        or str(data_factory_manifest_payload.get("silver_index_status") or "")
+        or ("SILVER_INDEX_READY" if silver_index_ready else "SILVER_INDEX_NOT_READY")
+    )
+    gold_feature_store_status = str(
+        gold_manifest_payload.get("gold_feature_store_status")
+        or data_factory_manifest_payload.get("gold_feature_store_status")
+        or "GOLD_FEATURE_STORE_NOT_READY"
+    )
+    orderbook_reconstruction_status = str(
+        quality_report_payload.get("orderbook_schema_status")
+        or "ORDERBOOK_RECONSTRUCTION_NOT_PROVEN"
+    )
+    ml_mode_status = request.ml_mode
+    expected_edge_model_required = request.ml_mode == "ML_MODE_OVERLAY_FROZEN"
+    expected_edge_model_reference_at = _expected_edge_model_reference_at(
+        created_at=created_at,
+        end_ms=end_ms,
+    )
+    expected_edge_model_load_result = GovernedExpectedEdgeModelLoadResult(
+        model=None,
+        status="GOVERNED_EDGE_MODEL_NOT_REQUESTED",
+    )
+    if expected_edge_model_required:
+        expected_edge_model_load_result = load_governed_expected_edge_model_artifact(
+            request.frozen_ml_artifact_path,
+            expected_artifact_hash=request.frozen_ml_artifact_hash,
+            now=expected_edge_model_reference_at,
+        )
+    expected_edge_model = expected_edge_model_load_result.model
+    expected_edge_model_load_status = expected_edge_model_load_result.status
+    expected_edge_model_blockers = expected_edge_model_load_result.blocker_codes
+
+    with performance_profiler.phase("feature_loading", status="OK"):
+        feature_result = load_strategy_ladder_feature_store(
+            request.feature_store_root,
+            pairs=request.pairs,
+            engines=request.engines,
+            timeframes=request.timeframes,
+            start_ms=start_ms,
+            end_ms=end_ms,
+        )
+
+    candidate_discovery_status = "CANDIDATE_DISCOVERY_NOT_PROVEN"
+    candidate_export_status = "CANDIDATE_EXPORT_NOT_PROVEN"
+    candidate_events = ()
+    candidate_summary = None
+    candidate_source_truth_events = ()
+    materialized_candidate_events = ()
+    preselection_result = None
+    candidate_path = fast_candidates_dir / "candidate_events.jsonl"
+    candidate_events_source_path: Path | None = None
+    external_candidate_path = request.candidate_events_path
+    effective_sample_cap = max(
+        int(request.candidate_sample_cap or request.engine_native_sample_size),
+        0,
+    )
+    engine_count = max(len(request.engines) or 4, 4)
+    if request.detailed_only:
+        source_candidate_path = (
+            external_candidate_path
+            if external_candidate_path is not None and external_candidate_path.is_file()
+            else candidate_path
+        )
+        if not source_candidate_path.is_file():
+            raise ValueError(
+                "Strategy Ladder detailed-only mode requires existing fast_candidates/candidate_events.jsonl"
+            )
+        candidate_events_source_path = source_candidate_path.resolve()
+        with performance_profiler.phase("candidate_loading", status="OK"):
+            candidate_events = load_strategy_ladder_candidate_events(source_candidate_path)
+        candidate_source_truth_events = candidate_events
+        candidate_summary = load_strategy_ladder_candidate_summary(
+            source_candidate_path.with_name("candidate_summary.json")
+        )
+        candidate_discovery_status = (
+            candidate_summary.candidate_discovery_status
+            if candidate_summary is not None
+            else "CANDIDATE_DISCOVERY_RESUMED"
+        )
+        candidate_export_status = (
+            candidate_summary.candidate_export_status
+            if candidate_summary is not None
+            else "CANDIDATE_EXPORT_READY"
+        )
+    elif request.resume and candidate_path.is_file():
+        with performance_profiler.phase("candidate_loading", status="OK"):
+            candidate_events = load_strategy_ladder_candidate_events(candidate_path)
+        candidate_source_truth_events = candidate_events
+        candidate_summary = load_strategy_ladder_candidate_summary(
+            candidate_path.with_name("candidate_summary.json")
+        )
+        candidate_discovery_status = (
+            candidate_summary.candidate_discovery_status
+            if candidate_summary is not None
+            else "CANDIDATE_DISCOVERY_RESUMED"
+        )
+        candidate_export_status = (
+            candidate_summary.candidate_export_status
+            if candidate_summary is not None
+            else "CANDIDATE_EXPORT_READY"
+        )
+    elif feature_result.feature_store_status != "FEATURE_STORE_MISSING":
+        with performance_profiler.phase(
+            "candidate_discovery",
+            status="OK",
+            rows_processed=len(feature_result.rows),
+        ):
+            candidate_discovery_status, discovered_candidate_events = (
+                discover_strategy_ladder_candidates(
+                    run_id=request.run_id,
+                    rows=feature_result.rows,
+                )
+            )
+            candidate_events, discovery_capped = cap_strategy_ladder_candidates(
+                discovered_candidate_events,
+                sample_cap_per_engine=effective_sample_cap,
+            )
+        if discovery_capped and candidate_events:
+            candidate_discovery_status = "CANDIDATE_DISCOVERY_SAMPLE_CAPPED"
+        elif candidate_events and request.full_scan_enabled:
+            candidate_discovery_status = "CANDIDATE_DISCOVERY_EXHAUSTED"
+        if not request.dry_run:
+            with performance_profiler.phase(
+                "candidate_export",
+                status="OK",
+                candidate_count=len(candidate_events),
+            ):
+                candidate_summary = export_strategy_ladder_candidates(
+                    fast_candidates_dir,
+                    run_id=request.run_id,
+                    candidates=candidate_events,
+                    feature_store_status=feature_result.feature_store_status,
+                    candidate_discovery_status=candidate_discovery_status,
+                    candidate_sample_cap=effective_sample_cap * engine_count,
+                    effective_engine_native_sample_size=effective_sample_cap,
+                    engine_count=engine_count,
+                    candidate_cap_formula=f"{engine_count} engines x {effective_sample_cap}",
+                    small_scope_enabled=request.small_scope_enabled,
+                    full_scan_enabled=request.full_scan_enabled,
+                    no_full_scan_enabled=request.no_full_scan_enabled,
+                    candidate_discovery_limited=discovery_capped
+                    or request.candidate_discovery_mode == "SAMPLE_CAPPED_DEBUG"
+                    or request.small_scope_enabled,
+                    candidate_discovery_limit_reason=(
+                        "ENGINE_NATIVE_SAMPLE_CAP_ACTIVE"
+                        if discovery_capped
+                        or request.candidate_discovery_mode == "SAMPLE_CAPPED_DEBUG"
+                        or request.small_scope_enabled
+                        else "DISCOVERY_EXHAUSTED_BEFORE_CAP"
+                    ),
+                    candidate_discovery_mode=request.candidate_discovery_mode,
+                    candidate_discovery_cap_status=(
+                        "CANDIDATE_DISCOVERY_SAMPLE_CAPPED"
+                        if discovery_capped or (
+                            candidate_events and len(candidate_events) == effective_sample_cap * engine_count
+                        )
+                        else (
+                            "CANDIDATE_DISCOVERY_EXHAUSTED"
+                            if candidate_events and request.full_scan_enabled
+                            else "CANDIDATE_DISCOVERY_FULL_SCAN_ENABLED"
+                        )
+                    ),
+                )
+            candidate_export_status = candidate_summary.candidate_export_status
+            candidate_source_truth_events = candidate_events
+        else:
+            candidate_export_status = (
+                "CANDIDATE_EXPORT_READY" if candidate_events else "CANDIDATE_EXPORT_EMPTY"
+            )
+    progress_manifest = _build_progress_manifest(
+        request=request,
+        run_dir=run_dir,
+        silver_index_path=silver_index_path,
+        silver_index_ready=silver_index_ready,
+        data_factory_status=data_factory_status,
+        raw_source_status=raw_source_status,
+        pair_universe_status=pair_universe_status,
+        silver_index_status=silver_index_status,
+        gold_feature_store_status=gold_feature_store_status,
+        orderbook_reconstruction_status=orderbook_reconstruction_status,
+        feature_store_status=feature_result.feature_store_status,
+        candidate_discovery_status=candidate_discovery_status,
+        candidate_export_status=candidate_export_status,
+        raw_window_status="RAW_WINDOW_NOT_PROVEN",
+        detailed_replay_status="DETAILED_REPLAY_NOT_PROVEN",
+        capital_profile_generation_status="CAPITAL_PROFILE_NOT_PROVEN",
+        promotion_artifact_status="PROMOTION_ARTIFACTS_NOT_PROVEN",
+        sample_size_status="SAMPLE_SIZE_NOT_PROVEN",
+        feature_row_count=feature_result.row_count,
+        candidate_count=len(candidate_events),
+        raw_window_count=0,
+        detailed_replay_count=0,
+        capital_profile_count=0,
+        engine_promotion_count=0,
+        pair_promotion_count=0,
+        strategy_promotion_count=0,
+        sample_size_survival_count=0,
+        blocker_codes=_merge_blocker_codes(
+            feature_result.blocker_codes,
+            expected_edge_model_blockers,
+        ),
+        created_at=created_at,
+        expected_edge_model_status=expected_edge_model_load_status,
+        expected_edge_model_artifact_hash=expected_edge_model_load_result.artifact_hash,
+        expected_edge_model_feature_hash=expected_edge_model_load_result.feature_hash,
+    )
+    _persist_progress_run_manifest(
+        run_dir,
+        progress_manifest,
+        progress_callback=progress_callback,
+    )
+
+    raw_window_status = "RAW_WINDOW_NOT_PROVEN"
+    raw_window_manifests = ()
+    raw_window_linkage_counts = _summarize_raw_window_linkage(
+        candidate_events=(),
+        raw_window_manifests=(),
+    )
+    raw_window_failure_blockers: tuple[str, ...] = ()
+    engine_native_blockers: tuple[str, ...] = ()
+    engine_native_status = (
+        "ENGINE_NATIVE_PENDING" if request.engine_native_mode else "ENGINE_NATIVE_NOT_REQUESTED"
+    )
+    engine_native_records_built = 0
+    expected_edge_proxy_count = 0
+    expected_edge_governed_count = 0
+    candidate_engine_native_progress_count = 0
+    candidate_proxy_progress_count: int | None = None
+    raw_window_extraction_failed = False
+
+    def _raw_window_stage_blockers(*extra: str) -> tuple[str, ...]:
+        return _merge_blocker_codes(
+            feature_result.blocker_codes,
+            expected_edge_model_blockers,
+            raw_window_failure_blockers,
+            engine_native_blockers,
+            tuple(extra),
+        )
+
+    def _raw_window_progress_callback(
+        progress_status: str,
+        raw_window_count_progress: int,
+    ) -> None:
+        progress_manifest = _build_progress_manifest(
+            request=request,
+            run_dir=run_dir,
+            silver_index_path=silver_index_path,
+            silver_index_ready=silver_index_ready,
+            data_factory_status=data_factory_status,
+            raw_source_status=raw_source_status,
+            pair_universe_status=pair_universe_status,
+            silver_index_status=silver_index_status,
+            gold_feature_store_status=gold_feature_store_status,
+            orderbook_reconstruction_status=orderbook_reconstruction_status,
+            feature_store_status=feature_result.feature_store_status,
+            candidate_discovery_status=candidate_discovery_status,
+            candidate_export_status=candidate_export_status,
+            raw_window_status=progress_status,
+            detailed_replay_status="DETAILED_REPLAY_NOT_PROVEN",
+            capital_profile_generation_status="CAPITAL_PROFILE_NOT_PROVEN",
+            promotion_artifact_status="PROMOTION_ARTIFACTS_NOT_PROVEN",
+            sample_size_status="SAMPLE_SIZE_NOT_PROVEN",
+            feature_row_count=feature_result.row_count,
+            candidate_count=len(candidate_events),
+            raw_window_count=raw_window_count_progress,
+            detailed_replay_count=0,
+            capital_profile_count=0,
+            engine_promotion_count=0,
+            pair_promotion_count=0,
+            strategy_promotion_count=0,
+            sample_size_survival_count=0,
+            blocker_codes=_raw_window_stage_blockers(
+                *(
+                    ("RAW_WINDOW_NOT_PROVEN",)
+                    if progress_status == "RAW_WINDOW_NOT_PROVEN"
+                    else ()
+                )
+            ),
+            created_at=created_at,
+            expected_edge_model_status=expected_edge_model_load_status,
+            expected_edge_model_artifact_hash=expected_edge_model_load_result.artifact_hash,
+            expected_edge_model_feature_hash=expected_edge_model_load_result.feature_hash,
+        )
+        _persist_progress_run_manifest(
+            run_dir,
+            progress_manifest,
+            progress_callback=progress_callback,
+        )
+
+    def _engine_native_progress_callback(
+        processed_count: int,
+        total_count: int,
+        records_built_progress: int,
+        runner_invocations: int,
+        edge_proxy_count: int,
+        edge_governed_count: int,
+    ) -> None:
+        progress_manifest = _build_progress_manifest(
+            request=request,
+            run_dir=run_dir,
+            silver_index_path=silver_index_path,
+            silver_index_ready=silver_index_ready,
+            data_factory_status=data_factory_status,
+            raw_source_status=raw_source_status,
+            pair_universe_status=pair_universe_status,
+            silver_index_status=silver_index_status,
+            gold_feature_store_status=gold_feature_store_status,
+            orderbook_reconstruction_status=orderbook_reconstruction_status,
+            feature_store_status=feature_result.feature_store_status,
+            candidate_discovery_status="CANDIDATE_DISCOVERY_ENGINE_NATIVE_IN_PROGRESS",
+            candidate_export_status=candidate_export_status,
+            raw_window_status=raw_window_status,
+            detailed_replay_status="DETAILED_REPLAY_NOT_PROVEN",
+            capital_profile_generation_status="CAPITAL_PROFILE_NOT_PROVEN",
+            promotion_artifact_status="PROMOTION_ARTIFACTS_NOT_PROVEN",
+            sample_size_status="SAMPLE_SIZE_NOT_PROVEN",
+            feature_row_count=feature_result.row_count,
+            candidate_count=total_count,
+            raw_window_count=len(raw_window_manifests),
+            detailed_replay_count=0,
+            capital_profile_count=0,
+            engine_promotion_count=0,
+            pair_promotion_count=0,
+            strategy_promotion_count=0,
+            sample_size_survival_count=0,
+            blocker_codes=_raw_window_stage_blockers(),
+            created_at=created_at,
+            expected_edge_model_status=expected_edge_model_load_status,
+            expected_edge_model_artifact_hash=expected_edge_model_load_result.artifact_hash,
+            expected_edge_model_feature_hash=expected_edge_model_load_result.feature_hash,
+            candidate_truth_status="CANDIDATE_ENGINE_NATIVE_IN_PROGRESS",
+            expected_edge_truth_status=(
+                "EXPECTED_EDGE_MIXED_PROXY_BLOCKED"
+                if edge_proxy_count and edge_governed_count
+                else (
+                    "EXPECTED_EDGE_PROXY_BLOCKED"
+                    if edge_proxy_count
+                    else (
+                        "EXPECTED_EDGE_GOVERNED_BACKTEST_TRUTH"
+                        if edge_governed_count
+                        else "EXPECTED_EDGE_NOT_PROVEN"
+                    )
+                )
+            ),
+            expected_edge_proxy_count=edge_proxy_count,
+            expected_edge_governed_count=edge_governed_count,
+            candidate_engine_native_count=runner_invocations,
+            candidate_proxy_count=max(total_count - processed_count, 0),
+            engine_native_status="ENGINE_NATIVE_MATERIALIZING",
+            engine_native_records_built=records_built_progress,
+        )
+        _persist_progress_run_manifest(
+            run_dir,
+            progress_manifest,
+            progress_callback=progress_callback,
+        )
+
+    if not request.fast_only and not request.dry_run and candidate_events:
+        try:
+            with performance_profiler.phase(
+                "raw_window_extraction",
+                status="OK",
+                candidate_count=len(candidate_events),
+            ):
+                raw_window_result = extract_strategy_ladder_raw_windows(
+                    raw_windows_dir,
+                    candidate_events=candidate_events,
+                    raw_root=request.raw_root,
+                    silver_index_path=silver_index_path if silver_index_ready else None,
+                    progress_callback=_raw_window_progress_callback,
+                )
+            raw_window_status, raw_window_manifests = raw_window_result
+            performance_profiler.observe_window_index_metrics(
+                raw_window_result.indexed_lookup_metrics
+            )
+            performance_profiler.observe_window_cache_metrics(
+                raw_window_result.window_cache_metrics
+            )
+            performance_profiler.record_phase(
+                "jsonl_parsing",
+                status=(
+                    "OK"
+                    if raw_window_result.jsonl_files_scanned > 0
+                    else "NOT_RUN"
+                ),
+                wall_time_s=raw_window_result.jsonl_parsing_wall_time_s,
+                cpu_time_s=raw_window_result.jsonl_parsing_cpu_time_s,
+                rows_processed=raw_window_result.jsonl_rows_processed,
+                files_scanned=raw_window_result.jsonl_files_scanned,
+                candidate_count=len(candidate_events),
+            )
+            raw_window_linkage_counts = _summarize_raw_window_linkage(
+                candidate_events=candidate_events,
+                raw_window_manifests=raw_window_manifests,
+            )
+        except Exception as exc:  # noqa: BLE001
+            raw_window_manifests = (
+                load_strategy_ladder_raw_window_manifests(raw_windows_dir)
+                if raw_windows_dir.exists()
+                else ()
+            )
+            raw_window_linkage_counts = _summarize_raw_window_linkage(
+                candidate_events=candidate_events,
+                raw_window_manifests=raw_window_manifests,
+            )
+            raw_window_status = (
+                "RAW_WINDOW_PARTIAL" if raw_window_manifests else "RAW_WINDOW_NOT_PROVEN"
+            )
+            raw_window_extraction_failed = True
+            raw_window_failure_blockers = ("RAW_WINDOW_EXTRACTION_FAILED",)
+            _write_raw_window_failure_report(
+                run_dir,
+                request=request,
+                candidate_count=len(candidate_events),
+                manifest_count=len(raw_window_manifests),
+                raw_window_status=raw_window_status,
+                error=exc,
+                blocker_codes=_raw_window_stage_blockers(),
+                linkage_counts=raw_window_linkage_counts,
+            )
+    elif request.resume and raw_windows_dir.exists():
+        raw_window_manifests = load_strategy_ladder_raw_window_manifests(raw_windows_dir)
+        raw_window_linkage_counts = _summarize_raw_window_linkage(
+            candidate_events=candidate_events,
+            raw_window_manifests=raw_window_manifests,
+        )
+        raw_window_status = (
+            "RAW_WINDOW_READY"
+            if raw_window_manifests
+            and all(item.window_extraction_status == "RAW_WINDOW_READY" for item in raw_window_manifests)
+            else ("RAW_WINDOW_PARTIAL" if raw_window_manifests else "RAW_WINDOW_NOT_PROVEN")
+        )
+    else:
+        raw_window_linkage_counts = _summarize_raw_window_linkage(
+            candidate_events=candidate_events,
+            raw_window_manifests=raw_window_manifests,
+        )
+    progress_manifest = _build_progress_manifest(
+        request=request,
+        run_dir=run_dir,
+        silver_index_path=silver_index_path,
+        silver_index_ready=silver_index_ready,
+        data_factory_status=data_factory_status,
+        raw_source_status=raw_source_status,
+        pair_universe_status=pair_universe_status,
+        silver_index_status=silver_index_status,
+        gold_feature_store_status=gold_feature_store_status,
+        orderbook_reconstruction_status=orderbook_reconstruction_status,
+        feature_store_status=feature_result.feature_store_status,
+        candidate_discovery_status=candidate_discovery_status,
+        candidate_export_status=candidate_export_status,
+        raw_window_status=raw_window_status,
+        detailed_replay_status="DETAILED_REPLAY_NOT_PROVEN",
+        capital_profile_generation_status="CAPITAL_PROFILE_NOT_PROVEN",
+        promotion_artifact_status="PROMOTION_ARTIFACTS_NOT_PROVEN",
+        sample_size_status="SAMPLE_SIZE_NOT_PROVEN",
+        feature_row_count=feature_result.row_count,
+        candidate_count=len(candidate_events),
+        raw_window_count=len(raw_window_manifests),
+        detailed_replay_count=0,
+        capital_profile_count=0,
+        engine_promotion_count=0,
+        pair_promotion_count=0,
+        strategy_promotion_count=0,
+        sample_size_survival_count=0,
+        blocker_codes=_raw_window_stage_blockers(
+            *(("RAW_WINDOW_NOT_PROVEN",) if raw_window_status == "RAW_WINDOW_NOT_PROVEN" else ())
+        ),
+        created_at=created_at,
+        expected_edge_proxy_count=expected_edge_proxy_count,
+        expected_edge_governed_count=expected_edge_governed_count,
+        candidate_engine_native_count=candidate_engine_native_progress_count,
+        candidate_proxy_count=candidate_proxy_progress_count,
+        engine_native_status=engine_native_status,
+        engine_native_records_built=engine_native_records_built,
+    )
+    _persist_progress_run_manifest(
+        run_dir,
+        progress_manifest,
+        progress_callback=progress_callback,
+    )
+
+    if (
+        request.engine_native_mode
+        and not request.fast_only
+        and not request.dry_run
+        and candidate_events
+    ):
+        native_materialization = _materialize_engine_native_candidates(
+            candidate_events=candidate_events,
+            raw_window_manifests=raw_window_manifests,
+            expected_edge_model=expected_edge_model,
+            expected_edge_model_required=expected_edge_model_required,
+            expected_edge_model_load_status=expected_edge_model_load_status,
+            progress_callback=_engine_native_progress_callback,
+            silver_exchange=silver_exchange_resolved,
+            silver_market_type=silver_market_type_resolved,
+        )
+        materialized_candidate_events = native_materialization.candidate_events
+        candidate_discovery_status = native_materialization.candidate_discovery_status
+        engine_native_status = native_materialization.engine_native_status
+        engine_native_records_built = native_materialization.engine_native_records_built
+        expected_edge_proxy_count = native_materialization.expected_edge_proxy_count
+        expected_edge_governed_count = native_materialization.expected_edge_governed_count
+        engine_native_blockers = native_materialization.blocker_codes
+        candidate_engine_native_progress_count = sum(
+            1
+            for event in materialized_candidate_events
+            if getattr(event, "candidate_source", "") == "ENGINE_NATIVE"
+        )
+        candidate_proxy_progress_count = sum(
+            1
+            for event in materialized_candidate_events
+            if getattr(event, "candidate_source", "") == "COMPAT_FEATURE_DISCOVERY"
+        )
+        source_truth_semantics = summarize_candidate_count_semantics(
+            candidate_source_truth_events or materialized_candidate_events
+        )
+        materialized_candidate_semantics = summarize_candidate_count_semantics(
+            materialized_candidate_events
+        )
+        preselection_result = build_strategy_ladder_engine_native_preselection(
+            run_dir=run_dir,
+            source_candidate_events=candidate_source_truth_events or candidate_events,
+            materialized_candidate_events=materialized_candidate_events,
+            diagnostic_full_replay=request.diagnostic_full_replay,
+            preselected_only=request.preselected_only,
+            b1_5_policy_mode=request.b1_5_policy_mode,
+        )
+        if request.diagnostic_full_replay:
+            candidate_events = materialized_candidate_events
+            replay_input_mode_status = "DIAGNOSTIC_FULL_REPLAY"
+        else:
+            preselected_candidate_path = Path(
+                preselection_result.preselection_candidates_path
+            )
+            candidate_events = (
+                load_strategy_ladder_candidate_events(preselected_candidate_path)
+                if preselected_candidate_path.is_file()
+                else ()
+            )
+            replay_input_mode_status = "PRESELECTED_ONLY"
+        candidate_summary = export_strategy_ladder_candidates(
+            fast_candidates_dir,
+            run_id=request.run_id,
+            candidates=materialized_candidate_events,
+            feature_store_status=feature_result.feature_store_status,
+            candidate_discovery_status=(
+                candidate_summary.candidate_discovery_status
+                if candidate_summary is not None
+                else candidate_discovery_status
+            ),
+            candidate_sample_cap=(
+                candidate_summary.candidate_sample_cap
+                if candidate_summary is not None
+                else effective_sample_cap * engine_count
+            ),
+            effective_engine_native_sample_size=(
+                candidate_summary.effective_engine_native_sample_size
+                if candidate_summary is not None
+                and candidate_summary.effective_engine_native_sample_size > 0
+                else effective_sample_cap
+            ),
+            engine_count=(
+                candidate_summary.engine_count
+                if candidate_summary is not None and candidate_summary.engine_count > 0
+                else engine_count
+            ),
+            candidate_cap_formula=(
+                candidate_summary.candidate_cap_formula
+                if candidate_summary is not None and candidate_summary.candidate_cap_formula
+                else f"{engine_count} engines x {effective_sample_cap}"
+            ),
+            small_scope_enabled=(
+                candidate_summary.small_scope_enabled
+                if candidate_summary is not None
+                else request.small_scope_enabled
+            ),
+            full_scan_enabled=(
+                candidate_summary.full_scan_enabled
+                if candidate_summary is not None
+                else request.full_scan_enabled
+            ),
+            no_full_scan_enabled=(
+                candidate_summary.no_full_scan_enabled
+                if candidate_summary is not None
+                else request.no_full_scan_enabled
+            ),
+            candidate_discovery_limited=(
+                candidate_summary.candidate_discovery_limited
+                if candidate_summary is not None
+                else candidate_discovery_status == "CANDIDATE_DISCOVERY_SAMPLE_CAPPED"
+            ),
+            candidate_discovery_limit_reason=(
+                candidate_summary.candidate_discovery_limit_reason
+                if candidate_summary is not None
+                else (
+                    "ENGINE_NATIVE_SAMPLE_CAP_ACTIVE"
+                    if candidate_discovery_status == "CANDIDATE_DISCOVERY_SAMPLE_CAPPED"
+                    else "DISCOVERY_EXHAUSTED_BEFORE_CAP"
+                )
+            ),
+            candidate_discovery_mode=(
+                candidate_summary.candidate_discovery_mode
+                if candidate_summary is not None and candidate_summary.candidate_discovery_mode
+                else request.candidate_discovery_mode
+            ),
+            candidate_discovery_cap_status=(
+                candidate_summary.candidate_discovery_cap_status
+                if candidate_summary is not None
+                and candidate_summary.candidate_discovery_cap_status
+                else candidate_discovery_status
+            ),
+            preselection_status=preselection_result.status,
+            replay_input_mode_status=replay_input_mode_status,
+            preselected_only=(request.preselected_only and not request.diagnostic_full_replay),
+            diagnostic_full_replay=request.diagnostic_full_replay,
+            b1_5_policy_mode=request.b1_5_policy_mode,
+            discovery_pre_candidate_count=source_truth_semantics.unique_candidate_count,
+            engine_native_preselected_count=preselection_result.engine_native_preselected_count,
+            preselection_hard_rejected_count=preselection_result.preselection_hard_rejected_count,
+            preselection_soft_flagged_count=preselection_result.preselection_soft_flagged_count,
+            preselection_passed_count=preselection_result.preselection_passed_count,
+            b2_replay_candidate_count=preselection_result.b2_replay_candidate_count,
+            trade_eligible_candidate_count=0,
+            preselection_rejection_count=preselection_result.preselection_rejection_count,
+            replay_savings_estimate_count=preselection_result.replay_savings_estimate_count,
+            unique_candidate_count=source_truth_semantics.unique_candidate_count,
+            base_event_count=source_truth_semantics.base_event_count,
+            per_engine_candidate_count=source_truth_semantics.per_engine_candidate_count,
+            engine_native_candidate_count=materialized_candidate_semantics.engine_native_candidate_count,
+            candidate_source_status=materialized_candidate_semantics.candidate_source_status,
+        )
+        candidate_export_status = candidate_summary.candidate_export_status
+        progress_manifest = _build_progress_manifest(
+            request=request,
+            run_dir=run_dir,
+            silver_index_path=silver_index_path,
+            silver_index_ready=silver_index_ready,
+            data_factory_status=data_factory_status,
+            raw_source_status=raw_source_status,
+            pair_universe_status=pair_universe_status,
+            silver_index_status=silver_index_status,
+            gold_feature_store_status=gold_feature_store_status,
+            orderbook_reconstruction_status=orderbook_reconstruction_status,
+            feature_store_status=feature_result.feature_store_status,
+            candidate_discovery_status=candidate_discovery_status,
+            candidate_export_status=candidate_export_status,
+            raw_window_status=raw_window_status,
+            detailed_replay_status="DETAILED_REPLAY_NOT_PROVEN",
+            capital_profile_generation_status="CAPITAL_PROFILE_NOT_PROVEN",
+            promotion_artifact_status="PROMOTION_ARTIFACTS_NOT_PROVEN",
+            sample_size_status="SAMPLE_SIZE_NOT_PROVEN",
+            feature_row_count=feature_result.row_count,
+            candidate_count=len(candidate_source_truth_events or materialized_candidate_events),
+            raw_window_count=len(raw_window_manifests),
+            detailed_replay_count=0,
+            capital_profile_count=0,
+            engine_promotion_count=0,
+            pair_promotion_count=0,
+            strategy_promotion_count=0,
+            sample_size_survival_count=0,
+            blocker_codes=_raw_window_stage_blockers(
+                *(("RAW_WINDOW_NOT_PROVEN",) if raw_window_status == "RAW_WINDOW_NOT_PROVEN" else ())
+            ),
+            created_at=created_at,
+            expected_edge_proxy_count=expected_edge_proxy_count,
+            expected_edge_governed_count=expected_edge_governed_count,
+            candidate_engine_native_count=candidate_engine_native_progress_count,
+            candidate_proxy_count=candidate_proxy_progress_count,
+            engine_native_status=engine_native_status,
+            engine_native_records_built=engine_native_records_built,
+        )
+        _persist_progress_run_manifest(
+            run_dir,
+            progress_manifest,
+            progress_callback=progress_callback,
+        )
+    elif candidate_events:
+        materialized_candidate_events = candidate_events
+    candidate_baseline_count = len(
+        candidate_source_truth_events or materialized_candidate_events or candidate_events
+    )
+
+    detailed_result = StrategyLadderDetailedReplayStageResult(
+        detailed_replay_status="DETAILED_REPLAY_NOT_PROVEN",
+        candidate_artifacts=(),
+        bucket_results_by_bucket={bucket: () for bucket in request.capital_buckets},
+        bucket_dtr_records={bucket: () for bucket in request.capital_buckets},
+    )
+    if (
+        not request.fast_only
+        and not request.dry_run
+        and candidate_events
+        and not raw_window_extraction_failed
+    ):
+        with performance_profiler.phase(
+            "replay_orchestration",
+            status="OK",
+            candidate_count=len(candidate_events),
+        ):
+            detailed_result = run_strategy_ladder_detailed_replay(
+                detailed_replay_dir,
+                candidate_events=candidate_events,
+                raw_window_manifests=raw_window_manifests,
+                capital_buckets=request.capital_buckets,
+                execution_runtime_projection_path=request.execution_runtime_projection_path,
+            )
+        performance_profiler.observe_replay_subtimers(
+            shared_payload_build_seconds=(
+                detailed_result.performance_metrics.shared_payload_build_seconds
+            ),
+            engine_dataset_build_seconds=(
+                detailed_result.performance_metrics.engine_dataset_build_seconds
+            ),
+            evaluate_replay_execution_seconds=(
+                detailed_result.performance_metrics.evaluate_replay_execution_seconds
+            ),
+            replay_evidence_seconds=(
+                detailed_result.performance_metrics.replay_evidence_seconds
+            ),
+            by_bucket_write_seconds=(
+                detailed_result.performance_metrics.by_bucket_write_seconds
+            ),
+            candidate_wrapper_write_seconds=(
+                detailed_result.performance_metrics.candidate_wrapper_write_seconds
+            ),
+            cache_hits_book_state=(
+                detailed_result.performance_metrics.cache_hits_book_state
+            ),
+            cache_misses_book_state=(
+                detailed_result.performance_metrics.cache_misses_book_state
+            ),
+            cache_hits_ohlcv=(
+                detailed_result.performance_metrics.cache_hits_ohlcv
+            ),
+            cache_misses_ohlcv=(
+                detailed_result.performance_metrics.cache_misses_ohlcv
+            ),
+        )
+    progress_manifest = _build_progress_manifest(
+        request=request,
+        run_dir=run_dir,
+        silver_index_path=silver_index_path,
+        silver_index_ready=silver_index_ready,
+        data_factory_status=data_factory_status,
+        raw_source_status=raw_source_status,
+        pair_universe_status=pair_universe_status,
+        silver_index_status=silver_index_status,
+        gold_feature_store_status=gold_feature_store_status,
+        orderbook_reconstruction_status=orderbook_reconstruction_status,
+        feature_store_status=feature_result.feature_store_status,
+        candidate_discovery_status=candidate_discovery_status,
+        candidate_export_status=candidate_export_status,
+        raw_window_status=raw_window_status,
+        detailed_replay_status=detailed_result.detailed_replay_status,
+        capital_profile_generation_status="CAPITAL_PROFILE_NOT_PROVEN",
+        promotion_artifact_status="PROMOTION_ARTIFACTS_NOT_PROVEN",
+        sample_size_status="SAMPLE_SIZE_NOT_PROVEN",
+        feature_row_count=feature_result.row_count,
+        candidate_count=candidate_baseline_count,
+        raw_window_count=len(raw_window_manifests),
+        detailed_replay_count=sum(
+            len(items) for items in detailed_result.bucket_results_by_bucket.values()
+        ),
+        capital_profile_count=0,
+        engine_promotion_count=0,
+        pair_promotion_count=0,
+        strategy_promotion_count=0,
+        sample_size_survival_count=0,
+        blocker_codes=_raw_window_stage_blockers(
+            *(("RAW_WINDOW_NOT_PROVEN",) if raw_window_status == "RAW_WINDOW_NOT_PROVEN" else ()),
+            *(
+                ("DETAILED_REPLAY_NOT_PROVEN",)
+                if detailed_result.detailed_replay_status == "DETAILED_REPLAY_NOT_PROVEN"
+                else ()
+            ),
+        ),
+        created_at=created_at,
+        expected_edge_proxy_count=expected_edge_proxy_count,
+        expected_edge_governed_count=expected_edge_governed_count,
+        candidate_engine_native_count=candidate_engine_native_progress_count,
+        candidate_proxy_count=candidate_proxy_progress_count,
+        engine_native_status=engine_native_status,
+        engine_native_records_built=engine_native_records_built,
+    )
+    _persist_progress_run_manifest(
+        run_dir,
+        progress_manifest,
+        progress_callback=progress_callback,
+    )
+
+    capital_profiles: tuple[CapitalBucketProfile, ...] = ()
+    capital_profile_generation_status = "CAPITAL_PROFILE_NOT_PROVEN"
+    if not request.fast_only and not request.dry_run:
+        profiles: list[CapitalBucketProfile] = []
+        for bucket in request.capital_buckets:
+            profile = _capital_profile_for_bucket(
+                request=request,
+                capital_bucket=bucket,
+                bucket_results=detailed_result.bucket_results_by_bucket.get(bucket, ()),
+                bucket_dtrs=detailed_result.bucket_dtr_records.get(bucket, ()),
+            )
+            profiles.append(profile)
+            capital_profiles_dir.mkdir(parents=True, exist_ok=True)
+            atomic_write_json(
+                capital_profiles_dir / f"{bucket}.json",
+                profile.model_dump(mode="json"),
+            )
+        capital_profiles = tuple(profiles)
+        if all(profile.record_count not in {None, 0} for profile in capital_profiles):
+            capital_profile_generation_status = "CAPITAL_PROFILE_GENERATION_READY"
+        elif capital_profiles:
+            capital_profile_generation_status = "CAPITAL_PROFILE_GENERATION_PARTIAL"
+    progress_manifest = _build_progress_manifest(
+        request=request,
+        run_dir=run_dir,
+        silver_index_path=silver_index_path,
+        silver_index_ready=silver_index_ready,
+        data_factory_status=data_factory_status,
+        raw_source_status=raw_source_status,
+        pair_universe_status=pair_universe_status,
+        silver_index_status=silver_index_status,
+        gold_feature_store_status=gold_feature_store_status,
+        orderbook_reconstruction_status=orderbook_reconstruction_status,
+        feature_store_status=feature_result.feature_store_status,
+        candidate_discovery_status=candidate_discovery_status,
+        candidate_export_status=candidate_export_status,
+        raw_window_status=raw_window_status,
+        detailed_replay_status=detailed_result.detailed_replay_status,
+        capital_profile_generation_status=capital_profile_generation_status,
+        promotion_artifact_status="PROMOTION_ARTIFACTS_NOT_PROVEN",
+        sample_size_status="SAMPLE_SIZE_NOT_PROVEN",
+        feature_row_count=feature_result.row_count,
+        candidate_count=candidate_baseline_count,
+        raw_window_count=len(raw_window_manifests),
+        detailed_replay_count=sum(
+            len(items) for items in detailed_result.bucket_results_by_bucket.values()
+        ),
+        capital_profile_count=len(capital_profiles),
+        engine_promotion_count=0,
+        pair_promotion_count=0,
+        strategy_promotion_count=0,
+        sample_size_survival_count=0,
+        blocker_codes=_raw_window_stage_blockers(
+            *(("RAW_WINDOW_NOT_PROVEN",) if raw_window_status == "RAW_WINDOW_NOT_PROVEN" else ()),
+            *(
+                ("DETAILED_REPLAY_NOT_PROVEN",)
+                if detailed_result.detailed_replay_status == "DETAILED_REPLAY_NOT_PROVEN"
+                else ()
+            ),
+        ),
+        created_at=created_at,
+        expected_edge_proxy_count=expected_edge_proxy_count,
+        expected_edge_governed_count=expected_edge_governed_count,
+        candidate_engine_native_count=candidate_engine_native_progress_count,
+        candidate_proxy_count=candidate_proxy_progress_count,
+        engine_native_status=engine_native_status,
+        engine_native_records_built=engine_native_records_built,
+    )
+    _persist_progress_run_manifest(
+        run_dir,
+        progress_manifest,
+        progress_callback=progress_callback,
+    )
+
+    all_bucket_results = tuple(
+        result
+        for bucket in request.capital_buckets
+        for result in detailed_result.bucket_results_by_bucket.get(bucket, ())
+    )
+    all_bucket_dtrs = tuple(
+        record
+        for bucket in request.capital_buckets
+        for record in detailed_result.bucket_dtr_records.get(bucket, ())
+    )
+    engine_artifacts: tuple[EnginePromotionArtifact, ...] = ()
+    pair_artifacts: tuple[PairPromotionArtifact, ...] = ()
+    strategy_artifacts: tuple[StrategyPromotionArtifact, ...] = ()
+    sample_artifacts: tuple[SampleSizeSurvivalArtifact, ...] = ()
+    promotion_artifact_status = "PROMOTION_ARTIFACTS_NOT_PROVEN"
+    sample_size_status = "SAMPLE_SIZE_NOT_PROVEN"
+    execution_label_source = "REPLAY_PROXY_EXECUTION"
+    fee_model_source = "REPLAY_PROXY"
+    spread_model_source = "REPLAY_PROXY"
+    slippage_model_source = "REPLAY_PROXY"
+    partial_fill_model_source = "REPLAY_PROXY"
+    adverse_selection_source = "REPLAY_PROXY"
+    order_type_selection_source = "REPLAY_PROXY"
+    venue_constraints_source = "REPLAY_PROXY"
+    execution_fidelity_gap_codes: tuple[str, ...] = ()
+    if not request.fast_only and not request.dry_run and all_bucket_results and all_bucket_dtrs:
+        global_manifest = _build_replay_manifest(
+            request=request,
+            run_id=request.run_id,
+            strategy_id="strategy_ladder",
+            engines=tuple(sorted({item.engine_id for item in all_bucket_results})),
+            pairs=tuple(sorted({item.pair for item in all_bucket_results})),
+            record_count=max(len(all_bucket_dtrs), 1),
+            start_timestamp_ms=min(item.timestamp_ms for item in all_bucket_results),
+            end_timestamp_ms=max(item.timestamp_ms for item in all_bucket_results),
+        )
+        global_metrics_summary = build_replay_metrics_summary(
+            all_bucket_dtrs,
+            total_opportunities=len(all_bucket_results),
+            initial_capital=max(request.capital_buckets) if request.capital_buckets else None,
+            fee_provenance=_build_fee_provenance(all_bucket_results),
+            impact_provenance=_build_impact_provenance(all_bucket_results),
+            book_depth_availability=_build_book_depth_availability(all_bucket_results),
+            fill_realism=_build_fill_realism(all_bucket_results),
+            cost_parity=_build_cost_parity(all_bucket_results),
+            capital_bucket_profiles=capital_profiles,
+        )
+        global_bundle = build_replay_promotion_artifact_bundle(
+            run_manifest=global_manifest,
+            metrics_summary=global_metrics_summary,
+            dtr_records=all_bucket_dtrs,
+            bucket_results=all_bucket_results,
+            candidate_events=candidate_source_truth_events or candidate_events,
+            input_data_hash=global_manifest.artifact_hash,
+        )
+        execution_label_source = global_metrics_summary.execution_label_source
+        fee_model_source = global_metrics_summary.fee_model_source
+        spread_model_source = global_metrics_summary.spread_model_source
+        slippage_model_source = global_metrics_summary.slippage_model_source
+        partial_fill_model_source = global_metrics_summary.partial_fill_model_source
+        adverse_selection_source = global_metrics_summary.adverse_selection_source
+        order_type_selection_source = global_metrics_summary.order_type_selection_source
+        venue_constraints_source = global_metrics_summary.venue_constraints_source
+        execution_fidelity_gap_codes = global_metrics_summary.execution_fidelity_gap_codes
+        strategy_bundles = tuple(
+            _build_strategy_bundle(
+                request=request,
+                strategy_id=strategy_id,
+                bucket_results=tuple(
+                    result for result in all_bucket_results if result.strategy_id == strategy_id
+                ),
+                bucket_dtrs=_strategy_records_for_scope(
+                    all_bucket_results,
+                    all_bucket_dtrs,
+                    strategy_id,
+                ),
+                candidate_events=tuple(
+                    candidate
+                    for candidate in (candidate_source_truth_events or candidate_events)
+                    if candidate.strategy_id == strategy_id
+                ),
+            )
+            for strategy_id in _strategy_ids_from_results(all_bucket_results)
+        )
+        engine_artifacts = global_bundle.engine_promotion_artifacts
+        pair_artifacts = global_bundle.pair_promotion_artifacts
+        strategy_artifacts = tuple(
+            artifact
+            for bundle in strategy_bundles
+            for artifact in bundle.strategy_promotion_artifacts
+        )
+        non_strategy_sample_artifacts = tuple(
+            artifact
+            for artifact in global_bundle.sample_size_survival_artifacts
+            if artifact.scope not in {"strategy", "strategy_pair"}
+        )
+        strategy_sample_artifacts = tuple(
+            artifact
+            for bundle in strategy_bundles
+            for artifact in bundle.sample_size_survival_artifacts
+            if artifact.scope in {"strategy", "strategy_pair"}
+        )
+        sample_artifacts = tuple(
+            {
+                (artifact.scope, artifact.id): artifact
+                for artifact in (*non_strategy_sample_artifacts, *strategy_sample_artifacts)
+            }.values()
+        )
+        _write_promotion_payloads(
+            run_dir,
+            run_id=request.run_id,
+            engine_artifacts=engine_artifacts,
+            pair_artifacts=pair_artifacts,
+            strategy_artifacts=strategy_artifacts,
+            sample_artifacts=sample_artifacts,
+        )
+        promotion_artifact_status = _derive_promotion_artifact_status(
+            engine_artifact_count=len(engine_artifacts),
+            pair_artifact_count=len(pair_artifacts),
+            strategy_artifact_count=len(strategy_artifacts),
+            promotion_fidelity_blockers=(),
+        )
+        if sample_artifacts:
+            sample_size_status = (
+                "SAMPLE_SIZE_PROVEN"
+                if any(
+                    artifact.sample_size_survival_status == "SAMPLE_SIZE_PROVEN"
+                    for artifact in sample_artifacts
+                )
+                else "SAMPLE_SIZE_NOT_PROVEN"
+            )
+    progress_manifest = _build_progress_manifest(
+        request=request,
+        run_dir=run_dir,
+        silver_index_path=silver_index_path,
+        silver_index_ready=silver_index_ready,
+        data_factory_status=data_factory_status,
+        raw_source_status=raw_source_status,
+        pair_universe_status=pair_universe_status,
+        silver_index_status=silver_index_status,
+        gold_feature_store_status=gold_feature_store_status,
+        orderbook_reconstruction_status=orderbook_reconstruction_status,
+        feature_store_status=feature_result.feature_store_status,
+        candidate_discovery_status=candidate_discovery_status,
+        candidate_export_status=candidate_export_status,
+        raw_window_status=raw_window_status,
+        detailed_replay_status=detailed_result.detailed_replay_status,
+        capital_profile_generation_status=capital_profile_generation_status,
+        promotion_artifact_status=promotion_artifact_status,
+        sample_size_status=sample_size_status,
+        feature_row_count=feature_result.row_count,
+        candidate_count=candidate_baseline_count,
+        raw_window_count=len(raw_window_manifests),
+        detailed_replay_count=len(all_bucket_results),
+        capital_profile_count=len(capital_profiles),
+        engine_promotion_count=len(engine_artifacts),
+        pair_promotion_count=len(pair_artifacts),
+        strategy_promotion_count=len(strategy_artifacts),
+        sample_size_survival_count=len(sample_artifacts),
+        blocker_codes=_raw_window_stage_blockers(
+            *(
+                ("RAW_WINDOW_NOT_PROVEN",)
+                if raw_window_status == "RAW_WINDOW_NOT_PROVEN" and not request.fast_only and not request.dry_run
+                else ()
+            ),
+            *(("PAIR_UNIVERSE_EMPTY",) if pair_universe_status == "PAIR_UNIVERSE_EMPTY" else ()),
+            *(
+                ("SILVER_INDEX_NOT_READY",)
+                if silver_index_status == "SILVER_INDEX_NOT_READY" and not request.fast_only and not request.dry_run
+                else ()
+            ),
+            *(
+                ("DETAILED_REPLAY_NOT_PROVEN",)
+                if detailed_result.detailed_replay_status == "DETAILED_REPLAY_NOT_PROVEN" and not request.fast_only and not request.dry_run
+                else ()
+            ),
+        ),
+        created_at=created_at,
+        expected_edge_proxy_count=expected_edge_proxy_count,
+        expected_edge_governed_count=expected_edge_governed_count,
+        candidate_engine_native_count=candidate_engine_native_progress_count,
+        candidate_proxy_count=candidate_proxy_progress_count,
+        engine_native_status=engine_native_status,
+        engine_native_records_built=engine_native_records_built,
+    )
+    _persist_progress_run_manifest(
+        run_dir,
+        progress_manifest,
+        progress_callback=progress_callback,
+    )
+
+    executed_trade_count = _count_executed_trades(all_bucket_results)
+    trade_eligible_candidate_count = len(
+        {
+            result.candidate_id
+            for result in all_bucket_results
+            if str(result.execution_state or "") in {"selected", "reduced", "executed"}
+        }
+    )
+    # Audit 2026-05-07 (P3a wire) — invocation opt-in du pont microstructure
+    final_status = _stage_final_status(
+        request=request,
+        feature_store_status=feature_result.feature_store_status,
+        candidate_export_status=candidate_export_status,
+        raw_window_status=raw_window_status,
+        detailed_replay_status=detailed_result.detailed_replay_status,
+        capital_profile_count=len(capital_profiles),
+        promotion_artifact_count=(
+            len(engine_artifacts) + len(pair_artifacts) + len(strategy_artifacts)
+        ),
+        executed_trade_count=executed_trade_count,
+        detailed_replay_record_count=len(all_bucket_results),
+    )
+    candidate_count_semantics = summarize_candidate_count_semantics(
+        candidate_source_truth_events or materialized_candidate_events or candidate_events
+    )
+    materialized_candidate_semantics = summarize_candidate_count_semantics(
+        materialized_candidate_events or candidate_events
+    )
+    replay_candidate_semantics = summarize_candidate_count_semantics(candidate_events)
+    materialized_candidate_count = len(materialized_candidate_events or candidate_events)
+    truth_candidate_events = materialized_candidate_events or candidate_events
+    candidate_engine_native_count = (
+        materialized_candidate_semantics.engine_native_candidate_count
+    )
+    candidate_proxy_count = materialized_candidate_semantics.proxy_candidate_count
+    final_expected_edge_governed_count = sum(
+        1
+        for event in truth_candidate_events
+        if is_expected_edge_backtest_truth(
+            (event.compatibility_payload or {}).get("expected_edge_provenance")
+        )
+    )
+    final_expected_edge_proxy_count = max(
+        expected_edge_proxy_count,
+        len(truth_candidate_events) - final_expected_edge_governed_count,
+    )
+    final_expected_edge_statuses = tuple(
+        expected_edge_backtest_truth_status(
+            (event.compatibility_payload or {}).get("expected_edge_provenance")
+        )
+        for event in truth_candidate_events
+    )
+    if not truth_candidate_events:
+        candidate_truth_status = "CANDIDATE_TRUTH_NOT_PROVEN"
+    elif candidate_proxy_count > 0:
+        candidate_truth_status = "CANDIDATE_TRUTH_PROXY_PRESENT"
+    elif candidate_engine_native_count == materialized_candidate_count:
+        candidate_truth_status = "CANDIDATE_ENGINE_NATIVE_READY"
+    elif candidate_engine_native_count > 0:
+        candidate_truth_status = "CANDIDATE_ENGINE_NATIVE_PARTIAL"
+    else:
+        candidate_truth_status = "CANDIDATE_ENGINE_NATIVE_NOT_PROVEN"
+    if not truth_candidate_events:
+        expected_edge_truth_status = "EXPECTED_EDGE_NOT_PROVEN"
+    elif final_expected_edge_proxy_count == 0 and final_expected_edge_governed_count > 0:
+        expected_edge_truth_status = "EXPECTED_EDGE_GOVERNED_BACKTEST_TRUTH"
+    elif final_expected_edge_governed_count > 0:
+        expected_edge_truth_status = "EXPECTED_EDGE_MIXED_PROXY_BLOCKED"
+    elif "EXPECTED_EDGE_MODEL_BLOCKED" in final_expected_edge_statuses:
+        expected_edge_truth_status = "EXPECTED_EDGE_MODEL_BLOCKED"
+    else:
+        expected_edge_truth_status = "EXPECTED_EDGE_PROXY_BLOCKED"
+    economic_statuses = tuple(
+        str((event.compatibility_payload or {}).get("economic_provenance") or "")
+        for event in truth_candidate_events
+    )
+    final_expected_edge_model_statuses = tuple(
+        str((event.compatibility_payload or {}).get("expected_edge_model_status") or "")
+        for event in truth_candidate_events
+    )
+    if "GOVERNED_EDGE_MODEL_READY" in final_expected_edge_model_statuses:
+        expected_edge_model_status = "GOVERNED_EDGE_MODEL_READY"
+    elif expected_edge_model_required:
+        expected_edge_model_status = expected_edge_model_load_status
+    else:
+        expected_edge_model_status = "EXPECTED_EDGE_MODEL_NOT_REQUESTED"
+    final_expected_edge_model_artifact_hash = (
+        expected_edge_model_load_result.artifact_hash
+        or next(
+            (
+                str((event.compatibility_payload or {}).get("expected_edge_model_artifact_hash"))
+                for event in candidate_events
+                if (event.compatibility_payload or {}).get("expected_edge_model_artifact_hash")
+            ),
+            None,
+        )
+    )
+    final_expected_edge_model_feature_hash = (
+        expected_edge_model_load_result.feature_hash
+        or next(
+            (
+                str((event.compatibility_payload or {}).get("expected_edge_model_feature_hash"))
+                for event in candidate_events
+                if (event.compatibility_payload or {}).get("expected_edge_model_feature_hash")
+            ),
+            None,
+        )
+    )
+    expected_edge_training_artifact_ref = (
+        expected_edge_model_load_result.training_artifact_ref
+        or (
+            str(request.frozen_ml_artifact_path.resolve())
+            if request.frozen_ml_artifact_path is not None
+            else ""
+        )
+    )
+    expected_edge_label_source = (
+        expected_edge_model_load_result.label_source
+        if expected_edge_training_artifact_ref
+        else "PROXY_FORWARD_RETURN_MEDIAN_TO_CALIBRATE"
+    )
+    expected_edge_label_fidelity = (
+        expected_edge_model_load_result.label_fidelity
+        if expected_edge_training_artifact_ref
+        else "EXPECTED_EDGE_PROXY_DISCOVERY_ONLY"
+    )
+    expected_edge_anti_leakage_status = (
+        expected_edge_model_load_result.anti_leakage_status
+        if expected_edge_training_artifact_ref
+        else "EXPECTED_EDGE_ANTI_LEAKAGE_NOT_PROVEN"
+    )
+    expected_edge_walkforward_status = (
+        expected_edge_model_load_result.walkforward_status
+        if expected_edge_training_artifact_ref
+        else "EXPECTED_EDGE_WALKFORWARD_NOT_DECLARED"
+    )
+    expected_edge_horizon = (
+        expected_edge_model_load_result.horizon_minutes
+        if expected_edge_training_artifact_ref
+        else None
+    )
+    expected_edge_purge_window = (
+        expected_edge_model_load_result.purge_window_minutes
+        if expected_edge_training_artifact_ref
+        else None
+    )
+    expected_edge_embargo_window = (
+        expected_edge_model_load_result.embargo_window_minutes
+        if expected_edge_training_artifact_ref
+        else None
+    )
+    expected_edge_blocker_codes = _merge_blocker_codes(
+        expected_edge_model_load_result.blocker_codes,
+        (
+            expected_edge_truth_status,
+            "EXPECTED_EDGE_PROXY_NOT_BACKTEST_TRUTH",
+        )
+        if final_expected_edge_proxy_count > 0
+        else (),
+        (
+            "EXPECTED_EDGE_NOT_PROMOTION_GRADE",
+        )
+        if final_expected_edge_governed_count > 0
+        and expected_edge_label_fidelity == "EXPECTED_EDGE_GOVERNED_BACKTEST_LABELS_READY"
+        else (),
+    )
+    if economic_statuses and all(status == "FULLY_MEASURED" for status in economic_statuses):
+        economic_constants_provenance = "FULLY_MEASURED"
+    elif any(status in {"FULLY_MEASURED", "PARTIALLY_MEASURED"} for status in economic_statuses):
+        economic_constants_provenance = "PARTIALLY_MEASURED"
+    elif request.engine_native_mode:
+        economic_constants_provenance = "ECONOMIC_PROVENANCE_BLOCKED"
+    else:
+        economic_constants_provenance = "HARDCODED_PROXY_CONSTANTS"
+    promotion_fidelity_blockers = _promotion_fidelity_blockers(
+        candidate_truth_status=candidate_truth_status,
+        expected_edge_truth_status=expected_edge_truth_status,
+        economic_constants_provenance=economic_constants_provenance,
+        execution_fidelity_gap_codes=execution_fidelity_gap_codes,
+    )
+    promotion_artifact_status = _derive_promotion_artifact_status(
+        engine_artifact_count=len(engine_artifacts),
+        pair_artifact_count=len(pair_artifacts),
+        strategy_artifact_count=len(strategy_artifacts),
+        promotion_fidelity_blockers=promotion_fidelity_blockers,
+    )
+    replay_count_semantics = summarize_replay_count_semantics(
+        unique_candidate_count=candidate_count_semantics.unique_candidate_count,
+        bucket_results=all_bucket_results,
+    )
+    resolved_pairs = request.pairs or tuple(
+        sorted(
+            {
+                *(event.pair for event in candidate_events if event.pair),
+                *(item.pair for item in all_bucket_results if item.pair),
+            }
+        )
+    )
+    resolved_engines = request.engines or tuple(
+        sorted(
+            {
+                *(event.engine_id for event in candidate_events if event.engine_id),
+                *(item.engine_id for item in all_bucket_results if item.engine_id),
+            }
+        )
+    )
+    resolved_timeframes = request.timeframes or tuple(
+        sorted({event.timeframe for event in candidate_events if event.timeframe})
+    )
+    resolved_engine_count = max(
+        (
+            candidate_summary.engine_count
+            if candidate_summary is not None and candidate_summary.engine_count > 0
+            else 0
+        ),
+        len(resolved_engines),
+        candidate_count_semantics.engine_count,
+        len(request.engines),
+        4,
+    )
+    resolved_effective_sample_size = (
+        candidate_summary.effective_engine_native_sample_size
+        if candidate_summary is not None
+        and candidate_summary.effective_engine_native_sample_size > 0
+        else max(int(request.candidate_sample_cap or request.engine_native_sample_size), 0)
+    )
+    resolved_candidate_sample_cap = (
+        candidate_summary.candidate_sample_cap
+        if candidate_summary is not None and candidate_summary.candidate_sample_cap > 0
+        else resolved_effective_sample_size * resolved_engine_count
+    )
+    resolved_candidate_cap_formula = (
+        candidate_summary.candidate_cap_formula
+        if candidate_summary is not None and candidate_summary.candidate_cap_formula
+        else f"{resolved_engine_count} engines x {resolved_effective_sample_size}"
+    )
+    resolved_small_scope_enabled = (
+        candidate_summary.small_scope_enabled
+        if candidate_summary is not None
+        else request.small_scope_enabled
+    )
+    resolved_full_scan_enabled = (
+        candidate_summary.full_scan_enabled
+        if candidate_summary is not None
+        else request.full_scan_enabled
+    )
+    resolved_no_full_scan_enabled = (
+        candidate_summary.no_full_scan_enabled
+        if candidate_summary is not None
+        else request.no_full_scan_enabled
+    )
+    resolved_candidate_discovery_limited = (
+        candidate_summary.candidate_discovery_limited
+        if candidate_summary is not None
+        else (
+            bool(resolved_candidate_sample_cap)
+            and candidate_count_semantics.unique_candidate_count >= resolved_candidate_sample_cap
+        )
+    )
+    resolved_candidate_discovery_limit_reason = (
+        candidate_summary.candidate_discovery_limit_reason
+        if candidate_summary is not None
+        else (
+            "ENGINE_NATIVE_SAMPLE_CAP_ACTIVE"
+            if resolved_candidate_discovery_limited
+            else "DISCOVERY_EXHAUSTED_BEFORE_CAP"
+        )
+    )
+    resolved_candidate_discovery_mode = (
+        candidate_summary.candidate_discovery_mode
+        if candidate_summary is not None and candidate_summary.candidate_discovery_mode
+        else request.candidate_discovery_mode
+    )
+    resolved_candidate_discovery_cap_status = (
+        candidate_summary.candidate_discovery_cap_status
+        if candidate_summary is not None and candidate_summary.candidate_discovery_cap_status
+        else (
+            "CANDIDATE_DISCOVERY_SAMPLE_CAPPED"
+            if resolved_candidate_sample_cap > 0
+            and candidate_count_semantics.unique_candidate_count >= resolved_candidate_sample_cap
+            else (
+                "CANDIDATE_DISCOVERY_EXHAUSTED"
+                if candidate_count_semantics.unique_candidate_count > 0
+                and resolved_full_scan_enabled
+                else (
+                    "CANDIDATE_DISCOVERY_FULL_SCAN_ENABLED"
+                    if resolved_full_scan_enabled
+                    else "CANDIDATE_DISCOVERY_LIMIT_NOT_PROVEN"
+                )
+            )
+        )
+    )
+    summary_inconsistency_codes: list[str] = []
+    if data_factory_manifest_payload:
+        if data_factory_status == "DATA_FACTORY_NOT_PROVEN":
+            summary_inconsistency_codes.append("SUMMARY_INCONSISTENT")
+        if silver_index_status == "SILVER_INDEX_NOT_READY":
+            summary_inconsistency_codes.append("SUMMARY_INCONSISTENT")
+        if gold_feature_store_status == "GOLD_FEATURE_STORE_NOT_READY":
+            summary_inconsistency_codes.append("SUMMARY_INCONSISTENT")
+    if candidate_summary is not None:
+        if (
+            candidate_summary.candidate_sample_cap > 0
+            and resolved_candidate_sample_cap != candidate_summary.candidate_sample_cap
+        ):
+            summary_inconsistency_codes.append("SUMMARY_INCONSISTENT")
+        if (
+            candidate_summary.effective_engine_native_sample_size > 0
+            and resolved_effective_sample_size
+            != candidate_summary.effective_engine_native_sample_size
+        ):
+            summary_inconsistency_codes.append("SUMMARY_INCONSISTENT")
+        if resolved_full_scan_enabled != candidate_summary.full_scan_enabled:
+            summary_inconsistency_codes.append("SUMMARY_INCONSISTENT")
+        if resolved_small_scope_enabled != candidate_summary.small_scope_enabled:
+            summary_inconsistency_codes.append("SUMMARY_INCONSISTENT")
+    if candidate_events and engine_native_status == "ENGINE_NATIVE_FAILED_NO_RUNNER_INVOCATIONS":
+        summary_inconsistency_codes.append("SUMMARY_INCONSISTENT")
+    count_semantics_validator_codes: list[str] = []
+    if summary_inconsistency_codes:
+        count_semantics_validator_codes.extend(summary_inconsistency_codes)
+    if (
+        candidate_count_semantics.unique_candidate_count > 0
+        and replay_count_semantics.replay_record_count
+        > candidate_count_semantics.unique_candidate_count
+        and not replay_count_semantics.replay_expansion_axis
+    ):
+        count_semantics_validator_codes.append("REPLAY_EXPANSION_UNDECLARED")
+    if (
+        candidate_count_semantics.unique_candidate_count > 0
+        and engine_native_status == "ENGINE_NATIVE_FAILED_NO_RUNNER_INVOCATIONS"
+        and materialized_candidate_semantics.candidate_source_status
+        not in {
+            "CANDIDATE_SOURCE_COMPAT_PROXY_DISCOVERY",
+            "CANDIDATE_SOURCE_FALLBACK_SYNTHETIC",
+            "CANDIDATE_SOURCE_MIXED_ENGINE_AND_PROXY",
+        }
+    ):
+        count_semantics_validator_codes.append("SUMMARY_INCONSISTENT")
+    matrix_count_inflation_status = (
+        "COUNT_SEMANTICS_CONSISTENT"
+        if not count_semantics_validator_codes
+        else "COUNT_SEMANTICS_BLOCKED"
+    )
+    run_manifest = StrategyLadderRunManifest(
+        run_id=request.run_id,
+        input_root=str(request.input_root.resolve()),
+        feature_store_root=str(request.feature_store_root.resolve()),
+        raw_root=str(request.raw_root.resolve()),
+        raw_roots=tuple(str(path.resolve()) for path in request.raw_roots),
+        raw_source_manifest_path=(
+            str(request.raw_source_manifest_path.resolve())
+            if request.raw_source_manifest_path is not None
+            else ""
+        ),
+        silver_index_path=str(silver_index_path.resolve()) if silver_index_ready else "",
+        output_root=str(run_dir.resolve()),
+        workflow_run_id=request.workflow_run_id,
+        phase_run_id=request.phase_run_id,
+        parent_workflow_ref=request.parent_workflow_ref,
+        pairs=resolved_pairs,
+        engines=resolved_engines,
+        capital_buckets=request.capital_buckets,
+        timeframes=resolved_timeframes,
+        start=request.start,
+        end=request.end,
+        fast_only=request.fast_only,
+        detailed_only=request.detailed_only,
+        resume=request.resume,
+        dry_run=request.dry_run,
+        ml_mode_status=ml_mode_status,
+        data_factory_status=data_factory_status,
+        raw_source_status=raw_source_status,
+        pair_universe_status=pair_universe_status,
+        silver_index_status=silver_index_status,
+        gold_feature_store_status=gold_feature_store_status,
+        orderbook_reconstruction_status=orderbook_reconstruction_status,
+        feature_store_status=feature_result.feature_store_status,
+        candidate_discovery_status=candidate_discovery_status,
+        candidate_export_status=candidate_export_status,
+        raw_window_extraction_status=raw_window_status,
+        detailed_replay_status=detailed_result.detailed_replay_status,
+        capital_profile_generation_status=capital_profile_generation_status,
+        promotion_artifact_status=promotion_artifact_status,
+        sample_size_survival_status=sample_size_status,
+        final_status=final_status,
+        blocker_codes=_raw_window_stage_blockers(
+            *(
+                ("RAW_WINDOW_NOT_PROVEN",)
+                if raw_window_status == "RAW_WINDOW_NOT_PROVEN" and not request.fast_only and not request.dry_run
+                else ()
+            ),
+            *(("PAIR_UNIVERSE_EMPTY",) if pair_universe_status == "PAIR_UNIVERSE_EMPTY" else ()),
+            *(
+                ("SILVER_INDEX_NOT_READY",)
+                if silver_index_status == "SILVER_INDEX_NOT_READY" and not request.fast_only and not request.dry_run
+                else ()
+            ),
+            *(
+                ("DETAILED_REPLAY_NOT_PROVEN",)
+                if detailed_result.detailed_replay_status == "DETAILED_REPLAY_NOT_PROVEN" and not request.fast_only and not request.dry_run
+                else ()
+            ),
+            *(
+                ("NO_EXECUTED_TRADES",)
+                if (
+                    executed_trade_count == 0
+                    and len(all_bucket_results) > 0
+                    and not request.fast_only
+                    and not request.dry_run
+                )
+                else ()
+            ),
+            *promotion_fidelity_blockers,
+            *summary_inconsistency_codes,
+        ),
+        feature_row_count=feature_result.row_count,
+        candidate_sample_cap=resolved_candidate_sample_cap,
+        effective_engine_native_sample_size=resolved_effective_sample_size,
+        engine_count=resolved_engine_count,
+        candidate_cap_formula=resolved_candidate_cap_formula,
+        small_scope_enabled=resolved_small_scope_enabled,
+        full_scan_enabled=resolved_full_scan_enabled,
+        no_full_scan_enabled=resolved_no_full_scan_enabled,
+        candidate_discovery_limited=resolved_candidate_discovery_limited,
+        candidate_discovery_limit_reason=resolved_candidate_discovery_limit_reason,
+        candidate_discovery_mode=resolved_candidate_discovery_mode,
+        candidate_discovery_cap_status=resolved_candidate_discovery_cap_status,
+        preselection_status=(
+            preselection_result.status
+            if preselection_result is not None
+            else "ENGINE_NATIVE_PRESELECTION_NOT_PROVEN"
+        ),
+        replay_input_mode_status=(
+            "DIAGNOSTIC_FULL_REPLAY"
+            if request.diagnostic_full_replay
+            else "PRESELECTED_ONLY"
+        ),
+        preselected_only=(request.preselected_only and not request.diagnostic_full_replay),
+        diagnostic_full_replay=request.diagnostic_full_replay,
+        b1_5_policy_mode=request.b1_5_policy_mode,
+        candidate_count=candidate_count_semantics.unique_candidate_count,
+        unique_candidate_count=candidate_count_semantics.unique_candidate_count,
+        base_event_count=candidate_count_semantics.base_event_count,
+        per_engine_candidate_count=candidate_count_semantics.per_engine_candidate_count,
+        engine_native_candidate_count=materialized_candidate_semantics.engine_native_candidate_count,
+        discovery_pre_candidate_count=candidate_count_semantics.unique_candidate_count,
+        engine_native_preselected_count=(
+            preselection_result.engine_native_preselected_count
+            if preselection_result is not None
+            else 0
+        ),
+        preselection_hard_rejected_count=(
+            preselection_result.preselection_hard_rejected_count
+            if preselection_result is not None
+            else 0
+        ),
+        preselection_soft_flagged_count=(
+            preselection_result.preselection_soft_flagged_count
+            if preselection_result is not None
+            else 0
+        ),
+        preselection_passed_count=(
+            preselection_result.preselection_passed_count
+            if preselection_result is not None
+            else 0
+        ),
+        b2_replay_candidate_count=replay_candidate_semantics.unique_candidate_count,
+        trade_eligible_candidate_count=trade_eligible_candidate_count,
+        preselection_rejection_count=(
+            preselection_result.preselection_rejection_count
+            if preselection_result is not None
+            else 0
+        ),
+        replay_savings_estimate_count=(
+            preselection_result.replay_savings_estimate_count
+            if preselection_result is not None
+            else 0
+        ),
+        replay_record_count=replay_count_semantics.replay_record_count,
+        evaluation_record_count=replay_count_semantics.evaluation_record_count,
+        promotion_record_count=replay_count_semantics.promotion_record_count,
+        capital_bucket_record_count=replay_count_semantics.capital_bucket_record_count,
+        replay_expansion_factor=replay_count_semantics.replay_expansion_factor,
+        replay_expansion_axis=replay_count_semantics.replay_expansion_axis,
+        candidate_source_status=materialized_candidate_semantics.candidate_source_status,
+        count_semantics_validator_codes=tuple(dict.fromkeys(count_semantics_validator_codes)),
+        matrix_count_inflation_status=matrix_count_inflation_status,
+        raw_window_count=len(raw_window_manifests),
+        raw_windows_total=raw_window_linkage_counts["raw_windows_total"],
+        trade_windows_found=raw_window_linkage_counts["trade_windows_found"],
+        trade_windows_missing=raw_window_linkage_counts["trade_windows_missing"],
+        book_windows_found=raw_window_linkage_counts["book_windows_found"],
+        book_windows_missing=raw_window_linkage_counts["book_windows_missing"],
+        ohlcv_windows_found=raw_window_linkage_counts["ohlcv_windows_found"],
+        ohlcv_windows_missing=raw_window_linkage_counts["ohlcv_windows_missing"],
+        depth20_found=raw_window_linkage_counts["depth20_found"],
+        depth20_missing=raw_window_linkage_counts["depth20_missing"],
+        detailed_replay_count=len(all_bucket_results),
+        capital_profile_count=len(capital_profiles),
+        engine_promotion_count=len(engine_artifacts),
+        pair_promotion_count=len(pair_artifacts),
+        strategy_promotion_count=len(strategy_artifacts),
+        sample_size_survival_count=len(sample_artifacts),
+        # Audit 2026-05-06 — flags de veracite (cf. _stage_final_status).
+        # Audit 2026-05-07 (P0 CE/cost provenance) — quand engine_native_mode
+        # Final provenance is derived from the materialized candidate payloads.
+        economic_constants_provenance=economic_constants_provenance,
+        candidate_truth_status=candidate_truth_status,
+        expected_edge_truth_status=expected_edge_truth_status,
+        execution_label_source=execution_label_source,
+        fee_model_source=fee_model_source,
+        spread_model_source=spread_model_source,
+        slippage_model_source=slippage_model_source,
+        partial_fill_model_source=partial_fill_model_source,
+        adverse_selection_source=adverse_selection_source,
+        order_type_selection_source=order_type_selection_source,
+        venue_constraints_source=venue_constraints_source,
+        execution_fidelity_gap_codes=execution_fidelity_gap_codes,
+        expected_edge_proxy_count=final_expected_edge_proxy_count,
+        expected_edge_governed_count=final_expected_edge_governed_count,
+        expected_edge_model_status=expected_edge_model_status,
+        expected_edge_model_artifact_hash=final_expected_edge_model_artifact_hash,
+        expected_edge_model_feature_hash=final_expected_edge_model_feature_hash,
+        expected_edge_training_artifact_ref=expected_edge_training_artifact_ref,
+        expected_edge_label_source=expected_edge_label_source,
+        expected_edge_label_fidelity=expected_edge_label_fidelity,
+        expected_edge_anti_leakage_status=expected_edge_anti_leakage_status,
+        expected_edge_walkforward_status=expected_edge_walkforward_status,
+        expected_edge_horizon=expected_edge_horizon,
+        expected_edge_purge_window=expected_edge_purge_window,
+        expected_edge_embargo_window=expected_edge_embargo_window,
+        expected_edge_blocker_codes=expected_edge_blocker_codes,
+        candidate_engine_native_count=candidate_engine_native_count,
+        candidate_proxy_count=candidate_proxy_count,
+        executed_trade_count=executed_trade_count,
+        # Audit 2026-05-06 (P3a) — Statut du pont microstructure vers les
+        # Native status now reflects full-path runner invocation before replay.
+        engine_native_status=engine_native_status,
+        engine_native_records_built=engine_native_records_built,
+        created_at=created_at,
+        updated_at=datetime.now(tz=UTC),
+    )
+    run_manifest = run_manifest.model_copy(
+        update={"artifact_hash": deterministic_payload_hash(run_manifest.model_dump(mode="json"))}
+    )
+    atomic_write_json(run_dir / "run_manifest.json", run_manifest.model_dump(mode="json"))
+    replay_artifact_refs = {
+        artifact.candidate_id: str((detailed_replay_dir / f"{artifact.candidate_id}.json").resolve())
+        for artifact in detailed_result.candidate_artifacts
+    }
+    replay_bucket_refs = {
+        artifact.candidate_id: artifact.bucket_result_refs
+        for artifact in detailed_result.candidate_artifacts
+    }
+    with performance_profiler.phase(
+        "refusal_ledger_generation",
+        status="OK",
+        candidate_count=len(candidate_events),
+        replay_record_count=len(all_bucket_results),
+    ):
+        operator_artifact_refs = write_strategy_ladder_operator_artifacts(
+            run_dir=run_dir,
+            candidate_events=candidate_events,
+            raw_window_manifests=raw_window_manifests,
+            bucket_results=all_bucket_results,
+            replay_artifact_refs=replay_artifact_refs,
+            replay_bucket_refs=replay_bucket_refs,
+        )
+    with performance_profiler.phase(
+        "dashboard_report_generation",
+        status="OK",
+        candidate_count=len(candidate_events),
+        replay_record_count=len(all_bucket_results),
+    ):
+        evidence_index = build_governed_audit_evidence_index(
+            run_id=request.run_id,
+            source_root=run_dir,
+            entries=_build_governed_audit_evidence_entries(
+                run_id=request.run_id,
+                run_dir=run_dir,
+                capital_profiles=capital_profiles,
+                engine_artifacts=engine_artifacts,
+                pair_artifacts=pair_artifacts,
+                strategy_artifacts=strategy_artifacts,
+                sample_artifacts=sample_artifacts,
+                operator_artifact_refs=operator_artifact_refs,
+            ),
+        )
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        evidence_index_path = reports_dir / "governed_audit_evidence_index.json"
+        atomic_write_json(
+            evidence_index_path,
+            evidence_index.model_dump(mode="json"),
+        )
+        evidence_projection = build_governed_audit_evidence_projection(
+            index=evidence_index,
+            index_path=evidence_index_path,
+        )
+
+        report_summary = _build_report_summary(
+            request=request,
+            run_manifest=run_manifest,
+            capital_profiles=capital_profiles,
+            engine_artifacts=engine_artifacts,
+            pair_artifacts=pair_artifacts,
+            strategy_artifacts=strategy_artifacts,
+            sample_artifacts=sample_artifacts,
+            bucket_results=all_bucket_results,
+            evidence_projection=evidence_projection,
+        )
+    with performance_profiler.phase(
+        "matrix_generation",
+        status="OK",
+        candidate_count=len(candidate_events),
+        replay_record_count=len(all_bucket_results),
+    ):
+        _write_reports(
+            reports_dir,
+            summary=report_summary,
+            run_manifest=run_manifest,
+            gold_manifest_payload=gold_manifest_payload,
+            capital_profiles=capital_profiles,
+            engine_artifacts=engine_artifacts,
+            pair_artifacts=pair_artifacts,
+            strategy_artifacts=strategy_artifacts,
+            sample_artifacts=sample_artifacts,
+            operator_artifact_refs=operator_artifact_refs,
+        )
+    with performance_profiler.phase(
+        "label_store_generation",
+        status="OK",
+        candidate_count=len(candidate_events),
+        replay_record_count=len(all_bucket_results),
+    ):
+        label_store_result = build_strategy_ladder_b2_label_store(
+            StrategyLadderB2LabelStoreBuilderRequest(
+                run_root=run_dir,
+                output_dir=run_dir / "ml_label_store",
+            )
+        )
+    with performance_profiler.phase(
+        "gate_counterfactual_analysis_generation",
+        status="OK",
+        candidate_count=len(candidate_events),
+        replay_record_count=len(all_bucket_results),
+    ):
+        write_strategy_ladder_gate_waterfall_reports(
+            run_dir=run_dir,
+            summary=report_summary,
+            run_manifest=run_manifest,
+            label_store_summary_path=Path(label_store_result.summary_path),
+            label_store_quality_report_path=Path(label_store_result.quality_report_path),
+        )
+    with performance_profiler.phase(
+        "candidate_trade_semantics_audit_generation",
+        status="OK",
+        candidate_count=len(candidate_events),
+        replay_record_count=len(all_bucket_results),
+    ):
+        write_strategy_ladder_candidate_trade_semantics_audit(
+            run_dir=run_dir,
+            summary=report_summary,
+            run_manifest=run_manifest,
+            source_candidate_events=candidate_source_truth_events or candidate_events,
+            materialized_candidate_events=materialized_candidate_events or candidate_events,
+        )
+    performance_profiler.finalize_counts(
+        candidate_count=len(candidate_events),
+        replay_record_count=len(all_bucket_results),
+    )
+    performance_profiler.write(run_dir)
+    if operator_artifact_refs.get("timeframe_matrix"):
+        run_manifest = _persist_progress_run_manifest(
+            run_dir,
+            run_manifest,
+            progress_callback=progress_callback,
+        )
+    _sync_parent_workflow_phase_record(
+        request,
+        run_manifest=run_manifest,
+        data_factory_root=data_factory_root,
+        candidate_events_source_path=candidate_events_source_path,
+        run_dir=run_dir,
+        fast_candidates_dir=fast_candidates_dir,
+        reports_dir=reports_dir,
+        operator_artifact_refs=operator_artifact_refs,
+        silver_index_report_payload=silver_index_report_payload,
+    )
+    return StrategyLadderRunResult(
+        run_manifest=run_manifest,
+        report_summary=report_summary,
+        capital_profiles=capital_profiles,
+        engine_promotion_artifacts=engine_artifacts,
+        pair_promotion_artifacts=pair_artifacts,
+        strategy_promotion_artifacts=strategy_artifacts,
+        sample_size_survival_artifacts=sample_artifacts,
+    )
+
+
+__all__ = [
+    "StrategyLadderRunResult",
+    "run_backtest_strategy_ladder",
+]

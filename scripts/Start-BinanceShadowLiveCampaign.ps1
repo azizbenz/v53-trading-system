@@ -7,7 +7,7 @@ param(
     [string] $CampaignRoot = "",
 
     [Parameter()]
-    [string[]] $Pairs = @("BTCUSDT", "ETHUSDT"),
+    [string[]] $Pairs = @(),
 
     [Parameter()]
     [string[]] $StreamTypes = @("trade", "ticker"),
@@ -24,9 +24,18 @@ param(
     [switch] $PersistUserEnv,
     [switch] $PublicOnly,
     [switch] $EnableTimeSyncProbe,
+    [switch] $EnableExecutionRuntimeBootstrap,
     [switch] $SkipServiceLaunch,
     [switch] $SkipDashboardRender,
     [switch] $StopOnError,
+
+    # 0 = unlimited (runs until Ctrl+C / SIGTERM); positive = exact cycle cap.
+    # Default of 1 preserves the original one-shot warmup behaviour.
+    [Parameter()]
+    [int] $MaxCycles = 1,
+
+    [Parameter()]
+    [double] $PollIntervalS = 0.0,
 
     [Parameter()]
     [string] $ExecutionRuntimeProjectionPath = "",
@@ -113,6 +122,127 @@ function Resolve-OptionalArtifactRef {
     return [System.IO.Path]::GetFullPath((Resolve-Path -LiteralPath $PathValue).Path)
 }
 
+function Get-RouteHintPayloads {
+    param(
+        [Parameter()]
+        $RouteHintEntry
+    )
+
+    if ($RouteHintEntry -is [System.Collections.IDictionary]) {
+        return @($RouteHintEntry)
+    }
+    if (
+        ($RouteHintEntry -is [System.Collections.IEnumerable]) `
+        -and -not ($RouteHintEntry -is [string])
+    ) {
+        $payloads = @()
+        foreach ($item in $RouteHintEntry) {
+            if ($item -is [System.Collections.IDictionary]) {
+                $payloads += ,$item
+            }
+        }
+        return $payloads
+    }
+    return @()
+}
+
+function Test-PairScopeMatches {
+    param(
+        [Parameter()]
+        [string[]] $ExpectedPairs,
+
+        [Parameter()]
+        $CandidatePairs
+    )
+
+    if (-not ($CandidatePairs -is [System.Collections.IEnumerable]) -or ($CandidatePairs -is [string])) {
+        return $false
+    }
+
+    $resolved = @()
+    foreach ($item in $CandidatePairs) {
+        $pair = [string]$item
+        if ([string]::IsNullOrWhiteSpace($pair)) {
+            continue
+        }
+        $resolved += $pair.ToUpperInvariant()
+    }
+
+    if ($resolved.Count -ne $ExpectedPairs.Count) {
+        return $false
+    }
+    for ($index = 0; $index -lt $ExpectedPairs.Count; $index += 1) {
+        if ($resolved[$index] -ne $ExpectedPairs[$index].ToUpperInvariant()) {
+            return $false
+        }
+    }
+    return $true
+}
+
+function Test-RouteHintsCoverExpectedPlan {
+    param(
+        [Parameter()]
+        $RouteHints,
+
+        [Parameter()]
+        $ExpectedRouteHints
+    )
+
+    if (-not ($RouteHints -is [System.Collections.IDictionary])) {
+        return $false
+    }
+    if (-not ($ExpectedRouteHints -is [System.Collections.IDictionary])) {
+        return $false
+    }
+
+    foreach ($pairKey in $ExpectedRouteHints.Keys) {
+        if (-not $RouteHints.Contains($pairKey)) {
+            return $false
+        }
+        $expectedEngineIds = New-Object 'System.Collections.Generic.HashSet[string]'
+        foreach ($expectedPayload in (Get-RouteHintPayloads -RouteHintEntry $ExpectedRouteHints[$pairKey])) {
+            $engineId = [string]$expectedPayload["engine_id"]
+            if (-not [string]::IsNullOrWhiteSpace($engineId)) {
+                [void]$expectedEngineIds.Add($engineId)
+            }
+        }
+        $actualEngineIds = New-Object 'System.Collections.Generic.HashSet[string]'
+        foreach ($actualPayload in (Get-RouteHintPayloads -RouteHintEntry $RouteHints[$pairKey])) {
+            $engineId = [string]$actualPayload["engine_id"]
+            if (-not [string]::IsNullOrWhiteSpace($engineId)) {
+                [void]$actualEngineIds.Add($engineId)
+            }
+        }
+        foreach ($engineId in $expectedEngineIds) {
+            if (-not $actualEngineIds.Contains($engineId)) {
+                return $false
+            }
+        }
+    }
+    return $true
+}
+
+function Get-ShadowLivePlan {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $PlanScriptPath,
+
+        [Parameter()]
+        [string[]] $RequestedPairs = @()
+    )
+
+    $args = @($PlanScriptPath)
+    if ($RequestedPairs.Count -gt 0) {
+        $args += "--pairs"
+        $args += $RequestedPairs
+    }
+    $payload = & python @args
+    if ($LASTEXITCODE -ne 0) {
+        throw "build_shadow_live_plan.py exited with code $LASTEXITCODE"
+    }
+    return ConvertTo-PlainHashtable -InputObject ($payload | ConvertFrom-Json)
+}
+
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
     $RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 }
@@ -125,7 +255,10 @@ $orchestratorDir = Join-Path $CampaignRoot "orchestrator"
 $shadowSessionDir = Join-Path $CampaignRoot "shadow_session"
 $liveCapturesRoot = Join-Path $CampaignRoot "live_captures"
 $autoExportsRoot = Join-Path $CampaignRoot "auto_exports"
+$dashboardCommandQueueRoot = Join-Path $serviceDir "dashboard_command_queue"
+$servicePidFile = Join-Path $serviceDir "shadow_vps_service.pid"
 $configPath = Join-Path $CampaignRoot "live_websocket_config.json"
+$planScriptPath = Join-Path $PSScriptRoot "build_shadow_live_plan.py"
 
 New-Item -ItemType Directory -Force -Path @(
     $CampaignRoot,
@@ -133,7 +266,8 @@ New-Item -ItemType Directory -Force -Path @(
     $orchestratorDir,
     $shadowSessionDir,
     $liveCapturesRoot,
-    $autoExportsRoot
+    $autoExportsRoot,
+    $dashboardCommandQueueRoot
 ) | Out-Null
 
 if (-not [string]::IsNullOrWhiteSpace($ApiKey) -or -not [string]::IsNullOrWhiteSpace($ApiSecret) -or $PersistUserEnv) {
@@ -163,8 +297,25 @@ if (Test-Path -LiteralPath $configPath) {
     }
 }
 
-$routeHints = @{}
-if ($existingConfig.ContainsKey("route_hints_by_pair") -and $existingConfig["route_hints_by_pair"] -is [hashtable]) {
+$requestedPairs = @()
+foreach ($pair in $Pairs) {
+    $resolvedPair = [string]$pair
+    if ([string]::IsNullOrWhiteSpace($resolvedPair)) {
+        continue
+    }
+    $requestedPairs += $resolvedPair.ToUpperInvariant()
+}
+$livePlan = Get-ShadowLivePlan -PlanScriptPath $planScriptPath -RequestedPairs $requestedPairs
+$Pairs = @($livePlan["pairs"])
+$routeHints = $livePlan["route_hints_by_pair"]
+if (
+    $existingConfig.ContainsKey("pairs") `
+    -and (Test-PairScopeMatches -ExpectedPairs $Pairs -CandidatePairs $existingConfig["pairs"]) `
+    -and $existingConfig.ContainsKey("route_hints_by_pair") `
+    -and (Test-RouteHintsCoverExpectedPlan `
+        -RouteHints $existingConfig["route_hints_by_pair"] `
+        -ExpectedRouteHints $routeHints)
+) {
     $routeHints = $existingConfig["route_hints_by_pair"]
 }
 
@@ -187,6 +338,7 @@ $configPayload = [ordered]@{
     idle_poll_limit = if ($existingConfig.ContainsKey("idle_poll_limit")) { $existingConfig["idle_poll_limit"] } else { 6 }
     capture_timeout_s = if ($existingConfig.ContainsKey("capture_timeout_s")) { $existingConfig["capture_timeout_s"] } else { 5.0 }
     time_sync_probe_enabled = [bool]$EnableTimeSyncProbe
+    execution_runtime_bootstrap_enabled = [bool]$EnableExecutionRuntimeBootstrap
     time_sync_sample_count = if ($existingConfig.ContainsKey("time_sync_sample_count")) { $existingConfig["time_sync_sample_count"] } else { 3 }
     execution_runtime_projection_path_ref = if ([string]::IsNullOrWhiteSpace($ExecutionRuntimeProjectionPath)) {
         if ($existingConfig.ContainsKey("execution_runtime_projection_path_ref")) { $existingConfig["execution_runtime_projection_path_ref"] } else { "" }
@@ -227,9 +379,14 @@ if (-not $SkipServiceLaunch) {
         "--live-websocket-config", $configPath,
         "--live-captures-root", $liveCapturesRoot,
         "--auto-exports-root", $autoExportsRoot,
-        "--max-cycles", "1",
-        "--poll-interval-s", "0"
+        "--dashboard-command-queue-root", $dashboardCommandQueueRoot,
+        "--pid-file", $servicePidFile,
+        "--poll-interval-s", "$PollIntervalS"
     )
+    if ($MaxCycles -gt 0) {
+        $serviceArgs += @("--max-cycles", "$MaxCycles")
+    }
+    # MaxCycles = 0 → omit --max-cycles entirely → service runs until Ctrl+C / SIGTERM
     if ($StopOnError) {
         $serviceArgs += "--stop-on-error"
     }
@@ -244,6 +401,8 @@ if (-not $SkipServiceLaunch) {
     campaign_root = [System.IO.Path]::GetFullPath($CampaignRoot)
     live_websocket_config = [System.IO.Path]::GetFullPath($configPath)
     service_dir = [System.IO.Path]::GetFullPath($serviceDir)
+    service_pid_file = [System.IO.Path]::GetFullPath($servicePidFile)
+    dashboard_command_queue_root = [System.IO.Path]::GetFullPath($dashboardCommandQueueRoot)
     observability_export = [System.IO.Path]::GetFullPath((Join-Path $serviceDir "shadow_vps_service_observability_export.json"))
     observability_prom = [System.IO.Path]::GetFullPath((Join-Path $serviceDir "shadow_vps_service_observability.prom"))
     scrape_manifest = [System.IO.Path]::GetFullPath((Join-Path $serviceDir "shadow_vps_service_scrape_manifest.json"))

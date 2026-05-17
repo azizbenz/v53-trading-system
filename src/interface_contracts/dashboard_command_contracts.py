@@ -49,9 +49,30 @@ class DashboardGovernedCommandKind(StrEnum):
 
     REQUEST_UPLOAD_ML_ARTIFACT = "request_upload_ml_artifact"
     REQUEST_UPLOAD_REGIME_DETECTOR_ARTIFACT = "request_upload_regime_detector_artifact"
+    REQUEST_UPLOAD_SHADOW_ML_CHALLENGER_ARTIFACT = (
+        "request_upload_shadow_ml_challenger_artifact"
+    )
+    REQUEST_UPLOAD_SHADOW_REGIME_DETECTOR_CHALLENGER_ARTIFACT = (
+        "request_upload_shadow_regime_detector_challenger_artifact"
+    )
+    REQUEST_CLEAR_SHADOW_ML_CHALLENGER_ARTIFACT = (
+        "request_clear_shadow_ml_challenger_artifact"
+    )
+    REQUEST_CLEAR_SHADOW_REGIME_DETECTOR_CHALLENGER_ARTIFACT = (
+        "request_clear_shadow_regime_detector_challenger_artifact"
+    )
     REQUEST_EXPORT_ACTIVE_ML_ARTIFACT = "request_export_active_ml_artifact"
     REQUEST_EXPORT_ACTIVE_REGIME_DETECTOR_ARTIFACT = (
         "request_export_active_regime_detector_artifact"
+    )
+    REQUEST_EXPORT_SHADOW_ML_ARTIFACT_COMPARISON_EVIDENCE = (
+        "request_export_shadow_ml_artifact_comparison_evidence"
+    )
+    REQUEST_EXPORT_SHADOW_REGIME_DETECTOR_ARTIFACT_COMPARISON_EVIDENCE = (
+        "request_export_shadow_regime_detector_artifact_comparison_evidence"
+    )
+    REQUEST_EXPORT_SHADOW_CHALLENGER_VERDICT_BUNDLE = (
+        "request_export_shadow_challenger_verdict_bundle"
     )
     REQUEST_EXPORT_REGIME_DETECTOR_SHADOW_AUDIT_BUNDLE = (
         "request_export_regime_detector_shadow_audit_bundle"
@@ -97,6 +118,8 @@ _UPLOAD_COMMANDS = frozenset(
     {
         DashboardGovernedCommandKind.REQUEST_UPLOAD_ML_ARTIFACT,
         DashboardGovernedCommandKind.REQUEST_UPLOAD_REGIME_DETECTOR_ARTIFACT,
+        DashboardGovernedCommandKind.REQUEST_UPLOAD_SHADOW_ML_CHALLENGER_ARTIFACT,
+        DashboardGovernedCommandKind.REQUEST_UPLOAD_SHADOW_REGIME_DETECTOR_CHALLENGER_ARTIFACT,
     }
 )
 _SECRET_UPLOAD_COMMANDS = frozenset(
@@ -382,27 +405,35 @@ class DashboardGovernedCommandRequest(TimestampedModel):
                 raise ValueError(
                     f"{self.command_kind.value} must not declare an artifact_manifest"
                 )
-        if self.command_kind == DashboardGovernedCommandKind.REQUEST_UPLOAD_ML_ARTIFACT:
+        if self.command_kind in {
+            DashboardGovernedCommandKind.REQUEST_UPLOAD_ML_ARTIFACT,
+            DashboardGovernedCommandKind.REQUEST_UPLOAD_SHADOW_ML_CHALLENGER_ARTIFACT,
+        }:
             if self.artifact_manifest is None:
-                raise ValueError("request_upload_ml_artifact requires artifact_manifest")
+                raise ValueError(
+                    f"{self.command_kind.value} requires artifact_manifest"
+                )
             if self.artifact_manifest.artifact_kind != DashboardArtifactKind.ML_MODEL_ARTIFACT:
                 raise ValueError(
-                    "request_upload_ml_artifact requires artifact_kind=ml_model_artifact"
+                    f"{self.command_kind.value} requires artifact_kind=ml_model_artifact"
                 )
         if (
             self.command_kind
-            == DashboardGovernedCommandKind.REQUEST_UPLOAD_REGIME_DETECTOR_ARTIFACT
+            in {
+                DashboardGovernedCommandKind.REQUEST_UPLOAD_REGIME_DETECTOR_ARTIFACT,
+                DashboardGovernedCommandKind.REQUEST_UPLOAD_SHADOW_REGIME_DETECTOR_CHALLENGER_ARTIFACT,
+            }
         ):
             if self.artifact_manifest is None:
                 raise ValueError(
-                    "request_upload_regime_detector_artifact requires artifact_manifest"
+                    f"{self.command_kind.value} requires artifact_manifest"
                 )
             if (
                 self.artifact_manifest.artifact_kind
                 != DashboardArtifactKind.REGIME_DETECTOR_ARTIFACT
             ):
                 raise ValueError(
-                    "request_upload_regime_detector_artifact requires artifact_kind=regime_detector_artifact"
+                    f"{self.command_kind.value} requires artifact_kind=regime_detector_artifact"
                 )
         if (
             self.command_kind

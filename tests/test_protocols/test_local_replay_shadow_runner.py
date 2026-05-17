@@ -608,13 +608,17 @@ def test_export_local_replay_shadow_run_accepts_real_export_directory():
         assert replay_plan["dataset_ref"]["dataset_id"] == "dataset-export-20260401"
         assert replay_plan["clock_ref"]["clock_id"] == "clock-local-export-1"
         assert replay_plan["bundle"]["manifest"]["strategy_version"] == "a.v2.0"
-        assert replay_plan["bundle"]["payload_refs"] == [
+        assert replay_plan["bundle"]["payload_refs"][:5] == [
             str((export_dir / "review_export.md").resolve()),
             str((export_dir / "feature_bridge.json").resolve()),
             str((export_dir / "parity_diagnostics.json").resolve()),
             str((export_dir / "replay_metrics.json").resolve()),
             str((export_dir / "replay_dtr.jsonl").resolve()),
         ]
+        assert any(
+            "strategy_promotion" in ref or "engine_promotion" in ref
+            for ref in replay_plan["bundle"]["payload_refs"][5:]
+        )
         assert run_manifest["strategy_id"] == "strategy-a-1"
         assert run_manifest["performance_mode"] == "research_fast_mode"
         assert local_replay_evidence["replay_useful_ready"] is True

@@ -1,0 +1,48 @@
+<section class="card">
+    <div class="card__head">
+        <h3>Model Risk Register · Narang</h3>
+        <span class="card__sub">{{ vm.model_risk.source_status }}</span>
+    </div>
+    <div class="card__body">
+        {% if vm.model_risk.source_status == 'not_yet_persisted' %}
+        <p class="muted">{{ vm.model_risk.info_message }}</p>
+
+        {% elif vm.model_risk.source_status == 'ok' %}
+        <div class="model-risk__cols">
+            <div>
+                <h4>Active</h4>
+                {% if vm.model_risk.active_ml %}
+                <p><strong>ML</strong>
+                    <code>{{ vm.model_risk.active_ml.profile_id }}</code> v{{ vm.model_risk.active_ml.version }}
+                    {% if vm.model_risk.active_ml.drift_score is not none %}
+                        · drift {{ "%.3f"|format(vm.model_risk.active_ml.drift_score) }}
+                    {% endif %}
+                </p>
+                {% endif %}
+                {% if vm.model_risk.active_regime_detector %}
+                <p><strong>Regime detector</strong>
+                    <code>{{ vm.model_risk.active_regime_detector.profile_id }}</code>
+                    v{{ vm.model_risk.active_regime_detector.version }}
+                </p>
+                {% endif %}
+            </div>
+            <div>
+                <h4>Shadow Challenger</h4>
+                {% if vm.model_risk.shadow_ml_challenger %}
+                <p><strong>ML</strong> <code>{{ vm.model_risk.shadow_ml_challenger.profile_id }}</code></p>
+                {% else %}<p class="muted">no ML challenger</p>{% endif %}
+                {% if vm.model_risk.shadow_regime_detector_challenger %}
+                <p><strong>Regime</strong> <code>{{ vm.model_risk.shadow_regime_detector_challenger.profile_id }}</code></p>
+                {% else %}<p class="muted">no regime challenger</p>{% endif %}
+            </div>
+        </div>
+        <p>Promotion eligible:
+            <span class="badge badge--{% if vm.model_risk.promotion_eligible %}up{% else %}warn{% endif %}">
+                {{ "yes" if vm.model_risk.promotion_eligible else "no" }}
+            </span>
+        </p>
+        {% else %}
+        <p class="muted">Source unavailable ({{ vm.model_risk.source_status }}).</p>
+        {% endif %}
+    </div>
+</section>

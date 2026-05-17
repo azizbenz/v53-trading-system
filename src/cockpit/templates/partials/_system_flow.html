@@ -1,0 +1,66 @@
+<section class="card" id="system-operability-score">
+    <div class="card__head">
+        <h3>System Operability Score</h3>
+        <span class="card__sub">{{ vm.operational_proof.system_flow.operability_score.overall_verdict }}</span>
+    </div>
+    <div class="card__body">
+        <p class="muted small" id="operability-blocker-summary">
+            Final state: <strong>{{ vm.operational_proof.warmup_explainer.final_state }}</strong>
+            · Eligible: <strong>{{ 'YES' if vm.operational_proof.warmup_explainer.eligible_to_trade else 'NO' }}</strong>
+            · Blocking: {{ vm.operational_proof.warmup_explainer.blocking_reasons|join(', ') if vm.operational_proof.warmup_explainer.blocking_reasons else 'none' }}
+        </p>
+        <table class="data-table data-table--compact">
+            <tbody>
+                <tr><th>Build-1 Manifest</th><td>{{ vm.operational_proof.system_flow.operability_score.build1_manifest_status }}</td></tr>
+                <tr><th>Build-1 DAG</th><td>{{ vm.operational_proof.system_flow.operability_score.build1_dag_status }}</td></tr>
+                <tr><th>Build-1 Guardrails</th><td>{{ vm.operational_proof.system_flow.operability_score.build1_guardrail_status }}</td></tr>
+                <tr><th>Build-1 Smoke</th><td>{{ vm.operational_proof.system_flow.operability_score.build1_smoke_status }}</td></tr>
+                <tr><th>Build-1 Core Health</th><td>{{ vm.operational_proof.system_flow.operability_score.build1_core_health_status }}</td></tr>
+                <tr><th>Warmup</th><td>{{ vm.operational_proof.system_flow.operability_score.warmup }}</td></tr>
+                <tr><th>Service</th><td>{{ vm.operational_proof.system_flow.operability_score.service }}</td></tr>
+                <tr><th>Queue</th><td>{{ vm.operational_proof.system_flow.operability_score.queue }}</td></tr>
+                <tr><th>Engines</th><td>{{ vm.operational_proof.system_flow.operability_score.engines }}</td></tr>
+                <tr><th>Economics</th><td>{{ vm.operational_proof.system_flow.operability_score.economics }}</td></tr>
+                <tr><th>Scoring Cost</th><td>{{ vm.operational_proof.system_flow.operability_score.scoring_cost_completeness_status }}</td></tr>
+                <tr><th>Book Depth</th><td>{{ vm.operational_proof.system_flow.operability_score.book_depth_status }}</td></tr>
+                <tr><th>Impact Depth</th><td>{{ vm.operational_proof.system_flow.operability_score.impact_depth_readiness_status }}</td></tr>
+                <tr><th>Fill Realism</th><td>{{ vm.operational_proof.system_flow.operability_score.fill_realism_status }}</td></tr>
+                <tr><th>Cost Parity</th><td>{{ vm.operational_proof.system_flow.operability_score.cost_parity_status }}</td></tr>
+                <tr><th>Shadow Extension</th><td>{{ vm.operational_proof.system_flow.operability_score.shadow_extension_status }} / days={{ vm.operational_proof.system_flow.operability_score.minimum_shadow_days_required if vm.operational_proof.system_flow.operability_score.minimum_shadow_days_required is not none else 'n/a' }}</td></tr>
+                <tr><th>Risk Inputs</th><td>{{ vm.operational_proof.system_flow.operability_score.risk_input_completeness_status }}</td></tr>
+                <tr><th>Small Capital</th><td>{{ vm.operational_proof.system_flow.operability_score.small_capital_viability_status }}</td></tr>
+                <tr><th>Capital Profiles</th><td>{{ vm.operational_proof.system_flow.operability_score.capital_profile_artifact_status }}</td></tr>
+                <tr><th>Sizing Doctrine</th><td>{{ vm.operational_proof.system_flow.operability_score.sizing_doctrine_status }}</td></tr>
+                <tr><th>Portfolio</th><td>{{ vm.operational_proof.system_flow.operability_score.portfolio_multi_asset_status }}</td></tr>
+                <tr><th>Executed Return</th><td>{{ vm.operational_proof.system_flow.operability_score.executed_return_status }}</td></tr>
+                <tr><th>True Drawdown</th><td>{{ vm.operational_proof.system_flow.operability_score.true_drawdown_status }}</td></tr>
+                <tr><th>Lineage</th><td>{{ vm.operational_proof.system_flow.operability_score.lineage }}</td></tr>
+                <tr><th>Refusal Journal</th><td>{{ vm.operational_proof.system_flow.operability_score.refusal_journal }}</td></tr>
+                <tr><th>Kill Switch</th><td>{{ vm.operational_proof.system_flow.operability_score.kill_switch }}</td></tr>
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<section class="card" id="system-flow">
+    <div class="card__head">
+        <h3>System Flow</h3>
+        <span class="card__sub">{{ vm.operational_proof.system_flow.source_status }}</span>
+    </div>
+    <div class="card__body">
+        <table class="data-table data-table--compact">
+            <thead>
+                <tr><th>Stage</th><th>Status</th><th>Detail</th></tr>
+            </thead>
+            <tbody>
+            {% for stage in vm.operational_proof.system_flow.stages %}
+                <tr>
+                    <td>{{ stage.stage_name }}</td>
+                    <td>{{ stage.status }}</td>
+                    <td>{{ stage.detail }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>

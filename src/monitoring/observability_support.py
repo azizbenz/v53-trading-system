@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from monitoring.challenger_evidence_alerts import (
+    build_shadow_challenger_alert_state,
+)
 from monitoring.contracts import MetricSample, ObservabilityExport, TechnicalDashboardPayload
 
 
@@ -310,6 +313,54 @@ def _build_dynamic_samples(payload: TechnicalDashboardPayload, base_labels: dict
     for pair in payload.pairs:
         samples.append(_sample("v53_pair_freshness_ms", kind="gauge", value=float(pair.freshness_ms), unit="ms", labels={**base_labels, "pair": pair.pair, "health": pair.health.value}))
         samples.append(_sample("v53_pair_useful_frequency", kind="gauge", value=pair.useful_frequency, unit="count", labels={**base_labels, "pair": pair.pair}))
+    challenger_state = build_shadow_challenger_alert_state(
+        artifact_runtime_visibility=payload.artifact_runtime_visibility,
+        artifact_comparisons=payload.artifact_comparisons,
+        artifact_verdict_bundle=payload.artifact_verdict_bundle,
+        shadow_last_completed_session_date=payload.shadow_last_completed_session_date,
+    )
+    if payload.artifact_verdict_bundle is not None:
+        samples.append(
+            _sample(
+                "v53_shadow_challenger_verdict",
+                kind="state",
+                value=1.0,
+                labels={
+                    **base_labels,
+                    "overall_verdict": payload.artifact_verdict_bundle.overall_verdict,
+                    "operator_recommendation": payload.artifact_verdict_bundle.operator_recommendation,
+                },
+            )
+        )
+        for family, status in (
+            ("ml", payload.artifact_verdict_bundle.ml_comparison_status),
+            ("regime_detector", payload.artifact_verdict_bundle.regime_detector_comparison_status),
+        ):
+            samples.append(
+                _sample(
+                    "v53_shadow_challenger_family_status",
+                    kind="state",
+                    value=1.0,
+                    labels={**base_labels, "family": family, "status": status},
+                )
+            )
+    if challenger_state.configured:
+        samples.append(
+            _sample(
+                "v53_shadow_challenger_evidence_missing",
+                kind="state",
+                value=1.0 if challenger_state.missing_evidence else 0.0,
+                labels=base_labels,
+            )
+        )
+        samples.append(
+            _sample(
+                "v53_shadow_challenger_evidence_stale",
+                kind="state",
+                value=1.0 if challenger_state.stale_evidence else 0.0,
+                labels=base_labels,
+            )
+        )
     return tuple(samples)
 
 

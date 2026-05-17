@@ -19,6 +19,12 @@ from interface_contracts import (
     VpsRecoveryReadinessReport,
     VpsWarmupRunSummary,
 )
+from monitoring.contracts_artifacts import (
+    ArtifactComparisonProjection,
+    ArtifactRuntimeVisibilityProjection,
+    ArtifactThresholdConsumerProjection,
+    ArtifactVerdictBundleProjection,
+)
 
 from .contracts_promotion import LiveLightRunSummary
 from .enums import LiveCompleteRunState, LiveCompleteVerdict, LiveLightRunState, LiveLightVerdict
@@ -76,9 +82,15 @@ class LiveCompleteInput(BaseModel, frozen=True):
     command_queue_snapshot: DashboardCommandQueueSnapshot | None = None
     active_ml_artifact: DashboardArtifactTransferManifest | None = None
     active_regime_detector_artifact: DashboardArtifactTransferManifest | None = None
+    shadow_ml_challenger_artifact: DashboardArtifactTransferManifest | None = None
+    shadow_regime_detector_challenger_artifact: DashboardArtifactTransferManifest | None = None
     recovery_readiness_report: VpsRecoveryReadinessReport | None = None
     warmup_run_summary: VpsWarmupRunSummary | None = None
     operator_safing_request: OperatorSafingRequest | None = None
+    artifact_runtime_visibility: tuple[ArtifactRuntimeVisibilityProjection, ...] = ()
+    artifact_threshold_consumers: tuple[ArtifactThresholdConsumerProjection, ...] = ()
+    artifact_comparisons: tuple[ArtifactComparisonProjection, ...] = ()
+    artifact_verdict_bundle: ArtifactVerdictBundleProjection | None = None
 
     @model_validator(mode="after")
     def validate_governance(self) -> "LiveCompleteInput":
@@ -147,6 +159,8 @@ class LiveCompleteExecutionEnvelope(BaseModel, frozen=True):
     command_queue_enabled: bool = False
     active_ml_artifact_hash: str = ""
     active_regime_detector_artifact_hash: str = ""
+    shadow_ml_challenger_artifact_hash: str = ""
+    shadow_regime_detector_challenger_artifact_hash: str = ""
     recovery_state: str = "cold_start"
     halt_guard_required: bool = True
     autonomous_execution_enabled: bool = False
@@ -170,8 +184,14 @@ class LiveCompleteRunSummary(BaseModel, frozen=True):
     command_queue_snapshot: DashboardCommandQueueSnapshot | None = None
     active_ml_artifact: DashboardArtifactTransferManifest | None = None
     active_regime_detector_artifact: DashboardArtifactTransferManifest | None = None
+    shadow_ml_challenger_artifact: DashboardArtifactTransferManifest | None = None
+    shadow_regime_detector_challenger_artifact: DashboardArtifactTransferManifest | None = None
     recovery_readiness_report: VpsRecoveryReadinessReport | None = None
     warmup_run_summary: VpsWarmupRunSummary | None = None
+    artifact_runtime_visibility: tuple[ArtifactRuntimeVisibilityProjection, ...] = ()
+    artifact_threshold_consumers: tuple[ArtifactThresholdConsumerProjection, ...] = ()
+    artifact_comparisons: tuple[ArtifactComparisonProjection, ...] = ()
+    artifact_verdict_bundle: ArtifactVerdictBundleProjection | None = None
     gate_groups: tuple[LiveCompleteGateGroupSummary, ...] = ()
 
     @property

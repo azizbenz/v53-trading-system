@@ -45,6 +45,8 @@ class QueuePressureRecord(BaseModel):
     top_k_used: int = Field(..., ge=1)
     partial_window: bool = False
     low_sample_confidence: bool = False
+    measurement_status: str = "MEASURED"
+    reason_codes: tuple[str, ...] = ()
     bid_volume_used: float = Field(..., ge=0.0)
     ask_volume_used: float = Field(..., ge=0.0)
     window_used: tuple[int | None, float | None]
@@ -98,6 +100,11 @@ def compute_queue_pressure(
     ask_volume = sum(point.ask_sizes[:resolved_top_k])
     denominator = bid_volume + ask_volume
     value = 0.0 if denominator <= 0.0 else (bid_volume - ask_volume) / denominator
+    measurement_status = "MEASURED"
+    reason_codes: tuple[str, ...] = ()
+    if denominator <= 0.0:
+        measurement_status = "QUEUE_PRESSURE_INSUFFICIENT_DEPTH"
+        reason_codes = ("QUEUE_PRESSURE_INSUFFICIENT_DEPTH",)
     eval_time_ns = point.timestamp_ns if computed_at_ns is None else computed_at_ns
     if eval_time_ns < point.timestamp_ns:
         raise ValueError("computed_at_ns must be >= point timestamp")
@@ -106,6 +113,8 @@ def compute_queue_pressure(
         top_k_used=resolved_top_k,
         partial_window=resolved_top_k < top_k,
         low_sample_confidence=denominator <= 0.0,
+        measurement_status=measurement_status,
+        reason_codes=reason_codes,
         bid_volume_used=bid_volume,
         ask_volume_used=ask_volume,
         window_used=(1, None),

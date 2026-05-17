@@ -15,6 +15,10 @@ from interface_contracts import (
 )
 from monitoring import (
     AlertProjection,
+    ArtifactComparisonProjection,
+    ArtifactRuntimeVisibilityProjection,
+    ArtifactThresholdConsumerProjection,
+    ArtifactVerdictBundleProjection,
     Build9MetaProjection,
     Build9XProjection,
     PortfolioMetrics,
@@ -90,7 +94,7 @@ def _payload() -> TechnicalDashboardPayload:
     )
 
 
-def test_build_complete_dashboard_sections_render_control_plane_cards() -> None:
+def _supplement() -> CompleteDashboardSupplement:
     recovery = VpsRecoveryReadinessReport(
         report_id="recovery-1",
         checks=(
@@ -101,7 +105,7 @@ def test_build_complete_dashboard_sections_render_control_plane_cards() -> None:
         ),
         eligible_to_trade=True,
     )
-    supplement = CompleteDashboardSupplement(
+    return CompleteDashboardSupplement(
         complete_gates=("gate.shadow_to_live_complete",),
         selected_pairs=("BTCUSDT", "ETHUSDT"),
         available_pairs=("BTCUSDT", "ETHUSDT", "SOLUSDT"),
@@ -131,6 +135,90 @@ def test_build_complete_dashboard_sections_render_control_plane_cards() -> None:
             feature_profile="extended_v2",
             source_ref="exports/regime.json",
         ),
+        shadow_ml_challenger_artifact=DashboardArtifactTransferManifest(
+            artifact_hash="c" * 64,
+            artifact_kind=DashboardArtifactKind.ML_MODEL_ARTIFACT,
+            artifact_id="ml-shadow-1",
+            source_ref="exports/ml_shadow.json",
+        ),
+        shadow_regime_detector_challenger_artifact=DashboardArtifactTransferManifest(
+            artifact_hash="d" * 64,
+            artifact_kind=DashboardArtifactKind.REGIME_DETECTOR_ARTIFACT,
+            artifact_id="regime-shadow-1",
+            source_ref="exports/regime_shadow.json",
+        ),
+        artifact_runtime_visibility=(
+            ArtifactRuntimeVisibilityProjection(
+                slot="active",
+                artifact_kind="ml_model_artifact",
+                artifact_id="ml-1",
+                artifact_hash="a" * 64,
+                lineage_version="a.v1.0.r1",
+                calibration_version="calib.v1",
+                promotion_state="shadow_validated",
+                review_state="approved",
+                validation_status="accepted",
+                pair_universe_count=3,
+                feature_count=12,
+                forecast_target_class="net_return",
+                forecast_horizon_class="intraday",
+                bet_structure="single_decision",
+                feature_hash="f" * 64,
+                top_feature_names_ref="exports/ml_features.json",
+            ),
+            ArtifactRuntimeVisibilityProjection(
+                slot="shadow_challenger",
+                artifact_kind="ml_model_artifact",
+                artifact_id="ml-shadow-1",
+                artifact_hash="c" * 64,
+                lineage_version="a.v1.0.r2",
+                review_state="pending",
+                validation_status="accepted",
+                shadow_only=True,
+                influence_detail="shadow_only / non_influential",
+                summary_ref="exports/ml_shadow_summary.json",
+            ),
+        ),
+        artifact_threshold_consumers=(
+            ArtifactThresholdConsumerProjection(
+                threshold_id="THR-X03",
+                threshold_family="execution_runtime",
+                consumer_id="rate_limiter",
+                consumer_interface="quota_ratio_ceiling",
+                method="quota_ratio_ceiling_v1",
+                unit="quota_ratio",
+                current_value=0.8,
+                threshold_review_status="ready",
+                threshold_fit_ready=True,
+                source_ref="exports/local_lab_execution_runtime_projection.json",
+            ),
+        ),
+        artifact_comparisons=(
+            ArtifactComparisonProjection(
+                champion_artifact_id="ml-1",
+                challenger_artifact_id="ml-shadow-1",
+                event_count=9,
+                decision_diff_rate=0.222,
+                expected_gain_delta_mean=0.00031,
+                expected_cost_delta_mean=0.00008,
+                expected_ce_delta_mean=0.00023,
+                halal_eligible_event_count=7,
+                halal_excluded_event_count=2,
+                sharia_policy_version="sharia_policy_v1",
+                sharia_scope_mode="pair_perimeter_with_spot_long_assumptions",
+                comparison_status="shadow_ready",
+                evidence_ref="exports/ml_compare.json",
+            ),
+        ),
+        artifact_verdict_bundle=ArtifactVerdictBundleProjection(
+            session_date="2026-04-25",
+            overall_verdict="shadow_validated",
+            operator_recommendation="review_for_micro_live_candidate",
+            configured_family_count=1,
+            ready_family_count=1,
+            ml_comparison_status="shadow_ready",
+            evidence_ref="exports/shadow_verdict_bundle.json",
+        ),
         recovery_readiness_report=recovery,
         warmup_run_summary=VpsWarmupRunSummary(
             run_id="warmup-1",
@@ -147,7 +235,9 @@ def test_build_complete_dashboard_sections_render_control_plane_cards() -> None:
         operator_report_ref="build/live_complete_operator_audit_report.json",
     )
 
-    sections = build_complete_dashboard_sections(_payload(), supplement)
+
+def test_build_complete_dashboard_control_plane_renders_shadow_verdict() -> None:
+    sections = build_complete_dashboard_sections(_payload(), _supplement())
     control_plane = next(
         section for section in sections if section.title == "Build-17 Control Plane"
     )
@@ -156,21 +246,46 @@ def test_build_complete_dashboard_sections_render_control_plane_cards() -> None:
     assert keys == {
         "complete_control_queue",
         "complete_control_artifacts",
+        "complete_control_shadow_challengers",
+        "complete_control_artifact_compare",
+        "complete_control_shadow_verdict_bundle",
         "complete_control_binance_credentials",
         "complete_control_recovery",
         "complete_control_warmup",
         "complete_control_operator_report",
     }
-    queue_card = next(card for card in control_plane.cards if card.key == "complete_control_queue")
-    operator_card = next(
-        card for card in control_plane.cards if card.key == "complete_control_operator_report"
-    )
-    credential_card = next(
+    verdict_card = next(
         card
         for card in control_plane.cards
-        if card.key == "complete_control_binance_credentials"
+        if card.key == "complete_control_shadow_verdict_bundle"
     )
-    assert queue_card.value == "healthy / pending=1"
-    assert credential_card.value == "profile=binance-live-001 / env=live"
-    assert "validation=validated" in credential_card.detail
-    assert operator_card.detail == "build/live_complete_operator_audit_report.json"
+    assert verdict_card.value == "shadow_validated / review_for_micro_live_candidate"
+    assert "ready=1 / invalid=0" in verdict_card.detail
+
+
+def test_build_complete_dashboard_artifact_sections_render_compare_and_verdict() -> None:
+    sections = build_complete_dashboard_sections(_payload(), _supplement())
+    artifact_forecast = next(
+        section for section in sections if section.title == "Forecast / Feature Visibility"
+    )
+    artifact_compare = next(
+        section for section in sections if section.title == "Threshold Consumers & Compare"
+    )
+    artifact_verdict = next(
+        section for section in sections if section.title == "Shadow Challenger Verdict"
+    )
+
+    assert any(card.label == "ml-1" for card in artifact_forecast.cards)
+    assert any(card.key == "complete_artifact_thresholds" for card in artifact_compare.cards)
+    compare_detail_card = next(
+        card for card in artifact_compare.cards if card.key == "complete_artifact_compare_1"
+    )
+    verdict_detail_card = next(
+        card for card in artifact_verdict.cards if card.key == "complete_artifact_verdict_bundle"
+    )
+    assert "events=9" in compare_detail_card.value
+    assert "ce_delta=0.000230" in compare_detail_card.detail
+    assert "gain_delta=0.000310" in compare_detail_card.detail
+    assert "halal=7/2" in compare_detail_card.detail
+    assert verdict_detail_card.value == "shadow_validated"
+    assert "recommendation=review_for_micro_live_candidate" in verdict_detail_card.detail

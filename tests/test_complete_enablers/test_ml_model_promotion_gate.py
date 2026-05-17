@@ -4,7 +4,13 @@ import base64
 from datetime import UTC, datetime
 
 from complete_enablers import evaluate_ml_model_promotion_gate
-from interface_contracts import MlModelArtifact, MlModelWindow, PromotionState
+from interface_contracts import (
+    MlAntiLeakageProofArtifact,
+    MlLiveDriftSnapshot,
+    MlModelArtifact,
+    MlModelWindow,
+    PromotionState,
+)
 
 
 def _artifact(
@@ -39,12 +45,74 @@ def _artifact(
     )
 
 
+def _anti_leakage_proof(artifact: MlModelArtifact) -> MlAntiLeakageProofArtifact:
+    return MlAntiLeakageProofArtifact.create(
+        artifact_id="anti-leakage-proof-1",
+        target_artifact_hash=artifact.artifact_hash,
+        dataset_hash=artifact.dataset_hash,
+        feature_hash=artifact.feature_hash,
+        label_policy="ml_backtest_realized_target_policy.v1",
+        train_window=artifact.train_window,
+        validation_window=artifact.validation_window,
+        test_window=MlModelWindow(
+            start_at=datetime(2026, 4, 22, tzinfo=UTC),
+            end_at=datetime(2026, 4, 29, tzinfo=UTC),
+        ),
+        purge_size=48,
+        embargo_size=24,
+        label_horizon="30m",
+        max_feature_timestamp=datetime(2026, 4, 21, 23, 30, tzinfo=UTC),
+        min_label_timestamp=datetime(2026, 4, 21, 23, 30, tzinfo=UTC),
+        feature_timestamp_alignment_status="FEATURE_TIMESTAMP_ALIGNED",
+        no_future_data_leak_status="NO_FUTURE_DATA_LEAK_PROVEN",
+        reviewer_signature="quant-reviewer",
+        method_version_hash="anti_leakage.v1",
+        created_at=datetime(2026, 4, 22, 12, 0, tzinfo=UTC),
+    )
+
+
+def _live_drift_snapshot(artifact: MlModelArtifact) -> MlLiveDriftSnapshot:
+    return MlLiveDriftSnapshot.create(
+        artifact_id="live-drift-1",
+        target_artifact_hash=artifact.artifact_hash,
+        feature_hash=artifact.feature_hash,
+        stage="LIVE",
+        feature_ks_pvalue=0.42,
+        shadow_diff_pct=0.02,
+        live_diff_pct=0.03,
+        win_rate_delta=-0.01,
+        ce_delta=-0.002,
+        source_status="LIVE_DRIFT_SOURCE_GOVERNED",
+        input_data_hash="c" * 64,
+        method_version_hash="live_drift.v1",
+        created_at=datetime(2026, 4, 22, 12, 0, tzinfo=UTC),
+        expires_at=datetime(2026, 4, 29, 12, 0, tzinfo=UTC),
+    )
+
+
 def test_ml_model_promotion_gate_blocks_on_unresolved_formalism_even_when_metrics_are_green() -> None:
     verdict = evaluate_ml_model_promotion_gate(_artifact())
 
     assert verdict.passed is False
     assert verdict.recommended_promotion_state == PromotionState.REPLAY_ONLY
     assert "ml.formalism.unresolved" in verdict.blocking_reasons
+    assert "ML_ANTI_LEAKAGE_PROOF_MISSING" in verdict.blocking_reasons
+    assert "ML_LIVE_DRIFT_SNAPSHOT_MISSING" in verdict.blocking_reasons
+
+
+def test_ml_model_promotion_gate_accepts_proof_contracts_but_keeps_formalism_blocker() -> None:
+    artifact = _artifact()
+
+    verdict = evaluate_ml_model_promotion_gate(
+        artifact,
+        anti_leakage_proof=_anti_leakage_proof(artifact),
+        live_drift_snapshot=_live_drift_snapshot(artifact),
+    )
+
+    assert verdict.passed is False
+    assert "ml.formalism.unresolved" in verdict.blocking_reasons
+    assert "ML_ANTI_LEAKAGE_PROOF_MISSING" not in verdict.blocking_reasons
+    assert "ML_LIVE_DRIFT_SNAPSHOT_MISSING" not in verdict.blocking_reasons
 
 
 def test_ml_model_promotion_gate_fails_closed_on_missing_metrics() -> None:

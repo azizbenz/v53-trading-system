@@ -23,6 +23,10 @@ from meta_minimal.edge_tracker_prudent_minimal.edge_status_classifier import (
 )
 from monitoring import (
     AccountUserDataProjection,
+    ArtifactComparisonProjection,
+    ArtifactRuntimeVisibilityProjection,
+    ArtifactThresholdConsumerProjection,
+    ArtifactVerdictBundleProjection,
     Build14ReaderProjection,
     Build14Projection,
     Build9XProjection,
@@ -321,6 +325,7 @@ def test_technical_dashboard_view_exposes_system_meta_build9x_and_replay_section
         "Build-13 Live",
         "Build-14 Enablers",
         "Artifact Hooks",
+        "Artifact Visibility",
         "Operator Controls",
         "Replay & Import",
         "Alerts",
@@ -1678,3 +1683,101 @@ def test_technical_dashboard_view_projects_build14_limited_influence_when_availa
     assert "family=microstructure" in next(
         card for card in build14.cards if card.key == "build14_reader_market_toxicity_snapshot"
     ).detail
+
+
+def test_technical_dashboard_view_renders_bounded_artifact_visibility_summary() -> None:
+    payload = build_technical_dashboard_payload(
+        _snapshot(),
+        artifact_runtime_visibility=(
+            ArtifactRuntimeVisibilityProjection(
+                slot="active",
+                artifact_kind="ml_model_artifact",
+                artifact_id="ml-1",
+                artifact_hash="a" * 64,
+                lineage_version="a.v1.0.r1",
+                feature_hash="f" * 64,
+                pair_universe_count=3,
+                feature_count=12,
+                forecast_target_class="net_return",
+                forecast_horizon_class="intraday",
+                bet_structure="single_decision",
+                top_feature_names_ref="exports/ml_features.json",
+            ),
+            ArtifactRuntimeVisibilityProjection(
+                slot="shadow_challenger",
+                artifact_kind="ml_model_artifact",
+                artifact_id="ml-shadow-1",
+                artifact_hash="c" * 64,
+                shadow_only=True,
+                influence_detail="shadow_only / non_influential",
+                summary_ref="exports/ml_shadow_summary.json",
+            ),
+        ),
+        artifact_threshold_consumers=(
+            ArtifactThresholdConsumerProjection(
+                threshold_id="THR-X03",
+                threshold_family="execution_runtime",
+                consumer_id="rate_limiter",
+                consumer_interface="quota_ratio_ceiling",
+                method="quota_ratio_ceiling_v1",
+                threshold_review_status="ready",
+                threshold_fit_ready=True,
+                source_ref="exports/runtime_projection.json",
+            ),
+        ),
+        artifact_comparisons=(
+            ArtifactComparisonProjection(
+                champion_artifact_id="ml-1",
+                challenger_artifact_id="ml-shadow-1",
+                event_count=6,
+                expected_gain_delta_mean=0.00027,
+                expected_ce_delta_mean=0.00019,
+                halal_eligible_event_count=4,
+                halal_excluded_event_count=2,
+                comparison_status="shadow_ready",
+            ),
+        ),
+        artifact_verdict_bundle=ArtifactVerdictBundleProjection(
+            session_date="2026-04-25",
+            overall_verdict="shadow_validated",
+            operator_recommendation="review_for_micro_live_candidate",
+            configured_family_count=1,
+            ready_family_count=1,
+            ml_comparison_status="shadow_ready",
+            evidence_ref="exports/shadow_verdict_bundle.json",
+        ),
+    )
+
+    view = build_technical_dashboard_view(payload)
+    section = next(
+        dashboard_section
+        for dashboard_section in view.sections
+        if dashboard_section.title == "Artifact Visibility"
+    )
+
+    keys = {card.key for card in section.cards}
+    assert keys == {
+        "artifact_visibility_presence",
+        "artifact_visibility_ids",
+        "artifact_visibility_thresholds",
+        "artifact_visibility_features",
+        "artifact_visibility_compare",
+        "artifact_visibility_verdict",
+    }
+    feature_card = next(
+        card for card in section.cards if card.key == "artifact_visibility_features"
+    )
+    compare_card = next(
+        card for card in section.cards if card.key == "artifact_visibility_compare"
+    )
+    verdict_card = next(
+        card for card in section.cards if card.key == "artifact_visibility_verdict"
+    )
+    assert "ref=exports/ml_features.json" in feature_card.detail
+    assert "feature_names" not in feature_card.detail
+    assert "events=6" in compare_card.detail
+    assert "ce_delta=0.000190" in compare_card.detail
+    assert "gain_delta=0.000270" in compare_card.detail
+    assert "halal=4/2" in compare_card.detail
+    assert verdict_card.value == "shadow_validated"
+    assert "recommendation=review_for_micro_live_candidate" in verdict_card.detail

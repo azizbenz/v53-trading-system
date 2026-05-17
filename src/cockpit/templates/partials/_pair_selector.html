@@ -1,0 +1,17 @@
+<div class="pair-selector">
+    <div class="pair-selector__head">
+        <h3>Trading Pair</h3>
+        <span class="pair-selector__sub">
+            {{ vm.pairs.active_pairs|length }} active / {{ vm.pairs.configured_pairs|length }} configured · {{ vm.pairs.source_status }}
+        </span>
+    </div>
+    {% set page_path = '/' if vm.current_page == 'overview' else '/' ~ vm.current_page %}
+    <div class="pair-selector__pills">
+        {% for pair in vm.pairs.configured_pairs %}
+        <a class="pill {% if pair == vm.selected_pair %}pill--active{% endif %}{% if pair in vm.pairs.suspended_pairs %} pill--suspended{% endif %}"
+           href="{{ page_path }}?pair={{ pair }}">
+            {{ pair }}{% if pair in vm.pairs.suspended_pairs %} · S{% endif %}
+        </a>
+        {% endfor %}
+    </div>
+</div>

@@ -466,8 +466,21 @@ def _build_resource_samples(payload: ShadowVpsServiceMonitoringPayload, base_lab
         _sample("v53_shadow_vps_process_thread_count", kind="gauge", value=float(payload.process.thread_count), unit="count", labels=process_labels),
         _sample("v53_shadow_vps_disk_used_pct", kind="gauge", value=payload.disk.used_pct, unit="pct", labels=disk_labels),
         _sample("v53_shadow_vps_disk_free_gb", kind="gauge", value=payload.disk.free_gb, unit="gb", labels=disk_labels),
+        _sample("v53_shadow_vps_host_cpu_alert_level", kind="gauge", value=_resource_alert_level(payload.process.cpu_pct, warning=85.0, critical=95.0), unit="level", labels=base_labels),
+        _sample("v53_shadow_vps_host_ram_alert_level", kind="gauge", value=_resource_alert_level(payload.process.ram_pct, warning=80.0, critical=90.0), unit="level", labels=base_labels),
+        _sample("v53_shadow_vps_host_disk_alert_level", kind="gauge", value=_resource_alert_level(payload.disk.used_pct, warning=80.0, critical=90.0), unit="level", labels=base_labels),
+        _sample("v53_shadow_vps_log_parse_errors_present", kind="state", value=1.0 if payload.parse_error_count else 0.0, labels=base_labels),
+        _sample("v53_shadow_vps_observability_refs_ready", kind="state", value=1.0 if payload.scrape_manifest_ref and payload.prometheus_file_sd_ref else 0.0, labels=base_labels),
         _sample("v53_shadow_vps_service_last_error_present", kind="state", value=1.0 if payload.last_error else 0.0, labels=base_labels),
     )
+
+
+def _resource_alert_level(value: float, *, warning: float, critical: float) -> float:
+    if value >= critical:
+        return 2.0
+    if value >= warning:
+        return 1.0
+    return 0.0
 
 
 def _render_text_payload(samples: tuple[MetricSample, ...]) -> str:

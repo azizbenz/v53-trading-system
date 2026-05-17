@@ -43,6 +43,31 @@ class TestDependenciesBienFormees:
         assert "interface_contracts" in deps
         assert "manifest_registry" in deps
 
+    def test_cockpit_read_only_projection_can_depend_on_data_backbone(self):
+        deps = get_allowed_dependencies("cockpit")
+        assert "data_backbone" in deps
+        assert "monitoring" in deps
+        assert "protocols" not in deps
+
+    def test_cockpit_stays_off_local_replay_runtime(self):
+        deps = get_allowed_dependencies("cockpit")
+        assert "local_replay_runtime" not in deps
+        assert "protocols" not in deps
+
+    def test_local_replay_runtime_can_depend_on_shared_core_runners(self):
+        deps = get_allowed_dependencies("local_replay_runtime")
+        for module_name in ("engine_a", "engine_b", "engine_c", "engine_d", "portfolio"):
+            assert module_name in deps
+        assert "backtest_artifact_import" not in deps
+
+    def test_local_replay_runtime_can_depend_on_execution_backbone(self):
+        deps = get_allowed_dependencies("local_replay_runtime")
+        assert "execution_backbone" in deps
+
+    def test_local_replay_runtime_can_depend_on_complete_enablers(self):
+        deps = get_allowed_dependencies("local_replay_runtime")
+        assert "complete_enablers" in deps
+
 
 @pytest.mark.build1
 class TestNoCycles:
@@ -124,6 +149,7 @@ class TestDAGLayerHierarchy:
         "alerting": 7,
         "monitoring": 7,
         "backtest_artifact_import": 8,
+        "cockpit": 8,
         "ui": 9,
         "venue_adapters": 10,
         "protocols": 10,

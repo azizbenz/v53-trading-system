@@ -361,6 +361,22 @@ def test_data_factory_filters_timeframes_limits_gold_and_defers_trade_slippage(
         ]
         assert len(gold_rows) == 3
         assert {row["timeframe"] for row in gold_rows} == {"5m"}
+        # Patch 2026-05-15 (timeframe propagation audit) — the silent 10m
+        # prune must now be surfaced as an explicit reason code on the
+        # manifest. The pre-existing assertions above are kept verbatim so
+        # the legacy behaviour stays validated; the new assertions below
+        # only ADD coverage on the visibility fields.
+        gold_manifest = result.gold_feature_manifest
+        assert "5m" in gold_manifest.silver_timeframes_detected
+        assert "10m" in gold_manifest.silver_timeframes_detected
+        assert gold_manifest.gold_timeframes_generated == ("5m",)
+        assert "10m" in gold_manifest.timeframes_pruned
+        assert (
+            gold_manifest.pruning_reason_by_timeframe.get("10m")
+            == "TIMEFRAME_PRUNED_NOT_REQUESTED"
+        )
+        assert "TIMEFRAME_PRUNED_NOT_REQUESTED" in gold_manifest.blocker_codes
+        assert gold_manifest.timeframe_feature_row_count.get("5m") == 3
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
@@ -1300,5 +1316,276 @@ def test_data_factory_uses_local_metadata_cache_without_network_calls() -> None:
             metadata_module.urlopen = original_urlopen  # type: ignore[assignment]
 
         assert result.manifest.historical_metadata_status == "BYBIT_HISTORICAL_METADATA_READY"
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_data_factory_emits_fragility_false_breakout_features_and_metadata_ready_reports() -> None:
+    scratch = _scratch_dir("gold_fragility_metadata")
+    shutil.rmtree(scratch, ignore_errors=True)
+    try:
+        raw_root = scratch / "raw"
+        metadata_root = scratch / "metadata"
+        report_root = scratch / "factory"
+        _write_gzip_csv(
+            raw_root / "trades" / "BTCUSDT_2025-04-29.csv.gz",
+            "id,timestamp,price,volume,side",
+            [
+                "1,1745884800000,63000,0.10,buy",
+                "2,1745884860000,63020,0.18,sell",
+            ],
+        )
+        _write_csv(
+            raw_root / "klines" / "BTCUSDT_1_2025-04-29.csv",
+            "startTime,open,high,low,close,volume,turnover",
+            [
+                "1745884800000,63000,63120,62990,63015,12,756180",
+                "1745884860000,63015,63160,62980,63010,18,1134180",
+            ],
+        )
+        _write_jsonl(
+            raw_root / "orderbook" / "snapshot" / "BTCUSDT_2025-04-29.data",
+            [
+                {
+                    "topic": "orderbook.200.BTCUSDT",
+                    "type": "snapshot",
+                    "timestamp_ms": 1745884800000,
+                    "seq": 1,
+                    "data": {"s": "BTCUSDT", "b": _book_levels("bid"), "a": _book_levels("ask")},
+                },
+            ],
+        )
+        _write_symbol_metadata_csv(
+            metadata_root / "symbol_metadata.csv",
+            [
+                "bybit,bybit,spot,BTCUSDT,BTC,USDT,Trading,0.1,0.001,0.001,5,0.001,0.001,local_cfg,historical_replay,research,local,2026-05-15T00:00:00+00:00,hash-btc,CURRENT_METADATA_PROXY",
+            ],
+        )
+
+        result = run_strategy_ladder_data_factory(
+            StrategyLadderDataFactoryRequest(
+                run_id="df-gold-fragility-metadata",
+                input_root=report_root,
+                raw_roots=(raw_root,),
+                historical_metadata_root=metadata_root,
+                silver_root=report_root / "silver",
+                gold_root=report_root / "gold",
+                pairs=("BTCUSDT",),
+                data_types=("trades", "klines", "orderbook"),
+                start="2025-04-29",
+                end="2025-04-29",
+            )
+        )
+
+        gold_rows = [
+            json.loads(line)
+            for path in result.gold_feature_manifest.feature_paths
+            for line in Path(path).read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        assert gold_rows
+        first_row = gold_rows[0]
+        assert "fragility_score" in first_row["feature_values"]
+        assert "fragility" in first_row["feature_values"]
+        assert "false_breakout_context" in first_row["feature_values"]
+        assert "sweep_score" in first_row["feature_values"]
+        assert "break_even_bps" in first_row["feature_values"]
+        assert "session_tags" in first_row["feature_values"]
+        report_payload = json.loads(
+            (report_root / "raw_data_processing_report.json").read_text(encoding="utf-8")
+        )
+        assert "metadata" not in report_payload["raw_coverage"]["source_types_missing"]
+        assert "fragility_false_breakout_features" not in report_payload["gold_feature_groups_missing"]
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+# Patch 2026-05-15 (timeframe propagation audit) — new multi-timeframe coverage.
+# Silver layer carrying 1m/5m/10m/15m must propagate every supported timeframe
+# to gold by default. Any timeframe that does not materialize must carry an
+# explicit reason code on the manifest. These tests harden the pipeline against
+# silent prunes that previously hid 10m/15m from candidate discovery and B2.
+
+
+def _stub_economic_provenance(monkeypatch) -> list[dict[str, object]]:
+    """Patch out compute_economic_provenance with a deterministic fake.
+
+    The new tests do not exercise the orderbook pipeline, so we return a
+    stable SimpleNamespace and record calls for assertions. Behaviour mirrors
+    the fake used in the legacy timeframe-filter test.
+    """
+
+    calls: list[dict[str, object]] = []
+
+    def _fake(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(
+            expected_edge_bps=5.0,
+            expected_edge_provenance="DEFAULT_TO_CALIBRATE",
+            aggregated_provenance="PARTIALLY_MEASURED",
+            measurement_warnings=(),
+            spread_bps=0.0,
+            spread_provenance="DEFAULT_BY_BOOK_STATUS",
+            slippage_bps=2.0,
+            slippage_provenance="DEFAULT_TO_CALIBRATE",
+            latency_penalty_bps=1.0,
+        )
+
+    monkeypatch.setattr(
+        data_factory_module,
+        "compute_economic_provenance",
+        _fake,
+    )
+    return calls
+
+
+def _write_btcusdt_kline_for_timeframe(raw_root: Path, minutes: int) -> None:
+    """Emit a minimal 2-row Bybit kline CSV for the given timeframe (minutes)."""
+
+    _write_csv(
+        raw_root / "klines" / f"BTCUSDT_{minutes}_2025-01-01.csv",
+        "startTime,open,high,low,close,volume,turnover",
+        [
+            "1735689600000,94000,94100,93900,94010,10,940100",
+            f"{1735689600000 + minutes * 60_000},94010,94110,93910,94020,11,1034220",
+        ],
+    )
+
+
+def _write_btcusdt_trades_sample(raw_root: Path) -> None:
+    _write_csv(
+        raw_root / "trades" / "BTCUSDT_2025-01-01.csv",
+        "id,timestamp,price,volume,side",
+        [
+            "1,1735689600000,94000,0.01,buy",
+            "2,1735689660000,94010,0.02,sell",
+        ],
+    )
+
+
+def test_gold_materializes_every_supported_timeframe_present_in_silver(monkeypatch) -> None:
+    """Silver carrying 1m/5m/10m/15m must yield gold for every timeframe."""
+
+    scratch = _scratch_dir("gold_all_supported_timeframes")
+    shutil.rmtree(scratch, ignore_errors=True)
+    try:
+        raw_root = scratch / "raw"
+        _write_btcusdt_trades_sample(raw_root)
+        for minutes in (1, 5, 10, 15):
+            _write_btcusdt_kline_for_timeframe(raw_root, minutes)
+        _stub_economic_provenance(monkeypatch)
+
+        report_root = scratch / "factory"
+        result = run_strategy_ladder_data_factory(
+            StrategyLadderDataFactoryRequest(
+                run_id="df-all-timeframes",
+                input_root=report_root,
+                raw_roots=(raw_root,),
+                silver_root=report_root / "silver",
+                gold_root=report_root / "gold",
+                pairs=("BTCUSDT",),
+                data_types=("trades", "klines"),
+                timeframes=("1m", "5m", "10m", "15m"),
+                start="2025-01-01",
+                end="2025-01-01",
+                use_measured_economic_provenance=True,
+                small_scope=True,
+            )
+        )
+
+        manifest = result.gold_feature_manifest
+        assert manifest.gold_feature_store_status == "FEATURE_STORE_READY"
+        assert set(manifest.silver_timeframes_detected) == {"1m", "5m", "10m", "15m"}
+        assert set(manifest.gold_timeframes_generated) == {"1m", "5m", "10m", "15m"}
+        assert manifest.timeframes_pruned == ()
+        assert manifest.pruning_reason_by_timeframe == {}
+        for tf in ("1m", "5m", "10m", "15m"):
+            assert manifest.timeframe_feature_row_count.get(tf, 0) > 0, tf
+            assert any(f"features_{tf}" in path for path in manifest.feature_paths), tf
+        # No timeframe-related blocker codes should leak when everything matches.
+        for code in manifest.blocker_codes:
+            assert not code.startswith("TIMEFRAME_"), code
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_gold_emits_input_missing_when_silver_lacks_requested_timeframe(monkeypatch) -> None:
+    """Requesting a timeframe absent from silver must surface an explicit reason."""
+
+    scratch = _scratch_dir("gold_input_missing")
+    shutil.rmtree(scratch, ignore_errors=True)
+    try:
+        raw_root = scratch / "raw"
+        _write_btcusdt_trades_sample(raw_root)
+        # Only 1m raw klines; 5m has no silver source.
+        _write_btcusdt_kline_for_timeframe(raw_root, 1)
+        _stub_economic_provenance(monkeypatch)
+
+        report_root = scratch / "factory"
+        result = run_strategy_ladder_data_factory(
+            StrategyLadderDataFactoryRequest(
+                run_id="df-input-missing",
+                input_root=report_root,
+                raw_roots=(raw_root,),
+                silver_root=report_root / "silver",
+                gold_root=report_root / "gold",
+                pairs=("BTCUSDT",),
+                data_types=("trades", "klines"),
+                timeframes=("1m", "5m"),
+                start="2025-01-01",
+                end="2025-01-01",
+                use_measured_economic_provenance=True,
+                small_scope=True,
+            )
+        )
+
+        manifest = result.gold_feature_manifest
+        assert "1m" in manifest.gold_timeframes_generated
+        assert "5m" not in manifest.gold_timeframes_generated
+        assert manifest.pruning_reason_by_timeframe.get("5m") == "TIMEFRAME_FEATURE_INPUT_MISSING"
+        assert "5m" in manifest.timeframes_pruned
+        assert "TIMEFRAME_FEATURE_INPUT_MISSING" in manifest.blocker_codes
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_gold_emits_generation_not_supported_for_unknown_timeframe(monkeypatch) -> None:
+    """Requesting a timeframe outside the registry must fail-closed explicitly."""
+
+    scratch = _scratch_dir("gold_unsupported_timeframe")
+    shutil.rmtree(scratch, ignore_errors=True)
+    try:
+        raw_root = scratch / "raw"
+        _write_btcusdt_trades_sample(raw_root)
+        _write_btcusdt_kline_for_timeframe(raw_root, 1)
+        _stub_economic_provenance(monkeypatch)
+
+        report_root = scratch / "factory"
+        # "30m" is not in SUPPORTED_GOLD_TIMEFRAMES — the request includes it
+        # alongside the valid 1m so we can assert the partial outcome.
+        result = run_strategy_ladder_data_factory(
+            StrategyLadderDataFactoryRequest(
+                run_id="df-unsupported-tf",
+                input_root=report_root,
+                raw_roots=(raw_root,),
+                silver_root=report_root / "silver",
+                gold_root=report_root / "gold",
+                pairs=("BTCUSDT",),
+                data_types=("trades", "klines"),
+                timeframes=("1m", "30m"),
+                start="2025-01-01",
+                end="2025-01-01",
+                use_measured_economic_provenance=True,
+                small_scope=True,
+            )
+        )
+
+        manifest = result.gold_feature_manifest
+        assert "1m" in manifest.gold_timeframes_generated
+        assert (
+            manifest.pruning_reason_by_timeframe.get("30m")
+            == "TIMEFRAME_FEATURE_GENERATION_NOT_SUPPORTED"
+        )
+        assert "TIMEFRAME_FEATURE_GENERATION_NOT_SUPPORTED" in manifest.blocker_codes
     finally:
         shutil.rmtree(scratch, ignore_errors=True)

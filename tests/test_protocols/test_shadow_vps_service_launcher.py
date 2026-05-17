@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from datetime import datetime, timezone
 import importlib.util
 import json
@@ -13,11 +14,23 @@ from uuid import uuid4
 
 import pytest
 
+from backtest_artifact_import import (
+    package_ml_model_artifact_for_transport,
+    package_regime_detector_artifact_for_transport,
+)
 from interface_contracts.binance_contracts import BinanceServerTime
 from interface_contracts import (
+    DashboardArtifactKind,
+    DashboardArtifactTransferManifest,
     DashboardGovernedCommandKind,
     DashboardGovernedCommandRequest,
+    MlModelArtifact,
+    MlModelWindow,
     ProfileId,
+    PromotionState,
+    RegimeDetectorArtifact,
+    RegimeDetectorFeatureSetVersion,
+    RegimeDetectorWindow,
     RuntimeMode,
     StrategyClassification,
 )
@@ -39,6 +52,7 @@ from protocols import (
     initialize_dashboard_command_queue,
     load_dashboard_command_acks,
     load_dashboard_command_results,
+    ShadowVpsServiceStore,
     write_dashboard_command_request,
 )
 from regime_classifier import RegimeLiteAssessment, RegimeLiteState
@@ -155,6 +169,183 @@ def _write_daily_export(export_dir: Path, session_date: str, run_suffix: str) ->
                 "decision_match_rate": 1.0,
             },
             review_notes=(f"vps service export {session_date}",),
+        ),
+    )
+
+
+def _write_historical_dataset(
+    export_dir: Path,
+    *,
+    rows: list[dict[str, object]],
+) -> None:
+    (export_dir / "historical_dataset.json").write_text(
+        json.dumps(rows, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _ml_artifact(*, prediction: float) -> MlModelArtifact:
+    created_at = datetime(2026, 4, 22, 12, 0, tzinfo=timezone.utc)
+    return MlModelArtifact.create(
+        feature_names=("feature_a", "feature_b"),
+        feature_hash="3" * 64,
+        pair_universe=("BTCUSDT", "ETHUSDT"),
+        train_window=MlModelWindow(
+            start_at=datetime(2025, 9, 24, tzinfo=timezone.utc),
+            end_at=datetime(2026, 3, 22, tzinfo=timezone.utc),
+        ),
+        validation_window=MlModelWindow(
+            start_at=datetime(2026, 3, 23, tzinfo=timezone.utc),
+            end_at=datetime(2026, 4, 21, tzinfo=timezone.utc),
+        ),
+        oos_sharpe=1.0,
+        backtest_sharpe=1.2,
+        ks_test_features_pvalue=0.4,
+        shadow_diff_pct=0.02,
+        promotion_state=PromotionState.REPLAY_ONLY,
+        training_seed=8,
+        created_at=created_at,
+        calibration_version="cal.v1",
+        dataset_hash="4" * 64,
+        model_bytes_b64=base64.b64encode(
+            json.dumps({"prediction": prediction}).encode("utf-8")
+        ).decode("ascii"),
+    )
+
+
+def _fake_lightgbm_module() -> SimpleNamespace:
+    class FakeBooster:
+        def __init__(self, *, model_str: str | None = None, model_file: str | None = None) -> None:
+            assert model_file is None
+            payload = json.loads(model_str or "{}")
+            raw_prediction = payload.get("prediction", 0.5)
+            self._prediction = (
+                raw_prediction
+                if isinstance(raw_prediction, (list, dict))
+                else float(raw_prediction)
+            )
+
+        def predict(self, rows: list[list[float]]) -> list[object]:
+            assert rows
+            return [self._prediction]
+
+    return SimpleNamespace(Booster=FakeBooster)
+
+
+def _write_ml_transport_manifest(
+    root: Path,
+    *,
+    label: str,
+    prediction: float,
+    artifact_id: str,
+) -> DashboardArtifactTransferManifest:
+    source_dir = root / f"{label}_source"
+    export_dir = root / f"{label}_transport"
+    source_dir.mkdir(parents=True, exist_ok=False)
+    export_dir.mkdir(parents=True, exist_ok=False)
+    source_path = source_dir / "ml_model_artifact.json"
+    artifact = _ml_artifact(prediction=prediction)
+    source_path.write_text(artifact.model_dump_json(indent=2), encoding="utf-8")
+    transport = package_ml_model_artifact_for_transport(
+        export_dir,
+        source_artifact_ref=str(source_path),
+    )
+    return DashboardArtifactTransferManifest(
+        artifact_hash=artifact.artifact_hash,
+        artifact_kind=DashboardArtifactKind.ML_MODEL_ARTIFACT,
+        artifact_id=artifact_id,
+        lineage_version=f"{artifact_id}.lineage.v1",
+        review_state="pending",
+        validation_status="accepted",
+        source_ref=str(source_path.resolve()),
+        payload_refs=(
+            transport.transport_artifact_ref,
+            transport.summary_ref,
+            transport.source_summary_ref,
+        ),
+    )
+
+
+def _regime_artifact(
+    *,
+    prediction: object,
+    pair_universe: tuple[str, ...] = ("BTCUSDT",),
+    feature_names: tuple[str, ...] = (
+        "real_wall_score_bid",
+        "deceptive_liquidity_score",
+        "microprice_pressure",
+        "observation_coverage_ratio",
+    ),
+) -> RegimeDetectorArtifact:
+    created_at = datetime(2026, 4, 22, 12, 0, tzinfo=timezone.utc)
+    return RegimeDetectorArtifact.create(
+        feature_set_version=RegimeDetectorFeatureSetVersion.LOB_REGIME_FEATURE_SET_V2,
+        feature_names=feature_names,
+        feature_hash="6" * 64,
+        pair_universe=pair_universe,
+        train_window=RegimeDetectorWindow(
+            start_at=datetime(2025, 9, 24, tzinfo=timezone.utc),
+            end_at=datetime(2026, 3, 22, tzinfo=timezone.utc),
+        ),
+        validation_window=RegimeDetectorWindow(
+            start_at=datetime(2026, 3, 23, tzinfo=timezone.utc),
+            end_at=datetime(2026, 4, 21, tzinfo=timezone.utc),
+        ),
+        regime_labels=("calm", "transition", "toxic"),
+        oos_metrics={"transition_auc": 0.71},
+        shadow_metrics={"shadow_diff_pct": 0.02},
+        promotion_state=PromotionState.REPLAY_ONLY,
+        training_seed=17,
+        created_at=created_at,
+        calibration_version="lob-regime.v1",
+        dataset_hash="7" * 64,
+        model_bytes_b64=base64.b64encode(
+            json.dumps({"prediction": prediction}).encode("utf-8")
+        ).decode("ascii"),
+    )
+
+
+def _write_regime_transport_manifest(
+    root: Path,
+    *,
+    label: str,
+    prediction: object,
+    artifact_id: str,
+    pair_universe: tuple[str, ...] = ("BTCUSDT",),
+    feature_names: tuple[str, ...] = (
+        "real_wall_score_bid",
+        "deceptive_liquidity_score",
+        "microprice_pressure",
+        "observation_coverage_ratio",
+    ),
+) -> DashboardArtifactTransferManifest:
+    source_dir = root / f"{label}_source"
+    export_dir = root / f"{label}_transport"
+    source_dir.mkdir(parents=True, exist_ok=False)
+    export_dir.mkdir(parents=True, exist_ok=False)
+    source_path = source_dir / "regime_detector_artifact.json"
+    artifact = _regime_artifact(
+        prediction=prediction,
+        pair_universe=pair_universe,
+        feature_names=feature_names,
+    )
+    source_path.write_text(artifact.model_dump_json(indent=2), encoding="utf-8")
+    transport = package_regime_detector_artifact_for_transport(
+        export_dir,
+        source_artifact_ref=str(source_path),
+    )
+    return DashboardArtifactTransferManifest(
+        artifact_hash=artifact.artifact_hash,
+        artifact_kind=DashboardArtifactKind.REGIME_DETECTOR_ARTIFACT,
+        artifact_id=artifact_id,
+        lineage_version=f"{artifact_id}.lineage.v1",
+        review_state="pending",
+        validation_status="accepted",
+        feature_set_version=artifact.feature_set_version.value,
+        source_ref=str(source_path.resolve()),
+        payload_refs=(
+            transport.transport_artifact_ref,
+            transport.summary_ref,
         ),
     )
 
@@ -541,6 +732,28 @@ def _write_execution_runtime_projection(path: Path) -> None:
     )
     path.write_text(
         projection.model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+
+
+def _write_shadow_artifact_state(
+    service_dir: Path,
+    *,
+    active_regime_detector_artifact: DashboardArtifactTransferManifest | None = None,
+    shadow_regime_detector_challenger_artifact: DashboardArtifactTransferManifest | None = None,
+) -> None:
+    service_dir.mkdir(parents=True, exist_ok=False)
+    payload: dict[str, object] = {}
+    if active_regime_detector_artifact is not None:
+        payload["active_regime_detector_artifact"] = active_regime_detector_artifact.model_dump(
+            mode="json"
+        )
+    if shadow_regime_detector_challenger_artifact is not None:
+        payload["shadow_regime_detector_challenger_artifact"] = (
+            shadow_regime_detector_challenger_artifact.model_dump(mode="json")
+        )
+    (service_dir / "shadow_vps_service.state.json").write_text(
+        json.dumps(payload, indent=2),
         encoding="utf-8",
     )
 
@@ -2898,6 +3111,300 @@ def test_shadow_vps_service_consumes_dashboard_command_queue_before_cycle() -> N
             and event["reason_codes"] == ["shadow.dashboard_control.halted_active"]
             for event in events
         )
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_shadow_vps_service_writes_regime_same_snapshot_comparison_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _load_service_module()
+    output_dir = _scratch_dir("regime_shadow_comparison_ready")
+
+    try:
+        service_dir = output_dir / "service"
+        orchestrator_dir = output_dir / "orchestrator"
+        shadow_output_dir = output_dir / "shadow_session"
+        exports_root = output_dir / "exports_root"
+        export_day = exports_root / "2026-04-02"
+        export_day.mkdir(parents=True, exist_ok=False)
+        _write_daily_export(export_day, "2026-04-02", "regime-ready")
+        _write_historical_dataset(
+            export_day,
+            rows=[
+                {
+                    "opportunity_id": "regime-row-1",
+                    "timestamp_ms": 1_700_000_000_000,
+                    "pair": "BTCUSDT",
+                    "engine_id": "engine_a",
+                    "expected_edge_bps": 9.0,
+                    "feature_values": {
+                        "real_wall_score_bid": 0.82,
+                        "deceptive_liquidity_score": 0.14,
+                        "microprice_pressure": 0.31,
+                        "observation_coverage_ratio": 0.95,
+                    },
+                },
+                {
+                    "opportunity_id": "regime-row-2",
+                    "timestamp_ms": 1_700_000_060_000,
+                    "pair": "BTCUSDT",
+                    "engine_id": "engine_a",
+                    "expected_edge_bps": 6.0,
+                    "feature_values": {
+                        "real_wall_score_bid": 0.76,
+                        "deceptive_liquidity_score": 0.18,
+                        "microprice_pressure": 0.28,
+                        "observation_coverage_ratio": 0.91,
+                    },
+                },
+            ],
+        )
+        active_manifest = _write_regime_transport_manifest(
+            output_dir,
+            label="regime_active",
+            prediction=[0.20, 0.90, 0.20, 0.9],
+            artifact_id="regime-active",
+        )
+        challenger_manifest = _write_regime_transport_manifest(
+            output_dir,
+            label="regime_shadow",
+            prediction=[0.78, 0.25, 0.81, 0.0],
+            artifact_id="regime-shadow",
+        )
+        _write_shadow_artifact_state(
+            service_dir,
+            active_regime_detector_artifact=active_manifest,
+            shadow_regime_detector_challenger_artifact=challenger_manifest,
+        )
+        monkeypatch.setattr(
+            "complete_enablers.regime_detector_runtime._load_lightgbm_module",
+            lambda: _fake_lightgbm_module(),
+        )
+
+        exit_code = service.main(
+            [
+                "--service-dir",
+                str(service_dir),
+                "--orchestrator-output-dir",
+                str(orchestrator_dir),
+                "--shadow-output-dir",
+                str(shadow_output_dir),
+                "--exports-root",
+                str(exports_root),
+                "--max-cycles",
+                "1",
+                "--poll-interval-s",
+                "0",
+            ]
+        )
+
+        assert exit_code == 0
+        state = json.loads(
+            (service_dir / "shadow_vps_service.state.json").read_text(encoding="utf-8")
+        )
+        evidence = json.loads(
+            Path(
+                state["last_shadow_regime_detector_artifact_comparison_ref"]
+            ).read_text(encoding="utf-8")
+        )
+
+        assert state["last_shadow_regime_detector_artifact_comparison_status"] == "shadow_ready"
+        assert state["active_regime_detector_artifact"]["artifact_id"] == "regime-active"
+        assert evidence["artifact_family"] == "regime_detector"
+        assert evidence["champion_artifact_id"] == "regime-active"
+        assert evidence["challenger_artifact_id"] == "regime-shadow"
+        assert evidence["comparison_status"] == "shadow_ready"
+        assert evidence["event_count"] == 2
+        assert evidence["decision_diff_rate"] == pytest.approx(1.0)
+        assert evidence["forecast_strength_delta_mean"] > 0.0
+        assert evidence["expected_gain_delta_mean"] == pytest.approx(0.0)
+        assert evidence["expected_cost_delta_mean"] == pytest.approx(0.0)
+        assert evidence["expected_ce_delta_mean"] == pytest.approx(0.0)
+        assert evidence["halal_eligible_event_count"] == 2
+        assert evidence["halal_excluded_event_count"] == 0
+        assert evidence["sharia_policy_version"] == "sharia_policy_v1"
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_shadow_vps_service_regime_comparison_becomes_sharia_scope_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _load_service_module()
+    output_dir = _scratch_dir("regime_shadow_comparison_halal_blocked")
+
+    try:
+        service_dir = output_dir / "service"
+        orchestrator_dir = output_dir / "orchestrator"
+        shadow_output_dir = output_dir / "shadow_session"
+        exports_root = output_dir / "exports_root"
+        export_day = exports_root / "2026-04-02"
+        export_day.mkdir(parents=True, exist_ok=False)
+        _write_daily_export(export_day, "2026-04-02", "regime-halal-blocked")
+        _write_historical_dataset(
+            export_day,
+            rows=[
+                {
+                    "opportunity_id": "regime-row-busd",
+                    "timestamp_ms": 1_700_000_000_000,
+                    "pair": "BTCBUSD",
+                    "engine_id": "engine_a",
+                    "expected_edge_bps": 8.0,
+                    "feature_values": {
+                        "real_wall_score_bid": 0.80,
+                        "deceptive_liquidity_score": 0.12,
+                        "microprice_pressure": 0.29,
+                        "observation_coverage_ratio": 0.94,
+                    },
+                }
+            ],
+        )
+        active_manifest = _write_regime_transport_manifest(
+            output_dir,
+            label="regime_active_busd",
+            prediction=[0.18, 0.87, 0.16, 0.9],
+            artifact_id="regime-active-busd",
+            pair_universe=("BTCBUSD",),
+        )
+        challenger_manifest = _write_regime_transport_manifest(
+            output_dir,
+            label="regime_shadow_busd",
+            prediction=[0.62, 0.35, 0.74, 0.0],
+            artifact_id="regime-shadow-busd",
+            pair_universe=("BTCBUSD",),
+        )
+        _write_shadow_artifact_state(
+            service_dir,
+            active_regime_detector_artifact=active_manifest,
+            shadow_regime_detector_challenger_artifact=challenger_manifest,
+        )
+        monkeypatch.setattr(
+            "complete_enablers.regime_detector_runtime._load_lightgbm_module",
+            lambda: _fake_lightgbm_module(),
+        )
+
+        exit_code = service.main(
+            [
+                "--service-dir",
+                str(service_dir),
+                "--orchestrator-output-dir",
+                str(orchestrator_dir),
+                "--shadow-output-dir",
+                str(shadow_output_dir),
+                "--exports-root",
+                str(exports_root),
+                "--max-cycles",
+                "1",
+                "--poll-interval-s",
+                "0",
+            ]
+        )
+
+        assert exit_code == 0
+        state = json.loads(
+            (service_dir / "shadow_vps_service.state.json").read_text(encoding="utf-8")
+        )
+        evidence = json.loads(
+            Path(
+                state["last_shadow_regime_detector_artifact_comparison_ref"]
+            ).read_text(encoding="utf-8")
+        )
+
+        assert state["last_shadow_regime_detector_artifact_comparison_status"] == "sharia_scope_blocked"
+        assert evidence["comparison_status"] == "sharia_scope_blocked"
+        assert evidence["event_count"] == 0
+        assert evidence["halal_eligible_event_count"] == 0
+        assert evidence["halal_excluded_event_count"] == 1
+        assert evidence["halal_exclusion_reason_summary"]
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_shadow_vps_service_regime_comparison_stays_runtime_inputs_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _load_service_module()
+    output_dir = _scratch_dir("regime_shadow_comparison_inputs_missing")
+
+    try:
+        service_dir = output_dir / "service"
+        orchestrator_dir = output_dir / "orchestrator"
+        shadow_output_dir = output_dir / "shadow_session"
+        exports_root = output_dir / "exports_root"
+        export_day = exports_root / "2026-04-02"
+        export_day.mkdir(parents=True, exist_ok=False)
+        _write_daily_export(export_day, "2026-04-02", "regime-inputs-missing")
+        _write_historical_dataset(
+            export_day,
+            rows=[
+                {
+                    "opportunity_id": "regime-row-missing",
+                    "timestamp_ms": 1_700_000_000_000,
+                    "pair": "BTCUSDT",
+                    "engine_id": "engine_a",
+                    "expected_edge_bps": 7.0,
+                    "feature_values": {
+                        "real_wall_score_bid": 0.82,
+                        "deceptive_liquidity_score": 0.14,
+                    },
+                }
+            ],
+        )
+        active_manifest = _write_regime_transport_manifest(
+            output_dir,
+            label="regime_active_missing",
+            prediction=[0.20, 0.90, 0.20, 0.9],
+            artifact_id="regime-active-missing",
+        )
+        challenger_manifest = _write_regime_transport_manifest(
+            output_dir,
+            label="regime_shadow_missing",
+            prediction=[0.78, 0.25, 0.81, 0.0],
+            artifact_id="regime-shadow-missing",
+        )
+        _write_shadow_artifact_state(
+            service_dir,
+            active_regime_detector_artifact=active_manifest,
+            shadow_regime_detector_challenger_artifact=challenger_manifest,
+        )
+        monkeypatch.setattr(
+            "complete_enablers.regime_detector_runtime._load_lightgbm_module",
+            lambda: _fake_lightgbm_module(),
+        )
+
+        exit_code = service.main(
+            [
+                "--service-dir",
+                str(service_dir),
+                "--orchestrator-output-dir",
+                str(orchestrator_dir),
+                "--shadow-output-dir",
+                str(shadow_output_dir),
+                "--exports-root",
+                str(exports_root),
+                "--max-cycles",
+                "1",
+                "--poll-interval-s",
+                "0",
+            ]
+        )
+
+        assert exit_code == 0
+        state = json.loads(
+            (service_dir / "shadow_vps_service.state.json").read_text(encoding="utf-8")
+        )
+        evidence = json.loads(
+            Path(
+                state["last_shadow_regime_detector_artifact_comparison_ref"]
+            ).read_text(encoding="utf-8")
+        )
+
+        assert state["last_shadow_regime_detector_artifact_comparison_status"] == "shadow_runtime_inputs_missing"
+        assert evidence["comparison_status"] == "shadow_runtime_inputs_missing"
+        assert evidence["event_count"] == 0
+        assert evidence["halal_eligible_event_count"] == 1
+        assert evidence["halal_excluded_event_count"] == 0
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)
 

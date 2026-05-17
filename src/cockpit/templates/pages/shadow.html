@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+
+{% block title %}Shadow - {{ vm.welcome_message }}{% endblock %}
+
+{% block content %}
+
+<section class="welcome-banner">
+    <div class="welcome-banner__inner">
+        <div>
+            <h1 class="welcome-banner__title">Shadow Runtime</h1>
+            <p class="welcome-banner__sub">
+                Warmup, challenger evidence, verdict bundle, websocket capture, and shadow blockers.
+            </p>
+        </div>
+        <div class="welcome-banner__amount">
+            <span class="welcome-banner__label">Eligible to trade</span>
+            <span class="welcome-banner__value">
+                {% if vm.operational_proof.warmup_explainer.eligible_to_trade %}YES{% else %}NO{% endif %}
+            </span>
+        </div>
+    </div>
+</section>
+
+<section class="stat-row">
+    <div class="stat-card">
+        <div class="stat-card__head"><span class="stat-card__pair">Service</span></div>
+        <div class="stat-card__price">{{ vm.operational_proof.service_liveness.service_status }}</div>
+        <div class="stat-card__foot">control_ready={{ vm.operational_proof.service_liveness.control_ready }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-card__head"><span class="stat-card__pair">Runtime mode</span></div>
+        <div class="stat-card__price">{{ vm.operational_proof.service_liveness.runtime_mode|upper }}</div>
+        <div class="stat-card__foot">loop={{ vm.operational_proof.service_liveness.main_loop_count }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-card__head"><span class="stat-card__pair">Shadow verdict</span></div>
+        <div class="stat-card__price">{{ vm.runtime.artifact_verdict_bundle.overall_verdict if vm.runtime.artifact_verdict_bundle else 'not_available' }}</div>
+        <div class="stat-card__foot">recommendation={{ vm.runtime.artifact_verdict_bundle.operator_recommendation if vm.runtime.artifact_verdict_bundle else 'keep_shadow' }}</div>
+    </div>
+</section>
+
+<section class="grid-2">
+    <div class="card">
+        <div class="card__head">
+            <h3>Readiness Truth</h3>
+            <span class="card__sub">{{ vm.operational_proof.warmup_explainer.readiness_status }}</span>
+        </div>
+        <div class="card__body">
+            <table class="data-table data-table--compact">
+                <tbody>
+                    <tr><th>Final state</th><td>{{ vm.operational_proof.warmup_explainer.final_state }}</td></tr>
+                    <tr><th>Eligible to trade</th><td>{{ vm.operational_proof.warmup_explainer.eligible_to_trade }}</td></tr>
+                    <tr><th>Blocking reasons</th><td>{{ vm.operational_proof.warmup_explainer.blocking_reasons|join(', ') if vm.operational_proof.warmup_explainer.blocking_reasons else 'none' }}</td></tr>
+                    <tr><th>Service status</th><td>{{ vm.operational_proof.service_liveness.service_status }}</td></tr>
+                    <tr><th>Control ready</th><td>{{ vm.operational_proof.service_liveness.control_ready }}</td></tr>
+                    <tr><th>Archive reader only</th><td>{{ vm.operational_proof.service_liveness.archive_reader_only }}</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card__head">
+            <h3>Verdict Bundle</h3>
+            <span class="card__sub">Daily challenger verdict</span>
+        </div>
+        <div class="card__body">
+            {% if vm.runtime.artifact_verdict_bundle %}
+            <table class="data-table data-table--compact">
+                <tbody>
+                    <tr><th>Session</th><td>{{ vm.runtime.artifact_verdict_bundle.session_date or 'n/a' }}</td></tr>
+                    <tr><th>Verdict</th><td>{{ vm.runtime.artifact_verdict_bundle.overall_verdict }}</td></tr>
+                    <tr><th>Recommendation</th><td>{{ vm.runtime.artifact_verdict_bundle.operator_recommendation }}</td></tr>
+                    <tr><th>Ready families</th><td>{{ vm.runtime.artifact_verdict_bundle.ready_family_count }}</td></tr>
+                    <tr><th>Invalid families</th><td>{{ vm.runtime.artifact_verdict_bundle.invalid_family_count }}</td></tr>
+                    <tr><th>Sharia blocked</th><td>{{ vm.runtime.artifact_verdict_bundle.sharia_blocked_family_count }}</td></tr>
+                    <tr><th>Inputs missing</th><td>{{ vm.runtime.artifact_verdict_bundle.runtime_inputs_missing_family_count }}</td></tr>
+                    <tr><th>Policy</th><td>{{ vm.runtime.artifact_verdict_bundle.sharia_policy_version or 'n/a' }}</td></tr>
+                </tbody>
+            </table>
+            {% else %}
+            <p class="muted">No verdict bundle projected yet.</p>
+            {% endif %}
+        </div>
+    </div>
+</section>
+
+<section class="grid-2">
+    {% include "partials/_service_liveness.html" %}
+    {% include "partials/_queue_trace.html" %}
+</section>
+
+<section class="grid-2">
+    {% include "partials/_warmup_explainer.html" %}
+    {% include "partials/_data_quality.html" %}
+</section>
+
+{% include "partials/_pair_universe_control.html" %}
+
+<section class="grid-2">
+    <div class="card">
+        <div class="card__head">
+            <h3>Artifact Visibility</h3>
+            <span class="card__sub">{{ vm.runtime.artifact_runtime_visibility|length }} slots</span>
+        </div>
+        <div class="card__body">
+            {% if vm.runtime.artifact_runtime_visibility %}
+            <table class="data-table data-table--compact">
+                <thead>
+                    <tr><th>Slot</th><th>ID</th><th>Kind</th><th>Forecast</th><th>Influence</th></tr>
+                </thead>
+                <tbody>
+                {% for artifact in vm.runtime.artifact_runtime_visibility %}
+                    <tr>
+                        <td>{{ artifact.slot }}</td>
+                        <td><code>{{ artifact.artifact_id }}</code></td>
+                        <td>{{ artifact.artifact_kind }}</td>
+                        <td>{{ artifact.forecast_target_class }} / {{ artifact.forecast_horizon_class }}</td>
+                        <td>{{ artifact.influence_detail or ('shadow_only' if artifact.shadow_only else 'active') }}</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="muted">No artifact visibility available.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card__head">
+            <h3>Shadow Comparisons</h3>
+            <span class="card__sub">{{ vm.runtime.artifact_comparisons|length }} families</span>
+        </div>
+        <div class="card__body">
+            {% if vm.runtime.artifact_comparisons %}
+            <table class="data-table data-table--compact">
+                <thead>
+                    <tr><th>Champion</th><th>Challenger</th><th>Status</th><th>Events</th><th>CE delta</th></tr>
+                </thead>
+                <tbody>
+                {% for comparison in vm.runtime.artifact_comparisons %}
+                    <tr>
+                        <td><code>{{ comparison.champion_artifact_id }}</code></td>
+                        <td><code>{{ comparison.challenger_artifact_id }}</code></td>
+                        <td>{{ comparison.comparison_status }}</td>
+                        <td>{{ comparison.event_count }}</td>
+                        <td>{{ "%.6f"|format(comparison.expected_ce_delta_mean) }}</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="muted">No shadow challenger comparisons projected yet.</p>
+            {% endif %}
+        </div>
+    </div>
+</section>
+
+<section class="card">
+    <div class="card__head">
+        <h3>Shadow Alerts</h3>
+        <span class="card__sub">{{ vm.runtime.alerts|length }} active</span>
+    </div>
+    <div class="card__body">
+        {% if vm.runtime.alerts %}
+        <ul class="small-list">
+            {% for alert in vm.runtime.alerts %}
+            <li><strong>{{ alert.severity|upper }}</strong> · {{ alert.category }} · {{ alert.message }}</li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p class="muted">No cockpit-derived shadow alerts.</p>
+        {% endif %}
+    </div>
+</section>
+
+{% endblock %}

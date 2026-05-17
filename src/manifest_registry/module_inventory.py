@@ -353,6 +353,16 @@ MODULES: tuple[ModuleEntry, ...] = (
         build_stage=16,
         description="Re-entry / Second Chance",
     ),
+    ModuleEntry(
+        module_name="cockpit",
+        module_layer=ModuleLayer.UI,
+        owner=Owner.CLAUDE,
+        status=ModuleStatus.ACTIVE,
+        priority=Priority.P1,
+        profile_scope=ProfileScope.GOVERNED,
+        build_stage=17,
+        description="Local operator shell for Shadow, VPS, IA Lab, backtest, observability, and logs",
+    ),
 )
 
 

@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - {{ vm.welcome_message }}{% endblock %}
+
+{% block content %}
+
+<section class="welcome-banner">
+    <div class="welcome-banner__inner">
+        <div>
+            <h1 class="welcome-banner__title">{{ vm.welcome_message }}</h1>
+            <p class="welcome-banner__sub">
+                Runtime mode <strong>{{ vm.operational_proof.service_liveness.runtime_mode|upper }}</strong>
+                - Service
+                {% if vm.operational_proof.service_liveness.control_ready %}
+                <span class="badge badge--up">ONLINE</span>
+                {% elif vm.operational_proof.service_liveness.shadow_service_running %}
+                <span class="badge badge--warn">ALIVE BUT NOT CONTROL-READY ({{ vm.operational_proof.service_liveness.service_status }})</span>
+                {% else %}
+                <span class="badge badge--down">OFFLINE</span>
+                {% endif %}
+                {% if vm.operational_proof.warmup_explainer.final_state != 'unknown' %}
+                - Eligible to trade
+                {% if vm.operational_proof.warmup_explainer.eligible_to_trade %}
+                <span class="badge badge--up">YES</span>
+                {% else %}
+                <span class="badge badge--warn">NO ({{ vm.operational_proof.warmup_explainer.blocking_reasons|length }} blocking)</span>
+                {% endif %}
+                {% endif %}
+            </p>
+        </div>
+        <div class="welcome-banner__amount">
+            <span class="welcome-banner__label">Selected pair</span>
+            <span class="welcome-banner__value">{{ vm.selected_pair }}</span>
+        </div>
+    </div>
+</section>
+
+<section class="stat-row">
+    {% for metric in vm.metrics[:3] %}
+        {% include "partials/_stat_card.html" %}
+    {% endfor %}
+    {% if vm.metrics|length == 0 %}
+        <div class="stat-card stat-card--empty">
+            <p>No pairs configured yet - check <code>live_websocket_config.json</code>.</p>
+        </div>
+    {% endif %}
+</section>
+
+<section class="card">
+    <div class="card__head">
+        <h3>PHASE 2.5 - Operational Proof Metrics</h3>
+        <span class="card__sub">Freshness, liveness, queue proof, blockers, kill status, and auditability</span>
+    </div>
+</section>
+
+{% include "partials/_system_flow.html" %}
+
+<section class="grid-2">
+    {% include "partials/_source_freshness.html" %}
+    {% include "partials/_queue_trace.html" %}
+</section>
+
+<section class="grid-2">
+    {% include "partials/_service_liveness.html" %}
+    {% include "partials/_warmup_explainer.html" %}
+</section>
+
+<section class="grid-2">
+    {% include "partials/_kill_proof.html" %}
+    {% include "partials/_disk_growth.html" %}
+</section>
+
+<section class="grid-2">
+    <div class="card card--chart">
+        <div class="card__head">
+            <h3>Trading Market - {{ vm.selected_pair }}</h3>
+            <span class="card__sub">Grafana panel</span>
+        </div>
+        <div class="card__body card__body--chart">
+            <iframe
+                src="{{ vm.grafana_url }}/d/v53-shadow-vps-local/v5-3-shadow-vps-local-dev-observability?orgId=1&kiosk&theme=dark"
+                class="grafana-frame"
+                title="Grafana shadow VPS dashboard"
+            ></iframe>
+            <p class="grafana-fallback">
+                If the chart does not load, open it directly:
+                <a href="{{ vm.grafana_url }}/d/v53-shadow-vps-local/v5-3-shadow-vps-local-dev-observability" target="_blank">
+                    Grafana dashboard (open)
+                </a>
+            </p>
+        </div>
+    </div>
+
+    <div class="side-stack">
+        {% include "partials/_pair_selector.html" %}
+        {% include "partials/_action_panel.html" %}
+    </div>
+</section>
+
+<section class="grid-2">
+    <div class="card">
+        <div class="card__head">
+            <h3>Recent Runtime Alerts</h3>
+            <span class="card__sub">{{ vm.runtime.alerts|length }} active</span>
+        </div>
+        <div class="card__body">
+            {% if vm.runtime.alerts %}
+            <ul class="small-list">
+                {% for alert in vm.runtime.alerts[:8] %}
+                <li><strong>{{ alert.severity|upper }}</strong> · {{ alert.category }} · {{ alert.message }}</li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="muted">No cockpit-derived runtime alerts right now.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card__head">
+            <h3>Recent Artefact Exports</h3>
+            <span class="card__sub">{{ vm.artefacts|length }} day(s)</span>
+        </div>
+        <div class="card__body">
+            {% if vm.artefacts %}
+                {% for day in vm.artefacts %}
+                <div class="artefact-day">
+                    <div class="artefact-day__head">
+                        <strong>{{ day.date }}</strong>
+                        <span class="muted">{{ day.files|length }} files</span>
+                    </div>
+                    <ul class="artefact-list">
+                        {% for file in day.files[:6] %}
+                        <li>
+                            <code>{{ file.name }}</code>
+                            <span class="muted">{{ file.size_bytes }} B</span>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                {% endfor %}
+            {% else %}
+                <p class="muted">No artefact exports captured yet. Run the Shadow service or a backtest to generate exports.</p>
+            {% endif %}
+        </div>
+    </div>
+</section>
+
+{% include "partials/_engines_grid.html" %}
+
+<section class="grid-2">
+    {% include "partials/_replay_metrics.html" %}
+    {% include "partials/_capacity_guard.html" %}
+</section>
+
+<section class="grid-2">
+    {% include "partials/_lab_review.html" %}
+    {% include "partials/_refusal_journal.html" %}
+</section>
+
+<section class="grid-2">
+    {% include "partials/_model_risk.html" %}
+    {% include "partials/_hlz_guard.html" %}
+</section>
+
+<section class="grid-2">
+    {% include "partials/_calibration_thresholds.html" %}
+    {% include "partials/_feature_bridge.html" %}
+</section>
+
+{% include "partials/_sizing_chain.html" %}
+
+<section class="card">
+    <div class="card__head">
+        <h3>Live Logs</h3>
+        <span class="card__sub">SSE streaming - Phase 3</span>
+    </div>
+    <div class="card__body">
+        <pre class="log-pane">[ Phase 3 will stream the Shadow service log here via Server-Sent Events. ]</pre>
+    </div>
+</section>
+
+{% endblock %}

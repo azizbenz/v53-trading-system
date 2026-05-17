@@ -3,8 +3,12 @@ from __future__ import annotations
 import pytest
 
 from data_backbone.microstructure import (
+    ENGINE_C_MICROSTRUCTURE_DOCTRINE,
     ENGINE_C_MICROSTRUCTURE_INPUT_FIELDS,
+    ENGINE_C_SHARED_SCORING_PHYSICS_STATUS,
+    ENGINE_D_MICROSTRUCTURE_DOCTRINE,
     ENGINE_D_MICROSTRUCTURE_INPUT_FIELDS,
+    ENGINE_D_SHARED_SCORING_PHYSICS_STATUS,
     EngineAMicrostructureProvenance,
     EngineCMicrostructureProvenance,
     EngineDMicrostructureProvenance,
@@ -483,3 +487,19 @@ def test_compose_engine_d_input_payload_rejects_pair_mismatch() -> None:
             pair="BTCUSDT",
             realized_vol_current_record=_realized_kernel_record(value=0.018),
         )
+
+
+def test_engine_c_and_d_doctrine_constants_remain_partial_by_design() -> None:
+    assert ENGINE_C_MICROSTRUCTURE_DOCTRINE == (
+        "CONTINUATION_BREAKOUT_MICROSTRUCTURE",
+        "FAKE_BREAKOUT_PROTECTION",
+        "TOXIC_FLOW_VETO",
+    )
+    assert ENGINE_D_MICROSTRUCTURE_DOCTRINE == (
+        "REENTRY_SECOND_CHANCE",
+        "FIRST_EPISODE_LINKAGE",
+        "ANTI_REVENGE_CONDITIONING",
+        "REALIZED_VOL_REENTRY_CONTEXT",
+    )
+    assert ENGINE_C_SHARED_SCORING_PHYSICS_STATUS == "PARTIAL_BY_DESIGN"
+    assert ENGINE_D_SHARED_SCORING_PHYSICS_STATUS == "PARTIAL_BY_DESIGN"

@@ -67,6 +67,8 @@ def test_breakout_strength_non_positive_rejected() -> None:
     assert result.decision == EngineCDecision.NO_TRADE
     assert result.no_trade_reasons == (NoTradeReasonC.NON_LONG_BREAKOUT,)
     assert "engine_internal.engine_c.breakout.non_long" in result.reason_codes
+    assert "engine_c.microstructure.confirmed" in result.reason_codes
+    assert result.microstructure_gate_applied is True
     assert "breakout_strength" in " ".join(_terminal_no_trade_log(result).reasons)
 
 
@@ -75,6 +77,8 @@ def test_breakout_unstructured_branch() -> None:
     assert result.decision == EngineCDecision.NO_TRADE
     assert result.no_trade_reasons[-1] == NoTradeReasonC.BREAKOUT_UNSTRUCTURED
     assert "engine_internal.engine_c.breakout.unstructured" in result.reason_codes
+    assert "engine_c.microstructure.confirmed" in result.reason_codes
+    assert result.microstructure_gate_applied is True
     assert "breakout structure insufficient" in " ".join(_terminal_no_trade_log(result).reasons)
 
 

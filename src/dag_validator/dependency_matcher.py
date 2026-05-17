@@ -16,6 +16,8 @@ _DECLARED_DYNAMIC_IMPORTS = frozenset({
     ("calibration_methods/regime_detector_trainer.py", "importlib.import_module"),
     ("complete_enablers/ml_confidence_enabler.py", "importlib.import_module"),
     ("complete_enablers/regime_detector_runtime.py", "importlib.import_module"),
+    ("local_replay_runtime/strategy_ladder_edge_model_provider.py", "__import__"),
+    ("local_replay_runtime/strategy_ladder_feature_store.py", "importlib.import_module"),
     ("meta_learning/monitoring_projection.py", "importlib.import_module"),
     ("meta_learning/replay_bundle_builder.py", "importlib.import_module"),
     ("monitoring/monitoring_runtime.py", "importlib.import_module"),

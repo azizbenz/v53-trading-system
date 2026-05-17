@@ -1,4 +1,4 @@
-"""Bounded runtime-facing ML confidence enabler for additive score modulation."""
+"""Bounded runtime-facing ML confidence enabler for non-sovereign score modulation."""
 
 from __future__ import annotations
 
@@ -14,6 +14,9 @@ from complete_enablers.ml_fusion import MlFusionResult, apply_ml_score_fusion
 from complete_enablers.ml_runtime_artifact_loader import (
     MlRuntimeArtifactLoadStatus,
     load_ml_runtime_artifact,
+)
+from complete_enablers.supplementary_refs_governance import (
+    validate_ml_supplementary_refs,
 )
 from interface_contracts import MlModelArtifact, Side
 
@@ -119,7 +122,7 @@ def _direction_from_confidence(ml_confidence: float) -> MlDirection:
 
 
 class MlConfidenceEnabler:
-    """Bounded ML confidence layer that never overrides engine side."""
+    """Bounded ML confidence layer that never overrides engine side or uplifts score."""
 
     def __init__(self, *, default_alpha: float = 0.2) -> None:
         self._default_alpha = default_alpha
@@ -176,8 +179,23 @@ class MlConfidenceEnabler:
     ) -> MlConfidenceSignal:
         """Load a transported ML artifact from supplementary refs or degrade to neutral."""
 
+        governance = validate_ml_supplementary_refs(supplementary_refs)
+        if governance.rejected:
+            return MlConfidenceSignal(
+                ml_confidence=0.5,
+                ml_direction=MlDirection.FLAT,
+                artifact_status=MlArtifactStatus.INVALID,
+                reason_codes=governance.reason_codes,
+            )
+        if not governance.accepted_refs:
+            return MlConfidenceSignal(
+                ml_confidence=0.5,
+                ml_direction=MlDirection.FLAT,
+                artifact_status=MlArtifactStatus.MISSING,
+                reason_codes=("ML_REFS_MISSING_NEUTRAL",),
+            )
         selection = load_ml_runtime_artifact(
-            supplementary_refs,
+            governance.accepted_refs,
             as_of=as_of,
         )
         if selection.status == MlRuntimeArtifactLoadStatus.LOADED and selection.artifact is not None:
@@ -197,7 +215,29 @@ class MlConfidenceEnabler:
                 ml_direction=MlDirection.FLAT,
                 artifact_status=MlArtifactStatus.STALE,
                 artifact_id=artifact_id,
-                reason_codes=selection.reasons,
+                reason_codes=("ML_ARTIFACT_STALE", *selection.reasons),
+            )
+        if selection.status == MlRuntimeArtifactLoadStatus.SOURCE_SUMMARY_STALE:
+            artifact_id = None
+            if selection.source_summary is not None:
+                artifact_id = selection.source_summary.target_artifact_hash
+            elif selection.summary is not None:
+                artifact_id = selection.summary.artifact_hash
+            return MlConfidenceSignal(
+                ml_confidence=0.5,
+                ml_direction=MlDirection.FLAT,
+                artifact_status=MlArtifactStatus.STALE,
+                artifact_id=artifact_id,
+                reason_codes=("ML_REFS_SOURCE_SUMMARY_STALE_NEUTRAL", *selection.reasons),
+            )
+        if selection.status == MlRuntimeArtifactLoadStatus.HASH_MISMATCH:
+            artifact_id = None if selection.summary is None else selection.summary.artifact_hash
+            return MlConfidenceSignal(
+                ml_confidence=0.5,
+                ml_direction=MlDirection.FLAT,
+                artifact_status=MlArtifactStatus.INVALID,
+                artifact_id=artifact_id,
+                reason_codes=("ML_ARTIFACT_HASH_MISMATCH", *selection.reasons),
             )
 
         artifact_status = (
@@ -206,17 +246,21 @@ class MlConfidenceEnabler:
             in (
                 MlRuntimeArtifactLoadStatus.MISSING_SUPPLEMENTARY_REFS,
                 MlRuntimeArtifactLoadStatus.SUMMARY_NOT_FOUND,
+                MlRuntimeArtifactLoadStatus.SOURCE_SUMMARY_NOT_FOUND,
                 MlRuntimeArtifactLoadStatus.TRANSPORT_ARTIFACT_NOT_DECLARED,
             )
             else MlArtifactStatus.INVALID
         )
         artifact_id = None if selection.summary is None else selection.summary.artifact_hash
+        reason_codes = selection.reasons
+        if artifact_status == MlArtifactStatus.MISSING:
+            reason_codes = ("ML_REFS_NOT_AVAILABLE", *reason_codes)
         return MlConfidenceSignal(
             ml_confidence=0.5,
             ml_direction=MlDirection.FLAT,
             artifact_status=artifact_status,
             artifact_id=artifact_id,
-            reason_codes=selection.reasons,
+            reason_codes=reason_codes,
         )
 
     def apply_to_engine_score(

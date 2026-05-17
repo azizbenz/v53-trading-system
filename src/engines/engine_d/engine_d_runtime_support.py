@@ -230,6 +230,15 @@ class _EngineDScoringState:
     scoring_audit: ScoringCandidateAudit | None
     penalized_score: float
 
+
+_ENGINE_D_ROLE = (
+    "Re-entry / second-chance engine with first-episode linkage, anti-revenge, "
+    "reformation, and realized-vol context."
+)
+_ENGINE_D_SHARED_PHYSICS_MAPPING_STATUS = "PARTIAL_BY_DESIGN"
+_ENGINE_D_COST_STATUS = "NOT_PROVEN"
+_ENGINE_D_RISK_INPUT_STATUS = "PARTIAL"
+
 def build_scoring_candidate(
     runtime_input: EngineDRuntimeInput,
     engine_output: EngineDOutput,
@@ -239,6 +248,15 @@ def build_scoring_candidate(
         engine_id="engine_d",
         pair=engine_output.pair,
         raw_features={key: engine_output.block_scores.get(key, 0.0) for key in feature_weights},
+        supplementary_refs=runtime_input.supplementary_refs,
+        carriage_statuses=("local_math_only", "shared_scoring_physics_partial"),
+        carriage_reason_codes=(
+            "SCORING_SHARED_PHYSICS_MAPPING_NOT_PROVEN",
+            "HUMAN_DECISION_REQUIRED_FOR_C_D_SHARED_CARRIAGE",
+            "REGIME_SCORING_REINJECTION_PARTIAL",
+        ),
+        shared_physics_mapping_status=_ENGINE_D_SHARED_PHYSICS_MAPPING_STATUS,
+        engine_role=_ENGINE_D_ROLE,
         allowed_features=frozenset(feature_weights),
         weights=dict(feature_weights),
         scoring_version=engine_output.scoring_version or runtime_input.engine_inputs.scoring_version,
@@ -253,6 +271,11 @@ def build_scoring_candidate(
         cluster_id=runtime_input.cluster_id,
         corr_penalty=runtime_input.corr_penalty,
         risk_penalty=runtime_input.risk_penalty,
+        cost_model_completeness_status=_ENGINE_D_COST_STATUS,
+        fee_source_status=_ENGINE_D_COST_STATUS,
+        impact_source_status=_ENGINE_D_COST_STATUS,
+        fill_realism_status=_ENGINE_D_COST_STATUS,
+        realized_slippage_status=_ENGINE_D_COST_STATUS,
     )
 
 
@@ -621,6 +644,25 @@ def evaluate_risk(
             size=runtime_input.projected_size * size_multiplier,
             planned_loss=planned_loss,
             pair_beta=runtime_input.pair_beta,
+            carriage_statuses=("risk_micro_friction_missing", "not_carried_to_risk_rail"),
+            carriage_reason_codes=(
+                "RISK_MICRO_FRICTION_FIELD_MISSING",
+                "RISK_INFO_STRESS_FIELD_MISSING",
+                "RISK_REGIME_STATE_MISSING",
+            ),
+            shared_physics_mapping_status=_ENGINE_D_SHARED_PHYSICS_MAPPING_STATUS,
+            engine_role=_ENGINE_D_ROLE,
+            execution_fragility_status="NOT_PROVEN",
+            market_toxicity_status="NOT_PROVEN",
+            spread_regime_penalty_status="NOT_PROVEN",
+            participation_penalty_status="NOT_PROVEN",
+            micro_friction_source_status="NOT_PROVEN",
+            risk_input_completeness_status=_ENGINE_D_RISK_INPUT_STATUS,
+            cost_model_completeness_status=_ENGINE_D_COST_STATUS,
+            fee_source_status=_ENGINE_D_COST_STATUS,
+            impact_source_status=_ENGINE_D_COST_STATUS,
+            fill_realism_status=_ENGINE_D_COST_STATUS,
+            realized_slippage_status=_ENGINE_D_COST_STATUS,
         ),
         now=timestamp,
     )

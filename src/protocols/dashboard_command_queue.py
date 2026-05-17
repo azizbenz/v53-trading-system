@@ -11,34 +11,19 @@ from pydantic import BaseModel, ValidationError
 
 from interface_contracts import (
     BinanceCredentialInventoryEntry,
-    BinanceCredentialValidationStatus,
-    DashboardArtifactKind,
     DashboardArtifactTransferManifest,
     DashboardCommandQueueSnapshot,
     DashboardCommandQueueStatus,
-    DeploymentState,
     DashboardGovernedCommandAck,
-    DashboardGovernedCommandKind,
     DashboardGovernedCommandRequest,
     DashboardGovernedCommandResult,
     DashboardGovernedCommandStatus,
-    ProfileId,
 )
 from interface_contracts.atomic_io import atomic_write_json
-from .dashboard_command_result_support import (
-    completed_command_result,
-    deactivate_credential_entry,
-    find_credential_profile_entry,
-    replace_credential_entry,
-    result_for_active_export,
-    result_for_credential_inventory_export,
-    result_for_credential_profile_request,
-    result_for_secret_upload_request,
-    result_for_shadow_audit_export,
-    result_for_upload_request,
-    set_active_credential_entry,
+from .dashboard_command_execution_support import (
+    _persist_command_result_state,
+    execute_dashboard_governed_command,
 )
-from .shadow_vps_service import ShadowVpsServiceStore
 
 _ModelT = TypeVar("_ModelT", bound=BaseModel)
 
@@ -57,9 +42,14 @@ class DashboardCommandQueuePaths:
 class DashboardGovernedCommandExecutionContext:
     """Bounded execution context used by the VPS-side queue processor."""
 
-    allowed_commands: frozenset[DashboardGovernedCommandKind]
+    allowed_commands: frozenset
     active_ml_artifact: DashboardArtifactTransferManifest | None = None
     active_regime_detector_artifact: DashboardArtifactTransferManifest | None = None
+    shadow_ml_challenger_artifact: DashboardArtifactTransferManifest | None = None
+    shadow_regime_detector_challenger_artifact: DashboardArtifactTransferManifest | None = None
+    shadow_ml_artifact_comparison_ref: str = ""
+    shadow_regime_detector_artifact_comparison_ref: str = ""
+    shadow_challenger_verdict_bundle_ref: str = ""
     regime_detector_shadow_audit_bundle_ref: str = ""
     binance_credential_inventory: tuple[BinanceCredentialInventoryEntry, ...] = ()
     binance_credential_inventory_export_ref: str = (
@@ -123,7 +113,12 @@ def load_dashboard_command_requests(
 
     paths = resolve_dashboard_command_queue_paths(queue_root)
     return tuple(
-        model for _, model in _load_models(paths.requests_dir, model_type=DashboardGovernedCommandRequest, label="request")
+        model
+        for _, model in _load_models(
+            paths.requests_dir,
+            model_type=DashboardGovernedCommandRequest,
+            label="request",
+        )
     )
 
 
@@ -134,7 +129,12 @@ def load_dashboard_command_acks(
 
     paths = resolve_dashboard_command_queue_paths(queue_root)
     return tuple(
-        model for _, model in _load_models(paths.acks_dir, model_type=DashboardGovernedCommandAck, label="ack")
+        model
+        for _, model in _load_models(
+            paths.acks_dir,
+            model_type=DashboardGovernedCommandAck,
+            label="ack",
+        )
     )
 
 
@@ -145,7 +145,12 @@ def load_dashboard_command_results(
 
     paths = resolve_dashboard_command_queue_paths(queue_root)
     return tuple(
-        model for _, model in _load_models(paths.results_dir, model_type=DashboardGovernedCommandResult, label="result")
+        model
+        for _, model in _load_models(
+            paths.results_dir,
+            model_type=DashboardGovernedCommandResult,
+            label="result",
+        )
     )
 
 
@@ -199,328 +204,39 @@ def write_dashboard_command_result(
     return _write_model(paths.results_dir / _result_filename(result), result)
 
 
-def _load_shadow_vps_service_store(
-    context: DashboardGovernedCommandExecutionContext,
-) -> ShadowVpsServiceStore | None:
-    if context.shadow_vps_service_state_dir is None:
-        return None
-    return ShadowVpsServiceStore(Path(context.shadow_vps_service_state_dir))
-
-
-def _resolve_active_manifest(
-    context: DashboardGovernedCommandExecutionContext,
-    *,
-    artifact_kind: DashboardArtifactKind,
-) -> DashboardArtifactTransferManifest | None:
-    store = _load_shadow_vps_service_store(context)
-    if artifact_kind == DashboardArtifactKind.ML_MODEL_ARTIFACT:
-        persisted = None if store is None else store.state.active_ml_artifact
-        return persisted or context.active_ml_artifact
-    persisted = None if store is None else store.state.active_regime_detector_artifact
-    return persisted or context.active_regime_detector_artifact
-
-
-def _resolve_shadow_audit_bundle_ref(
-    context: DashboardGovernedCommandExecutionContext,
-) -> str:
-    store = _load_shadow_vps_service_store(context)
-    persisted = (
-        ""
-        if store is None
-        else store.state.active_regime_detector_shadow_audit_bundle_ref
-    )
-    return persisted or context.regime_detector_shadow_audit_bundle_ref
-
-
-def _credential_inventory(
-    context: DashboardGovernedCommandExecutionContext,
-) -> tuple[BinanceCredentialInventoryEntry, ...]:
-    store = _load_shadow_vps_service_store(context)
-    persisted = () if store is None else store.state.binance_credential_inventory
-    return persisted or context.binance_credential_inventory
-
-
-def _credential_state_allows_profile_change(
-    context: DashboardGovernedCommandExecutionContext,
-) -> bool:
-    store = _load_shadow_vps_service_store(context)
-    if store is None:
-        return False
-    state = store.state
-    return (
-        state.dashboard_control_halted
-        or state.dashboard_control_target_deployment_state == DeploymentState.HALTED.value
-        or state.last_vps_warmup_final_state == "blocked"
-        or state.last_vps_recovery_status == "blocked"
-    )
-
-
-def _sorted_unique(values: tuple[str, ...], new_value: str) -> tuple[str, ...]:
-    if not new_value:
-        return values
-    return tuple(sorted(set(values) | {new_value}))
-
-
-def _without_value(values: tuple[str, ...], removed_value: str) -> tuple[str, ...]:
-    if not removed_value:
-        return values
-    return tuple(value for value in values if value != removed_value)
-
-
-def _build_state_updates(
-    store: ShadowVpsServiceStore,
-    request: DashboardGovernedCommandRequest,
-    result: DashboardGovernedCommandResult,
-) -> dict[str, object]:
-    updates: dict[str, object] = {
-        "dashboard_control_last_request_id": request.request_id,
-        "dashboard_control_last_command_kind": request.command_kind.value,
-        "dashboard_control_last_operator_reason": request.operator_reason,
-        "dashboard_control_last_result_status": result.status.value,
-        "dashboard_control_last_command_timestamp_ms": request.timestamp_ms,
-    }
-    if result.status != DashboardGovernedCommandStatus.COMPLETED:
-        return updates
-    if request.command_kind == DashboardGovernedCommandKind.REQUEST_UPLOAD_ML_ARTIFACT:
-        updates["active_ml_artifact"] = request.artifact_manifest
-    elif (
-        request.command_kind
-        == DashboardGovernedCommandKind.REQUEST_UPLOAD_REGIME_DETECTOR_ARTIFACT
-    ):
-        updates["active_regime_detector_artifact"] = request.artifact_manifest
-    elif (
-        request.command_kind
-        == DashboardGovernedCommandKind.REQUEST_UPLOAD_BINANCE_CREDENTIALS_BUNDLE
-    ):
-        if request.secret_manifest is not None:
-            updates["binance_credential_inventory"] = replace_credential_entry(
-                store.state.binance_credential_inventory,
-                request.secret_manifest,
-            )
-    elif (
-        request.command_kind
-        == DashboardGovernedCommandKind.REQUEST_ACTIVATE_BINANCE_CREDENTIALS_PROFILE
-    ):
-        entry = find_credential_profile_entry(
-            store.state.binance_credential_inventory,
-            profile_id=request.target_secret_profile,
-        )
-        if entry is not None:
-            updates["binance_credential_inventory"] = set_active_credential_entry(
-                store.state.binance_credential_inventory,
-                profile_id=request.target_secret_profile,
-            )
-            updates["active_binance_credential_profile_id"] = request.target_secret_profile
-            updates["active_binance_credential_environment"] = (
-                entry.profile.environment.value
-            )
-            updates["binance_credential_validation_status"] = (
-                BinanceCredentialValidationStatus.PENDING.value
-            )
-            updates["binance_credential_last_failure_reason_codes"] = ()
-    elif (
-        request.command_kind
-        == DashboardGovernedCommandKind.REQUEST_DEACTIVATE_BINANCE_CREDENTIALS_PROFILE
-    ):
-        if (
-            store.state.active_binance_credential_profile_id
-            == request.target_secret_profile
-        ):
-            updates["binance_credential_inventory"] = deactivate_credential_entry(
-                store.state.binance_credential_inventory,
-                profile_id=request.target_secret_profile,
-            )
-            updates["active_binance_credential_profile_id"] = ""
-            updates["active_binance_credential_environment"] = ""
-            updates["binance_credential_validation_status"] = (
-                BinanceCredentialValidationStatus.DEACTIVATED.value
-            )
-            updates["binance_credential_last_failure_reason_codes"] = ()
-    elif request.command_kind == DashboardGovernedCommandKind.SET_HALTED:
-        updates["dashboard_control_halted"] = True
-        updates["dashboard_control_target_deployment_state"] = (
-            DeploymentState.HALTED.value
-        )
-    elif request.command_kind == DashboardGovernedCommandKind.ROLLBACK_TO_LIGHT:
-        updates["dashboard_control_halted"] = False
-        updates["dashboard_control_target_profile"] = ProfileId.LIGHT.value
-        updates["dashboard_control_target_deployment_state"] = (
-            DeploymentState.ROLLBACK.value
-        )
-    elif request.command_kind == DashboardGovernedCommandKind.SUSPEND_PAIR:
-        updates["dashboard_control_suspended_pairs"] = _sorted_unique(
-            store.state.dashboard_control_suspended_pairs,
-            request.target_pair,
-        )
-    elif request.command_kind == DashboardGovernedCommandKind.REQUEST_PAIR_RESUME:
-        updates["dashboard_control_suspended_pairs"] = _without_value(
-            store.state.dashboard_control_suspended_pairs,
-            request.target_pair,
-        )
-    elif request.command_kind == DashboardGovernedCommandKind.SUSPEND_ENGINE:
-        updates["dashboard_control_suspended_engines"] = _sorted_unique(
-            store.state.dashboard_control_suspended_engines,
-            request.target_engine,
-        )
-    elif request.command_kind == DashboardGovernedCommandKind.REQUEST_ENGINE_RESUME:
-        updates["dashboard_control_suspended_engines"] = _without_value(
-            store.state.dashboard_control_suspended_engines,
-            request.target_engine,
-        )
-    elif (
-        request.command_kind
-        == DashboardGovernedCommandKind.REQUEST_EXPORT_REGIME_DETECTOR_SHADOW_AUDIT_BUNDLE
-        and result.export_ref
-    ):
-        updates["active_regime_detector_shadow_audit_bundle_ref"] = result.export_ref
-    return updates
-
-
-def _persist_command_result_state(
-    context: DashboardGovernedCommandExecutionContext,
-    request: DashboardGovernedCommandRequest,
-    result: DashboardGovernedCommandResult,
-) -> None:
-    store = _load_shadow_vps_service_store(context)
-    if store is None:
-        return
-    store.update_state(**_build_state_updates(store, request, result))
-
-
-def execute_dashboard_governed_command(
-    request: DashboardGovernedCommandRequest,
-    *,
-    context: DashboardGovernedCommandExecutionContext,
-    timestamp_ms: int,
-) -> DashboardGovernedCommandResult:
-    """Execute one governed dashboard command against the bounded VPS context."""
-
-    result_id = f"{request.request_id}.result"
-    if request.command_kind not in context.allowed_commands:
-        return DashboardGovernedCommandResult(
-            timestamp_ms=timestamp_ms,
-            correlation_id=request.correlation_id,
-            result_id=result_id,
-            request_id=request.request_id,
-            command_kind=request.command_kind,
-            status=DashboardGovernedCommandStatus.REJECTED,
-            idempotency_key=request.idempotency_key,
-            reason_codes=("dashboard.command.kind_not_allowed",),
-            detail=f"{request.command_kind.value} is outside the governed VPS command surface",
-            failure_stage="governance_surface",
-        )
-    if (
-        request.command_kind
-        in {
-            DashboardGovernedCommandKind.REQUEST_UPLOAD_ML_ARTIFACT,
-            DashboardGovernedCommandKind.REQUEST_UPLOAD_REGIME_DETECTOR_ARTIFACT,
-        }
-    ):
-        return result_for_upload_request(
-            request,
-            result_id=result_id,
-            timestamp_ms=timestamp_ms,
-        )
-    if (
-        request.command_kind
-        == DashboardGovernedCommandKind.REQUEST_UPLOAD_BINANCE_CREDENTIALS_BUNDLE
-    ):
-        return result_for_secret_upload_request(
-            request,
-            result_id=result_id,
-            timestamp_ms=timestamp_ms,
-        )
-    if (
-        request.command_kind
-        in {
-            DashboardGovernedCommandKind.REQUEST_ACTIVATE_BINANCE_CREDENTIALS_PROFILE,
-            DashboardGovernedCommandKind.REQUEST_DEACTIVATE_BINANCE_CREDENTIALS_PROFILE,
-        }
-    ):
-        return result_for_credential_profile_request(
-            request,
-            result_id=result_id,
-            timestamp_ms=timestamp_ms,
-            inventory=_credential_inventory(context),
-            profile_change_allowed=_credential_state_allows_profile_change(context),
-        )
-    if (
-        request.command_kind
-        == DashboardGovernedCommandKind.REQUEST_EXPORT_BINANCE_CREDENTIAL_INVENTORY
-    ):
-        store = _load_shadow_vps_service_store(context)
-        active_profile_id = (
-            "" if store is None else store.state.active_binance_credential_profile_id
-        )
-        return result_for_credential_inventory_export(
-            request,
-            result_id=result_id,
-            timestamp_ms=timestamp_ms,
-            inventory=_credential_inventory(context),
-            active_profile_id=active_profile_id,
-            export_ref=context.binance_credential_inventory_export_ref,
-        )
-    if request.command_kind == DashboardGovernedCommandKind.REQUEST_EXPORT_ACTIVE_ML_ARTIFACT:
-        return result_for_active_export(
-            request,
-            result_id=result_id,
-            timestamp_ms=timestamp_ms,
-            manifest=_resolve_active_manifest(
-                context,
-                artifact_kind=DashboardArtifactKind.ML_MODEL_ARTIFACT,
-            ),
-        )
-    if (
-        request.command_kind
-        == DashboardGovernedCommandKind.REQUEST_EXPORT_ACTIVE_REGIME_DETECTOR_ARTIFACT
-    ):
-        return result_for_active_export(
-            request,
-            result_id=result_id,
-            timestamp_ms=timestamp_ms,
-            manifest=_resolve_active_manifest(
-                context,
-                artifact_kind=DashboardArtifactKind.REGIME_DETECTOR_ARTIFACT,
-            ),
-        )
-    if (
-        request.command_kind
-        == DashboardGovernedCommandKind.REQUEST_EXPORT_REGIME_DETECTOR_SHADOW_AUDIT_BUNDLE
-    ):
-        return result_for_shadow_audit_export(
-            request,
-            result_id=result_id,
-            timestamp_ms=timestamp_ms,
-            shadow_audit_bundle_ref=_resolve_shadow_audit_bundle_ref(context),
-        )
-    return completed_command_result(
-        request,
-        result_id=result_id,
-        timestamp_ms=timestamp_ms,
-    )
-
-
 def build_dashboard_command_queue_snapshot(
     queue_root: str | Path,
 ) -> DashboardCommandQueueSnapshot:
     """Project one queue root into a deterministic queue health snapshot."""
 
     paths = resolve_dashboard_command_queue_paths(queue_root)
-    request_items = _load_models(
-        paths.requests_dir,
-        model_type=DashboardGovernedCommandRequest,
-        label="request",
-    ) if paths.requests_dir.exists() else ()
-    ack_items = _load_models(
-        paths.acks_dir,
-        model_type=DashboardGovernedCommandAck,
-        label="ack",
-    ) if paths.acks_dir.exists() else ()
-    result_items = _load_models(
-        paths.results_dir,
-        model_type=DashboardGovernedCommandResult,
-        label="result",
-    ) if paths.results_dir.exists() else ()
+    request_items = (
+        _load_models(
+            paths.requests_dir,
+            model_type=DashboardGovernedCommandRequest,
+            label="request",
+        )
+        if paths.requests_dir.exists()
+        else ()
+    )
+    ack_items = (
+        _load_models(
+            paths.acks_dir,
+            model_type=DashboardGovernedCommandAck,
+            label="ack",
+        )
+        if paths.acks_dir.exists()
+        else ()
+    )
+    result_items = (
+        _load_models(
+            paths.results_dir,
+            model_type=DashboardGovernedCommandResult,
+            label="result",
+        )
+        if paths.results_dir.exists()
+        else ()
+    )
     request_ids = {item.request_id for _, item in request_items}
     result_ids = {item.request_id for _, item in result_items}
     ambiguous_pending_count = len(request_ids - result_ids)
@@ -537,7 +253,10 @@ def build_dashboard_command_queue_snapshot(
         for directory in (paths.root, paths.requests_dir, paths.acks_dir, paths.results_dir)
         if directory.exists()
     )
-    drainable = paths.requests_dir.exists() and paths.acks_dir.exists() and paths.results_dir.exists()
+    drainable = all(
+        directory.exists()
+        for directory in (paths.requests_dir, paths.acks_dir, paths.results_dir)
+    )
     blocking_reasons: list[str] = []
     if not writable:
         blocking_reasons.append("dashboard.command.queue.not_writable")
@@ -545,12 +264,15 @@ def build_dashboard_command_queue_snapshot(
         blocking_reasons.append("dashboard.command.queue.not_drainable")
     if ambiguous_pending_count:
         blocking_reasons.append("dashboard.command.queue.ambiguous_pending")
-    if blocking_reasons:
-        queue_status = DashboardCommandQueueStatus.BLOCKED
-    elif failed_result_count or rejected_ack_count:
-        queue_status = DashboardCommandQueueStatus.WARNING
-    else:
-        queue_status = DashboardCommandQueueStatus.HEALTHY
+    queue_status = (
+        DashboardCommandQueueStatus.BLOCKED
+        if blocking_reasons
+        else (
+            DashboardCommandQueueStatus.WARNING
+            if failed_result_count or rejected_ack_count
+            else DashboardCommandQueueStatus.HEALTHY
+        )
+    )
     latest_result_path, latest_result = result_items[-1] if result_items else (None, None)
     latest_request = request_items[-1][1] if request_items else None
     return DashboardCommandQueueSnapshot(
@@ -561,9 +283,7 @@ def build_dashboard_command_queue_snapshot(
         queue_status=queue_status,
         pending_request_count=len(request_items),
         accepted_ack_count=sum(
-            1
-            for _, ack in ack_items
-            if ack.status == DashboardGovernedCommandStatus.ACCEPTED
+            1 for _, ack in ack_items if ack.status == DashboardGovernedCommandStatus.ACCEPTED
         ),
         rejected_ack_count=rejected_ack_count,
         completed_result_count=sum(
@@ -596,6 +316,7 @@ def process_dashboard_command_queue_once(
     handled_idempotency = {result.idempotency_key for result in existing_results}
     handled_request_ids = {result.request_id for result in existing_results}
     existing_ack_ids = {ack.request_id for ack in load_dashboard_command_acks(paths.root)}
+
     for request in load_dashboard_command_requests(paths.root):
         if request.request_id in handled_request_ids or request.idempotency_key in handled_idempotency:
             continue

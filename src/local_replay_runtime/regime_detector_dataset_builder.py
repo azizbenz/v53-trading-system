@@ -26,6 +26,8 @@ from interface_contracts import (
 )
 from local_replay_runtime.historical_snapshot_loader import HistoricalSnapshotBatch
 
+DATASET_BUILDER_LABEL_SCOPE = "LOCAL_LAB_TRAINING_ONLY"
+
 
 class _RegimeStateSignature(NamedTuple):
     toxicity: RegimeToxicityBucket
@@ -332,4 +334,4 @@ def build_regime_detector_training_dataset(
     )
 
 
-__all__ = ["build_regime_detector_training_dataset"]
+__all__ = ["DATASET_BUILDER_LABEL_SCOPE", "build_regime_detector_training_dataset"]

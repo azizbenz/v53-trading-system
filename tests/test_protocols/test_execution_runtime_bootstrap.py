@@ -232,6 +232,7 @@ class _FakeSocket:
     def __init__(self, messages) -> None:
         self._messages = list(messages)
         self.sent: list[str] = []
+        self.closed = False
 
     def settimeout(self, timeout: float) -> None:
         return None
@@ -248,6 +249,7 @@ class _FakeSocket:
         return next_message
 
     def close(self) -> None:
+        self.closed = True
         return None
 
 
@@ -657,3 +659,63 @@ def test_build_binance_execution_runtime_bootstrap_bundle_can_capture_remote_sta
         assert bundle.remote_state_snapshot.positions == {}
     finally:
         asyncio.run(http_client.aclose())
+
+
+def test_build_binance_execution_runtime_bootstrap_bundle_close_releases_owned_clients() -> None:
+    fake_socket = _FakeSocket(
+        [
+            json.dumps(
+                {
+                    "id": "v53-user-data-subscribe",
+                    "status": 200,
+                    "result": {"subscriptionId": 7},
+                }
+            ),
+            json.dumps(
+                {
+                    "subscriptionId": 7,
+                    "event": {
+                        "e": "executionReport",
+                        "E": 1_710_000_006_000,
+                        "s": "BTCUSDT",
+                        "c": "v53_engine_a_intent-1",
+                        "S": "BUY",
+                        "o": "LIMIT",
+                        "f": "GTC",
+                        "q": "0.25000000",
+                        "p": "50000.10000000",
+                        "x": "NEW",
+                        "X": "NEW",
+                        "i": 123464,
+                        "l": "0.00000000",
+                        "z": "0.00000000",
+                        "L": "0.00000000",
+                        "n": "0",
+                        "N": None,
+                        "t": -1,
+                        "r": "NONE",
+                    },
+                }
+            ),
+        ]
+    )
+    bundle = build_binance_execution_runtime_bootstrap_bundle(
+        credentials=BinanceCredentials(
+            api_key="test-api-key",
+            secret_key="test-api-secret",
+            label="testnet",
+        ),
+        config=BinanceAdapterConfig(rest_base_url="https://testnet.binance.vision"),
+        user_data_stream_enabled=True,
+        user_data_socket_factory=lambda endpoint, connect_timeout_s, recv_timeout_s: fake_socket,
+        clock_ms=lambda: 1_710_000_000_000,
+    )
+    adapter = bundle.runtime._adapter
+
+    assert adapter.poll_order_events()[0].event_type == VenueOrderEventType.ACK
+    assert adapter._rest_client._client.is_closed is False
+
+    bundle.close()
+
+    assert adapter._rest_client._client.is_closed is True
+    assert fake_socket.closed is True

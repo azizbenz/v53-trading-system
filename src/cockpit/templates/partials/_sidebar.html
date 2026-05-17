@@ -1,0 +1,54 @@
+<aside class="sidebar">
+    <div class="brand">
+        <div class="brand-icon">⌬</div>
+        <div class="brand-text">
+            <div class="brand-title">Benz Family</div>
+            <div class="brand-sub">AI Bot Trading</div>
+        </div>
+    </div>
+
+    <nav class="nav">
+        <a class="nav-item {% if vm.current_page == 'overview' %}active{% endif %}" href="/">
+            <span class="nav-icon">◦</span><span>Overview</span>
+        </a>
+        <a class="nav-item {% if vm.current_page == 'trading' %}active{% endif %}" href="/trading">
+            <span class="nav-icon">📈</span><span>Trading</span>
+        </a>
+        <a class="nav-item {% if vm.current_page == 'shadow' %}active{% endif %}" href="/shadow">
+            <span class="nav-icon">🌘</span><span>Shadow</span>
+        </a>
+        <a class="nav-item {% if vm.current_page == 'vps' %}active{% endif %}" href="/vps">
+            <span class="nav-icon">🖥</span><span>VPS</span>
+        </a>
+        <a class="nav-item {% if vm.current_page == 'lab' %}active{% endif %}" href="/lab">
+            <span class="nav-icon">🧠</span><span>IA Lab</span>
+        </a>
+        <a class="nav-item {% if vm.current_page == 'backtest' %}active{% endif %}" href="/backtest">
+            <span class="nav-icon">🧪</span><span>Backtest</span>
+        </a>
+        <a class="nav-item {% if vm.current_page == 'observability' %}active{% endif %}" href="/observability">
+            <span class="nav-icon">📡</span><span>Observability</span>
+        </a>
+        <a class="nav-item {% if vm.current_page == 'logs' %}active{% endif %}" href="/logs">
+            <span class="nav-icon">📜</span><span>Logs</span>
+        </a>
+        <a class="nav-item" href="{{ vm.grafana_url }}" target="_blank">
+            <span class="nav-icon">📊</span><span>Grafana</span>
+            <span class="nav-ext">↗</span>
+        </a>
+        <a class="nav-item" href="{{ vm.prometheus_url }}" target="_blank">
+            <span class="nav-icon">🧮</span><span>Prometheus</span>
+            <span class="nav-ext">↗</span>
+        </a>
+    </nav>
+
+    <div class="sidebar-footer">
+        <div class="capital-tier">
+            <span class="tier-label">Alerts</span>
+            <span class="tier-value">{{ vm.runtime.alerts|length }} active</span>
+        </div>
+        <div class="runtime-tag runtime-{{ vm.service.runtime_mode|lower }}">
+            {{ vm.service.runtime_mode|upper }}
+        </div>
+    </div>
+</aside>

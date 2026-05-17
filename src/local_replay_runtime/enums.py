@@ -23,7 +23,14 @@ class ReplayLifecycleState(StrEnum):
     IMPORTED = "imported"
 
 
+class ReplayExecutionProviderKind(StrEnum):
+    """Execution-realism implementations available behind the replay seam."""
+
+    SHADOW_SIMULATOR = "shadow_simulator"
+
+
 __all__ = [
     "ReplayArtifactKind",
     "ReplayLifecycleState",
+    "ReplayExecutionProviderKind",
 ]

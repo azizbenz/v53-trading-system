@@ -1,8 +1,6 @@
 """Tests for interface_contracts.atomic_io — GEM-19 atomic write utilities."""
 
 import json
-import os
-import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -169,6 +167,41 @@ class TestAtomicWriteFailurePath:
         with patch("interface_contracts.atomic_io.os.fsync", side_effect=OSError("disk full")):
             with pytest.raises(OSError, match="disk full"):
                 atomic_write_json(target, {"key": "value"})
+        assert not target.exists()
+        tmp_files = [f for f in tmp_dir.iterdir() if ".tmp_" in f.name]
+        assert len(tmp_files) == 0
+
+    def test_text_replace_retries_after_transient_permission_error(self, tmp_dir, monkeypatch):
+        target = tmp_dir / "retry.txt"
+        replace_calls = {"count": 0}
+
+        def _flaky_replace(src, dst):
+            replace_calls["count"] += 1
+            if replace_calls["count"] < 3:
+                raise PermissionError("[WinError 5] Access denied")
+            return Path(dst).write_bytes(Path(src).read_bytes())
+
+        monkeypatch.setattr("interface_contracts.atomic_io.os.replace", _flaky_replace)
+        monkeypatch.setattr("interface_contracts.atomic_io.time.sleep", lambda _: None)
+
+        atomic_write_text(target, "eventual success")
+
+        assert replace_calls["count"] == 3
+        assert target.read_text(encoding="utf-8") == "eventual success"
+
+    def test_text_replace_gives_up_and_cleans_temp_after_retries(self, tmp_dir, monkeypatch):
+        target = tmp_dir / "retry_fail.txt"
+        monkeypatch.setattr(
+            "interface_contracts.atomic_io.os.replace",
+            lambda src, dst: (_ for _ in ()).throw(
+                PermissionError("[WinError 5] Access denied")
+            ),
+        )
+        monkeypatch.setattr("interface_contracts.atomic_io.time.sleep", lambda _: None)
+
+        with pytest.raises(PermissionError, match="WinError 5"):
+            atomic_write_text(target, "never lands")
+
         assert not target.exists()
         tmp_files = [f for f in tmp_dir.iterdir() if ".tmp_" in f.name]
         assert len(tmp_files) == 0

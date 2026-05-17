@@ -11,6 +11,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+ml = [
+    "lightgbm>=4.6,<5.0",
+]
 dev = [
     "pytest>=7.4,<9.0",
     "pytest-cov>=4.0",
@@ -29,6 +32,7 @@ markers = [
     "build4: Build-4 Risk Backbone",
     "build5: Build-5 Scoring Backbone",
     "build6: Build-6 Engine A",
+    "smoke: Opt-in subprocess/runtime smoke proofs",
     "slow: Tests lents (shadow/live simulation)",
     "testnet: Binance Spot testnet integration tests",
 ]

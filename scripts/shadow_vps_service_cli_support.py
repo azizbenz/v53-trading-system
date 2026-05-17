@@ -252,6 +252,27 @@ _RUNTIME_LOOP_ARGUMENTS: tuple[dict[str, object], ...] = (
         "action": "store_true",
         "help": "Stop the service immediately on the first orchestration error.",
     },
+    {
+        "name": "--pid-file",
+        "type": Path,
+        "default": None,
+        "help": (
+            "Optional path where the service writes its PID at startup and "
+            "removes it on exit. Required by the cockpit kill switch (Phase 3) "
+            "to send SIGTERM to the running service."
+        ),
+    },
+    {
+        "name": "--halt-flag-file",
+        "type": Path,
+        "default": None,
+        "help": (
+            "Optional path watched at the start of every cycle; when present "
+            "the service requests an orderly stop and removes the flag. "
+            "Provides a Windows-friendly kill channel that does not rely on "
+            "Unix signals."
+        ),
+    },
 )
 
 

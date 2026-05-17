@@ -1,0 +1,29 @@
+<section class="card engines-grid">
+    <div class="card__head">
+        <h3>Engines · A / B / C / D</h3>
+        <span class="card__sub">runtime status</span>
+    </div>
+    <div class="card__body engines-grid__body">
+        {% for engine in vm.engines.engines %}
+        <div class="engine-card engine-card--{{ engine.status }}">
+            <div class="engine-card__head">
+                <span class="engine-card__id">{{ engine.engine_id|upper|replace("ENGINE_", "") }}</span>
+                <span class="badge badge--{% if engine.status == 'active' %}up{% elif engine.status == 'suspended' %}down{% elif engine.status == 'dormant' %}warn{% else %}neutral{% endif %}">
+                    {{ engine.status }}
+                </span>
+            </div>
+            <div class="engine-card__metrics">
+                <div><span class="muted">records</span><span>{{ engine.record_count }}</span></div>
+                <div><span class="muted">selected</span><span>{{ engine.selected_count }}</span></div>
+                <div><span class="muted">blocked</span><span>{{ engine.hard_blocked_count }}</span></div>
+                <div><span class="muted">expected CE</span><span>{{ "%.4f"|format(engine.ce_net) }}</span></div>
+                <div><span class="muted">gross R</span><span>{{ "%.4f"|format(engine.gross_return_mean) }}</span></div>
+                <div><span class="muted">cost</span><span>{{ "%.4f"|format(engine.expected_cost_mean) }}</span></div>
+            </div>
+            {% if engine.suspended_reason %}
+            <div class="engine-card__reason">{{ engine.suspended_reason }}</div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</section>

@@ -15,6 +15,8 @@ from engines.engine_b import (
     EngineBSweepValidationInput,
     EngineBSweepValidationOutcome,
 )
+from engines.engine_b.engine_b_runner import run_engine_b
+from engines.engine_b.engine_b_runtime_support import _build_scoring_candidate
 from engines.engine_b.conviction_builder_b import ENGINE_B_CONVICTION_FEATURE_WEIGHTS
 from engines.engine_b.engine_b_runner import EngineBInput
 from interface_contracts import (
@@ -228,6 +230,58 @@ def test_runtime_emits_canonical_signal_and_accepts_through_risk(repo_tmp_path: 
     assert "engine_b_scoring_completed" in events
     assert "engine_b_accepted" in events
     assert result.forecast_signal_candidate is None
+
+
+def test_scoring_candidate_carries_shared_physics_for_engine_b() -> None:
+    runtime_input = _runtime_input(
+        engine_inputs=_good_engine_inputs(
+            execution_fragility=0.8,
+            market_toxicity=0.7,
+            spread_regime_penalty=0.6,
+        ),
+        supplementary_refs=("E:/shadow/ml_model_artifact.summary.json",),
+    )
+    engine_output = run_engine_b(runtime_input.engine_inputs)
+
+    candidate = _build_scoring_candidate(runtime_input, engine_output)
+
+    assert candidate.execution_fragility == pytest.approx(0.8)
+    assert candidate.market_toxicity == pytest.approx(0.7)
+    assert candidate.spread_regime_penalty == pytest.approx(0.6)
+    assert candidate.supplementary_refs == ("E:/shadow/ml_model_artifact.summary.json",)
+    assert "shared_scoring_physics_carried" in candidate.carriage_statuses
+    assert "shared_scoring_physics_partial" in candidate.carriage_statuses
+    assert candidate.carriage_reason_codes == ("SCORING_SHARED_PHYSICS_MAPPING_NOT_PROVEN",)
+
+
+def test_runtime_carries_risk_micro_friction_for_engine_b(repo_tmp_path: Path) -> None:
+    base = _base_risk_evaluation()
+    risk_runtime = _FixedRiskRuntime(base)
+    runtime = _runtime(repo_tmp_path, "engine_b_risk_carriage", risk_runtime=risk_runtime)
+
+    result = runtime.evaluate(
+        _runtime_input(
+            engine_inputs=_good_engine_inputs(
+                execution_fragility=0.05,
+                market_toxicity=0.02,
+                spread_regime_penalty=0.02,
+            ),
+            strategy_id="strategy-b-reversion",
+        ),
+        now=15.0,
+    )
+
+    assert result.risk_evaluation is not None
+    candidate = risk_runtime._candidate
+    assert isinstance(candidate, RiskCandidate)
+    assert candidate.execution_fragility == pytest.approx(0.05)
+    assert candidate.market_toxicity == pytest.approx(0.02)
+    assert candidate.spread_regime_penalty == pytest.approx(0.02)
+    assert candidate.carriage_statuses == ("risk_micro_friction_carried",)
+    assert candidate.carriage_reason_codes == (
+        "RISK_INFO_STRESS_FIELD_MISSING",
+        "RISK_REGIME_STATE_MISSING",
+    )
 
 
 def test_runtime_emits_additive_forecast_signal_when_strategy_id_is_provided(

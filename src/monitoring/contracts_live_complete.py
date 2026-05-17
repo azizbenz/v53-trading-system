@@ -6,6 +6,12 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from .contracts_artifacts import (
+    ArtifactComparisonProjection,
+    ArtifactRuntimeVisibilityProjection,
+    ArtifactThresholdConsumerProjection,
+    ArtifactVerdictBundleProjection,
+)
 from .contracts_core import ProjectionStatus
 
 
@@ -38,8 +44,18 @@ class LiveCompleteProjection(BaseModel, frozen=True):
     selected_pairs: tuple[str, ...] = ()
     allowed_actions: tuple[str, ...] = ()
     forbidden_actions: tuple[str, ...] = ()
+    active_ml_artifact_id: str = ""
     active_ml_artifact_hash: str = ""
+    active_regime_detector_artifact_id: str = ""
     active_regime_detector_artifact_hash: str = ""
+    shadow_ml_challenger_artifact_id: str = ""
+    shadow_ml_challenger_artifact_hash: str = ""
+    shadow_regime_detector_challenger_artifact_id: str = ""
+    shadow_regime_detector_challenger_artifact_hash: str = ""
+    artifact_runtime_visibility: tuple[ArtifactRuntimeVisibilityProjection, ...] = ()
+    artifact_threshold_consumers: tuple[ArtifactThresholdConsumerProjection, ...] = ()
+    artifact_comparisons: tuple[ArtifactComparisonProjection, ...] = ()
+    artifact_verdict_bundle: ArtifactVerdictBundleProjection | None = None
     command_queue_status: str = "not_configured"
     command_queue_pending_request_count: int = Field(default=0, ge=0)
     command_queue_ambiguous_pending_count: int = Field(default=0, ge=0)

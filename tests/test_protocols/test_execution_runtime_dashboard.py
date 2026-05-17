@@ -316,6 +316,11 @@ def test_build_execution_runtime_projection_bridge_projection_returns_healthy_wh
         assert projection.projection_found is True
         assert projection.projection_loaded is True
         assert projection.ready_consumer_count == 3
+        assert tuple(consumer.threshold_id for consumer in projection.consumers) == (
+            "THR-X03",
+            "THR-X04",
+            "THR-X05",
+        )
         assert projection.rate_limit_model_loaded is True
         assert projection.spread_guard_model_loaded is True
         assert projection.slippage_model_loaded is True

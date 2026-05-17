@@ -1,0 +1,19 @@
+<section class="card" id="kill-proof-status">
+    <div class="card__head">
+        <h3>Kill Proof Status</h3>
+        <span class="card__sub">{{ vm.operational_proof.kill_proof.kill_switch_status }}</span>
+    </div>
+    <div class="card__body">
+        <table class="data-table data-table--compact">
+            <tbody>
+                <tr><th>Status</th><td>{{ vm.operational_proof.kill_proof.kill_switch_status }}</td></tr>
+                <tr><th>PID file present</th><td>{{ vm.operational_proof.kill_proof.pid_file_present }}</td></tr>
+                <tr><th>Halt watcher enabled</th><td>{{ vm.operational_proof.kill_proof.halt_flag_watcher_enabled }}</td></tr>
+                <tr><th>Last kill test</th><td>{{ vm.operational_proof.kill_proof.last_kill_test_at or 'n/a' }}</td></tr>
+                <tr><th>Latency</th><td>{{ "%.1f ms"|format(vm.operational_proof.kill_proof.last_kill_latency_ms) if vm.operational_proof.kill_proof.last_kill_latency_ms is not none else 'n/a' }}</td></tr>
+                <tr><th>Result</th><td>{{ vm.operational_proof.kill_proof.last_kill_result or 'n/a' }}</td></tr>
+                <tr><th>Evidence</th><td><code>{{ vm.operational_proof.kill_proof.evidence_file or 'n/a' }}</code></td></tr>
+            </tbody>
+        </table>
+    </div>
+</section>

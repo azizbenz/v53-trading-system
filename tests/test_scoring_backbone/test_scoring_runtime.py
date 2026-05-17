@@ -55,17 +55,26 @@ def _candidate(
     market_toxicity: float = 0.0,
     spread_regime_penalty: float = 0.0,
     participation_penalty: float = 0.0,
+    cost_model_completeness_status: str = "UNKNOWN",
+    fee_source_status: str = "UNKNOWN",
+    impact_source_status: str = "UNKNOWN",
+    fill_realism_status: str = "UNKNOWN",
+    realized_slippage_status: str = "UNKNOWN",
     raw_score_multiplier: float = 1.0,
     raw_score_add: float = 0.0,
     raw_score_cap: float | None = None,
     scoring_version: str = "5.0",
     supplementary_refs: tuple[str, ...] = (),
+    carriage_statuses: tuple[str, ...] = (),
+    carriage_reason_codes: tuple[str, ...] = (),
 ) -> ScoringCandidateInput:
     return ScoringCandidateInput(
         engine_id=engine_id,
         pair=pair,
         raw_features=raw_features,
         supplementary_refs=supplementary_refs,
+        carriage_statuses=carriage_statuses,
+        carriage_reason_codes=carriage_reason_codes,
         allowed_features=frozenset({"momentum", "flow"}),
         weights={"momentum": 2.0, "flow": 1.0},
         scoring_version=scoring_version,
@@ -87,6 +96,11 @@ def _candidate(
         market_toxicity=market_toxicity,
         spread_regime_penalty=spread_regime_penalty,
         participation_penalty=participation_penalty,
+        cost_model_completeness_status=cost_model_completeness_status,
+        fee_source_status=fee_source_status,
+        impact_source_status=impact_source_status,
+        fill_realism_status=fill_realism_status,
+        realized_slippage_status=realized_slippage_status,
     )
 
 
@@ -144,11 +158,16 @@ def _packaged_artifact_refs(
     *,
     label: str,
     prediction: float,
-) -> tuple[Path, Path, tuple[str, str]]:
+    stale_after: datetime | None = None,
+) -> tuple[Path, Path, tuple[str, ...]]:
     export_dir = _scratch_dir(f"{label}_export")
     source_dir = _scratch_dir(f"{label}_source")
     source_path = source_dir / "ml_model_artifact.json"
     artifact = _artifact(prediction=prediction)
+    if stale_after is not None:
+        payload = artifact.model_dump(mode="python")
+        payload["stale_after"] = stale_after
+        artifact = MlModelArtifact.create(**payload)
     source_path.write_text(artifact.model_dump_json(indent=2), encoding="utf-8")
     transport_package = package_ml_model_artifact_for_transport(
         export_dir,
@@ -160,12 +179,13 @@ def _packaged_artifact_refs(
         (
             transport_package.transport_artifact_ref,
             transport_package.summary_ref,
+            transport_package.source_summary_ref,
         ),
     )
 
 
 class TestScoringRuntime:
-    def test_runtime_accepts_ml_scoring_soft_penalty_hook_with_packaged_artifact(
+    def test_runtime_keeps_high_confidence_ml_neutral_without_uplift(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -212,16 +232,245 @@ class TestScoringRuntime:
 
             audit = result.audits[0]
             assert audit.raw_score_result.base_raw_score == pytest.approx(2.5)
-            assert audit.raw_score_result.raw_score_multiplier == pytest.approx(1.12)
-            assert audit.raw_score_result.raw_score == pytest.approx(2.8)
+            assert audit.raw_score_result.raw_score_multiplier == pytest.approx(1.0)
+            assert audit.raw_score_result.raw_score == pytest.approx(2.5)
             assert "ML_ARTIFACT_ACTIVE" in audit.explainability.artifact_hook_reason_codes
             assert "ML_SCORE_MODULATION_ACTIVE" in audit.explainability.artifact_hook_reason_codes
-            assert audit.economics.artifact_raw_score_multiplier_delta == pytest.approx(0.12)
+            assert "ML_ACTIVE_GOVERNED_REFS" in audit.explainability.carriage_statuses
+            assert audit.economics.artifact_raw_score_multiplier_delta == pytest.approx(0.0)
             assert audit.selection_entry is not None
             assert audit.selection_entry.outcome == SelectionOutcome.SELECTED
         finally:
             shutil.rmtree(export_dir, ignore_errors=True)
             shutil.rmtree(source_dir, ignore_errors=True)
+
+    def test_runtime_marks_stale_ml_refs_as_neutral_not_active(self) -> None:
+        export_dir, source_dir, supplementary_refs = _packaged_artifact_refs(
+            label="runtime_ml_stale",
+            prediction=0.8,
+            stale_after=datetime(2026, 4, 22, 12, 0, tzinfo=UTC),
+        )
+        runtime = ScoringRuntime(
+            _registry(),
+            soft_penalty_hook=MlScoringSoftPenaltyHook(
+                config=MlScoringSoftPenaltyHookConfig(alpha=0.3),
+            ),
+        )
+
+        try:
+            result = runtime.run_round(
+                (
+                    _candidate(
+                        engine_id="eng_a",
+                        pair="BTCUSDT",
+                        raw_features={"momentum": 1.0, "flow": 0.5},
+                        supplementary_refs=supplementary_refs,
+                        expected_ce=0.2,
+                        expected_cost=0.05,
+                        projected_size=10.0,
+                        projected_loss=1.0,
+                        projected_beta_impact=0.01,
+                        cluster_id="majors",
+                    ),
+                ),
+                portfolio=PortfolioState(
+                    remaining_gross_capacity=1000.0,
+                    remaining_loss_capacity=100.0,
+                    remaining_beta_capacity=1.0,
+                    remaining_cluster_capacity={"majors": 500.0},
+                ),
+                max_selections=1,
+                now=datetime(2026, 4, 22, 12, 1, tzinfo=UTC).timestamp(),
+            )
+
+            audit = result.audits[0]
+            assert audit.raw_score_result.base_raw_score == pytest.approx(2.5)
+            assert audit.raw_score_result.raw_score == pytest.approx(2.5)
+            assert "ML_STALE_NEUTRAL" in audit.explainability.carriage_statuses
+            assert "ML_ACTIVE_GOVERNED_REFS" not in audit.explainability.carriage_statuses
+            assert "ML_ARTIFACT_STALE" in audit.explainability.artifact_hook_reason_codes
+            assert audit.economics.artifact_raw_score_multiplier_delta == pytest.approx(0.0)
+        finally:
+            shutil.rmtree(export_dir, ignore_errors=True)
+            shutil.rmtree(source_dir, ignore_errors=True)
+
+    def test_runtime_marks_hash_mismatched_ml_refs_as_disabled_not_active(self) -> None:
+        export_dir, source_dir, supplementary_refs = _packaged_artifact_refs(
+            label="runtime_ml_hash_mismatch",
+            prediction=0.8,
+        )
+        runtime = ScoringRuntime(
+            _registry(),
+            soft_penalty_hook=MlScoringSoftPenaltyHook(
+                config=MlScoringSoftPenaltyHookConfig(alpha=0.3),
+            ),
+        )
+
+        try:
+            summary_path = Path(supplementary_refs[1])
+            summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
+            summary_payload["artifact_hash"] = "f" * 64
+            summary_path.write_text(json.dumps(summary_payload, indent=2), encoding="utf-8")
+
+            result = runtime.run_round(
+                (
+                    _candidate(
+                        engine_id="eng_a",
+                        pair="BTCUSDT",
+                        raw_features={"momentum": 1.0, "flow": 0.5},
+                        supplementary_refs=supplementary_refs,
+                        expected_ce=0.2,
+                        expected_cost=0.05,
+                        projected_size=10.0,
+                        projected_loss=1.0,
+                        projected_beta_impact=0.01,
+                        cluster_id="majors",
+                    ),
+                ),
+                portfolio=PortfolioState(
+                    remaining_gross_capacity=1000.0,
+                    remaining_loss_capacity=100.0,
+                    remaining_beta_capacity=1.0,
+                    remaining_cluster_capacity={"majors": 500.0},
+                ),
+                max_selections=1,
+                now=4.1,
+            )
+
+            audit = result.audits[0]
+            assert audit.raw_score_result.base_raw_score == pytest.approx(2.5)
+            assert audit.raw_score_result.raw_score == pytest.approx(2.5)
+            assert "ML_HASH_MISMATCH_DISABLED" in audit.explainability.carriage_statuses
+            assert "ML_ACTIVE_GOVERNED_REFS" not in audit.explainability.carriage_statuses
+            assert "ML_ARTIFACT_HASH_MISMATCH" in audit.explainability.artifact_hook_reason_codes
+            assert audit.economics.artifact_raw_score_multiplier_delta == pytest.approx(0.0)
+        finally:
+            shutil.rmtree(export_dir, ignore_errors=True)
+            shutil.rmtree(source_dir, ignore_errors=True)
+
+    def test_runtime_preserves_raw_score_and_exposes_shared_scoring_carriage_metadata(self) -> None:
+        runtime = ScoringRuntime(_registry())
+
+        result = runtime.run_round(
+            (
+                _candidate(
+                    engine_id="eng_a",
+                    pair="BTCUSDT",
+                    raw_features={"momentum": 1.0, "flow": 0.5},
+                    expected_ce=0.2,
+                    expected_cost=0.05,
+                    projected_size=10.0,
+                    projected_loss=1.0,
+                    projected_beta_impact=0.01,
+                    cluster_id="majors",
+                    execution_fragility=0.8,
+                    market_toxicity=0.7,
+                    spread_regime_penalty=0.6,
+                    carriage_statuses=(
+                        "derived_shared_scoring",
+                        "shared_scoring_physics_carried",
+                        "shared_scoring_physics_partial",
+                    ),
+                    carriage_reason_codes=("SCORING_SHARED_PHYSICS_MAPPING_NOT_PROVEN",),
+                ),
+            ),
+            portfolio=PortfolioState(
+                remaining_gross_capacity=1000.0,
+                remaining_loss_capacity=100.0,
+                remaining_beta_capacity=1.0,
+                remaining_cluster_capacity={"majors": 500.0},
+            ),
+            max_selections=1,
+            now=4.0,
+        )
+
+        audit = result.audits[0]
+        assert audit.raw_score_result.base_raw_score == pytest.approx(2.5)
+        assert audit.raw_score_result.raw_score == pytest.approx(2.5)
+        assert "shared_scoring_physics_carried" in audit.explainability.carriage_statuses
+        assert "shared_scoring_physics_partial" in audit.explainability.carriage_statuses
+        assert "ml_refs_missing_neutral" in audit.explainability.carriage_statuses
+        assert "ML_NEUTRAL_NO_REFS" in audit.explainability.carriage_statuses
+        assert "SCORING_SHARED_PHYSICS_MAPPING_NOT_PROVEN" in audit.explainability.carriage_reason_codes
+        assert "ML_REFS_MISSING_NEUTRAL" in audit.explainability.carriage_reason_codes
+        assert audit.economics.carriage_statuses == audit.explainability.carriage_statuses
+
+    def test_runtime_carries_partial_cost_model_without_changing_scoring_math(self) -> None:
+        runtime = ScoringRuntime(_registry())
+
+        result = runtime.run_round(
+            (
+                _candidate(
+                    engine_id="eng_a",
+                    pair="BTCUSDT",
+                    raw_features={"momentum": 1.0, "flow": 0.5},
+                    expected_ce=0.2,
+                    expected_cost=0.05,
+                    projected_size=10.0,
+                    projected_loss=1.0,
+                    projected_beta_impact=0.01,
+                    cluster_id="majors",
+                    cost_model_completeness_status="PARTIAL_NO_FEE_NO_IMPACT",
+                    fee_source_status="NOT_PROVEN",
+                    impact_source_status="NOT_PROVEN",
+                    fill_realism_status="PARTIAL",
+                    realized_slippage_status="NOT_PROVEN",
+                ),
+            ),
+            portfolio=PortfolioState(
+                remaining_gross_capacity=1000.0,
+                remaining_loss_capacity=100.0,
+                remaining_beta_capacity=1.0,
+                remaining_cluster_capacity={"majors": 500.0},
+            ),
+            max_selections=1,
+            now=4.5,
+        )
+
+        audit = result.audits[0]
+        assert audit.raw_score_result.base_raw_score == pytest.approx(2.5)
+        assert audit.raw_score_result.raw_score == pytest.approx(2.5)
+        assert audit.explainability.scoring_risk_cost_completeness_status == (
+            "SCORING_RISK_COST_COMPLETENESS_PARTIAL"
+        )
+        assert "COST_MODEL_INCOMPLETE" in audit.explainability.cost_readiness_reason_codes
+        assert audit.explainability.execution_ready is False
+        assert audit.explainability.promotion_ready is False
+        assert audit.economics.cost_model_completeness_status == "PARTIAL_NO_FEE_NO_IMPACT"
+        assert audit.economics.execution_ready is False
+        assert audit.economics.promotion_ready is False
+
+    def test_runtime_defaults_missing_cost_completeness_to_unknown_not_complete(self) -> None:
+        runtime = ScoringRuntime(_registry())
+
+        result = runtime.run_round(
+            (
+                _candidate(
+                    engine_id="eng_a",
+                    pair="BTCUSDT",
+                    raw_features={"momentum": 1.0, "flow": 0.5},
+                    expected_ce=0.2,
+                    expected_cost=0.05,
+                    projected_size=10.0,
+                    projected_loss=1.0,
+                    projected_beta_impact=0.01,
+                    cluster_id="majors",
+                ),
+            ),
+            portfolio=PortfolioState(
+                remaining_gross_capacity=1000.0,
+                remaining_loss_capacity=100.0,
+                remaining_beta_capacity=1.0,
+                remaining_cluster_capacity={"majors": 500.0},
+            ),
+            max_selections=1,
+            now=4.6,
+        )
+
+        audit = result.audits[0]
+        assert audit.explainability.cost_model_completeness_status == "UNKNOWN"
+        assert audit.economics.cost_model_completeness_status == "UNKNOWN"
+        assert audit.economics.execution_ready is False
 
     def test_runtime_applies_scoring_soft_penalty_hook_before_raw_score_calculation(self):
         def _soft_penalty(_hook_input):

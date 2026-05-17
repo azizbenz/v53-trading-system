@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import logging
+import os
 import signal
 import sys
 import time
@@ -47,6 +49,9 @@ from shadow_vps_service_cycle_support import (  # noqa: E402
     _record_shadow_vps_idle_cycle,
     _resolve_shadow_vps_cycle_selection,
 )
+from shadow_vps_service_governance_snapshot_support import (  # noqa: E402
+    _refresh_shadow_vps_governance_snapshots,
+)
 from shadow_vps_service_complete_support import (  # noqa: E402
     ShadowVpsBuild17Refresh,
     refresh_shadow_vps_build17_supervision,
@@ -57,6 +62,7 @@ from shadow_vps_service_event_support import (  # noqa: E402
 from shadow_vps_service_execution_support import (  # noqa: E402
     _apply_last_run_to_shadow_vps_state,
     _complete_shadow_vps_successful_cycle,
+    _persist_shadow_artifact_comparison_evidence,
     _record_shadow_vps_failed_cycle,
     _run_shadow_vps_daily_orchestrator,
     _write_shadow_vps_cycle_execution_telemetry,
@@ -156,6 +162,75 @@ def _install_shadow_vps_signal_handlers(
                 continue
 
     return _restore_signal_handlers
+
+
+_COCKPIT_LOGGER = logging.getLogger("v53.cockpit.kill_channel")
+
+
+def _write_pid_file_if_configured(pid_file: Path | None) -> bool:
+    """Atomically write the current PID. Returns True iff the file was written.
+
+    Used by the cockpit kill switch (Phase 3): the cockpit reads this file to
+    know which process to ``SIGTERM``.  Atomic write protects against partial
+    files if the service crashes mid-write.
+    """
+    if pid_file is None:
+        return False
+    try:
+        pid_file.parent.mkdir(parents=True, exist_ok=True)
+        tmp = pid_file.with_suffix(pid_file.suffix + ".tmp")
+        tmp.write_text(str(os.getpid()), encoding="utf-8")
+        os.replace(tmp, pid_file)
+    except OSError as exc:
+        _COCKPIT_LOGGER.warning("cannot write PID file %s: %s", pid_file, exc)
+        return False
+    _COCKPIT_LOGGER.info("PID file written: %s (pid=%d)", pid_file, os.getpid())
+    return True
+
+
+def _clear_pid_file(pid_file: Path) -> None:
+    try:
+        pid_file.unlink(missing_ok=True)
+    except OSError as exc:
+        _COCKPIT_LOGGER.warning("cannot clear PID file %s: %s", pid_file, exc)
+
+
+def _build_should_stop_callable(
+    *,
+    signal_controller: _ShadowVpsSignalController,
+    halt_flag_file: Path | None,
+) -> Callable[[], bool]:
+    """Compose the main-loop ``should_stop`` callback.
+
+    The base check is the signal_controller (SIGINT/SIGTERM). When a
+    ``halt_flag_file`` is configured, the callback also watches the filesystem
+    for a flag dropped by the cockpit ``POST /kill`` endpoint. Detecting the
+    flag triggers an orderly stop and removes the flag (one-shot semantics).
+
+    This dual channel makes the kill switch work on Windows (no SIGTERM) and
+    survives stale PID files (the cockpit can drop the flag even if the PID
+    tracker is out of sync).
+    """
+    def _should_stop() -> bool:
+        if halt_flag_file is not None:
+            try:
+                exists = halt_flag_file.is_file()
+            except OSError:
+                exists = False
+            if exists:
+                _COCKPIT_LOGGER.info(
+                    "cockpit.halt_flag_observed file=%s", halt_flag_file
+                )
+                signal_controller.request_stop("HALT_FLAG_OBSERVED")
+                try:
+                    halt_flag_file.unlink(missing_ok=True)
+                except OSError as exc:
+                    _COCKPIT_LOGGER.warning(
+                        "cannot clear halt flag %s: %s", halt_flag_file, exc
+                    )
+        return signal_controller.stop_requested()
+
+    return _should_stop
 
 
 def _sync_shadow_vps_service_protocol_dependencies() -> None:
@@ -425,6 +500,11 @@ def _run_shadow_vps_orchestrator_cycle(
         runtime_evidence_bundle_path,
         last_run_str=_last_run_str,
     )
+    _persist_shadow_artifact_comparison_evidence(
+        context,
+        last_run,
+    )
+    _refresh_shadow_vps_governance_snapshots(context)
     _refresh_shadow_vps_recovery_artifacts(
         context,
         live_capture_result=live_capture_result,
@@ -466,6 +546,7 @@ def _run_shadow_vps_service_cycle(
     _refresh_shadow_vps_cycle_state(context)
     _process_dashboard_command_queue(context)
     _refresh_shadow_vps_recovery_artifacts(context)
+    _refresh_shadow_vps_governance_snapshots(context)
     supervision = refresh_shadow_vps_build17_supervision(
         context,
         append_service_event=_append_service_event,
@@ -515,6 +596,7 @@ def run_shadow_vps_service(
     node_exporter_scheme: str = "http", node_exporter_metrics_path: str = "/metrics",
     prometheus_job_name: str = "v53_shadow_vps", poll_interval_s: float = 5.0,
     max_cycles: int | None = None, continue_on_error: bool = True,
+    pid_file: Path | None = None, halt_flag_file: Path | None = None,
 ) -> int:
     _sync_shadow_vps_service_protocol_dependencies()
     context = _initialize_shadow_vps_service_runtime(
@@ -540,6 +622,11 @@ def run_shadow_vps_service(
     )
     signal_controller = _ShadowVpsSignalController()
     restore_signal_handlers = _install_shadow_vps_signal_handlers(signal_controller)
+    pid_file_written = _write_pid_file_if_configured(pid_file)
+    should_stop = _build_should_stop_callable(
+        signal_controller=signal_controller,
+        halt_flag_file=halt_flag_file,
+    )
     try:
         refresh_shadow_vps_build17_supervision(
             context,
@@ -552,13 +639,15 @@ def run_shadow_vps_service(
             max_cycles=max_cycles,
             continue_on_error=continue_on_error,
             run_shadow_vps_service_cycle=_run_shadow_vps_service_cycle,
-            should_stop=signal_controller.stop_requested,
+            should_stop=should_stop,
             resolve_stop_reason=signal_controller.stop_reason,
             write_service_monitoring=_write_service_monitoring,
             append_service_event=_append_service_event,
         )
     finally:
         restore_signal_handlers()
+        if pid_file_written and pid_file is not None:
+            _clear_pid_file(pid_file)
     _finalize_shadow_vps_service_runtime(
         context,
         read_runtime_evidence_bundle=_read_runtime_evidence_bundle,
@@ -614,6 +703,8 @@ def main(argv: list[str] | None = None) -> int:
         poll_interval_s=max(0.0, args.poll_interval_s),
         max_cycles=args.max_cycles,
         continue_on_error=not args.stop_on_error,
+        pid_file=args.pid_file,
+        halt_flag_file=args.halt_flag_file,
     )
 
 

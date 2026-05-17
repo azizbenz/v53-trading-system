@@ -93,6 +93,16 @@ class ShadowVpsServiceState(BaseModel):
     last_live_complete_operator_report_recommendation: str = ""
     active_ml_artifact: DashboardArtifactTransferManifest | None = None
     active_regime_detector_artifact: DashboardArtifactTransferManifest | None = None
+    shadow_ml_challenger_artifact: DashboardArtifactTransferManifest | None = None
+    shadow_regime_detector_challenger_artifact: DashboardArtifactTransferManifest | None = (
+        None
+    )
+    last_shadow_ml_artifact_comparison_ref: str = ""
+    last_shadow_ml_artifact_comparison_status: str = "not_available"
+    last_shadow_regime_detector_artifact_comparison_ref: str = ""
+    last_shadow_regime_detector_artifact_comparison_status: str = "not_available"
+    last_shadow_challenger_verdict_bundle_ref: str = ""
+    last_shadow_challenger_verdict_bundle_status: str = "not_available"
     active_regime_detector_shadow_audit_bundle_ref: str = ""
     binance_credential_inventory: tuple[BinanceCredentialInventoryEntry, ...] = ()
     active_binance_credential_profile_id: str = ""

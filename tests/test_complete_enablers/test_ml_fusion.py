@@ -47,15 +47,17 @@ def test_ml_fusion_neutral_confidence_keeps_base_score() -> None:
     assert result.fused_score == pytest.approx(12.0)
 
 
-def test_ml_fusion_high_confidence_uplifts_score() -> None:
+def test_ml_fusion_high_confidence_does_not_uplift_score() -> None:
     result = apply_ml_score_fusion(base_score=10.0, ml_confidence=0.9, alpha=0.3)
 
-    assert result.fused_score > 10.0
+    assert result.multiplier_delta == pytest.approx(0.0)
+    assert result.fused_score == pytest.approx(10.0)
 
 
 def test_ml_fusion_low_confidence_penalizes_score() -> None:
     result = apply_ml_score_fusion(base_score=10.0, ml_confidence=0.1, alpha=0.3)
 
+    assert result.multiplier_delta == pytest.approx(-0.12)
     assert result.fused_score < 10.0
 
 

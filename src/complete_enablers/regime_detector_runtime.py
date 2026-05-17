@@ -13,8 +13,32 @@ from complete_enablers.regime_detector_runtime_loader import (
     RegimeDetectorArtifactLoadStatus,
     load_regime_detector_runtime_artifact,
 )
+from complete_enablers.supplementary_refs_governance import (
+    validate_regime_detector_supplementary_refs,
+)
 from data_backbone.microstructure import LobRegimeFeatureSnapshot
 from interface_contracts import RegimeDetectorArtifact, RegimeDurationBucket
+
+RUNTIME_REGIME_OUTPUTS = (
+    "regime_transition_risk",
+    "regime_stability_score",
+    "market_toxicity_score",
+    "expected_duration_bucket",
+)
+DIRECTIONAL_RUNTIME_KEYS_FORBIDDEN = (
+    "direction_up_300s_fee_safe",
+    "buy_probability",
+    "sell_probability",
+    "market_will_go_up",
+    "side",
+    "long",
+    "short",
+    "target_return",
+    "future_return",
+    "label",
+    "direct_trade_decision",
+)
+RUNTIME_REGIME_OUTPUT_MODE = "NON_DIRECTIONAL_ONLY"
 
 
 class RegimeDetectorSignalStatus(StrEnum):
@@ -236,7 +260,14 @@ class RegimeDetectorRuntime:
         features: LobRegimeFeatureSnapshot,
         supplementary_refs: tuple[str, ...],
     ) -> RegimeDetectorSignal:
-        selection = load_regime_detector_runtime_artifact(supplementary_refs)
+        governance = validate_regime_detector_supplementary_refs(supplementary_refs)
+        if governance.rejected:
+            return _neutral_signal(
+                status=RegimeDetectorSignalStatus.INVALID_ARTIFACT,
+                features=features,
+                reason_codes=governance.reason_codes,
+            )
+        selection = load_regime_detector_runtime_artifact(governance.accepted_refs)
         if selection.status == RegimeDetectorArtifactLoadStatus.LOADED and selection.artifact is not None:
             return self.evaluate(features=features, artifact=selection.artifact)
         artifact = selection.artifact
@@ -258,7 +289,10 @@ class RegimeDetectorRuntime:
 
 
 __all__ = [
+    "DIRECTIONAL_RUNTIME_KEYS_FORBIDDEN",
     "RegimeDetectorSignalStatus",
     "RegimeDetectorSignal",
     "RegimeDetectorRuntime",
+    "RUNTIME_REGIME_OUTPUT_MODE",
+    "RUNTIME_REGIME_OUTPUTS",
 ]

@@ -14,6 +14,7 @@ from backtest_artifact_import.contracts import (
     ArtifactUploadContext,
     ArtifactUploadRequest,
 )
+from backtest_artifact_import.capital_profile_builder import discover_capital_profile_refs
 from backtest_artifact_import.export_dir_bridge_support import (
     _load_json_payload_from_ref,
     _load_json_sidecar_with_backup,
@@ -60,6 +61,7 @@ from local_replay_runtime import (
     ReplayDatasetRef,
     ReplayExecutionPlan,
     ReplayRunManifest,
+    discover_promotion_artifact_refs,
 )
 
 
@@ -130,6 +132,45 @@ def build_feature_locks_from_feature_bridge(
         label="feature_bridge",
         allow_symbolic_ref=True,
     )
+    embedded_feature_lineage_lock = feature_bridge_payload.get("feature_lineage_lock")
+    embedded_transform_whitelist_lock = feature_bridge_payload.get("transform_whitelist_lock")
+    if isinstance(embedded_feature_lineage_lock, dict):
+        feature_lineage_lock = FeatureLineageLock.model_validate(
+            embedded_feature_lineage_lock
+        )
+        if feature_lineage_lock.feature_set_version != feature_set_version:
+            raise ValueError(
+                "embedded feature_lineage_lock feature_set_version must match manifest"
+            )
+        if feature_lineage_lock.transform_set_version != transform_set_version:
+            raise ValueError(
+                "embedded feature_lineage_lock transform_set_version must match manifest"
+            )
+        if isinstance(embedded_transform_whitelist_lock, dict):
+            transform_whitelist_lock = TransformWhitelistLock.model_validate(
+                embedded_transform_whitelist_lock
+            )
+        else:
+            transform_whitelist_lock = TransformWhitelistLock(
+                transform_set_version=transform_set_version,
+                allowed_transform_ids=tuple(
+                    dict.fromkeys(
+                        transform_id
+                        for record in feature_lineage_lock.records
+                        for transform_id in record.transform_ids
+                    )
+                ) or canonical_transform_ids(),
+            )
+        if transform_whitelist_lock.transform_set_version != transform_set_version:
+            raise ValueError(
+                "embedded transform_whitelist_lock transform_set_version must match manifest"
+            )
+        return (
+            feature_lineage_lock,
+            transform_whitelist_lock,
+            tuple(record.feature_id for record in feature_lineage_lock.records),
+            tuple(transform_whitelist_lock.allowed_transform_ids),
+        )
     raw_feature_keys_payload = feature_bridge_payload.get("recognized_feature_keys")
     if raw_feature_keys_payload is None:
         raw_feature_keys_payload = feature_bridge_payload.get("feature_keys") or ()
@@ -253,6 +294,10 @@ def discover_local_replay_export(export_dir: Path) -> LocalReplayExportDiscovery
                 ),
                 label="replay_dtr",
             )
+        ),
+        supplementary_refs=(
+            *discover_capital_profile_refs(resolved_export_dir),
+            *discover_promotion_artifact_refs(resolved_export_dir),
         ),
     )
     sidecars = _load_payload_bundle_sidecars(payload_bundle)

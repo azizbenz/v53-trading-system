@@ -458,6 +458,20 @@ def _emit_output_lines(*lines: str) -> None:
     sys.stdout.write("\n".join(lines) + "\n")
 
 
+def _write_build1_core_health_artifact(
+    *,
+    repo_root: Path,
+    build1_report: object,
+) -> None:
+    from smoke_bootstrap_recovery import write_build1_core_health_payload
+
+    artifact_path = repo_root / "build" / "build9_core_smoke" / "build1_core_health.json"
+    write_build1_core_health_payload(
+        artifact_path,
+        report=build1_report,
+    )
+
+
 def _run_execution_bootstrap_smoke_with_projection(
     execution_runtime_projection_path: Path | None = None,
     reconciliation_calibration_root: Path | None = None,
@@ -539,6 +553,10 @@ def main(argv: list[str] | None = None) -> int:
 
     build1_report = run_build1_smoke()
     build1_text = format_smoke_report(build1_report)
+    _write_build1_core_health_artifact(
+        repo_root=repo_root,
+        build1_report=build1_report,
+    )
 
     checks = [
         _bootstrap_module(module_label, module_name)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 from interface_contracts.atomic_io import atomic_write_json
@@ -14,9 +15,13 @@ from protocols import (
     ExecutionRuntimeBootstrapBundle,
     ShadowLiveWebSocketConfig,
     ShadowVpsRawInputConfig,
+    ShadowVpsServiceStore,
     build_binance_execution_runtime_bootstrap_bundle,
 )
-from venue_adapters.binance_spot.credential_loader import BinanceCredentialLoadError
+from venue_adapters.binance_spot.credential_loader import (
+    BinanceCredentialLoadError,
+    load_binance_credentials_from_file,
+)
 from venue_adapters.binance_spot.time_sync import BinanceAdapterConfig
 
 
@@ -200,12 +205,29 @@ def _pin_auto_export_session_date(auto_export_dir: Path, session_date: str) -> N
 
 def _resolve_bootstrap_credentials(
     bootstrap_config: ShadowLiveWebSocketConfig,
+    *,
+    service_dir: Path,
 ) -> BinanceCredentials:
-    _ = bootstrap_config
-    raise BinanceCredentialLoadError(
-        "Governed execution runtime bootstrap requires a sealed Binance credential profile; "
-        "environment credentials are forbidden on the Shadow VPS launcher"
+    store = ShadowVpsServiceStore(service_dir)
+    state = store.state
+    active_profile_id = state.active_binance_credential_profile_id
+    if not active_profile_id:
+        raise BinanceCredentialLoadError(
+            "No active Binance credential profile in state store — run run_shadow_credential_seed.py"
+        )
+    entry = next(
+        (item for item in state.binance_credential_inventory
+         if item.profile.profile_id == active_profile_id),
+        None,
     )
+    if entry is None:
+        raise BinanceCredentialLoadError(
+            f"Active credential profile {active_profile_id!r} not found in inventory"
+        )
+    repo_root = Path(__file__).resolve().parent.parent
+    sealed_path = repo_root / entry.profile.sealed_ref
+    key_path = sealed_path.with_name(sealed_path.name.replace(".sealed.json", ".key"))
+    return load_binance_credentials_from_file(sealed_path, key_path=key_path)
 
 
 def _build_bootstrap_adapter_config(
@@ -360,14 +382,16 @@ def _write_execution_runtime_bootstrap_summary(
     gatekeeper_audit_ref = (
         str(gatekeeper_audit_path.resolve()) if gatekeeper_audit_path is not None else ""
     )
+    bundle = None
     try:
-        credentials = _resolve_bootstrap_credentials(bootstrap_config)
+        credentials = _resolve_bootstrap_credentials(bootstrap_config, service_dir=service_dir)
         bundle = build_binance_execution_runtime_bootstrap_bundle(
             credentials=credentials,
             config=_build_bootstrap_adapter_config(bootstrap_config),
             gatekeeper_audit_path=gatekeeper_audit_path,
             execution_runtime_projection_path=execution_runtime_projection_path,
             user_data_stream_enabled=bootstrap_config.user_data_stream_enabled,
+            reconciliation_boot_now=time.time(),
             capture_remote_state_snapshot=True,
         )
         summary = _build_bootstrap_success_summary(
@@ -389,6 +413,9 @@ def _write_execution_runtime_bootstrap_summary(
             live_config=bootstrap_config,
             error=exc,
         )
+    finally:
+        if bundle is not None:
+            bundle.close()
 
     atomic_write_json(summary_path, summary.model_dump(mode="json"))
     return summary, summary_path

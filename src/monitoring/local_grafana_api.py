@@ -118,10 +118,11 @@ def bootstrap_local_grafana(
             datasource_payload,
             headers,
         )
+    import_payload = {**dashboard_payload, "overwrite": True, "folderId": 0}
     dashboard_status_code, _ = _request_json(
         "POST",
         f"{grafana_url.rstrip('/')}/api/dashboards/db",
-        dashboard_payload,
+        import_payload,
         headers,
     )
     dashboard = dashboard_payload["dashboard"]
@@ -137,9 +138,31 @@ def bootstrap_local_grafana(
     )
 
 
+def import_dashboard_payload(
+    *,
+    grafana_url: str,
+    username: str,
+    password: str,
+    dashboard_payload: GrafanaPayload,
+) -> tuple[int, str]:
+    """Import a single dashboard payload into Grafana (datasource must already exist)."""
+    headers = _basic_auth_headers(username, password)
+    import_payload = {**dashboard_payload, "overwrite": True, "folderId": 0}
+    status_code, _ = _request_json(
+        "POST",
+        f"{grafana_url.rstrip('/')}/api/dashboards/db",
+        import_payload,
+        headers,
+    )
+    inner = dashboard_payload.get("dashboard", dashboard_payload)
+    uid = str(inner.get("uid", "unknown"))
+    return status_code, uid
+
+
 __all__ = [
     "LocalGrafanaBootstrapSummary",
     "bootstrap_local_grafana",
     "build_prometheus_datasource_payload",
+    "import_dashboard_payload",
     "load_dashboard_payload",
 ]

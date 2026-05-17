@@ -27,6 +27,7 @@ class ReplayOrchestratorRequest(BaseModel, frozen=True):
     performance_mode: str = Field(..., min_length=1)
     input_kind: ReplayInputKind | None = None
     dataset: HistoricalReplayDataset | None = None
+    execution_runtime_projection_path: Path | None = None
     profile_scope: ProfileId = ProfileId.COMPLETE
     chunk_count: int = Field(default=1, ge=1)
     chunk_index: int = Field(default=1, ge=1)

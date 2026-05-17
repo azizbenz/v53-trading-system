@@ -26,6 +26,13 @@ def _build_scoring_candidate(
         engine_id="engine_a",
         pair=engine_output.pair,
         raw_features=raw_features,
+        supplementary_refs=runtime_input.supplementary_refs,
+        carriage_statuses=(
+            "derived_shared_scoring",
+            "shared_scoring_physics_carried",
+            "shared_scoring_physics_partial",
+        ),
+        carriage_reason_codes=("SCORING_SHARED_PHYSICS_MAPPING_NOT_PROVEN",),
         allowed_features=frozenset(raw_features),
         weights=_build_engine_a_scoring_weights(),
         scoring_version=engine_output.scoring_version
@@ -47,6 +54,9 @@ def _build_scoring_candidate(
         cluster_id=runtime_input.cluster_id,
         corr_penalty=runtime_input.corr_penalty,
         risk_penalty=runtime_input.risk_penalty,
+        execution_fragility=runtime_input.engine_inputs.execution_fragility,
+        market_toxicity=runtime_input.engine_inputs.market_toxicity,
+        spread_regime_penalty=runtime_input.engine_inputs.spread_regime_penalty,
     )
 
 

@@ -142,6 +142,7 @@ def check_manifest_consistency() -> SanityCheck:
         )
         from manifest_registry.build_order_registry import (
             validate_build_order_coherent,
+            validate_modules_have_exactly_one_stage,
             validate_modules_have_stages,
         )
 
@@ -163,6 +164,9 @@ def check_manifest_consistency() -> SanityCheck:
         unstaged = validate_modules_have_stages()
         if unstaged:
             errors.append(f"modules without stage: {unstaged}")
+        multiply_staged = validate_modules_have_exactly_one_stage()
+        if multiply_staged:
+            errors.append(f"modules with non-unique stage declaration: {multiply_staged}")
 
         if errors:
             return False, "; ".join(errors)

@@ -8,6 +8,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+from interface_contracts.shadow_vps_service_contracts import ShadowVpsServiceEvent
 from protocols.shadow_vps_service import ShadowVpsServiceState, ShadowVpsServiceStore
 from tests.support_paths import make_repo_scratch_dir
 
@@ -106,5 +107,29 @@ def test_truncated_json_creates_backup() -> None:
         backup = state_path.with_suffix(".corrupted")
         assert backup.exists()
         assert "corrupted" in store.state.last_error.lower()
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_event_log_rotates_with_bounded_shadow_vps_limits() -> None:
+    output_dir = _scratch_dir("event_rotation")
+    try:
+        store = ShadowVpsServiceStore(
+            output_dir,
+            events_max_bytes=256,
+            events_backup_count=2,
+        )
+        for index in range(24):
+            store.append_event(
+                ShadowVpsServiceEvent(
+                    event_type="resource_ram_heartbeat",
+                    message=f"heartbeat-{index}-" + ("x" * 64),
+                    session_date="2026-04-25",
+                )
+            )
+        store.close()
+
+        assert (output_dir / "shadow_vps_service.events.jsonl").exists()
+        assert any(output_dir.glob("shadow_vps_service.events.jsonl.*"))
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)

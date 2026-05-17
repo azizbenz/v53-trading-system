@@ -1,0 +1,27 @@
+<section class="card" id="queue-consumption-trace">
+    <div class="card__head">
+        <h3>Queue Consumption Trace</h3>
+        <span class="card__sub">{{ vm.operational_proof.queue_trace.consumption_status }}</span>
+    </div>
+    <div class="card__body">
+        <table class="data-table data-table--compact">
+            <tbody>
+                <tr><th>Queue status</th><td>{{ vm.operational_proof.queue_trace.queue_status }}</td></tr>
+                <tr><th>Pending</th><td>{{ vm.operational_proof.queue_trace.pending_count }}</td></tr>
+                <tr><th>Completed</th><td>{{ vm.operational_proof.queue_trace.completed_count }}</td></tr>
+                <tr><th>Failed</th><td>{{ vm.operational_proof.queue_trace.failed_count }}</td></tr>
+                <tr><th>Last command</th><td><code>{{ vm.operational_proof.queue_trace.last_command_id or 'n/a' }}</code></td></tr>
+                <tr><th>Kind</th><td>{{ vm.operational_proof.queue_trace.last_kind or 'n/a' }}</td></tr>
+                <tr><th>Service last request</th><td><code>{{ vm.operational_proof.queue_trace.service_last_request_id or 'n/a' }}</code></td></tr>
+                <tr><th>Service last kind</th><td>{{ vm.operational_proof.queue_trace.service_last_command_kind or 'n/a' }}</td></tr>
+                <tr><th>Service last result</th><td>{{ vm.operational_proof.queue_trace.service_last_result_status or 'n/a' }}</td></tr>
+                <tr><th>Created</th><td>{{ vm.operational_proof.queue_trace.created_at or 'n/a' }}</td></tr>
+                <tr><th>Picked</th><td>{{ vm.operational_proof.queue_trace.picked_at or 'n/a' }}</td></tr>
+                <tr><th>Completed at</th><td>{{ vm.operational_proof.queue_trace.completed_at or 'n/a' }}</td></tr>
+                <tr><th>Latency</th><td>{{ "%.1f ms"|format(vm.operational_proof.queue_trace.latency_ms) if vm.operational_proof.queue_trace.latency_ms is not none else 'n/a' }}</td></tr>
+                <tr><th>Consumer PID</th><td>{{ vm.operational_proof.queue_trace.consumer_service_pid or 'unknown' }}</td></tr>
+                <tr><th>Backlog stalled</th><td>{{ vm.operational_proof.queue_trace.queue_backlog_stalled }}</td></tr>
+            </tbody>
+        </table>
+    </div>
+</section>

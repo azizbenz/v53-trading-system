@@ -11,7 +11,13 @@ import pytest
 
 from backtest_artifact_import import package_ml_model_artifact_for_transport
 from complete_enablers import MlArtifactStatus, MlConfidenceEnabler
-from interface_contracts import MlModelArtifact, MlModelWindow, PromotionState, Side
+from interface_contracts import (
+    MlModelArtifact,
+    MlModelWindow,
+    MlSupplementaryRefsSourceSummary,
+    PromotionState,
+    Side,
+)
 from tests.support_paths import make_repo_scratch_dir
 
 
@@ -71,7 +77,7 @@ def _packaged_artifact_refs(
     label: str,
     prediction: float,
     stale_after: datetime | None = None,
-) -> tuple[Path, Path, tuple[str, str]]:
+) -> tuple[Path, Path, tuple[str, ...]]:
     export_dir = _scratch_dir(f"{label}_export")
     source_dir = _scratch_dir(f"{label}_source")
     source_path = source_dir / "ml_model_artifact.json"
@@ -87,6 +93,7 @@ def _packaged_artifact_refs(
         (
             transport_package.transport_artifact_ref,
             transport_package.summary_ref,
+            transport_package.source_summary_ref,
         ),
     )
 
@@ -163,6 +170,8 @@ def test_ml_direction_never_overrides_engine_side(
 
     assert result.signal.ml_direction.value == "long"
     assert result.engine_side == Side.SELL
+    assert result.fusion.multiplier_delta == pytest.approx(0.0)
+    assert result.fusion.fused_score == pytest.approx(6.0)
 
 
 def test_ml_direct_confidence_override_is_forbidden_without_explicit_opt_in() -> None:
@@ -227,3 +236,113 @@ def test_ml_confidence_stale_supplementary_artifact_degrades_gracefully() -> Non
     finally:
         shutil.rmtree(export_dir, ignore_errors=True)
         shutil.rmtree(source_dir, ignore_errors=True)
+
+
+def test_ml_confidence_empty_supplementary_refs_are_explicitly_neutral() -> None:
+    enabler = MlConfidenceEnabler()
+
+    signal = enabler.score_candidate_from_supplementary_refs(
+        feature_values={"feature_a": 0.1, "feature_b": 0.2},
+        supplementary_refs=(),
+    )
+
+    assert signal.artifact_status == MlArtifactStatus.MISSING
+    assert signal.reason_codes == ("ML_REFS_MISSING_NEUTRAL",)
+
+
+def test_ml_confidence_hash_mismatch_disables_transport_artifact() -> None:
+    export_dir, source_dir, supplementary_refs = _packaged_artifact_refs(
+        label="supplementary_hash_mismatch",
+        prediction=0.8,
+    )
+    enabler = MlConfidenceEnabler()
+
+    try:
+        summary_path = Path(supplementary_refs[1])
+        summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
+        summary_payload["artifact_hash"] = "f" * 64
+        summary_path.write_text(json.dumps(summary_payload, indent=2), encoding="utf-8")
+
+        signal = enabler.score_candidate_from_supplementary_refs(
+            feature_values={"feature_a": 0.1, "feature_b": 0.2},
+            supplementary_refs=supplementary_refs,
+        )
+
+        assert signal.artifact_status == MlArtifactStatus.INVALID
+        assert (
+            "ML_SUPPLEMENTARY_REFS_SOURCE_SUMMARY_ARTIFACT_HASH_MISMATCH"
+            in signal.reason_codes
+        )
+    finally:
+        shutil.rmtree(export_dir, ignore_errors=True)
+        shutil.rmtree(source_dir, ignore_errors=True)
+
+
+def test_ml_confidence_missing_source_summary_stays_neutral() -> None:
+    export_dir, source_dir, supplementary_refs = _packaged_artifact_refs(
+        label="supplementary_source_summary_missing",
+        prediction=0.8,
+    )
+    enabler = MlConfidenceEnabler()
+
+    try:
+        signal = enabler.score_candidate_from_supplementary_refs(
+            feature_values={"feature_a": 0.1, "feature_b": 0.2},
+            supplementary_refs=supplementary_refs[:2],
+        )
+
+        assert signal.artifact_status == MlArtifactStatus.MISSING
+        assert "ML_SUPPLEMENTARY_REFS_SOURCE_SUMMARY_NOT_FOUND" in signal.reason_codes
+    finally:
+        shutil.rmtree(export_dir, ignore_errors=True)
+        shutil.rmtree(source_dir, ignore_errors=True)
+
+
+def test_ml_confidence_stale_source_summary_stays_neutral() -> None:
+    export_dir, source_dir, supplementary_refs = _packaged_artifact_refs(
+        label="supplementary_source_summary_stale",
+        prediction=0.8,
+    )
+    enabler = MlConfidenceEnabler()
+
+    try:
+        source_summary_path = Path(supplementary_refs[2])
+        payload = json.loads(source_summary_path.read_text(encoding="utf-8"))
+        payload["generated_at"] = "2026-04-22T11:59:00+00:00"
+        payload["source_stale_after"] = "2026-04-22T12:00:00+00:00"
+        payload.pop("artifact_hash", None)
+        refreshed = MlSupplementaryRefsSourceSummary.create(**payload)
+        source_summary_path.write_text(refreshed.model_dump_json(indent=2), encoding="utf-8")
+
+        signal = enabler.score_candidate_from_supplementary_refs(
+            feature_values={"feature_a": 0.1, "feature_b": 0.2},
+            supplementary_refs=supplementary_refs,
+            as_of=datetime(2026, 4, 22, 12, 1, tzinfo=UTC),
+        )
+
+        assert signal.artifact_status == MlArtifactStatus.STALE
+        assert "ML_SUPPLEMENTARY_REFS_SOURCE_SUMMARY_STALE" in signal.reason_codes
+    finally:
+        shutil.rmtree(export_dir, ignore_errors=True)
+        shutil.rmtree(source_dir, ignore_errors=True)
+
+
+def test_ml_confidence_rejects_directional_supplementary_refs() -> None:
+    scratch = _scratch_dir("directional_ref_forbidden")
+    forbidden_ref = scratch / "directional_ref.json"
+    forbidden_ref.write_text(
+        json.dumps({"buy_probability": 0.91}, indent=2),
+        encoding="utf-8",
+    )
+    enabler = MlConfidenceEnabler()
+
+    try:
+        signal = enabler.score_candidate_from_supplementary_refs(
+            feature_values={"feature_a": 0.1, "feature_b": 0.2},
+            supplementary_refs=(str(forbidden_ref),),
+        )
+
+        assert signal.artifact_status == MlArtifactStatus.INVALID
+        assert signal.reason_codes[0] == "ML_DIRECTIONAL_REF_FORBIDDEN"
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)

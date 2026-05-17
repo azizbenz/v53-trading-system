@@ -6,14 +6,23 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from complete_enablers import evaluate_ml_model_promotion_gate
 from interface_contracts import (
     DashboardGovernedCommandKind,
     DashboardGovernedCommandResult,
     DashboardGovernedCommandStatus,
+    MlAntiLeakageProofArtifact,
+    MlLiveDriftSnapshot,
     MlModelArtifact,
 )
 from local_replay_runtime.local_lab_ml_artifact_training import (
     LocalLabMlArtifactTrainingReport,
+)
+from local_replay_runtime.ml_governance_sidecars import (
+    ML_ANTI_LEAKAGE_PROOF_FILENAME,
+    ML_LIVE_DRIFT_SNAPSHOT_FILENAME,
+    load_ml_anti_leakage_proof,
+    load_ml_live_drift_snapshot,
 )
 
 
@@ -31,6 +40,9 @@ class LocalLabMlFinalAuditReport(BaseModel, frozen=True):
     uploaded_feature_set_version: str = ""
     feature_set_compatible: bool = False
     artifact_matches_lab_recommendation: bool = False
+    anti_leakage_proof_present: bool = False
+    live_drift_snapshot_present: bool = False
+    promotion_gate_status: str = Field(default="not_evaluated", min_length=1)
     final_recommendation: str = Field(default="not_evaluated", min_length=1)
     blocking_reasons: tuple[str, ...] = ()
     caution_flags: tuple[str, ...] = ()
@@ -44,10 +56,43 @@ def _load_uploaded_ml_artifact(path_ref: str) -> MlModelArtifact:
     return MlModelArtifact.model_validate_json(path.read_text(encoding="utf-8"))
 
 
-def _ml_formalism_blocking_reasons() -> tuple[str, ...]:
-    """Return the current doctrinal blocker until ML formalism is explicitly accepted."""
+def _load_governance_sidecars(
+    artifact_ref: str,
+) -> tuple[
+    MlAntiLeakageProofArtifact | None,
+    MlLiveDriftSnapshot | None,
+    tuple[str, ...],
+    bool,
+    bool,
+]:
+    artifact_dir = Path(artifact_ref).resolve().parent
+    anti_leakage_path = (artifact_dir / ML_ANTI_LEAKAGE_PROOF_FILENAME).resolve()
+    live_drift_path = (artifact_dir / ML_LIVE_DRIFT_SNAPSHOT_FILENAME).resolve()
+    blocking_reasons: list[str] = []
+    anti_leakage_proof = None
+    live_drift_snapshot = None
 
-    return ("ml.formalism.unresolved",)
+    anti_leakage_present = anti_leakage_path.is_file()
+    if anti_leakage_present:
+        try:
+            anti_leakage_proof = load_ml_anti_leakage_proof(anti_leakage_path)
+        except Exception:  # pragma: no cover - defensive malformed sidecar path.
+            blocking_reasons.append("ml.final_audit.anti_leakage_proof_invalid")
+
+    live_drift_present = live_drift_path.is_file()
+    if live_drift_present:
+        try:
+            live_drift_snapshot = load_ml_live_drift_snapshot(live_drift_path)
+        except Exception:  # pragma: no cover - defensive malformed sidecar path.
+            blocking_reasons.append("ml.final_audit.live_drift_snapshot_invalid")
+
+    return (
+        anti_leakage_proof,
+        live_drift_snapshot,
+        tuple(blocking_reasons),
+        anti_leakage_present,
+        live_drift_present,
+    )
 
 
 def build_local_lab_ml_final_audit_report_from_vps_command_result(
@@ -77,8 +122,6 @@ def build_local_lab_ml_final_audit_report_from_vps_command_result(
         blocking_reasons.extend(training_report.blocking_reasons)
         if not training_report.blocking_reasons:
             blocking_reasons.append("ml.final_audit.training_report_not_ready")
-    elif recommended_artifact is not None:
-        blocking_reasons.extend(_ml_formalism_blocking_reasons())
 
     try:
         uploaded_artifact = _load_uploaded_ml_artifact(command_result.export_ref)
@@ -86,6 +129,14 @@ def build_local_lab_ml_final_audit_report_from_vps_command_result(
         raise
     except Exception as exc:  # pragma: no cover - defensive parse failure path
         raise ValueError("command_result export_ref must resolve to a valid ML artifact") from exc
+    (
+        anti_leakage_proof,
+        live_drift_snapshot,
+        sidecar_blockers,
+        anti_leakage_proof_present,
+        live_drift_snapshot_present,
+    ) = _load_governance_sidecars(command_result.export_ref)
+    blocking_reasons.extend(sidecar_blockers)
 
     uploaded_manifest = command_result.artifact_manifest
     if uploaded_manifest is None:
@@ -108,8 +159,12 @@ def build_local_lab_ml_final_audit_report_from_vps_command_result(
     )
     if recommended_artifact is not None and not feature_set_compatible:
         blocking_reasons.append("ml.final_audit.feature_set_incompatible")
-
-    blocking_reasons.extend(_ml_formalism_blocking_reasons())
+    promotion_gate = evaluate_ml_model_promotion_gate(
+        uploaded_artifact,
+        anti_leakage_proof=anti_leakage_proof,
+        live_drift_snapshot=live_drift_snapshot,
+    )
+    blocking_reasons.extend(promotion_gate.blocking_reasons)
 
     artifact_matches_lab_recommendation = (
         recommended_artifact is not None
@@ -151,6 +206,9 @@ def build_local_lab_ml_final_audit_report_from_vps_command_result(
         uploaded_feature_set_version=uploaded_feature_set_version,
         feature_set_compatible=feature_set_compatible,
         artifact_matches_lab_recommendation=artifact_matches_lab_recommendation,
+        anti_leakage_proof_present=anti_leakage_proof_present,
+        live_drift_snapshot_present=live_drift_snapshot_present,
+        promotion_gate_status=promotion_gate.gate_status,
         final_recommendation=final_recommendation,
         blocking_reasons=tuple(dict.fromkeys(blocking_reasons)),
         caution_flags=tuple(dict.fromkeys(caution_flags)),

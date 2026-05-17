@@ -250,10 +250,25 @@ def run_engine_c(inputs: EngineCInput) -> EngineCOutput:
     logs: list[EngineCLogEntry] = []
     no_trade_reasons: list[NoTradeReasonC] = []
     structure = resolve_engine_c_structure(inputs)
-    no_trade_output = _evaluate_input_guards_stage(inputs, structure, logs, no_trade_reasons)
+    context_score, continuation_preview = _prepare_continuation_preview(inputs)
+    no_trade_output = _evaluate_input_guards_stage(
+        inputs,
+        structure,
+        logs,
+        no_trade_reasons,
+        continuation_validation=continuation_preview,
+        continuation_score=continuation_preview.continuation_score,
+    )
     if no_trade_output is not None:
         return no_trade_output
-    breakout_score, no_trade_output = _evaluate_breakout_stage(inputs, structure, logs, no_trade_reasons)
+    breakout_score, no_trade_output = _evaluate_breakout_stage(
+        inputs,
+        structure,
+        logs,
+        no_trade_reasons,
+        context_score=context_score,
+        continuation_validation=continuation_preview,
+    )
     if no_trade_output is not None:
         return no_trade_output
     context_score, continuation_validation, no_trade_output = _evaluate_continuation_stage(
@@ -262,6 +277,8 @@ def run_engine_c(inputs: EngineCInput) -> EngineCOutput:
         logs,
         no_trade_reasons,
         breakout_score=breakout_score,
+        context_score=context_score,
+        continuation_validation=continuation_preview,
     )
     if no_trade_output is not None:
         return no_trade_output
@@ -332,56 +349,11 @@ def run_engine_c(inputs: EngineCInput) -> EngineCOutput:
         cost_metrics=cost_metrics,
         conviction_result=conviction_result,
     )
-def _evaluate_breakout_stage(
-    inputs: EngineCInput,
-    structure: EngineCStructure,
-    logs: list[EngineCLogEntry],
-    no_trade_reasons: list[NoTradeReasonC],
-) -> tuple[float, EngineCOutput | None]:
-    if inputs.breakout_strength <= 0.0:
-        no_trade_reasons.append(NoTradeReasonC.NON_LONG_BREAKOUT)
-        _append_engine_c_log(
-            logs,
-            inputs,
-            structure,
-            event="engine_c_no_trade",
-            reasons=(f"breakout_strength={inputs.breakout_strength:.3f} <= 0",),
-        )
-        return 0.0, _build_engine_c_no_trade_output(inputs, structure, logs, no_trade_reasons)
-    breakout_score = compute_breakout_score(inputs)
-    _append_engine_c_log(logs, inputs, structure, event="engine_c_breakout_evaluated", breakout_score=breakout_score, raw_score=breakout_score)
-    if (
-        breakout_score < ENGINE_C_THRESHOLDS.breakout_score_min
-        or inputs.breakout_strength < ENGINE_C_THRESHOLDS.breakout_strength_min
-        or inputs.range_quality < ENGINE_C_THRESHOLDS.range_quality_min
-    ):
-        no_trade_reasons.append(NoTradeReasonC.BREAKOUT_UNSTRUCTURED)
-        _append_engine_c_log(
-            logs,
-            inputs,
-            structure,
-            event="engine_c_no_trade",
-            breakout_score=breakout_score,
-            reasons=("breakout structure insufficient",),
-        )
-        return breakout_score, _build_engine_c_no_trade_output(
-            inputs,
-            structure,
-            logs,
-            no_trade_reasons,
-            breakout_score=breakout_score,
-        )
-    return breakout_score, None
 
 
-def _evaluate_continuation_stage(
+def _prepare_continuation_preview(
     inputs: EngineCInput,
-    structure: EngineCStructure,
-    logs: list[EngineCLogEntry],
-    no_trade_reasons: list[NoTradeReasonC],
-    *,
-    breakout_score: float,
-) -> tuple[float, EngineCContinuationValidationResult, EngineCOutput | None]:
+) -> tuple[float, EngineCContinuationValidationResult]:
     context_score = compute_context_score(inputs)
     continuation_validation = validate_continuation_c(
         EngineCContinuationValidationInput(
@@ -398,6 +370,91 @@ def _evaluate_continuation_stage(
             kyle_lambda_max=inputs.continuation_kyle_lambda_max,
         )
     )
+    return context_score, continuation_validation
+
+
+def _evaluate_breakout_stage(
+    inputs: EngineCInput,
+    structure: EngineCStructure,
+    logs: list[EngineCLogEntry],
+    no_trade_reasons: list[NoTradeReasonC],
+    *,
+    context_score: float,
+    continuation_validation: EngineCContinuationValidationResult,
+) -> tuple[float, EngineCOutput | None]:
+    if inputs.breakout_strength <= 0.0:
+        no_trade_reasons.append(NoTradeReasonC.NON_LONG_BREAKOUT)
+        _append_engine_c_log(
+            logs,
+            inputs,
+            structure,
+            event="engine_c_no_trade",
+            continuation_score=continuation_validation.continuation_score,
+            cumulative_ofi=continuation_validation.cumulative_ofi,
+            queue_pressure=continuation_validation.queue_pressure,
+            vpin=continuation_validation.vpin,
+            kyle_lambda=continuation_validation.kyle_lambda,
+            microstructure_gate_applied=continuation_validation.microstructure_gate_applied,
+            reasons=(f"breakout_strength={inputs.breakout_strength:.3f} <= 0",),
+        )
+        return 0.0, _build_engine_c_no_trade_output(
+            inputs,
+            structure,
+            logs,
+            no_trade_reasons,
+            continuation_score=continuation_validation.continuation_score,
+            microstructure_gate_applied=continuation_validation.microstructure_gate_applied,
+            microstructure_required=continuation_validation.microstructure_required,
+            microstructure_missing=continuation_validation.microstructure_missing,
+            microstructure_contradictory=continuation_validation.microstructure_contradictory,
+        )
+    breakout_score = compute_breakout_score(inputs)
+    _append_engine_c_log(logs, inputs, structure, event="engine_c_breakout_evaluated", breakout_score=breakout_score, raw_score=breakout_score)
+    if (
+        breakout_score < ENGINE_C_THRESHOLDS.breakout_score_min
+        or inputs.breakout_strength < ENGINE_C_THRESHOLDS.breakout_strength_min
+        or inputs.range_quality < ENGINE_C_THRESHOLDS.range_quality_min
+    ):
+        no_trade_reasons.append(NoTradeReasonC.BREAKOUT_UNSTRUCTURED)
+        _append_engine_c_log(
+            logs,
+            inputs,
+            structure,
+            event="engine_c_no_trade",
+            breakout_score=breakout_score,
+            continuation_score=continuation_validation.continuation_score,
+            cumulative_ofi=continuation_validation.cumulative_ofi,
+            queue_pressure=continuation_validation.queue_pressure,
+            vpin=continuation_validation.vpin,
+            kyle_lambda=continuation_validation.kyle_lambda,
+            microstructure_gate_applied=continuation_validation.microstructure_gate_applied,
+            reasons=("breakout structure insufficient",),
+        )
+        return breakout_score, _build_engine_c_no_trade_output(
+            inputs,
+            structure,
+            logs,
+            no_trade_reasons,
+            breakout_score=breakout_score,
+            continuation_score=continuation_validation.continuation_score,
+            microstructure_gate_applied=continuation_validation.microstructure_gate_applied,
+            microstructure_required=continuation_validation.microstructure_required,
+            microstructure_missing=continuation_validation.microstructure_missing,
+            microstructure_contradictory=continuation_validation.microstructure_contradictory,
+        )
+    return breakout_score, None
+
+
+def _evaluate_continuation_stage(
+    inputs: EngineCInput,
+    structure: EngineCStructure,
+    logs: list[EngineCLogEntry],
+    no_trade_reasons: list[NoTradeReasonC],
+    *,
+    breakout_score: float,
+    context_score: float,
+    continuation_validation: EngineCContinuationValidationResult,
+) -> tuple[float, EngineCContinuationValidationResult, EngineCOutput | None]:
     _append_engine_c_log(
         logs,
         inputs,

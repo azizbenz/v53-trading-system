@@ -1,0 +1,26 @@
+<section class="card" id="data-quality-live">
+    <div class="card__head">
+        <h3>Data Quality Live</h3>
+        <span class="card__sub">{{ vm.operational_proof.data_quality.source_status }}</span>
+    </div>
+    <div class="card__body">
+        <table class="data-table data-table--compact">
+            <thead>
+                <tr><th>Pair</th><th>Status</th><th>Age ms</th><th>Spread bps</th><th>Depth</th><th>WS gap</th><th>Time sync</th></tr>
+            </thead>
+            <tbody>
+            {% for row in vm.operational_proof.data_quality.pairs %}
+                <tr>
+                    <td>{{ row.pair }}</td>
+                    <td>{{ row.status }}</td>
+                    <td>{{ "%.1f"|format(row.age_ms) if row.age_ms is not none else 'n/a' }}</td>
+                    <td>{{ "%.3f"|format(row.spread_bps) if row.spread_bps is not none else 'n/a' }}</td>
+                    <td>{{ row.depth_available }}</td>
+                    <td>{{ "%.3fs"|format(row.ws_gap_seconds) if row.ws_gap_seconds is not none else 'n/a' }}</td>
+                    <td>{{ "%.1f ms"|format(row.time_sync_offset_ms) if row.time_sync_offset_ms is not none else 'n/a' }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>

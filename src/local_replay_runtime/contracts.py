@@ -15,6 +15,14 @@ from interface_contracts import (
 )
 from local_replay_runtime.artifact_manifest import ArtifactManifest
 from local_replay_runtime.enums import ReplayArtifactKind, ReplayLifecycleState
+from local_replay_runtime.replay_execution_contracts import (
+    ParityTolerancePolicy,
+    ReplayExecutionEvaluationRequest,
+    ReplayExecutionEvaluationResult,
+    ReplayExecutionProviderRef,
+    ReplayParityDiagnosticsSummary,
+    ShadowExecutionSimulatorConfig,
+)
 
 
 class ReplayDatasetRef(BaseModel, frozen=True):
@@ -128,4 +136,10 @@ __all__ = [
     "ReplayBundle",
     "ReplayExecutionPlan",
     "LocalReplayRuntimeEvidence",
+    "ParityTolerancePolicy",
+    "ReplayExecutionEvaluationRequest",
+    "ReplayExecutionEvaluationResult",
+    "ReplayExecutionProviderRef",
+    "ReplayParityDiagnosticsSummary",
+    "ShadowExecutionSimulatorConfig",
 ]

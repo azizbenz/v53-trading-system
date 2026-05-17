@@ -73,8 +73,49 @@ def test_feature_registry_specs_are_integral_and_audit_ready() -> None:
         assert spec.calibration_seam_path.startswith("src/calibration_methods/")
         assert spec.calibration_seam_path.endswith(".py")
         assert spec.consumed_by
+        assert spec.consumer_statuses
         assert all(consumer.strip() for consumer in spec.consumed_by)
         assert spec.method_version_hash == sha256(spec.method_version.encode("utf-8")).hexdigest()
+
+
+def test_feature_registry_surfaces_wave4_semantic_statuses() -> None:
+    ofi = get_feature_spec("ofi.cont_kukanov")
+    kyle = get_feature_spec("kyle_lambda.kyle")
+    amihud = get_feature_spec("amihud_illiquidity.amihud")
+    roll = get_feature_spec("roll_spread.roll")
+    corwin = get_feature_spec("corwin_schultz_spread.corwin_schultz")
+    pin = get_feature_spec("pin.easley_kiefer_ohara_paperman")
+    hawkes = get_feature_spec("hawkes_intensity.bacry_mastromatteo_muzy")
+    wall = get_feature_spec("real_wall_score_bid")
+
+    assert ofi.unit_status == "RAW_SIGNED_SIZE_IMBALANCE"
+    assert ofi.cross_pair_comparable is False
+    assert ofi.normalization_status == "ENGINE_LOCAL_THRESHOLDS"
+    assert ofi.normalized_seam_available is True
+    assert ofi.runtime_lifecycle_status == "ACTIVE_ENGINE_INPUT"
+
+    assert kyle.unit_status == "UNNORMALIZED_LOCAL_OLS_SLOPE"
+    assert kyle.cross_pair_comparable is False
+    assert kyle.normalized_seam_available is True
+    assert kyle.runtime_lifecycle_status == "ACTIVE_ENGINE_INPUT"
+
+    assert amihud.runtime_lifecycle_status == "RESEARCH_ONLY"
+    assert amihud.registry_intent_status == "PAIR_LIQUIDITY_REPORT"
+    assert roll.runtime_lifecycle_status == "FALLBACK_ONLY"
+    assert roll.registry_intent_status == "MISSING_L2_SPREAD_FALLBACK"
+    assert corwin.runtime_lifecycle_status == "RESEARCH_ONLY"
+    assert corwin.registry_intent_status == "OHLC_FALLBACK"
+
+    assert "FUTURE_RESERVED" in pin.consumer_statuses
+    assert "NOT_RUNTIME_CONSUMED" in pin.consumer_statuses
+    assert pin.runtime_lifecycle_status == "FUTURE_RESERVED"
+    assert pin.registry_intent_status == "OFFLINE_PARAMETER_SEAM"
+    assert "RESEARCH_ONLY" in hawkes.consumer_statuses
+    assert "NOT_RUNTIME_CONSUMED" in hawkes.consumer_statuses
+    assert hawkes.runtime_lifecycle_status == "FUTURE_RESERVED"
+
+    assert wall.calibration_status == "CALIBRATION_REQUIRED_FOR_STRONG_PRODUCTION_CLAIM"
+    assert wall.runtime_lifecycle_status == "ACTIVE_RUNTIME"
 
 
 def test_feature_registry_consumers_resolve_to_real_source_surfaces() -> None:

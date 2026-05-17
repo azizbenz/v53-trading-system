@@ -57,6 +57,33 @@ _KNOWN_QUOTE_SUFFIXES = (
 
 
 class ExecutionRuntimeSupportMixin:
+    @staticmethod
+    def _resolve_execution_boundary_mode(opportunity: ExecutionOpportunity) -> str:
+        for key in ("target_runtime_mode", "runtime_mode", "source_runtime_mode"):
+            raw_value = opportunity.metadata.get(key)
+            if raw_value is None:
+                continue
+            normalized = str(raw_value).strip().casefold().replace("-", "_")
+            if normalized in {"local_replay", "backtest", "replay"}:
+                return "local_replay"
+            if normalized == "shadow":
+                return "shadow"
+            if normalized == "micro_live":
+                return "micro_live"
+            if normalized == "live":
+                return "live"
+        return "unknown"
+
+    def _strict_execution_telemetry_required(
+        self,
+        opportunity: ExecutionOpportunity,
+    ) -> bool:
+        return self._resolve_execution_boundary_mode(opportunity) in {
+            "shadow",
+            "micro_live",
+            "live",
+        }
+
     def _run_execution_no_trade_filter(
         self,
         opportunity: ExecutionOpportunity,
@@ -81,6 +108,17 @@ class ExecutionRuntimeSupportMixin:
             return None
         raw_value = opportunity.metadata.get("rest_quota_ratio_current")
         if raw_value is None:
+            if self._strict_execution_telemetry_required(opportunity):
+                return ExecutionRateLimitDecision(
+                    blocked=True,
+                    reason_code="RATE_LIMIT_TELEMETRY_MISSING_NO_SUBMIT",
+                    detail=(
+                        "critical execution telemetry missing: rest_quota_ratio_current "
+                        f"required for governed {self._resolve_execution_boundary_mode(opportunity)} submits"
+                    ),
+                    telemetry_status="missing",
+                    quota_ratio_ceiling=self._rate_limit_model.quota_ratio_ceiling,
+                )
             return None
         try:
             current_quota_ratio = float(raw_value)
@@ -93,6 +131,17 @@ class ExecutionRuntimeSupportMixin:
                     "engine_id": opportunity.engine_id,
                 },
             )
+            if self._strict_execution_telemetry_required(opportunity):
+                return ExecutionRateLimitDecision(
+                    blocked=True,
+                    reason_code="RATE_LIMIT_TELEMETRY_MISSING_NO_SUBMIT",
+                    detail=(
+                        "critical execution telemetry invalid: rest_quota_ratio_current "
+                        f"required for governed {self._resolve_execution_boundary_mode(opportunity)} submits"
+                    ),
+                    telemetry_status="invalid",
+                    quota_ratio_ceiling=self._rate_limit_model.quota_ratio_ceiling,
+                )
             return None
         if not math.isfinite(current_quota_ratio) or current_quota_ratio < 0.0:
             logger.warning(
@@ -103,6 +152,17 @@ class ExecutionRuntimeSupportMixin:
                     "engine_id": opportunity.engine_id,
                 },
             )
+            if self._strict_execution_telemetry_required(opportunity):
+                return ExecutionRateLimitDecision(
+                    blocked=True,
+                    reason_code="RATE_LIMIT_TELEMETRY_MISSING_NO_SUBMIT",
+                    detail=(
+                        "critical execution telemetry invalid: rest_quota_ratio_current "
+                        f"required for governed {self._resolve_execution_boundary_mode(opportunity)} submits"
+                    ),
+                    telemetry_status="invalid",
+                    quota_ratio_ceiling=self._rate_limit_model.quota_ratio_ceiling,
+                )
             return None
         return evaluate_execution_rate_limit(
             self._rate_limit_model,
@@ -125,6 +185,17 @@ class ExecutionRuntimeSupportMixin:
                     "engine_id": opportunity.engine_id,
                 },
             )
+            if self._strict_execution_telemetry_required(opportunity):
+                return ExecutionSpreadGuardDecision(
+                    blocked=True,
+                    reason_code="SPREAD_INVALID_NO_SUBMIT",
+                    detail=(
+                        "invalid spread telemetry for governed "
+                        f"{self._resolve_execution_boundary_mode(opportunity)} submit"
+                    ),
+                    telemetry_status="invalid",
+                    max_spread_bps=self._spread_guard_model.max_spread_bps,
+                )
             return None
         return evaluate_execution_spread_guard(
             self._spread_guard_model,

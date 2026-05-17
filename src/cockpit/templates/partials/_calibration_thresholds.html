@@ -1,0 +1,30 @@
+<section class="card">
+    <div class="card__head">
+        <h3>Calibration Thresholds</h3>
+        <span class="card__sub">{{ vm.calibration.signature_mode or vm.calibration.source_status }}</span>
+    </div>
+    <div class="card__body">
+        {% if vm.calibration.source_status != 'ok' %}
+            <p class="muted">No calibration thresholds file detected.</p>
+        {% else %}
+        <p class="muted small">
+            artifact <code>{{ vm.calibration.artifact_id }}</code>
+            v{{ vm.calibration.version }}
+            · signed by <strong>{{ vm.calibration.signed_by or "—" }}</strong>
+            on {{ vm.calibration.signed_at or "—" }}
+        </p>
+        <table class="data-table data-table--compact">
+            <thead><tr><th>Threshold</th><th>Value</th><th>Description</th></tr></thead>
+            <tbody>
+                {% for t in vm.calibration.thresholds %}
+                <tr>
+                    <td><code>{{ t.threshold_id }}</code></td>
+                    <td><strong>{{ t.value }}</strong></td>
+                    <td>{{ t.description }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+    </div>
+</section>

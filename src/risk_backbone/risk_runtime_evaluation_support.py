@@ -259,6 +259,7 @@ def _build_rejected_components(snapshot: _RiskGuardSnapshot) -> tuple[str, ...]:
 
 
 def _build_evaluation(
+    candidate: RiskCandidate,
     snapshot: _RiskGuardSnapshot,
     *,
     action: RiskRuntimeAction,
@@ -274,6 +275,7 @@ def _build_evaluation(
         else dominant_reason_code
     )
     explainability = _build_risk_explainability(
+        candidate=candidate,
         action=action,
         reason_details=resolved_reason_details,
         drawdown_result=snapshot.drawdown_result,
@@ -314,6 +316,7 @@ def _record_and_build_block(
         snapshot.timestamp,
     )
     return _build_evaluation(
+        candidate,
         snapshot,
         action=action,
         accepted=False,
@@ -439,6 +442,7 @@ def _accept_candidate(
             timestamp=snapshot.timestamp,
         )
     return _build_evaluation(
+        candidate,
         snapshot,
         action=RiskRuntimeAction.ACCEPT,
         accepted=True,

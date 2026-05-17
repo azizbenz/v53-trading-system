@@ -1,0 +1,21 @@
+<section class="card" id="run-comparison">
+    <div class="card__head">
+        <h3>Run Comparison</h3>
+        <span class="card__sub">{{ vm.operational_proof.run_comparison.status }}</span>
+    </div>
+    <div class="card__body">
+        <table class="data-table data-table--compact">
+            <tbody>
+                <tr><th>Current run</th><td><code>{{ vm.operational_proof.run_comparison.current_run_id or 'n/a' }}</code></td></tr>
+                <tr><th>Previous run</th><td><code>{{ vm.operational_proof.run_comparison.previous_run_id or 'n/a' }}</code></td></tr>
+                <tr><th>Sample warning</th><td>{{ vm.operational_proof.run_comparison.sample_warning or 'none' }}</td></tr>
+                <tr><th>Expected CE net</th><td>{{ vm.operational_proof.run_comparison.ce_net_transition.previous }} → {{ vm.operational_proof.run_comparison.ce_net_transition.current }}</td></tr>
+                <tr><th>Exec rate (executed / total records)</th><td>{{ vm.operational_proof.run_comparison.exec_rate_transition.previous }} → {{ vm.operational_proof.run_comparison.exec_rate_transition.current }}</td></tr>
+                <tr><th>Engines active</th><td>{{ vm.operational_proof.run_comparison.engines_active_count_transition.previous }} → {{ vm.operational_proof.run_comparison.engines_active_count_transition.current }}</td></tr>
+                <tr><th>Service</th><td>{{ vm.operational_proof.run_comparison.service_transition.current or 'unknown' }}</td></tr>
+                <tr><th>Warmup eligible</th><td>{{ vm.operational_proof.run_comparison.eligible_transition.current if vm.operational_proof.run_comparison.eligible_transition.current is not none else 'unknown' }}</td></tr>
+                <tr><th>Blocking reasons</th><td>{{ vm.operational_proof.run_comparison.blocking_reasons_changed|join(', ') if vm.operational_proof.run_comparison.blocking_reasons_changed else 'none' }}</td></tr>
+            </tbody>
+        </table>
+    </div>
+</section>

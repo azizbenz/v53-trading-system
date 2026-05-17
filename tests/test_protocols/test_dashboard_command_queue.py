@@ -193,6 +193,109 @@ def test_upload_ml_artifact_persists_active_manifest_in_shadow_vps_state() -> No
         shutil.rmtree(service_dir, ignore_errors=True)
 
 
+def test_upload_shadow_ml_challenger_persists_only_challenger_manifest() -> None:
+    queue_root = _queue_root("upload_shadow_ml_challenger")
+    service_dir = _service_dir("upload_shadow_ml_challenger")
+    try:
+        initialize_dashboard_command_queue(queue_root)
+        store = ShadowVpsServiceStore(service_dir)
+        store.update_state(
+            active_ml_artifact=_manifest(
+                kind=DashboardArtifactKind.ML_MODEL_ARTIFACT,
+                source_ref="exports/active_ml_artifact.json",
+            )
+        )
+        request = DashboardGovernedCommandRequest(
+            timestamp_ms=1_700_000_000_000,
+            correlation_id="corr-shadow-ml-challenger",
+            request_id="req-shadow-ml-challenger",
+            command_kind=(
+                DashboardGovernedCommandKind.REQUEST_UPLOAD_SHADOW_ML_CHALLENGER_ARTIFACT
+            ),
+            source_runtime_mode=RuntimeMode.LOCAL_REPLAY,
+            target_runtime_mode=RuntimeMode.SHADOW,
+            artifact_manifest=_manifest(
+                kind=DashboardArtifactKind.ML_MODEL_ARTIFACT,
+                source_ref="exports/shadow_ml_challenger_artifact.json",
+            ),
+        )
+        write_dashboard_command_request(queue_root, request)
+
+        process_dashboard_command_queue_once(
+            queue_root,
+            context=DashboardGovernedCommandExecutionContext(
+                allowed_commands=frozenset({request.command_kind}),
+                shadow_vps_service_state_dir=service_dir,
+            ),
+        )
+
+        persisted = ShadowVpsServiceStore(service_dir).state
+        assert persisted.active_ml_artifact is not None
+        assert persisted.active_ml_artifact.source_ref == "exports/active_ml_artifact.json"
+        assert persisted.shadow_ml_challenger_artifact is not None
+        assert (
+            persisted.shadow_ml_challenger_artifact.source_ref
+            == "exports/shadow_ml_challenger_artifact.json"
+        )
+        assert persisted.last_shadow_ml_artifact_comparison_status == "shadow_pending_evidence"
+    finally:
+        shutil.rmtree(queue_root, ignore_errors=True)
+        shutil.rmtree(service_dir, ignore_errors=True)
+
+
+def test_shadow_regime_challenger_clear_only_resets_challenger_slot() -> None:
+    queue_root = _queue_root("clear_shadow_regime_challenger")
+    service_dir = _service_dir("clear_shadow_regime_challenger")
+    try:
+        initialize_dashboard_command_queue(queue_root)
+        store = ShadowVpsServiceStore(service_dir)
+        store.update_state(
+            active_regime_detector_artifact=_manifest(
+                kind=DashboardArtifactKind.REGIME_DETECTOR_ARTIFACT,
+                source_ref="exports/active_regime_detector_artifact.json",
+            ),
+            shadow_regime_detector_challenger_artifact=_manifest(
+                kind=DashboardArtifactKind.REGIME_DETECTOR_ARTIFACT,
+                source_ref="exports/shadow_regime_detector_challenger.json",
+            ),
+            last_shadow_regime_detector_artifact_comparison_ref="exports/compare_regime.json",
+            last_shadow_regime_detector_artifact_comparison_status="shadow_ready",
+        )
+        request = DashboardGovernedCommandRequest(
+            timestamp_ms=1_700_000_000_000,
+            correlation_id="corr-clear-shadow-regime",
+            request_id="req-clear-shadow-regime",
+            command_kind=(
+                DashboardGovernedCommandKind.REQUEST_CLEAR_SHADOW_REGIME_DETECTOR_CHALLENGER_ARTIFACT
+            ),
+            source_runtime_mode=RuntimeMode.LOCAL_REPLAY,
+            target_runtime_mode=RuntimeMode.SHADOW,
+            operator_reason="clear stale challenger",
+        )
+        write_dashboard_command_request(queue_root, request)
+
+        process_dashboard_command_queue_once(
+            queue_root,
+            context=DashboardGovernedCommandExecutionContext(
+                allowed_commands=frozenset({request.command_kind}),
+                shadow_vps_service_state_dir=service_dir,
+            ),
+        )
+
+        persisted = ShadowVpsServiceStore(service_dir).state
+        assert persisted.active_regime_detector_artifact is not None
+        assert (
+            persisted.active_regime_detector_artifact.source_ref
+            == "exports/active_regime_detector_artifact.json"
+        )
+        assert persisted.shadow_regime_detector_challenger_artifact is None
+        assert persisted.last_shadow_regime_detector_artifact_comparison_ref == ""
+        assert persisted.last_shadow_regime_detector_artifact_comparison_status == "not_available"
+    finally:
+        shutil.rmtree(queue_root, ignore_errors=True)
+        shutil.rmtree(service_dir, ignore_errors=True)
+
+
 def test_export_active_ml_artifact_reads_persisted_shadow_vps_state() -> None:
     queue_root = _queue_root("export_active_ml_persisted")
     service_dir = _service_dir("export_active_ml_persisted")
@@ -282,6 +385,99 @@ def test_upload_and_export_regime_detector_artifact_use_persisted_state() -> Non
         assert len(results) == 2
         assert results[-1].status == DashboardGovernedCommandStatus.COMPLETED
         assert results[-1].export_ref == "exports/persisted_regime_detector_artifact.json"
+    finally:
+        shutil.rmtree(queue_root, ignore_errors=True)
+        shutil.rmtree(service_dir, ignore_errors=True)
+
+
+def test_export_shadow_ml_artifact_comparison_reads_persisted_state() -> None:
+    queue_root = _queue_root("export_shadow_ml_comparison")
+    service_dir = _service_dir("export_shadow_ml_comparison")
+    try:
+        initialize_dashboard_command_queue(queue_root)
+        ShadowVpsServiceStore(service_dir).update_state(
+            shadow_ml_challenger_artifact=_manifest(
+                kind=DashboardArtifactKind.ML_MODEL_ARTIFACT,
+                source_ref="exports/shadow_ml_challenger_artifact.json",
+            ),
+            last_shadow_ml_artifact_comparison_ref="exports/shadow_ml_comparison.json",
+            last_shadow_ml_artifact_comparison_status="shadow_ready",
+        )
+        request = DashboardGovernedCommandRequest(
+            timestamp_ms=1_700_000_000_000,
+            correlation_id="corr-export-shadow-ml-comparison",
+            request_id="req-export-shadow-ml-comparison",
+            command_kind=(
+                DashboardGovernedCommandKind.REQUEST_EXPORT_SHADOW_ML_ARTIFACT_COMPARISON_EVIDENCE
+            ),
+            source_runtime_mode=RuntimeMode.LOCAL_REPLAY,
+            target_runtime_mode=RuntimeMode.LIVE,
+        )
+        write_dashboard_command_request(queue_root, request)
+
+        process_dashboard_command_queue_once(
+            queue_root,
+            context=DashboardGovernedCommandExecutionContext(
+                allowed_commands=frozenset({request.command_kind}),
+                shadow_vps_service_state_dir=service_dir,
+            ),
+        )
+
+        results = load_dashboard_command_results(queue_root)
+        assert len(results) == 1
+        assert results[0].status == DashboardGovernedCommandStatus.COMPLETED
+        assert results[0].export_ref == "exports/shadow_ml_comparison.json"
+        assert results[0].artifact_manifest is not None
+        assert results[0].artifact_manifest.artifact_kind == DashboardArtifactKind.GENERIC_EXPORT_BUNDLE
+    finally:
+        shutil.rmtree(queue_root, ignore_errors=True)
+        shutil.rmtree(service_dir, ignore_errors=True)
+
+
+def test_export_shadow_regime_artifact_comparison_reads_persisted_state() -> None:
+    queue_root = _queue_root("export_shadow_regime_comparison")
+    service_dir = _service_dir("export_shadow_regime_comparison")
+    try:
+        initialize_dashboard_command_queue(queue_root)
+        ShadowVpsServiceStore(service_dir).update_state(
+            shadow_regime_detector_challenger_artifact=_manifest(
+                kind=DashboardArtifactKind.REGIME_DETECTOR_ARTIFACT,
+                source_ref="exports/shadow_regime_detector_challenger.json",
+            ),
+            last_shadow_regime_detector_artifact_comparison_ref=(
+                "exports/shadow_regime_comparison.json"
+            ),
+            last_shadow_regime_detector_artifact_comparison_status="shadow_runtime_inputs_missing",
+        )
+        request = DashboardGovernedCommandRequest(
+            timestamp_ms=1_700_000_000_000,
+            correlation_id="corr-export-shadow-regime-comparison",
+            request_id="req-export-shadow-regime-comparison",
+            command_kind=(
+                DashboardGovernedCommandKind.REQUEST_EXPORT_SHADOW_REGIME_DETECTOR_ARTIFACT_COMPARISON_EVIDENCE
+            ),
+            source_runtime_mode=RuntimeMode.LOCAL_REPLAY,
+            target_runtime_mode=RuntimeMode.LIVE,
+        )
+        write_dashboard_command_request(queue_root, request)
+
+        process_dashboard_command_queue_once(
+            queue_root,
+            context=DashboardGovernedCommandExecutionContext(
+                allowed_commands=frozenset({request.command_kind}),
+                shadow_vps_service_state_dir=service_dir,
+            ),
+        )
+
+        results = load_dashboard_command_results(queue_root)
+        assert len(results) == 1
+        assert results[0].status == DashboardGovernedCommandStatus.COMPLETED
+        assert results[0].export_ref == "exports/shadow_regime_comparison.json"
+        assert results[0].artifact_manifest is not None
+        assert (
+            results[0].artifact_manifest.artifact_id
+            == "shadow_regime_detector_artifact_comparison_evidence"
+        )
     finally:
         shutil.rmtree(queue_root, ignore_errors=True)
         shutil.rmtree(service_dir, ignore_errors=True)

@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+from . import contracts_artifacts as _artifacts
 from . import contracts_core as _core
 from . import contracts_dashboard as _dashboard
+from . import contracts_dashboard_payloads as _dashboard_payloads
 from . import contracts_vps as _vps
+from .contracts_artifacts import *
 from .contracts_core import *
 from .contracts_dashboard import *
+from .contracts_dashboard_payloads import *
 from .contracts_vps import *
 
 
 __all__ = [
+    *_artifacts.__all__,
     *_core.__all__,
     *_dashboard.__all__,
+    *_dashboard_payloads.__all__,
     *_vps.__all__,
 ]

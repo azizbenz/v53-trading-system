@@ -34,23 +34,31 @@ def build_fee_aware_edge_context(
 def build_rate_limit_context(
     decision: ExecutionRateLimitDecision,
 ) -> dict[str, str | float | int | bool]:
-    return {
+    context: dict[str, str | float | int | bool] = {
         "gate": "rate_limiter",
         "reason_code": decision.reason_code,
-        "current_quota_ratio": 0.0 if decision.current_quota_ratio is None else decision.current_quota_ratio,
-        "quota_ratio_ceiling": 0.0 if decision.quota_ratio_ceiling is None else decision.quota_ratio_ceiling,
+        "telemetry_status": decision.telemetry_status or "unknown",
     }
+    if decision.current_quota_ratio is not None:
+        context["current_quota_ratio"] = decision.current_quota_ratio
+    if decision.quota_ratio_ceiling is not None:
+        context["quota_ratio_ceiling"] = decision.quota_ratio_ceiling
+    return context
 
 
 def build_spread_guard_context(
     decision: ExecutionSpreadGuardDecision,
 ) -> dict[str, str | float | int | bool]:
-    return {
+    context: dict[str, str | float | int | bool] = {
         "gate": "spread_guard",
         "reason_code": decision.reason_code,
-        "current_spread_bps": 0.0 if decision.current_spread_bps is None else decision.current_spread_bps,
-        "max_spread_bps": 0.0 if decision.max_spread_bps is None else decision.max_spread_bps,
+        "telemetry_status": decision.telemetry_status or "unknown",
     }
+    if decision.current_spread_bps is not None:
+        context["current_spread_bps"] = decision.current_spread_bps
+    if decision.max_spread_bps is not None:
+        context["max_spread_bps"] = decision.max_spread_bps
+    return context
 
 
 def build_order_type_context(

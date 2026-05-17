@@ -1,0 +1,232 @@
+<section class="card replay-metrics">
+    <div class="card__head">
+        <h3>Replay Metrics · daily KPIs</h3>
+        <span class="card__sub">{{ vm.replay.source_status }}</span>
+    </div>
+    <div class="card__body">
+        {% if vm.replay.source_is_unavailable %}
+            <p class="muted">No replay metrics for the latest day yet ({{ vm.replay.source_status }}).</p>
+        {% else %}
+        {% if vm.replay.economics_display_state == 'placeholder' %}
+            <p class="muted small value-warn">Replay metrics are present but not measured yet: total_records = 0, so expected CE and execution rate are placeholders only.</p>
+        {% elif vm.replay.economics_display_state == 'stale' %}
+            <p class="muted small value-warn">Latest replay metrics are stale. Economics stay visible for inspection only and must not be treated as green.</p>
+        {% elif vm.replay.economics_display_state == 'insufficient_sample' %}
+            <p class="muted small value-warn">Replay sample is thin. Economics are visible, but positive values stay cautionary until the sample is large enough.</p>
+        {% elif vm.replay.economics_display_state == 'partial_replay' %}
+            <p class="muted small value-warn">Replay economics stay cautionary because the replay cost model is partial. Positive expected CE must not be treated as green profitability until depth, fee, impact, fill realism, and parity coverage are explicit.</p>
+        {% endif %}
+        <div class="kpi-row">
+            <div class="kpi-mega">
+                <span class="kpi-mega__label">{{ vm.replay.expected_ce_label }}</span>
+                <span class="kpi-mega__value {{ vm.replay.ce_net_value_class }}">
+                    {{ "%.4f"|format(vm.replay.ce_net) }}
+                </span>
+                <div class="muted small">{{ vm.replay.expected_ce_realization_status }} / {{ vm.replay.realized_profitability_status }}</div>
+                <div class="muted small">{{ vm.replay.expected_ce_caveat }}</div>
+            </div>
+            <div class="kpi-mega">
+                <span class="kpi-mega__label">{{ vm.replay.executed_only_net_return_label }}</span>
+                <span class="kpi-mega__value {% if vm.replay.executed_only_net_return is not none and vm.replay.allow_positive_economics_tone %}value-info{% else %}value-warn{% endif %}">
+                    {{ "%.4f"|format(vm.replay.executed_only_net_return) if vm.replay.executed_only_net_return is not none else 'n/a' }}
+                </span>
+                <div class="muted small">{{ vm.replay.executed_return_display_status }} / {{ vm.replay.executed_only_net_return_status }}</div>
+                <div class="muted small">{{ vm.replay.executed_only_net_return_caveat }}</div>
+            </div>
+            <div class="kpi-mega">
+                <span class="kpi-mega__label">{{ vm.replay.replay_expected_cost_model_label }}</span>
+                <span class="kpi-mega__value {% if vm.replay.allow_positive_economics_tone %}value-info{% else %}value-warn{% endif %}">
+                    {{ "%.4f"|format(vm.replay.replay_expected_cost_model_mean) }}
+                </span>
+                <div class="muted small">{{ vm.replay.replay_expected_cost_model_caveat }}</div>
+            </div>
+            <div class="kpi-mega">
+                <span class="kpi-mega__label">Gross Return</span>
+                <span class="kpi-mega__value {{ vm.replay.gross_return_mean_value_class }}">
+                    {{ "%.4f"|format(vm.replay.gross_return_mean) }}
+                </span>
+            </div>
+            <div class="kpi-mega">
+                <span class="kpi-mega__label">{{ vm.replay.drawdown_proxy_label }}</span>
+                <span class="kpi-mega__value value-info">{{ "%.4f"|format(vm.replay.drawdown_proxy) }}</span>
+                <div class="muted small">{{ vm.replay.drawdown_proxy_status }}</div>
+                <div class="muted small">{{ vm.replay.drawdown_proxy_caveat }}</div>
+            </div>
+            <div class="kpi-mega">
+                <span class="kpi-mega__label">{{ vm.replay.true_net_equity_drawdown_label }}</span>
+                <span class="kpi-mega__value {% if vm.replay.true_net_equity_max_drawdown is not none and vm.replay.allow_positive_economics_tone %}value-info{% else %}value-warn{% endif %}">
+                    {{ "%.4f"|format(vm.replay.true_net_equity_max_drawdown) if vm.replay.true_net_equity_max_drawdown is not none else 'n/a' }}
+                </span>
+                <div class="muted small">{{ vm.replay.true_drawdown_display_status }} / {{ vm.replay.true_net_equity_drawdown_status }}</div>
+                <div class="muted small">{{ vm.replay.true_drawdown_caveat }}</div>
+            </div>
+            <div class="kpi-mega">
+                <span class="kpi-mega__label">{{ vm.replay.exec_rate_label }}</span>
+                <span class="kpi-mega__value {% if vm.replay.allow_positive_economics_tone %}value-info{% else %}value-warn{% endif %}">{{ "%.1f%%"|format(vm.replay.exec_rate_total * 100) }}</span>
+                <div class="muted small">{{ vm.replay.exec_rate_caveat }}</div>
+            </div>
+        </div>
+        <p class="muted small">{{ vm.replay.promotion_economics_status }}</p>
+        <p class="muted small">{{ vm.replay.cost_model_caveat }}</p>
+        <p class="muted small">Book depth: {{ vm.replay.book_depth_display_status }} / {{ vm.replay.book_depth_caveat }}</p>
+        <p class="muted small">Fee provenance: {{ vm.replay.normalized_fee_source_status }} / fee_bps={{ "%.4f"|format(vm.replay.fee_bps) if vm.replay.fee_bps is not none else 'n/a' }}</p>
+        <p class="muted small">Impact provenance: {{ vm.replay.normalized_impact_source_status }} / impact_bps={{ "%.4f"|format(vm.replay.impact_bps) if vm.replay.impact_bps is not none else 'n/a' }}</p>
+        <p class="muted small">Fill realism: {{ vm.replay.fill_realism_display_status }} / {{ vm.replay.fill_realism_caveat }}</p>
+        <p class="muted small">Cost parity: {{ vm.replay.cost_parity_display_status }} / raw={{ vm.replay.cost_parity_status }} / sample_count={{ vm.replay.parity_sample_count }}</p>
+        <p class="muted small">Shadow extension: {{ vm.replay.shadow_extension_display_status }} / minimum_shadow_days={{ vm.replay.minimum_shadow_days_required if vm.replay.minimum_shadow_days_required is not none else 'n/a' }} / reason={{ vm.replay.shadow_extension_reason or 'n/a' }}</p>
+        <p class="muted small">{{ vm.replay.realized_slippage_caveat }}</p>
+        <p class="muted small">{{ vm.replay.small_capital_caveat }}</p>
+        <p class="muted small">{{ vm.replay.capital_profile_caveat }}</p>
+        <p class="muted small">{{ vm.replay.sizing_doctrine_caveat }}</p>
+        <p class="muted small">{{ vm.replay.portfolio_multi_asset_caveat }}</p>
+
+        <div class="replay-metrics__grids">
+            <div>
+                <h4>Capital Buckets</h4>
+                <table class="data-table data-table--compact">
+                    <thead><tr><th>Bucket</th><th>Status</th><th>Allowed</th><th>Blocked</th><th>Max Active</th><th>Min Notional</th><th>Fragmentation</th></tr></thead>
+                    <tbody>
+                    {% if vm.replay.capital_bucket_profiles %}
+                    {% for bucket in vm.replay.capital_bucket_profiles %}
+                        <tr>
+                            <td><code>{{ bucket.capital_bucket }}</code></td>
+                            <td>{{ bucket.promotion_status }}</td>
+                            <td>{{ bucket.allowed_pairs|join(', ') if bucket.allowed_pairs else 'n/a' }}</td>
+                            <td>{{ bucket.blocked_pair_symbols|join(', ') if bucket.blocked_pair_symbols else 'n/a' }}</td>
+                            <td>{{ bucket.max_active_pairs if bucket.max_active_pairs is not none else 'n/a' }}</td>
+                            <td>{{ "%.3f"|format(bucket.min_notional_block_rate) if bucket.min_notional_block_rate is not none else 'n/a' }}</td>
+                            <td>{{ bucket.pair_universe_too_wide_status }} / {{ "%.3f"|format(bucket.capital_fragmentation_rate) if bucket.capital_fragmentation_rate is not none else 'n/a' }}</td>
+                        </tr>
+                    {% endfor %}
+                    {% else %}
+                        <tr><td colspan="7">CAPITAL_BUCKET_NOT_PROVEN</td></tr>
+                    {% endif %}
+                    </tbody>
+                </table>
+            </div>
+            <div>
+                <h4>By Pair</h4>
+                <table class="data-table data-table--compact">
+                    <thead><tr><th>Pair</th><th>Rec</th><th>Sel</th><th>Expected CE net</th><th>Gross R</th></tr></thead>
+                    <tbody>
+                    {% for p in vm.replay.pair_aggregates %}
+                        <tr>
+                            <td><code>{{ p.pair }}</code></td>
+                            <td>{{ p.record_count }}</td>
+                            <td>{{ p.selected_count }}</td>
+                            <td class="{% if vm.replay.allow_positive_economics_tone %}{% if p.ce_net >= 0 %}value-up{% else %}value-down{% endif %}{% else %}{% if p.ce_net >= 0 %}value-warn{% else %}value-down{% endif %}{% endif %}">{{ "%.4f"|format(p.ce_net) }}</td>
+                            <td class="{% if vm.replay.allow_positive_economics_tone %}{% if p.gross_return_mean >= 0 %}value-up{% else %}value-down{% endif %}{% else %}{% if p.gross_return_mean >= 0 %}value-warn{% else %}value-down{% endif %}{% endif %}">{{ "%.4f"|format(p.gross_return_mean) }}</td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div>
+                <h4>By Engine</h4>
+                <table class="data-table data-table--compact">
+                    <thead><tr><th>Engine</th><th>Rec</th><th>Sel</th><th>Blocked</th><th>Expected CE net</th></tr></thead>
+                    <tbody>
+                    {% for e in vm.replay.engine_aggregates %}
+                        <tr>
+                            <td><code>{{ e.engine_id }}</code></td>
+                            <td>{{ e.record_count }}</td>
+                            <td>{{ e.selected_count }}</td>
+                            <td>{{ e.hard_blocked_count }}</td>
+                            <td class="{% if vm.replay.allow_positive_economics_tone %}{% if e.ce_net >= 0 %}value-up{% else %}value-down{% endif %}{% else %}{% if e.ce_net >= 0 %}value-warn{% else %}value-down{% endif %}{% endif %}">{{ "%.4f"|format(e.ce_net) }}</td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div>
+                <h4>Engine Promotion</h4>
+                <table class="data-table data-table--compact">
+                    <thead><tr><th>Engine</th><th>Status</th><th>Executed Return</th><th>True DD</th><th>Sample</th><th>Blockers</th></tr></thead>
+                    <tbody>
+                    {% if vm.replay.engine_promotion_artifacts %}
+                    {% for item in vm.replay.engine_promotion_artifacts %}
+                        <tr>
+                            <td><code>{{ item.engine_id }}</code></td>
+                            <td>{{ item.promotion_status }}</td>
+                            <td>{{ item.executed_only_net_return_status }}</td>
+                            <td>{{ item.true_net_equity_drawdown_status }}</td>
+                            <td>{{ item.sample_size_survival_status }}</td>
+                            <td>{{ item.promotion_blockers|join(', ') if item.promotion_blockers else 'n/a' }}</td>
+                        </tr>
+                    {% endfor %}
+                    {% else %}
+                        <tr><td colspan="6">ENGINE_PROMOTION_NOT_READY</td></tr>
+                    {% endif %}
+                    </tbody>
+                </table>
+            </div>
+            <div>
+                <h4>Pair Promotion</h4>
+                <table class="data-table data-table--compact">
+                    <thead><tr><th>Pair</th><th>Status</th><th>Executed Return</th><th>True DD</th><th>Sample</th><th>Blockers</th></tr></thead>
+                    <tbody>
+                    {% if vm.replay.pair_promotion_artifacts %}
+                    {% for item in vm.replay.pair_promotion_artifacts %}
+                        <tr>
+                            <td><code>{{ item.pair }}</code></td>
+                            <td>{{ item.promotion_status }}</td>
+                            <td>{{ item.executed_only_net_return_status }}</td>
+                            <td>{{ item.true_net_equity_drawdown_status }}</td>
+                            <td>{{ item.sample_size_survival_status }}</td>
+                            <td>{{ item.promotion_blockers|join(', ') if item.promotion_blockers else 'n/a' }}</td>
+                        </tr>
+                    {% endfor %}
+                    {% else %}
+                        <tr><td colspan="6">PAIR_NOT_PROVEN</td></tr>
+                    {% endif %}
+                    </tbody>
+                </table>
+            </div>
+            <div>
+                <h4>Strategy Promotion</h4>
+                <table class="data-table data-table--compact">
+                    <thead><tr><th>Strategy</th><th>Status</th><th>Executed Return</th><th>True DD</th><th>Sample</th><th>Blockers</th></tr></thead>
+                    <tbody>
+                    {% if vm.replay.strategy_promotion_artifacts %}
+                    {% for item in vm.replay.strategy_promotion_artifacts %}
+                        <tr>
+                            <td><code>{{ item.strategy_id or 'n/a' }}</code></td>
+                            <td>{{ item.promotion_status }}</td>
+                            <td>{{ item.executed_only_net_return_status }}</td>
+                            <td>{{ item.true_net_equity_drawdown_status }}</td>
+                            <td>{{ item.sample_size_survival_status }}</td>
+                            <td>{{ item.promotion_blockers|join(', ') if item.promotion_blockers else 'n/a' }}</td>
+                        </tr>
+                    {% endfor %}
+                    {% else %}
+                        <tr><td colspan="6">STRATEGY_PROMOTION_NOT_READY</td></tr>
+                    {% endif %}
+                    </tbody>
+                </table>
+            </div>
+            <div>
+                <h4>Sample-Size Survival</h4>
+                <table class="data-table data-table--compact">
+                    <thead><tr><th>Scope</th><th>ID</th><th>Status</th><th>Raw</th><th>Selected</th><th>Exec</th></tr></thead>
+                    <tbody>
+                    {% if vm.replay.sample_size_survival_artifacts %}
+                    {% for item in vm.replay.sample_size_survival_artifacts %}
+                        <tr>
+                            <td><code>{{ item.scope }}</code></td>
+                            <td><code>{{ item.id }}</code></td>
+                            <td>{{ item.sample_size_survival_status }}</td>
+                            <td>{{ item.raw_candidate_count if item.raw_candidate_count is not none else 'n/a' }}</td>
+                            <td>{{ item.selected_count if item.selected_count is not none else 'n/a' }}</td>
+                            <td>{{ item.executed_count if item.executed_count is not none else 'n/a' }}</td>
+                        </tr>
+                    {% endfor %}
+                    {% else %}
+                        <tr><td colspan="6">SAMPLE_SIZE_NOT_PROVEN</td></tr>
+                    {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</section>

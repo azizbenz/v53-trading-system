@@ -1,0 +1,19 @@
+<section class="card" id="disk-growth">
+    <div class="card__head">
+        <h3>Disk / Log Growth</h3>
+        <span class="card__sub">{{ vm.operational_proof.disk_growth.status }}</span>
+    </div>
+    <div class="card__body">
+        <table class="data-table data-table--compact">
+            <tbody>
+                <tr><th>Disk used %</th><td>{{ "%.1f"|format(vm.operational_proof.disk_growth.disk_used_percent) }}</td></tr>
+                <tr><th>Logs size MB</th><td>{{ "%.2f"|format(vm.operational_proof.disk_growth.logs_size_mb) }}</td></tr>
+                <tr><th>Artifacts size MB</th><td>{{ "%.2f"|format(vm.operational_proof.disk_growth.artifacts_size_mb) }}</td></tr>
+                <tr><th>Auto exports size MB</th><td>{{ "%.2f"|format(vm.operational_proof.disk_growth.auto_exports_size_mb) }}</td></tr>
+                <tr><th>Oldest log</th><td>{{ vm.operational_proof.disk_growth.oldest_log_date or 'n/a' }}</td></tr>
+                <tr><th>Retention policy present</th><td>{{ vm.operational_proof.disk_growth.retention_policy_present }}</td></tr>
+                <tr><th>Cleanup needed</th><td>{{ vm.operational_proof.disk_growth.cleanup_needed }}</td></tr>
+            </tbody>
+        </table>
+    </div>
+</section>

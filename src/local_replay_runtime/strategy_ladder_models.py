@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 import hashlib
 import json
 from pathlib import Path
@@ -17,6 +17,34 @@ def _normalize_datetime(value: datetime | None) -> datetime | None:
     if value is None:
         return None
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def _parse_boundary_date(raw_value: str) -> date | None:
+    value = (raw_value or "").strip().replace("Z", "+00:00")
+    if not value:
+        return None
+    if value.isdigit():
+        numeric = int(value)
+        if len(value) >= 13:
+            return datetime.fromtimestamp(numeric / 1000.0, tz=UTC).date()
+        return datetime.fromtimestamp(numeric, tz=UTC).date()
+    try:
+        if "T" not in value and " " not in value:
+            return date.fromisoformat(value)
+        parsed = datetime.fromisoformat(value)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC).date()
+    except ValueError:
+        return None
+
+
+def _backtest_days_covered(start: str, end: str) -> int | None:
+    start_date = _parse_boundary_date(start)
+    end_date = _parse_boundary_date(end)
+    if start_date is None or end_date is None or end_date < start_date:
+        return None
+    return (end_date - start_date).days + 1
 
 
 def deterministic_payload_hash(payload: object) -> str:
@@ -59,6 +87,8 @@ class StrategyLadderRequest(BaseModel, frozen=True):
     ml_mode: str = "ML_MODE_OFF"
     frozen_ml_artifact_path: Path | None = None
     frozen_ml_artifact_hash: str | None = None
+    rolling_ml_window_plan_path: Path | None = None
+    ml_artifact_freshness_days: int = Field(default=30, ge=1)
     execution_runtime_projection_path: Path | None = None
     # Audit 2026-05-06 (P3a) — opt-in flag pour activer le pont microstructure
     # vers les engine runners natifs. Quand True, le rail invoque l'adapter
@@ -80,6 +110,9 @@ class StrategyLadderRequest(BaseModel, frozen=True):
     small_scope_enabled: bool = True
     full_scan_enabled: bool = False
     no_full_scan_enabled: bool = True
+    preselected_only: bool = True
+    diagnostic_full_replay: bool = False
+    b1_5_policy_mode: str = "conservative_hard_only"
     candidate_events_path: Path | None = None
 
     @model_validator(mode="before")
@@ -115,10 +148,41 @@ class StrategyLadderRequest(BaseModel, frozen=True):
             data["raw_roots"] = tuple(normalized)
         return data
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_b1_5_policy_mode(cls, value: object) -> object:
+        if isinstance(value, cls):
+            return value
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        resolved_mode = str(data.get("b1_5_policy_mode") or "").strip().lower()
+        if not resolved_mode:
+            resolved_mode = (
+                "diagnostic_full_replay"
+                if bool(data.get("diagnostic_full_replay"))
+                else "conservative_hard_only"
+            )
+        if resolved_mode == "diagnostic_full_replay":
+            data["diagnostic_full_replay"] = True
+            data["preselected_only"] = False
+        elif resolved_mode in {
+            "conservative_hard_only",
+            "strict_fail_closed",
+        }:
+            data["diagnostic_full_replay"] = False
+            data["preselected_only"] = True
+        data["b1_5_policy_mode"] = resolved_mode
+        return data
+
     @model_validator(mode="after")
     def validate_modes(self) -> "StrategyLadderRequest":
         if self.fast_only and self.detailed_only:
             raise ValueError("StrategyLadderRequest cannot combine fast_only and detailed_only")
+        if self.preselected_only and self.diagnostic_full_replay:
+            raise ValueError(
+                "StrategyLadderRequest cannot enable preselected_only and diagnostic_full_replay simultaneously"
+            )
         if self.ml_mode not in {
             "ML_MODE_OFF",
             "ML_MODE_OVERLAY_FROZEN",
@@ -131,6 +195,24 @@ class StrategyLadderRequest(BaseModel, frozen=True):
             self.frozen_ml_artifact_path is None or not self.frozen_ml_artifact_hash
         ):
             raise ValueError("StrategyLadderRequest ML_MODE_OVERLAY_FROZEN requires artifact path and hash")
+        if self.b1_5_policy_mode not in {
+            "conservative_hard_only",
+            "strict_fail_closed",
+            "diagnostic_full_replay",
+        }:
+            raise ValueError(
+                f"StrategyLadderRequest unsupported b1_5_policy_mode: {self.b1_5_policy_mode}"
+            )
+        covered_days = _backtest_days_covered(self.start, self.end)
+        if (
+            self.ml_mode == "ML_MODE_OVERLAY_FROZEN"
+            and covered_days is not None
+            and covered_days > self.ml_artifact_freshness_days
+            and self.rolling_ml_window_plan_path is None
+        ):
+            raise ValueError(
+                "StrategyLadderRequest ML_MODE_OVERLAY_FROZEN long backtests require rolling_ml_window_plan_path"
+            )
         return self
 
     @property
@@ -402,6 +484,20 @@ class StrategyLadderCandidateSummary(BaseModel, frozen=True):
     candidate_discovery_limit_reason: str = ""
     candidate_discovery_mode: str = "SAMPLE_CAPPED_DEBUG"
     candidate_discovery_cap_status: str = "CANDIDATE_DISCOVERY_LIMIT_NOT_PROVEN"
+    preselection_status: str = "ENGINE_NATIVE_PRESELECTION_NOT_PROVEN"
+    replay_input_mode_status: str = "PRESELECTED_ONLY"
+    preselected_only: bool = True
+    diagnostic_full_replay: bool = False
+    b1_5_policy_mode: str = "conservative_hard_only"
+    discovery_pre_candidate_count: int = Field(default=0, ge=0)
+    engine_native_preselected_count: int = Field(default=0, ge=0)
+    preselection_hard_rejected_count: int = Field(default=0, ge=0)
+    preselection_soft_flagged_count: int = Field(default=0, ge=0)
+    preselection_passed_count: int = Field(default=0, ge=0)
+    b2_replay_candidate_count: int = Field(default=0, ge=0)
+    trade_eligible_candidate_count: int = Field(default=0, ge=0)
+    preselection_rejection_count: int = Field(default=0, ge=0)
+    replay_savings_estimate_count: int = Field(default=0, ge=0)
     artifact_hash: str | None = None
     input_data_hash: str | None = None
     created_at: datetime | None = None
@@ -467,6 +563,18 @@ class StrategyLadderBucketReplayResult(BaseModel, frozen=True):
     cost_parity_status: str = "REPLAY_LIVE_COST_PARITY_NOT_PROVEN"
     book_depth_source_status: str = "BOOK_DEPTH_NOT_PROVEN"
     impact_depth_readiness_status: str = "BOOK_DEPTH_NOT_PROVEN"
+    replay_outcome_status: str = "REPLAY_OUTCOME_NOT_PROVEN"
+    entry_reference_status: str = "ENTRY_REFERENCE_NOT_AVAILABLE"
+    mfe_mae_status: str = "MFE_MAE_NOT_AVAILABLE"
+    holding_time_ms: int | None = Field(default=None, ge=0)
+    forward_return_h1: float | None = None
+    forward_return_h5: float | None = None
+    forward_return_h10: float | None = None
+    mfe_bps: float | None = None
+    mae_bps: float | None = None
+    entry_ref: dict[str, object] = Field(default_factory=dict)
+    exit_ref: dict[str, object] = Field(default_factory=dict)
+    invalidation_ref: dict[str, object] = Field(default_factory=dict)
     reason_codes: tuple[str, ...] = ()
     planned_notional: float | None = Field(default=None, ge=0.0)
     min_notional: float | None = Field(default=None, ge=0.0)
@@ -478,6 +586,52 @@ class StrategyLadderBucketReplayResult(BaseModel, frozen=True):
     artifact_hash: str | None = None
     dtr_record: dict[str, object] = Field(default_factory=dict)
     parity_payload: dict[str, object] = Field(default_factory=dict)
+    shared_payload_ref: str = ""
+
+
+class StrategyLadderSharedReplayPayload(BaseModel, frozen=True):
+    """Per-candidate payload shared across all capital-bucket replay artifacts."""
+
+    schema_version: str = Field(default="v1", min_length=1)
+    candidate_id: str = Field(..., min_length=1)
+    pair: str = Field(..., min_length=1)
+    engine_id: str = Field(..., min_length=1)
+    strategy_id: str = Field(..., min_length=1)
+    timestamp_ms: int = Field(..., ge=0)
+    window_start_ms: int | None = Field(default=None, ge=0)
+    window_end_ms: int | None = Field(default=None, ge=0)
+    raw_trade_path: str = ""
+    raw_book_path: str = ""
+    raw_book_delta_path: str = ""
+    raw_ohlcv_path: str = ""
+    raw_metadata_path: str = ""
+    raw_sources_used: tuple[str, ...] = ()
+    book_depth_levels_available: int | None = Field(default=None, ge=0)
+    book_depth_source_status: str = "BOOK_DEPTH_NOT_PROVEN"
+    source_coverage_status: str = "SOURCE_COVERAGE_NOT_PROVEN"
+    shared_parity_payload: dict[str, object] = Field(default_factory=dict)
+    input_data_hash: str | None = None
+    method_version_hash: str | None = None
+    artifact_hash: str | None = None
+
+
+class StrategyLadderBucketReplaySummary(BaseModel, frozen=True):
+    """Compact candidate-wrapper projection of one bucket result."""
+
+    candidate_id: str = Field(..., min_length=1)
+    capital_bucket: int = Field(..., ge=0)
+    execution_state: str = "evaluated"
+    expected_ce_net: float = 0.0
+    executed_only_net_return: float | None = None
+    executed_only_net_return_status: str = "EXECUTED_NET_RETURN_NOT_PROVEN"
+    planned_notional: float | None = Field(default=None, ge=0.0)
+    min_notional_viable: bool | None = None
+    book_depth_source_status: str = "BOOK_DEPTH_NOT_PROVEN"
+    fill_realism_status: str = "FILL_REALISM_NOT_PROVEN"
+    cost_parity_status: str = "REPLAY_LIVE_COST_PARITY_NOT_PROVEN"
+    replay_outcome_status: str = "REPLAY_OUTCOME_NOT_PROVEN"
+    reason_codes: tuple[str, ...] = ()
+    artifact_hash: str | None = None
 
 
 class StrategyLadderDetailedReplayArtifact(BaseModel, frozen=True):
@@ -491,7 +645,9 @@ class StrategyLadderDetailedReplayArtifact(BaseModel, frozen=True):
     timestamp_ms: int = Field(..., ge=0)
     detailed_replay_status: str = "DETAILED_REPLAY_NOT_PROVEN"
     bucket_results: tuple[StrategyLadderBucketReplayResult, ...] = ()
+    bucket_result_summary: tuple[StrategyLadderBucketReplaySummary, ...] = ()
     bucket_result_refs: tuple[str, ...] = ()
+    shared_payload_ref: str = ""
     input_data_hash: str | None = None
     method_version_hash: str | None = None
     artifact_hash: str | None = None
@@ -553,11 +709,25 @@ class StrategyLadderRunManifest(BaseModel, frozen=True):
     candidate_discovery_limit_reason: str = ""
     candidate_discovery_mode: str = "SAMPLE_CAPPED_DEBUG"
     candidate_discovery_cap_status: str = "CANDIDATE_DISCOVERY_LIMIT_NOT_PROVEN"
+    preselection_status: str = "ENGINE_NATIVE_PRESELECTION_NOT_PROVEN"
+    replay_input_mode_status: str = "PRESELECTED_ONLY"
+    preselected_only: bool = True
+    diagnostic_full_replay: bool = False
+    b1_5_policy_mode: str = "conservative_hard_only"
     candidate_count: int = Field(default=0, ge=0)
     unique_candidate_count: int = Field(default=0, ge=0)
     base_event_count: int = Field(default=0, ge=0)
     per_engine_candidate_count: int | None = Field(default=None, ge=0)
     engine_native_candidate_count: int = Field(default=0, ge=0)
+    discovery_pre_candidate_count: int = Field(default=0, ge=0)
+    engine_native_preselected_count: int = Field(default=0, ge=0)
+    preselection_hard_rejected_count: int = Field(default=0, ge=0)
+    preselection_soft_flagged_count: int = Field(default=0, ge=0)
+    preselection_passed_count: int = Field(default=0, ge=0)
+    b2_replay_candidate_count: int = Field(default=0, ge=0)
+    trade_eligible_candidate_count: int = Field(default=0, ge=0)
+    preselection_rejection_count: int = Field(default=0, ge=0)
+    replay_savings_estimate_count: int = Field(default=0, ge=0)
     replay_record_count: int = Field(default=0, ge=0)
     evaluation_record_count: int = Field(default=0, ge=0)
     promotion_record_count: int = Field(default=0, ge=0)
@@ -677,11 +847,25 @@ class StrategyLadderReportSummary(BaseModel, frozen=True):
     candidate_discovery_limit_reason: str = ""
     candidate_discovery_mode: str = "SAMPLE_CAPPED_DEBUG"
     candidate_discovery_cap_status: str = "CANDIDATE_DISCOVERY_LIMIT_NOT_PROVEN"
+    preselection_status: str = "ENGINE_NATIVE_PRESELECTION_NOT_PROVEN"
+    replay_input_mode_status: str = "PRESELECTED_ONLY"
+    preselected_only: bool = True
+    diagnostic_full_replay: bool = False
+    b1_5_policy_mode: str = "conservative_hard_only"
     candidate_count: int = Field(default=0, ge=0)
     unique_candidate_count: int = Field(default=0, ge=0)
     base_event_count: int = Field(default=0, ge=0)
     per_engine_candidate_count: int | None = Field(default=None, ge=0)
     engine_native_candidate_count: int = Field(default=0, ge=0)
+    discovery_pre_candidate_count: int = Field(default=0, ge=0)
+    engine_native_preselected_count: int = Field(default=0, ge=0)
+    preselection_hard_rejected_count: int = Field(default=0, ge=0)
+    preselection_soft_flagged_count: int = Field(default=0, ge=0)
+    preselection_passed_count: int = Field(default=0, ge=0)
+    b2_replay_candidate_count: int = Field(default=0, ge=0)
+    trade_eligible_candidate_count: int = Field(default=0, ge=0)
+    preselection_rejection_count: int = Field(default=0, ge=0)
+    replay_savings_estimate_count: int = Field(default=0, ge=0)
     replay_record_count: int = Field(default=0, ge=0)
     evaluation_record_count: int = Field(default=0, ge=0)
     promotion_record_count: int = Field(default=0, ge=0)

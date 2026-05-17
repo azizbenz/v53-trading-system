@@ -78,7 +78,7 @@ def _packaged_artifact_refs(
     prediction: float,
     feature_names: tuple[str, ...] = ("momentum", "flow"),
     stale_after: datetime | None = None,
-) -> tuple[Path, Path, tuple[str, str]]:
+) -> tuple[Path, Path, tuple[str, ...]]:
     export_dir = _scratch_dir(f"{label}_export")
     source_dir = _scratch_dir(f"{label}_source")
     source_path = source_dir / "ml_model_artifact.json"
@@ -98,6 +98,7 @@ def _packaged_artifact_refs(
         (
             transport_package.transport_artifact_ref,
             transport_package.summary_ref,
+            transport_package.source_summary_ref,
         ),
     )
 
@@ -122,7 +123,7 @@ def _hook_input(*, supplementary_refs: tuple[str, ...], feature_values: dict[str
     )
 
 
-def test_ml_scoring_soft_penalty_hook_applies_exact_multiplier_delta(
+def test_ml_scoring_soft_penalty_hook_high_confidence_is_neutral_not_positive(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -145,9 +146,69 @@ def test_ml_scoring_soft_penalty_hook_applies_exact_multiplier_delta(
             )
         )
 
-        assert outcome.raw_score_multiplier_delta == pytest.approx(0.12)
+        assert outcome.raw_score_multiplier_delta == pytest.approx(0.0)
         assert outcome.raw_score_add == pytest.approx(0.0)
         assert outcome.raw_score_cap is None
+        assert outcome.reason_codes[-1] == "ML_SCORE_MODULATION_ACTIVE"
+    finally:
+        shutil.rmtree(export_dir, ignore_errors=True)
+        shutil.rmtree(source_dir, ignore_errors=True)
+
+
+def test_ml_scoring_soft_penalty_hook_neutral_confidence_stays_neutral(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "complete_enablers.ml_confidence_enabler._load_lightgbm_module",
+        lambda: _fake_lightgbm_module(),
+    )
+    export_dir, source_dir, supplementary_refs = _packaged_artifact_refs(
+        label="neutral",
+        prediction=0.5,
+    )
+    hook = MlScoringSoftPenaltyHook(
+        config=MlScoringSoftPenaltyHookConfig(alpha=0.3),
+    )
+
+    try:
+        outcome = hook(
+            _hook_input(
+                supplementary_refs=supplementary_refs,
+                feature_values={"momentum": 1.0, "flow": 0.5},
+            )
+        )
+
+        assert outcome.raw_score_multiplier_delta == pytest.approx(0.0)
+        assert outcome.reason_codes[-1] == "ML_SCORE_MODULATION_ACTIVE"
+    finally:
+        shutil.rmtree(export_dir, ignore_errors=True)
+        shutil.rmtree(source_dir, ignore_errors=True)
+
+
+def test_ml_scoring_soft_penalty_hook_low_confidence_reduces_score(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "complete_enablers.ml_confidence_enabler._load_lightgbm_module",
+        lambda: _fake_lightgbm_module(),
+    )
+    export_dir, source_dir, supplementary_refs = _packaged_artifact_refs(
+        label="low_confidence",
+        prediction=0.1,
+    )
+    hook = MlScoringSoftPenaltyHook(
+        config=MlScoringSoftPenaltyHookConfig(alpha=0.3),
+    )
+
+    try:
+        outcome = hook(
+            _hook_input(
+                supplementary_refs=supplementary_refs,
+                feature_values={"momentum": 1.0, "flow": 0.5},
+            )
+        )
+
+        assert outcome.raw_score_multiplier_delta == pytest.approx(-0.12)
         assert outcome.reason_codes[-1] == "ML_SCORE_MODULATION_ACTIVE"
     finally:
         shutil.rmtree(export_dir, ignore_errors=True)
@@ -167,7 +228,7 @@ def test_ml_scoring_soft_penalty_hook_degrades_to_neutral_without_artifact() -> 
     assert outcome.raw_score_multiplier_delta == pytest.approx(0.0)
     assert outcome.raw_score_add == pytest.approx(0.0)
     assert outcome.raw_score_cap is None
-    assert outcome.reason_codes[0] == "ML_RUNTIME_ARTIFACT_MISSING_SUPPLEMENTARY_REFS"
+    assert outcome.reason_codes[0] == "ML_REFS_MISSING_NEUTRAL"
 
 
 def test_ml_scoring_soft_penalty_hook_degrades_to_neutral_on_feature_schema_mismatch(
@@ -199,3 +260,26 @@ def test_ml_scoring_soft_penalty_hook_degrades_to_neutral_on_feature_schema_mism
     finally:
         shutil.rmtree(export_dir, ignore_errors=True)
         shutil.rmtree(source_dir, ignore_errors=True)
+
+
+def test_ml_scoring_soft_penalty_hook_rejects_directional_refs() -> None:
+    scratch = _scratch_dir("directional_ref_forbidden")
+    forbidden_ref = scratch / "directional_ref.json"
+    forbidden_ref.write_text(
+        json.dumps({"direct_trade_decision": "buy"}, indent=2),
+        encoding="utf-8",
+    )
+    hook = MlScoringSoftPenaltyHook()
+
+    try:
+        outcome = hook(
+            _hook_input(
+                supplementary_refs=(str(forbidden_ref),),
+                feature_values={"momentum": 1.0, "flow": 0.5},
+            )
+        )
+
+        assert outcome.raw_score_multiplier_delta == pytest.approx(0.0)
+        assert outcome.reason_codes[0] == "ML_DIRECTIONAL_REF_FORBIDDEN"
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)

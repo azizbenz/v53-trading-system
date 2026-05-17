@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from time import perf_counter
 from pathlib import Path
 
 from interface_contracts.atomic_io import atomic_write_json
@@ -16,11 +17,19 @@ from local_replay_runtime.replay_execution_contracts import (
 from local_replay_runtime.replay_execution_runtime import (
     evaluate_replay_execution,
 )
+from local_replay_runtime.strategy_ladder_replay_evidence import (
+    StrategyLadderReplayEvidenceCache,
+    build_measured_spread_payload,
+    build_replay_outcome_payload,
+    build_strategy_ladder_replay_evidence,
+)
 from local_replay_runtime.strategy_ladder_models import (
+    StrategyLadderBucketReplaySummary,
     StrategyLadderBucketReplayResult,
     StrategyLadderCandidateEvent,
     StrategyLadderDetailedReplayArtifact,
     StrategyLadderRawWindowManifest,
+    StrategyLadderSharedReplayPayload,
     deterministic_payload_hash,
 )
 from meta_minimal.dtr_core.decision_state_encoder import DecisionState
@@ -32,6 +41,31 @@ from portfolio_minimal.allocation_router.capital_viability import (
 
 
 _EXECUTED_STATES = {DecisionState.EXECUTED, DecisionState.REDUCED}
+_SHARED_PARITY_KEYS = (
+    "build14_shadow_activation_status",
+    "build14_shadow_observation",
+    "build14_shadow_report",
+    "build14_shadow_applied_fields",
+    "build14_shadow_adjustment_factors",
+    "build14_shadow_reason_codes",
+    "measured_spread_report",
+    "measured_spread_bps",
+    "replay_outcome_report",
+)
+
+
+@dataclass(frozen=True)
+class StrategyLadderDetailedReplayPerformanceMetrics:
+    shared_payload_build_seconds: float = 0.0
+    engine_dataset_build_seconds: float = 0.0
+    evaluate_replay_execution_seconds: float = 0.0
+    replay_evidence_seconds: float = 0.0
+    by_bucket_write_seconds: float = 0.0
+    candidate_wrapper_write_seconds: float = 0.0
+    cache_hits_book_state: int = 0
+    cache_misses_book_state: int = 0
+    cache_hits_ohlcv: int = 0
+    cache_misses_ohlcv: int = 0
 
 
 @dataclass(frozen=True)
@@ -40,6 +74,9 @@ class StrategyLadderDetailedReplayStageResult:
     candidate_artifacts: tuple[StrategyLadderDetailedReplayArtifact, ...]
     bucket_results_by_bucket: dict[int, tuple[StrategyLadderBucketReplayResult, ...]]
     bucket_dtr_records: dict[int, tuple[DTRRecord, ...]]
+    performance_metrics: StrategyLadderDetailedReplayPerformanceMetrics = (
+        StrategyLadderDetailedReplayPerformanceMetrics()
+    )
 
 
 def _coalesce_numeric(payload: dict[str, object], key: str, default: float) -> float:
@@ -207,6 +244,129 @@ def _executed_return_for_record(record: DTRRecord) -> tuple[float | None, str]:
     return round(record.gross_return - record.realized_cost, 6), "EXECUTED_NET_RETURN_NOT_PROVEN"
 
 
+def _shared_payload_dir(output_dir: Path) -> Path:
+    return output_dir / "shared"
+
+
+def _shared_payload_path(output_dir: Path, candidate_id: str) -> Path:
+    return _shared_payload_dir(output_dir) / f"{candidate_id}.json"
+
+
+def _shared_payload_path_from_ref(ref: str) -> Path | None:
+    if not ref:
+        return None
+    try:
+        return Path(ref)
+    except OSError:
+        return None
+
+
+def _strip_shared_parity_payload(
+    parity_payload: dict[str, object],
+) -> tuple[dict[str, object], dict[str, object]]:
+    shared: dict[str, object] = {}
+    bucket_specific: dict[str, object] = {}
+    for key, value in parity_payload.items():
+        if key in _SHARED_PARITY_KEYS:
+            shared[key] = value
+        else:
+            bucket_specific[key] = value
+    return shared, bucket_specific
+
+
+def _bucket_result_summary(
+    result: StrategyLadderBucketReplayResult,
+) -> StrategyLadderBucketReplaySummary:
+    return StrategyLadderBucketReplaySummary(
+        candidate_id=result.candidate_id,
+        capital_bucket=result.capital_bucket,
+        execution_state=result.execution_state,
+        expected_ce_net=result.expected_ce_net,
+        executed_only_net_return=result.executed_only_net_return,
+        executed_only_net_return_status=result.executed_only_net_return_status,
+        planned_notional=result.planned_notional,
+        min_notional_viable=result.min_notional_viable,
+        book_depth_source_status=result.book_depth_source_status,
+        fill_realism_status=result.fill_realism_status,
+        cost_parity_status=result.cost_parity_status,
+        replay_outcome_status=result.replay_outcome_status,
+        reason_codes=result.reason_codes,
+        artifact_hash=result.artifact_hash,
+    )
+
+
+def load_strategy_ladder_shared_replay_payload(
+    path: Path,
+) -> StrategyLadderSharedReplayPayload:
+    return StrategyLadderSharedReplayPayload.model_validate_json(
+        path.read_text(encoding="utf-8-sig")
+    )
+
+
+def load_strategy_ladder_bucket_replay_result(
+    path: Path,
+    *,
+    shared_payload_cache: dict[str, StrategyLadderSharedReplayPayload] | None = None,
+) -> StrategyLadderBucketReplayResult:
+    result = StrategyLadderBucketReplayResult.model_validate_json(
+        path.read_text(encoding="utf-8-sig")
+    )
+    shared_ref = result.shared_payload_ref
+    shared_path = _shared_payload_path_from_ref(shared_ref)
+    if shared_path is None or not shared_path.is_file():
+        return result
+    cache = shared_payload_cache if shared_payload_cache is not None else {}
+    cache_key = str(shared_path.resolve())
+    shared_payload = cache.get(cache_key)
+    if shared_payload is None:
+        shared_payload = load_strategy_ladder_shared_replay_payload(shared_path)
+        cache[cache_key] = shared_payload
+    merged_parity = dict(shared_payload.shared_parity_payload)
+    merged_parity.update(result.parity_payload)
+    return result.model_copy(update={"parity_payload": merged_parity})
+
+
+def load_strategy_ladder_detailed_replay_artifact(
+    path: Path,
+    *,
+    shared_payload_cache: dict[str, StrategyLadderSharedReplayPayload] | None = None,
+) -> StrategyLadderDetailedReplayArtifact:
+    artifact = StrategyLadderDetailedReplayArtifact.model_validate_json(
+        path.read_text(encoding="utf-8-sig")
+    )
+    hydrated_results: list[StrategyLadderBucketReplayResult] = []
+    if artifact.bucket_results:
+        for result in artifact.bucket_results:
+            shared_ref = result.shared_payload_ref or artifact.shared_payload_ref
+            if not shared_ref:
+                hydrated_results.append(result)
+                continue
+            shared_path = _shared_payload_path_from_ref(shared_ref)
+            if shared_path is None or not shared_path.is_file():
+                hydrated_results.append(result)
+                continue
+            cache = shared_payload_cache if shared_payload_cache is not None else {}
+            cache_key = str(shared_path.resolve())
+            shared_payload = cache.get(cache_key)
+            if shared_payload is None:
+                shared_payload = load_strategy_ladder_shared_replay_payload(shared_path)
+                cache[cache_key] = shared_payload
+            merged_parity = dict(shared_payload.shared_parity_payload)
+            merged_parity.update(result.parity_payload)
+            hydrated_results.append(result.model_copy(update={"parity_payload": merged_parity}))
+    elif artifact.bucket_result_refs:
+        for ref in artifact.bucket_result_refs:
+            hydrated_results.append(
+                load_strategy_ladder_bucket_replay_result(
+                    Path(ref),
+                    shared_payload_cache=shared_payload_cache,
+                )
+            )
+    if not hydrated_results:
+        return artifact
+    return artifact.model_copy(update={"bucket_results": tuple(hydrated_results)})
+
+
 def run_strategy_ladder_detailed_replay(
     output_dir: Path,
     *,
@@ -235,13 +395,122 @@ def run_strategy_ladder_detailed_replay(
             candidate_artifacts=(),
             bucket_results_by_bucket={bucket: () for bucket in capital_buckets},
             bucket_dtr_records={bucket: () for bucket in capital_buckets},
+            performance_metrics=StrategyLadderDetailedReplayPerformanceMetrics(),
         )
+
+    shared_payload_root = _shared_payload_dir(output_dir)
+    shared_payload_root.mkdir(parents=True, exist_ok=True)
+    shared_payload_build_seconds = 0.0
+    engine_dataset_build_seconds = 0.0
+    evaluate_replay_execution_seconds = 0.0
+    replay_evidence_seconds = 0.0
+    by_bucket_write_seconds = 0.0
+    candidate_wrapper_write_seconds = 0.0
+    cache_hits_book_state = 0
+    cache_misses_book_state = 0
+    cache_hits_ohlcv = 0
+    cache_misses_ohlcv = 0
 
     for candidate in candidate_events:
         window_manifest = window_by_candidate.get(candidate.candidate_id)
         bucket_results: list[StrategyLadderBucketReplayResult] = []
         bucket_refs: list[str] = []
+        evidence_cache = StrategyLadderReplayEvidenceCache()
+        candidate_payload = dict(candidate.compatibility_payload or {})
+        shared_payload_ref = str(
+            _shared_payload_path(output_dir, candidate.candidate_id).resolve()
+        )
+        shared_payload_started = perf_counter()
+        shared_measured_spread = build_measured_spread_payload(
+            window_manifest=window_manifest,
+            decision_timestamp_ms=candidate.resolved_timestamp_ms,
+            evidence_cache=evidence_cache,
+        )
+        shared_replay_outcome = build_replay_outcome_payload(
+            candidate=candidate,
+            window_manifest=window_manifest,
+            decision_timestamp_ms=candidate.resolved_timestamp_ms,
+            evidence_cache=evidence_cache,
+        )
+        shared_parity_payload = {
+            key: candidate_payload[key]
+            for key in _SHARED_PARITY_KEYS
+            if key in candidate_payload
+        }
+        shared_parity_payload["measured_spread_report"] = shared_measured_spread
+        shared_parity_payload["replay_outcome_report"] = shared_replay_outcome
+        if shared_measured_spread.get("spread_bps") is not None:
+            shared_parity_payload["measured_spread_bps"] = shared_measured_spread.get(
+                "spread_bps"
+            )
+        shared_payload = StrategyLadderSharedReplayPayload(
+            candidate_id=candidate.candidate_id,
+            pair=candidate.pair,
+            engine_id=candidate.engine_id,
+            strategy_id=candidate.strategy_id,
+            timestamp_ms=candidate.resolved_timestamp_ms,
+            window_start_ms=(
+                window_manifest.window_start_ms if window_manifest is not None else None
+            ),
+            window_end_ms=(
+                window_manifest.window_end_ms if window_manifest is not None else None
+            ),
+            raw_trade_path=(
+                window_manifest.raw_trade_path if window_manifest is not None else ""
+            )
+            or "",
+            raw_book_path=(
+                window_manifest.raw_book_path if window_manifest is not None else ""
+            )
+            or "",
+            raw_book_delta_path=(
+                window_manifest.raw_book_delta_path if window_manifest is not None else ""
+            )
+            or "",
+            raw_ohlcv_path=(
+                window_manifest.raw_ohlcv_path if window_manifest is not None else ""
+            )
+            or "",
+            raw_metadata_path=(
+                window_manifest.raw_metadata_path if window_manifest is not None else ""
+            )
+            or "",
+            raw_sources_used=(
+                window_manifest.raw_sources_used if window_manifest is not None else ()
+            ),
+            book_depth_levels_available=(
+                window_manifest.book_depth_levels_available
+                if window_manifest is not None
+                else None
+            ),
+            book_depth_source_status=(
+                window_manifest.book_depth_source_status
+                if window_manifest is not None
+                else "BOOK_DEPTH_NOT_PROVEN"
+            ),
+            source_coverage_status=(
+                window_manifest.source_coverage_status
+                if window_manifest is not None
+                else "SOURCE_COVERAGE_NOT_PROVEN"
+            ),
+            shared_parity_payload=shared_parity_payload,
+            input_data_hash=candidate.input_data_hash,
+            method_version_hash=candidate.method_version_hash,
+        )
+        shared_payload = shared_payload.model_copy(
+            update={
+                "artifact_hash": deterministic_payload_hash(
+                    shared_payload.model_dump(mode="json")
+                )
+            }
+        )
+        atomic_write_json(
+            Path(shared_payload_ref),
+            shared_payload.model_dump(mode="json"),
+        )
+        shared_payload_build_seconds += perf_counter() - shared_payload_started
         for capital_bucket in capital_buckets:
+            dataset_started = perf_counter()
             row, min_notional_assessment, planned_notional = _row_from_candidate(
                 candidate=candidate,
                 capital_bucket=capital_bucket,
@@ -257,6 +526,8 @@ def run_strategy_ladder_detailed_replay(
                 records=(row,),
                 source="strategy_ladder_detailed_replay",
             )
+            engine_dataset_build_seconds += perf_counter() - dataset_started
+            evaluate_started = perf_counter()
             execution_evaluation = evaluate_replay_execution(
                 ReplayExecutionEvaluationRequest(
                     dataset=dataset,
@@ -268,19 +539,9 @@ def run_strategy_ladder_detailed_replay(
                     ),
                 )
             )
+            evaluate_replay_execution_seconds += perf_counter() - evaluate_started
             dtr_record = execution_evaluation.dtr_records[0]
             parity_payload = execution_evaluation.parity_diagnostics_payload
-            build14_payload = candidate.compatibility_payload or {}
-            for key in (
-                "build14_shadow_activation_status",
-                "build14_shadow_observation",
-                "build14_shadow_report",
-                "build14_shadow_applied_fields",
-                "build14_shadow_adjustment_factors",
-                "build14_shadow_reason_codes",
-            ):
-                if key in build14_payload:
-                    parity_payload[key] = build14_payload[key]
             executed_only_net_return, executed_return_status = _executed_return_for_record(
                 dtr_record
             )
@@ -291,14 +552,40 @@ def run_strategy_ladder_detailed_replay(
                 if window_manifest is not None
                 else str(parity_payload.get("book_depth_source_status") or "BOOK_DEPTH_NOT_PROVEN")
             )
-            result = StrategyLadderBucketReplayResult(
+            execution_state = dtr_record.decision_state.value
+            replay_evidence_started = perf_counter()
+            replay_evidence = build_strategy_ladder_replay_evidence(
+                candidate=candidate,
+                window_manifest=window_manifest,
+                planned_notional=planned_notional,
+                execution_state=execution_state,
+                evidence_cache=evidence_cache,
+            )
+            parity_payload["measured_slippage_report"] = replay_evidence.measured_slippage
+            parity_payload["adverse_selection_report"] = replay_evidence.adverse_selection
+            parity_payload["fill_realism_report"] = replay_evidence.fill_realism
+            if replay_evidence.measured_slippage.get("walk_cost_bps") is not None:
+                parity_payload["measured_slippage_bps"] = replay_evidence.measured_slippage.get(
+                    "walk_cost_bps"
+                )
+            if replay_evidence.adverse_selection.get("adverse_selection_bps") is not None:
+                parity_payload["adverse_selection_bps"] = replay_evidence.adverse_selection.get(
+                    "adverse_selection_bps"
+                )
+            replay_evidence_seconds += perf_counter() - replay_evidence_started
+            full_parity_payload = dict(shared_parity_payload)
+            full_parity_payload.update(parity_payload)
+            _shared_overlay, bucket_specific_parity_payload = _strip_shared_parity_payload(
+                full_parity_payload
+            )
+            persisted_result = StrategyLadderBucketReplayResult(
                 candidate_id=candidate.candidate_id,
                 pair=candidate.pair,
                 engine_id=candidate.engine_id,
                 strategy_id=candidate.strategy_id,
                 capital_bucket=capital_bucket,
                 timestamp_ms=candidate.resolved_timestamp_ms,
-                execution_state=dtr_record.decision_state.value,
+                execution_state=execution_state,
                 executed_notional=(
                     planned_notional
                     if dtr_record.decision_state == DecisionState.EXECUTED
@@ -326,6 +613,7 @@ def run_strategy_ladder_detailed_replay(
                 fill_realism_status=str(
                     (candidate.compatibility_payload or {}).get("fill_realism_status")
                     or parity_payload.get("fill_realism_status")
+                    or replay_evidence.fill_realism.get("status")
                     or "FILL_REALISM_NOT_PROVEN"
                 ),
                 cost_parity_status=str(
@@ -338,6 +626,57 @@ def run_strategy_ladder_detailed_replay(
                     parity_payload.get("impact_depth_readiness_status")
                     or book_status
                 ),
+                replay_outcome_status=str(
+                    replay_evidence.replay_outcome.get("status")
+                    or "REPLAY_OUTCOME_NOT_PROVEN"
+                ),
+                entry_reference_status=str(
+                    replay_evidence.replay_outcome.get("entry_reference_status")
+                    or "ENTRY_REFERENCE_NOT_AVAILABLE"
+                ),
+                mfe_mae_status=str(
+                    replay_evidence.replay_outcome.get("mfe_mae_status")
+                    or "MFE_MAE_NOT_AVAILABLE"
+                ),
+                holding_time_ms=(
+                    int(replay_evidence.replay_outcome["holding_time_ms"])
+                    if replay_evidence.replay_outcome.get("holding_time_ms") is not None
+                    else None
+                ),
+                forward_return_h1=(
+                    float(replay_evidence.replay_outcome["forward_return_h1"])
+                    if replay_evidence.replay_outcome.get("forward_return_h1") is not None
+                    else None
+                ),
+                forward_return_h5=(
+                    float(replay_evidence.replay_outcome["forward_return_h5"])
+                    if replay_evidence.replay_outcome.get("forward_return_h5") is not None
+                    else None
+                ),
+                forward_return_h10=(
+                    float(replay_evidence.replay_outcome["forward_return_h10"])
+                    if replay_evidence.replay_outcome.get("forward_return_h10") is not None
+                    else None
+                ),
+                mfe_bps=(
+                    float(replay_evidence.replay_outcome["mfe_bps"])
+                    if replay_evidence.replay_outcome.get("mfe_bps") is not None
+                    else None
+                ),
+                mae_bps=(
+                    float(replay_evidence.replay_outcome["mae_bps"])
+                    if replay_evidence.replay_outcome.get("mae_bps") is not None
+                    else None
+                ),
+                entry_ref=(
+                    dict(replay_evidence.replay_outcome.get("entry_ref") or {})
+                ),
+                exit_ref=(
+                    dict(replay_evidence.replay_outcome.get("exit_ref") or {})
+                ),
+                invalidation_ref=(
+                    dict(replay_evidence.replay_outcome.get("invalidation_ref") or {})
+                ),
                 reason_codes=tuple(
                     dict.fromkeys(
                         (
@@ -346,7 +685,7 @@ def run_strategy_ladder_detailed_replay(
                             *tuple(
                                 str(code)
                                 for code in (
-                                    build14_payload.get("build14_shadow_reason_codes") or ()
+                                    candidate_payload.get("build14_shadow_reason_codes") or ()
                                 )
                             ),
                         )
@@ -367,20 +706,35 @@ def run_strategy_ladder_detailed_replay(
                 input_data_hash=candidate.input_data_hash,
                 method_version_hash=candidate.method_version_hash,
                 dtr_record=dtr_record.model_dump(mode="json"),
-                parity_payload=parity_payload,
+                parity_payload=bucket_specific_parity_payload,
+                shared_payload_ref=shared_payload_ref,
             )
-            result = result.model_copy(
-                update={"artifact_hash": deterministic_payload_hash(result.model_dump(mode="json"))}
+            persisted_result = persisted_result.model_copy(
+                update={
+                    "artifact_hash": deterministic_payload_hash(
+                        persisted_result.model_dump(mode="json")
+                    )
+                }
+            )
+            result = persisted_result.model_copy(
+                update={"parity_payload": full_parity_payload}
             )
             bucket_dir = output_dir / "by_bucket" / str(capital_bucket)
             bucket_dir.mkdir(parents=True, exist_ok=True)
             bucket_path = bucket_dir / f"{candidate.candidate_id}.json"
-            atomic_write_json(bucket_path, result.model_dump(mode="json"))
+            write_started = perf_counter()
+            atomic_write_json(bucket_path, persisted_result.model_dump(mode="json"))
+            by_bucket_write_seconds += perf_counter() - write_started
             bucket_results.append(result)
             bucket_refs.append(str(bucket_path.resolve()))
             bucket_results_by_bucket[capital_bucket].append(result)
             bucket_dtr_records[capital_bucket].append(dtr_record)
 
+        cache_metrics = evidence_cache.metrics_snapshot()
+        cache_hits_book_state += cache_metrics.cache_hits_book_state
+        cache_misses_book_state += cache_metrics.cache_misses_book_state
+        cache_hits_ohlcv += cache_metrics.cache_hits_ohlcv
+        cache_misses_ohlcv += cache_metrics.cache_misses_ohlcv
         candidate_status = (
             "DETAILED_REPLAY_READY"
             if all(
@@ -396,18 +750,24 @@ def run_strategy_ladder_detailed_replay(
             strategy_id=candidate.strategy_id,
             timestamp_ms=candidate.resolved_timestamp_ms,
             detailed_replay_status=candidate_status,
-            bucket_results=tuple(bucket_results),
+            bucket_results=(),
+            bucket_result_summary=tuple(
+                _bucket_result_summary(item) for item in bucket_results
+            ),
             bucket_result_refs=tuple(bucket_refs),
+            shared_payload_ref=shared_payload_ref,
             input_data_hash=candidate.input_data_hash,
             method_version_hash=candidate.method_version_hash,
         )
         artifact = artifact.model_copy(
             update={"artifact_hash": deterministic_payload_hash(artifact.model_dump(mode="json"))}
         )
+        candidate_wrapper_started = perf_counter()
         atomic_write_json(
             output_dir / f"{candidate.candidate_id}.json",
             artifact.model_dump(mode="json"),
         )
+        candidate_wrapper_write_seconds += perf_counter() - candidate_wrapper_started
         candidate_artifacts.append(artifact)
 
     overall_status = "DETAILED_REPLAY_READY"
@@ -429,10 +789,32 @@ def run_strategy_ladder_detailed_replay(
             bucket: tuple(items)
             for bucket, items in bucket_dtr_records.items()
         },
+        performance_metrics=StrategyLadderDetailedReplayPerformanceMetrics(
+            shared_payload_build_seconds=round(shared_payload_build_seconds, 6),
+            engine_dataset_build_seconds=round(engine_dataset_build_seconds, 6),
+            evaluate_replay_execution_seconds=round(
+                evaluate_replay_execution_seconds,
+                6,
+            ),
+            replay_evidence_seconds=round(replay_evidence_seconds, 6),
+            by_bucket_write_seconds=round(by_bucket_write_seconds, 6),
+            candidate_wrapper_write_seconds=round(
+                candidate_wrapper_write_seconds,
+                6,
+            ),
+            cache_hits_book_state=cache_hits_book_state,
+            cache_misses_book_state=cache_misses_book_state,
+            cache_hits_ohlcv=cache_hits_ohlcv,
+            cache_misses_ohlcv=cache_misses_ohlcv,
+        ),
     )
 
 
 __all__ = [
+    "StrategyLadderDetailedReplayPerformanceMetrics",
     "StrategyLadderDetailedReplayStageResult",
+    "load_strategy_ladder_bucket_replay_result",
+    "load_strategy_ladder_detailed_replay_artifact",
+    "load_strategy_ladder_shared_replay_payload",
     "run_strategy_ladder_detailed_replay",
 ]

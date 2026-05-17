@@ -1,0 +1,46 @@
+<section class="card" id="pair-universe-control">
+    <div class="card__head">
+        <h3>Pair Universe Control</h3>
+        <span class="card__sub">{{ vm.pairs.active_pairs|length }} active / {{ vm.pairs.configured_pairs|length }} governed</span>
+    </div>
+    <div class="card__body">
+        <p class="muted">
+            The live plan now starts from the canonical governed universe. Use the governed queue below to focus Shadow on one pair or a subset while you study pair-level economics.
+        </p>
+        <form method="post" action="/shadow/pairs/apply" class="pair-universe-form">
+            <table class="data-table data-table--compact">
+                <thead>
+                    <tr>
+                        <th>Active</th>
+                        <th>Pair</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for pair in vm.pairs.configured_pairs %}
+                    {% set pair_active = pair in vm.pairs.active_pairs %}
+                    <tr>
+                        <td>
+                            <label class="checkbox-field pair-toggle">
+                                <input type="checkbox" name="active_pairs" value="{{ pair }}" {% if pair_active %}checked{% endif %}>
+                            </label>
+                        </td>
+                        <td><strong>{{ pair }}</strong></td>
+                        <td>
+                            {% if pair_active %}
+                            <span class="badge badge--up">active</span>
+                            {% else %}
+                            <span class="badge badge--warn">suspended</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            <input type="hidden" name="operator_reason" value="study shadow pair universe from cockpit">
+            <div class="button-stack pair-universe-actions">
+                <button type="submit" class="button button--primary">Apply Active Pair Set</button>
+            </div>
+        </form>
+    </div>
+</section>

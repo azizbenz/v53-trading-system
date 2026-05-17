@@ -7,6 +7,9 @@ import time
 from typing import Callable
 
 from protocols import ShadowVpsServiceEvent, ShadowVpsServiceStatus
+from shadow_vps_service_resource_hygiene_support import (
+    ShadowVpsServiceResourceHygieneController,
+)
 from shadow_vps_service_models import ShadowVpsServiceRuntimeContext
 
 ReadRuntimeEvidenceBundle = Callable[[str], object | None]
@@ -99,6 +102,7 @@ def _run_shadow_vps_service_main_loop(
 ) -> None:
     cycle_index = 0
     stop_request_recorded = False
+    resource_hygiene = ShadowVpsServiceResourceHygieneController()
 
     def _should_stop_now() -> bool:
         return should_stop is not None and should_stop()
@@ -134,6 +138,11 @@ def _run_shadow_vps_service_main_loop(
             context,
             continue_on_error=continue_on_error,
         )
+        if append_service_event is not None:
+            resource_hygiene.run_due(
+                context,
+                append_service_event=append_service_event,
+            )
         if action == "break":
             break
         if _record_stop_request_if_needed():

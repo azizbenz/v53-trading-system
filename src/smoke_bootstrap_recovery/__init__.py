@@ -46,8 +46,10 @@ from smoke_bootstrap_recovery.state_sanity_checker import (
     run_sanity_checks,
 )
 from smoke_bootstrap_recovery.smoke_reporter import (
+    build_build1_core_health_payload,
     build_smoke_report,
     format_smoke_report,
+    write_build1_core_health_payload,
 )
 from smoke_bootstrap_recovery.shadow_readiness import (
     ShadowReadinessReport,
@@ -279,7 +281,9 @@ __all__ = [
     "run_sanity_checks",
     # Reporter
     "build_smoke_report",
+    "build_build1_core_health_payload",
     "format_smoke_report",
+    "write_build1_core_health_payload",
     # Shadow readiness preflight
     "ShadowReadinessReport",
     "evaluate_shadow_readiness",

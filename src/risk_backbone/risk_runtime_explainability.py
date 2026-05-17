@@ -211,6 +211,7 @@ def _build_explain_summary(
 
 def _build_risk_explainability(
     *,
+    candidate: RiskCandidate,
     action: RiskRuntimeAction,
     reason_details: tuple[RiskReasonDetail, ...],
     drawdown_result: DrawdownGuardResult,
@@ -218,6 +219,7 @@ def _build_risk_explainability(
 ) -> RiskExplainability:
     blocked_guard_codes = tuple(detail.code for detail in reason_details)
     blocked_guard_categories = tuple(dict.fromkeys(detail.category for detail in reason_details))
+    input_audit = _resolve_input_audit_surface(candidate)
     decision_severity = {
         RiskRuntimeAction.ACCEPT: "nominal",
         RiskRuntimeAction.REDUCE_EXPOSURE: "warning",
@@ -231,6 +233,25 @@ def _build_risk_explainability(
         blocked_guard_codes=blocked_guard_codes,
         blocked_guard_categories=blocked_guard_categories,
         blocked_guard_count=len(blocked_guard_codes),
+        carriage_statuses=candidate.carriage_statuses,
+        carriage_reason_codes=candidate.carriage_reason_codes,
+        shared_physics_mapping_status=candidate.shared_physics_mapping_status,
+        engine_role=candidate.engine_role,
+        execution_fragility_status=input_audit["execution_fragility_status"],
+        market_toxicity_status=input_audit["market_toxicity_status"],
+        spread_regime_penalty_status=input_audit["spread_regime_penalty_status"],
+        participation_penalty_status=input_audit["participation_penalty_status"],
+        micro_friction_source_status=input_audit["micro_friction_source_status"],
+        risk_input_completeness_status=input_audit["risk_input_completeness_status"],
+        cost_model_completeness_status=input_audit["cost_model_completeness_status"],
+        fee_source_status=input_audit["fee_source_status"],
+        impact_source_status=input_audit["impact_source_status"],
+        fill_realism_status=input_audit["fill_realism_status"],
+        realized_slippage_status=input_audit["realized_slippage_status"],
+        risk_readiness_status=input_audit["risk_readiness_status"],
+        input_reason_codes=input_audit["reason_codes"],
+        execution_ready=input_audit["execution_ready"],
+        promotion_ready=input_audit["promotion_ready"],
         drawdown_state_code=drawdown_result.verdict.value,
         decision_severity=decision_severity,
         physics_pressure_state=physics_scores.pressure_state,
@@ -252,6 +273,111 @@ def _require_runtime_timestamp(now: float | None, *, context: str) -> float:
     if now <= 0.0:
         raise ValueError(f"{context} requires now > 0")
     return now
+
+
+def _resolve_input_audit_surface(candidate: RiskCandidate) -> dict[str, object]:
+    execution_fragility_status = _normalize_status(
+        candidate.execution_fragility_status,
+        default="UNKNOWN",
+    )
+    market_toxicity_status = _normalize_status(
+        candidate.market_toxicity_status,
+        default="UNKNOWN",
+    )
+    spread_regime_penalty_status = _normalize_status(
+        candidate.spread_regime_penalty_status,
+        default="UNKNOWN",
+    )
+    participation_penalty_status = _normalize_status(
+        candidate.participation_penalty_status,
+        default="NOT_PROVEN",
+    )
+    micro_friction_source_status = _normalize_status(
+        candidate.micro_friction_source_status,
+        default="UNKNOWN",
+    )
+    cost_model_completeness_status = _normalize_status(
+        candidate.cost_model_completeness_status,
+        default="UNKNOWN",
+    )
+    fee_source_status = _normalize_status(candidate.fee_source_status, default="UNKNOWN")
+    impact_source_status = _normalize_status(candidate.impact_source_status, default="UNKNOWN")
+    fill_realism_status = _normalize_status(candidate.fill_realism_status, default="UNKNOWN")
+    realized_slippage_status = _normalize_status(
+        candidate.realized_slippage_status,
+        default="UNKNOWN",
+    )
+
+    explicit_risk_input_status = _normalize_status(
+        candidate.risk_input_completeness_status,
+        default="UNKNOWN",
+    )
+    reason_codes: list[str] = []
+    if execution_fragility_status == "UNKNOWN":
+        reason_codes.append("RISK_EXECUTION_FRAGILITY_UNKNOWN")
+    if market_toxicity_status == "UNKNOWN":
+        reason_codes.append("RISK_MARKET_TOXICITY_UNKNOWN")
+    if spread_regime_penalty_status == "UNKNOWN":
+        reason_codes.append("RISK_SPREAD_REGIME_PENALTY_UNKNOWN")
+    if participation_penalty_status in {"UNKNOWN", "NOT_PROVEN", "MISSING", "PARTIAL"}:
+        reason_codes.append("RISK_PARTICIPATION_PENALTY_NOT_PROVEN")
+    if micro_friction_source_status in {"UNKNOWN", "NOT_PROVEN", "MISSING", "PARTIAL"}:
+        reason_codes.append("RISK_MICRO_FRICTION_SOURCE_UNKNOWN")
+    if cost_model_completeness_status != "COMPLETE":
+        reason_codes.append("COST_MODEL_INCOMPLETE")
+
+    inferred_risk_input_status = explicit_risk_input_status
+    if candidate.risk_input_completeness_status == "UNKNOWN":
+        component_statuses = (
+            execution_fragility_status,
+            market_toxicity_status,
+            spread_regime_penalty_status,
+            participation_penalty_status,
+            micro_friction_source_status,
+        )
+        if any(status in {"MISSING", "NOT_PROVEN", "PARTIAL"} for status in component_statuses):
+            inferred_risk_input_status = "PARTIAL"
+        elif any(status == "UNKNOWN" for status in component_statuses):
+            inferred_risk_input_status = "UNKNOWN"
+        else:
+            inferred_risk_input_status = "GOVERNED_SOURCE"
+
+    risk_ready = inferred_risk_input_status in {
+        "MEASURED",
+        "GOVERNED_SOURCE",
+        "NEUTRAL_BY_DESIGN",
+    }
+    cost_ready = cost_model_completeness_status == "COMPLETE"
+    execution_ready = risk_ready and cost_ready
+    promotion_ready = execution_ready
+    if execution_ready:
+        risk_readiness_status = "READY"
+    elif inferred_risk_input_status == "UNKNOWN":
+        risk_readiness_status = "RISK_INPUTS_UNKNOWN"
+    elif inferred_risk_input_status in {"PARTIAL", "MISSING", "NOT_PROVEN"}:
+        risk_readiness_status = "RISK_INPUTS_PARTIAL"
+    elif not cost_ready:
+        risk_readiness_status = "SCORING_RISK_COST_COMPLETENESS_PARTIAL"
+    else:
+        risk_readiness_status = "UNKNOWN"
+
+    return {
+        "execution_fragility_status": execution_fragility_status,
+        "market_toxicity_status": market_toxicity_status,
+        "spread_regime_penalty_status": spread_regime_penalty_status,
+        "participation_penalty_status": participation_penalty_status,
+        "micro_friction_source_status": micro_friction_source_status,
+        "risk_input_completeness_status": inferred_risk_input_status,
+        "cost_model_completeness_status": cost_model_completeness_status,
+        "fee_source_status": fee_source_status,
+        "impact_source_status": impact_source_status,
+        "fill_realism_status": fill_realism_status,
+        "realized_slippage_status": realized_slippage_status,
+        "risk_readiness_status": risk_readiness_status,
+        "reason_codes": tuple(dict.fromkeys(reason_codes)),
+        "execution_ready": execution_ready,
+        "promotion_ready": promotion_ready,
+    }
 
 
 def _normalize_runtime_equity_state(
@@ -284,6 +410,11 @@ def _normalize_runtime_equity_state(
     elif normalized_peak < current_equity:
         normalized_peak = current_equity
     return current_equity, normalized_peak
+
+
+def _normalize_status(value: str | None, *, default: str) -> str:
+    normalized = "" if value is None else str(value).strip()
+    return normalized or default
 
 
 __all__ = [

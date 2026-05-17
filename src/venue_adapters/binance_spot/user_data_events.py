@@ -21,8 +21,18 @@ class BinanceUserDataEventSource(Protocol):
 class BufferedBinanceUserDataEventSource(BinanceUserDataEventSource):
     """Simple in-memory buffer used by tests and future websocket bridges."""
 
-    def __init__(self, initial_events: Iterable[dict[str, object]] = ()) -> None:
-        self._events: deque[dict[str, object]] = deque(dict(event) for event in initial_events)
+    def __init__(
+        self,
+        initial_events: Iterable[dict[str, object]] = (),
+        *,
+        max_events: int = 2048,
+    ) -> None:
+        if max_events <= 0:
+            raise ValueError("max_events must be > 0")
+        self._events: deque[dict[str, object]] = deque(
+            (dict(event) for event in initial_events),
+            maxlen=max_events,
+        )
 
     def push(self, *events: dict[str, object]) -> None:
         for event in events:

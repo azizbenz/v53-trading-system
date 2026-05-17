@@ -67,6 +67,9 @@ class WallsAndSpoofingSnapshot(BaseModel):
     spoof_suspicion_score_ask: float = 0.0
     deceptive_liquidity_score: float = 0.0
     observation_coverage_ratio: float = 0.0
+    real_wall_score_method: str = "HEURISTIC_WEIGHTED_SCORE"
+    spoof_suspicion_score_method: str = "HEURISTIC_WEIGHTED_SCORE"
+    calibration_status: str = "CALIBRATION_REQUIRED_FOR_STRONG_PRODUCTION_CLAIM"
     dominant_side: Literal["bid", "ask", "neutral"] = "neutral"
     insufficient_data: bool = False
     reason_codes: tuple[str, ...] = ()

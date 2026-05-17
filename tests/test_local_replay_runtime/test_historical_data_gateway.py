@@ -125,3 +125,52 @@ def test_build_feature_bridge_payload_accepts_explicit_lineage_lock():
         assert payload["unrecognized_feature_keys"] == []
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_build_feature_bridge_payload_can_auto_materialize_live_snapshot_lineage_lock():
+    scratch = _scratch_dir("json_auto_lineage")
+    dataset_path = scratch / "sample_dataset_auto_lineage.json"
+    dataset_path.write_text(
+        json.dumps(
+            {
+                "records": [
+                    {
+                        "opportunity_id": "op-1",
+                        "timestamp_ms": 1_700_000_000_000,
+                        "pair": "BTCUSDT",
+                        "engine_id": "engine_a",
+                        "raw_score": 0.8,
+                        "feature_values": {
+                            "snapshot_last_price": 43250.0,
+                            "snapshot_spread_bps": 3.0,
+                            "trade_notional_usdt": 1200.0,
+                            "trade_is_maker": False,
+                        },
+                    }
+                ]
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    try:
+        dataset = load_historical_replay_dataset(dataset_path, source="historical_snapshot_router")
+        payload = build_feature_bridge_payload(
+            dataset,
+            auto_materialize_feature_locks=True,
+        )
+
+        assert payload["lineage_lock_present"] is True
+        assert payload["lineage_lock_status"] == "ok"
+        assert payload["feature_lineage_lock"]["records"][0]["feature_id"] == "snapshot_last_price"
+        assert payload["transform_whitelist_present"] is True
+        assert payload["transform_whitelist_status"] == "ok"
+        assert payload["recognized_feature_keys"] == []
+        assert payload["unrecognized_feature_keys"] == [
+            "snapshot_last_price",
+            "snapshot_spread_bps",
+            "trade_is_maker",
+            "trade_notional_usdt",
+        ]
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)

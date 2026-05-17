@@ -1,0 +1,31 @@
+<section class="card" id="decision-trace">
+    <div class="card__head">
+        <h3>Decision Trace</h3>
+        <span class="card__sub">{{ vm.operational_proof.decision_trace.source_status }}</span>
+    </div>
+    <div class="card__body">
+        {% if vm.operational_proof.decision_trace.entries %}
+        <table class="data-table data-table--compact">
+            <thead>
+                <tr><th>Timestamp</th><th>Pair</th><th>Engine</th><th>Final score</th><th>Selected</th><th>Reason</th><th>Expected CE</th></tr>
+            </thead>
+            <tbody>
+            {% for row in vm.operational_proof.decision_trace.entries %}
+                <tr>
+                    <td>{{ row.timestamp }}</td>
+                    <td>{{ row.pair }}</td>
+                    <td>{{ row.engine }}</td>
+                    <td>{{ row.final_score if row.final_score is not none else 'n/a' }}</td>
+                    <td>{{ row.selected }}</td>
+                    <td>{{ row.refusal_reason or '—' }}</td>
+                    <td>{{ row.expected_ce if row.expected_ce is not none else 'n/a' }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        <p class="muted small">Decision-trace CE values come from `ce_expected`; they are expected CE, not realized profitability.</p>
+        {% else %}
+        <p class="muted">{{ vm.operational_proof.decision_trace.source_message }}</p>
+        {% endif %}
+    </div>
+</section>

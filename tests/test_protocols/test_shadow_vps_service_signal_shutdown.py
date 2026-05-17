@@ -123,7 +123,10 @@ def test_shadow_vps_service_main_loop_stops_cleanly_when_stop_requested(
     )
 
     assert cycle_calls == ["cycle"]
-    assert event_types == ["service_stop_requested"]
+    assert event_types == [
+        "resource_ram_heartbeat",
+        "service_stop_requested",
+    ]
     assert monitoring_markers == ["monitoring"]
 
 
@@ -166,11 +169,18 @@ def test_run_shadow_vps_service_finalizes_cleanly_when_signal_is_pre_requested(
         state = json.loads(
             (service_dir / "shadow_vps_service.state.json").read_text(encoding="utf-8")
         )
+        monitoring_payload = json.loads(
+            (
+                service_dir / "shadow_vps_service_monitoring_backend_payload.json"
+            ).read_text(encoding="utf-8")
+        )
 
         assert exit_code == 0
         assert state["service_status"] == "stopped"
         assert state["loop_count"] == 0
         assert state["last_error"] == ""
+        assert monitoring_payload["process"]["pid"] > 0
+        assert monitoring_payload["disk"]["path"]
         assert [event["event_type"] for event in events][-2:] == [
             "service_stop_requested",
             "service_stopped",

@@ -1,0 +1,51 @@
+<section class="card">
+    <div class="card__head">
+        <h3>Carver Sizing Chain</h3>
+        <span class="card__sub">{{ vm.sizing_chain.rows|length }} rows · {{ vm.sizing_chain.source_status }}</span>
+    </div>
+    <div class="card__body">
+        {% if vm.sizing_chain.source_status != 'ok' or not vm.sizing_chain.rows %}
+            <p class="muted">No DTR rows in the latest export.</p>
+        {% else %}
+        <div class="sizing-pipeline">
+            <div class="sizing-pipeline__stage">
+                <span class="muted">Forecast (raw_score)</span>
+                <strong>{{ "%.3f"|format(vm.sizing_chain.avg_raw_score) }}</strong>
+            </div>
+            <div class="sizing-pipeline__arrow">→</div>
+            <div class="sizing-pipeline__stage">
+                <span class="muted">Penalised</span>
+                <strong>{{ "%.3f"|format(vm.sizing_chain.avg_penalized_score) }}</strong>
+            </div>
+            <div class="sizing-pipeline__arrow">→</div>
+            <div class="sizing-pipeline__stage">
+                <span class="muted">Final score</span>
+                <strong>{{ "%.3f"|format(vm.sizing_chain.avg_final_score) }}</strong>
+            </div>
+            <div class="sizing-pipeline__arrow">→</div>
+            <div class="sizing-pipeline__stage sizing-pipeline__stage--final">
+                <span class="muted">Effective size</span>
+                <strong>{{ "%.4f"|format(vm.sizing_chain.avg_final_size) }}</strong>
+            </div>
+        </div>
+        <details>
+            <summary>{{ vm.sizing_chain.rows|length }} latest rows</summary>
+            <table class="data-table data-table--compact">
+                <thead><tr><th>Pair</th><th>Engine</th><th>Edge bps</th><th>Final size</th><th>Tier</th><th>Decision</th></tr></thead>
+                <tbody>
+                {% for r in vm.sizing_chain.rows[:20] %}
+                <tr>
+                    <td><code>{{ r.pair }}</code></td>
+                    <td>{{ r.engine_id }}</td>
+                    <td>{{ "%.1f"|format(r.expected_edge_bps) }}</td>
+                    <td>{{ "%.4f"|format(r.final_size) }}</td>
+                    <td>{{ r.tier or "—" }}</td>
+                    <td><span class="chip">{{ r.decision_state }}</span></td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </details>
+        {% endif %}
+    </div>
+</section>

@@ -1,0 +1,60 @@
+<section class="card">
+    <div class="card__head">
+        <h3>Feature Bridge</h3>
+        <span class="card__sub">{{ vm.feature_bridge.source_status }}</span>
+    </div>
+    <div class="card__body">
+        {% if vm.feature_bridge.source_status != 'ok' %}
+            <p class="muted">No feature bridge export for the latest day.</p>
+        {% else %}
+        <div class="feature-bridge__meta">
+            <span class="badge badge--{% if vm.feature_bridge.bridge_status == 'ok' %}up{% else %}warn{% endif %}">
+                bridge {{ vm.feature_bridge.bridge_status }}
+            </span>
+            <span class="badge badge--warn">
+                artifact: {{ vm.feature_bridge.artifact_presence_status or "-" }}
+            </span>
+            <span class="badge badge--{% if vm.feature_bridge.runtime_active %}up{% else %}warn{% endif %}">
+                runtime: {{ vm.feature_bridge.runtime_consumption_status or "-" }}
+            </span>
+            <span class="badge badge--{% if vm.feature_bridge.lineage_lock_status in ('valid', 'present', 'locked') %}up{% elif vm.feature_bridge.lineage_lock_status == 'missing' %}down{% else %}warn{% endif %}">
+                lineage lock: {{ vm.feature_bridge.lineage_lock_status or "-" }}
+            </span>
+        </div>
+        <p class="muted small value-down"><strong>Runtime caveat:</strong> feature-bridge artifact presence is not runtime-consumption proof.</p>
+        {% if vm.feature_bridge.lineage_lock_status == 'missing' %}
+        <p class="muted small value-down"><strong>Audit gap:</strong> feature lineage lock is still missing.</p>
+        {% endif %}
+        <p class="muted small">
+            features {{ vm.feature_bridge.feature_keys|length }}
+            · recognized {{ vm.feature_bridge.recognized_feature_keys|length }}
+            ({{ "%.0f%%"|format(vm.feature_bridge.recognition_rate * 100) }})
+            · pairs {{ vm.feature_bridge.pairs|join(", ") }}
+            · engines {{ vm.feature_bridge.engines|join(", ") }}
+        </p>
+        <p class="muted small">
+            families {{ vm.feature_bridge.feature_families|join(", ") if vm.feature_bridge.feature_families else "none" }}
+            · unrecognized families {{ vm.feature_bridge.unrecognized_feature_families|join(", ") if vm.feature_bridge.unrecognized_feature_families else "none" }}
+        </p>
+        {% if vm.feature_bridge.lineage_lock_reasons %}
+        <details>
+            <summary>Lineage lock reasons</summary>
+            <ul class="small-list muted">
+                {% for reason in vm.feature_bridge.lineage_lock_reasons %}<li>{{ reason }}</li>{% endfor %}
+            </ul>
+        </details>
+        {% endif %}
+        {% if vm.feature_bridge.feature_family_statuses %}
+        <details>
+            <summary>Feature family runtime status</summary>
+            <ul class="small-list muted">
+                {% for row in vm.feature_bridge.feature_family_statuses %}
+                <li>{{ row.family }}: artifact={{ row.artifact_status }}, runtime={{ row.runtime_status }}, lifecycle={{ row.runtime_lifecycle_status }}{% if row.registry_intent_status %}, intent={{ row.registry_intent_status }}{% endif %}{% if row.registry_consumer_statuses %}, registry={{ row.registry_consumer_statuses|join(", ") }}{% endif %}</li>
+                {% endfor %}
+            </ul>
+        </details>
+        {% endif %}
+        <p class="feature-path"><code>{{ vm.feature_bridge.feature_to_engine_path }}</code></p>
+        {% endif %}
+    </div>
+</section>

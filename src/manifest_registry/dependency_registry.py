@@ -95,6 +95,8 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
     }),
     "calibration_methods": frozenset({"interface_contracts"}),
     # Stage-10 scaffolding: LOCAL_REPLAY / artifact import / Build-9X
+    # LOCAL_REPLAY may invoke canonical shared-core runners directly so replay
+    # keeps one decision core instead of drifting into a second backtest stack.
     "local_replay_runtime": frozenset({
         "interface_contracts",
         "manifest_registry",
@@ -102,7 +104,14 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
         "calibration_loader",
         "calibration_methods",
         "data_backbone",
+        "execution_backbone",
         "meta_learning",
+        "complete_enablers",
+        "engine_a",
+        "engine_b",
+        "engine_c",
+        "engine_d",
+        "portfolio",
     }),
     "backtest_artifact_import": frozenset({
         "interface_contracts",
@@ -129,6 +138,13 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
         "interface_contracts",
         "monitoring",
         "meta_learning",
+    }),
+    # cockpit is a read-only operator shell: it may project governed data-quality
+    # and feature-registry status, but it never mutates runtime or trading state.
+    "cockpit": frozenset({
+        "interface_contracts",
+        "monitoring",
+        "data_backbone",
     }),
     # Build-11/12/13: Protocols
     "protocols": frozenset({

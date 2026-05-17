@@ -7,6 +7,9 @@ from pathlib import Path
 from typing import Callable
 
 from protocols import ShadowVpsServiceEvent, ShadowVpsServiceStatus
+from shadow_vps_service_artifact_support import (
+    _persist_shadow_artifact_comparison_evidence,
+)
 from shadow_vps_service_models import (
     ShadowVpsCycleSelection,
     ShadowVpsServiceRuntimeContext,

@@ -1,0 +1,61 @@
+<section class="card">
+    <div class="card__head">
+        <h3>IA Lab · Build-9X Review</h3>
+        <span class="card__sub">{{ vm.lab_review.source_status }}</span>
+    </div>
+    <div class="card__body">
+        {% if vm.lab_review.source_status != 'ok' %}
+            <p class="muted">Run <code>scripts/run_local_lab_analysis_bundle.py</code> to generate a review.</p>
+        {% else %}
+        <p><strong>Correlation:</strong> <code>{{ vm.lab_review.correlation_id }}</code></p>
+        {% if vm.lab_review.summary %}
+        <p class="lab-summary">{{ vm.lab_review.summary }}</p>
+        {% endif %}
+
+        {% if vm.lab_review.mistake_classes %}
+        <div class="lab-row">
+            <span class="muted">Mistake classes:</span>
+            {% for m in vm.lab_review.mistake_classes %}
+                <span class="chip chip--warn">{{ m }}</span>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if vm.lab_review.candidates %}
+        <h4>Candidates ({{ vm.lab_review.candidates|length }})</h4>
+        <ul class="small-list">
+            {% for c in vm.lab_review.candidates %}
+            <li><code>{{ c.candidate_id }}</code> · stage <span class="chip">{{ c.stage }}</span> · tests pending <strong>{{ c.tests_pending }}</strong></li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+
+        {% if vm.lab_review.merge_gates %}
+        <h4>Merge Gates · {% if vm.lab_review.merge_gates_all_passed %}<span class="badge badge--up">ALL PASS</span>{% else %}<span class="badge badge--down">FAIL</span>{% endif %}</h4>
+        <table class="data-table data-table--compact">
+            <thead><tr><th>Gate</th><th>Status</th><th>Summary</th></tr></thead>
+            <tbody>
+                {% for g in vm.lab_review.merge_gates %}
+                <tr>
+                    <td><code>{{ g.gate_name }}</code></td>
+                    <td><span class="badge badge--{% if g.passed %}up{% else %}down{% endif %}">{% if g.passed %}pass{% else %}fail{% endif %}</span></td>
+                    <td>{{ g.summary }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+
+        {% if vm.lab_review.lifecycle_transitions %}
+        <details>
+            <summary>Lifecycle transitions ({{ vm.lab_review.lifecycle_transitions|length }})</summary>
+            <ul class="small-list">
+                {% for t in vm.lab_review.lifecycle_transitions[:10] %}
+                <li><code>{{ t.target }}</code>: {{ t.from_state }} → {{ t.to_state }} <span class="muted">({{ t.actor }})</span></li>
+                {% endfor %}
+            </ul>
+        </details>
+        {% endif %}
+        {% endif %}
+    </div>
+</section>

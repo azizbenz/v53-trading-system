@@ -87,5 +87,6 @@ def test_local_observability_stack_launcher_delegates_to_orchestrator(
         assert captured_args["prom_text_path"] == prom_path
         assert captured_args["output_dir"] == output_dir
         assert captured_args["grafana_password"] == "admin"
+        assert captured_args["readiness_timeout_s"] == 90.0
     finally:
         shutil.rmtree(scratch, ignore_errors=True)

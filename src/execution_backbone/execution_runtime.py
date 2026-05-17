@@ -978,6 +978,11 @@ class ExecutionRuntime(ExecutionRuntimeSupportMixin):
                 alpha_decay_bps=None,
             )
 
+    def close(self) -> None:
+        close_adapter = getattr(self._adapter, "close", None)
+        if callable(close_adapter):
+            close_adapter()
+
 
 def _resolve_original_signal_arrival(intent: ExecutionIntent, now: float) -> float:
     raw_value = intent.metadata.get("hybrid_router_original_signal_arrival_monotonic_s")

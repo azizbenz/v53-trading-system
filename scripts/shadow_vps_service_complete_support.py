@@ -24,6 +24,12 @@ from local_replay_runtime.live_complete_operator_audit_report import (
     write_live_complete_operator_audit_report,
 )
 from monitoring import build_shadow_vps_service_recent_events_summary
+from monitoring.artifact_visibility import (
+    build_artifact_comparison_projections,
+    build_artifact_runtime_visibility_projections,
+    build_artifact_threshold_consumer_projections,
+    build_artifact_verdict_bundle_projection,
+)
 from protocols import (
     LiveCompleteRunSummary,
     LiveCompleteAllowedAction,
@@ -52,8 +58,15 @@ _ALLOWED_ACTIONS = (
     LiveCompleteAllowedAction.REQUEST_ENGINE_RESUME,
     LiveCompleteAllowedAction.REQUEST_UPLOAD_ML_ARTIFACT,
     LiveCompleteAllowedAction.REQUEST_UPLOAD_REGIME_DETECTOR_ARTIFACT,
+    LiveCompleteAllowedAction.REQUEST_UPLOAD_SHADOW_ML_CHALLENGER_ARTIFACT,
+    LiveCompleteAllowedAction.REQUEST_UPLOAD_SHADOW_REGIME_DETECTOR_CHALLENGER_ARTIFACT,
+    LiveCompleteAllowedAction.REQUEST_CLEAR_SHADOW_ML_CHALLENGER_ARTIFACT,
+    LiveCompleteAllowedAction.REQUEST_CLEAR_SHADOW_REGIME_DETECTOR_CHALLENGER_ARTIFACT,
     LiveCompleteAllowedAction.REQUEST_EXPORT_ACTIVE_ML_ARTIFACT,
     LiveCompleteAllowedAction.REQUEST_EXPORT_ACTIVE_REGIME_DETECTOR_ARTIFACT,
+    LiveCompleteAllowedAction.REQUEST_EXPORT_SHADOW_ML_ARTIFACT_COMPARISON_EVIDENCE,
+    LiveCompleteAllowedAction.REQUEST_EXPORT_SHADOW_REGIME_DETECTOR_ARTIFACT_COMPARISON_EVIDENCE,
+    LiveCompleteAllowedAction.REQUEST_EXPORT_SHADOW_CHALLENGER_VERDICT_BUNDLE,
     LiveCompleteAllowedAction.REQUEST_EXPORT_REGIME_DETECTOR_SHADOW_AUDIT_BUNDLE,
     LiveCompleteAllowedAction.REQUEST_UPLOAD_BINANCE_CREDENTIALS_BUNDLE,
     LiveCompleteAllowedAction.REQUEST_ACTIVATE_BINANCE_CREDENTIALS_PROFILE,
@@ -91,6 +104,33 @@ class ShadowVpsBuild17Refresh:
     warmup_summary: VpsWarmupRunSummary | None
     live_complete_summary: LiveCompleteRunSummary
     operator_report: LiveCompleteOperatorAuditReport
+
+
+def _build_artifact_supervision_surfaces(
+    state: object,
+) -> tuple[tuple, tuple, tuple, object | None]:
+    runtime_visibility = build_artifact_runtime_visibility_projections(
+        active_ml_artifact=state.active_ml_artifact,
+        active_regime_detector_artifact=state.active_regime_detector_artifact,
+        shadow_ml_challenger_artifact=state.shadow_ml_challenger_artifact,
+        shadow_regime_detector_challenger_artifact=state.shadow_regime_detector_challenger_artifact,
+    )
+    threshold_consumers = build_artifact_threshold_consumer_projections(
+        execution_runtime_projection_path=state.last_execution_runtime_projection_ref,
+    )
+    comparisons = build_artifact_comparison_projections(
+        active_ml_artifact=state.active_ml_artifact,
+        active_regime_detector_artifact=state.active_regime_detector_artifact,
+        shadow_ml_challenger_artifact=state.shadow_ml_challenger_artifact,
+        shadow_regime_detector_challenger_artifact=state.shadow_regime_detector_challenger_artifact,
+        ml_comparison_ref=state.last_shadow_ml_artifact_comparison_ref,
+        regime_detector_comparison_ref=state.last_shadow_regime_detector_artifact_comparison_ref,
+    )
+    verdict_bundle = build_artifact_verdict_bundle_projection(
+        verdict_bundle_ref=state.last_shadow_challenger_verdict_bundle_ref,
+        verdict_bundle_status=state.last_shadow_challenger_verdict_bundle_status,
+    )
+    return runtime_visibility, threshold_consumers, comparisons, verdict_bundle
 
 
 def _read_model(path_ref: str, model_type: type[object]) -> object | None:
@@ -317,15 +357,22 @@ def refresh_shadow_vps_build17_supervision(
     """Refresh synthetic Build-17 supervision artifacts from persisted Shadow state."""
 
     timestamp_ms = int(time.time() * 1000.0)
+    state = context.store.state
     queue_snapshot = _load_queue_snapshot(context)
     recovery_report = _read_model(
-        context.store.state.last_vps_recovery_readiness_report_ref,
+        state.last_vps_recovery_readiness_report_ref,
         VpsRecoveryReadinessReport,
     )
     warmup_summary = _read_model(
-        context.store.state.last_vps_warmup_summary_ref,
+        state.last_vps_warmup_summary_ref,
         VpsWarmupRunSummary,
     )
+    (
+        artifact_runtime_visibility,
+        artifact_threshold_consumers,
+        artifact_comparisons,
+        artifact_verdict_bundle,
+    ) = _build_artifact_supervision_surfaces(state)
     control_surface = _resolve_control_surface(context)
     live_light_summary = _build_synthetic_live_light_summary(
         context,
@@ -348,10 +395,16 @@ def refresh_shadow_vps_build17_supervision(
             allowed_actions=_ALLOWED_ACTIONS,
             forbidden_actions=_FORBIDDEN_ACTIONS,
             command_queue_snapshot=queue_snapshot,
-            active_ml_artifact=context.store.state.active_ml_artifact,
-            active_regime_detector_artifact=context.store.state.active_regime_detector_artifact,
+            active_ml_artifact=state.active_ml_artifact,
+            active_regime_detector_artifact=state.active_regime_detector_artifact,
+            shadow_ml_challenger_artifact=state.shadow_ml_challenger_artifact,
+            shadow_regime_detector_challenger_artifact=state.shadow_regime_detector_challenger_artifact,
             recovery_readiness_report=recovery_report,
             warmup_run_summary=warmup_summary,
+            artifact_runtime_visibility=artifact_runtime_visibility,
+            artifact_threshold_consumers=artifact_threshold_consumers,
+            artifact_comparisons=artifact_comparisons,
+            artifact_verdict_bundle=artifact_verdict_bundle,
         ),
         run_id="shadow-vps-service.live_complete",
     )

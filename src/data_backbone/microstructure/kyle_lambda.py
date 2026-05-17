@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from hashlib import sha256
 import json
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 KYLE_LAMBDA_METHOD_VERSION = "kyle_lambda.rolling_ols.v1"
@@ -17,6 +17,7 @@ KYLE_LAMBDA_METHOD_VERSION_HASH = sha256(
 DEFAULT_KYLE_WINDOW_SECONDS = 3_600.0
 MAX_KYLE_WINDOW_SECONDS = 14_400.0
 DEFAULT_KYLE_BUCKET_SECONDS = 60.0
+DEFAULT_KYLE_STANDARD_QUOTE_NOTIONAL = 1_000.0
 
 
 class KyleTradePoint(BaseModel):
@@ -45,7 +46,16 @@ class KyleLambdaRecord(BaseModel):
     """Audit-ready Kyle lambda estimate."""
 
     value: float
+    raw_kyle_lambda: float = 0.0
     normalized_value: float | None = None
+    unit_status: str = "UNNORMALIZED_LOCAL_OLS_SLOPE"
+    cross_pair_comparable: bool = False
+    normalized_kyle_lambda_available: bool = False
+    reference_mid_price: float | None = Field(default=None, gt=0.0)
+    standard_quote_notional: float | None = Field(default=None, gt=0.0)
+    normalized_kyle_impact_bps_for_standard_notional: float | None = None
+    normalized_unit_status: str | None = None
+    normalized_cross_pair_comparable: bool = False
     is_stale: bool
     stale_reason: str | None = Field(default=None)
     partial_window: bool = False
@@ -71,6 +81,12 @@ class KyleLambdaRecord(BaseModel):
         if not normalized:
             raise ValueError("pair must not be blank")
         return normalized
+
+    @model_validator(mode="after")
+    def _align_raw_kyle_lambda(self) -> "KyleLambdaRecord":
+        if self.raw_kyle_lambda == 0.0 and self.value != 0.0:
+            object.__setattr__(self, "raw_kyle_lambda", self.value)
+        return self
 
 
 def classify_trade_direction(
@@ -217,12 +233,30 @@ def _select_effective_trades(
     return recent_trades, effective_trades, derived_input_warning
 
 
+def compute_normalized_kyle_impact_bps(
+    raw_kyle_lambda: float,
+    *,
+    mid_price: float,
+    standard_quote_notional: float = DEFAULT_KYLE_STANDARD_QUOTE_NOTIONAL,
+) -> float:
+    """Project raw Kyle slope into bps impact for a fixed quote notional."""
+
+    if mid_price <= 0.0:
+        raise ValueError("mid_price must be > 0")
+    if standard_quote_notional <= 0.0:
+        raise ValueError("standard_quote_notional must be > 0")
+    base_qty_standard = standard_quote_notional / mid_price
+    predicted_price_move = raw_kyle_lambda * base_qty_standard
+    return (predicted_price_move / mid_price) * 10_000.0
+
+
 def compute_kyle_lambda(
     trades: list[KyleTradePoint],
     *,
     pair: str,
     window_seconds: float = DEFAULT_KYLE_WINDOW_SECONDS,
     bucket_seconds: float = DEFAULT_KYLE_BUCKET_SECONDS,
+    standard_quote_notional: float = DEFAULT_KYLE_STANDARD_QUOTE_NOTIONAL,
     computed_at_ns: int | None = None,
 ) -> KyleLambdaRecord:
     """Compute rolling OLS Kyle lambda on recent fixed-width intervals."""
@@ -281,11 +315,29 @@ def compute_kyle_lambda(
         sum(interval.reference_price for interval in recent_intervals) / len(recent_intervals)
     )
     normalized_value = None if mean_reference_price <= 0.0 else slope / mean_reference_price
+    normalized_kyle_impact_bps = None
+    normalized_cross_pair_comparable = False
+    normalized_unit_status: str | None = None
+    if mean_reference_price > 0.0 and standard_quote_notional > 0.0:
+        normalized_kyle_impact_bps = compute_normalized_kyle_impact_bps(
+            slope,
+            mid_price=mean_reference_price,
+            standard_quote_notional=standard_quote_notional,
+        )
+        normalized_cross_pair_comparable = True
+        normalized_unit_status = "NORMALIZED_BPS_FOR_STANDARD_NOTIONAL"
     return KyleLambdaRecord(
         value=slope,
+        raw_kyle_lambda=slope,
         normalized_value=normalized_value,
         is_stale=is_stale,
         stale_reason=stale_reason,
+        reference_mid_price=(mean_reference_price if mean_reference_price > 0.0 else None),
+        standard_quote_notional=(standard_quote_notional if standard_quote_notional > 0.0 else None),
+        normalized_kyle_impact_bps_for_standard_notional=normalized_kyle_impact_bps,
+        normalized_unit_status=normalized_unit_status,
+        normalized_cross_pair_comparable=normalized_cross_pair_comparable,
+        normalized_kyle_lambda_available=normalized_kyle_impact_bps is not None,
         partial_window=available_window_seconds < window_seconds,
         low_sample_confidence=len(recent_intervals) < 5,
         insufficient_variation=insufficient_variation,
@@ -311,6 +363,7 @@ def compute_kyle_lambda(
 
 __all__ = [
     "DEFAULT_KYLE_BUCKET_SECONDS",
+    "DEFAULT_KYLE_STANDARD_QUOTE_NOTIONAL",
     "DEFAULT_KYLE_WINDOW_SECONDS",
     "KYLE_LAMBDA_METHOD_VERSION",
     "KYLE_LAMBDA_METHOD_VERSION_HASH",
@@ -320,5 +373,6 @@ __all__ = [
     "MAX_KYLE_WINDOW_SECONDS",
     "build_kyle_intervals",
     "classify_trade_direction",
+    "compute_normalized_kyle_impact_bps",
     "compute_kyle_lambda",
 ]

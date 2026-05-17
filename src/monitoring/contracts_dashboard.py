@@ -22,6 +22,12 @@ from .contracts_core import (
     ProjectionStatus,
     SystemProjection,
 )
+from .contracts_artifacts import (
+    ArtifactComparisonProjection,
+    ArtifactShadowComparisonEvidence,
+    ArtifactRuntimeVisibilityProjection,
+    ArtifactThresholdConsumerProjection,
+)
 from .contracts_live_complete import (
     LiveCompleteGateGroupProjection,
     LiveCompleteProjection,
@@ -458,6 +464,7 @@ class ExecutionRuntimeProjectionBridgeProjection(BaseModel, frozen=True):
     rate_limit_model_loaded: bool = False
     spread_guard_model_loaded: bool = False
     slippage_model_loaded: bool = False
+    consumers: tuple[ArtifactThresholdConsumerProjection, ...] = ()
     caution_flags: tuple[str, ...] = ()
     blocking_reasons: tuple[str, ...] = ()
     error_type: str = ""
@@ -488,49 +495,6 @@ class AlertProjection(BaseModel, frozen=True):
     edge_degraded_count: int = Field(..., ge=0)
     loss_drift_status: ProjectionStatus
     operator_runtime: OperatorRuntimeProjection = OperatorRuntimeProjection()
-
-
-class TechnicalDashboardPayload(TimestampedModel):
-    """Normalized Build-10 technical supervision payload."""
-
-    correlation_id: str = Field(..., min_length=1)
-    profile: ProfileId
-    runtime_mode: RuntimeMode
-    system: SystemProjection
-    portfolio: PortfolioMetrics
-    engines: tuple[EngineMetrics, ...] = ()
-    pairs: tuple[PairMetrics, ...] = ()
-    infra: InfraMetrics = InfraMetrics()
-    build9_meta: Build9MetaProjection
-    build9x: Build9XProjection
-    engine_judgment: EngineJudgmentProjection = EngineJudgmentProjection()
-    shadow: ShadowProjection = ShadowProjection()
-    micro_live: MicroLiveProjection = MicroLiveProjection()
-    live_light: LiveLightProjection = LiveLightProjection()
-    build14: Build14Projection = Build14Projection()
-    account_user_data: AccountUserDataProjection = AccountUserDataProjection()
-    execution_no_trade_bridge: ExecutionNoTradeBridgeProjection = ExecutionNoTradeBridgeProjection()
-    execution_runtime_projection_bridge: ExecutionRuntimeProjectionBridgeProjection = (
-        ExecutionRuntimeProjectionBridgeProjection()
-    )
-    hybrid_router: HybridRouterMetricsProjection = HybridRouterMetricsProjection()
-    runtime_hook_bridges: tuple[RuntimeHookBridgeProjection, ...] = ()
-    replay_import: ReplayImportProjection
-    alerts: AlertProjection
-    future_panels: tuple[str, ...] = (
-        "technical_supervision",
-        "build9x_diagnostics",
-        "shadow_supervision",
-        "micro_live_supervision",
-        "live_light_supervision",
-        "build14_supervision",
-        "artifact_import",
-        "observability_export",
-    )
-
-    @property
-    def live(self) -> LiveProjection:
-        return self.live_light
 
 
 class LocalLabMonitoringBackendPayload(TimestampedModel):
@@ -676,6 +640,10 @@ __all__ = [
     "Build14ReaderProjection",
     "EngineJudgmentCard",
     "EngineJudgmentProjection",
+    "ArtifactShadowComparisonEvidence",
+    "ArtifactRuntimeVisibilityProjection",
+    "ArtifactThresholdConsumerProjection",
+    "ArtifactComparisonProjection",
     "ExecutionNoTradeBridgeProjection",
     "ExecutionRuntimeProjectionBridgeProjection",
     "HybridRouterMetricsProjection",
@@ -691,5 +659,4 @@ __all__ = [
     "ReplayImportProjection",
     "RuntimeHookBridgeProjection",
     "ShadowProjection",
-    "TechnicalDashboardPayload",
 ]

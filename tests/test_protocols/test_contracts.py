@@ -166,6 +166,8 @@ def test_protocols_exports_expected_symbols():
         "build_shadow_projection",
         "build_shadow_dashboard_section",
         "build_engine_judgment_projection",
+        "ReplayGovernanceProjection",
+        "project_replay_governance",
     }.issubset(set(protocols.__all__))
 
 

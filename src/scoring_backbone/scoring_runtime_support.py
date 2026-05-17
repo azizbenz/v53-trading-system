@@ -36,6 +36,10 @@ class ScoringCandidateInput(BaseModel, frozen=True):
     pair: str
     raw_features: dict[str, float]
     supplementary_refs: tuple[str, ...] = ()
+    carriage_statuses: tuple[str, ...] = ()
+    carriage_reason_codes: tuple[str, ...] = ()
+    shared_physics_mapping_status: str = "NOT_PROVEN"
+    engine_role: str = ""
     allowed_features: frozenset[str]
     weights: dict[str, float]
     scoring_version: str
@@ -57,6 +61,11 @@ class ScoringCandidateInput(BaseModel, frozen=True):
     market_toxicity: float = 0.0
     spread_regime_penalty: float = 0.0
     participation_penalty: float = 0.0
+    cost_model_completeness_status: str = "UNKNOWN"
+    fee_source_status: str = "UNKNOWN"
+    impact_source_status: str = "UNKNOWN"
+    fill_realism_status: str = "UNKNOWN"
+    realized_slippage_status: str = "UNKNOWN"
 
     @field_validator("scoring_version")
     @classmethod
@@ -144,10 +153,23 @@ class ScoringExplainability(BaseModel, frozen=True):
     dominant_feature_keys: tuple[str, ...] = ()
     dominant_score_penalty_ids: tuple[str, ...] = ()
     dominant_size_penalty_ids: tuple[str, ...] = ()
+    carriage_statuses: tuple[str, ...] = ()
+    carriage_reason_codes: tuple[str, ...] = ()
+    shared_physics_mapping_status: str = "NOT_PROVEN"
+    engine_role: str = ""
     artifact_hook_reason_codes: tuple[str, ...] = ()
     hard_block_codes: tuple[str, ...] = ()
     portfolio_verdict_code: str = ""
     selection_outcome_code: str = ""
+    cost_model_completeness_status: str = "UNKNOWN"
+    fee_source_status: str = "UNKNOWN"
+    impact_source_status: str = "UNKNOWN"
+    fill_realism_status: str = "UNKNOWN"
+    realized_slippage_status: str = "UNKNOWN"
+    scoring_risk_cost_completeness_status: str = "UNKNOWN"
+    cost_readiness_reason_codes: tuple[str, ...] = ()
+    execution_ready: bool = False
+    promotion_ready: bool = False
     physics_pressure_state: str = "nominal"
     summary: str = "score=unexplained"
 
@@ -170,6 +192,19 @@ class ScoringEconomicsProjection(BaseModel, frozen=True):
     hard_blocked: bool = False
     portfolio_verdict_code: str = ""
     selection_outcome_code: str = ""
+    carriage_statuses: tuple[str, ...] = ()
+    carriage_reason_codes: tuple[str, ...] = ()
+    shared_physics_mapping_status: str = "NOT_PROVEN"
+    engine_role: str = ""
+    cost_model_completeness_status: str = "UNKNOWN"
+    fee_source_status: str = "UNKNOWN"
+    impact_source_status: str = "UNKNOWN"
+    fill_realism_status: str = "UNKNOWN"
+    realized_slippage_status: str = "UNKNOWN"
+    scoring_risk_cost_completeness_status: str = "UNKNOWN"
+    cost_readiness_reason_codes: tuple[str, ...] = ()
+    execution_ready: bool = False
+    promotion_ready: bool = False
     physics_pressure_state: str = "nominal"
     fragility_score: float = 0.0
     toxicity_score: float = 0.0
@@ -310,6 +345,11 @@ def build_explainability(
     hard_block_codes = tuple(reason.code for reason in hard_block_decision.reasons)
     portfolio_verdict_code = portfolio_result.verdict.value if portfolio_result is not None else ""
     selection_outcome_code = selection_entry.outcome.value if selection_entry is not None else ""
+    carriage_statuses, carriage_reason_codes = _resolve_carriage_audit_surface(
+        candidate,
+        hook_outcome=hook_outcome,
+    )
+    cost_readiness = _resolve_cost_readiness(candidate)
 
     summary_parts = [
         f"features={','.join(dominant_feature_keys) if dominant_feature_keys else 'n/a'}",
@@ -337,6 +377,11 @@ def build_explainability(
         summary_parts.append(f"portfolio={portfolio_verdict_code}")
     if selection_outcome_code:
         summary_parts.append(f"selection={selection_outcome_code}")
+    if cost_readiness["scoring_risk_cost_completeness_status"] != "COMPLETE":
+        summary_parts.append(
+            "cost_readiness="
+            f"{cost_readiness['scoring_risk_cost_completeness_status']}"
+        )
     physics_pressure_state = "nominal" if physics_projection is None else physics_projection.pressure_state
     if physics_pressure_state != "nominal":
         summary_parts.append(f"physics={physics_pressure_state}")
@@ -354,10 +399,23 @@ def build_explainability(
         dominant_feature_keys=dominant_feature_keys,
         dominant_score_penalty_ids=dominant_score_penalty_ids,
         dominant_size_penalty_ids=dominant_size_penalty_ids,
+        carriage_statuses=carriage_statuses,
+        carriage_reason_codes=carriage_reason_codes,
+        shared_physics_mapping_status=candidate.shared_physics_mapping_status,
+        engine_role=candidate.engine_role,
         artifact_hook_reason_codes=artifact_hook_reason_codes,
         hard_block_codes=hard_block_codes,
         portfolio_verdict_code=portfolio_verdict_code,
         selection_outcome_code=selection_outcome_code,
+        cost_model_completeness_status=cost_readiness["cost_model_completeness_status"],
+        fee_source_status=cost_readiness["fee_source_status"],
+        impact_source_status=cost_readiness["impact_source_status"],
+        fill_realism_status=cost_readiness["fill_realism_status"],
+        realized_slippage_status=cost_readiness["realized_slippage_status"],
+        scoring_risk_cost_completeness_status=cost_readiness["scoring_risk_cost_completeness_status"],
+        cost_readiness_reason_codes=cost_readiness["reason_codes"],
+        execution_ready=cost_readiness["execution_ready"],
+        promotion_ready=cost_readiness["promotion_ready"],
         physics_pressure_state=physics_pressure_state,
         summary=" / ".join(summary_parts),
     )
@@ -374,6 +432,11 @@ def build_economics_projection(
     selection_entry: SelectionEntry | None = None,
     physics_projection: ScoringPhysicsProjection | None = None,
 ) -> ScoringEconomicsProjection:
+    carriage_statuses, carriage_reason_codes = _resolve_carriage_audit_surface(
+        candidate,
+        hook_outcome=hook_outcome,
+    )
+    cost_readiness = _resolve_cost_readiness(candidate)
     phantom_reason_code = (
         "PHANTOM_RISK"
         if penalty_cap_result.verdict == PenaltyCapVerdict.PHANTOM_RISK
@@ -395,6 +458,19 @@ def build_economics_projection(
         hard_blocked=hard_block_decision.is_blocked,
         portfolio_verdict_code=portfolio_result.verdict.value if portfolio_result is not None else "",
         selection_outcome_code=selection_entry.outcome.value if selection_entry is not None else "",
+        carriage_statuses=carriage_statuses,
+        carriage_reason_codes=carriage_reason_codes,
+        shared_physics_mapping_status=candidate.shared_physics_mapping_status,
+        engine_role=candidate.engine_role,
+        cost_model_completeness_status=cost_readiness["cost_model_completeness_status"],
+        fee_source_status=cost_readiness["fee_source_status"],
+        impact_source_status=cost_readiness["impact_source_status"],
+        fill_realism_status=cost_readiness["fill_realism_status"],
+        realized_slippage_status=cost_readiness["realized_slippage_status"],
+        scoring_risk_cost_completeness_status=cost_readiness["scoring_risk_cost_completeness_status"],
+        cost_readiness_reason_codes=cost_readiness["reason_codes"],
+        execution_ready=cost_readiness["execution_ready"],
+        promotion_ready=cost_readiness["promotion_ready"],
         physics_pressure_state="nominal" if physics_projection is None else physics_projection.pressure_state,
         fragility_score=0.0 if physics_projection is None else physics_projection.fragility_score,
         toxicity_score=0.0 if physics_projection is None else physics_projection.toxicity_score,
@@ -460,6 +536,78 @@ def build_scoring_soft_penalty_hook_input(
         micro_friction_score=physics_projection.micro_friction_score,
         pressure_state=physics_projection.pressure_state,
     )
+
+
+def _resolve_carriage_audit_surface(
+    candidate: ScoringCandidateInput,
+    *,
+    hook_outcome: ScoringSoftPenaltyLayerOutcome | None,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    statuses = list(candidate.carriage_statuses)
+    reason_codes = list(candidate.carriage_reason_codes)
+    if not candidate.supplementary_refs:
+        statuses.append("ml_refs_missing_neutral")
+        statuses.append("ML_NEUTRAL_NO_REFS")
+        reason_codes.append("ML_REFS_MISSING_NEUTRAL")
+    if hook_outcome is not None:
+        if any(code == "ML_ARTIFACT_ACTIVE" for code in hook_outcome.reason_codes):
+            statuses.append("ML_ACTIVE_GOVERNED_REFS")
+        if any(code == "ML_ARTIFACT_STALE" for code in hook_outcome.reason_codes):
+            statuses.append("ml_refs_stale")
+            statuses.append("ML_STALE_NEUTRAL")
+        if any(code == "ML_ARTIFACT_HASH_MISMATCH" for code in hook_outcome.reason_codes):
+            statuses.append("ML_HASH_MISMATCH_DISABLED")
+        if any(code == "ML_DIRECTIONAL_REF_FORBIDDEN" for code in hook_outcome.reason_codes):
+            statuses.append("ml_directional_ref_forbidden")
+            statuses.append("ML_DIRECTIONAL_REF_FORBIDDEN")
+    deduped_statuses = tuple(dict.fromkeys(statuses))
+    deduped_reason_codes = tuple(dict.fromkeys(reason_codes))
+    return deduped_statuses, deduped_reason_codes
+
+
+def _resolve_cost_readiness(candidate: ScoringCandidateInput) -> dict[str, object]:
+    cost_model_status = _normalize_status(
+        candidate.cost_model_completeness_status,
+        default="UNKNOWN",
+    )
+    fee_source_status = _normalize_status(candidate.fee_source_status, default="UNKNOWN")
+    impact_source_status = _normalize_status(candidate.impact_source_status, default="UNKNOWN")
+    fill_realism_status = _normalize_status(candidate.fill_realism_status, default="UNKNOWN")
+    realized_slippage_status = _normalize_status(
+        candidate.realized_slippage_status,
+        default="UNKNOWN",
+    )
+    reason_codes: list[str] = []
+    if cost_model_status != "COMPLETE":
+        reason_codes.extend(
+            [
+                "SCORING_RISK_COST_COMPLETENESS_PARTIAL",
+                "COST_MODEL_INCOMPLETE",
+            ]
+        )
+        readiness_status = "SCORING_RISK_COST_COMPLETENESS_PARTIAL"
+        execution_ready = False
+        promotion_ready = False
+    else:
+        readiness_status = "COMPLETE"
+        execution_ready = True
+        promotion_ready = True
+    return {
+        "cost_model_completeness_status": cost_model_status,
+        "fee_source_status": fee_source_status,
+        "impact_source_status": impact_source_status,
+        "fill_realism_status": fill_realism_status,
+        "realized_slippage_status": realized_slippage_status,
+        "scoring_risk_cost_completeness_status": readiness_status,
+        "reason_codes": tuple(dict.fromkeys(reason_codes)),
+        "execution_ready": execution_ready,
+        "promotion_ready": promotion_ready,
+    }
+
+
+def _normalize_status(value: str | None, *, default: str) -> str:
+    normalized = "" if value is None else str(value).strip()
+    return normalized or default
 
 
 def apply_soft_penalty_hook(

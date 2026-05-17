@@ -16,6 +16,7 @@ if str(SRC_ROOT) not in sys.path:
 
 from monitoring.local_observability_stack import (  # noqa: E402
     DEFAULT_LOCAL_OBSERVABILITY_OUTPUT_DIR,
+    DEFAULT_READINESS_TIMEOUT_S,
     LocalObservabilityStackSummary,
     launch_local_observability_stack,
 )
@@ -102,7 +103,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--readiness-timeout-s",
         type=float,
-        default=30.0,
+        default=DEFAULT_READINESS_TIMEOUT_S,
         help="Timeout applied while waiting for bridge/Prometheus/Grafana readiness.",
     )
     return parser

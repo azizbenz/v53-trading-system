@@ -2,11 +2,24 @@
 
 from __future__ import annotations
 
+import shutil
+from pathlib import Path
+
 import monitoring
 import pytest
 from pydantic import ValidationError
 
-from interface_contracts import AlertCategory, AlertRecord, AlertSeverity, HookId, PairHealthLevel, ProfileId, RuntimeMode
+from interface_contracts import (
+    AlertCategory,
+    AlertRecord,
+    AlertSeverity,
+    DashboardArtifactKind,
+    DashboardArtifactTransferManifest,
+    HookId,
+    PairHealthLevel,
+    ProfileId,
+    RuntimeMode,
+)
 from meta import (
     build_break_even_report,
     build_cra_report,
@@ -27,6 +40,10 @@ from meta_minimal.edge_tracker_prudent_minimal.edge_status_classifier import (
 )
 from monitoring import (
     AccountUserDataProjection,
+    ArtifactComparisonProjection,
+    ArtifactRuntimeVisibilityProjection,
+    ArtifactShadowComparisonEvidence,
+    ArtifactThresholdConsumerProjection,
     Build14ReaderProjection,
     Build14Projection,
     Build9XProjection,
@@ -51,6 +68,8 @@ from monitoring import (
     collect_pair_metrics,
     collect_portfolio_metrics,
 )
+from monitoring.artifact_visibility import build_artifact_comparison_projections
+from tests.support_paths import make_repo_scratch_dir
 
 
 def _sample_build9_reports():
@@ -1447,6 +1466,207 @@ def test_technical_dashboard_payload_accepts_execution_runtime_projection_bridge
     assert payload.execution_runtime_projection_bridge.ready_consumer_count == 1
     assert payload.execution_runtime_projection_bridge.spread_guard_model_loaded is False
     assert payload.execution_runtime_projection_bridge.slippage_model_loaded is False
+
+
+def test_technical_dashboard_payload_accepts_artifact_visibility_and_compare_surfaces() -> None:
+    dtr_summary, cra_report, break_even_report, edge_report = _sample_build9_reports()
+    snapshot = collect_monitoring_snapshot(
+        correlation_id="corr-artifact-visibility",
+        profile=ProfileId.LIGHT,
+        runtime_mode=RuntimeMode.SHADOW,
+        timestamp_ms=1_700_000_000_000,
+        portfolio=collect_portfolio_metrics(
+            allocated_opportunities=1,
+            gross_capacity_used_pct=10.0,
+            loss_capacity_used_pct=2.0,
+            beta_utilization=0.1,
+            capital_deployed_usdt=500.0,
+            ce_net=0.0010,
+        ),
+        infra=collect_infra_metrics(),
+        meta=collect_meta_metrics(dtr_summary, cra_report, break_even_report, edge_report),
+    )
+
+    payload = build_technical_dashboard_payload(
+        snapshot,
+        artifact_runtime_visibility=(
+            ArtifactRuntimeVisibilityProjection(
+                slot="active",
+                artifact_kind="ml_model_artifact",
+                artifact_id="ml-1",
+                artifact_hash="a" * 64,
+                lineage_version="a.v1.0.r1",
+                feature_hash="f" * 64,
+                pair_universe_count=3,
+                feature_count=12,
+                forecast_target_class="net_return",
+                forecast_horizon_class="intraday",
+                bet_structure="single_decision",
+                top_feature_names_ref="exports/ml_features.json",
+            ),
+        ),
+        artifact_threshold_consumers=(
+            ArtifactThresholdConsumerProjection(
+                threshold_id="THR-X03",
+                threshold_family="execution_runtime",
+                consumer_id="rate_limiter",
+                consumer_interface="quota_ratio_ceiling",
+                method="quota_ratio_ceiling_v1",
+                threshold_review_status="ready",
+                threshold_fit_ready=True,
+                source_ref="exports/runtime_projection.json",
+            ),
+        ),
+        artifact_comparisons=(
+            ArtifactComparisonProjection(
+                champion_artifact_id="ml-1",
+                challenger_artifact_id="ml-shadow-1",
+                comparison_status="shadow_pending_evidence",
+            ),
+        ),
+    )
+
+    assert payload.artifact_runtime_visibility[0].artifact_id == "ml-1"
+    assert payload.artifact_threshold_consumers[0].threshold_id == "THR-X03"
+    assert payload.artifact_comparisons[0].challenger_artifact_id == "ml-shadow-1"
+
+
+def _artifact_visibility_scratch(label: str) -> Path:
+    return make_repo_scratch_dir("artifact_visibility_monitoring_tests", label)
+
+
+def _artifact_manifest(
+    *,
+    kind: DashboardArtifactKind,
+    artifact_id: str,
+) -> DashboardArtifactTransferManifest:
+    return DashboardArtifactTransferManifest(
+        artifact_hash="a" * 64,
+        artifact_kind=kind,
+        artifact_id=artifact_id,
+        source_ref=f"exports/{artifact_id}.json",
+    )
+
+
+def test_artifact_comparison_projection_preserves_gain_and_halal_fields() -> None:
+    scratch = _artifact_visibility_scratch("comparison_projection_fields")
+    try:
+        evidence_path = scratch / "ml_compare.json"
+        evidence_path.write_text(
+            ArtifactShadowComparisonEvidence(
+                artifact_family="ml",
+                champion_artifact_id="ml-1",
+                challenger_artifact_id="ml-shadow-1",
+                event_count=11,
+                expected_gain_delta_mean=0.00042,
+                expected_cost_delta_mean=0.00009,
+                expected_ce_delta_mean=0.00033,
+                sharia_policy_version="sharia_policy_v1",
+                sharia_scope_mode="pair_perimeter_with_spot_long_assumptions",
+                halal_eligible_event_count=8,
+                halal_excluded_event_count=3,
+                halal_exclusion_reason_summary=("quote_pair_not_permitted",),
+                sharia_assumption_flags=("assumed_side=BUY",),
+                comparison_status="shadow_ready",
+            ).model_dump_json(indent=2),
+            encoding="utf-8",
+        )
+
+        projections = build_artifact_comparison_projections(
+            active_ml_artifact=_artifact_manifest(
+                kind=DashboardArtifactKind.ML_MODEL_ARTIFACT,
+                artifact_id="ml-1",
+            ),
+            shadow_ml_challenger_artifact=_artifact_manifest(
+                kind=DashboardArtifactKind.ML_MODEL_ARTIFACT,
+                artifact_id="ml-shadow-1",
+            ),
+            ml_comparison_ref=str(evidence_path),
+        )
+
+        assert len(projections) == 1
+        projection = projections[0]
+        assert projection.expected_gain_delta_mean == 0.00042
+        assert projection.expected_ce_delta_mean == 0.00033
+        assert projection.sharia_policy_version == "sharia_policy_v1"
+        assert projection.halal_eligible_event_count == 8
+        assert projection.halal_excluded_event_count == 3
+        assert projection.halal_exclusion_reason_summary == (
+            "quote_pair_not_permitted",
+        )
+        assert projection.sharia_assumption_flags == ("assumed_side=BUY",)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_artifact_comparison_projection_degrades_invalid_evidence() -> None:
+    scratch = _artifact_visibility_scratch("comparison_projection_invalid")
+    try:
+        evidence_path = scratch / "ml_compare_invalid.json"
+        evidence_path.write_text("{invalid-json", encoding="utf-8")
+
+        projections = build_artifact_comparison_projections(
+            active_ml_artifact=_artifact_manifest(
+                kind=DashboardArtifactKind.ML_MODEL_ARTIFACT,
+                artifact_id="ml-1",
+            ),
+            shadow_ml_challenger_artifact=_artifact_manifest(
+                kind=DashboardArtifactKind.ML_MODEL_ARTIFACT,
+                artifact_id="ml-shadow-1",
+            ),
+            ml_comparison_ref=str(evidence_path),
+        )
+
+        assert len(projections) == 1
+        assert projections[0].comparison_status == "invalid_evidence"
+        assert projections[0].evidence_ref == str(evidence_path)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_regime_artifact_comparison_projection_preserves_ready_evidence() -> None:
+    scratch = _artifact_visibility_scratch("regime_comparison_projection_ready")
+    try:
+        evidence_path = scratch / "regime_compare.json"
+        evidence_path.write_text(
+            ArtifactShadowComparisonEvidence(
+                artifact_family="regime_detector",
+                champion_artifact_id="regime-1",
+                challenger_artifact_id="regime-shadow-1",
+                event_count=5,
+                decision_diff_rate=0.4,
+                forecast_strength_delta_mean=0.18,
+                sharia_policy_version="sharia_policy_v1",
+                sharia_scope_mode="pair_perimeter_with_spot_long_assumptions",
+                halal_eligible_event_count=4,
+                halal_excluded_event_count=1,
+                comparison_status="shadow_ready",
+            ).model_dump_json(indent=2),
+            encoding="utf-8",
+        )
+
+        projections = build_artifact_comparison_projections(
+            active_regime_detector_artifact=_artifact_manifest(
+                kind=DashboardArtifactKind.REGIME_DETECTOR_ARTIFACT,
+                artifact_id="regime-1",
+            ),
+            shadow_regime_detector_challenger_artifact=_artifact_manifest(
+                kind=DashboardArtifactKind.REGIME_DETECTOR_ARTIFACT,
+                artifact_id="regime-shadow-1",
+            ),
+            regime_detector_comparison_ref=str(evidence_path),
+        )
+
+        assert len(projections) == 1
+        projection = projections[0]
+        assert projection.comparison_status == "shadow_ready"
+        assert projection.event_count == 5
+        assert projection.decision_diff_rate == 0.4
+        assert projection.forecast_strength_delta_mean == 0.18
+        assert projection.halal_eligible_event_count == 4
+        assert projection.halal_excluded_event_count == 1
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
 
 
 def test_technical_dashboard_payload_accepts_runtime_hook_bridge_projections():

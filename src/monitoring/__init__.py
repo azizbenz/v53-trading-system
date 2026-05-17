@@ -11,6 +11,10 @@ from monitoring.contracts import (
     AccountUserDataProjection,
     AlertHistoryEntry,
     AlertProjection,
+    ArtifactComparisonProjection,
+    ArtifactShadowComparisonEvidence,
+    ArtifactRuntimeVisibilityProjection,
+    ArtifactThresholdConsumerProjection,
     Build14ReaderProjection,
     Build14Projection,
     Build9MetaProjection,
@@ -59,6 +63,10 @@ from monitoring.contracts import (
     ShadowProjection,
     SystemProjection,
     TechnicalDashboardPayload,
+)
+from monitoring.contracts_artifacts import (
+    ArtifactShadowVerdictBundle,
+    ArtifactVerdictBundleProjection,
 )
 from monitoring.health_dashboard_backend import build_health_dashboard_payload
 from monitoring.hybrid_router_metrics import (
@@ -212,6 +220,8 @@ __all__ = [
     "Build14ReaderProjection",
     "Build14Projection",
     "AccountUserDataProjection",
+    "ArtifactShadowComparisonEvidence",
+    "ArtifactShadowVerdictBundle",
     "LiveCompleteGateGroupProjection",
     "LiveCompleteProjection",
     "MicroLiveProjection",
@@ -222,6 +232,10 @@ __all__ = [
     "ShadowProjection",
     "ReplayImportProjection",
     "AlertProjection",
+    "ArtifactRuntimeVisibilityProjection",
+    "ArtifactThresholdConsumerProjection",
+    "ArtifactComparisonProjection",
+    "ArtifactVerdictBundleProjection",
     "TechnicalDashboardPayload",
     "LocalLabMonitoringBackendPayload",
     "LocalLabMonitoringIngestionSummary",

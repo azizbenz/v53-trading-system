@@ -165,12 +165,22 @@ from local_replay_runtime.artifact_manifest import ArtifactManifest, SHARED_CORE
 from local_replay_runtime.contracts import (
     LocalReplayRequest,
     LocalReplayRuntimeEvidence,
+    ParityTolerancePolicy,
     ReplayBundle,
     ReplayClockRef,
     ReplayDatasetRef,
+    ReplayExecutionEvaluationRequest,
+    ReplayExecutionEvaluationResult,
     ReplayExecutionPlan,
+    ReplayExecutionProviderRef,
+    ReplayParityDiagnosticsSummary,
+    ShadowExecutionSimulatorConfig,
 )
-from local_replay_runtime.enums import ReplayArtifactKind, ReplayLifecycleState
+from local_replay_runtime.enums import (
+    ReplayArtifactKind,
+    ReplayExecutionProviderKind,
+    ReplayLifecycleState,
+)
 from interface_contracts import (
     ActionUnit,
     ArtifactActivationStage,
@@ -213,13 +223,29 @@ from local_replay_runtime.replay_clock import (
     build_replay_clock,
 )
 from local_replay_runtime.replay_dtr_exporter import export_replay_dtr_records, load_replay_dtr_records
+from local_replay_runtime.replay_execution_runtime import (
+    build_replay_parity_diagnostics,
+    evaluate_replay_execution,
+)
 from local_replay_runtime.replay_executor import (
     ReplayExecutionInput,
     ReplayExecutionResult,
     execute_local_replay_export,
 )
+from local_replay_runtime.promotion_artifact_builder import (
+    ReplayPromotionArtifactBundle,
+    SampleSizeSurvivalBuildInput,
+    build_replay_promotion_artifact_bundle,
+    build_sample_size_survival_artifact,
+    discover_promotion_artifact_refs,
+)
 from local_replay_runtime.replay_metrics_collector import (
+    ReplayBookDepthAvailability,
+    ReplayCostParityEvidence,
     ReplayEngineAggregate,
+    ReplayFeeProvenance,
+    ReplayFillRealismEvidence,
+    ReplayImpactProvenance,
     ReplayMetricsSummary,
     ReplayPairAggregate,
     build_replay_metrics_summary,
@@ -259,9 +285,6 @@ from local_replay_runtime.runtime_evidence import (
     LocalReplayEvidenceRecorderState,
 )
 from local_replay_runtime.shadow_execution_simulator import (
-    ParityTolerancePolicy,
-    ReplayParityDiagnosticsSummary,
-    ShadowExecutionSimulatorConfig,
     build_parity_diagnostics_payload,
     simulate_shadow_compatible_dtrs,
 )
@@ -272,6 +295,43 @@ from local_replay_runtime.walk_forward_review import (
     build_walk_forward_review_template,
     summarize_walk_forward_review,
 )
+from local_replay_runtime.strategy_ladder_models import (
+    StrategyLadderBucketReplayResult,
+    StrategyLadderCandidateEvent,
+    StrategyLadderCandidateSummary,
+    StrategyLadderDetailedReplayArtifact,
+    StrategyLadderFeatureRow,
+    StrategyLadderFeatureStoreResult,
+    StrategyLadderReportSummary,
+    StrategyLadderRequest,
+    StrategyLadderRunManifest,
+    deterministic_payload_hash,
+)
+from local_replay_runtime.strategy_ladder_feature_store import (
+    load_strategy_ladder_feature_store,
+    parse_time_boundary_to_ms,
+)
+from local_replay_runtime.strategy_ladder_candidate_discovery import (
+    discover_strategy_ladder_candidates,
+    export_strategy_ladder_candidates,
+    load_strategy_ladder_candidate_events,
+)
+from local_replay_runtime.strategy_ladder_detailed_replay import (
+    StrategyLadderDetailedReplayStageResult,
+    run_strategy_ladder_detailed_replay,
+)
+try:
+    from local_replay_runtime.strategy_ladder_raw_window_extractor import (
+        extract_strategy_ladder_raw_windows,
+        load_strategy_ladder_raw_window_manifests,
+    )
+    from local_replay_runtime.strategy_ladder_runner import (
+        StrategyLadderRunResult,
+        run_backtest_strategy_ladder,
+    )
+except ModuleNotFoundError as exc:
+    if exc.name != "local_replay_runtime.strategy_ladder_raw_window_extractor":
+        raise
 
 __all__ = [
     "ArtifactManifest",
@@ -381,13 +441,25 @@ __all__ = [
     "build_ml_backtest_training_dataset_from_replay_and_dtr",
     "ReplayPairAggregate",
     "ReplayEngineAggregate",
+    "ReplayBookDepthAvailability",
+    "ReplayFillRealismEvidence",
+    "ReplayCostParityEvidence",
+    "ReplayFeeProvenance",
+    "ReplayImpactProvenance",
     "ReplayMetricsSummary",
     "build_replay_metrics_summary",
     "export_replay_dtr_records",
     "load_replay_dtr_records",
+    "build_replay_parity_diagnostics",
+    "evaluate_replay_execution",
     "ReplayExecutionInput",
     "ReplayExecutionResult",
     "execute_local_replay_export",
+    "ReplayPromotionArtifactBundle",
+    "SampleSizeSurvivalBuildInput",
+    "build_replay_promotion_artifact_bundle",
+    "build_sample_size_survival_artifact",
+    "discover_promotion_artifact_refs",
     "ReplayChunkArtifact",
     "ReplayChunkSessionSummary",
     "ReplayOrchestratorRequest",
@@ -398,7 +470,10 @@ __all__ = [
     "ReplayClockRef",
     "LocalReplayRequest",
     "ReplayBundle",
+    "ReplayExecutionEvaluationRequest",
+    "ReplayExecutionEvaluationResult",
     "ReplayExecutionPlan",
+    "ReplayExecutionProviderRef",
     "LocalReplayRuntimeEvidence",
     "LocalReplayOrchestrator",
     "PerformanceModeGuardReport",
@@ -442,7 +517,25 @@ __all__ = [
     "WalkForwardReviewSummary",
     "build_walk_forward_review_template",
     "summarize_walk_forward_review",
+    "StrategyLadderRequest",
+    "StrategyLadderFeatureRow",
+    "StrategyLadderFeatureStoreResult",
+    "StrategyLadderCandidateEvent",
+    "StrategyLadderCandidateSummary",
+    "StrategyLadderBucketReplayResult",
+    "StrategyLadderDetailedReplayArtifact",
+    "StrategyLadderRunManifest",
+    "StrategyLadderReportSummary",
+    "StrategyLadderDetailedReplayStageResult",
+    "deterministic_payload_hash",
+    "parse_time_boundary_to_ms",
+    "load_strategy_ladder_feature_store",
+    "discover_strategy_ladder_candidates",
+    "export_strategy_ladder_candidates",
+    "load_strategy_ladder_candidate_events",
+    "run_strategy_ladder_detailed_replay",
     "ReplayArtifactKind",
+    "ReplayExecutionProviderKind",
     "ReplayLifecycleState",
     "ArtifactActivationStage",
     "ArtifactHealthState",
@@ -456,3 +549,13 @@ __all__ = [
     "BacktestProfileForbiddenError",
     "ProfileForkForbiddenError",
 ]
+
+if "StrategyLadderRunResult" in globals():
+    __all__.extend(
+        [
+            "StrategyLadderRunResult",
+            "extract_strategy_ladder_raw_windows",
+            "load_strategy_ladder_raw_window_manifests",
+            "run_backtest_strategy_ladder",
+        ]
+    )

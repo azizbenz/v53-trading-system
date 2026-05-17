@@ -1,0 +1,3008 @@
+{% extends "base.html" %}
+
+{% block title %}Backtest - {{ vm.welcome_message }}{% endblock %}
+
+{% block content %}
+
+{% macro status_chip(value) -%}
+    {% set text = (value if value is not none else 'n/a') | string %}
+    {% set upper = text.upper() %}
+    {% if 'BLOCKED' in upper or 'FAILED' in upper or 'MISSING' in upper or 'NOT_PROVEN' in upper or 'NOT_READY' in upper or 'DEAD' in upper or 'CANCELLED' in upper or 'ERROR' in upper or 'BLOCKER' in upper %}
+        <span class="status-chip status-chip--bad">{{ text }}</span>
+    {% elif 'READY' in upper or 'AVAILABLE' in upper or 'OK' in upper or 'PRODUCED' in upper or 'RUNNING' in upper or 'ACTIVE' in upper or 'LAUNCHABLE' in upper or 'ALIVE' in upper %}
+        <span class="status-chip status-chip--ok">{{ text }}</span>
+    {% else %}
+        <span class="status-chip status-chip--warn">{{ text }}</span>
+    {% endif %}
+{%- endmacro %}
+
+<section class="welcome-banner">
+    <div class="welcome-banner__inner">
+        <div>
+            <h1 class="welcome-banner__title">Backtest / Replay</h1>
+            <p class="welcome-banner__sub">
+                Launch audited local jobs on existing scripts and inspect runner progress and outputs.
+            </p>
+        </div>
+        <div class="welcome-banner__amount">
+            <span class="welcome-banner__label">Latest job</span>
+            <span id="backtest-latest-status" class="welcome-banner__value">{{ vm.runtime.backtest_summary.latest_status }}</span>
+        </div>
+    </div>
+</section>
+
+<section class="stat-row">
+    <div class="stat-card">
+        <div class="stat-card__head"><span class="stat-card__pair">Requested</span></div>
+        <div id="backtest-summary-requested" class="stat-card__price">{{ vm.runtime.backtest_summary.requested_count }}</div>
+        <div class="stat-card__foot">queued jobs</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-card__head"><span class="stat-card__pair">Running</span></div>
+        <div id="backtest-summary-running" class="stat-card__price">{{ vm.runtime.backtest_summary.running_count }}</div>
+        <div class="stat-card__foot">active local runners</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-card__head"><span class="stat-card__pair">Completed</span></div>
+        <div id="backtest-summary-completed" class="stat-card__price">{{ vm.runtime.backtest_summary.completed_count }}</div>
+        <div class="stat-card__foot">audited outputs</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-card__head"><span class="stat-card__pair">Failed</span></div>
+        <div id="backtest-summary-failed" class="stat-card__price">{{ vm.runtime.backtest_summary.failed_count }}</div>
+        <div class="stat-card__foot">needs review</div>
+    </div>
+</section>
+
+<section class="card">
+    <div class="card__head">
+        <h3>Launch Local Job</h3>
+        <span class="card__sub">Audited local runner only</span>
+    </div>
+    <div class="card__body">
+        <ul class="small-list">
+            <li>Lightweight status polling is enabled on the backtest page. Source preview remains manual to avoid rescanning large run trees on every refresh.</li>
+            <li><a class="button button--ghost" href="/backtest">Refresh Status</a> Use <strong>Generate Preview</strong> to rescan the selected source folders.</li>
+        </ul>
+        <form class="form-grid form-grid--wide" method="post" action="/backtest/run">
+            <label>
+                Job kind
+                <select name="job_kind">
+                    {% set _selected_job_kind = vm.selected_form.job_kind %}
+                    <option value="local_lab_analysis_bundle"{% if _selected_job_kind == 'local_lab_analysis_bundle' %} selected{% endif %}>Local lab analysis bundle</option>
+                    <option value="local_lab_post_trade_review"{% if _selected_job_kind == 'local_lab_post_trade_review' %} selected{% endif %}>Post-trade review</option>
+                    <option value="edge_gate_calibration"{% if _selected_job_kind == 'edge_gate_calibration' %} selected{% endif %}>Edge-gate calibration</option>
+                    <option value="strategy_ladder_runner"{% if _selected_job_kind == 'strategy_ladder_runner' %} selected{% endif %}>Strategy Ladder runner</option>
+                </select>
+            </label>
+            <label>
+                Export dir
+                <input type="text" name="export_dir" placeholder="E:\lab\candidate_export" value="{{ vm.selected_form.export_dir }}" required>
+            </label>
+            <label>
+                Baseline export dir (optional)
+                <input type="text" name="baseline_export_dir" placeholder="E:\lab\baseline_export" value="{{ vm.selected_form.baseline_export_dir }}">
+            </label>
+            <label>
+                Signed by
+                <input type="text" name="signed_by" value="{{ vm.selected_form.signed_by or 'cockpit_operator' }}">
+            </label>
+            <div class="form-actions">
+                <button class="button button--primary" type="submit">Run Backtest Job</button>
+            </div>
+        </form>
+    </div>
+</section>
+
+{% set monitor_active = vm.runtime.backtest_summary.running_count > 0 %}
+<section class="card run-backtest-card{% if monitor_active %} run-backtest-card--active{% endif %}">
+    <div class="card__head">
+        <div class="card__head-main">
+            <h3>Run Backtest</h3>
+            <span class="card__sub">Patch 6 Controls for phases A1/A2/B1/B2</span>
+        </div>
+        <span id="run-backtest-badge" class="monitor-badge {% if monitor_active or vm.backtest_preflight.preview_launchable %}monitor-badge--active{% else %}monitor-badge--idle{% endif %}">
+            {{ 'backtest running' if monitor_active else vm.backtest_preflight.inspection_status }}
+        </span>
+    </div>
+    {% set preview_badge_class = 'preview-badge--ok' if vm.backtest_preflight.preview_launchable else ('preview-badge--danger' if vm.backtest_preflight.blockers else 'preview-badge--warn') %}
+    <div class="card__body">
+        <div class="patch6-layout">
+        <div class="patch6-form-column">
+        <form method="post" action="/backtest/run">
+            <div class="operator-token-row">
+                <span class="operator-token operator-token--info">{{ vm.backtest_preflight.phase_label or 'phase not selected' }}</span>
+                <span class="operator-token {% if vm.backtest_preflight.preview_launchable %}operator-token--ok{% else %}operator-token--warn{% endif %}">{{ 'launch-ready' if vm.backtest_preflight.preview_launchable else 'preview required' }}</span>
+                <span class="operator-token {% if vm.backtest_preflight.normalized_request.dry_run %}operator-token--warn{% else %}operator-token--ok{% endif %}">{{ 'dry-run' if vm.backtest_preflight.normalized_request.dry_run else 'materialized run' }}</span>
+            </div>
+            <div class="operator-panel">
+                <div class="operator-panel__head">
+                    <div>
+                        <h4>Stage 1 - Source and scope selection</h4>
+                        <div class="operator-panel__sub">Choose the workflow phase, candidate breadth, and storage mode before scanning the folders.</div>
+                    </div>
+                </div>
+                <div class="form-grid form-grid--wide">
+            <label>
+                Phase
+                <select name="action_name">
+                    {% set _selected_phase = vm.selected_form.workflow_phase or vm.selected_form.phase_id %}
+                    {% set _selected_action = vm.selected_form.action_name or 'PHASE_A1_PREVIEW' %}
+                    {% if _selected_action not in ['PHASE_A1_PREVIEW', 'PHASE_A2_DATA_FACTORY', 'PHASE_B1_CANDIDATE_DISCOVERY', 'PHASE_B2_DETAILED_REPLAY'] %}
+                        {% if _selected_phase in ['PHASE_A1', 'PHASE_1A', 'PHASE_2A'] %}
+                            {% set _selected_action = 'PHASE_A1_PREVIEW' %}
+                        {% elif _selected_phase in ['PHASE_A2', 'PHASE_1B'] %}
+                            {% set _selected_action = 'PHASE_A2_DATA_FACTORY' %}
+                        {% elif _selected_phase == 'PHASE_B1' %}
+                            {% set _selected_action = 'PHASE_B1_CANDIDATE_DISCOVERY' %}
+                        {% elif _selected_phase in ['PHASE_B2', 'PHASE_2B'] %}
+                            {% set _selected_action = 'PHASE_B2_DETAILED_REPLAY' %}
+                        {% endif %}
+                    {% endif %}
+                    <option value="PHASE_A1_PREVIEW"{% if _selected_action == 'PHASE_A1_PREVIEW' %} selected{% endif %}>A1 Preview / Source Scope Validation</option>
+                    <option value="PHASE_A2_DATA_FACTORY"{% if _selected_action == 'PHASE_A2_DATA_FACTORY' %} selected{% endif %}>A2 Data Factory Materialization</option>
+                    <option value="PHASE_B1_CANDIDATE_DISCOVERY"{% if _selected_action == 'PHASE_B1_CANDIDATE_DISCOVERY' %} selected{% endif %}>B1 Candidate Discovery</option>
+                    <option value="PHASE_B2_DETAILED_REPLAY"{% if _selected_action == 'PHASE_B2_DETAILED_REPLAY' %} selected{% endif %}>B2 Detailed Replay</option>
+                </select>
+            </label>
+            <label>
+                Input / export root
+                <input type="text" name="export_dir" placeholder="E:\strategy_ladder\patch6" value="{{ vm.selected_form.export_dir if vm.selected_form.action_name else '' }}" required>
+            </label>
+            <label>
+                Baseline export root (optional)
+                <input type="text" name="baseline_export_dir" placeholder="E:\strategy_ladder\baseline_export" value="{{ vm.selected_form.baseline_export_dir }}">
+            </label>
+            <label>
+                Pair subset (optional CSV; inferred from paths if empty) &rarr; <code>--pairs</code>
+                <input type="text" name="pairs" placeholder="BTCUSDT,ETHUSDT" value="{{ vm.selected_form.pairs_csv }}">
+            </label>
+            <label>
+                Candidate discovery mode
+                <select name="candidate_discovery_mode">
+                    {% set _candidate_mode = vm.selected_form.candidate_discovery_mode or 'SAMPLE_CAPPED_DEBUG' %}
+                    <option value="SAMPLE_CAPPED_DEBUG"{% if _candidate_mode == 'SAMPLE_CAPPED_DEBUG' %} selected{% endif %}>SAMPLE_CAPPED_DEBUG</option>
+                    <option value="BROAD_DIAGNOSTIC"{% if _candidate_mode == 'BROAD_DIAGNOSTIC' %} selected{% endif %}>BROAD_DIAGNOSTIC</option>
+                    <option value="FULL_DISCOVERY"{% if _candidate_mode == 'FULL_DISCOVERY' %} selected{% endif %}>FULL_DISCOVERY</option>
+                </select>
+            </label>
+            <label>
+                Engine native sample size
+                <select name="engine_native_sample_size">
+                    {% set _sample_size = vm.selected_form.engine_native_sample_size or 10 %}
+                    {% for _sample_option in [10, 50, 100, 250] %}
+                    <option value="{{ _sample_option }}"{% if _sample_size == _sample_option %} selected{% endif %}>{{ _sample_option }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label>
+                Silver storage mode
+                <select name="silver_storage_mode">
+                    {% set _silver_mode = vm.selected_form.silver_storage_mode or 'jsonl_gz' %}
+                    <option value="jsonl_gz"{% if _silver_mode == 'jsonl_gz' %} selected{% endif %}>jsonl_gz</option>
+                    <option value="parquet"{% if _silver_mode == 'parquet' %} selected{% endif %}>parquet</option>
+                    <option value="jsonl_debug"{% if _silver_mode == 'jsonl_debug' %} selected{% endif %}>jsonl_debug</option>
+                </select>
+            </label>
+                </div>
+            </div>
+            <div class="operator-panel">
+                <div class="operator-panel__head">
+                    <div>
+                        <h4>Stage 2 - Historical source folders</h4>
+                        <div class="operator-panel__sub">Select only the folders for this request. The launcher reuses these exact roots.</div>
+                    </div>
+                </div>
+                <div class="operator-field-stack">
+            <label>
+                Orderbook root &rarr; <code>--raw-root</code>
+                <div class="field-row">
+                    <input id="orderbook_path" type="text" name="orderbook_path" placeholder="L:\ordre book part 1\BTCUSDT" value="{{ vm.selected_form.orderbook_path }}">
+                        <button class="button button--ghost js-browse-folder" type="button" data-target="orderbook_path">Browse...</button>
+                </div>
+            </label>
+            <label>
+                Klines root &rarr; <code>--raw-root</code>
+                <div class="field-row">
+                    <input id="klines_path" type="text" name="klines_path" placeholder="L:\klines\BTCUSDT\1" value="{{ vm.selected_form.klines_path }}">
+                        <button class="button button--ghost js-browse-folder" type="button" data-target="klines_path">Browse...</button>
+                </div>
+            </label>
+            <label>
+                Trades root &rarr; <code>--raw-root</code>
+                <div class="field-row">
+                    <input id="trades_path" type="text" name="trades_path" placeholder="L:\trades\BTCUSDT\" value="{{ vm.selected_form.trades_path }}">
+                        <button class="button button--ghost js-browse-folder" type="button" data-target="trades_path">Browse...</button>
+                </div>
+            </label>
+            <label>
+                Historical metadata root (optional) &rarr; <code>--historical-metadata-root</code>
+                <div class="field-row">
+                    <input id="metadata_path" type="text" name="metadata_path" placeholder="K:\v5.3 backtest\metadata\bybit\spot" value="{{ vm.selected_form.metadata_path }}">
+                        <button class="button button--ghost js-browse-folder" type="button" data-target="metadata_path">Browse...</button>
+                </div>
+            </label>
+            <label>
+                Output root (optional) &rarr; <code>--output-root</code>
+                <div class="field-row">
+                    <input id="output_root" type="text" name="output_root" placeholder="J:\v53_backtest_outputs\BTCUSDT_2025_04_29_30" value="{{ vm.selected_form.output_root }}">
+                        <button class="button button--ghost js-browse-folder" type="button" data-target="output_root">Browse...</button>
+                </div>
+            </label>
+                </div>
+            </div>
+            <div class="operator-panel">
+                <div class="operator-panel__head">
+                    <div>
+                        <h4>Stage 3 - Date and run controls</h4>
+                        <div class="operator-panel__sub">Lock the window, opt into broad runs with the checkbox, then launch only from the matching workflow preview.</div>
+                    </div>
+                </div>
+                <div class="form-grid form-grid--wide">
+            <label>
+                Start (optional) &rarr; <code>--start</code>
+                <input type="text" name="start" placeholder="2026-01-01" value="{{ vm.selected_form.start }}">
+            </label>
+            <label>
+                End (optional) &rarr; <code>--end</code>
+                <input type="text" name="end" placeholder="2026-01-31" value="{{ vm.selected_form.end }}">
+            </label>
+            <label>
+                ML mode
+                <input type="text" name="ml_mode" value="{{ vm.selected_form.ml_mode or 'ML_MODE_OFF' }}" readonly>
+            </label>
+            <label>
+                <span>Allow broad run (explicit operator confirmation)</span>
+                <input type="checkbox" name="allow_broad_run" value="true"{% if vm.selected_form.allow_broad_run in ('1', 'true', 'yes', 'on', True) %} checked{% endif %}>
+            </label>
+            <label>
+                <span>Small scope</span>
+                <input type="checkbox" name="small_scope_enabled" value="true"{% if vm.selected_form.small_scope_enabled in ('1', 'true', 'yes', 'on', True) %} checked{% endif %}>
+            </label>
+            <label>
+                <span>Full scan enabled</span>
+                <input type="checkbox" name="full_scan_enabled" value="true"{% if vm.selected_form.full_scan_enabled in ('1', 'true', 'yes', 'on', True) %} checked{% endif %}>
+            </label>
+            <label>
+                B1.5 policy mode
+                {% set _b15_policy_mode = vm.selected_form.b1_5_policy_mode or ('diagnostic_full_replay' if vm.selected_form.diagnostic_full_replay in ('1', 'true', 'yes', 'on', True) else 'conservative_hard_only') %}
+                <select name="b1_5_policy_mode">
+                    <option value="conservative_hard_only"{% if _b15_policy_mode == 'conservative_hard_only' %} selected{% endif %}>conservative_hard_only</option>
+                    <option value="strict_fail_closed"{% if _b15_policy_mode == 'strict_fail_closed' %} selected{% endif %}>strict_fail_closed</option>
+                    <option value="diagnostic_full_replay"{% if _b15_policy_mode == 'diagnostic_full_replay' %} selected{% endif %}>diagnostic_full_replay</option>
+                </select>
+            </label>
+            <label>
+                <span>Debug storage override</span>
+                <input type="checkbox" name="debug_storage_override" value="true"{% if vm.selected_form.debug_storage_override in ('1', 'true', 'yes', 'on', True) %} checked{% endif %}>
+            </label>
+            <details class="form-grid__advanced" style="grid-column: 1 / -1;">
+                <summary>Advanced — raw source manifest (.json only)</summary>
+                <label>
+                    Raw source manifest &rarr; <code>--raw-source-manifest</code> (must be <code>*.json</code>)
+                    <input type="text" name="raw_source_manifest_path" placeholder="L:\raw_sources.json" value="{{ vm.selected_form.raw_source_manifest_path }}">
+                </label>
+                <label>
+                    Legacy raw roots (deprecated CSV; use the dedicated fields above)
+                    <input type="text" name="raw_roots" placeholder="" value="{{ vm.selected_form.raw_roots_csv }}">
+                </label>
+            </details>
+            <input type="hidden" name="preview_id" value="{{ vm.backtest_preflight.preview_id }}">
+            <input type="hidden" name="request_hash" value="{{ vm.backtest_preflight.request_hash }}">
+            <input type="hidden" name="workflow_run_id" value="{{ vm.backtest_preflight.workflow_run_id }}">
+                </div>
+            <div class="form-actions form-actions--dual">
+                    <button class="button button--info" type="submit" name="intent" value="preview">Generate Preview</button>
+                <button id="backtest-launch-button" class="button button--primary" type="submit" name="intent" value="launch"{% if not vm.backtest_preflight.preview_id or vm.backtest_preflight.phase_id == 'PHASE_A1' %} disabled{% endif %}>Launch Selected Phase</button>
+            </div>
+            </div>
+        </form>
+        <div class="backtest-monitor-stack">
+            <div class="card backtest-monitor-card{% if monitor_active %} backtest-monitor-card--active{% endif %}" id="backtest-progress-card">
+                <div class="card__head">
+                    <div class="card__head-main">
+                        <h3>Backtest Progress</h3>
+                        <span class="card__sub">Observe the active run here first</span>
+                    </div>
+                    <span id="backtest-progress-badge" class="monitor-badge {% if monitor_active %}monitor-badge--active{% else %}monitor-badge--idle{% endif %}">
+                        {{ 'active monitoring' if monitor_active else 'idle snapshot' }}
+                    </span>
+                </div>
+                <div class="card__body" id="backtest-progress-body">
+                    {% if vm.runtime.backtest_jobs %}
+                    {% set latest_job = vm.runtime.backtest_jobs[0] %}
+                    <table class="data-table data-table--compact">
+                        <tbody>
+                            <tr><th>Job</th><td><code id="backtest-latest-job-id">{{ latest_job.job_id }}</code></td></tr>
+                            <tr><th>Status</th><td id="backtest-latest-job-status">{{ status_chip(latest_job.status.value) }}</td></tr>
+                            <tr><th>PID</th><td id="backtest-latest-job-pid">{{ latest_job.pid or 'n/a' }}</td></tr>
+                            <tr><th>PID signal</th><td id="backtest-latest-job-pid-state">{{ status_chip('alive' if latest_job.pid_alive else 'dead_or_missing') }}</td></tr>
+                            <tr>
+                                <th>Progress</th>
+                                <td>
+                                    <div id="backtest-latest-progress-bar" class="progress-bar" role="progressbar" aria-valuenow="{{ latest_job.progress_pct }}" aria-valuemin="0" aria-valuemax="100" style="background:#222;border:1px solid #555;width:120px;height:14px;display:inline-block;vertical-align:middle;">
+                                        <div id="backtest-latest-progress-fill" class="progress-bar__fill" style="background:#3a8;width:{{ latest_job.progress_pct }}%;height:100%;"></div>
+                                    </div>
+                                    <span id="backtest-latest-progress-pct" class="muted">{{ latest_job.progress_pct }}%</span>
+                                </td>
+                            </tr>
+                            <tr><th>ETA</th><td id="backtest-latest-job-eta">{{ "%.1f"|format(latest_job.eta_minutes) if latest_job.eta_minutes > 0 else '-' }}</td></tr>
+                            <tr><th>Latest activity</th><td id="backtest-latest-job-activity">{{ latest_job.latest_activity_iso or 'n/a' }}</td></tr>
+                            <tr><th>Duration</th><td id="backtest-latest-job-duration">{{ "%.1fs"|format(latest_job.duration_seconds) if latest_job.duration_seconds is not none else 'n/a' }}</td></tr>
+                            <tr><th>Produced files</th><td id="backtest-latest-job-produced">{{ latest_job.produced_file_count }}</td></tr>
+                            <tr><th>Output refs</th><td id="backtest-latest-job-output-refs">{{ latest_job.output_ref_count }}</td></tr>
+                            <tr><th>Stdout log</th><td id="backtest-latest-job-stdout">{{ "%.1f KB"|format(latest_job.stdout_log_size_kb) }}</td></tr>
+                        </tbody>
+                    </table>
+                    {% if latest_job.job_id in vm.runtime.strategy_ladder_summary.cancellable_running_jobs %}
+                    <form action="/backtest/cancel" method="post" style="margin-top:0.5rem;">
+                        <input type="hidden" name="job_id" value="{{ latest_job.job_id }}">
+                        <input type="text" name="operator_reason" placeholder="reason (optional)" value="operator_requested_cancel">
+                        <button class="button button--danger" type="submit">Cancel Job</button>
+                    </form>
+                    {% endif %}
+                    {% else %}
+                    <p class="muted">No audited backtest runner activity recorded yet.</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="card backtest-monitor-card{% if monitor_active %} backtest-monitor-card--active{% endif %}" id="backtest-runner-coverage-card">
+                <div class="card__head">
+                    <div class="card__head-main">
+                        <h3>Runner Coverage</h3>
+                        <span class="card__sub">What the cockpit can prove during execution</span>
+                    </div>
+                    <span id="backtest-runner-coverage-badge" class="monitor-badge {% if monitor_active %}monitor-badge--active{% else %}monitor-badge--idle{% endif %}">
+                        {{ 'live reading' if monitor_active else 'proof surface' }}
+                    </span>
+                </div>
+                <div class="card__body">
+                    <ul class="small-list">
+                        <li>Runner visibility: {{ 'present' if vm.runtime.backtest_jobs else 'not_yet_persisted' }}</li>
+                        <li>Progress proof: job status + timestamps + output refs</li>
+                        <li>Failure proof: explicit exit code in audited record</li>
+                        <li>Baseline diff input: configured on demand</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        </div>
+        <div class="patch6-preview-column">
+        <div class="operator-panel">
+            <div class="preview-hero">
+                <div>
+                    <h4>Preview validation</h4>
+                    <p class="muted">Preview, launch, and latest summary stay separate. A1 preview can arm A2 for the same workflow request; higher phases still require their upstream artifacts.</p>
+                </div>
+                <span class="preview-badge {{ preview_badge_class }}">{{ vm.backtest_preflight.inspection_status }}</span>
+            </div>
+            <div class="preview-stat-grid" style="margin-top: 12px;">
+                <div class="preview-stat">
+                    <span class="preview-stat__label">Preview ID</span>
+                    <span class="preview-stat__value"><code>{{ vm.backtest_preflight.preview_id or 'n/a' }}</code></span>
+                </div>
+                <div class="preview-stat">
+                    <span class="preview-stat__label">Request hash</span>
+                    <span class="preview-stat__value"><code>{{ vm.backtest_preflight.request_hash or 'n/a' }}</code></span>
+                </div>
+                <div class="preview-stat">
+                    <span class="preview-stat__label">Detected pair(s)</span>
+                    <span class="preview-stat__value">{{ vm.backtest_preflight.detected_pairs|join(', ') if vm.backtest_preflight.detected_pairs else 'none' }}</span>
+                </div>
+                <div class="preview-stat">
+                    <span class="preview-stat__label">Active pair(s)</span>
+                    <span class="preview-stat__value">{{ vm.backtest_preflight.active_pairs_after_pruning|join(', ') if vm.backtest_preflight.active_pairs_after_pruning else 'none' }}</span>
+                </div>
+                <div class="preview-stat">
+                    <span class="preview-stat__label">Date range</span>
+                    <span class="preview-stat__value">{{ vm.backtest_preflight.common_date_start or 'n/a' }} -> {{ vm.backtest_preflight.common_date_end or 'n/a' }}</span>
+                </div>
+                <div class="preview-stat">
+                    <span class="preview-stat__label">Launchable</span>
+                    <span class="preview-stat__value">{{ 'PREVIEW_LAUNCHABLE' if vm.backtest_preflight.preview_launchable else 'PREVIEW_NOT_LAUNCHABLE' }}</span>
+                </div>
+            </div>
+            <table class="data-table data-table--compact" style="margin-top:0.75rem;">
+                <tbody>
+                    <tr><th>Phase</th><td>{{ vm.backtest_preflight.phase_label }}</td></tr>
+                    <tr><th>Inspection</th><td>{{ vm.backtest_preflight.inspection_status }}</td></tr>
+                    <tr><th>Preview ID</th><td><code>{{ vm.backtest_preflight.preview_id or 'n/a' }}</code></td></tr>
+                    <tr><th>Request hash</th><td><code>{{ vm.backtest_preflight.request_hash or 'n/a' }}</code></td></tr>
+                    <tr><th>Launchable</th><td>{{ 'PREVIEW_LAUNCHABLE' if vm.backtest_preflight.preview_launchable else 'PREVIEW_NOT_LAUNCHABLE' }}</td></tr>
+                    <tr><th>Realism claim</th><td>{{ status_chip(vm.backtest_preflight.execution_realism_claim_status) }}</td></tr>
+                    <tr><th>Detected pair(s)</th><td>{{ vm.backtest_preflight.detected_pairs|join(', ') if vm.backtest_preflight.detected_pairs else 'none' }}</td></tr>
+                    <tr><th>Requested pair(s)</th><td>{{ vm.backtest_preflight.requested_pairs|join(', ') if vm.backtest_preflight.requested_pairs else 'auto' }}</td></tr>
+                    <tr><th>Active pair(s) after pruning</th><td>{{ vm.backtest_preflight.active_pairs_after_pruning|join(', ') if vm.backtest_preflight.active_pairs_after_pruning else 'none' }}</td></tr>
+                    <tr><th>Pair inference</th><td>{{ vm.backtest_preflight.pair_inference_status }}</td></tr>
+                    <tr><th>Common intersection</th><td>{{ vm.backtest_preflight.common_data_intersection_status }}</td></tr>
+                    <tr><th>Metadata status</th><td>{{ vm.backtest_preflight.metadata_status }}</td></tr>
+                    <tr><th>Common date range</th><td>{{ vm.backtest_preflight.common_date_start or 'n/a' }} → {{ vm.backtest_preflight.common_date_end or 'n/a' }}</td></tr>
+                    <tr><th>Matched files total</th><td>{{ vm.backtest_preflight.files_matched_total }}</td></tr>
+                    <tr><th>Skipped by date filter</th><td>{{ vm.backtest_preflight.files_skipped_by_date_filter_total }}</td></tr>
+                    <tr><th>Estimated raw volume</th><td>{{ "%.1f MB"|format((vm.backtest_preflight.raw_size_estimate_bytes or 0) / 1048576.0) }}</td></tr>
+                    <tr><th>Estimated silver volume</th><td>{{ "%.1f MB"|format((vm.backtest_preflight.silver_size_estimate_bytes or 0) / 1048576.0) }}</td></tr>
+                    <tr><th>Estimated gold volume</th><td>{{ "%.1f MB"|format((vm.backtest_preflight.gold_size_estimate_bytes or 0) / 1048576.0) }}</td></tr>
+                    <tr><th>Output root selected</th><td><code>{{ vm.backtest_preflight.output_root_selected or 'default cockpit root' }}</code></td></tr>
+                    <tr><th>Output root effective</th><td><code>{{ vm.backtest_preflight.output_root_effective_preview or 'not_ready' }}</code></td></tr>
+                    <tr><th>Output root status</th><td>{{ vm.backtest_preflight.output_root_status }}</td></tr>
+                </tbody>
+            </table>
+            {% if vm.backtest_preflight.normalized_request.dry_run %}
+            <div class="operator-note-surface operator-note-surface--info" style="margin-top: 12px;">
+                <h5>Dry-run doctrine</h5>
+                <ul class="small-list">
+                    <li>{{ vm.backtest_preflight.phase_label }} produces manifests and proof reports, but does not materialize datasets.</li>
+                    <li><code>silver/</code> and <code>gold/</code> remain empty by design in dry-run mode.</li>
+                    <li>Use <strong>A2</strong> for silver/gold, then <strong>B1</strong> for candidate discovery, then <strong>B2</strong> for detailed replay.</li>
+                </ul>
+            </div>
+            {% endif %}
+            {% if vm.backtest_preflight.output_root_blocker %}
+            <div class="operator-note-surface operator-note-surface--danger" style="margin-top: 12px;">
+                <h5>Output root blocker</h5>
+                <ul class="small-list">
+                    <li>{{ vm.backtest_preflight.output_root_blocker }}</li>
+                    <li>Selected output path: <code>{{ vm.backtest_preflight.output_root_selected }}</code></li>
+                    <li>create timestamped subfolder: <code>{{ vm.backtest_preflight.output_root_timestamped_suggestion or 'n/a' }}</code></li>
+                </ul>
+            </div>
+            {% endif %}
+            {% if vm.backtest_preflight.execution_realism_claim_blockers %}
+            <div class="operator-note-surface operator-note-surface--warn" style="margin-top: 12px;">
+                <h5>Execution realism claim blocked</h5>
+                <ul class="small-list">
+                    {% for blocker in vm.backtest_preflight.execution_realism_claim_blockers %}
+                    <li>{{ blocker }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+            <div class="preview-source-wrap" style="margin-top: 12px;">
+            <table class="data-table data-table--compact">
+                <thead>
+                    <tr>
+                        <th>Source</th>
+                        <th>Status</th>
+                        <th>Detected pairs</th>
+                        <th>Matched files</th>
+                        <th>Skipped by date</th>
+                        <th>Matched dates</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for preview in (vm.backtest_preflight.orderbook, vm.backtest_preflight.trades, vm.backtest_preflight.klines, vm.backtest_preflight.metadata) %}
+                    <tr>
+                        <th>{{ preview.source_kind }}</th>
+                        <td>{{ preview.preview_status }}</td>
+                        <td>{{ preview.detected_pairs|join(', ') if preview.detected_pairs else 'none' }}</td>
+                        <td>{{ preview.files_matched }}</td>
+                        <td>{{ preview.files_skipped_by_date_filter }}</td>
+                        <td>{{ preview.matched_min_date or 'n/a' }} → {{ preview.matched_max_date or 'n/a' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            </div>
+            <ul class="small-list">
+                <li>Detected pair source:
+                    orderbook={{ vm.backtest_preflight.pair_inference_sources.get('orderbook', '') or 'n/a' }},
+                    trades={{ vm.backtest_preflight.pair_inference_sources.get('trades', '') or 'n/a' }},
+                    klines={{ vm.backtest_preflight.pair_inference_sources.get('klines', '') or 'n/a' }}.
+                </li>
+                <li>Ignored source pairs: {{ vm.backtest_preflight.ignored_source_pairs|join(', ') if vm.backtest_preflight.ignored_source_pairs else 'none' }}</li>
+                <li>Feature groups in dry-run are declared only; generated groups remain empty until a real run.</li>
+            </ul>
+            {% if vm.backtest_preflight.orderbook.matched_paths_preview %}
+            <ul class="small-list">
+                <li>Orderbook preview paths:
+                    {% for path in vm.backtest_preflight.orderbook.matched_paths_preview %}
+                    <code>{{ path }}</code>{% if not loop.last %}; {% endif %}
+                    {% endfor %}
+                </li>
+            </ul>
+            {% endif %}
+            {% if vm.backtest_preflight.inspection_status == 'PREVIEW_NOT_GENERATED' %}
+            <ul class="small-list">
+                {% for warning in vm.backtest_preflight.warnings %}
+                <li>{{ warning }}</li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+            {% if vm.backtest_preflight.blockers %}
+            <div class="operator-note-surface operator-note-surface--danger" style="margin-top: 12px;">
+                <h5>Launch blockers</h5>
+                <ul class="small-list">
+                    {% for blocker in vm.backtest_preflight.blockers %}
+                    <li>{{ blocker }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+            {% if vm.backtest_preflight.warnings %}
+            <div class="operator-note-surface operator-note-surface--warn" style="margin-top: 12px;">
+                <h5>Operator warnings</h5>
+                <ul class="small-list">
+                    {% for warning in vm.backtest_preflight.warnings %}
+                    <li>{{ warning }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+        </div>
+        <div class="operator-panel">
+            <div class="operator-panel__head">
+                <div>
+                    <h4>Launch doctrine and command preview</h4>
+                    <div class="operator-panel__sub">The command must match the preview manifest. The normal backtest path stays on local cache only.</div>
+                </div>
+            </div>
+        <ul class="small-list">
+            <li>Routing rules:
+                <code>orderbook</code>, <code>klines</code>, <code>trades</code>, <code>metadata</code>
+                each &rarr; <code>--raw-root</code>; manifest accepts <code>*.json</code> only;
+                <code>--pairs</code> never receives a path.
+            </li>
+            <li>ML mode baseline: <code>ML_MODE_OFF</code> · Broad run stays opt-in through the checkbox.</li>
+            <li>Output root: empty &rarr; defaults to <code>build/cockpit/backtest_jobs/&lt;job_id&gt;/output</code>. Custom path must be outside any raw root and writable.</li>
+            <li>Warnings:
+                {% if not vm.selected_form.orderbook_path %}<span class="warning">Orderbook missing &rarr; depth not proven</span>;{% endif %}
+                {% if not vm.selected_form.klines_path %}<span class="warning">Klines missing &rarr; OHLCV features not proven</span>;{% endif %}
+                {% if not vm.selected_form.trades_path %}<span class="warning">Trades missing &rarr; flow features not proven</span>;{% endif %}
+                {% if not vm.selected_form.metadata_path %}<span class="warning">Historical metadata cache missing &rarr; fees / min-notional not proven</span>;{% endif %}
+                {% if vm.selected_form.action_name in ('PHASE_A1_PREVIEW', 'DATA_FACTORY_DRY_RUN', 'FIRST_CONTROLLED_RUN_DRY_RUN') %}<span class="warning">Preview-only / dry-run &rarr; no promotion-grade artifacts generated</span>{% endif %}
+            </li>
+        </ul>
+        <div class="operator-note-surface operator-note-surface--info" style="margin-top: 12px;">
+            <h5>Command preview</h5>
+            <pre class="operator-code-box">{{ vm.backtest_preflight.command_preview or 'preview available after source/date preview becomes launch-ready' }}</pre>
+        </div>
+        <ul class="small-list">
+            <li>OPEN_ARTIFACT_INVENTORY: <code>{{ vm.runtime.strategy_ladder_summary.artifact_inventory_path or 'not_available' }}</code></li>
+            <li>OPEN_STAGE_SUMMARY: <code>{{ vm.runtime.strategy_ladder_summary.stage_summary_path or 'not_available' }}</code></li>
+            <li>COPY_EQUIVALENT_CLI_COMMAND: preview string above</li>
+        </ul>
+        </div>
+        </div>
+        </div>
+    </div>
+</section>
+
+<section class="card backtest-monitor-card backtest-recent-jobs-card{% if monitor_active %} backtest-monitor-card--active{% endif %}" id="backtest-recent-jobs-card">
+    <div class="card__head">
+        <div class="card__head-main">
+            <h3>Recent Backtest Jobs</h3>
+            <span class="card__sub">Latest 4 runs first, then up to 8 more historical jobs in the same scroll surface</span>
+        </div>
+        <span id="backtest-recent-jobs-badge" class="monitor-badge {% if monitor_active %}monitor-badge--active{% else %}monitor-badge--idle{% endif %}">
+            {{ 'running now' if monitor_active else 'latest queue view' }}
+        </span>
+    </div>
+    <div class="card__body" id="backtest-jobs-table-host">
+        {% if vm.runtime.backtest_jobs %}
+        {% set latest_jobs = vm.runtime.backtest_jobs[:4] %}
+        {% set history_jobs = vm.runtime.backtest_jobs[4:12] %}
+        <div class="recent-jobs-scroll">
+            <table class="data-table data-table--compact">
+                <thead>
+                    <tr><th>Job</th><th>Status</th><th>Progress</th><th>ETA (min)</th><th>Outputs</th><th>Logs</th><th>Error</th></tr>
+                </thead>
+                <tbody>
+                {% for job in latest_jobs %}
+                    <tr class="recent-jobs-row recent-jobs-row--latest"{% if loop.first %} id="backtest-latest-table-row"{% endif %}>
+                        <td>
+                            <div><code{% if loop.first %} id="backtest-latest-table-job-id"{% endif %}>{{ job.job_id }}</code></div>
+                            <div class="muted">{{ job.job_kind.value }}</div>
+                        </td>
+                        <td{% if loop.first %} id="backtest-latest-table-status"{% endif %}>{{ status_chip(job.status.value) }}</td>
+                        <td>
+                            <div{% if loop.first %} id="backtest-latest-table-progress-bar"{% endif %} class="progress-bar" role="progressbar" aria-valuenow="{{ job.progress_pct }}" aria-valuemin="0" aria-valuemax="100" style="background:#222;border:1px solid #555;width:120px;height:14px;display:inline-block;vertical-align:middle;">
+                                <div{% if loop.first %} id="backtest-latest-table-progress-fill"{% endif %} class="progress-bar__fill" style="background:#3a8;width:{{ job.progress_pct }}%;height:100%;"></div>
+                            </div>
+                            <span{% if loop.first %} id="backtest-latest-table-progress-pct"{% endif %} class="muted">{{ job.progress_pct }}%</span>
+                            <div{% if loop.first %} id="backtest-latest-table-activity"{% endif %}>{{ job.latest_activity_iso or 'n/a' }}</div>
+                            <div class="muted">
+                                {% if job.duration_seconds is not none %}
+                                {{ "%.1fs"|format(job.duration_seconds) }}
+                                {% else %}
+                                n/a
+                                {% endif %}
+                            </div>
+                        </td>
+                        <td>
+                            {% if job.eta_minutes > 0 %}
+                            <strong{% if loop.first %} id="backtest-latest-table-eta"{% endif %}>{{ "%.1f"|format(job.eta_minutes) }} min</strong>
+                            {% else %}
+                            <span{% if loop.first %} id="backtest-latest-table-eta"{% endif %} class="muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div>{{ job.produced_file_count }} files</div>
+                            <div{% if loop.first %} id="backtest-latest-table-output-refs"{% endif %} class="muted">{{ job.output_ref_count }} refs</div>
+                        </td>
+                        <td>
+                            <div>{{ "%.1f KB"|format(job.stdout_log_size_kb) }}</div>
+                            <div class="muted"><code>{{ job.stdout_log_path }}</code></div>
+                        </td>
+                        <td>{{ job.error_summary or 'none' }}</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+                {% if history_jobs %}
+                <tbody class="recent-jobs-history">
+                    <tr class="recent-jobs-divider">
+                        <td colspan="7">More recent history</td>
+                    </tr>
+                    {% for job in history_jobs %}
+                    <tr class="recent-jobs-row">
+                        <td>
+                            <div><code>{{ job.job_id }}</code></div>
+                            <div class="muted">{{ job.job_kind.value }}</div>
+                        </td>
+                        <td>{{ status_chip(job.status.value) }}</td>
+                        <td>
+                            <div class="progress-bar" role="progressbar" aria-valuenow="{{ job.progress_pct }}" aria-valuemin="0" aria-valuemax="100" style="background:#222;border:1px solid #555;width:120px;height:14px;display:inline-block;vertical-align:middle;">
+                                <div class="progress-bar__fill" style="background:#3a8;width:{{ job.progress_pct }}%;height:100%;"></div>
+                            </div>
+                            <span class="muted">{{ job.progress_pct }}%</span>
+                            <div>{{ job.latest_activity_iso or 'n/a' }}</div>
+                            <div class="muted">
+                                {% if job.duration_seconds is not none %}
+                                {{ "%.1fs"|format(job.duration_seconds) }}
+                                {% else %}
+                                n/a
+                                {% endif %}
+                            </div>
+                        </td>
+                        <td>
+                            {% if job.eta_minutes > 0 %}
+                            <strong>{{ "%.1f"|format(job.eta_minutes) }} min</strong>
+                            {% else %}
+                            <span class="muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div>{{ job.produced_file_count }} files</div>
+                            <div class="muted">{{ job.output_ref_count }} refs</div>
+                        </td>
+                        <td>
+                            <div>{{ "%.1f KB"|format(job.stdout_log_size_kb) }}</div>
+                            <div class="muted"><code>{{ job.stdout_log_path }}</code></div>
+                        </td>
+                        <td>{{ job.error_summary or 'none' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                {% endif %}
+            </table>
+        </div>
+        {% else %}
+        <p class="muted">No audited backtest jobs recorded yet.</p>
+        {% endif %}
+    </div>
+</section>
+
+<section class="card operator-card--warn">
+    <div class="card__head">
+        <h3>Cockpit State Consistency</h3>
+        <span class="card__sub">Current form vs preview vs latest launch vs latest canonical summary</span>
+    </div>
+    <div class="card__body">
+        <table class="data-table data-table--compact">
+            <tbody>
+                <tr><th>Consistency</th><td>{{ status_chip(vm.cockpit_state_consistency.consistency_status) }}</td></tr>
+                <tr><th>Operator context</th><td>{{ status_chip(vm.cockpit_state_consistency.operator_context_status) }}</td></tr>
+                <tr><th>Current form request hash</th><td><code>{{ vm.cockpit_state_consistency.current_form_request_hash or 'n/a' }}</code></td></tr>
+                <tr><th>Current form workflow</th><td><code>{{ vm.cockpit_state_consistency.current_form_workflow_run_id or 'n/a' }}</code></td></tr>
+                <tr><th>Preview request hash</th><td><code>{{ vm.cockpit_state_consistency.preview_request_hash or 'n/a' }}</code></td></tr>
+                <tr><th>Preview workflow</th><td><code>{{ vm.cockpit_state_consistency.preview_workflow_run_id or 'n/a' }}</code></td></tr>
+                <tr><th>Launch request hash</th><td><code>{{ vm.cockpit_state_consistency.launch_request_hash or 'n/a' }}</code></td></tr>
+                <tr><th>Launch workflow</th><td><code>{{ vm.cockpit_state_consistency.launch_workflow_run_id or 'n/a' }}</code></td></tr>
+                <tr><th>Latest summary request hash</th><td><code>{{ vm.cockpit_state_consistency.latest_summary_request_hash or 'n/a' }}</code></td></tr>
+                <tr><th>Displayed summary workflow</th><td><code>{{ vm.cockpit_state_consistency.displayed_summary_workflow_run_id or 'n/a' }}</code></td></tr>
+                <tr><th>Summary freshness</th><td>{{ status_chip(vm.cockpit_state_consistency.summary_freshness_status) }}</td></tr>
+                <tr><th>Current form changed since launch</th><td>{{ 'true' if vm.cockpit_state_consistency.current_form_changed_since_launch else 'false' }}</td></tr>
+                <tr><th>Current form changed since summary</th><td>{{ 'true' if vm.cockpit_state_consistency.current_form_changed_since_summary else 'false' }}</td></tr>
+                <tr><th>Launch matches displayed summary workflow</th><td>{{ 'true' if vm.cockpit_state_consistency.launch_matches_displayed_summary_workflow else 'false' }}</td></tr>
+                <tr><th>Summary run ID</th><td><code>{{ vm.runtime.strategy_ladder_summary.run_id or 'n/a' }}</code></td></tr>
+                <tr><th>Current preview ID</th><td><code>{{ vm.backtest_preflight.preview_id or 'n/a' }}</code></td></tr>
+                <tr><th>Current launch job ID</th><td><code>{{ vm.launch_request_state.job_id if vm.launch_request_state else 'n/a' }}</code></td></tr>
+            </tbody>
+        </table>
+        {% if vm.cockpit_state_consistency.operator_context_message %}
+        <p class="muted">{{ vm.cockpit_state_consistency.operator_context_message }}</p>
+        {% endif %}
+        {% if vm.cockpit_state_consistency.current_form_changed_since_launch and vm.launch_request_state and vm.launch_request_state.workflow_run_id %}
+        <form action="/backtest/adopt-launch-workflow" method="post" style="margin-top:0.5rem;">
+            <button class="button button--ghost" type="submit">Adopt Current Launch Workflow</button>
+        </form>
+        {% endif %}
+        {% if vm.cockpit_state_consistency.mismatch_fields %}
+        <ul class="small-list">
+            <li>Mismatch fields: {{ vm.cockpit_state_consistency.mismatch_fields|join(', ') }}</li>
+        </ul>
+        {% endif %}
+        {% if vm.cockpit_state_consistency.consistency_status == 'LATEST_SUMMARY_NOT_CURRENT_REQUEST' %}
+        <p class="muted">Showing latest completed run, not current preview.</p>
+        {% endif %}
+    </div>
+</section>
+
+<section>
+    <div class="card status-summary-card operator-card--warn">
+        <div class="card__head">
+            <h3>Strategy Ladder Status</h3>
+            <span class="card__sub">Latest canonical ladder summary</span>
+        </div>
+        <div class="card__body">
+            {% if vm.runtime.backtest_jobs and vm.runtime.backtest_jobs[0].phase_id in ['PHASE_A1', 'PHASE_1A', 'PHASE_2A'] %}
+            <p class="muted">Latest job is a dry-run phase. Materialized silver/gold datasets, candidate export, and detailed replay are not expected from that job.</p>
+            {% endif %}
+            {% if vm.runtime.strategy_ladder_summary.run_state_banner_status %}
+            <p><strong>{{ vm.runtime.strategy_ladder_summary.run_state_banner_message }}</strong></p>
+            {% if vm.runtime.strategy_ladder_summary.run_state_banner_details %}
+            <ul class="small-list">
+                {% for detail in vm.runtime.strategy_ladder_summary.run_state_banner_details %}
+                <li>{{ detail }}</li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+            {% endif %}
+            {% if vm.runtime.strategy_ladder_summary.overall_backtest_proof_status == 'BACKTEST_PROOF_RESEARCH_ONLY' %}
+            <div class="operator-note-surface operator-note-surface--warn" style="margin-bottom: 12px;">
+                <h5>Research-only backtest</h5>
+                <ul class="small-list">
+                    <li>The data and replay rail is materially produced, but promotion-ready proof is still blocked.</li>
+                    <li>Bybit proxy backtest does not validate Binance live execution.</li>
+                </ul>
+            </div>
+            {% endif %}
+            {% if vm.runtime.strategy_ladder_summary.protocol_blocker_codes %}
+            <div class="operator-note-surface operator-note-surface--danger" style="margin-bottom: 12px;">
+                <h5>Promotion gate blocked</h5>
+                <ul class="small-list">
+                    <li>{{ vm.runtime.strategy_ladder_summary.protocol_micro_live_gate_message }}</li>
+                    <li>{{ vm.runtime.strategy_ladder_summary.protocol_live_gate_message }}</li>
+                </ul>
+            </div>
+            {% endif %}
+            <div class="status-section" style="margin-bottom: 12px;">
+                <h5>Current job</h5>
+                <table class="data-table data-table--compact">
+                    <tbody>
+                        <tr><th>Job ID</th><td><code>{{ vm.runtime.strategy_ladder_summary.current_job_id or 'n/a' }}</code></td></tr>
+                        <tr><th>Status</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.current_job_status) }}</td></tr>
+                        <tr><th>Phase</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.current_job_phase_id or 'PHASE_NOT_PROVEN') }}</td></tr>
+                        <tr><th>Phase run ID</th><td><code>{{ vm.runtime.strategy_ladder_summary.current_job_phase_run_id or 'n/a' }}</code></td></tr>
+                        <tr><th>Output root</th><td><code>{{ vm.runtime.strategy_ladder_summary.current_job_output_root or 'n/a' }}</code></td></tr>
+                        <tr><th>Stage summary</th><td><code>{{ vm.runtime.strategy_ladder_summary.current_job_stage_summary_path or 'n/a' }}</code></td></tr>
+                        <tr><th>Error summary</th><td>{{ vm.runtime.strategy_ladder_summary.current_job_error_summary or vm.runtime.strategy_ladder_summary.current_phase_error_code or 'none' }}</td></tr>
+                        <tr><th>Blockers</th><td>{{ vm.runtime.strategy_ladder_summary.current_job_blocker_codes|join(', ') if vm.runtime.strategy_ladder_summary.current_job_blocker_codes else 'none' }}</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="status-section" style="margin-bottom: 12px;">
+                <h5>Last successful B2 summary</h5>
+                <table class="data-table data-table--compact">
+                    <tbody>
+                        <tr><th>Job ID</th><td><code>{{ vm.runtime.strategy_ladder_summary.last_successful_b2_job_id or 'n/a' }}</code></td></tr>
+                        <tr><th>Status</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.last_successful_b2_status) }}</td></tr>
+                        <tr><th>Run ID</th><td><code>{{ vm.runtime.strategy_ladder_summary.last_successful_b2_run_id or 'n/a' }}</code></td></tr>
+                        <tr><th>Phase run ID</th><td><code>{{ vm.runtime.strategy_ladder_summary.last_successful_b2_phase_run_id or 'n/a' }}</code></td></tr>
+                        <tr><th>Final status</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.last_successful_b2_final_status) }}</td></tr>
+                        <tr><th>Summary path</th><td><code>{{ vm.runtime.strategy_ladder_summary.last_successful_b2_summary_path or 'n/a' }}</code></td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="status-section" style="margin-bottom: 12px;">
+                <h5>Workflow canonical summary</h5>
+                <table class="data-table data-table--compact">
+                    <tbody>
+                        <tr><th>Displayed summary source</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.displayed_summary_source) }}</td></tr>
+                        <tr><th>Displayed summary job ID</th><td><code>{{ vm.runtime.strategy_ladder_summary.displayed_summary_job_id or 'n/a' }}</code></td></tr>
+                        <tr><th>Displayed summary path</th><td><code>{{ vm.runtime.strategy_ladder_summary.displayed_summary_path or 'n/a' }}</code></td></tr>
+                        <tr><th>Summary matches current job</th><td>{{ 'true' if vm.runtime.strategy_ladder_summary.summary_matches_current_job else 'false' }}</td></tr>
+                        <tr><th>Stale summary warning</th><td>{{ 'true' if vm.runtime.strategy_ladder_summary.stale_summary_warning else 'false' }}</td></tr>
+                    </tbody>
+                </table>
+                {% if vm.runtime.strategy_ladder_summary.stale_summary_warning %}
+                <p class="muted">Current job and displayed canonical summary do not refer to the same job.</p>
+                {% endif %}
+            </div>
+            {% if vm.runtime.strategy_ladder_summary.source_status == 'ok' %}
+            {% if vm.runtime.strategy_ladder_summary.final_status == 'not_present' %}
+            <p class="muted">No canonical Strategy Ladder runner summary exists yet for this request. A1/A2 stop before replay proof, and B1 stops before detailed replay artifacts.</p>
+            {% endif %}
+            <div class="status-kpi-grid" style="margin-bottom: 12px;">
+                <div class="status-kpi">
+                    <span class="status-kpi__label">Final status</span>
+                    <span class="status-kpi__value">{{ status_chip(vm.runtime.strategy_ladder_summary.final_status) }}</span>
+                </div>
+                <div class="status-kpi">
+                    <span class="status-kpi__label">Overall proof</span>
+                    <span class="status-kpi__value">{{ status_chip(vm.runtime.strategy_ladder_summary.overall_backtest_proof_status) }}</span>
+                </div>
+                <div class="status-kpi">
+                    <span class="status-kpi__label">Candidate count</span>
+                    <span class="status-kpi__value">{{ vm.runtime.strategy_ladder_summary.candidate_count }}</span>
+                </div>
+                <div class="status-kpi">
+                    <span class="status-kpi__label">Raw windows</span>
+                    <span class="status-kpi__value">{{ vm.runtime.strategy_ladder_summary.raw_window_count }}</span>
+                </div>
+                <div class="status-kpi">
+                    <span class="status-kpi__label">Detailed replay</span>
+                    <span class="status-kpi__value">{{ vm.runtime.strategy_ladder_summary.detailed_replay_count }}</span>
+                </div>
+                <div class="status-kpi">
+                    <span class="status-kpi__label">Trade count</span>
+                    <span class="status-kpi__value">{{ vm.runtime.strategy_ladder_summary.trade_count if vm.runtime.strategy_ladder_summary.trade_count else 'NOT_PROVEN' }}</span>
+                </div>
+            </div>
+            <div class="status-section" style="margin-bottom: 12px;">
+                <h5>Canonical status surface</h5>
+            <table class="data-table data-table--compact">
+                <tbody>
+                    <tr><th>Run</th><td><code>{{ vm.runtime.strategy_ladder_summary.run_id }}</code></td></tr>
+                    <tr><th>Displayed summary source</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.displayed_summary_source) }}</td></tr>
+                    <tr><th>Displayed summary path</th><td><code>{{ vm.runtime.strategy_ladder_summary.displayed_summary_path or 'n/a' }}</code></td></tr>
+                    <tr><th>Summary matches current job</th><td>{{ 'true' if vm.runtime.strategy_ladder_summary.summary_matches_current_job else 'false' }}</td></tr>
+                    <tr><th>Stale summary warning</th><td>{{ 'true' if vm.runtime.strategy_ladder_summary.stale_summary_warning else 'false' }}</td></tr>
+                    <tr><th>Final status</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.final_status) }}</td></tr>
+                    <tr><th>Data Factory</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.data_factory_status) }}</td></tr>
+                    <tr><th>Raw sources</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.raw_source_status) }}</td></tr>
+                    <tr><th>Pair universe</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.pair_universe_status) }}</td></tr>
+                    <tr><th>Available pairs</th><td>{{ vm.runtime.strategy_ladder_summary.available_pair_count }}</td></tr>
+                    <tr><th>Missing requested pairs</th><td>{{ vm.runtime.strategy_ladder_summary.missing_requested_pairs|join(', ') if vm.runtime.strategy_ladder_summary.missing_requested_pairs else 'none' }}</td></tr>
+                    <tr><th>Silver index</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.silver_index_status) }}</td></tr>
+                    <tr><th>Gold feature store</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.gold_feature_store_status) }}</td></tr>
+                    <tr><th>Compression</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.compression_status) }}</td></tr>
+                    <tr><th>Trade schema</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.trade_schema_status) }}</td></tr>
+                    <tr><th>Kline schema</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.kline_schema_status) }}</td></tr>
+                    <tr><th>Historical metadata</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.historical_metadata_status) }}</td></tr>
+                    <tr><th>Metadata source mode</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.metadata_source_mode) }}</td></tr>
+                    <tr><th>Metadata temporal status</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.metadata_temporal_status) }}</td></tr>
+                    <tr><th>Fee provenance</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.fee_provenance_status) }}</td></tr>
+                    <tr><th>Orderbook reconstruction</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.orderbook_reconstruction_status) }}</td></tr>
+                    <tr><th>Orderbook sequence</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.sequence_gap_status) }}</td></tr>
+                    <tr><th>Gap recovery</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.gap_recovery_status) }}</td></tr>
+                    <tr><th>Gap count</th><td>{{ vm.runtime.strategy_ladder_summary.gap_count }}</td></tr>
+                    <tr><th>Pair inference</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.pair_inference_status) }}</td></tr>
+                    <tr><th>First controlled run</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.first_controlled_run_status) }}</td></tr>
+                    <tr><th>ML mode</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.ml_mode_status) }}</td></tr>
+                    <tr><th>Feature store</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.feature_store_status) }}</td></tr>
+                    <tr><th>Feature rows</th><td>{{ vm.runtime.strategy_ladder_summary.feature_row_count }}</td></tr>
+                    <tr><th>Candidate export</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.candidate_export_status) }}</td></tr>
+                    <tr><th>Raw windows</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.raw_window_extraction_status) }}</td></tr>
+                    <tr><th>Raw windows total</th><td>{{ vm.runtime.strategy_ladder_summary.raw_windows_total }}</td></tr>
+                    <tr><th>Trade windows</th><td>{{ vm.runtime.strategy_ladder_summary.trade_windows_found }} found / {{ vm.runtime.strategy_ladder_summary.trade_windows_missing }} missing</td></tr>
+                    <tr><th>Book windows</th><td>{{ vm.runtime.strategy_ladder_summary.book_windows_found }} found / {{ vm.runtime.strategy_ladder_summary.book_windows_missing }} missing</td></tr>
+                    <tr><th>OHLCV windows</th><td>{{ vm.runtime.strategy_ladder_summary.ohlcv_windows_found }} found / {{ vm.runtime.strategy_ladder_summary.ohlcv_windows_missing }} missing</td></tr>
+                    <tr><th>Depth20 windows</th><td>{{ vm.runtime.strategy_ladder_summary.depth20_found }} found / {{ vm.runtime.strategy_ladder_summary.depth20_missing }} missing</td></tr>
+                    <tr><th>Detailed replay</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.detailed_replay_status) }}</td></tr>
+                    <tr><th>Capital profiles</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.capital_profile_generation_status) }}</td></tr>
+                    <tr><th>Promotion artifacts</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.promotion_artifact_status) }}</td></tr>
+                    <tr><th>Sample size</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.sample_size_survival_status) }}</td></tr>
+                    <tr><th>Execution label source</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.execution_label_source) }}</td></tr>
+                    <tr><th>Fee model source</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.fee_model_source) }}</td></tr>
+                    <tr><th>Spread model source</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.spread_model_source) }}</td></tr>
+                    <tr><th>Slippage model source</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.slippage_model_source) }}</td></tr>
+                    <tr><th>Partial-fill model source</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.partial_fill_model_source) }}</td></tr>
+                    <tr><th>Adverse-selection source</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.adverse_selection_source) }}</td></tr>
+                    <tr><th>Order-type source</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.order_type_selection_source) }}</td></tr>
+                    <tr><th>Venue-constraints source</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.venue_constraints_source) }}</td></tr>
+                    <tr><th>Protocol readiness</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.protocol_readiness_status) }}</td></tr>
+                    <tr><th>Shadow import compatibility</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.protocol_shadow_runtime_compatibility_status) }}</td></tr>
+                    <tr><th>Output root</th><td><code>{{ vm.runtime.strategy_ladder_summary.output_root or 'default' }}</code></td></tr>
+                    <tr><th>Run class</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.run_class) }}</td></tr>
+                    <tr><th>Proof matrix</th><td><code>{{ vm.runtime.strategy_ladder_summary.backtest_proof_matrix_path or 'not_yet_generated' }}</code></td></tr>
+                    <tr><th>Component coverage</th><td><code>{{ vm.runtime.strategy_ladder_summary.run_class_component_coverage_path or 'not_yet_generated' }}</code></td></tr>
+                    <tr><th>Gap report</th><td><code>{{ vm.runtime.strategy_ladder_summary.sequence_gap_report_path or 'not_available' }}</code></td></tr>
+                    <tr><th>Overall proof</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.overall_backtest_proof_status) }}</td></tr>
+                </tbody>
+            </table>
+            </div>
+            <div class="status-section" style="margin-bottom: 12px;">
+                <h5>Replay Performance</h5>
+                <div class="status-kpi-grid" style="margin-bottom: 12px;">
+                    <div class="status-kpi">
+                        <span class="status-kpi__label">Profile</span>
+                        <span class="status-kpi__value">{{ status_chip(vm.runtime.strategy_ladder_summary.replay_performance_profile_status) }}</span>
+                    </div>
+                    <div class="status-kpi">
+                        <span class="status-kpi__label">Rows / sec</span>
+                        <span class="status-kpi__value">{{ vm.runtime.strategy_ladder_summary.replay_perf_rows_per_s if vm.runtime.strategy_ladder_summary.replay_perf_rows_per_s is not none else 'NOT_PROVEN' }}</span>
+                    </div>
+                    <div class="status-kpi">
+                        <span class="status-kpi__label">Replay records / sec</span>
+                        <span class="status-kpi__value">{{ vm.runtime.strategy_ladder_summary.replay_perf_records_per_s if vm.runtime.strategy_ladder_summary.replay_perf_records_per_s is not none else 'NOT_PROVEN' }}</span>
+                    </div>
+                    <div class="status-kpi">
+                        <span class="status-kpi__label">Files scanned</span>
+                        <span class="status-kpi__value">{{ vm.runtime.strategy_ladder_summary.replay_perf_files_scanned }}</span>
+                    </div>
+                    <div class="status-kpi">
+                        <span class="status-kpi__label">Index hit rate</span>
+                        <span class="status-kpi__value">{{ vm.runtime.strategy_ladder_summary.replay_perf_indexed_lookup_hit_rate if vm.runtime.strategy_ladder_summary.replay_perf_indexed_lookup_hit_rate is not none else 'NOT_PROVEN' }}</span>
+                    </div>
+                    <div class="status-kpi">
+                        <span class="status-kpi__label">Cache reuse ratio</span>
+                        <span class="status-kpi__value">{{ vm.runtime.strategy_ladder_summary.replay_perf_window_cache_reuse_ratio if vm.runtime.strategy_ladder_summary.replay_perf_window_cache_reuse_ratio is not none else 'NOT_PROVEN' }}</span>
+                    </div>
+                </div>
+                <table class="data-table data-table--compact">
+                    <tbody>
+                        <tr><th>Profile path</th><td><code>{{ vm.runtime.strategy_ladder_summary.replay_performance_profile_path or 'not_generated' }}</code></td></tr>
+                        <tr><th>Total wall / CPU / I/O wait</th><td>{{ vm.runtime.strategy_ladder_summary.replay_perf_total_wall_time_s if vm.runtime.strategy_ladder_summary.replay_perf_total_wall_time_s is not none else 'NOT_PROVEN' }} / {{ vm.runtime.strategy_ladder_summary.replay_perf_total_cpu_time_s if vm.runtime.strategy_ladder_summary.replay_perf_total_cpu_time_s is not none else 'NOT_PROVEN' }} / {{ vm.runtime.strategy_ladder_summary.replay_perf_total_io_wait_estimate_s if vm.runtime.strategy_ladder_summary.replay_perf_total_io_wait_estimate_s is not none else 'NOT_PROVEN' }}</td></tr>
+                        <tr><th>Raw-window wall time</th><td>{{ vm.runtime.strategy_ladder_summary.replay_perf_raw_window_wall_time_s if vm.runtime.strategy_ladder_summary.replay_perf_raw_window_wall_time_s is not none else 'NOT_PROVEN' }}</td></tr>
+                        <tr><th>Replay wall time</th><td>{{ vm.runtime.strategy_ladder_summary.replay_perf_replay_wall_time_s if vm.runtime.strategy_ladder_summary.replay_perf_replay_wall_time_s is not none else 'NOT_PROVEN' }}</td></tr>
+                        <tr><th>Label-store wall time</th><td>{{ vm.runtime.strategy_ladder_summary.replay_perf_label_store_wall_time_s if vm.runtime.strategy_ladder_summary.replay_perf_label_store_wall_time_s is not none else 'NOT_PROVEN' }}</td></tr>
+                        <tr><th>Matrix / report wall time</th><td>{{ vm.runtime.strategy_ladder_summary.replay_perf_matrix_wall_time_s if vm.runtime.strategy_ladder_summary.replay_perf_matrix_wall_time_s is not none else 'NOT_PROVEN' }} / {{ vm.runtime.strategy_ladder_summary.replay_perf_report_wall_time_s if vm.runtime.strategy_ladder_summary.replay_perf_report_wall_time_s is not none else 'NOT_PROVEN' }}</td></tr>
+                        <tr><th>Indexed lookup</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.replay_perf_indexed_lookup_status) }}{% if vm.runtime.strategy_ladder_summary.replay_perf_index_lookup_miss_count or vm.runtime.strategy_ladder_summary.replay_perf_fallback_scan_count %} (misses={{ vm.runtime.strategy_ladder_summary.replay_perf_index_lookup_miss_count }}, fallback_scans={{ vm.runtime.strategy_ladder_summary.replay_perf_fallback_scan_count }}){% endif %}</td></tr>
+                        <tr><th>Window cache</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.replay_perf_window_cache_status) }} (hits={{ vm.runtime.strategy_ladder_summary.replay_perf_window_cache_hit_count }}, misses={{ vm.runtime.strategy_ladder_summary.replay_perf_window_cache_miss_count }})</td></tr>
+                        <tr><th>Workers / parallelism / queue wait</th><td>{{ vm.runtime.strategy_ladder_summary.replay_perf_replay_workers_used }} / {{ vm.runtime.strategy_ladder_summary.replay_perf_replay_parallelism_ratio if vm.runtime.strategy_ladder_summary.replay_perf_replay_parallelism_ratio is not none else 'NOT_PROVEN' }} / {{ vm.runtime.strategy_ladder_summary.replay_perf_replay_queue_wait_time_s }}</td></tr>
+                        <tr><th>Parquet fast path</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.replay_perf_parquet_fast_path_status) }}</td></tr>
+                        <tr><th>Research fast debug mode</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.replay_perf_research_fast_debug_mode_status) }}</td></tr>
+                        <tr><th>Bottlenecks</th><td>{{ vm.runtime.strategy_ladder_summary.replay_perf_bottleneck_summary|join(', ') if vm.runtime.strategy_ladder_summary.replay_perf_bottleneck_summary else 'none' }}</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="status-section" style="margin-bottom: 12px;">
+                <h5>Proxy &amp; Fidelity Surface</h5>
+                <table class="data-table data-table--compact">
+                    <tbody>
+                        <tr><th>Feature store surface</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.feature_store_pipeline_status) }}</td></tr>
+                        <tr><th>Feature row proof</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.feature_row_sample_status) }}</td></tr>
+                        <tr><th>Expected edge truth</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.expected_edge_truth_status) }}</td></tr>
+                        <tr><th>Expected edge governance</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.expected_edge_governance_status) }}</td></tr>
+                        <tr><th>Expected edge proxy / governed</th><td>{{ vm.runtime.strategy_ladder_summary.expected_edge_proxy_count }} / {{ vm.runtime.strategy_ladder_summary.expected_edge_governed_count }}</td></tr>
+                        <tr><th>Expected-edge artifact</th><td><code>{{ vm.runtime.strategy_ladder_summary.expected_edge_training_artifact_ref or 'not_proven' }}</code></td></tr>
+                        <tr><th>Expected-edge label source</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.expected_edge_label_source) }}</td></tr>
+                        <tr><th>Expected-edge label fidelity</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.expected_edge_label_fidelity) }}</td></tr>
+                        <tr><th>Expected-edge anti-leakage</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.expected_edge_anti_leakage_status) }}</td></tr>
+                        <tr><th>Expected-edge walkforward</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.expected_edge_walkforward_status) }}</td></tr>
+                        <tr><th>Expected-edge horizon</th><td>{{ vm.runtime.strategy_ladder_summary.expected_edge_horizon if vm.runtime.strategy_ladder_summary.expected_edge_horizon is not none else 'not_declared' }}</td></tr>
+                        <tr><th>Expected-edge purge / embargo</th><td>{{ vm.runtime.strategy_ladder_summary.expected_edge_purge_window if vm.runtime.strategy_ladder_summary.expected_edge_purge_window is not none else 'not_declared' }} / {{ vm.runtime.strategy_ladder_summary.expected_edge_embargo_window if vm.runtime.strategy_ladder_summary.expected_edge_embargo_window is not none else 'not_declared' }}</td></tr>
+                        <tr><th>Execution label source</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.execution_label_source) }}</td></tr>
+                        <tr><th>Fee model source</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.fee_model_source) }}</td></tr>
+                        <tr><th>Spread model source</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.spread_model_source) }}</td></tr>
+                        <tr><th>Slippage model source</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.slippage_model_source) }}</td></tr>
+                        <tr><th>Partial-fill model source</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.partial_fill_model_source) }}</td></tr>
+                        <tr><th>Adverse-selection source</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.adverse_selection_source) }}</td></tr>
+                        <tr><th>Order-type source</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.order_type_selection_source) }}</td></tr>
+                        <tr><th>Venue-constraints source</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.venue_constraints_source) }}</td></tr>
+                        <tr><th>Execution fidelity</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.execution_fidelity_status) }}</td></tr>
+                        <tr><th>Threshold calibration</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.threshold_calibration_status) }}</td></tr>
+                        <tr><th>Threshold counts</th><td>default={{ vm.runtime.strategy_ladder_summary.threshold_default_count }}, calibrated={{ vm.runtime.strategy_ladder_summary.threshold_calibrated_count }}, calibration_not_proven={{ vm.runtime.strategy_ladder_summary.threshold_calibration_not_proven_count }}</td></tr>
+                        <tr><th>Sample size</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.sample_size_survival_status) }}</td></tr>
+                        <tr><th>Silver storage</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.silver_storage_status) }}{% if vm.runtime.strategy_ladder_summary.silver_bloat_ratio is not none %} (ratio={{ vm.runtime.strategy_ladder_summary.silver_bloat_ratio }}){% endif %}</td></tr>
+                        <tr><th>Historical replay venue</th><td>{{ vm.runtime.strategy_ladder_summary.historical_replay_venue }}</td></tr>
+                        <tr><th>Execution target venue</th><td>{{ vm.runtime.strategy_ladder_summary.execution_target_venue }}</td></tr>
+                        <tr><th>Venue transfer status</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.venue_transfer_status) }}</td></tr>
+                        <tr><th>Promotion artifacts</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.promotion_artifact_status) }}</td></tr>
+                        <tr><th>Overall proof</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.overall_backtest_proof_status) }}</td></tr>
+                    </tbody>
+                </table>
+                <ul class="small-list" style="margin-top: 12px;">
+                    {% if vm.runtime.strategy_ladder_summary.feature_store_pipeline_status == 'PIPELINE_READY_ONLY' %}
+                    <li>Feature Store READY is shown as pipeline-ready only.</li>
+                    {% endif %}
+                    {% if vm.runtime.strategy_ladder_summary.feature_row_sample_status == 'NOT_PROVEN_SMALL_SAMPLE' %}
+                    <li>feature_row_count={{ vm.runtime.strategy_ladder_summary.feature_row_count }} is too small for statistical proof.</li>
+                    {% endif %}
+                    {% if vm.runtime.strategy_ladder_summary.expected_edge_governance_status == 'EXPECTED_EDGE_NOT_GOVERNED' %}
+                    <li>expected_edge_governed_count=0 keeps expected edge in proxy-only mode.</li>
+                    {% endif %}
+                    {% if vm.runtime.strategy_ladder_summary.execution_fidelity_status == 'EXECUTION_FIDELITY_PARTIAL' %}
+                    <li>Execution fidelity remains partial while fidelity gap codes are non-empty.</li>
+                    {% endif %}
+                    {% if vm.runtime.strategy_ladder_summary.threshold_calibration_status == 'THRESHOLDS_DEFAULT_NOT_CALIBRATED' %}
+                    <li>Thresholds remain default or uncalibrated; calibration proof is missing.</li>
+                    {% endif %}
+                    {% if vm.runtime.strategy_ladder_summary.venue_transfer_status == 'BINANCE_SHADOW_REQUIRED' %}
+                    <li>BYBIT historical replay targeting BINANCE requires Shadow before any readiness claim.</li>
+                    {% endif %}
+                    {% if vm.runtime.strategy_ladder_summary.expected_edge_blocker_codes %}
+                    <li>Expected-edge governance blockers: {{ vm.runtime.strategy_ladder_summary.expected_edge_blocker_codes|join(', ') }}</li>
+                    {% endif %}
+                </ul>
+            </div>
+            <div class="status-section" style="margin-bottom: 12px;">
+                <h5>Governed Audit Evidence</h5>
+                <table class="data-table data-table--compact">
+                    <tbody>
+                        <tr><th>Evidence status</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.governed_evidence_status) }}</td></tr>
+                        <tr><th>Evidence index</th><td><code>{{ vm.runtime.strategy_ladder_summary.governed_audit_evidence_index_path or 'not_proven' }}</code></td></tr>
+                        <tr><th>Evidence counts</th><td>audited={{ vm.runtime.strategy_ladder_summary.audited_evidence_count }}, scratch_only={{ vm.runtime.strategy_ladder_summary.scratch_only_evidence_count }}, promotion_grade={{ vm.runtime.strategy_ladder_summary.promotion_grade_evidence_count }}</td></tr>
+                        <tr><th>run_manifest</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.run_manifest_evidence_class) }}</td></tr>
+                        <tr><th>capital_profiles</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.capital_profiles_evidence_class) }}</td></tr>
+                        <tr><th>engine_promotion</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.engine_promotion_evidence_class) }}</td></tr>
+                        <tr><th>pair_promotion</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.pair_promotion_evidence_class) }}</td></tr>
+                        <tr><th>strategy_promotion</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.strategy_promotion_evidence_class) }}</td></tr>
+                        <tr><th>sample_size_survival</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.sample_size_survival_evidence_class) }}</td></tr>
+                        <tr><th>trade_detail_ledger</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.trade_detail_ledger_evidence_class) }}</td></tr>
+                        <tr><th>refusal_ledger</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.refusal_ledger_evidence_class) }}</td></tr>
+                        <tr><th>loss_analysis_ledger</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.loss_analysis_ledger_evidence_class) }}</td></tr>
+                    </tbody>
+                </table>
+                {% if vm.runtime.strategy_ladder_summary.evidence_audit_blocker_codes %}
+                <ul class="small-list" style="margin-top: 12px;">
+                    {% for blocker in vm.runtime.strategy_ladder_summary.evidence_audit_blocker_codes %}
+                    <li>{{ blocker }}</li>
+                    {% endfor %}
+                </ul>
+                {% endif %}
+            </div>
+            <div class="status-section" style="margin-bottom: 12px;">
+                <h5>Candidate Count Semantics</h5>
+                <table class="data-table data-table--compact">
+                    <tbody>
+                        <tr><th>Base event count</th><td>{{ vm.runtime.strategy_ladder_summary.base_event_count }}</td></tr>
+                        <tr><th>Unique candidate count</th><td>{{ vm.runtime.strategy_ladder_summary.unique_candidate_count }}</td></tr>
+                        <tr><th>Engine-native candidate count</th><td>{{ vm.runtime.strategy_ladder_summary.engine_native_candidate_count }}</td></tr>
+                        <tr><th>Per-engine candidate count</th><td>{{ vm.runtime.strategy_ladder_summary.per_engine_candidate_count if vm.runtime.strategy_ladder_summary.per_engine_candidate_count is not none else 'NOT_UNIFORM' }}</td></tr>
+                        <tr><th>Candidate source</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.candidate_source_status) }}</td></tr>
+                        <tr><th>Replay record count</th><td>{{ vm.runtime.strategy_ladder_summary.replay_record_count }}</td></tr>
+                        <tr><th>Evaluation record count</th><td>{{ vm.runtime.strategy_ladder_summary.evaluation_record_count }}</td></tr>
+                        <tr><th>Promotion record count</th><td>{{ vm.runtime.strategy_ladder_summary.promotion_record_count }}</td></tr>
+                        <tr><th>Capital-bucket record count</th><td>{{ vm.runtime.strategy_ladder_summary.capital_bucket_record_count }}</td></tr>
+                        <tr><th>Replay expansion factor</th><td>{{ vm.runtime.strategy_ladder_summary.replay_expansion_factor if vm.runtime.strategy_ladder_summary.replay_expansion_factor is not none else 'NOT_PROVEN' }}</td></tr>
+                        <tr><th>Replay expansion axis</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.replay_expansion_axis or 'NOT_DECLARED') }}</td></tr>
+                        <tr><th>Matrix inflation status</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.matrix_count_inflation_status) }}</td></tr>
+                    </tbody>
+                </table>
+                {% if vm.runtime.strategy_ladder_summary.count_semantics_validator_codes %}
+                <ul class="small-list" style="margin-top: 12px;">
+                    {% for code in vm.runtime.strategy_ladder_summary.count_semantics_validator_codes %}
+                    <li>{{ code }}</li>
+                    {% endfor %}
+                </ul>
+                {% endif %}
+            </div>
+            {% if vm.runtime.strategy_ladder_summary.execution_fidelity_gap_codes %}
+            <div class="operator-note-surface operator-note-surface--warn" style="margin-bottom: 12px;">
+                <h5>Execution fidelity gaps</h5>
+                <ul class="small-list">
+                    {% for blocker in vm.runtime.strategy_ladder_summary.execution_fidelity_gap_codes %}
+                    <li>{{ blocker }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+            {% if vm.runtime.strategy_ladder_summary.component_coverage_rows %}
+            <div class="status-section" style="margin-bottom: 12px;">
+                <h5>Run-Class Component Coverage</h5>
+                <p class="muted">USED / NOT_APPLICABLE / CONFIGURED_OFF / MISSING_WIRING / SHADOW_LIVE_ONLY by current run class.</p>
+                <table class="data-table data-table--compact">
+                    <thead>
+                        <tr><th>Component</th><th>Status</th><th>Expected</th><th>Invoked</th><th>Consumed by</th><th>Proof</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for row in vm.runtime.strategy_ladder_summary.component_coverage_rows %}
+                        <tr>
+                            <td><code>{{ row.get('component_id', '') }}</code></td>
+                            <td>{{ status_chip(row.get('status', '')) }}</td>
+                            <td>{{ 'yes' if row.get('expected_for_run_class') else 'no' }}</td>
+                            <td>{{ 'yes' if row.get('invoked') else 'no' }}</td>
+                            <td>{{ row.get('consumed_by', [])|join(', ') if row.get('consumed_by') else 'none' }}</td>
+                            <td><code>{{ row.get('proof_artifact', '') or 'n/a' }}</code></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+            {% if vm.runtime.strategy_ladder_summary.blocker_codes %}
+            <ul class="small-list">
+                {% for blocker in vm.runtime.strategy_ladder_summary.blocker_codes %}
+                <li>{{ blocker }}</li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+            <div class="status-section" style="margin-top: 1rem;">
+                <h5>Bybit Historical Metadata</h5>
+                <table class="data-table data-table--compact" style="margin-top:0.5rem;">
+                    <tbody>
+                        <tr><th>Metadata cache path</th><td><code>{{ vm.runtime.strategy_ladder_summary.metadata_cache_path or vm.selected_form.metadata_path or 'not_provided' }}</code></td></tr>
+                        <tr><th>Pairs covered</th><td>{{ vm.runtime.strategy_ladder_summary.metadata_pairs_covered|join(', ') if vm.runtime.strategy_ladder_summary.metadata_pairs_covered else 'none' }}</td></tr>
+                        <tr><th>Missing metadata pairs</th><td>{{ vm.runtime.strategy_ladder_summary.missing_metadata_pairs|join(', ') if vm.runtime.strategy_ladder_summary.missing_metadata_pairs else 'none' }}</td></tr>
+                        <tr><th>Fetched at</th><td>{{ vm.runtime.strategy_ladder_summary.metadata_fetched_at_utc or 'n/a' }}</td></tr>
+                        <tr><th>Capital bucket metadata status</th><td>{{ vm.runtime.strategy_ladder_summary.capital_bucket_metadata_status }}</td></tr>
+                    </tbody>
+                </table>
+                {% if vm.runtime.strategy_ladder_summary.metadata_preview_rows %}
+                <table class="data-table data-table--compact" style="margin-top:0.75rem;">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Status</th>
+                            <th>Tick size</th>
+                            <th>Qty step</th>
+                            <th>Min order qty</th>
+                            <th>Min notional</th>
+                            <th>Maker fee</th>
+                            <th>Taker fee</th>
+                            <th>Fee source</th>
+                            <th>Proof level</th>
+                            <th>Temporal</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in vm.runtime.strategy_ladder_summary.metadata_preview_rows %}
+                        <tr>
+                            <td>{{ row.get('symbol', '') }}</td>
+                            <td>{{ row.get('status', '') }}</td>
+                            <td>{{ row.get('tick_size', '') }}</td>
+                            <td>{{ row.get('qty_step', '') }}</td>
+                            <td>{{ row.get('min_order_qty', '') }}</td>
+                            <td>{{ row.get('min_notional', '') }}</td>
+                            <td>{{ row.get('maker_fee_rate', '') }}</td>
+                            <td>{{ row.get('taker_fee_rate', '') }}</td>
+                            <td>{{ row.get('fee_source', '') }}</td>
+                            <td>{{ row.get('proof_level', '') }}</td>
+                            <td>{{ row.get('metadata_temporal_status', '') }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% endif %}
+                <ul class="small-list">
+                    {% if vm.runtime.strategy_ladder_summary.fee_provenance_status == 'CONFIGURED_FEE_PROVENANCE_READY' %}
+                    <li>Fees are configured research fees, not account-verified.</li>
+                    {% endif %}
+                    {% if vm.runtime.strategy_ladder_summary.metadata_temporal_status == 'CURRENT_METADATA_PROXY' %}
+                    <li>Current Bybit metadata is used as proxy. Historical metadata snapshot is not proven.</li>
+                    {% endif %}
+                    {% if vm.runtime.strategy_ladder_summary.replay_fill_realism_status == 'FILL_REALISM_MODEL_ONLY' or vm.runtime.strategy_ladder_summary.replay_cost_parity_status == 'REPLAY_LIVE_COST_PARITY_BLOCKED_BY_TELEMETRY' %}
+                    <li>Replay/fill/cost remains model-only, not proven live.</li>
+                    <li>Prudent replay model is active. Live Binance execution proof is still missing.</li>
+                    {% endif %}
+                </ul>
+            </div>
+            {% if vm.runtime.strategy_ladder_summary.gap_count %}
+            <ul class="small-list">
+                <li>Affected dates: {{ vm.runtime.strategy_ladder_summary.gap_dates|join(', ') if vm.runtime.strategy_ladder_summary.gap_dates else 'n/a' }}</li>
+                <li>Affected files: {{ vm.runtime.strategy_ladder_summary.gap_files|join(', ') if vm.runtime.strategy_ladder_summary.gap_files else 'n/a' }}</li>
+                <li>First gap seq: expected={{ vm.runtime.strategy_ladder_summary.first_gap_expected_seq if vm.runtime.strategy_ladder_summary.first_gap_expected_seq is not none else 'n/a' }}, actual={{ vm.runtime.strategy_ladder_summary.first_gap_actual_seq if vm.runtime.strategy_ladder_summary.first_gap_actual_seq is not none else 'n/a' }}, previous={{ vm.runtime.strategy_ladder_summary.first_gap_previous_seq if vm.runtime.strategy_ladder_summary.first_gap_previous_seq is not none else 'n/a' }}</li>
+            </ul>
+            {% endif %}
+            {% else %}
+            <p class="muted">No Strategy Ladder summary recorded yet.</p>
+            {% endif %}
+        </div>
+    </div>
+
+</section>
+
+{% if vm.runtime.strategy_ladder_summary.no_trade_audit_status != 'NO_TRADE_AUDIT_NOT_PROVEN' %}
+<section class="card">
+    <div class="card__head">
+        <h3>Post-B2 No-Trade Audit</h3>
+        <span class="card__sub">Structured B2 refusal aggregation from ledger artifacts</span>
+    </div>
+    <div class="card__body">
+        <div class="status-kpi-grid" style="margin-bottom: 12px;">
+            <div class="status-kpi">
+                <span class="status-kpi__label">Audit status</span>
+                <span class="status-kpi__value">{{ status_chip(vm.runtime.strategy_ladder_summary.no_trade_audit_status) }}</span>
+            </div>
+            <div class="status-kpi">
+                <span class="status-kpi__label">Refusal rows</span>
+                <span class="status-kpi__value">{{ vm.runtime.strategy_ladder_summary.no_trade_refusal_rows_total }}</span>
+            </div>
+            <div class="status-kpi">
+                <span class="status-kpi__label">Selected total</span>
+                <span class="status-kpi__value">{{ vm.runtime.strategy_ladder_summary.no_trade_selected_count_total }}</span>
+            </div>
+            <div class="status-kpi">
+                <span class="status-kpi__label">Hard-blocked total</span>
+                <span class="status-kpi__value">{{ vm.runtime.strategy_ladder_summary.no_trade_hard_blocked_count_total }}</span>
+            </div>
+            <div class="status-kpi">
+                <span class="status-kpi__label">Executed total</span>
+                <span class="status-kpi__value">{{ vm.runtime.strategy_ladder_summary.no_trade_executed_count_total }}</span>
+            </div>
+            <div class="status-kpi">
+                <span class="status-kpi__label">Sample-size status</span>
+                <span class="status-kpi__value">{{ status_chip(vm.runtime.strategy_ladder_summary.no_trade_sample_size_status) }}</span>
+            </div>
+        </div>
+        <p class="muted small">Refusal ledger evidence: <strong>{{ vm.runtime.strategy_ladder_summary.refusal_ledger_evidence_class }}</strong> · Sample-size evidence: <strong>{{ vm.runtime.strategy_ladder_summary.sample_size_survival_evidence_class }}</strong></p>
+        {% if vm.runtime.strategy_ladder_summary.refusal_ledger_evidence_class == 'SCRATCH_ONLY' %}
+        <p class="muted small value-warn">EVIDENCE_AUDIT_NOT_CONFIRMED: refusal-ledger aggregation is scratch-only and must not be treated as audited promotion proof.</p>
+        {% endif %}
+        {% if vm.runtime.strategy_ladder_summary.no_trade_common_reason_codes %}
+        <p class="muted small">Common blockers:
+            {% for code in vm.runtime.strategy_ladder_summary.no_trade_common_reason_codes %}
+            <code>{{ code }}</code>{{ '' if loop.last else ', ' }}
+            {% endfor %}
+        </p>
+        {% endif %}
+        <div class="replay-metrics__grids">
+            <div>
+                <h4>By Engine</h4>
+                <table class="data-table data-table--compact">
+                    <thead><tr><th>Engine</th><th>Refusals</th><th>Selected</th><th>Hard-blocked</th><th>Top reasons</th></tr></thead>
+                    <tbody>
+                    {% for row in vm.runtime.strategy_ladder_summary.no_trade_engine_rows %}
+                        <tr>
+                            <td><code>{{ row.engine_id }}</code></td>
+                            <td>{{ row.refusal_count }}</td>
+                            <td>{{ row.selected_count }}</td>
+                            <td>{{ row.hard_blocked_count }}</td>
+                            <td>{{ row.top_reason_codes|join(', ') if row.top_reason_codes else 'n/a' }}</td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div>
+                <h4>By Capital Bucket</h4>
+                <table class="data-table data-table--compact">
+                    <thead><tr><th>Bucket</th><th>Records</th><th>Refusals</th><th>Selected</th><th>Hard-blocked</th></tr></thead>
+                    <tbody>
+                    {% for row in vm.runtime.strategy_ladder_summary.no_trade_capital_bucket_rows %}
+                        <tr>
+                            <td><code>{{ row.capital_bucket }}</code></td>
+                            <td>{{ row.record_count }}</td>
+                            <td>{{ row.refusal_count }}</td>
+                            <td>{{ row.selected_count }}</td>
+                            <td>{{ row.hard_blocked_count }}</td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div>
+                <h4>Top Reason Codes</h4>
+                <table class="data-table data-table--compact">
+                    <thead><tr><th>Reason code</th><th>Count</th><th>Share</th></tr></thead>
+                    <tbody>
+                    {% for row in vm.runtime.strategy_ladder_summary.no_trade_reason_rows %}
+                        <tr>
+                            <td><code>{{ row.reason_code }}</code></td>
+                            <td>{{ row.count }}</td>
+                            <td>{{ "%.1f%%"|format((row.share_of_refusals or 0) * 100) }}</td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</section>
+{% endif %}
+
+{% if vm.runtime.strategy_ladder_summary.engine_no_trade_diagnosis_status != 'ENGINE_NO_TRADE_DIAGNOSIS_NOT_PROVEN' %}
+<section class="card">
+    <div class="card__head">
+        <h3>Engine No-Trade Diagnosis</h3>
+        <span class="card__sub">Per-engine B2 blocker diagnosis without weakening gates</span>
+    </div>
+    <div class="card__body">
+        <div class="status-kpi-grid" style="margin-bottom: 12px;">
+            <div class="status-kpi">
+                <span class="status-kpi__label">Diagnosis status</span>
+                <span class="status-kpi__value">{{ status_chip(vm.runtime.strategy_ladder_summary.engine_no_trade_diagnosis_status) }}</span>
+            </div>
+            <div class="status-kpi">
+                <span class="status-kpi__label">First gate</span>
+                <span class="status-kpi__value">{{ status_chip(vm.runtime.strategy_ladder_summary.engine_no_trade_first_gate_status) }}</span>
+            </div>
+        </div>
+        <p class="muted small">Report path: <code>{{ vm.runtime.strategy_ladder_summary.engine_no_trade_diagnosis_path or 'not_generated' }}</code></p>
+        {% if vm.runtime.strategy_ladder_summary.engine_no_trade_common_blockers %}
+        <p class="muted small">Common blockers:
+            {% for code in vm.runtime.strategy_ladder_summary.engine_no_trade_common_blockers %}
+            <code>{{ code }}</code>{{ '' if loop.last else ', ' }}
+            {% endfor %}
+        </p>
+        {% endif %}
+        <table class="data-table data-table--compact">
+            <thead>
+                <tr>
+                    <th>Engine</th>
+                    <th>Candidates</th>
+                    <th>Replay records</th>
+                    <th>Selected</th>
+                    <th>Hard-blocked</th>
+                    <th>First blocking layer</th>
+                    <th>Suspected gaps</th>
+                    <th>Next action</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for row in vm.runtime.strategy_ladder_summary.engine_no_trade_engine_rows %}
+                <tr>
+                    <td><code>{{ row.engine_id }}</code></td>
+                    <td>{{ row.candidate_count }}</td>
+                    <td>{{ row.replay_record_count }}</td>
+                    <td>{{ row.selected_count }}</td>
+                    <td>{{ row.hard_blocked_count }}</td>
+                    <td>{{ row.first_blocking_layer or 'n/a' }}</td>
+                    <td>{{ row.suspected_wiring_gaps|join(', ') if row.suspected_wiring_gaps else 'none' }}</td>
+                    <td><code>{{ row.recommended_next_action or 'n/a' }}</code></td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% if vm.runtime.strategy_ladder_summary.engine_no_trade_next_actions %}
+        <ul class="small-list">
+            {% for item in vm.runtime.strategy_ladder_summary.engine_no_trade_next_actions %}
+            <li><strong>{{ item.get('rank', '?') }}.</strong> <code>{{ item.get('action', '') }}</code> - {{ item.get('rationale', '') }}</li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+    </div>
+</section>
+{% endif %}
+
+{% if vm.runtime.strategy_ladder_summary.preselection_status != 'ENGINE_NATIVE_PRESELECTION_NOT_PROVEN' or vm.runtime.strategy_ladder_summary.discovery_pre_candidate_count > 0 %}
+<section class="card">
+    <div class="card__head">
+        <h3>B1.5 Native Preselection</h3>
+        <span class="card__sub">Discovery pre-candidates → engine-native preselected → B2 replay candidates</span>
+    </div>
+    <div class="card__body">
+        <div class="status-kpi-grid" style="margin-bottom: 12px;">
+            <div class="status-kpi">
+                <span class="status-kpi__label">Preselection status</span>
+                <span class="status-kpi__value">{{ status_chip(vm.runtime.strategy_ladder_summary.preselection_status) }}</span>
+            </div>
+            <div class="status-kpi">
+                <span class="status-kpi__label">Replay input mode</span>
+                <span class="status-kpi__value"><code>{{ vm.runtime.strategy_ladder_summary.replay_input_mode_status }}</code></span>
+            </div>
+            <div class="status-kpi">
+                <span class="status-kpi__label">B1.5 policy mode</span>
+                <span class="status-kpi__value">{{ vm.runtime.strategy_ladder_summary.b1_5_policy_mode }}</span>
+            </div>
+            <div class="status-kpi">
+                <span class="status-kpi__label">Discovery pre-candidates</span>
+                <span class="status-kpi__value">{{ vm.runtime.strategy_ladder_summary.discovery_pre_candidate_count or vm.runtime.strategy_ladder_summary.candidate_count }}</span>
+            </div>
+            <div class="status-kpi">
+                <span class="status-kpi__label">Engine-native preselected</span>
+                <span class="status-kpi__value">{{ vm.runtime.strategy_ladder_summary.engine_native_preselected_count }}</span>
+            </div>
+            <div class="status-kpi">
+                <span class="status-kpi__label">Hard rejected</span>
+                <span class="status-kpi__value">{{ vm.runtime.strategy_ladder_summary.preselection_hard_rejected_count }}</span>
+            </div>
+            <div class="status-kpi">
+                <span class="status-kpi__label">Soft flagged</span>
+                <span class="status-kpi__value">{{ vm.runtime.strategy_ladder_summary.preselection_soft_flagged_count }}</span>
+            </div>
+            <div class="status-kpi">
+                <span class="status-kpi__label">Passed to B1.5 set</span>
+                <span class="status-kpi__value">{{ vm.runtime.strategy_ladder_summary.preselection_passed_count }}</span>
+            </div>
+            <div class="status-kpi">
+                <span class="status-kpi__label">B2 replay candidates</span>
+                <span class="status-kpi__value">{{ vm.runtime.strategy_ladder_summary.b2_replay_candidate_count }}</span>
+            </div>
+            <div class="status-kpi">
+                <span class="status-kpi__label">Preselection rejections</span>
+                <span class="status-kpi__value">{{ vm.runtime.strategy_ladder_summary.preselection_rejection_count }}</span>
+            </div>
+            <div class="status-kpi">
+                <span class="status-kpi__label">Trade-eligible candidates</span>
+                <span class="status-kpi__value">{{ vm.runtime.strategy_ladder_summary.trade_eligible_candidate_count }}</span>
+            </div>
+            <div class="status-kpi">
+                <span class="status-kpi__label">Replay savings estimate</span>
+                <span class="status-kpi__value">{{ vm.runtime.strategy_ladder_summary.replay_savings_estimate_count }}</span>
+            </div>
+        </div>
+        {% if vm.runtime.strategy_ladder_summary.preselection_top_hard_rejection_reasons %}
+        <table class="data-table data-table--compact">
+            <thead>
+                <tr>
+                    <th>Top hard rejection reason</th>
+                    <th>Count</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for row in vm.runtime.strategy_ladder_summary.preselection_top_hard_rejection_reasons %}
+                <tr>
+                    <td><code>{{ row.get('reason_code', '') }}</code></td>
+                    <td>{{ row.get('count', 0) }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+        {% if vm.runtime.strategy_ladder_summary.preselection_top_soft_advisory_reasons %}
+        <table class="data-table data-table--compact">
+            <thead>
+                <tr>
+                    <th>Top soft advisory reason</th>
+                    <th>Count</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for row in vm.runtime.strategy_ladder_summary.preselection_top_soft_advisory_reasons %}
+                <tr>
+                    <td><code>{{ row.get('reason_code', '') }}</code></td>
+                    <td>{{ row.get('count', 0) }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+        {% if vm.runtime.strategy_ladder_summary.preselection_rejection_rows %}
+        <table class="data-table data-table--compact">
+            <thead>
+                <tr>
+                    <th>Candidate</th>
+                    <th>Engine</th>
+                    <th>Primary hard rejection</th>
+                    <th>Intent</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for row in vm.runtime.strategy_ladder_summary.preselection_rejection_rows %}
+                <tr>
+                    <td><code>{{ row.get('candidate_id', '') }}</code></td>
+                    <td><code>{{ row.get('engine_id', '') }}</code></td>
+                    <td><code>{{ row.get('preselection_reason_primary', '') }}</code></td>
+                    <td>{{ row.get('candidate_intent', '') }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+    </div>
+</section>
+{% endif %}
+
+{% if vm.runtime.strategy_ladder_summary.gate_waterfall_analysis_status != 'GATE_WATERFALL_NOT_PROVEN' %}
+<section class="card">
+    <div class="card__head">
+        <h3>Gate Waterfall</h3>
+        <span class="card__sub">RESEARCH_ONLY_COUNTERFACTUAL / NON_PROMOTION_GRADE / DIAGNOSTIC_ONLY</span>
+    </div>
+    <div class="card__body">
+        <div class="status-kpi-grid" style="margin-bottom: 12px;">
+            <div class="status-kpi">
+                <span class="status-kpi__label">Analysis status</span>
+                <span class="status-kpi__value">{{ status_chip(vm.runtime.strategy_ladder_summary.gate_waterfall_analysis_status) }}</span>
+            </div>
+            <div class="status-kpi">
+                <span class="status-kpi__label">Real selected</span>
+                <span class="status-kpi__value">{{ vm.runtime.strategy_ladder_summary.gate_waterfall_canonical_selected_count }}</span>
+            </div>
+            <div class="status-kpi">
+                <span class="status-kpi__label">Real executed</span>
+                <span class="status-kpi__value">{{ vm.runtime.strategy_ladder_summary.gate_waterfall_canonical_executed_count }}</span>
+            </div>
+            <div class="status-kpi">
+                <span class="status-kpi__label">Best counterfactual survival</span>
+                <span class="status-kpi__value">{{ vm.runtime.strategy_ladder_summary.gate_waterfall_counterfactual_survival_count }}</span>
+            </div>
+            <div class="status-kpi">
+                <span class="status-kpi__label">Canonical vs counterfactual delta</span>
+                <span class="status-kpi__value">{{ vm.runtime.strategy_ladder_summary.gate_waterfall_canonical_vs_counterfactual_delta }}</span>
+            </div>
+            <div class="status-kpi">
+                <span class="status-kpi__label">Best scenario</span>
+                <span class="status-kpi__value"><code>{{ vm.runtime.strategy_ladder_summary.gate_waterfall_best_scenario or 'n/a' }}</code></span>
+            </div>
+        </div>
+        <p class="muted small">Report path: <code>{{ vm.runtime.strategy_ladder_summary.gate_waterfall_analysis_path or 'not_generated' }}</code></p>
+        {% if vm.runtime.strategy_ladder_summary.gate_waterfall_dominant_blocking_gates %}
+        <table class="data-table data-table--compact">
+            <thead>
+                <tr>
+                    <th>Dominant gate</th>
+                    <th>First-block count</th>
+                    <th>Pct</th>
+                    <th>Reasons</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for row in vm.runtime.strategy_ladder_summary.gate_waterfall_dominant_blocking_gates %}
+                <tr>
+                    <td>{{ row.get('gate_label', row.get('gate_id', '')) }}</td>
+                    <td>{{ row.get('first_blocking_count', 0) }}</td>
+                    <td>{{ row.get('first_blocking_pct', 0) }}</td>
+                    <td>
+                        {% if row.get('dominant_reason_codes') %}
+                            {% for item in row.get('dominant_reason_codes', ()) %}
+                            <code>{{ item.get('reason_code', '') }}</code>{{ '' if loop.last else ', ' }}
+                            {% endfor %}
+                        {% else %}
+                            none
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+        {% if vm.runtime.strategy_ladder_summary.gate_waterfall_funnel_rows %}
+        <table class="data-table data-table--compact">
+            <thead>
+                <tr>
+                    <th>Gate</th>
+                    <th>Remaining after gate</th>
+                    <th>Marginal drop</th>
+                    <th>Cumulative drop</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for row in vm.runtime.strategy_ladder_summary.gate_waterfall_funnel_rows %}
+                <tr>
+                    <td>{{ row.get('gate_label', row.get('gate_id', '')) }}</td>
+                    <td>{{ row.get('remaining_after_gate_count', 0) }}</td>
+                    <td>{{ row.get('marginal_drop_by_gate', 0) }}</td>
+                    <td>{{ row.get('cumulative_drop_by_gate', 0) }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+        {% if vm.runtime.strategy_ladder_summary.gate_counterfactual_scenarios %}
+        <table class="data-table data-table--compact">
+            <thead>
+                <tr>
+                    <th>Would-pass-if scenario</th>
+                    <th>Counterfactual survival</th>
+                    <th>Pct</th>
+                    <th>Delta vs real selected</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for row in vm.runtime.strategy_ladder_summary.gate_counterfactual_scenarios %}
+                <tr>
+                    <td><code>{{ row.get('scenario_id', '') }}</code></td>
+                    <td>{{ row.get('counterfactual_survival_count', 0) }}</td>
+                    <td>{{ row.get('counterfactual_survival_pct', 0) }}</td>
+                    <td>{{ row.get('delta_vs_canonical_selected', 0) }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+        {% if vm.runtime.strategy_ladder_summary.gate_counterfactual_engine_rows %}
+        <table class="data-table data-table--compact">
+            <thead>
+                <tr>
+                    <th>Engine</th>
+                    <th>Replay records</th>
+                    <th>Dominant gate</th>
+                    <th>Best scenario</th>
+                    <th>Counterfactual survival</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for row in vm.runtime.strategy_ladder_summary.gate_counterfactual_engine_rows %}
+                <tr>
+                    <td><code>{{ row.get('engine_id', '') }}</code></td>
+                    <td>{{ row.get('replay_record_count', 0) }}</td>
+                    <td>{{ row.get('dominant_gate_label', row.get('dominant_blocking_gate', '')) }}</td>
+                    <td><code>{{ row.get('best_counterfactual_scenario', '') }}</code></td>
+                    <td>{{ row.get('counterfactual_survival_count', 0) }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+        {% if vm.runtime.strategy_ladder_summary.gate_counterfactual_timeframe_rows %}
+        <table class="data-table data-table--compact">
+            <thead>
+                <tr>
+                    <th>Timeframe</th>
+                    <th>Replay records</th>
+                    <th>Dominant gate</th>
+                    <th>Best scenario</th>
+                    <th>Counterfactual survival</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for row in vm.runtime.strategy_ladder_summary.gate_counterfactual_timeframe_rows %}
+                <tr>
+                    <td><code>{{ row.get('timeframe', '') }}</code></td>
+                    <td>{{ row.get('replay_record_count', 0) }}</td>
+                    <td>{{ row.get('dominant_gate_label', row.get('dominant_blocking_gate', '')) }}</td>
+                    <td><code>{{ row.get('best_counterfactual_scenario', '') }}</code></td>
+                    <td>{{ row.get('counterfactual_survival_count', 0) }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+    </div>
+</section>
+{% endif %}
+
+{% if vm.runtime.strategy_ladder_summary.expected_edge_readiness_status != 'EXPECTED_EDGE_READINESS_NOT_PROVEN' %}
+<section class="card">
+    <div class="card__head">
+        <h3>Expected-Edge Readiness Audit</h3>
+        <span class="card__sub">Diagnostic-only pre-training audit</span>
+    </div>
+    <div class="card__body">
+        <div class="status-kpi-grid" style="margin-bottom: 12px;">
+            <div class="status-kpi">
+                <span class="status-kpi__label">Audit status</span>
+                <span class="status-kpi__value">{{ status_chip(vm.runtime.strategy_ladder_summary.expected_edge_readiness_status) }}</span>
+            </div>
+            <div class="status-kpi">
+                <span class="status-kpi__label">Verdict</span>
+                <span class="status-kpi__value">{{ status_chip(vm.runtime.strategy_ladder_summary.expected_edge_readiness_verdict or 'EXPECTED_EDGE_TRAINING_PREMATURE') }}</span>
+            </div>
+        </div>
+        <p class="muted small">Report path: <code>{{ vm.runtime.strategy_ladder_summary.expected_edge_readiness_path or 'not_generated' }}</code></p>
+        {% if vm.runtime.strategy_ladder_summary.expected_edge_readiness_key_findings %}
+        <ul class="small-list">
+            {% for item in vm.runtime.strategy_ladder_summary.expected_edge_readiness_key_findings %}
+            <li>{{ item }}</li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+    </div>
+</section>
+{% endif %}
+
+<section class="grid-2">
+    <div class="card">
+        <div class="card__head">
+            <h3>Two-Stage Backtest Status</h3>
+            <span class="card__sub">Phase 1 candidate discovery → Phase 2 detailed replay</span>
+        </div>
+        <div class="card__body">
+            <table class="data-table data-table--compact">
+                <tbody>
+                    <tr><th>Phase 1 — feature discovery</th><td>{{ vm.runtime.strategy_ladder_summary.phase1_feature_discovery_status }}</td></tr>
+                    <tr><th>Phase 1 — candidate export</th><td>{{ vm.runtime.strategy_ladder_summary.phase1_candidate_export_status }}</td></tr>
+                    <tr><th>Phase 2 — raw window extraction</th><td>{{ vm.runtime.strategy_ladder_summary.phase2_raw_window_extraction_status }}</td></tr>
+                    <tr><th>Phase 2 — detailed replay</th><td>{{ vm.runtime.strategy_ladder_summary.phase2_detailed_replay_status }}</td></tr>
+                    <tr><th>Storage budget</th><td>{{ vm.runtime.strategy_ladder_summary.storage_budget_status }}</td></tr>
+                    <tr><th>Storage budget report</th><td><code>{{ vm.runtime.strategy_ladder_summary.storage_budget_report_path or 'not_yet_generated' }}</code></td></tr>
+                    <tr><th>Silver storage</th><td>{{ vm.runtime.strategy_ladder_summary.silver_storage_status }} ({{ vm.runtime.strategy_ladder_summary.silver_storage_format }})</td></tr>
+                    <tr><th>Date pruning</th><td>{{ vm.runtime.strategy_ladder_summary.date_pruning_status }}</td></tr>
+                    <tr><th>Silver index date range</th><td>{{ vm.runtime.strategy_ladder_summary.silver_index_date_range_status }}</td></tr>
+                    <tr><th>Dry-run scope</th><td>{{ vm.runtime.strategy_ladder_summary.raw_scan_budget_status }}</td></tr>
+                    <tr><th>Files seen / skipped</th><td>{{ vm.runtime.strategy_ladder_summary.files_seen }} / {{ vm.runtime.strategy_ladder_summary.files_skipped_by_date_filter }} skipped by date</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card__head">
+            <h3>Orderbook Snapshot/Delta Status</h3>
+            <span class="card__sub">Reconstruction-derived depth proof</span>
+        </div>
+        <div class="card__body">
+            <table class="data-table data-table--compact">
+                <tbody>
+                    <tr><th>Snapshot</th><td>{{ vm.runtime.strategy_ladder_summary.orderbook_snapshot_status }}</td></tr>
+                    <tr><th>Delta</th><td>{{ vm.runtime.strategy_ladder_summary.orderbook_delta_status }}</td></tr>
+                    <tr><th>Reconstruction</th><td>{{ vm.runtime.strategy_ladder_summary.orderbook_reconstruction_status }}</td></tr>
+                    <tr><th>Depth20 proof</th>
+                        <td>
+                            {% if vm.runtime.strategy_ladder_summary.depth20_proof_status == 'BOOK_DEPTH20_AVAILABLE' %}
+                                <span class="status-ready">{{ vm.runtime.strategy_ladder_summary.depth20_proof_status }}</span>
+                            {% else %}
+                                {{ vm.runtime.strategy_ladder_summary.depth20_proof_status }}
+                            {% endif %}
+                        </td>
+                    </tr>
+                    <tr><th>Snapshot rows</th><td>{{ vm.runtime.strategy_ladder_summary.snapshot_entry_count }}</td></tr>
+                    <tr><th>Delta rows</th><td>{{ vm.runtime.strategy_ladder_summary.delta_entry_count }}</td></tr>
+                </tbody>
+            </table>
+            {% if vm.runtime.strategy_ladder_summary.snapshot_paths %}
+            <ul class="small-list">
+                <li>Snapshot paths shown:
+                    {% for path in vm.runtime.strategy_ladder_summary.snapshot_paths %}<div><code>{{ path }}</code></div>{% endfor %}
+                </li>
+            </ul>
+            {% endif %}
+            {% if vm.runtime.strategy_ladder_summary.delta_paths %}
+            <ul class="small-list">
+                <li>Delta paths shown:
+                    {% for path in vm.runtime.strategy_ladder_summary.delta_paths %}<div><code>{{ path }}</code></div>{% endfor %}
+                </li>
+            </ul>
+            {% endif %}
+        </div>
+    </div>
+</section>
+
+<section class="card">
+    <div class="card__head">
+        <h3>Features &amp; Thresholds</h3>
+        <span class="card__sub">Gold feature groups + threshold registry provenance</span>
+    </div>
+    <div class="card__body">
+        <ul class="small-list">
+            <li>Manifest path: <code>{{ vm.runtime.strategy_ladder_summary.feature_threshold_manifest_path or 'not_yet_generated' }}</code></li>
+            <li>Threshold count (registered): {{ vm.runtime.strategy_ladder_summary.threshold_count }}</li>
+            <li>Feature groups declared:
+                {% if vm.runtime.strategy_ladder_summary.feature_groups_declared %}
+                    {% for group in vm.runtime.strategy_ladder_summary.feature_groups_declared %}<code>{{ group }}</code>{{ '' if loop.last else ', ' }}{% endfor %}
+                {% else %}
+                    <span class="muted">none declared yet</span>
+                {% endif %}
+            </li>
+            <li>Feature groups generated:
+                {% if vm.runtime.strategy_ladder_summary.feature_groups_generated %}
+                    {% for group in vm.runtime.strategy_ladder_summary.feature_groups_generated %}<code>{{ group }}</code>{{ '' if loop.last else ', ' }}{% endfor %}
+                {% else %}
+                    <span class="muted">none generated for this run</span>
+                {% endif %}
+            </li>
+            <li>Feature groups ready:
+                {% if vm.runtime.strategy_ladder_summary.feature_groups_ready %}
+                    {% for group in vm.runtime.strategy_ladder_summary.feature_groups_ready %}<code>{{ group }}</code>{{ '' if loop.last else ', ' }}{% endfor %}
+                {% else %}
+                    <span class="muted">declared but not proven yet</span>
+                {% endif %}
+            </li>
+        </ul>
+    </div>
+</section>
+
+{# Patch 2026-05-15 (timeframe propagation audit) — surface silver→gold #}
+{# timeframe diff so operators see exactly which timeframes flow end-to-end #}
+{# and which are pruned, with the explicit reason code from the registry. #}
+<section class="card">
+    <div class="card__head">
+        <h3>Timeframe propagation</h3>
+        <span class="card__sub">Silver → gold feature pipeline visibility (no silent prunes)</span>
+    </div>
+    <div class="card__body">
+        <ul class="small-list">
+            <li>Silver timeframes detected:
+                {% if vm.runtime.strategy_ladder_summary.silver_timeframes_detected %}
+                    {% for tf in vm.runtime.strategy_ladder_summary.silver_timeframes_detected %}<code>{{ tf }}</code>{{ '' if loop.last else ', ' }}{% endfor %}
+                {% else %}
+                    <span class="muted">no silver OHLCV detected yet</span>
+                {% endif %}
+            </li>
+            <li>Gold timeframes generated:
+                {% if vm.runtime.strategy_ladder_summary.gold_timeframes_generated %}
+                    {% for tf in vm.runtime.strategy_ladder_summary.gold_timeframes_generated %}<code>{{ tf }}</code>{{ '' if loop.last else ', ' }}{% endfor %}
+                {% else %}
+                    <span class="muted">none materialized for this run</span>
+                {% endif %}
+            </li>
+            <li>Pruned timeframes:
+                {% if vm.runtime.strategy_ladder_summary.timeframes_pruned %}
+                    {% for tf in vm.runtime.strategy_ladder_summary.timeframes_pruned %}<code>{{ tf }}</code>{{ '' if loop.last else ', ' }}{% endfor %}
+                {% else %}
+                    <span class="muted">none — every silver timeframe flowed to gold</span>
+                {% endif %}
+            </li>
+        </ul>
+        {% if vm.runtime.strategy_ladder_summary.pruning_reason_by_timeframe %}
+        <table class="data-table">
+            <thead><tr><th>timeframe</th><th>reason code</th></tr></thead>
+            <tbody>
+                {% for tf, reason in vm.runtime.strategy_ladder_summary.pruning_reason_by_timeframe.items() %}
+                <tr><td><code>{{ tf }}</code></td><td><code>{{ reason }}</code></td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+        {% if vm.runtime.strategy_ladder_summary.timeframe_feature_row_count %}
+        <table class="data-table">
+            <thead><tr><th>timeframe</th><th>feature rows</th></tr></thead>
+            <tbody>
+                {% for tf, count in vm.runtime.strategy_ladder_summary.timeframe_feature_row_count.items() %}
+                <tr><td><code>{{ tf }}</code></td><td>{{ count }}</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+    </div>
+</section>
+
+<section class="status-surface-grid">
+    <div class="card proof-surface-card">
+        <div class="card__head">
+            <h3>Run Summary</h3>
+            <span class="card__sub">Operator-grade outcome and remaining proof gaps</span>
+        </div>
+        <div class="card__body">
+            <div class="status-kpi-grid">
+                <div class="status-kpi">
+                    <span class="status-kpi__label">Files processed</span>
+                    <span class="status-kpi__value">{{ vm.runtime.strategy_ladder_summary.files_processed }}</span>
+                </div>
+                <div class="status-kpi">
+                    <span class="status-kpi__label">Rows processed</span>
+                    <span class="status-kpi__value">{{ vm.runtime.strategy_ladder_summary.rows_processed }}</span>
+                </div>
+                <div class="status-kpi">
+                    <span class="status-kpi__label">Candidate count</span>
+                    <span class="status-kpi__value">{{ vm.runtime.strategy_ladder_summary.candidate_count }}</span>
+                </div>
+                <div class="status-kpi">
+                    <span class="status-kpi__label">Detailed replay count</span>
+                    <span class="status-kpi__value">{{ vm.runtime.strategy_ladder_summary.detailed_replay_count }}</span>
+                </div>
+            </div>
+            <table class="data-table data-table--compact" style="margin-top: 12px;">
+                <tbody>
+                    <tr><th>Raw size</th><td>{{ vm.runtime.strategy_ladder_summary.raw_size_bytes if vm.runtime.strategy_ladder_summary.raw_size_bytes else 'NOT_PROVEN' }}</td></tr>
+                    <tr><th>Silver size</th><td>{{ vm.runtime.strategy_ladder_summary.silver_size_bytes if vm.runtime.strategy_ladder_summary.silver_size_bytes else 'NOT_PROVEN' }}</td></tr>
+                    <tr><th>Gold size</th><td>{{ vm.runtime.strategy_ladder_summary.gold_size_bytes if vm.runtime.strategy_ladder_summary.gold_size_bytes else 'NOT_PROVEN' }}</td></tr>
+                    <tr><th>Silver bloat ratio</th><td>{{ vm.runtime.strategy_ladder_summary.silver_bloat_ratio if vm.runtime.strategy_ladder_summary.silver_bloat_ratio is not none else 'NOT_PROVEN' }}</td></tr>
+                    <tr><th>Raw window count</th><td>{{ vm.runtime.strategy_ladder_summary.raw_window_count }}</td></tr>
+                    <tr><th>Raw windows total</th><td>{{ vm.runtime.strategy_ladder_summary.raw_windows_total }}</td></tr>
+                    <tr><th>Trade windows</th><td>{{ vm.runtime.strategy_ladder_summary.trade_windows_found }} found / {{ vm.runtime.strategy_ladder_summary.trade_windows_missing }} missing</td></tr>
+                    <tr><th>Book windows</th><td>{{ vm.runtime.strategy_ladder_summary.book_windows_found }} found / {{ vm.runtime.strategy_ladder_summary.book_windows_missing }} missing</td></tr>
+                    <tr><th>OHLCV windows</th><td>{{ vm.runtime.strategy_ladder_summary.ohlcv_windows_found }} found / {{ vm.runtime.strategy_ladder_summary.ohlcv_windows_missing }} missing</td></tr>
+                    <tr><th>Depth20 windows</th><td>{{ vm.runtime.strategy_ladder_summary.depth20_found }} found / {{ vm.runtime.strategy_ladder_summary.depth20_missing }} missing</td></tr>
+                    <tr><th>Trade count</th><td>{{ vm.runtime.strategy_ladder_summary.trade_count if vm.runtime.strategy_ladder_summary.trade_count else 'NOT_PROVEN' }}</td></tr>
+                    <tr><th>Refusal count</th><td>{{ vm.runtime.strategy_ladder_summary.refusal_count if vm.runtime.strategy_ladder_summary.refusal_count else 'NOT_PROVEN' }}</td></tr>
+                    <tr><th>Winning count</th><td>{{ vm.runtime.strategy_ladder_summary.winning_count if vm.runtime.strategy_ladder_summary.winning_count else 'NOT_PROVEN' }}</td></tr>
+                    <tr><th>Losing count</th><td>{{ vm.runtime.strategy_ladder_summary.losing_count if vm.runtime.strategy_ladder_summary.losing_count else 'NOT_PROVEN' }}</td></tr>
+                    <tr><th>Gross PnL (bps)</th><td>{{ vm.runtime.strategy_ladder_summary.gross_pnl_bps if vm.runtime.strategy_ladder_summary.gross_pnl_bps is not none else 'NOT_PROVEN' }}</td></tr>
+                    <tr><th>Net PnL (bps)</th><td>{{ vm.runtime.strategy_ladder_summary.net_pnl_bps if vm.runtime.strategy_ladder_summary.net_pnl_bps is not none else 'NOT_PROVEN' }}</td></tr>
+                    <tr><th>Max drawdown (bps)</th><td>{{ vm.runtime.strategy_ladder_summary.max_drawdown_bps if vm.runtime.strategy_ladder_summary.max_drawdown_bps is not none else 'NOT_PROVEN' }}</td></tr>
+                    <tr><th>Average gain / loss (bps)</th><td>{{ vm.runtime.strategy_ladder_summary.avg_gain_bps if vm.runtime.strategy_ladder_summary.avg_gain_bps is not none else 'NOT_PROVEN' }} / {{ vm.runtime.strategy_ladder_summary.avg_loss_bps if vm.runtime.strategy_ladder_summary.avg_loss_bps is not none else 'NOT_PROVEN' }}</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="status-proof-column">
+        <div class="card proof-surface-card">
+            <div class="card__head">
+                <h3>Proof Matrix</h3>
+                <span class="card__sub">READY metrics vs remaining non-green proof gaps</span>
+            </div>
+            <div class="card__body">
+                {% if vm.runtime.strategy_ladder_summary.overall_backtest_proof_status == 'BACKTEST_PROOF_RESEARCH_ONLY' %}
+                <div class="operator-note-surface operator-note-surface--warn" style="margin-bottom: 12px;">
+                    <h5>Research-only warning</h5>
+                    <ul class="small-list">
+                        <li>Research-only backtest. Not promotion-ready. Binance live execution is not validated.</li>
+                        <li>NOT_PROVEN metrics must stay visible until telemetry or executed-only evidence exists.</li>
+                    </ul>
+                </div>
+                {% endif %}
+                <div class="proof-columns">
+                    <div class="proof-column">
+                        <h5>Ready metrics</h5>
+                        <ul class="small-list">
+                            <li>Data Factory: {{ vm.runtime.strategy_ladder_summary.data_factory_status }}</li>
+                            <li>Silver index: {{ vm.runtime.strategy_ladder_summary.silver_index_status }}</li>
+                            <li>Gold feature store: {{ vm.runtime.strategy_ladder_summary.gold_feature_store_status }}</li>
+                            <li>Historical metadata: {{ vm.runtime.strategy_ladder_summary.historical_metadata_status }}</li>
+                            <li>Orderbook reconstruction: {{ vm.runtime.strategy_ladder_summary.orderbook_reconstruction_status }}</li>
+                            <li>Candidate export: {{ vm.runtime.strategy_ladder_summary.candidate_export_status }}</li>
+                            <li>Raw windows: {{ vm.runtime.strategy_ladder_summary.raw_window_extraction_status }}</li>
+                            <li>Detailed replay: {{ vm.runtime.strategy_ladder_summary.detailed_replay_status }}</li>
+                            <li>Fee provenance: {{ vm.runtime.strategy_ladder_summary.fee_provenance_status }}</li>
+                        </ul>
+                    </div>
+                    <div class="proof-column">
+                        <h5>Gaps / not proven</h5>
+                        <ul class="small-list">
+                            <li>Impact provenance: {{ vm.runtime.strategy_ladder_summary.replay_impact_source_status }}</li>
+                            <li>Fill realism: {{ vm.runtime.strategy_ladder_summary.replay_fill_realism_status }}</li>
+                            <li>Cost parity: {{ vm.runtime.strategy_ladder_summary.replay_cost_parity_status }}</li>
+                            <li>Executed-only economics: {{ vm.runtime.strategy_ladder_summary.replay_executed_only_net_return_status }}</li>
+                            <li>True drawdown: {{ vm.runtime.strategy_ladder_summary.replay_true_net_equity_drawdown_status }}</li>
+                            <li>Capital bucket: {{ vm.runtime.strategy_ladder_summary.capital_bucket_metadata_status }}</li>
+                            <li>Sample size: {{ vm.runtime.strategy_ladder_summary.sample_size_survival_status }}</li>
+                            <li>Live eligibility: {{ vm.runtime.strategy_ladder_summary.live_trading_eligibility_status }}</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card venue-surface-card">
+            <div class="card__head">
+                <h3>Venue &amp; Replay Doctrine</h3>
+                <span class="card__sub">Research-only guardrails and model-only replay disclosure</span>
+            </div>
+            <div class="card__body">
+                <div class="venue-doctrine-list">
+                    <div class="venue-doctrine-item">
+                        <strong>Venue split</strong>
+                        Historical replay venue: {{ vm.runtime.strategy_ladder_summary.historical_replay_venue }}<br>
+                        Execution target venue: {{ vm.runtime.strategy_ladder_summary.execution_target_venue }}<br>
+                        Backtest class: {{ vm.runtime.strategy_ladder_summary.backtest_class }}<br>
+                        Venue transfer status: {{ vm.runtime.strategy_ladder_summary.venue_transfer_status }}<br>
+                        Live trading eligibility: {{ vm.runtime.strategy_ladder_summary.live_trading_eligibility_status }}
+                    </div>
+                    <div class="venue-doctrine-item">
+                        <strong>Replay / fill / cost disclosure</strong>
+                        Fee source: {{ vm.runtime.strategy_ladder_summary.replay_fee_source_status }}<br>
+                        Impact source: {{ vm.runtime.strategy_ladder_summary.replay_impact_source_status }}<br>
+                        Fill realism: {{ vm.runtime.strategy_ladder_summary.replay_fill_realism_status }}<br>
+                        Cost parity: {{ vm.runtime.strategy_ladder_summary.replay_cost_parity_status }}<br>
+                        Executed-only economics: {{ vm.runtime.strategy_ladder_summary.replay_executed_only_net_return_status }}<br>
+                        True drawdown: {{ vm.runtime.strategy_ladder_summary.replay_true_net_equity_drawdown_status }}
+                    </div>
+                </div>
+                <ul class="small-list" style="margin-top: 12px;">
+                    <li>Bybit backtest does not imply Binance live readiness.</li>
+                    <li>Replay/fill/cost remains model-only until shadow/live telemetry exists.</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</section>
+
+{% set selected_candidate_id = vm.runtime.strategy_ladder_summary.selected_candidate_id %}
+{% set selected_candidate_detail = vm.runtime.strategy_ladder_summary.selected_candidate_detail %}
+{% set selected_candidate_replay = vm.runtime.strategy_ladder_summary.selected_candidate_replay %}
+{% set selected_candidate_window = vm.runtime.strategy_ladder_summary.selected_candidate_window %}
+<section class="grid-2 candidate-workspace" id="candidate-workspace">
+    <div class="card candidate-explorer-card">
+        <div class="card__head">
+            <h3>Candidate Explorer</h3>
+            <span class="card__sub">Fast candidates from existing artifacts</span>
+        </div>
+        <div class="card__body">
+            <div class="candidate-explorer-toolbar">
+                <div class="candidate-explorer-meta">
+                    <span class="candidate-token">Rows <strong>{{ vm.runtime.strategy_ladder_summary.candidate_rows|length }}</strong></span>
+                    <span class="candidate-token">Run <strong>{{ vm.runtime.strategy_ladder_summary.run_id or 'not_available' }}</strong></span>
+                    <span class="candidate-token">Selection <strong id="candidate-selection-token">{{ selected_candidate_id or 'none' }}</strong></span>
+                </div>
+                <div class="candidate-chip-list">
+                    <span class="candidate-chip candidate-chip--status">No reload selection</span>
+                </div>
+            </div>
+            {% if vm.runtime.strategy_ladder_summary.candidate_rows %}
+            <div class="candidate-explorer-table-wrap">
+                <table class="data-table data-table--compact">
+                    <thead>
+                        <tr>
+                            <th>Candidate</th>
+                            <th>Pair</th>
+                            <th>Engine</th>
+                            <th>TF</th>
+                            <th>Score</th>
+                            <th>Replay</th>
+                            <th>Outcome</th>
+                            <th>Net</th>
+                            <th>Select</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in vm.runtime.strategy_ladder_summary.candidate_rows %}
+                        {% set row_candidate_id = row.get('candidate_id', '') %}
+                        {% set row_selected = row_candidate_id == selected_candidate_id %}
+                        <tr class="candidate-row{% if row_selected %} candidate-row--selected{% endif %}" data-candidate-row data-candidate-id="{{ row_candidate_id }}">
+                            <td><code>{{ row_candidate_id }}</code></td>
+                            <td>{{ row.get('pair', '') }}</td>
+                            <td>{{ row.get('engine_id', '') }}</td>
+                            <td>{{ row.get('timeframe', '') }}</td>
+                            <td>{{ row.get('score_final', row.get('signal_strength', '')) }}</td>
+                            <td>{{ row.get('replay_status', '') }}</td>
+                            <td>{{ row.get('outcome_status', '') }}</td>
+                            <td>{{ row.get('net_result', 'NOT_PROVEN') }}</td>
+                            <td class="candidate-row__action">
+                                <form action="/backtest#candidate-workspace" method="get" data-candidate-select-form>
+                                    <input type="hidden" name="candidate_id" value="{{ row_candidate_id }}">
+                                    <button class="button button--info candidate-select-button" type="submit" aria-pressed="{{ 'true' if row_selected else 'false' }}">
+                                        {{ 'Selected' if row_selected else 'Inspect' }}
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="muted">CANDIDATE_LIST_NOT_AVAILABLE</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card candidate-detail-card">
+        <div class="card__head">
+            <h3>Selected Candidate Detail</h3>
+            <span class="card__sub">Why found, replay outcome, and current proof</span>
+        </div>
+        <div class="card__body" id="candidate-detail-host" data-selected-candidate-id="{{ selected_candidate_id }}">
+            {% if selected_candidate_detail %}
+            <div class="candidate-detail-panel">
+                <div class="candidate-detail-hero">
+                    <div>
+                        <h4><code>{{ selected_candidate_detail.get('candidate_id', '') }}</code></h4>
+                        <div class="muted">Selected candidate detail without full-page reload.</div>
+                    </div>
+                    <div class="candidate-chip-list">
+                        <span class="candidate-chip candidate-chip--pair">{{ selected_candidate_detail.get('pair', 'n/a') }}</span>
+                        <span class="candidate-chip candidate-chip--engine">{{ selected_candidate_detail.get('engine_id', 'n/a') }}</span>
+                        <span class="candidate-chip candidate-chip--timeframe">{{ selected_candidate_detail.get('timeframe', 'n/a') }}</span>
+                        <span class="candidate-chip candidate-chip--status">{{ selected_candidate_replay.get('execution_state', selected_candidate_replay.get('detailed_replay_status', 'NOT_PROVEN')) if selected_candidate_replay else 'NOT_PROVEN' }}</span>
+                    </div>
+                </div>
+                <div class="candidate-proof-banner">
+                    Replay/fill/cost remains model-only, not proven live.
+                </div>
+                <div class="candidate-detail-grid">
+                    <div class="candidate-metric">
+                        <span class="candidate-metric__label">Strategy</span>
+                        <span class="candidate-metric__value">{{ selected_candidate_detail.get('strategy_id', 'n/a') }}</span>
+                    </div>
+                    <div class="candidate-metric">
+                        <span class="candidate-metric__label">Reason codes</span>
+                        <span class="candidate-metric__value">{{ selected_candidate_detail.get('reason_codes', ())|join(', ') if selected_candidate_detail.get('reason_codes') else 'not_available' }}</span>
+                    </div>
+                    <div class="candidate-metric">
+                        <span class="candidate-metric__label">Score raw / penalized / final</span>
+                        <span class="candidate-metric__value">{{ selected_candidate_detail.get('score_raw', 'n/a') }} / {{ selected_candidate_detail.get('score_penalized', 'n/a') }} / {{ selected_candidate_detail.get('score_final', 'n/a') }}</span>
+                    </div>
+                    <div class="candidate-metric">
+                        <span class="candidate-metric__label">Spread / slippage / edge (bps)</span>
+                        <span class="candidate-metric__value">{{ selected_candidate_detail.get('spread_bps', 'n/a') }} / {{ selected_candidate_detail.get('slippage_bps', 'n/a') }} / {{ selected_candidate_detail.get('expected_edge_bps', 'n/a') }}</span>
+                    </div>
+                    <div class="candidate-metric">
+                        <span class="candidate-metric__label">Scoring trace</span>
+                        <span class="candidate-metric__value">{{ selected_candidate_detail.get('scoring_trace_status', 'NOT_PROVEN') }}</span>
+                    </div>
+                    <div class="candidate-metric">
+                        <span class="candidate-metric__label">Microstructure consumption</span>
+                        <span class="candidate-metric__value">{{ selected_candidate_detail.get('microstructure_consumption_status', 'NOT_PROVEN') }}</span>
+                    </div>
+                    <div class="candidate-metric">
+                        <span class="candidate-metric__label">Replay status</span>
+                        <span class="candidate-metric__value">{{ selected_candidate_replay.get('detailed_replay_status', 'DETAILED_REPLAY_NOT_PROVEN') if selected_candidate_replay else 'DETAILED_REPLAY_NOT_PROVEN' }}</span>
+                    </div>
+                    <div class="candidate-metric">
+                        <span class="candidate-metric__label">Execution state</span>
+                        <span class="candidate-metric__value">{{ selected_candidate_replay.get('execution_state', 'NOT_PROVEN') if selected_candidate_replay else 'NOT_PROVEN' }}</span>
+                    </div>
+                </div>
+                <div class="candidate-detail-section">
+                    <h5>Feature refs</h5>
+                    <ul>
+                        {% if selected_candidate_detail.get('feature_refs') %}
+                        {% for ref in selected_candidate_detail.get('feature_refs', ()) %}
+                        <li><code>{{ ref }}</code></li>
+                        {% endfor %}
+                        {% else %}
+                        <li>not_available</li>
+                        {% endif %}
+                    </ul>
+                </div>
+                <div class="candidate-detail-section">
+                    <h5>Replay proof</h5>
+                    <ul>
+                        <li>Expected CE: {{ selected_candidate_replay.get('expected_ce_net', 'NOT_PROVEN') if selected_candidate_replay else 'NOT_PROVEN' }}</li>
+                        <li>Net return (bps): {{ selected_candidate_replay.get('net_return_bps', 'NOT_PROVEN') if selected_candidate_replay else 'NOT_PROVEN' }}</li>
+                        <li>Reason codes: {{ selected_candidate_replay.get('reason_codes', ())|join(', ') if selected_candidate_replay and selected_candidate_replay.get('reason_codes') else 'none' }}</li>
+                        <li>Fee / impact / fill / parity: {{ selected_candidate_replay.get('fee_source_status', 'n/a') if selected_candidate_replay else 'n/a' }} / {{ selected_candidate_replay.get('impact_source_status', 'n/a') if selected_candidate_replay else 'n/a' }} / {{ selected_candidate_replay.get('fill_realism_status', 'n/a') if selected_candidate_replay else 'n/a' }} / {{ selected_candidate_replay.get('cost_parity_status', 'n/a') if selected_candidate_replay else 'n/a' }}</li>
+                    </ul>
+                </div>
+                <div class="candidate-detail-section">
+                    <h5>Scoring and microstructure trace</h5>
+                    <ul>
+                        <li>Score decomposition: {{ selected_candidate_detail.get('score_decomposition', {}) }}</li>
+                        <li>Warning codes: {{ selected_candidate_detail.get('warning_codes', ())|join(', ') if selected_candidate_detail.get('warning_codes') else 'none' }}</li>
+                        <li>Microstructure reason: {{ selected_candidate_detail.get('microstructure_not_consumed_reason', '') or 'none' }}</li>
+                    </ul>
+                </div>
+                <div class="candidate-detail-section">
+                    <h5>Feature values</h5>
+                    <pre class="candidate-code-box"><code>{{ selected_candidate_detail.get('feature_values', {}) }}</code></pre>
+                </div>
+            </div>
+            {% else %}
+            <p class="muted">CANDIDATE_DETAIL_NOT_AVAILABLE</p>
+            {% endif %}
+        </div>
+    </div>
+</section>
+
+<section class="card candidate-followup-card">
+    <div class="card__head">
+        <h3>After Candidate Selection</h3>
+        <span class="card__sub">Replay window, proof review, ledgers, and matrices continue below the explorer.</span>
+    </div>
+</section>
+
+<section class="grid-2">
+    <div class="card">
+        <div class="card__head">
+            <h3>Replay Window</h3>
+            <span class="card__sub">T-1h / T+1h structured artifact view</span>
+        </div>
+        <div class="card__body" id="candidate-window-host">
+            {% if selected_candidate_window %}
+            <table class="data-table data-table--compact">
+                <tbody>
+                    <tr><th>Window status</th><td>{{ selected_candidate_window.get('raw_window_status', 'RAW_WINDOW_NOT_PROVEN') }}</td></tr>
+                    <tr><th>Depth status</th><td>{{ selected_candidate_window.get('book_depth_source_status', 'BOOK_DEPTH_NOT_PROVEN') }}</td></tr>
+                    <tr><th>Coverage status</th><td>{{ selected_candidate_window.get('source_coverage_status', 'RAW_WINDOW_SOURCE_NOT_PROVEN') }}</td></tr>
+                    <tr><th>Trade path</th><td><code>{{ selected_candidate_window.get('raw_trade_path', 'not_available') }}</code></td></tr>
+                    <tr><th>Orderbook path</th><td><code>{{ selected_candidate_window.get('raw_book_path', 'not_available') }}</code></td></tr>
+                    <tr><th>OHLCV path</th><td><code>{{ selected_candidate_window.get('raw_ohlcv_path', 'not_available') }}</code></td></tr>
+                    <tr><th>Replay artifact</th><td><code>{{ selected_candidate_window.get('replay_artifact_path', 'not_available') }}</code></td></tr>
+                </tbody>
+            </table>
+            {% else %}
+            <p class="muted">WINDOW_DATA_NOT_AVAILABLE</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card__head">
+            <h3>Selection Proof Review</h3>
+            <span class="card__sub">READY metrics vs remaining gaps for the currently selected run</span>
+        </div>
+        <div class="card__body">
+            <div class="grid-2">
+                <div>
+                    <strong>Ready metrics</strong>
+                    <ul class="small-list">
+                        {% if vm.runtime.strategy_ladder_summary.proof_ready_metrics %}
+                        {% for row in vm.runtime.strategy_ladder_summary.proof_ready_metrics %}
+                        <li>{{ row.get('metric_name', '') }} ({{ row.get('status', '') }})</li>
+                        {% endfor %}
+                        {% else %}
+                        <li>none</li>
+                        {% endif %}
+                    </ul>
+                </div>
+                <div>
+                    <strong>Gaps / not proven</strong>
+                    <ul class="small-list">
+                        {% if vm.runtime.strategy_ladder_summary.proof_gap_metrics %}
+                        {% for row in vm.runtime.strategy_ladder_summary.proof_gap_metrics %}
+                        <li>{{ row.get('metric_name', '') }}: {{ row.get('status', '') }}</li>
+                        {% endfor %}
+                        {% else %}
+                        <li>none</li>
+                        {% endif %}
+                    </ul>
+                </div>
+            </div>
+            {% if vm.runtime.strategy_ladder_summary.overall_backtest_proof_status == 'BACKTEST_PROOF_RESEARCH_ONLY' %}
+            <p class="muted">Research-only backtest. Not promotion-ready. Binance live execution is not validated.</p>
+            {% endif %}
+        </div>
+    </div>
+</section>
+
+<section class="grid-3">
+    <div class="card">
+        <div class="card__head">
+            <h3>Trade Detail Ledger</h3>
+            <span class="card__sub">Executed/reduced rows only</span>
+        </div>
+        <div class="card__body">
+            {% if vm.runtime.strategy_ladder_summary.trade_ledger_rows %}
+            <table class="data-table data-table--compact">
+                <thead><tr><th>Trade</th><th>Candidate</th><th>Pair</th><th>Engine</th><th>Net</th><th>Fill</th></tr></thead>
+                <tbody>
+                    {% for row in vm.runtime.strategy_ladder_summary.trade_ledger_rows %}
+                    <tr>
+                        <td><code>{{ row.get('trade_id', '') }}</code></td>
+                        <td><code>{{ row.get('candidate_id', '') }}</code></td>
+                        <td>{{ row.get('pair', '') }}</td>
+                        <td>{{ row.get('engine_id', '') }}</td>
+                        <td>{{ row.get('net_return_bps', 'NOT_PROVEN') }}</td>
+                        <td>{{ row.get('fill_status', 'NOT_PROVEN') }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="muted">trade_detail_ledger not materialized for this run.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card__head">
+            <h3>Refusal Ledger</h3>
+            <span class="card__sub">Truthful non-execution evidence</span>
+        </div>
+        <div class="card__body">
+            {% if vm.runtime.strategy_ladder_summary.refusal_ledger_rows %}
+            <table class="data-table data-table--compact">
+                <thead><tr><th>Candidate</th><th>Category</th><th>Gate</th><th>Reason</th></tr></thead>
+                <tbody>
+                    {% for row in vm.runtime.strategy_ladder_summary.refusal_ledger_rows %}
+                    <tr>
+                        <td><code>{{ row.get('candidate_id', '') }}</code></td>
+                        <td>{{ row.get('refusal_category', '') }}</td>
+                        <td>{{ row.get('gate', '') }}</td>
+                        <td>{{ row.get('reason_codes', ())|join(', ') if row.get('reason_codes') else 'none' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="muted">refusal_ledger not materialized for this run.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card__head">
+            <h3>Loss Analysis Ledger</h3>
+            <span class="card__sub">Only real losing executed trades</span>
+        </div>
+        <div class="card__body">
+            {% if vm.runtime.strategy_ladder_summary.loss_ledger_rows %}
+            <table class="data-table data-table--compact">
+                <thead><tr><th>Trade</th><th>Loss</th><th>Classification</th><th>Primary cause</th></tr></thead>
+                <tbody>
+                    {% for row in vm.runtime.strategy_ladder_summary.loss_ledger_rows %}
+                    <tr>
+                        <td><code>{{ row.get('trade_id', '') }}</code></td>
+                        <td>{{ row.get('loss_bps', 'NOT_PROVEN') }}</td>
+                        <td>{{ row.get('loss_classification', '') }}</td>
+                        <td>{{ row.get('primary_cause', '') or 'LOSS_UNCLASSIFIED' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="muted">loss_analysis_ledger not materialized for this run.</p>
+            {% endif %}
+        </div>
+    </div>
+</section>
+
+<section class="grid-3">
+    <div class="card">
+        <div class="card__head">
+            <h3>Engine Matrix</h3>
+            <span class="card__sub">Per-engine promotion surface</span>
+        </div>
+        <div class="card__body">
+            {% if vm.runtime.strategy_ladder_summary.engine_matrix_rows %}
+            <table class="data-table data-table--compact">
+                <thead><tr><th>Engine</th><th>Candidates</th><th>Evaluations</th><th>No fill</th><th>Promotion</th></tr></thead>
+                <tbody>
+                    {% for row in vm.runtime.strategy_ladder_summary.engine_matrix_rows %}
+                    <tr>
+                        <td>{{ row.get('engine_id', '') }}</td>
+                        <td>{{ row.get('candidate_count', 0) }}</td>
+                        <td>{{ row.get('engine_evaluation_count', row.get('evaluation_record_count', row.get('record_count', 0))) }}</td>
+                        <td>{{ row.get('no_fill_count', 0) }}</td>
+                        <td>{{ row.get('promotion_status', 'NOT_PROVEN') }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="muted">not_available</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card__head">
+            <h3>Pair Matrix</h3>
+            <span class="card__sub">Per-pair replay status</span>
+        </div>
+        <div class="card__body">
+            {% if vm.runtime.strategy_ladder_summary.pair_matrix_rows %}
+            <table class="data-table data-table--compact">
+                <thead><tr><th>Pair</th><th>Candidates</th><th>Records</th><th>No fill</th><th>Promotion</th></tr></thead>
+                <tbody>
+                    {% for row in vm.runtime.strategy_ladder_summary.pair_matrix_rows %}
+                    <tr>
+                        <td>{{ row.get('pair', '') }}</td>
+                        <td>{{ row.get('candidate_count', 0) }}</td>
+                        <td>{{ row.get('record_count', 0) }}</td>
+                        <td>{{ row.get('no_fill_count', 0) }}</td>
+                        <td>{{ row.get('promotion_status', 'NOT_PROVEN') }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="muted">not_available</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card__head">
+            <h3>Timeframe Matrix</h3>
+            <span class="card__sub">Per-timeframe replay surface</span>
+        </div>
+        <div class="card__body">
+            {% if vm.runtime.strategy_ladder_summary.timeframe_matrix_rows %}
+            <table class="data-table data-table--compact">
+                <thead><tr><th>TF</th><th>Candidates</th><th>Trades</th><th>No fill</th></tr></thead>
+                <tbody>
+                    {% for row in vm.runtime.strategy_ladder_summary.timeframe_matrix_rows %}
+                    <tr>
+                        <td>{{ row.get('timeframe', '') }}</td>
+                        <td>{{ row.get('candidate_count', 0) }}</td>
+                        <td>{{ row.get('executed_count', 0) + row.get('reduced_count', 0) }}</td>
+                        <td>{{ row.get('no_fill_count', 0) }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="muted">not_available</p>
+            {% endif %}
+        </div>
+    </div>
+</section>
+
+<div id="folder-picker-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:9999; padding:2rem;">
+    <div style="background:#111; border:1px solid #444; max-width:960px; margin:0 auto; padding:1rem; max-height:85vh; overflow:auto;">
+        <div style="display:flex; justify-content:space-between; gap:1rem; align-items:center;">
+            <strong>Browse folders</strong>
+            <button class="button button--ghost" id="folder-picker-close" type="button">Close</button>
+        </div>
+        <div style="margin-top:0.75rem;">
+            <div><strong>Current folder:</strong> <code id="folder-picker-current">n/a</code></div>
+            <div style="margin-top:0.5rem; display:flex; gap:0.5rem;">
+                <button class="button button--ghost" id="folder-picker-up" type="button">Up</button>
+                <button class="button button--primary" id="folder-picker-select" type="button">Select This Folder</button>
+            </div>
+        </div>
+        <div style="margin-top:1rem;">
+            <strong>Drives</strong>
+            <div id="folder-picker-drives" style="display:flex; flex-wrap:wrap; gap:0.5rem; margin-top:0.5rem;"></div>
+        </div>
+        <div style="margin-top:1rem;">
+            <strong>Directories</strong>
+            <div id="folder-picker-directories" style="display:grid; gap:0.5rem; margin-top:0.5rem;"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+(() => {
+    const modal = document.getElementById("folder-picker-modal");
+    const drivesHost = document.getElementById("folder-picker-drives");
+    const dirsHost = document.getElementById("folder-picker-directories");
+    const currentHost = document.getElementById("folder-picker-current");
+    const closeBtn = document.getElementById("folder-picker-close");
+    const upBtn = document.getElementById("folder-picker-up");
+    const selectBtn = document.getElementById("folder-picker-select");
+    const pickerStateKey = "patch6_folder_picker_state";
+    let currentTargetId = "";
+    let currentPath = "";
+
+    if (!modal || !drivesHost || !dirsHost || !currentHost || !closeBtn || !upBtn || !selectBtn) {
+        return;
+    }
+
+    async function fetchJson(url) {
+        const response = await fetch(url, {headers: {"Accept": "application/json"}});
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        return response.json();
+    }
+
+    function savePickerState() {
+        if (!currentTargetId) {
+            return;
+        }
+        window.sessionStorage.setItem(
+            pickerStateKey,
+            JSON.stringify({targetId: currentTargetId, currentPath}),
+        );
+    }
+
+    function clearPickerState() {
+        window.sessionStorage.removeItem(pickerStateKey);
+    }
+
+    function openModal(targetId, initialPath = "") {
+        currentTargetId = targetId;
+        modal.style.display = "block";
+        savePickerState();
+        loadDrives();
+        const input = document.getElementById(targetId);
+        const initial = initialPath || (input && input.value ? input.value : "");
+        if (initial) {
+            loadDirectory(initial);
+        } else {
+            currentHost.textContent = "select a drive";
+            dirsHost.innerHTML = "";
+            currentPath = "";
+            savePickerState();
+        }
+    }
+
+    function closeModal() {
+        modal.style.display = "none";
+        currentTargetId = "";
+        currentPath = "";
+        clearPickerState();
+    }
+
+    async function loadDrives() {
+        const payload = await fetchJson("/backtest/picker/drives");
+        drivesHost.innerHTML = "";
+        for (const drive of payload.drives || []) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "button button--ghost";
+            button.textContent = drive.label || drive.path;
+            button.addEventListener("click", () => loadDirectory(drive.path));
+            drivesHost.appendChild(button);
+        }
+    }
+
+    async function loadDirectory(path) {
+        const payload = await fetchJson(`/backtest/picker/browse?path=${encodeURIComponent(path)}`);
+        currentPath = payload.current_path || "";
+        currentHost.textContent = currentPath || "n/a";
+        dirsHost.innerHTML = "";
+        savePickerState();
+        for (const directory of payload.directories || []) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "button button--ghost";
+            button.style.textAlign = "left";
+            button.textContent = directory.name;
+            button.addEventListener("click", () => loadDirectory(directory.path));
+            dirsHost.appendChild(button);
+        }
+        upBtn.dataset.parentPath = payload.parent_path || "";
+    }
+
+    async function tryNativePicker(targetId) {
+        const input = document.getElementById(targetId);
+        const initial = input && input.value ? input.value : currentPath;
+        const payload = await fetchJson(`/backtest/picker/native?path=${encodeURIComponent(initial || "")}`);
+        if (payload.status === "FOLDER_PICKER_SELECTED" && payload.selected_path && input) {
+            input.value = payload.selected_path;
+            clearPickerState();
+            return true;
+        }
+        if (payload.status === "FOLDER_PICKER_CANCELLED") {
+            clearPickerState();
+            return true;
+        }
+        return false;
+    }
+
+    document.querySelectorAll(".js-browse-folder").forEach((button) => {
+        button.addEventListener("click", async () => {
+            const targetId = button.dataset.target || "";
+            if (!targetId) {
+                return;
+            }
+            try {
+                const handled = await tryNativePicker(targetId);
+                if (handled) {
+                    return;
+                }
+            } catch (error) {
+                console.warn("native folder picker unavailable", error);
+            }
+            openModal(targetId);
+        });
+    });
+    closeBtn.addEventListener("click", closeModal);
+    modal.addEventListener("click", (event) => {
+        if (event.target === modal) {
+            closeModal();
+        }
+    });
+    upBtn.addEventListener("click", () => {
+        const parentPath = upBtn.dataset.parentPath || "";
+        if (parentPath) {
+            loadDirectory(parentPath);
+        }
+    });
+    selectBtn.addEventListener("click", () => {
+        if (!currentTargetId || !currentPath) {
+            return;
+        }
+        const input = document.getElementById(currentTargetId);
+        if (input) {
+            input.value = currentPath;
+        }
+        closeModal();
+    });
+    try {
+        const persisted = JSON.parse(window.sessionStorage.getItem(pickerStateKey) || "null");
+        if (persisted && persisted.targetId) {
+            openModal(persisted.targetId, persisted.currentPath || "");
+        }
+    } catch (error) {
+        console.warn("folder picker state restore failed", error);
+        clearPickerState();
+    }
+})();
+</script>
+
+<script>
+(() => {
+    const form = document.querySelector('form[action="/backtest/run"]');
+    if (!form) {
+        return;
+    }
+    const phaseSelect = form.querySelector('select[name="action_name"]');
+    const launchButton = document.getElementById("backtest-launch-button");
+    const previewIdInput = form.querySelector('input[name="preview_id"]');
+    const requestHashInput = form.querySelector('input[name="request_hash"]');
+    if (!phaseSelect || !launchButton || !previewIdInput || !requestHashInput) {
+        return;
+    }
+
+    function syncLaunchButton() {
+        const selectedAction = String(phaseSelect.value || "").trim();
+        const hasPreview = Boolean(
+            String(previewIdInput.value || "").trim()
+            && String(requestHashInput.value || "").trim()
+        );
+        const allowLaunch = hasPreview && selectedAction !== "PHASE_A1_PREVIEW";
+        launchButton.disabled = !allowLaunch;
+        launchButton.title = allowLaunch
+            ? ""
+            : selectedAction === "PHASE_A1_PREVIEW"
+                ? "Phase A1 is preview-only."
+                : "Generate a matching preview before launching this phase.";
+    }
+
+    phaseSelect.addEventListener("change", syncLaunchButton);
+    syncLaunchButton();
+})();
+</script>
+
+<script>
+(() => {
+    const detailUrl = "/backtest/candidate-detail.json";
+    const detailHost = document.getElementById("candidate-detail-host");
+    const windowHost = document.getElementById("candidate-window-host");
+    const selectionToken = document.getElementById("candidate-selection-token");
+    const candidateRows = Array.from(document.querySelectorAll("[data-candidate-row]"));
+    const candidateForms = Array.from(document.querySelectorAll("[data-candidate-select-form]"));
+    let currentCandidateId = detailHost?.dataset.selectedCandidateId || "";
+    let requestToken = 0;
+
+    if (!detailHost || !windowHost || candidateForms.length === 0) {
+        return;
+    }
+
+    function esc(value) {
+        return String(value ?? "")
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;")
+            .replaceAll('"', "&quot;")
+            .replaceAll("'", "&#39;");
+    }
+
+    function normalizeList(value) {
+        if (Array.isArray(value)) {
+            return value.filter(Boolean).map((item) => String(item));
+        }
+        if (value === null || value === undefined || value === "") {
+            return [];
+        }
+        return [String(value)];
+    }
+
+    function renderListItems(values, emptyLabel = "not_available") {
+        const items = normalizeList(values);
+        if (items.length === 0) {
+            return `<li>${esc(emptyLabel)}</li>`;
+        }
+        return items.map((item) => `<li><code>${esc(item)}</code></li>`).join("");
+    }
+
+    function renderCandidateDetail(payload) {
+        const detail = payload?.detail || {};
+        const replay = payload?.replay || {};
+        if (!detail.candidate_id) {
+            return '<p class="muted">CANDIDATE_DETAIL_NOT_AVAILABLE</p>';
+        }
+        const featureValues = JSON.stringify(detail.feature_values || {}, null, 2);
+        const reasonCodes = normalizeList(detail.reason_codes).join(", ") || "not_available";
+        const executionState = replay.execution_state || replay.detailed_replay_status || "NOT_PROVEN";
+        return `
+            <div class="candidate-detail-panel">
+                <div class="candidate-detail-hero">
+                    <div>
+                        <h4><code>${esc(detail.candidate_id || "")}</code></h4>
+                        <div class="muted">Selected candidate detail without full-page reload.</div>
+                    </div>
+                    <div class="candidate-chip-list">
+                        <span class="candidate-chip candidate-chip--pair">${esc(detail.pair || "n/a")}</span>
+                        <span class="candidate-chip candidate-chip--engine">${esc(detail.engine_id || "n/a")}</span>
+                        <span class="candidate-chip candidate-chip--timeframe">${esc(detail.timeframe || "n/a")}</span>
+                        <span class="candidate-chip candidate-chip--status">${esc(executionState)}</span>
+                    </div>
+                </div>
+                <div class="candidate-proof-banner">Replay/fill/cost remains model-only, not proven live.</div>
+                <div class="candidate-detail-grid">
+                    <div class="candidate-metric">
+                        <span class="candidate-metric__label">Strategy</span>
+                        <span class="candidate-metric__value">${esc(detail.strategy_id || "n/a")}</span>
+                    </div>
+                    <div class="candidate-metric">
+                        <span class="candidate-metric__label">Reason codes</span>
+                        <span class="candidate-metric__value">${esc(reasonCodes)}</span>
+                    </div>
+                    <div class="candidate-metric">
+                        <span class="candidate-metric__label">Score raw / penalized / final</span>
+                        <span class="candidate-metric__value">${esc(detail.score_raw ?? "n/a")} / ${esc(detail.score_penalized ?? "n/a")} / ${esc(detail.score_final ?? "n/a")}</span>
+                    </div>
+                    <div class="candidate-metric">
+                        <span class="candidate-metric__label">Spread / slippage / edge (bps)</span>
+                        <span class="candidate-metric__value">${esc(detail.spread_bps ?? "n/a")} / ${esc(detail.slippage_bps ?? "n/a")} / ${esc(detail.expected_edge_bps ?? "n/a")}</span>
+                    </div>
+                    <div class="candidate-metric">
+                        <span class="candidate-metric__label">Replay status</span>
+                        <span class="candidate-metric__value">${esc(replay.detailed_replay_status || "DETAILED_REPLAY_NOT_PROVEN")}</span>
+                    </div>
+                    <div class="candidate-metric">
+                        <span class="candidate-metric__label">Execution state</span>
+                        <span class="candidate-metric__value">${esc(replay.execution_state || "NOT_PROVEN")}</span>
+                    </div>
+                </div>
+                <div class="candidate-detail-section">
+                    <h5>Feature refs</h5>
+                    <ul>${renderListItems(detail.feature_refs, "not_available")}</ul>
+                </div>
+                <div class="candidate-detail-section">
+                    <h5>Replay proof</h5>
+                    <ul>
+                        <li>Expected CE: ${esc(replay.expected_ce_net ?? "NOT_PROVEN")}</li>
+                        <li>Net return (bps): ${esc(replay.net_return_bps ?? "NOT_PROVEN")}</li>
+                        <li>Reason codes: ${esc(normalizeList(replay.reason_codes).join(", ") || "none")}</li>
+                        <li>Fee / impact / fill / parity: ${esc(replay.fee_source_status || "n/a")} / ${esc(replay.impact_source_status || "n/a")} / ${esc(replay.fill_realism_status || "n/a")} / ${esc(replay.cost_parity_status || "n/a")}</li>
+                    </ul>
+                </div>
+                <div class="candidate-detail-section">
+                    <h5>Feature values</h5>
+                    <pre class="candidate-code-box"><code>${esc(featureValues)}</code></pre>
+                </div>
+            </div>
+        `;
+    }
+
+    function renderCandidateWindow(payload) {
+        if (!payload || !Object.keys(payload).length) {
+            return '<p class="muted">WINDOW_DATA_NOT_AVAILABLE</p>';
+        }
+        return `
+            <table class="data-table data-table--compact">
+                <tbody>
+                    <tr><th>Window status</th><td>${esc(payload.raw_window_status || "RAW_WINDOW_NOT_PROVEN")}</td></tr>
+                    <tr><th>Depth status</th><td>${esc(payload.book_depth_source_status || "BOOK_DEPTH_NOT_PROVEN")}</td></tr>
+                    <tr><th>Coverage status</th><td>${esc(payload.source_coverage_status || "RAW_WINDOW_SOURCE_NOT_PROVEN")}</td></tr>
+                    <tr><th>Trade path</th><td><code>${esc(payload.raw_trade_path || "not_available")}</code></td></tr>
+                    <tr><th>Orderbook path</th><td><code>${esc(payload.raw_book_path || "not_available")}</code></td></tr>
+                    <tr><th>OHLCV path</th><td><code>${esc(payload.raw_ohlcv_path || "not_available")}</code></td></tr>
+                    <tr><th>Replay artifact</th><td><code>${esc(payload.replay_artifact_path || "not_available")}</code></td></tr>
+                </tbody>
+            </table>
+        `;
+    }
+
+    function applySelectedState(candidateId) {
+        currentCandidateId = candidateId || "";
+        detailHost.dataset.selectedCandidateId = currentCandidateId;
+        if (selectionToken) {
+            selectionToken.textContent = currentCandidateId || "none";
+        }
+        candidateRows.forEach((row) => {
+            const rowCandidateId = row.dataset.candidateId || "";
+            const selected = rowCandidateId === currentCandidateId;
+            row.classList.toggle("candidate-row--selected", selected);
+            const button = row.querySelector(".candidate-select-button");
+            if (button) {
+                button.setAttribute("aria-pressed", selected ? "true" : "false");
+                button.textContent = selected ? "Selected" : "Inspect";
+            }
+        });
+    }
+
+    async function fetchCandidatePayload(candidateId) {
+        const response = await fetch(`${detailUrl}?candidate_id=${encodeURIComponent(candidateId)}`, {
+            headers: {"Accept": "application/json"},
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(payload.error || `HTTP ${response.status}`);
+        }
+        return payload;
+    }
+
+    async function selectCandidate(candidateId, {updateHistory = true} = {}) {
+        const nextCandidateId = (candidateId || "").trim();
+        if (!nextCandidateId) {
+            return;
+        }
+        const token = ++requestToken;
+        detailHost.innerHTML = '<p class="muted">Loading candidate detail...</p>';
+        windowHost.innerHTML = '<p class="muted">Loading replay window...</p>';
+        try {
+            const payload = await fetchCandidatePayload(nextCandidateId);
+            if (token !== requestToken) {
+                return;
+            }
+            detailHost.innerHTML = renderCandidateDetail(payload);
+            windowHost.innerHTML = renderCandidateWindow(payload.window || {});
+            applySelectedState(payload.selected_candidate_id || nextCandidateId);
+            if (updateHistory) {
+                const url = new URL(window.location.href);
+                url.searchParams.set("candidate_id", nextCandidateId);
+                window.history.replaceState({candidateId: nextCandidateId}, "", url);
+            }
+        } catch (error) {
+            console.warn("candidate detail fetch failed", error);
+            detailHost.innerHTML = '<p class="muted">CANDIDATE_DETAIL_NOT_AVAILABLE</p>';
+            windowHost.innerHTML = '<p class="muted">WINDOW_DATA_NOT_AVAILABLE</p>';
+        }
+    }
+
+    candidateForms.forEach((form) => {
+        form.addEventListener("submit", (event) => {
+            event.preventDefault();
+            const input = form.querySelector('input[name="candidate_id"]');
+            const candidateId = input ? input.value : "";
+            void selectCandidate(candidateId);
+        });
+    });
+
+    candidateRows.forEach((row) => {
+        row.addEventListener("click", (event) => {
+            if (event.target instanceof HTMLElement && event.target.closest("button, input, form, a")) {
+                return;
+            }
+            const candidateId = row.dataset.candidateId || "";
+            void selectCandidate(candidateId);
+        });
+    });
+
+    window.addEventListener("popstate", () => {
+        const url = new URL(window.location.href);
+        const candidateId = url.searchParams.get("candidate_id") || "";
+        if (candidateId && candidateId !== currentCandidateId) {
+            void selectCandidate(candidateId, {updateHistory: false});
+        }
+    });
+
+    applySelectedState(currentCandidateId);
+})();
+</script>
+
+<script>
+(() => {
+    const statusUrl = "/backtest/status.json";
+    const pollIntervalMs = 4000;
+    let requestInFlight = false;
+
+    function esc(value) {
+        return String(value ?? "")
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;")
+            .replaceAll('"', "&quot;")
+            .replaceAll("'", "&#39;");
+    }
+
+    function setText(id, value) {
+        const node = document.getElementById(id);
+        if (node) {
+            node.textContent = value;
+        }
+    }
+
+    function setProgress(barId, fillId, pctId, pctValue) {
+        const pct = Number.isFinite(pctValue) ? Math.max(0, Math.min(100, pctValue)) : 0;
+        const bar = document.getElementById(barId);
+        const fill = document.getElementById(fillId);
+        if (bar) {
+            bar.setAttribute("aria-valuenow", String(pct));
+        }
+        if (fill) {
+            fill.style.width = `${pct}%`;
+        }
+        setText(pctId, `${pct}%`);
+    }
+
+    function formatDuration(value) {
+        return Number.isFinite(value) ? `${value.toFixed(1)}s` : "n/a";
+    }
+
+    function formatEta(value) {
+        return Number.isFinite(value) && value > 0 ? `${value.toFixed(1)} min` : "-";
+    }
+
+    function formatStdout(value) {
+        return Number.isFinite(value) ? `${value.toFixed(1)} KB` : "0.0 KB";
+    }
+
+    function renderLatestJob(job) {
+        const host = document.getElementById("backtest-progress-body");
+        if (!host) {
+            return;
+        }
+        if (!job) {
+            host.innerHTML = '<p class="muted">No audited backtest runner activity recorded yet.</p>';
+            return;
+        }
+        const cancelForm = job.can_cancel
+            ? `
+            <form action="/backtest/cancel" method="post" style="margin-top:0.5rem;">
+                <input type="hidden" name="job_id" value="${esc(job.job_id)}">
+                <input type="text" name="operator_reason" placeholder="reason (optional)" value="operator_requested_cancel">
+                <button class="button button--danger" type="submit">Cancel Job</button>
+            </form>`
+            : "";
+        host.innerHTML = `
+            <table class="data-table data-table--compact">
+                <tbody>
+                    <tr><th>Job</th><td><code id="backtest-latest-job-id">${esc(job.job_id || "n/a")}</code></td></tr>
+                    <tr><th>Status</th><td id="backtest-latest-job-status">${esc(job.status || "n/a")}</td></tr>
+                    <tr><th>PID</th><td id="backtest-latest-job-pid">${job.pid ? esc(job.pid) : "n/a"}</td></tr>
+                    <tr><th>PID signal</th><td id="backtest-latest-job-pid-state">${job.pid_alive ? "alive" : "dead_or_missing"}</td></tr>
+                    <tr>
+                        <th>Progress</th>
+                        <td>
+                            <div id="backtest-latest-progress-bar" class="progress-bar" role="progressbar" aria-valuenow="${esc(job.progress_pct ?? 0)}" aria-valuemin="0" aria-valuemax="100" style="background:#222;border:1px solid #555;width:120px;height:14px;display:inline-block;vertical-align:middle;">
+                                <div id="backtest-latest-progress-fill" class="progress-bar__fill" style="background:#3a8;width:${esc(job.progress_pct ?? 0)}%;height:100%;"></div>
+                            </div>
+                            <span id="backtest-latest-progress-pct" class="muted">${esc(job.progress_pct ?? 0)}%</span>
+                        </td>
+                    </tr>
+                    <tr><th>ETA</th><td id="backtest-latest-job-eta">${esc(formatEta(job.eta_minutes))}</td></tr>
+                    <tr><th>Latest activity</th><td id="backtest-latest-job-activity">${esc(job.latest_activity_iso || "n/a")}</td></tr>
+                    <tr><th>Duration</th><td id="backtest-latest-job-duration">${esc(formatDuration(job.duration_seconds))}</td></tr>
+                    <tr><th>Produced files</th><td id="backtest-latest-job-produced">${esc(job.produced_file_count ?? 0)}</td></tr>
+                    <tr><th>Output refs</th><td id="backtest-latest-job-output-refs">${esc(job.output_ref_count ?? 0)}</td></tr>
+                    <tr><th>Stdout log</th><td id="backtest-latest-job-stdout">${esc(formatStdout(job.stdout_log_size_kb))}</td></tr>
+                </tbody>
+            </table>
+            ${cancelForm}
+        `;
+    }
+
+    function renderRecentJobs(jobs) {
+        const host = document.getElementById("backtest-jobs-table-host");
+        if (!host) {
+            return;
+        }
+        if (!Array.isArray(jobs) || jobs.length === 0) {
+            host.innerHTML = '<p class="muted">No audited backtest runner activity recorded yet.</p>';
+            return;
+        }
+        const rows = jobs.map((job, index) => `
+            <tr${index === 0 ? ' id="backtest-latest-table-row"' : ""}>
+                <td>
+                    <div><code${index === 0 ? ' id="backtest-latest-table-job-id"' : ""}>${esc(job.job_id || "n/a")}</code></div>
+                    <div class="muted">${esc(job.job_kind || "unknown")}</div>
+                </td>
+                <td${index === 0 ? ' id="backtest-latest-table-status"' : ""}>${esc(job.status || "n/a")}</td>
+                <td>
+                    <div${index === 0 ? ' id="backtest-latest-table-progress-bar"' : ""} class="progress-bar" role="progressbar" aria-valuenow="${esc(job.progress_pct ?? 0)}" aria-valuemin="0" aria-valuemax="100" style="background:#222;border:1px solid #555;width:120px;height:14px;display:inline-block;vertical-align:middle;">
+                        <div${index === 0 ? ' id="backtest-latest-table-progress-fill"' : ""} class="progress-bar__fill" style="background:#3a8;width:${esc(job.progress_pct ?? 0)}%;height:100%;"></div>
+                    </div>
+                    <span${index === 0 ? ' id="backtest-latest-table-progress-pct"' : ""} class="muted">${esc(job.progress_pct ?? 0)}%</span>
+                    <div${index === 0 ? ' id="backtest-latest-table-activity"' : ""}>${esc(job.latest_activity_iso || "n/a")}</div>
+                    <div class="muted">${esc(formatDuration(job.duration_seconds))}</div>
+                </td>
+                <td>${index === 0 ? `<span id="backtest-latest-table-eta">${esc(formatEta(job.eta_minutes))}</span>` : esc(formatEta(job.eta_minutes))}</td>
+                <td>
+                    <div>${esc(job.produced_file_count ?? 0)} files</div>
+                    <div${index === 0 ? ' id="backtest-latest-table-output-refs"' : ""} class="muted">${esc(job.output_ref_count ?? 0)} refs</div>
+                </td>
+                <td>
+                    <div>${esc(formatStdout(job.stdout_log_size_kb))}</div>
+                    <div class="muted"><code>${esc(job.stdout_log_path || "")}</code></div>
+                </td>
+                <td>${esc(job.error_summary || "none")}</td>
+            </tr>
+        `).join("");
+        host.innerHTML = `
+            <table class="data-table data-table--compact">
+                <thead>
+                    <tr><th>Job</th><th>Status</th><th>Progress</th><th>ETA (min)</th><th>Outputs</th><th>Logs</th><th>Error</th></tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
+        `;
+    }
+
+    function applyService(service) {
+        if (!service) {
+            return;
+        }
+        const dot = document.getElementById("shadow-service-dot");
+        const text = document.getElementById("shadow-service-text");
+        if (dot) {
+            dot.classList.toggle("status-dot--up", !!service.running);
+            dot.classList.toggle("status-dot--down", !service.running);
+        }
+        if (text) {
+            text.textContent = service.status_text || "Shadow Service offline";
+        }
+    }
+
+    function applyMonitorState(isActive) {
+        const active = !!isActive;
+        [
+            "backtest-progress-card",
+            "backtest-recent-jobs-card",
+            "backtest-runner-coverage-card",
+        ].forEach((id) => {
+            const node = document.getElementById(id);
+            if (node) {
+                node.classList.toggle("backtest-monitor-card--active", active);
+            }
+        });
+        [
+            ["backtest-progress-badge", active ? "active monitoring" : "idle snapshot"],
+            ["backtest-recent-jobs-badge", active ? "watch here" : "latest queue view"],
+            ["backtest-runner-coverage-badge", active ? "live reading" : "proof surface"],
+        ].forEach(([id, label]) => {
+            const badge = document.getElementById(id);
+            if (badge) {
+                badge.textContent = label;
+                badge.classList.toggle("monitor-badge--active", active);
+                badge.classList.toggle("monitor-badge--idle", !active);
+            }
+        });
+    }
+
+    function applySummary(summary) {
+        if (!summary) {
+            return;
+        }
+        setText("backtest-latest-status", summary.latest_status || "not_present");
+        setText("backtest-summary-requested", String(summary.requested_count ?? 0));
+        setText("backtest-summary-running", String(summary.running_count ?? 0));
+        setText("backtest-summary-completed", String(summary.completed_count ?? 0));
+        setText("backtest-summary-failed", String(summary.failed_count ?? 0));
+        applyMonitorState((summary.running_count ?? 0) > 0);
+    }
+
+    function applyLatestJob(job) {
+        renderLatestJob(job);
+    }
+
+    function applyJobs(jobs) {
+        renderRecentJobs(jobs);
+    }
+
+    async function refreshStatus() {
+        if (requestInFlight) {
+            return;
+        }
+        requestInFlight = true;
+        try {
+            const response = await fetch(statusUrl, {headers: {"Accept": "application/json"}});
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            const payload = await response.json();
+            applyService(payload.service || null);
+            applySummary(payload.summary || null);
+            applyLatestJob(payload.latest_job || null);
+            applyJobs(payload.backtest_jobs || []);
+        } catch (error) {
+            console.warn("backtest status polling failed", error);
+        } finally {
+            requestInFlight = false;
+        }
+    }
+
+    window.setInterval(refreshStatus, pollIntervalMs);
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") {
+            refreshStatus();
+        }
+    });
+    refreshStatus();
+})();
+</script>
+
+{% endblock %}

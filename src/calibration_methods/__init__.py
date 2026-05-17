@@ -6,6 +6,7 @@ from calibration_methods.energy_distance import (
     EnergyDistanceError,
     EnergyDistanceResult,
     compute_energy_distance_test,
+    compute_raw_energy_distance_statistic,
 )
 from calibration_methods.ks_test import (
     KolmogorovSmirnovError,
@@ -46,6 +47,7 @@ from calibration_methods.dsr import (
     DeflatedSharpeRatioError,
     DeflatedSharpeRatioResult,
     compute_deflated_sharpe_ratio,
+    compute_deflated_sharpe_ratio_from_moments,
 )
 from calibration_methods.hard_cap_floor import (
     HumanHardCapPolicyError,
@@ -189,6 +191,7 @@ __all__ = [
     "calibrate_rate_limit_throttle_ratio",
     "calibrate_slippage_model_bps",
     "compute_deflated_sharpe_ratio",
+    "compute_deflated_sharpe_ratio_from_moments",
     "compute_hansen_spa_test",
     "compute_adf_level_stationarity",
     "compute_kpss_level_stationarity",
@@ -206,6 +209,7 @@ __all__ = [
     "stationary_bootstrap_confidence_interval",
     "compute_harvey_liu_zhu_deflated_sharpe",
     "compute_energy_distance_test",
+    "compute_raw_energy_distance_statistic",
     "compute_ks_2sample",
     "compute_mann_kendall_test",
     "compute_probabilistic_sharpe_ratio",

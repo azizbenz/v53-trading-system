@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+
+{% block title %}Trading - {{ vm.welcome_message }}{% endblock %}
+
+{% block content %}
+
+<section class="welcome-banner">
+    <div class="welcome-banner__inner">
+        <div>
+            <h1 class="welcome-banner__title">Trading - Live Runtime View</h1>
+            <p class="welcome-banner__sub">
+                Engines - Replay metrics - Capacity guard - Feature bridge - Sizing chain
+            </p>
+        </div>
+        <div class="welcome-banner__amount">
+            <span class="welcome-banner__label">Selected pair</span>
+            <span class="welcome-banner__value">{{ vm.selected_pair }}</span>
+        </div>
+    </div>
+</section>
+
+<section class="stat-row">
+    {% for metric in vm.metrics[:3] %}
+        {% include "partials/_stat_card.html" %}
+    {% endfor %}
+</section>
+
+<section class="stat-row">
+    <div class="stat-card">
+        <div class="stat-card__head"><span class="stat-card__pair">Engines active</span></div>
+        <div class="stat-card__price">{{ vm.operational_proof.engine_why.active_count }}/4</div>
+        <div class="stat-card__foot">runtime-visible active engines</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-card__head"><span class="stat-card__pair">Dormant</span></div>
+        <div class="stat-card__price">{{ vm.operational_proof.engine_why.dormant_count }}</div>
+        <div class="stat-card__foot">engines with no records in latest replay</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-card__head"><span class="stat-card__pair">Suspended</span></div>
+        <div class="stat-card__price">{{ vm.operational_proof.engine_why.suspended_count }}</div>
+        <div class="stat-card__foot">governed suspension state</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-card__head"><span class="stat-card__pair">Economics</span></div>
+        <div class="stat-card__price">{{ vm.operational_proof.system_flow.operability_score.economics }}</div>
+        <div class="stat-card__foot">expected_ce_net={{ "%.4f"|format(vm.operational_proof.economic_sterilization.ce_net) }}</div>
+    </div>
+</section>
+
+<section class="card">
+    <div class="card__head">
+        <h3>PHASE 2.5 - Operational Proof Metrics</h3>
+        <span class="card__sub">Why engines are active or dormant, whether data is fresh, and whether economics are meaningful</span>
+    </div>
+</section>
+
+<section class="grid-2">
+    {% include "partials/_engine_why.html" %}
+    {% include "partials/_economic_sterilization.html" %}
+</section>
+
+<section class="grid-2">
+    {% include "partials/_decision_trace.html" %}
+    {% include "partials/_data_quality.html" %}
+</section>
+
+{% include "partials/_engines_grid.html" %}
+
+<section class="grid-2">
+    {% include "partials/_replay_metrics.html" %}
+    {% include "partials/_capacity_guard.html" %}
+</section>
+
+<section class="grid-2">
+    {% include "partials/_feature_bridge.html" %}
+    {% include "partials/_calibration_thresholds.html" %}
+</section>
+
+{% include "partials/_sizing_chain.html" %}
+
+{% endblock %}

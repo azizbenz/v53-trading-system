@@ -109,6 +109,21 @@ def compute_energy_distance_test(
     )
 
 
+def compute_raw_energy_distance_statistic(
+    shadow_returns: Iterable[float],
+    backtest_returns: Iterable[float],
+) -> float:
+    """Compute the unscaled raw 1D Energy distance statistic E_n,m.
+
+    This additive seam exists for audit/scientific anchoring only. It does not
+    alter the production scaled test seam used by `compute_energy_distance_test`.
+    """
+
+    x = _validated_series(shadow_returns, "shadow_returns")
+    y = _validated_series(backtest_returns, "backtest_returns")
+    return _raw_energy_statistic(x, y)
+
+
 # ---------------------------------------------------------------------------
 # Energy statistic (scaled for sample sizes)
 # ---------------------------------------------------------------------------
@@ -128,21 +143,27 @@ def _energy_statistic(x: tuple[float, ...], y: tuple[float, ...]) -> float:
     n = len(x)
     m = len(y)
 
-    # 2 * E|X - Y|
+    # Scaled statistic — positive by construction when F ≠ G
+    scale = (n * m) / (n + m)
+    return scale * _raw_energy_statistic(x, y)
+
+
+def _raw_energy_statistic(x: tuple[float, ...], y: tuple[float, ...]) -> float:
+    n = len(x)
+    m = len(y)
+
     cross = 0.0
     for xi in x:
         for yj in y:
             cross += abs(xi - yj)
     cross_mean = (2.0 * cross) / (n * m)
 
-    # E|X - X'|
     xx = 0.0
     for i in range(n):
         for j in range(n):
             xx += abs(x[i] - x[j])
     xx_mean = xx / (n * n)
 
-    # E|Y - Y'|
     yy = 0.0
     for i in range(m):
         for j in range(m):
@@ -150,10 +171,7 @@ def _energy_statistic(x: tuple[float, ...], y: tuple[float, ...]) -> float:
     yy_mean = yy / (m * m)
 
     e_hat = cross_mean - xx_mean - yy_mean
-
-    # Scaled statistic — positive by construction when F ≠ G
-    scale = (n * m) / (n + m)
-    return scale * max(e_hat, 0.0)
+    return max(e_hat, 0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -177,4 +195,5 @@ __all__ = [
     "EnergyDistanceError",
     "EnergyDistanceResult",
     "compute_energy_distance_test",
+    "compute_raw_energy_distance_statistic",
 ]

@@ -166,3 +166,59 @@ def test_export_local_replay_artifact_serializes_optional_strategy_identity(
         "bet_structure": "breakout",
         "calibration_version": "calibration.v3",
     }
+
+
+def test_export_local_replay_artifact_writes_promotion_and_sample_size_sidecars(
+    repo_tmp_path: Path,
+) -> None:
+    output_dir = _scratch_dir(repo_tmp_path, "artifact_with_promotion")
+    request = _request().model_copy(
+        update={
+            "engine_promotion_payloads": {
+                "engine_c": {
+                    "schema_version": "v1",
+                    "run_id": "run-exporter-1",
+                    "engine_id": "engine_c",
+                    "promotion_status": "ENGINE_PROMOTION_NOT_READY",
+                }
+            },
+            "pair_promotion_payloads": {
+                "BTCUSDT": {
+                    "schema_version": "v1",
+                    "run_id": "run-exporter-1",
+                    "pair": "BTCUSDT",
+                    "promotion_status": "PAIR_NOT_PROVEN",
+                }
+            },
+            "strategy_promotion_payloads": {
+                "strategy-a-exporter": {
+                    "schema_version": "v1",
+                    "run_id": "run-exporter-1",
+                    "strategy_id": "strategy-a-exporter",
+                    "promotion_status": "STRATEGY_PROMOTION_NOT_READY",
+                }
+            },
+            "sample_size_survival_payloads": {
+                "engine:engine_c": {
+                    "schema_version": "v1",
+                    "run_id": "run-exporter-1",
+                    "scope": "engine",
+                    "id": "engine_c",
+                    "sample_size_survival_status": "SAMPLE_SIZE_NOT_PROVEN",
+                }
+            },
+        }
+    )
+
+    result = export_local_replay_artifact(output_dir, request)
+
+    assert (output_dir / "engine_promotion" / "engine_c" / "run-exporter-1.json").exists()
+    assert (output_dir / "pair_promotion" / "BTCUSDT" / "run-exporter-1.json").exists()
+    assert (
+        output_dir / "strategy_promotion" / "strategy-a-exporter" / "run-exporter-1.json"
+    ).exists()
+    assert (
+        output_dir / "sample_size_survival" / "engine" / "engine_c" / "run-exporter-1.json"
+    ).exists()
+    assert any("engine_promotion" in ref for ref in result.payload_refs)
+    assert any("sample_size_survival" in ref for ref in result.payload_refs)

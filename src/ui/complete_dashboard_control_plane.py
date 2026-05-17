@@ -10,6 +10,11 @@ from interface_contracts import (
     VpsRecoveryReadinessReport,
     VpsWarmupRunSummary,
 )
+from monitoring.contracts_artifacts import (
+    ArtifactComparisonProjection,
+    ArtifactRuntimeVisibilityProjection,
+    ArtifactVerdictBundleProjection,
+)
 from ui.contracts import DashboardCard, DashboardSection
 
 
@@ -19,6 +24,11 @@ class CompleteControlPlaneSupplement(Protocol):
     command_queue_snapshot: DashboardCommandQueueSnapshot | None
     active_ml_artifact: DashboardArtifactTransferManifest | None
     active_regime_detector_artifact: DashboardArtifactTransferManifest | None
+    shadow_ml_challenger_artifact: DashboardArtifactTransferManifest | None
+    shadow_regime_detector_challenger_artifact: DashboardArtifactTransferManifest | None
+    artifact_runtime_visibility: tuple[ArtifactRuntimeVisibilityProjection, ...]
+    artifact_comparisons: tuple[ArtifactComparisonProjection, ...]
+    artifact_verdict_bundle: ArtifactVerdictBundleProjection | None
     recovery_readiness_report: VpsRecoveryReadinessReport | None
     warmup_run_summary: VpsWarmupRunSummary | None
     active_binance_profile_id: str
@@ -42,6 +52,9 @@ def build_complete_control_plane_section(
         cards=(
             _queue_card(queue),
             _artifact_card(supplement),
+            _challenger_card(supplement),
+            _comparison_card(supplement),
+            _verdict_card(supplement),
             _credential_card(supplement),
             _recovery_card(recovery),
             _warmup_card(warmup),
@@ -84,6 +97,83 @@ def _artifact_card(supplement: CompleteControlPlaneSupplement) -> DashboardCard:
         detail=(
             f"ml_hash={_artifact_hash(supplement.active_ml_artifact)} / "
             f"regime_hash={_artifact_hash(supplement.active_regime_detector_artifact)}"
+        ),
+    )
+
+
+def _challenger_card(supplement: CompleteControlPlaneSupplement) -> DashboardCard:
+    visibility_count = len(supplement.artifact_runtime_visibility)
+    return DashboardCard(
+        key="complete_control_shadow_challengers",
+        label="Shadow Challengers",
+        value=(
+            f"ml={_artifact_label(supplement.shadow_ml_challenger_artifact)} / "
+            f"regime={_artifact_label(supplement.shadow_regime_detector_challenger_artifact)}"
+        ),
+        status="info",
+        detail=(
+            f"ml_hash={_artifact_hash(supplement.shadow_ml_challenger_artifact)} / "
+            f"regime_hash={_artifact_hash(supplement.shadow_regime_detector_challenger_artifact)} / "
+            f"visibility={visibility_count} / mode=shadow_only_non_influential"
+        ),
+    )
+
+
+def _comparison_card(supplement: CompleteControlPlaneSupplement) -> DashboardCard:
+    ml_status = _comparison_status_for_manifest(
+        supplement.shadow_ml_challenger_artifact,
+        comparisons=supplement.artifact_comparisons,
+    )
+    regime_status = _comparison_status_for_manifest(
+        supplement.shadow_regime_detector_challenger_artifact,
+        comparisons=supplement.artifact_comparisons,
+    )
+    return DashboardCard(
+        key="complete_control_artifact_compare",
+        label="Compare Status",
+        value=f"ml={ml_status} / regime={regime_status}",
+        status="info" if supplement.artifact_comparisons else "planned",
+        detail=_join(
+            tuple(
+                (
+                    f"{comparison.challenger_artifact_id}:"
+                    f"{comparison.comparison_status}:"
+                    f"{'ref' if comparison.evidence_ref else 'no_ref'}:"
+                    f"halal={comparison.halal_eligible_event_count}/"
+                    f"{comparison.halal_excluded_event_count}"
+                )
+                for comparison in supplement.artifact_comparisons
+            ),
+            empty="No champion/challenger evidence attached",
+        ),
+    )
+
+
+def _verdict_card(supplement: CompleteControlPlaneSupplement) -> DashboardCard:
+    verdict = supplement.artifact_verdict_bundle
+    return DashboardCard(
+        key="complete_control_shadow_verdict_bundle",
+        label="Shadow Verdict",
+        value=(
+            "not_available"
+            if verdict is None
+            else f"{verdict.overall_verdict} / {verdict.operator_recommendation}"
+        ),
+        status=(
+            "planned"
+            if verdict is None
+            else _verdict_status(verdict.overall_verdict)
+        ),
+        detail=(
+            "No daily challenger verdict bundle attached"
+            if verdict is None
+            else (
+                f"ready={verdict.ready_family_count} / "
+                f"invalid={verdict.invalid_family_count} / "
+                f"runtime_inputs={verdict.runtime_inputs_missing_family_count} / "
+                f"blocked={verdict.sharia_blocked_family_count} / "
+                f"ref={verdict.evidence_ref or 'none'}"
+            )
         ),
     )
 
@@ -162,8 +252,31 @@ def _artifact_hash(manifest: DashboardArtifactTransferManifest | None) -> str:
     return manifest.artifact_hash[:12]
 
 
+def _comparison_status_for_manifest(
+    manifest: DashboardArtifactTransferManifest | None,
+    *,
+    comparisons: tuple[ArtifactComparisonProjection, ...],
+) -> str:
+    if manifest is None:
+        return "none"
+    for comparison in comparisons:
+        if comparison.challenger_artifact_id == manifest.artifact_id:
+            return comparison.comparison_status
+    return "pending"
+
+
 def _join(values: tuple[str, ...], *, empty: str) -> str:
     return ", ".join(values) if values else empty
+
+
+def _verdict_status(verdict: str) -> str:
+    if verdict == "shadow_validated":
+        return "healthy"
+    if verdict in {"shadow_inconclusive", "shadow_runtime_inputs_missing"}:
+        return "warning"
+    if verdict in {"sharia_scope_blocked", "invalid_evidence"}:
+        return "critical"
+    return "info"
 
 
 __all__ = ["build_complete_control_plane_section"]

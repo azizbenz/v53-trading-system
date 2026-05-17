@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
+import json
 from pathlib import Path
 
 from protocols import (
@@ -156,6 +157,67 @@ def _has_auto_export_artifacts(auto_export_dir: Path) -> bool:
     )
 
 
+def _read_json_payload(path: Path) -> dict[str, object] | None:
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _iter_route_hint_payloads(route_hints_by_pair: dict[str, object]) -> tuple[dict[str, object], ...]:
+    payloads: list[dict[str, object]] = []
+    for raw_value in route_hints_by_pair.values():
+        if isinstance(raw_value, dict):
+            payloads.append(raw_value)
+            continue
+        if isinstance(raw_value, (list, tuple)):
+            payloads.extend(item for item in raw_value if isinstance(item, dict))
+    return tuple(payloads)
+
+
+def _expected_live_engine_scope(live_config: ShadowLiveWebSocketConfig) -> tuple[str, ...]:
+    engine_ids = tuple(
+        dict.fromkeys(
+            str(payload.get("engine_id", "")).strip()
+            for payload in _iter_route_hint_payloads(live_config.route_hints_by_pair)
+            if str(payload.get("engine_id", "")).strip()
+        )
+    )
+    return engine_ids or ("engine_a",)
+
+
+def _live_auto_export_is_compatible(
+    auto_export_dir: Path,
+    *,
+    live_config: ShadowLiveWebSocketConfig,
+) -> bool:
+    if not _has_auto_export_artifacts(auto_export_dir):
+        return False
+    feature_bridge_payload = _read_json_payload(auto_export_dir / "feature_bridge.json")
+    replay_metrics_payload = _read_json_payload(auto_export_dir / "replay_metrics.json")
+    if feature_bridge_payload is None or replay_metrics_payload is None:
+        return False
+    if str(feature_bridge_payload.get("lineage_lock_status", "")).strip().lower() != "ok":
+        return False
+    expected_engine_scope = set(_expected_live_engine_scope(live_config))
+    feature_bridge_engines = {
+        str(item).strip()
+        for item in feature_bridge_payload.get("engines", ())
+        if str(item).strip()
+    }
+    replay_metrics_engines = {
+        str(item.get("engine_id", "")).strip()
+        for item in replay_metrics_payload.get("engine_aggregates", ())
+        if isinstance(item, dict) and str(item.get("engine_id", "")).strip()
+    }
+    return expected_engine_scope.issubset(feature_bridge_engines) and expected_engine_scope.issubset(
+        replay_metrics_engines
+    )
+
+
 def _ensure_auto_export_from_raw_slot(
     raw_slot: ShadowVpsRawInputSlot,
     *,
@@ -261,7 +323,10 @@ def _ensure_auto_export_from_live_websocket(
         )
 
     auto_export_dir = auto_exports_root / session_date
-    if _has_auto_export_artifacts(auto_export_dir):
+    if _live_auto_export_is_compatible(
+        auto_export_dir,
+        live_config=live_config,
+    ):
         return live_capture_dir, auto_export_dir
 
     auto_export_dir.mkdir(parents=True, exist_ok=True)

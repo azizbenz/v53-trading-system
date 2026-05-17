@@ -7,6 +7,10 @@ final state, anomalies.
 
 from __future__ import annotations
 
+import json
+from datetime import UTC, datetime
+from pathlib import Path
+
 from smoke_bootstrap_recovery.smoke_models import (
     BootstrapResult,
     ConfigCheckResult,
@@ -86,3 +90,77 @@ def format_smoke_report(report: SmokeReport) -> str:
     lines.append("=" * 60)
 
     return "\n".join(lines)
+
+
+def build_build1_core_health_payload(report: SmokeReport) -> dict[str, object]:
+    """Build a compact operator-facing Build-1 health payload from a smoke report."""
+
+    module_map = {module.module_name: module for module in report.module_reports}
+    manifest_status, manifest_reasons = _extract_named_check_status(
+        module_map.get("manifest_registry"),
+        "manifest_consistency",
+    )
+    dag_status, dag_reasons = _extract_named_check_status(
+        module_map.get("dag_validator"),
+        "dag_clean",
+    )
+    guardrail_status, guardrail_reasons = _extract_named_check_status(
+        module_map.get("smoke_bootstrap_recovery"),
+        "engineering_guardrails",
+    )
+    smoke_status = "PASS" if report.passed else "FAIL"
+    core_health_status = (
+        "PASS"
+        if manifest_status == "PASS"
+        and dag_status == "PASS"
+        and guardrail_status == "PASS"
+        and smoke_status == "PASS"
+        else "BLOCKED"
+    )
+    reason_codes = tuple(
+        reason
+        for reasons in (
+            manifest_reasons,
+            dag_reasons,
+            guardrail_reasons,
+        )
+        for reason in reasons
+    )
+    return {
+        "generated_at": datetime.now(tz=UTC).isoformat(),
+        "build1_manifest_status": manifest_status,
+        "build1_dag_status": dag_status,
+        "build1_guardrail_status": guardrail_status,
+        "build1_smoke_status": smoke_status,
+        "build1_core_health_status": core_health_status,
+        "reason_codes": list(reason_codes),
+    }
+
+
+def write_build1_core_health_payload(
+    output_path: Path,
+    *,
+    report: SmokeReport,
+) -> Path:
+    """Persist the Build-1 core health payload as JSON."""
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = build_build1_core_health_payload(report)
+    output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return output_path
+
+
+def _extract_named_check_status(
+    module_report: ModuleSmokeReport | None,
+    check_name: str,
+) -> tuple[str, tuple[str, ...]]:
+    if module_report is None or module_report.state_sanity is None:
+        return "NOT_PROVEN", (f"{check_name}: state_sanity_missing",)
+    anomalies = tuple(
+        anomaly
+        for anomaly in module_report.state_sanity.anomalies
+        if anomaly.startswith(f"{check_name}:")
+    )
+    if anomalies:
+        return "FAIL", anomalies
+    return "PASS", ()

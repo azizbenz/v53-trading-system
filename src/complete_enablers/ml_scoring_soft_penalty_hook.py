@@ -1,4 +1,4 @@
-"""Bounded Build-5 scoring hook backed by the governed ML confidence enabler."""
+"""Bounded Build-5 scoring hook backed by governed non-positive ML modulation."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ class MlScoringSoftPenaltyHookConfig(BaseModel, frozen=True):
 
 
 class MlScoringSoftPenaltyHook:
-    """Apply additive ML score modulation on the canonical Build-5 hook rail."""
+    """Apply bounded non-positive ML score modulation on the canonical Build-5 hook rail."""
 
     def __init__(
         self,
@@ -51,7 +51,7 @@ class MlScoringSoftPenaltyHook:
             raw_score_multiplier_delta=multiplier_delta,
             reason_codes=(*signal.reason_codes, "ML_SCORE_MODULATION_ACTIVE"),
             detail=(
-                "ml scoring modulation applied for "
+                "ml non-positive scoring modulation applied for "
                 f"{hook_input.pair}/{hook_input.engine_id}"
             ),
         )

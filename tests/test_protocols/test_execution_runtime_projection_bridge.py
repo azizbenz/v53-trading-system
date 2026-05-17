@@ -50,6 +50,7 @@ def test_inspect_execution_runtime_projection_bridge_reports_missing_projection(
     assert status.configured is True
     assert status.projection_found is False
     assert status.projection_loaded is False
+    assert status.consumers == ()
 
 
 def test_load_execution_runtime_consumer_models_recovers_ready_models():
@@ -69,6 +70,12 @@ def test_load_execution_runtime_consumer_models_recovers_ready_models():
         assert slippage_model is not None
         assert slippage_model.threshold_id == "THR-X05"
         assert status.projection_loaded is True
+        assert len(status.consumers) == 3
+        assert tuple(consumer.threshold_id for consumer in status.consumers) == (
+            "THR-X03",
+            "THR-X04",
+            "THR-X05",
+        )
         assert status.rate_limit_model_loaded is True
         assert status.spread_guard_model_loaded is True
         assert status.slippage_model_loaded is True

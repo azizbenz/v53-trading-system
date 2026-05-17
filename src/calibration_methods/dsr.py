@@ -42,7 +42,11 @@ def compute_deflated_sharpe_ratio(
     trial_count: int,
     acceptance_floor: float = 0.95,
 ) -> DeflatedSharpeRatioResult:
-    """Compute the bounded Deflated Sharpe Ratio from a return series."""
+    """Compute the bounded Deflated Sharpe Ratio from a return series.
+
+    `trial_count` represents the effective number of tested strategy candidates
+    or promotion trials whose best-of-N selection effect must be deflated.
+    """
 
     if trial_count < 1:
         raise DeflatedSharpeRatioError("trial_count must be >= 1")
@@ -57,22 +61,95 @@ def compute_deflated_sharpe_ratio(
     skewness = _population_skewness(values, mean_return, sample_std)
     kurtosis = _population_kurtosis(values, mean_return, sample_std)
 
+    return _build_deflated_sharpe_ratio_result(
+        observation_count=len(values),
+        trial_count=trial_count,
+        acceptance_floor=acceptance_floor,
+        mean_return=mean_return,
+        sample_std=sample_std,
+        sharpe_ratio=sharpe_ratio,
+        skewness=skewness,
+        kurtosis=kurtosis,
+        method_version="deflated_sharpe_ratio_v1",
+    )
+
+
+def compute_deflated_sharpe_ratio_from_moments(
+    *,
+    observation_count: int,
+    trial_count: int,
+    sharpe_ratio: float,
+    skewness: float,
+    kurtosis: float,
+    acceptance_floor: float = 0.95,
+    sample_std: float = 1.0,
+) -> DeflatedSharpeRatioResult:
+    """Compute the bounded DSR from a moments-style reference seam.
+
+    This additive seam exists for audit / scientific anchoring when the caller
+    already has the moments-space inputs used by Bailey et al. rather than a
+    raw returns series.
+
+    `trial_count` keeps the same semantics as the returns-based API:
+    the effective number of tested strategy candidates or promotion trials.
+    """
+
+    if observation_count < 3:
+        raise DeflatedSharpeRatioError("observation_count must be >= 3")
+    if trial_count < 1:
+        raise DeflatedSharpeRatioError("trial_count must be >= 1")
+    if not math.isfinite(sharpe_ratio):
+        raise DeflatedSharpeRatioError("sharpe_ratio must be finite")
+    if not math.isfinite(skewness):
+        raise DeflatedSharpeRatioError("skewness must be finite")
+    if not math.isfinite(kurtosis):
+        raise DeflatedSharpeRatioError("kurtosis must be finite")
+    if not math.isfinite(sample_std) or sample_std <= 0.0:
+        raise DeflatedSharpeRatioError("sample_std must be finite and > 0")
+
+    mean_return = sharpe_ratio * sample_std
+    return _build_deflated_sharpe_ratio_result(
+        observation_count=observation_count,
+        trial_count=trial_count,
+        acceptance_floor=acceptance_floor,
+        mean_return=mean_return,
+        sample_std=sample_std,
+        sharpe_ratio=sharpe_ratio,
+        skewness=skewness,
+        kurtosis=kurtosis,
+        method_version="deflated_sharpe_ratio_from_moments_v1",
+    )
+
+
+def _build_deflated_sharpe_ratio_result(
+    *,
+    observation_count: int,
+    trial_count: int,
+    acceptance_floor: float,
+    mean_return: float,
+    sample_std: float,
+    sharpe_ratio: float,
+    skewness: float,
+    kurtosis: float,
+    method_version: str,
+) -> DeflatedSharpeRatioResult:
     denominator_term = 1.0 - (skewness * sharpe_ratio) + (((kurtosis - 1.0) / 4.0) * sharpe_ratio**2)
     if denominator_term <= 0.0:
         raise DeflatedSharpeRatioError("DSR denominator is not positive")
 
-    sharpe_variance = denominator_term / float(len(values) - 1)
+    sharpe_variance = denominator_term / float(observation_count - 1)
     if sharpe_variance <= 0.0:
         raise DeflatedSharpeRatioError("DSR sharpe variance must be > 0")
 
     benchmark_sharpe = _benchmark_sharpe(sharpe_variance=sharpe_variance, trial_count=trial_count)
-    z_score = ((sharpe_ratio - benchmark_sharpe) * math.sqrt(len(values) - 1)) / math.sqrt(
+    z_score = ((sharpe_ratio - benchmark_sharpe) * math.sqrt(observation_count - 1)) / math.sqrt(
         denominator_term
     )
     dsr = NormalDist().cdf(z_score)
 
     return DeflatedSharpeRatioResult(
-        observation_count=len(values),
+        method_version=method_version,
+        observation_count=observation_count,
         trial_count=trial_count,
         acceptance_floor=acceptance_floor,
         mean_return=mean_return,
@@ -138,4 +215,5 @@ __all__ = [
     "DeflatedSharpeRatioError",
     "DeflatedSharpeRatioResult",
     "compute_deflated_sharpe_ratio",
+    "compute_deflated_sharpe_ratio_from_moments",
 ]

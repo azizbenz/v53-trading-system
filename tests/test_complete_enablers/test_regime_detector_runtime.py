@@ -11,8 +11,11 @@ import pytest
 
 from backtest_artifact_import import package_regime_detector_artifact_for_transport
 from complete_enablers import (
+    DIRECTIONAL_RUNTIME_KEYS_FORBIDDEN,
     RegimeDetectorRuntime,
     RegimeDetectorSignalStatus,
+    RUNTIME_REGIME_OUTPUT_MODE,
+    RUNTIME_REGIME_OUTPUTS,
     load_regime_detector_runtime_artifact,
 )
 from complete_enablers.regime_detector_runtime_loader import RegimeDetectorArtifactLoadStatus
@@ -28,6 +31,7 @@ from interface_contracts import (
     RegimeDetectorFeatureSetVersion,
     RegimeDetectorWindow,
 )
+from local_replay_runtime.regime_detector_dataset_builder import DATASET_BUILDER_LABEL_SCOPE
 from tests.support_paths import make_repo_scratch_dir
 
 
@@ -184,6 +188,39 @@ def test_regime_detector_runtime_degrades_to_neutral_without_artifact() -> None:
     assert signal.status == RegimeDetectorSignalStatus.NEUTRAL
     assert signal.regime_transition_risk == pytest.approx(0.0)
     assert signal.regime_stability_score == pytest.approx(1.0)
+
+
+def test_regime_detector_runtime_rejects_directional_supplementary_refs() -> None:
+    scratch = _scratch_dir("directional_regime_ref")
+    forbidden_ref = scratch / "directional_regime_ref.json"
+    forbidden_ref.write_text(
+        json.dumps({"direction_up_300s_fee_safe": True}, indent=2),
+        encoding="utf-8",
+    )
+
+    try:
+        signal = RegimeDetectorRuntime().evaluate_from_supplementary_refs(
+            features=_features(),
+            supplementary_refs=(str(forbidden_ref),),
+        )
+
+        assert signal.status == RegimeDetectorSignalStatus.INVALID_ARTIFACT
+        assert signal.reason_codes[0] == "REGIME_DIRECTIONAL_REF_FORBIDDEN"
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_regime_runtime_outputs_are_non_directional_and_dataset_labels_are_local_lab_only() -> None:
+    assert RUNTIME_REGIME_OUTPUT_MODE == "NON_DIRECTIONAL_ONLY"
+    assert set(RUNTIME_REGIME_OUTPUTS) == {
+        "regime_transition_risk",
+        "regime_stability_score",
+        "market_toxicity_score",
+        "expected_duration_bucket",
+    }
+    assert "direction_up_300s_fee_safe" in DIRECTIONAL_RUNTIME_KEYS_FORBIDDEN
+    assert "buy_probability" in DIRECTIONAL_RUNTIME_KEYS_FORBIDDEN
+    assert DATASET_BUILDER_LABEL_SCOPE == "LOCAL_LAB_TRAINING_ONLY"
 
 
 def test_regime_detector_runtime_degrades_on_feature_schema_mismatch(

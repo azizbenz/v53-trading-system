@@ -101,6 +101,8 @@ def test_local_lab_ablation_study_builds_positive_candidate_delta():
     assert study.ablation_delta_ce is not None
     assert study.ablation_delta_ce > 0.0
     assert study.block_rate_delta == 0.0
+    assert study.candidate_non_execution_rate == study.candidate_block_rate
+    assert study.block_rate_proxy_label == "non_execution_rate"
 
 
 def test_local_lab_ablation_study_rejects_misaligned_dtr_ids():

@@ -84,11 +84,19 @@ class MicrostructureFeatureSpec(BaseModel):
     default_window_seconds: float | None = Field(default=None, gt=0.0)
     calibration_seam_path: str = Field(..., min_length=1)
     consumed_by: tuple[str, ...] = Field(..., min_length=1)
+    consumer_statuses: tuple[str, ...] = Field(default=("NOT_PROVEN",), min_length=1)
+    runtime_lifecycle_status: str = "NOT_PROVEN"
     promotion_state: MicrostructurePromotionState
     method_version: str = Field(..., min_length=1)
     method_version_hash: str = Field(..., min_length=8)
     quarantined_from: MicrostructurePromotionState | None = None
     lifecycle_reason: str | None = None
+    unit_status: str | None = None
+    cross_pair_comparable: bool | None = None
+    normalization_status: str | None = None
+    normalized_seam_available: bool | None = None
+    calibration_status: str | None = None
+    registry_intent_status: str | None = None
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -138,6 +146,37 @@ class MicrostructureFeatureSpec(BaseModel):
         if not normalized:
             raise ValueError("consumed_by must not be empty")
         return tuple(normalized)
+
+    @field_validator("consumer_statuses")
+    @classmethod
+    def _normalize_consumer_statuses(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        normalized: list[str] = []
+        for status in value:
+            stripped = status.strip().upper()
+            if not stripped:
+                raise ValueError("consumer_statuses must not contain blank entries")
+            normalized.append(stripped)
+        if not normalized:
+            raise ValueError("consumer_statuses must not be empty")
+        return tuple(normalized)
+
+    @field_validator("runtime_lifecycle_status")
+    @classmethod
+    def _normalize_runtime_lifecycle_status(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if not normalized:
+            raise ValueError("runtime_lifecycle_status must not be blank")
+        return normalized
+
+    @field_validator("registry_intent_status")
+    @classmethod
+    def _normalize_registry_intent_status(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().upper()
+        if not normalized:
+            raise ValueError("registry_intent_status must not be blank when provided")
+        return normalized
 
     @model_validator(mode="after")
     def _validate_window_shape(self) -> "MicrostructureFeatureSpec":
@@ -338,8 +377,16 @@ def _spec(
     default_window_seconds: float | None,
     calibration_seam_path: str,
     consumed_by: tuple[str, ...],
+    consumer_statuses: tuple[str, ...] = ("NOT_PROVEN",),
+    runtime_lifecycle_status: str = "NOT_PROVEN",
     method_version: str,
     method_version_hash: str,
+    unit_status: str | None = None,
+    cross_pair_comparable: bool | None = None,
+    normalization_status: str | None = None,
+    normalized_seam_available: bool | None = None,
+    calibration_status: str | None = None,
+    registry_intent_status: str | None = None,
 ) -> MicrostructureFeatureSpec:
     return MicrostructureFeatureSpec(
         feature_id=feature_id,
@@ -348,9 +395,17 @@ def _spec(
         default_window_seconds=default_window_seconds,
         calibration_seam_path=calibration_seam_path,
         consumed_by=consumed_by,
+        consumer_statuses=consumer_statuses,
+        runtime_lifecycle_status=runtime_lifecycle_status,
         promotion_state=MicrostructurePromotionState.DISCOVERED,
         method_version=method_version,
         method_version_hash=method_version_hash,
+        unit_status=unit_status,
+        cross_pair_comparable=cross_pair_comparable,
+        normalization_status=normalization_status,
+        normalized_seam_available=normalized_seam_available,
+        calibration_status=calibration_status,
+        registry_intent_status=registry_intent_status,
     )
 
 
@@ -369,6 +424,12 @@ _FEATURE_SPECS: tuple[MicrostructureFeatureSpec, ...] = (
             "engines.engine_a.conviction_builder_a",
             "meta_learning",
         ),
+        consumer_statuses=("ENGINE_CONSUMED",),
+        runtime_lifecycle_status="ACTIVE_ENGINE_INPUT",
+        unit_status="RAW_SIGNED_SIZE_IMBALANCE",
+        cross_pair_comparable=False,
+        normalization_status="ENGINE_LOCAL_THRESHOLDS",
+        normalized_seam_available=True,
         method_version=ORDER_FLOW_IMBALANCE_METHOD_VERSION,
         method_version_hash=ORDER_FLOW_IMBALANCE_METHOD_VERSION_HASH,
     ),
@@ -386,6 +447,8 @@ _FEATURE_SPECS: tuple[MicrostructureFeatureSpec, ...] = (
             "engines.engine_c.continuation_validator_c",
             "engines.engine_b.excess_detector_b",
         ),
+        consumer_statuses=("ENGINE_CONSUMED",),
+        runtime_lifecycle_status="ACTIVE_ENGINE_INPUT",
         method_version=VPIN_METHOD_VERSION,
         method_version_hash=VPIN_METHOD_VERSION_HASH,
     ),
@@ -403,6 +466,12 @@ _FEATURE_SPECS: tuple[MicrostructureFeatureSpec, ...] = (
             "engines.engine_a.cost_feasibility_a",
             "execution_backbone",
         ),
+        consumer_statuses=("ENGINE_CONSUMED", "COST_GATE_CONSUMED"),
+        runtime_lifecycle_status="ACTIVE_ENGINE_INPUT",
+        unit_status="UNNORMALIZED_LOCAL_OLS_SLOPE",
+        cross_pair_comparable=False,
+        normalization_status="ENGINE_LOCAL_THRESHOLDS",
+        normalized_seam_available=True,
         method_version=KYLE_LAMBDA_METHOD_VERSION,
         method_version_hash=KYLE_LAMBDA_METHOD_VERSION_HASH,
     ),
@@ -420,6 +489,9 @@ _FEATURE_SPECS: tuple[MicrostructureFeatureSpec, ...] = (
             "scoring_backbone",
             "interface_contracts.pair_catalog",
         ),
+        consumer_statuses=("RESEARCH_ONLY", "NOT_RUNTIME_CONSUMED"),
+        runtime_lifecycle_status="RESEARCH_ONLY",
+        registry_intent_status="PAIR_LIQUIDITY_REPORT",
         method_version=AMIHUD_METHOD_VERSION,
         method_version_hash=AMIHUD_METHOD_VERSION_HASH,
     ),
@@ -433,6 +505,9 @@ _FEATURE_SPECS: tuple[MicrostructureFeatureSpec, ...] = (
         default_window_seconds=3_600.0,
         calibration_seam_path="src/calibration_methods/roll_spread_calibration.py",
         consumed_by=("execution_backbone.execution_cost_meter",),
+        consumer_statuses=("COST_GATE_CONSUMED",),
+        runtime_lifecycle_status="FALLBACK_ONLY",
+        registry_intent_status="MISSING_L2_SPREAD_FALLBACK",
         method_version=ROLL_SPREAD_METHOD_VERSION,
         method_version_hash=ROLL_SPREAD_METHOD_VERSION_HASH,
     ),
@@ -449,6 +524,9 @@ _FEATURE_SPECS: tuple[MicrostructureFeatureSpec, ...] = (
             "interface_contracts.pair_catalog",
             "meta_learning",
         ),
+        consumer_statuses=("RESEARCH_ONLY", "NOT_RUNTIME_CONSUMED"),
+        runtime_lifecycle_status="RESEARCH_ONLY",
+        registry_intent_status="OHLC_FALLBACK",
         method_version=CORWIN_SCHULTZ_METHOD_VERSION,
         method_version_hash=CORWIN_SCHULTZ_METHOD_VERSION_HASH,
     ),
@@ -474,6 +552,8 @@ _FEATURE_SPECS: tuple[MicrostructureFeatureSpec, ...] = (
             "engines.engine_d.engine_d_runtime_support",
             "engines.engine_d.invalidation_mapper_d",
         ),
+        consumer_statuses=("ENGINE_CONSUMED",),
+        runtime_lifecycle_status="ACTIVE_ENGINE_INPUT",
         method_version=REALIZED_KERNEL_METHOD_VERSION,
         method_version_hash=REALIZED_KERNEL_METHOD_VERSION_HASH,
     ),
@@ -490,6 +570,9 @@ _FEATURE_SPECS: tuple[MicrostructureFeatureSpec, ...] = (
             "engines.engine_c.continuation_validator_c",
             "meta_learning",
         ),
+        consumer_statuses=("FUTURE_RESERVED", "RESEARCH_ONLY", "NOT_RUNTIME_CONSUMED"),
+        runtime_lifecycle_status="FUTURE_RESERVED",
+        registry_intent_status="ENGINE_C_INTENSITY_RESEARCH",
         method_version=HAWKES_METHOD_VERSION,
         method_version_hash=HAWKES_METHOD_VERSION_HASH,
     ),
@@ -504,6 +587,9 @@ _FEATURE_SPECS: tuple[MicrostructureFeatureSpec, ...] = (
         default_window_seconds=604_800.0,
         calibration_seam_path="src/calibration_methods/pin_calibration.py",
         consumed_by=("meta_learning",),
+        consumer_statuses=("FUTURE_RESERVED", "RESEARCH_ONLY", "NOT_RUNTIME_CONSUMED"),
+        runtime_lifecycle_status="FUTURE_RESERVED",
+        registry_intent_status="OFFLINE_PARAMETER_SEAM",
         method_version=PIN_METHOD_VERSION,
         method_version_hash=PIN_METHOD_VERSION_HASH,
     ),
@@ -514,6 +600,8 @@ _FEATURE_SPECS: tuple[MicrostructureFeatureSpec, ...] = (
         default_window_seconds=None,
         calibration_seam_path="src/calibration_methods/queue_pressure_calibration.py",
         consumed_by=("engines.engine_c.continuation_validator_c",),
+        consumer_statuses=("ENGINE_CONSUMED",),
+        runtime_lifecycle_status="ACTIVE_ENGINE_INPUT",
         method_version=QUEUE_PRESSURE_METHOD_VERSION,
         method_version_hash=QUEUE_PRESSURE_METHOD_VERSION_HASH,
     ),
@@ -530,6 +618,8 @@ _FEATURE_SPECS: tuple[MicrostructureFeatureSpec, ...] = (
             "execution_backbone.execution_cost_meter",
             "meta_minimal",
         ),
+        consumer_statuses=("COST_GATE_CONSUMED",),
+        runtime_lifecycle_status="ACTIVE_EXECUTION_GATE",
         method_version=REALIZED_EFFECTIVE_SPREAD_METHOD_VERSION,
         method_version_hash=REALIZED_EFFECTIVE_SPREAD_METHOD_VERSION_HASH,
     ),
@@ -549,6 +639,9 @@ _FEATURE_SPECS: tuple[MicrostructureFeatureSpec, ...] = (
                 "meta_learning",
                 "complete_enablers.regime_detector_runtime",
             ),
+            consumer_statuses=("RUNTIME_CONSUMED",),
+            runtime_lifecycle_status="ACTIVE_RUNTIME",
+            calibration_status="CALIBRATION_REQUIRED_FOR_STRONG_PRODUCTION_CLAIM",
             method_version=WALLS_AND_SPOOFING_METHOD_VERSION,
             method_version_hash=WALLS_AND_SPOOFING_METHOD_VERSION_HASH,
         )

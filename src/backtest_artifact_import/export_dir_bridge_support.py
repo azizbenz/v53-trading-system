@@ -12,7 +12,14 @@ from backtest_artifact_import.contracts import ArtifactPayloadRefBundle
 from interface_contracts import CANONICAL_PHYSICS_FEATURE_DICTIONARY, FeatureDictionaryEntry
 from local_replay_runtime import ReplayMetricsSummary, ReplayParityDiagnosticsSummary
 from local_replay_runtime.replay_run_manifest import ReplayRunManifest
-from local_replay_runtime.replay_metrics_collector import build_replay_metrics_summary
+from local_replay_runtime.replay_metrics_collector import (
+    ReplayBookDepthAvailability,
+    ReplayCostParityEvidence,
+    ReplayFeeProvenance,
+    ReplayFillRealismEvidence,
+    ReplayImpactProvenance,
+    build_replay_metrics_summary,
+)
 from meta_minimal.dtr_core.dtr_record_builder import DTRRecord
 
 _LoadedBridgeModelT = TypeVar("_LoadedBridgeModelT")
@@ -329,9 +336,41 @@ def _validate_metrics_consistency(
         raise ValueError(
             "governed export replay_metrics total_records must match replay_dtr count"
         )
+    sidecar_payload = replay_metrics.model_dump(mode="python")
     expected_replay_metrics = build_replay_metrics_summary(
         replay_dtr_records,
         total_opportunities=replay_metrics.total_opportunities,
+        capital_bucket_profiles=replay_metrics.capital_bucket_profiles,
+        fee_provenance=ReplayFeeProvenance.model_validate(
+            {
+                key: sidecar_payload.get(key)
+                for key in ReplayFeeProvenance.model_fields
+            }
+        ),
+        impact_provenance=ReplayImpactProvenance.model_validate(
+            {
+                key: sidecar_payload.get(key)
+                for key in ReplayImpactProvenance.model_fields
+            }
+        ),
+        book_depth_availability=ReplayBookDepthAvailability.model_validate(
+            {
+                key: sidecar_payload.get(key)
+                for key in ReplayBookDepthAvailability.model_fields
+            }
+        ),
+        fill_realism=ReplayFillRealismEvidence.model_validate(
+            {
+                key: sidecar_payload.get(key)
+                for key in ReplayFillRealismEvidence.model_fields
+            }
+        ),
+        cost_parity=ReplayCostParityEvidence.model_validate(
+            {
+                key: sidecar_payload.get(key)
+                for key in ReplayCostParityEvidence.model_fields
+            }
+        ),
     )
     if replay_metrics != expected_replay_metrics:
         raise ValueError(

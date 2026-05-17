@@ -100,6 +100,7 @@ class EngineCRuntimeInput(BaseModel, frozen=True):
     score_penalties: tuple[ScorePenaltyItem, ...] = ()
     size_penalties: tuple[SizePenaltyItem, ...] = ()
     blocker_conditions: BlockerCondition = Field(default_factory=BlockerCondition)
+    supplementary_refs: tuple[str, ...] = ()
     peer_candidates: tuple[ScoringCandidateInput, ...] = ()
     max_selections: int = 1
     corr_penalty: float = 0.0

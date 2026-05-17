@@ -17,6 +17,7 @@ ORDER_FLOW_IMBALANCE_METHOD_VERSION_HASH = sha256(
 ).hexdigest()
 DEFAULT_OFI_WINDOW_EVENTS = 200
 MAX_OFI_WINDOW_EVENTS = 2_000
+OFI_DEPTH_EPS = 1e-12
 
 
 class OrderBookTopLevelPoint(BaseModel):
@@ -41,6 +42,16 @@ class OrderFlowImbalanceRecord(BaseModel):
     """Audit-ready cumulative OFI record."""
 
     value: float
+    raw_ofi: float = 0.0
+    unit_status: str = "RAW_SIGNED_SIZE_IMBALANCE"
+    cross_pair_comparable: bool = False
+    normalization_status: str = "ENGINE_LOCAL_THRESHOLDS"
+    top_k_bid_depth: float = Field(default=0.0, ge=0.0)
+    top_k_ask_depth: float = Field(default=0.0, ge=0.0)
+    ofi_depth_adjusted: float | None = None
+    depth_adjusted_unit_status: str | None = None
+    depth_adjusted_cross_pair_comparable: bool = False
+    depth_adjustment_status: str = "NOT_PROVEN"
     partial_window: bool = False
     low_sample_confidence: bool = False
     n_events_received: int = Field(..., ge=2)
@@ -61,6 +72,12 @@ class OrderFlowImbalanceRecord(BaseModel):
             raise ValueError("pair must not be blank")
         return normalized
 
+    @model_validator(mode="after")
+    def _align_raw_ofi(self) -> "OrderFlowImbalanceRecord":
+        if self.raw_ofi == 0.0 and self.value != 0.0:
+            object.__setattr__(self, "raw_ofi", self.value)
+        return self
+
 
 def compute_order_book_event_contribution(
     previous: OrderBookTopLevelPoint,
@@ -78,6 +95,21 @@ def compute_order_book_event_contribution(
         - (ask_down_or_same * current.ask_size)
         + (ask_up_or_same * previous.ask_size)
     )
+
+
+def compute_depth_adjusted_ofi(
+    raw_ofi: float,
+    *,
+    top_k_bid_depth: float,
+    top_k_ask_depth: float,
+    eps: float = OFI_DEPTH_EPS,
+) -> float | None:
+    """Normalize raw OFI by the visible top-k depth denominator."""
+
+    denominator = top_k_bid_depth + top_k_ask_depth
+    if denominator <= eps:
+        return None
+    return raw_ofi / denominator
 
 
 def _hash_input(
@@ -136,10 +168,32 @@ def compute_order_flow_imbalance(
     observed_window_seconds = (
         recent_points[-1].timestamp_ns - recent_points[0].timestamp_ns
     ) / 1_000_000_000.0
+    raw_ofi = sum(recent_contributions)
+    top_k_bid_depth = recent_points[-1].bid_size
+    top_k_ask_depth = recent_points[-1].ask_size
+    ofi_depth_adjusted = compute_depth_adjusted_ofi(
+        raw_ofi,
+        top_k_bid_depth=top_k_bid_depth,
+        top_k_ask_depth=top_k_ask_depth,
+    )
+    depth_adjusted_status = (
+        "OFI_INSUFFICIENT_DEPTH"
+        if ofi_depth_adjusted is None
+        else "DEPTH_ADJUSTED_RATIO"
+    )
     return OrderFlowImbalanceRecord(
-        value=sum(recent_contributions),
+        value=raw_ofi,
+        raw_ofi=raw_ofi,
         partial_window=resolved_window < window_events,
         low_sample_confidence=resolved_window < 3,
+        top_k_bid_depth=top_k_bid_depth,
+        top_k_ask_depth=top_k_ask_depth,
+        ofi_depth_adjusted=ofi_depth_adjusted,
+        depth_adjusted_unit_status=(
+            None if ofi_depth_adjusted is None else "DEPTH_ADJUSTED_RATIO"
+        ),
+        depth_adjusted_cross_pair_comparable=ofi_depth_adjusted is not None,
+        depth_adjustment_status=depth_adjusted_status,
         n_events_received=len(points),
         window_used=(resolved_window, observed_window_seconds),
         n_events_used=len(recent_points),
@@ -157,10 +211,12 @@ def compute_order_flow_imbalance(
 __all__ = [
     "DEFAULT_OFI_WINDOW_EVENTS",
     "MAX_OFI_WINDOW_EVENTS",
+    "OFI_DEPTH_EPS",
     "ORDER_FLOW_IMBALANCE_METHOD_VERSION",
     "ORDER_FLOW_IMBALANCE_METHOD_VERSION_HASH",
     "OrderBookTopLevelPoint",
     "OrderFlowImbalanceRecord",
+    "compute_depth_adjusted_ofi",
     "compute_order_book_event_contribution",
     "compute_order_flow_imbalance",
 ]

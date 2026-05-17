@@ -1,0 +1,55 @@
+<section class="card">
+    <div class="card__head">
+        <h3>Refusal Journal · Taleb</h3>
+        <span class="card__sub">{{ vm.refusal_journal.source_status }}</span>
+    </div>
+    <div class="card__body">
+        {% if vm.refusal_journal.source_status == 'not_yet_persisted' %}
+        <p class="muted">{{ vm.refusal_journal.info_message }}</p>
+
+        {% if vm.tail_risk.source_status == 'ok' %}
+        <h4>Tail-Risk Breakers (proxy)</h4>
+        <table class="data-table data-table--compact">
+            <thead><tr><th>Threshold</th><th>Period</th><th>Status</th><th>Periods</th><th>Caution flags</th></tr></thead>
+            <tbody>
+                {% for b in vm.tail_risk.breakers %}
+                <tr>
+                    <td><code>{{ b.threshold_id }}</code></td>
+                    <td>{{ b.period_kind }}</td>
+                    <td>
+                        <span class="badge badge--{% if b.review_status == 'ready' %}up{% elif b.review_status == 'partial' %}warn{% else %}down{% endif %}">
+                            {{ b.review_status or "—" }}
+                        </span>
+                    </td>
+                    <td>{{ b.period_count }}</td>
+                    <td>
+                        {% for f in b.caution_flags %}
+                            <span class="chip chip--warn">{{ f }}</span>
+                        {% endfor %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+
+        {% elif vm.refusal_journal.source_status == 'ok' %}
+        <h4>Top motifs</h4>
+        <ul class="small-list">
+            {% for m in vm.refusal_journal.top_motifs[:10] %}
+            <li><strong>{{ m.count }}×</strong> {{ m.motif }} <span class="muted">({{ m.last_observed_at }})</span></li>
+            {% endfor %}
+        </ul>
+        <h4>Quadruple Filter</h4>
+        <div class="quadruple-filter">
+            <span class="chip chip--{% if vm.refusal_journal.quadruple_filter_bayes_evidence %}ok{% else %}warn{% endif %}">Bayes evidence</span>
+            <span class="chip chip--{% if vm.refusal_journal.quadruple_filter_oos_validation %}ok{% else %}warn{% endif %}">OOS validation</span>
+            <span class="chip chip--{% if vm.refusal_journal.quadruple_filter_tail_risk_audit %}ok{% else %}warn{% endif %}">Tail-risk audit</span>
+            <span class="chip chip--{% if vm.refusal_journal.quadruple_filter_regime_stationarity %}ok{% else %}warn{% endif %}">Regime stationarity</span>
+        </div>
+        <p class="muted small">Tail-risk meter: <strong>{{ "%.1f%%"|format(vm.refusal_journal.tail_risk_meter * 100) }}</strong></p>
+        {% else %}
+        <p class="muted">Refusal journal source unavailable ({{ vm.refusal_journal.source_status }}).</p>
+        {% endif %}
+    </div>
+</section>

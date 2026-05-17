@@ -8,6 +8,8 @@ Build order is strict and sequential:
 
 from __future__ import annotations
 
+from collections import Counter
+
 from pydantic import BaseModel, Field
 
 from manifest_registry.module_inventory import MODULES, ModuleEntry
@@ -114,14 +116,14 @@ BUILD_STAGES: tuple[BuildStage, ...] = (
     BuildStage(
         stage=12,
         name="Micro-live",
-        description="Validation Micro-live gouvernee sur le rail runtime actif complet, avec capital reel ultra-prudent; Build-13 Live reste ensuite gouverne et distinct",
-        modules=("protocols",),
+        description="Validation Micro-live gouvernee sur le rail protocoles deja declares en Build-11, avec capital reel ultra-prudent",
+        modules=(),
     ),
     BuildStage(
         stage=13,
         name="Live-Light",
-        description="Premiere execution reelle minimale et gouvernee sur le rail runtime actif complet, sans ouvrir l'extension gouvernee",
-        modules=("protocols",),
+        description="Premiere execution reelle minimale et gouvernee sur le rail protocoles deja declares en Build-11",
+        modules=(),
     ),
     BuildStage(
         stage=14,
@@ -144,8 +146,8 @@ BUILD_STAGES: tuple[BuildStage, ...] = (
     BuildStage(
         stage=17,
         name="UI Complete + Live-Complete",
-        description="Extension finale: UI operateur et protocole live gouverne etendu",
-        modules=("ui", "protocols"),
+        description="Extension finale: cockpit operateur gouverne et projection live-complete read-only",
+        modules=("cockpit",),
     ),
 )
 
@@ -211,3 +213,21 @@ def validate_modules_have_stages() -> list[str]:
 
     known = get_module_names()
     return sorted(known - declared)
+
+
+def validate_modules_have_exactly_one_stage() -> list[str]:
+    """Check that every inventory module is declared in exactly one build stage."""
+    declared_counts = Counter[str]()
+    for stage in BUILD_STAGES:
+        declared_counts.update(stage.modules)
+    from manifest_registry.module_inventory import get_module_names
+
+    known = get_module_names()
+    errors: list[str] = []
+    for module_name in sorted(known):
+        count = declared_counts.get(module_name, 0)
+        if count == 0:
+            errors.append(f"{module_name}: missing build stage")
+        elif count > 1:
+            errors.append(f"{module_name}: declared in {count} build stages")
+    return errors

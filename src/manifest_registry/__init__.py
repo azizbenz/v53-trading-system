@@ -54,6 +54,7 @@ from manifest_registry.build_order_registry import (
     get_next_stage,
     get_prerequisite_modules,
     validate_build_order_coherent,
+    validate_modules_have_exactly_one_stage,
     validate_modules_have_stages,
 )
 from manifest_registry.version_registry import (
@@ -114,6 +115,7 @@ __all__ = [
     "get_next_stage",
     "get_prerequisite_modules",
     "validate_build_order_coherent",
+    "validate_modules_have_exactly_one_stage",
     "validate_modules_have_stages",
     # Versioning & diff
     "MANIFEST_VERSION",

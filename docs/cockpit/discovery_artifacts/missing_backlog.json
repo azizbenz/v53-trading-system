@@ -1,0 +1,2750 @@
+[
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "scripts/build_shadow_live_plan.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Emit the canonical Shadow live pair plan as JSON."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "scripts/local_replay_shadow_engines.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Engine-scoped Shadow demo evaluation helpers for the governed LOCAL_REPLAY runner."
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "scripts/run_build9_core_smoke_support.py",
+    "owner_page_candidate": "unknown",
+    "reason": "support module for run_build9_core_smoke"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "scripts/run_cockpit_source_discovery.py",
+    "owner_page_candidate": "overview",
+    "reason": "Run the V5.3 cockpit source discovery audit."
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "scripts/run_complete_dashboard.py",
+    "owner_page_candidate": "unknown",
+    "reason": "Generate a local Build-17 Complete dashboard page."
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "scripts/run_engineering_guardrails.py",
+    "owner_page_candidate": "unknown",
+    "reason": "Run executable engineering guardrails and optionally refresh the baseline."
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "scripts/run_governance_snapshot_seed.py",
+    "owner_page_candidate": "unknown",
+    "reason": "Phase 2.1 — Synthesise governance snapshots for the cockpit."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "scripts/run_local_replay_shadow.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Materialize a governed LOCAL_REPLAY -> VPS import -> SHADOW demo run."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "scripts/run_shadow_vps_service.py",
+    "owner_page_candidate": "vps",
+    "reason": "Run the autonomous long-running VPS Shadow service."
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "scripts/run_sharia_account_audit.py",
+    "owner_page_candidate": "unknown",
+    "reason": "Standalone weekly launcher for the bounded halal account-feature audit."
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "scripts/run_sharia_pair_screening_audit.py",
+    "owner_page_candidate": "unknown",
+    "reason": "Standalone deterministic launcher for HC-4 AAOIFI pair-screening audit."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "scripts/shadow_gate_check_sections_support.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Optional report-section helpers for the governed Shadow gate report."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "scripts/shadow_gate_check_support.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Support primitives for the governed Shadow gate report launcher."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "scripts/shadow_vps_service_context_support.py",
+    "owner_page_candidate": "vps",
+    "reason": "Runtime context helpers for the Shadow VPS service."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "scripts/shadow_vps_service_cycle_support.py",
+    "owner_page_candidate": "vps",
+    "reason": "Cycle selection helpers for the Shadow VPS service."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "scripts/shadow_vps_service_event_support.py",
+    "owner_page_candidate": "vps",
+    "reason": "Shadow VPS service event helpers."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "scripts/shadow_vps_service_execution_support.py",
+    "owner_page_candidate": "vps",
+    "reason": "Execution cycle helpers for the Shadow VPS service."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "scripts/shadow_vps_service_models.py",
+    "owner_page_candidate": "vps",
+    "reason": "Models for the Shadow VPS service launcher."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "scripts/shadow_vps_service_resource_hygiene_support.py",
+    "owner_page_candidate": "vps",
+    "reason": "Resource-hygiene helpers for the long-running Shadow VPS service."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "scripts/shadow_vps_service_runtime_support.py",
+    "owner_page_candidate": "vps",
+    "reason": "Runtime loop helpers for the Shadow VPS service."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "scripts/shadow_vps_service_startup_support.py",
+    "owner_page_candidate": "vps",
+    "reason": "Shadow VPS service startup helpers."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/backtest_artifact_import/__init__.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Controlled local->VPS artifact import scaffold."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/backtest_artifact_import/compatibility_policy.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Bounded compatibility-registry policy for governed artifact intake."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/backtest_artifact_import/contracts.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Contracts for controlled local->VPS artifact import."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/backtest_artifact_import/ed25519_verifier.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Minimal pure-Python Ed25519 verification for governed artifact intake."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/backtest_artifact_import/errors.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Errors for the controlled artifact import scaffold."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/backtest_artifact_import/export_dir_bridge_models.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Typed models shared by the governed LOCAL_REPLAY export-dir bridge."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/backtest_artifact_import/export_dir_bridge_support.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Support helpers for governed LOCAL_REPLAY export discovery and validation."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/backtest_artifact_import/local_lab_upload_bridge_candidate.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Dry-run governed bridge builder from Local IA Lab release candidates to VPS import contracts."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/backtest_artifact_import/local_lab_upload_bridge_candidate_support.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Support helpers for Local IA Lab upload bridge assembly."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/backtest_artifact_import/monitoring_projection.py",
+    "owner_page_candidate": "observability",
+    "reason": "Thin monitoring projection adapters for governed LOCAL_REPLAY imports."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/backtest_artifact_import/signature_policy.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Governed trust-store and payload-hash policy for artifact signature envelopes."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/backtest_artifact_import/upload_bridge.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Thin governed bridge from upload dry-run payloads to import contracts."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/backtest_artifact_import/validators.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Guards for controlled artifact import."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/calibration_methods/__init__.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Shared Local IA Lab calibration-method primitives."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/calibration_methods/bootstrap.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Shared Local IA Lab stationary bootstrap helpers."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/calibration_methods/dsr.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Shared Local IA Lab Deflated Sharpe Ratio helpers."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/calibration_methods/energy_distance.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Energy distance test for shadow gate distribution drift (Székely & Rizzo, 2004)."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/calibration_methods/execution.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Shared Local IA Lab execution-calibration helpers for THR-X01 to THR-X05."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/calibration_methods/hansen_spa.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Bounded Hansen SPA test for multi-engine shadow promotion."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/calibration_methods/hard_cap_floor.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Shared Local IA Lab helpers for human hard-floor / hard-cap publication."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/calibration_methods/ks_test.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Two-sample Kolmogorov-Smirnov test for shadow gate distribution drift."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/calibration_methods/mann_kendall.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Mann-Kendall monotonic trend test for shadow gate drift detection."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/calibration_methods/ml_backtest_projection.py",
+    "owner_page_candidate": "backtest",
+    "reason": "LAB_ONLY projection from ML backtest contracts into trainer-ready rows."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/calibration_methods/ml_trainer.py",
+    "owner_page_candidate": "backtest",
+    "reason": "LAB_ONLY LightGBM trainer for the bounded V5.3 ML confidence layer."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/calibration_methods/multiple_testing.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Bounded Local IA Lab multiple-testing helpers."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/calibration_methods/multiple_testing_guard.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Harvey-Liu-Zhu multiple-testing guard helpers for V5.3 promotion gates."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/calibration_methods/pot_gpd.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Shared Local IA Lab POT-GPD tail-risk helpers."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/calibration_methods/psr.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Probabilistic Sharpe Ratio — Bailey & López de Prado (2012)."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/calibration_methods/regime_detector_feature_calibration.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Feature-profile selection helpers for RegimeDetectorML training."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/calibration_methods/regime_detector_projection.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Projection from Local-Lab regime datasets into trainer rows."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/calibration_methods/regime_detector_trainer.py",
+    "owner_page_candidate": "backtest",
+    "reason": "LAB_ONLY LightGBM trainer for VPS-shadow LOB RegimeDetectorML artifacts."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/calibration_methods/stationarity.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Shared Local IA Lab stationarity helpers (ADF + KPSS, bounded implementation)."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/calibration_methods/walkforward.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Shared Local IA Lab purged walk-forward helpers."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/calibration_methods/walls_and_spoofing_calibration.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Feature-set selection helpers for walls/spoofing ML integration."
+  },
+  {
+    "kind": "insufficient_evidence",
+    "file_path": "src/cockpit/__init__.py",
+    "owner_page_candidate": "unknown",
+    "reason": "V5.3 Local Lab Cockpit — minimal HTTP UI to operate the Shadow runtime."
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "src/complete_enablers/competition_monitor.py",
+    "owner_page_candidate": "unknown",
+    "reason": "Competition monitor reader for Build-14 SHADOW_ENABLED enablers."
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "src/complete_enablers/execution_fragility_score.py",
+    "owner_page_candidate": "unknown",
+    "reason": "Execution fragility reader for Build-14 SHADOW_ENABLED enablers."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/complete_enablers/hurst_regime_classifier.py",
+    "owner_page_candidate": "lab",
+    "reason": "Hurst regime classifier reader for Build-14 SHADOW_ENABLED enablers."
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "src/complete_enablers/micro_edge_entry_timing_layer.py",
+    "owner_page_candidate": "unknown",
+    "reason": "Micro-edge entry timing reader for Build-14 SHADOW_ENABLED enablers."
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "src/complete_enablers/micro_edge_exit_governor.py",
+    "owner_page_candidate": "unknown",
+    "reason": "Micro-edge exit governor reader for Build-14 SHADOW_ENABLED enablers."
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "src/complete_enablers/ml_model_promotion_gate.py",
+    "owner_page_candidate": "unknown",
+    "reason": "Fail-closed promotion gate for bounded ML model artifacts."
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "src/complete_enablers/ml_runtime_artifact_loader.py",
+    "owner_page_candidate": "unknown",
+    "reason": "Artifact-only runtime loader for governed ML supplementary refs."
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "src/complete_enablers/order_book_imbalance.py",
+    "owner_page_candidate": "unknown",
+    "reason": "Order-book imbalance reader for Build-14 SHADOW_ENABLED enablers."
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "src/complete_enablers/regime_detector_runtime_loader.py",
+    "owner_page_candidate": "unknown",
+    "reason": "Artifact-only runtime loader for transported RegimeDetectorML artifacts."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/__init__.py",
+    "owner_page_candidate": "trading",
+    "reason": "production module"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_a/__init__.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-6 — Engine A: Premium Trend / Expansion."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_a/context_validator_a.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-6 / engine_a / context_validator_A"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_a/conviction_builder_a.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-6 / engine_a / conviction_builder_A"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_a/cost_feasibility_a.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-6 / engine_a / cost_feasibility_A"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_a/engine_a_runner.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-6 / engine_a / engine_a_runner: canonical orchestrator for Engine A."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_a/engine_a_runner_support.py",
+    "owner_page_candidate": "trading",
+    "reason": "Small pure helpers supporting the Engine A runner."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_a/engine_a_runtime.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-6 / engine_a / engine_a_runtime"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_a/engine_a_runtime_support.py",
+    "owner_page_candidate": "trading",
+    "reason": "Private helper functions for the Engine A runtime facade."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_a/engine_a_scoring_candidate_builder.py",
+    "owner_page_candidate": "trading",
+    "reason": "Scoring candidate builder helpers for Engine A runtime."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_a/invalidation_mapper_a.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-6 / engine_a / invalidation_mapper_A"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_a/signal_candidate_adapter.py",
+    "owner_page_candidate": "trading",
+    "reason": "module exposing build_signal_candidate_a"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_a/signal_reporter_a.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-6 / engine_a / signal_reporter_A"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_a/structure_detector_a.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-6 / engine_a / structure_detector_A"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_b/__init__.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-7 / engine_b — Mean Reversion Intraday Motor."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_b/anti_breakout_filter_b.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-7 / engine_b / anti_breakout_filter_B"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_b/conviction_builder_b.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-7 / engine_b / conviction_builder_B"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_b/cost_feasibility_b.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-7 / engine_b / cost_feasibility_B"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_b/engine_b_runner.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-7 / engine_b / engine_b_runner"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_b/engine_b_runner_support.py",
+    "owner_page_candidate": "trading",
+    "reason": "Private helper functions for the Engine B runner facade."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_b/engine_b_runtime.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-7 / engine_b / engine_b_runtime"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_b/engine_b_runtime_forecast_support.py",
+    "owner_page_candidate": "trading",
+    "reason": "Forecast and downstream truthfulness helpers for the Engine B runtime."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_b/engine_b_runtime_support.py",
+    "owner_page_candidate": "trading",
+    "reason": "Private helper functions for the Engine B runtime facade."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_b/excess_detector_b.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-7 / engine_b / excess_detector_B"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_b/invalidation_mapper_b.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-7 / engine_b / invalidation_mapper_B"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_b/local_mean_estimator_b.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-7 / engine_b / local_mean_estimator_B"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_b/signal_candidate_adapter.py",
+    "owner_page_candidate": "trading",
+    "reason": "module exposing build_signal_candidate_b"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_b/signal_reporter_b.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-7 / engine_b / signal_reporter_B"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_c/__init__.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-15 / engine_c."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_c/continuation_validator_c.py",
+    "owner_page_candidate": "trading",
+    "reason": "Pure continuation validation helpers for Engine C."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_c/conviction_builder_c.py",
+    "owner_page_candidate": "trading",
+    "reason": "Pure conviction helpers for Engine C."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_c/cost_feasibility_c.py",
+    "owner_page_candidate": "trading",
+    "reason": "Pure cost-feasibility helpers for Engine C."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_c/engine_c_runner.py",
+    "owner_page_candidate": "trading",
+    "reason": "Canonical Engine C runner."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_c/engine_c_runner_support.py",
+    "owner_page_candidate": "trading",
+    "reason": "Internal support helpers for the canonical Engine C runner."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_c/engine_c_runtime.py",
+    "owner_page_candidate": "trading",
+    "reason": "Engine C runtime across signal, scoring, ranking and risk."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_c/engine_c_runtime_forecast_support.py",
+    "owner_page_candidate": "trading",
+    "reason": "Forecast and downstream truthfulness helpers for the Engine C runtime."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_c/engine_c_runtime_support.py",
+    "owner_page_candidate": "trading",
+    "reason": "Support helpers for the Engine C runtime facade."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_c/invalidation_mapper_c.py",
+    "owner_page_candidate": "trading",
+    "reason": "Pure invalidation helpers for Engine C."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_c/output_payload_builder_c.py",
+    "owner_page_candidate": "trading",
+    "reason": "Pure output-payload assembly helpers for Engine C."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_c/signal_math_c.py",
+    "owner_page_candidate": "trading",
+    "reason": "Pure scoring helpers for Engine C signal evaluation."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_c/structure_resolver_c.py",
+    "owner_page_candidate": "trading",
+    "reason": "Pure structure-resolution helpers for Engine C."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_d/__init__.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-16 / engine_d."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_d/consecutive_stop_counter_d.py",
+    "owner_page_candidate": "trading",
+    "reason": "Explicit Engine D consecutive-stop state helpers."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_d/context_resolver_d.py",
+    "owner_page_candidate": "trading",
+    "reason": "Pure context-resolution helpers for Engine D."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_d/conviction_builder_d.py",
+    "owner_page_candidate": "trading",
+    "reason": "Pure conviction helpers for Engine D."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_d/coordination_input_assembler_d.py",
+    "owner_page_candidate": "trading",
+    "reason": "Governed Engine D coordination-input assembly from historical state."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_d/cost_feasibility_d.py",
+    "owner_page_candidate": "trading",
+    "reason": "Pure cost-feasibility helpers for Engine D."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_d/engine_d_models.py",
+    "owner_page_candidate": "trading",
+    "reason": "Shared typed models for the canonical Engine D runner/runtime."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_d/engine_d_runner.py",
+    "owner_page_candidate": "trading",
+    "reason": "Canonical Engine D runner."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_d/engine_d_runner_late_stages.py",
+    "owner_page_candidate": "trading",
+    "reason": "Late-stage helpers for the canonical Engine D runner."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_d/engine_d_runner_support.py",
+    "owner_page_candidate": "trading",
+    "reason": "Internal support helpers for the canonical Engine D runner."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_d/engine_d_runtime.py",
+    "owner_page_candidate": "trading",
+    "reason": "Engine D runtime across signal, scoring, ranking and risk."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_d/engine_d_runtime_history_entry_mixin.py",
+    "owner_page_candidate": "trading",
+    "reason": "Additive historical-entry helpers for the public Engine D runtime surface."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_d/engine_d_runtime_result_builders.py",
+    "owner_page_candidate": "trading",
+    "reason": "Result builders for the Engine D runtime facade."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_d/engine_d_runtime_support.py",
+    "owner_page_candidate": "trading",
+    "reason": "Support helpers for the Engine D runtime facade."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_d/engine_d_runtime_support_refusal.py",
+    "owner_page_candidate": "trading",
+    "reason": "Runtime refusal / downstream annotation helpers extracted from `engine_d_runtime_support.py` on 2026-04-18."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_d/first_episode_resolver_d.py",
+    "owner_page_candidate": "trading",
+    "reason": "Explicit Engine D first-episode resolution helpers."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_d/historical_linkage_guard_d.py",
+    "owner_page_candidate": "trading",
+    "reason": "Explicit Engine D historical-linkage guard wrapping the canonical coordination rule."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_d/invalidation_mapper_d.py",
+    "owner_page_candidate": "trading",
+    "reason": "Pure invalidation helpers for Engine D."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_d/marginal_value_estimator_d.py",
+    "owner_page_candidate": "trading",
+    "reason": "Local marginal-value setup-quality threshold seam for Engine D."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_d/output_payload_builder_d.py",
+    "owner_page_candidate": "trading",
+    "reason": "Pure output-payload assembly helpers for Engine D."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_d/runtime_input_assembler_d.py",
+    "owner_page_candidate": "trading",
+    "reason": "Governed Engine D runtime-input assembly from historical linkage state."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/engines/engine_d/signal_math_d.py",
+    "owner_page_candidate": "trading",
+    "reason": "Pure scoring helpers for Engine D signal evaluation."
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "src/execution_backbone/emergency_circuit_breaker.py",
+    "owner_page_candidate": "unknown",
+    "reason": "GEM-10 / QWEN-07 — Emergency Circuit Breaker with disk persistence."
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "src/execution_backbone/execution_cost_meter/fee_meter.py",
+    "owner_page_candidate": "unknown",
+    "reason": "Build-3 / execution_cost_meter / fee_meter"
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "src/execution_backbone/execution_runtime.py",
+    "owner_page_candidate": "unknown",
+    "reason": "Build-3 / execution_backbone / execution_runtime"
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "src/execution_backbone/execution_runtime_models.py",
+    "owner_page_candidate": "unknown",
+    "reason": "Models and protocols for the canonical Build-3 execution runtime."
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "src/execution_backbone/fee_aware_edge_gate.py",
+    "owner_page_candidate": "unknown",
+    "reason": "Fee-aware edge gate resolved from shared calibration artifacts."
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "src/execution_backbone/fill_tracker/fill_reporter.py",
+    "owner_page_candidate": "unknown",
+    "reason": "Build-3 / fill_tracker / fill_reporter"
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "src/execution_backbone/gatekeeper/gatekeeper.py",
+    "owner_page_candidate": "unknown",
+    "reason": "Bounded canonical execution gatekeeper over the existing Build-3 guard chain."
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "src/execution_backbone/order_decider/decision_reporter.py",
+    "owner_page_candidate": "unknown",
+    "reason": "Build-3 / order_decider / decision_reporter"
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "src/execution_backbone/order_decider/hybrid_router_metrics.py",
+    "owner_page_candidate": "unknown",
+    "reason": "Execution-backbone-local metrics sink and projections for hybrid routing V2."
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "src/execution_backbone/order_decider/intent_builder.py",
+    "owner_page_candidate": "unknown",
+    "reason": "Build-3 / order_decider / intent_builder"
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "src/execution_backbone/order_decider/timeout_policy_selector.py",
+    "owner_page_candidate": "unknown",
+    "reason": "Build-3 / order_decider / timeout_policy_selector"
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "src/interface_contracts/artifact_contracts_models.py",
+    "owner_page_candidate": "unknown",
+    "reason": "Typed models and enums for governed artifact contracts."
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "src/interface_contracts/binance_contracts.py",
+    "owner_page_candidate": "unknown",
+    "reason": "Typed contracts for the Binance Spot venue adapter."
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "src/interface_contracts/build14_contracts.py",
+    "owner_page_candidate": "unknown",
+    "reason": "Shared Build-14 enums and typed contracts."
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "src/interface_contracts/decision_contracts.py",
+    "owner_page_candidate": "unknown",
+    "reason": "V5.3 — DECISION_CONTRACTS"
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "src/interface_contracts/forecast_contracts.py",
+    "owner_page_candidate": "unknown",
+    "reason": "V5.3 - FORECAST_CONTRACTS"
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "src/interface_contracts/market_event_contracts.py",
+    "owner_page_candidate": "unknown",
+    "reason": "V5.3 — MARKET_EVENT_CONTRACTS"
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "src/interface_contracts/meta_contracts.py",
+    "owner_page_candidate": "unknown",
+    "reason": "V5.3 — META_CONTRACTS"
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "src/interface_contracts/ml_model_artifact.py",
+    "owner_page_candidate": "unknown",
+    "reason": "Typed contract for Local-Lab-trained ML model artifacts."
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "src/interface_contracts/regime_detector_shadow_audit_contracts.py",
+    "owner_page_candidate": "unknown",
+    "reason": "Typed contracts for VPS->IA Lab shadow audit bundles of RegimeDetectorML."
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "src/interface_contracts/shadow_vps_service_contracts.py",
+    "owner_page_candidate": "unknown",
+    "reason": "Shared Shadow VPS service state/event contracts."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/__init__.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Minimal LOCAL_REPLAY scaffold for the unified V5.3 plan."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/artifact_ablation_study.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Governed Local IA Lab ablation study between baseline and candidate replay exports."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/artifact_manifest.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Canonical manifest for LOCAL_REPLAY artifacts."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/artifact_proof_summary_builder.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Conservative Local IA Lab proof-summary builder for governed artifact export."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/artifact_release_candidate.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Future-facing Local IA Lab artifact release candidate for governed VPS import."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/artifact_upload_bridge_candidate.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Typed Local IA Lab dry-run bridge contracts."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/contracts.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Contracts for the LOCAL_REPLAY scaffold."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/enums.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Enums for the LOCAL_REPLAY scaffold."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/errors.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Errors for the LOCAL_REPLAY scaffold."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/historical_data_gateway.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Historical dataset loader for governed LOCAL_REPLAY sessions."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/historical_snapshot_loader.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Historical market snapshot loader for governed LOCAL_REPLAY sessions."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/live_complete_operator_audit_report.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Operator-facing final Build-17 audit report for governed Complete supervision."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/local_lab_calibration_methods_review.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Local IA Lab review sidecar over shared calibration-method primitives."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/local_lab_calibration_normalized_report.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Normalized Local IA Lab calibration report over bounded 13-A/13-B evidence."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/local_lab_execution_review.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Local IA Lab execution-threshold review for THR-X01 to THR-X05."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/local_lab_execution_runtime_projection.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Project Local IA Lab execution review outputs into future runtime consumer contracts."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/local_lab_execution_telemetry_archive_support.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Support helpers for Local IA Lab execution telemetry archive materialization."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/local_lab_loss_surrogate.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Bounded trained loss-risk surrogate for Local IA Lab research only."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/local_lab_ml_artifact_training.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Governed Local-Lab ML artifact training from replay/backtest evidence."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/local_lab_multiple_testing_review.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Local IA Lab multiple-testing review sidecar over current calibration evidence."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/local_lab_promotion_readiness.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Top-level Local IA Lab promotion-readiness projection over the dry-run handoff rail."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/local_lab_recalibration_plan.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Typed Local IA Lab recalibration planning from governed loss attribution evidence."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/local_lab_regime_detector_artifact_training.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Governed Local-IA-Lab RegimeDetector artifact training from historical LOB events."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/local_lab_replay_candidate_queue.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Bounded Local IA Lab replay/research queue derived from current planning truth."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/local_lab_replay_dispatch_plan.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Local-only dispatch plan derived from the governed Local IA Lab replay ticket index."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/local_lab_replay_ticket_index.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Governed Local IA Lab replay ticket index derived from the replay candidate queue."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/local_lab_replay_workflow_manifest.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Manifest over Local IA Lab replay workflow sidecars."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/local_lab_research_priority.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Interpretable Local IA Lab research-priority scorer."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/local_lab_scope_matrix.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Typed multi-scope projection for Local IA Lab candidate vs baseline analysis."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/local_lab_tail_risk_review.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Local IA Lab tail-risk review over POT-GPD breakers."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/ml_backtest_projection.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Projection from governed replay/backtest rows into ML backtest contracts."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/ml_final_audit_report.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Final IA-Lab audit report for the governed ML artifact export loop."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/orchestrator.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Governed LOCAL_REPLAY bundle preparation helpers."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/performance_mode_guard.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Guardrails for governed LOCAL_REPLAY performance modes."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/regime_detector_dataset_builder.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Local-IA-Lab regime-training dataset builder from governed historical LOB events."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/regime_detector_final_audit_report.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Final Local IA Lab audit report joining profile comparison and VPS shadow diagnosis."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/regime_detector_profile_comparison.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Local IA Lab comparison of RegimeDetector feature profiles."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/regime_detector_shadow_audit_diagnosis.py",
+    "owner_page_candidate": "backtest",
+    "reason": "IA-Lab import and root-cause diagnosis for RegimeDetector shadow audit bundles."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/replay_clock.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Replay clock helpers for governed LOCAL_REPLAY sessions."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/replay_event_router.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Replay event router from raw historical events to normalized opportunities."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/replay_executor.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Governed session executor for LOCAL_REPLAY artifact generation."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/replay_metrics_collector.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Derived metrics for governed LOCAL_REPLAY artifact exports."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/replay_orchestrator.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Governed orchestration helpers for LOCAL_REPLAY exports."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/replay_orchestrator_chunking.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Dataset chunking helpers for governed LOCAL_REPLAY exports."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/replay_orchestrator_models.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Models for governed LOCAL_REPLAY orchestration."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/replay_run_manifest.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Typed run manifest for governed LOCAL_REPLAY artifact exports."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/replay_scope_identity.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Typed aggregate replay scope identity for governed multi-scope sessions."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/replay_session_config.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Typed session configuration for governed LOCAL_REPLAY runs."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/run_consistency_guard.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Consistency guard for governed LOCAL_REPLAY runs."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/shadow_execution_simulator.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Prudent Shadow-compatible execution simulator for LOCAL_REPLAY."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/local_replay_runtime/walk_forward_review.py",
+    "owner_page_candidate": "backtest",
+    "reason": "Governed human review gate for Local IA Lab walk-forward evidence."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_learning/__init__.py",
+    "owner_page_candidate": "lab",
+    "reason": "Build-9X governed meta-learning layer."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_learning/breakdown_report_builder.py",
+    "owner_page_candidate": "lab",
+    "reason": "Aggregate governed diagnostics into a concise breakdown report."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_learning/capacity_guard.py",
+    "owner_page_candidate": "lab",
+    "reason": "Capacity and backpressure guardrails for the governed Build-9X layer."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_learning/checklist_generator.py",
+    "owner_page_candidate": "lab",
+    "reason": "Generate governed checklists from diagnostics and mistake classes."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_learning/contracts.py",
+    "owner_page_candidate": "lab",
+    "reason": "Minimal governed contracts for the Build-9X meta-learning layer."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_learning/enums.py",
+    "owner_page_candidate": "lab",
+    "reason": "Canonical enums for the governed Build-9X meta-learning layer."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_learning/errors.py",
+    "owner_page_candidate": "lab",
+    "reason": "Errors for the governed Build-9X meta-learning layer."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_learning/facade.py",
+    "owner_page_candidate": "lab",
+    "reason": "Canonical internal facade for the governed Build-9X layer."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_learning/hypothesis_registry.py",
+    "owner_page_candidate": "lab",
+    "reason": "Build governed hypotheses from diagnostics."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_learning/improvement_candidate_builder.py",
+    "owner_page_candidate": "lab",
+    "reason": "Build governed improvement candidates from hypotheses."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_learning/learning_memory_store.py",
+    "owner_page_candidate": "lab",
+    "reason": "Append-only in-memory storage for governed learning reviews."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_learning/learning_review_exporter.py",
+    "owner_page_candidate": "lab",
+    "reason": "Export governed Build-9X review packets."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_learning/lifecycle_registry.py",
+    "owner_page_candidate": "lab",
+    "reason": "Canonical Build-9X lifecycle transition helpers."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_learning/merge_gate_contracts.py",
+    "owner_page_candidate": "lab",
+    "reason": "Typed contracts for explicit Build-9X merge gates."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_learning/merge_gates.py",
+    "owner_page_candidate": "lab",
+    "reason": "Explicit merge-gate evaluators for the governed Build-9X layer."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_learning/mistake_classifier.py",
+    "owner_page_candidate": "lab",
+    "reason": "Classify governed diagnostics into stable mistake classes."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_learning/model_risk_registry/__init__.py",
+    "owner_page_candidate": "lab",
+    "reason": "Typed minimal registry for ML model drift and pause/promotion-block decisions."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_learning/model_risk_registry/registry.py",
+    "owner_page_candidate": "lab",
+    "reason": "Minimal typed ML model risk registry for the bounded enabler layer."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_learning/monitoring_projection.py",
+    "owner_page_candidate": "observability",
+    "reason": "Adapters from Build-9X governed bundles to monitoring projections."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_learning/near_miss_analyzer.py",
+    "owner_page_candidate": "lab",
+    "reason": "Identify governed near misses from Build-9 DTR records."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_learning/post_trade_diagnostic_engine.py",
+    "owner_page_candidate": "lab",
+    "reason": "Build governed diagnostics from real Build-9 outputs."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_learning/replay_bundle_builder.py",
+    "owner_page_candidate": "lab",
+    "reason": "Build governed replay handoff bundles from Build-9X candidates."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_learning/retention_policy.py",
+    "owner_page_candidate": "lab",
+    "reason": "Retention helpers for governed Build-9X records and transitions."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_learning/review_governance.py",
+    "owner_page_candidate": "lab",
+    "reason": "Review-decision and archive-governance helpers for Build-9X."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_learning/review_orchestrator.py",
+    "owner_page_candidate": "lab",
+    "reason": "Governed orchestration entrypoint for the real Build-9X layer."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_learning/review_queue.py",
+    "owner_page_candidate": "lab",
+    "reason": "Review-queue builder for Build-9X governed hypotheses."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_learning/review_resolution.py",
+    "owner_page_candidate": "lab",
+    "reason": "Post-review and replay resolution helpers for governed Build-9X bundles."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_learning/strategy_drift_monitor/__init__.py",
+    "owner_page_candidate": "lab",
+    "reason": "Bounded strategy-drift monitor for ML and replay-side governance."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_learning/strategy_drift_monitor/monitor.py",
+    "owner_page_candidate": "lab",
+    "reason": "Minimal typed strategy drift monitor."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_learning/trade_loss_attribution.py",
+    "owner_page_candidate": "lab",
+    "reason": "Governed per-trade loss attribution for Local IA Lab post-trade review."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_minimal/__init__.py",
+    "owner_page_candidate": "lab",
+    "reason": "Build-9 â€” Meta Minimal Pack: economic observability layer."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_minimal/break_even_dashboard/__init__.py",
+    "owner_page_candidate": "lab",
+    "reason": "Build-9 / break_even_dashboard â€” Real break-even visibility by engine/pair."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_minimal/break_even_dashboard/break_even_reporter.py",
+    "owner_page_candidate": "lab",
+    "reason": "Build-9 / break_even_dashboard / break_even_reporter"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_minimal/break_even_dashboard/cost_distribution_aggregator.py",
+    "owner_page_candidate": "lab",
+    "reason": "Build-9 / break_even_dashboard / cost_distribution_aggregator"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_minimal/break_even_dashboard/expected_break_even_calculator.py",
+    "owner_page_candidate": "lab",
+    "reason": "Build-9 / break_even_dashboard / expected_break_even_calculator"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_minimal/break_even_dashboard/motor_pair_break_even_view.py",
+    "owner_page_candidate": "lab",
+    "reason": "Build-9 / break_even_dashboard / motor_pair_break_even_view"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_minimal/break_even_dashboard/realized_break_even_calculator.py",
+    "owner_page_candidate": "lab",
+    "reason": "Build-9 / break_even_dashboard / realized_break_even_calculator"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_minimal/cost_drift_monitor/__init__.py",
+    "owner_page_candidate": "lab",
+    "reason": "Minimal cost drift monitor for expected vs realized execution cost bias."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_minimal/cost_drift_monitor/monitor.py",
+    "owner_page_candidate": "lab",
+    "reason": "Minimal monitor for execution-cost bias drift."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_minimal/cra_monitor/__init__.py",
+    "owner_page_candidate": "lab",
+    "reason": "Build-9 / cra_monitor â€” Cumulative Reduction Alarm: detect economic sterilization."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_minimal/cra_monitor/cra_alert_builder.py",
+    "owner_page_candidate": "lab",
+    "reason": "Build-9 / cra_monitor / cra_alert_builder"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_minimal/cra_monitor/cra_reporter.py",
+    "owner_page_candidate": "lab",
+    "reason": "Build-9 / cra_monitor / cra_reporter"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_minimal/cra_monitor/phantom_risk_estimator.py",
+    "owner_page_candidate": "lab",
+    "reason": "Build-9 / cra_monitor / phantom_risk_estimator"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_minimal/cra_monitor/reduction_trace_reader.py",
+    "owner_page_candidate": "lab",
+    "reason": "Build-9 / cra_monitor / reduction_trace_reader"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_minimal/cra_monitor/sterilization_classifier.py",
+    "owner_page_candidate": "lab",
+    "reason": "Build-9 / cra_monitor / sterilization_classifier"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_minimal/dtr_core/__init__.py",
+    "owner_page_candidate": "lab",
+    "reason": "Build-9 / dtr_core â€” Decision Trace Records for every significant decision."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_minimal/dtr_core/cause_chain_assembler.py",
+    "owner_page_candidate": "lab",
+    "reason": "Build-9 / dtr_core / cause_chain_assembler"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_minimal/dtr_core/decision_state_encoder.py",
+    "owner_page_candidate": "lab",
+    "reason": "Build-9 / dtr_core / decision_state_encoder"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_minimal/dtr_core/dtr_record_builder.py",
+    "owner_page_candidate": "lab",
+    "reason": "Build-9 / dtr_core / dtr_record_builder"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_minimal/dtr_core/dtr_reporter.py",
+    "owner_page_candidate": "lab",
+    "reason": "Build-9 / dtr_core / dtr_reporter"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_minimal/edge_tracker_prudent_minimal/__init__.py",
+    "owner_page_candidate": "lab",
+    "reason": "Build-9 / edge_tracker_prudent_minimal â€” Prudent net edge tracking."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_minimal/edge_tracker_prudent_minimal/edge_reporter.py",
+    "owner_page_candidate": "lab",
+    "reason": "Build-9 / edge_tracker_prudent_minimal / edge_reporter"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_minimal/edge_tracker_prudent_minimal/edge_status_classifier.py",
+    "owner_page_candidate": "lab",
+    "reason": "Build-9 / edge_tracker_prudent_minimal / edge_status_classifier"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_minimal/edge_tracker_prudent_minimal/return_aggregator.py",
+    "owner_page_candidate": "lab",
+    "reason": "Build-9 / edge_tracker_prudent_minimal / return_aggregator"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_minimal/edge_tracker_prudent_minimal/sample_size_tracker.py",
+    "owner_page_candidate": "lab",
+    "reason": "Build-9 / edge_tracker_prudent_minimal / sample_size_tracker"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_minimal/edge_tracker_prudent_minimal/uncertainty_estimator.py",
+    "owner_page_candidate": "lab",
+    "reason": "Build-9 / edge_tracker_prudent_minimal / uncertainty_estimator"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_minimal/meta_runtime.py",
+    "owner_page_candidate": "lab",
+    "reason": "Build-9 / meta_runtime"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/meta_minimal/refusal_journal/__init__.py",
+    "owner_page_candidate": "lab",
+    "reason": "Append-only refusal journal for governed runtime no-trade / no-fill evidence."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/__init__.py",
+    "owner_page_candidate": "observability",
+    "reason": "Real Build-10 monitoring backend for the Light runtime."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/alert_manager.py",
+    "owner_page_candidate": "observability",
+    "reason": "Alert projection for the real Build-10 monitoring backend."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/artifact_visibility.py",
+    "owner_page_candidate": "observability",
+    "reason": "Bounded artifact visibility and comparison builders for Build-17 supervision."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/build14_observation.py",
+    "owner_page_candidate": "observability",
+    "reason": "Shared Build-14 observation derivation from governed monitoring surfaces."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/challenger_evidence_alerts.py",
+    "owner_page_candidate": "observability",
+    "reason": "Bounded challenger-evidence alert derivation shared by monitoring surfaces."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/contracts.py",
+    "owner_page_candidate": "observability",
+    "reason": "Contracts for the real Build-10 monitoring backend."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/contracts_artifacts.py",
+    "owner_page_candidate": "observability",
+    "reason": "Bounded artifact visibility contracts shared by Build-10 and Build-17 surfaces."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/contracts_core.py",
+    "owner_page_candidate": "observability",
+    "reason": "Core monitoring contracts for the real Build-10 backend."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/contracts_dashboard.py",
+    "owner_page_candidate": "observability",
+    "reason": "Dashboard and projection contracts for the real Build-10 backend."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/contracts_dashboard_payloads.py",
+    "owner_page_candidate": "observability",
+    "reason": "Payload contracts split from contracts_dashboard to keep modules bounded."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/contracts_live_complete.py",
+    "owner_page_candidate": "observability",
+    "reason": "Build-17 Complete monitoring projection contracts."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/contracts_vps.py",
+    "owner_page_candidate": "observability",
+    "reason": "Observability and VPS monitoring contracts for the real Build-10 backend."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/dashboard_metric_guides.py",
+    "owner_page_candidate": "observability",
+    "reason": "Canonical Grafana metric guide text for local operator dashboards."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/disk_monitor.py",
+    "owner_page_candidate": "observability",
+    "reason": "Bounded disk usage sampling for VPS observability."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/grafana_operator_bridge_markdown.py",
+    "owner_page_candidate": "observability",
+    "reason": "Canonical operator bridge markdown for Grafana-to-queue control."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/grafana_types.py",
+    "owner_page_candidate": "observability",
+    "reason": "Typed JSON aliases for Grafana payload builders."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/health_dashboard_backend.py",
+    "owner_page_candidate": "observability",
+    "reason": "Stable backend payload for the locked Build-10 operator UI."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/hybrid_router_metrics.py",
+    "owner_page_candidate": "observability",
+    "reason": "Monitoring re-export surface for Build-3 hybrid routing metrics."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/hybrid_router_trace.py",
+    "owner_page_candidate": "observability",
+    "reason": "Monitoring-facing routing trace contracts for Build-3 hybrid routing."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/local_grafana_api.py",
+    "owner_page_candidate": "observability",
+    "reason": "Local Grafana HTTP API helpers for datasource and dashboard bootstrap."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/local_grafana_dashboard.py",
+    "owner_page_candidate": "observability",
+    "reason": "Build a detailed local Grafana dashboard over the current V5.3 Shadow VPS metrics."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/local_grafana_dashboard_build17.py",
+    "owner_page_candidate": "observability",
+    "reason": "Build-17 Grafana panel helpers for the local Shadow VPS dashboard."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/local_lab_grafana_dashboard.py",
+    "owner_page_candidate": "observability",
+    "reason": "Build a detailed local Grafana dashboard over the current V5.3 Local IA Lab metrics."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/local_lab_ingestion.py",
+    "owner_page_candidate": "observability",
+    "reason": "Monitoring-side ingestion helpers for Local IA Lab backend payloads."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/local_lab_monitoring_backend.py",
+    "owner_page_candidate": "observability",
+    "reason": "Typed backend payload adapter for Local IA Lab monitoring surfaces."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/local_lab_monitoring_bundle_manifest.py",
+    "owner_page_candidate": "observability",
+    "reason": "Manifest over Local IA Lab monitoring sidecars."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/local_lab_monitoring_feed.py",
+    "owner_page_candidate": "observability",
+    "reason": "Compact monitoring feed over discovered Local IA Lab bundles."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/local_lab_monitoring_projection.py",
+    "owner_page_candidate": "observability",
+    "reason": "Compact future-dashboard projection for Local IA Lab packaging and dry-run handoff."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/local_lab_observability.py",
+    "owner_page_candidate": "observability",
+    "reason": "Structured observability export for Local IA Lab packaging runs."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/local_prometheus_config.py",
+    "owner_page_candidate": "observability",
+    "reason": "Generate a checked local-PC Prometheus config over V5.3 scrape handoff artifacts."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/local_prometheus_metrics_bridge.py",
+    "owner_page_candidate": "observability",
+    "reason": "Dev-only local HTTP bridge that serves a Prometheus text payload over /metrics."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/log_rotation.py",
+    "owner_page_candidate": "observability",
+    "reason": "Bounded gzip log rotation with retention for operated monitoring rails."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/logging_config.py",
+    "owner_page_candidate": "observability",
+    "reason": "Shared rotating file handler builder for monitoring and VPS rails."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/metrics_collector.py",
+    "owner_page_candidate": "observability",
+    "reason": "Metrics aggregation for the real Build-10 monitoring backend."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/observability.py",
+    "owner_page_candidate": "observability",
+    "reason": "Minimal structured observability export for Build-10 supervision."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/observability_io.py",
+    "owner_page_candidate": "observability",
+    "reason": "I/O helpers for persisted observability exports."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/observability_support.py",
+    "owner_page_candidate": "observability",
+    "reason": "Support helpers for Build-10 structured observability export."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/process_metrics.py",
+    "owner_page_candidate": "observability",
+    "reason": "Lightweight real process metrics sampling for VPS observability."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/regime_detector_shadow_audit_bundle.py",
+    "owner_page_candidate": "observability",
+    "reason": "Deterministic VPS shadow audit aggregation for RegimeDetectorML."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/regime_detector_shadow_projection.py",
+    "owner_page_candidate": "observability",
+    "reason": "Shadow monitoring projection for artifact-only LOB RegimeDetectorML signals."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/shadow_vps_redaction.py",
+    "owner_page_candidate": "observability",
+    "reason": "Local redaction helpers for Shadow VPS monitoring and event projection."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/shadow_vps_service_log_retrieval.py",
+    "owner_page_candidate": "observability",
+    "reason": "Bounded retrieval helpers over durable Shadow VPS service JSONL events."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/shadow_vps_service_monitoring.py",
+    "owner_page_candidate": "observability",
+    "reason": "Typed monitoring projection for the real Shadow VPS service loop."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/shadow_vps_service_monitoring_observability_support.py",
+    "owner_page_candidate": "observability",
+    "reason": "Support helpers for Shadow VPS service observability export construction."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/shadow_vps_service_monitoring_payload_field_support.py",
+    "owner_page_candidate": "observability",
+    "reason": "Support field resolvers for Shadow VPS service monitoring payload construction."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/shadow_vps_service_monitoring_payload_support.py",
+    "owner_page_candidate": "observability",
+    "reason": "Support helpers for Shadow VPS service monitoring payload construction."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/shadow_vps_service_scrape_manifest.py",
+    "owner_page_candidate": "observability",
+    "reason": "Typed scrape handoff artifacts for local Prometheus over Shadow VPS observability."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/technical_dashboard_backend.py",
+    "owner_page_candidate": "observability",
+    "reason": "Normalized Build-10 technical dashboard payload builder."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/monitoring/technical_dashboard_backend_support.py",
+    "owner_page_candidate": "observability",
+    "reason": "Support helpers for the Build-10 technical dashboard backend."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/portfolio/__init__.py",
+    "owner_page_candidate": "trading",
+    "reason": "V5.3 - Canonical portfolio facade."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/portfolio_minimal/__init__.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-8 / portfolio_minimal — Portfolio Minimal Pack."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/portfolio_minimal/allocation_router/__init__.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-8 / allocation_router â€” Allocate capital to selected opportunities."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/portfolio_minimal/allocation_router/allocation_reporter.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-8 / allocation_router / allocation_reporter"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/portfolio_minimal/allocation_router/base_size_builder.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-8 / allocation_router / base_size_builder"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/portfolio_minimal/allocation_router/phantom_trade_guard.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-8 / allocation_router / phantom_trade_guard"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/portfolio_minimal/allocation_router/portfolio_cap_applier.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-8 / allocation_router / portfolio_cap_applier"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/portfolio_minimal/allocation_router/score_size_mapper.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-8 / allocation_router / score_size_mapper"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/portfolio_minimal/allocation_router/vol_target_sizer.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-8 / allocation_router / vol_target_sizer"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/portfolio_minimal/arbitration_record.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-8 / arbitration_record"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/portfolio_minimal/opportunity_selector/__init__.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-8 / opportunity_selector â€” Select which opportunities deserve capital."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/portfolio_minimal/opportunity_selector/candidate_pool_builder.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-8 / opportunity_selector / candidate_pool_builder"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/portfolio_minimal/opportunity_selector/comparative_ranker.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-8 / opportunity_selector / comparative_ranker"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/portfolio_minimal/opportunity_selector/correlation_conflict_checker.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-8 / opportunity_selector / correlation_conflict_checker"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/portfolio_minimal/opportunity_selector/eligibility_filter.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-8 / opportunity_selector / eligibility_filter"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/portfolio_minimal/opportunity_selector/selection_resolver.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-8 / opportunity_selector / selection_resolver"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/portfolio_minimal/portfolio_orchestrator.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-8 / portfolio_orchestrator"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/__init__.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Minimal real Build-11/12/13 protocol runtime surface."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/artifact_action_composer.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Canonical runtime composition for multiple artifact actions on the same hook."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/compiled_hook_plan_loader.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Bounded selection/loading semantics for compiled hook plans."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/contracts.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Governed contracts for the minimal real Build-11/12/13 runtimes."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/contracts_complete.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Governed Build-17 Complete control-surface contracts."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/contracts_shared.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Shared governed protocol contracts for Shadow, Micro-live, and Live-Light."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/contracts_validation_support.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Validation helpers for governed protocol contracts."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/dashboard_command_execution_support.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Execution and state helpers for the governed dashboard command queue."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/dashboard_command_result_support.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Result builders for the governed dashboard command queue."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/engine_a_hooks.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Bounded executor surface for the canonical ENGINE_A_PRE_ENTRY_CONFIRMATION hook."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/engine_a_pre_entry_confirmation_bridge.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Thin bridge from the compiled hook-plan rail to Engine A pre-entry confirmation."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/engine_b_hooks.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Bounded executor surface for the canonical ENGINE_B_SWEEP_VALIDATION hook."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/engine_b_sweep_validation_bridge.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Thin bridge from the compiled hook-plan rail to Engine B sweep validation."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/engine_c_hooks.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Bounded executor surface for the canonical ENGINE_C_VOID_VALIDATION hook."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/engine_c_void_validation_bridge.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Thin bridge from the compiled hook-plan rail to Engine C void validation."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/engine_coordination_rules.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Typed engine coordination rules before deeper C/D doctrinal migration."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/engine_d_hooks.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Bounded executor surface for the canonical ENGINE_D_REENTRY_VALIDATION hook."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/engine_d_reentry_validation_bridge.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Thin bridge from the compiled hook-plan rail to Engine D re-entry validation."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/engine_judgment_dashboard.py",
+    "owner_page_candidate": "shadow",
+    "reason": "module exposing _card_status_from_verdict"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/enums.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Enums for the minimal real Build-11/12/13 protocol runtimes."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/errors.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Dedicated errors for the minimal real Build-11/12/13 protocol runtimes."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/execution_hooks.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Canonical execution hook module wrapper aligned with HOOK_MODULE_BY_ID."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/execution_no_trade_filter_bridge.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Thin bridge from the compiled hook-plan rail to the execution-edge veto surface."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/execution_no_trade_hook.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Bounded executor surface for the canonical EXECUTION_NO_TRADE_FILTER hook."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/execution_opportunity_bridge.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Canonical inter-build stitch from Build-8 portfolio output to Build-3 execution."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/execution_routing_bridge.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Protocol-layer re-export for the Build-3 routing bridge."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/execution_routing_features.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Protocol-layer re-export for Build-3 routing feature contracts."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/execution_runtime_bootstrap.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Bootstrap helpers for wiring compiled execution hooks into the execution runtime."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/execution_runtime_dashboard.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Monitoring projections for bounded compiled runtime hook bridges."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/execution_runtime_projection_bridge.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Fail-open loader for Local IA Lab execution runtime projection artifacts."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/live_complete_dashboard.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Build-17 Complete dashboard projections for governed supervision."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/live_complete_gate_support.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Support helpers for the Build-17 Complete control gate."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/live_complete_runtime.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Build-17 Complete control gate and typed supervision builder."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/live_light_dashboard.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Build-13 governed live supervision helpers for the technical interface."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/live_light_runtime.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Minimal governed Build-13 Live-Light gate and execution-intent builder."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/live_light_runtime_gate_support.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Gate-surface helpers for the governed Build-13 Live-Light runtime."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/live_light_runtime_result_support.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Outcome builders for the governed Build-13 Live-Light runtime."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/live_light_runtime_support.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Validation helpers for the governed Build-13 Live-Light runtime."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/micro_live_dashboard.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Build-12 Micro-live supervision helpers for the technical interface."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/micro_live_runtime.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Minimal governed Build-12 Micro-live gate and plan builder."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/micro_live_runtime_support.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Validation helpers for the governed Build-12 Micro-live runtime."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/portfolio_hooks.py",
+    "owner_page_candidate": "trading",
+    "reason": "Bounded executor surface for the canonical PORTFOLIO_RELATIVE_RANK_ADJUSTMENT hook."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/portfolio_relative_rank_adjustment_bridge.py",
+    "owner_page_candidate": "trading",
+    "reason": "Thin bridge from the compiled hook-plan rail to the portfolio relative-rank hook."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/promotion_gates.py",
+    "owner_page_candidate": "shadow",
+    "reason": "HARD STATEMENT §0.6 - Promotion Gate Checks."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/risk_hooks.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Bounded executor surface for the canonical RISK_MICRO_FRICTION_PRECHECK hook."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/risk_micro_friction_precheck_bridge.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Thin bridge from the compiled hook-plan rail to the risk micro-friction precheck."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/runtime_signal_support.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Shared signal-aware idle entrypoints for governed protocol runtimes."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/scoring_hooks.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Bounded executor surface for the canonical SCORING_SOFT_PENALTY_LAYER hook."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/scoring_soft_penalty_layer_bridge.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Thin bridge from the compiled hook-plan rail to the scoring soft-penalty layer."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/shadow_dashboard.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Build-11 Shadow supervision helpers for the technical interface."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/shadow_day_counter_models.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Typed models for shadow day counting and promotion readiness."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/shadow_day_counter_report_rendering.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Rendering helpers for shadow day counter report artifacts."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/shadow_day_counter_reporting.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Reporting helpers for shadow day counter artifacts."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/shadow_live_plan.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Canonical pair-universe and route-plan helpers for Shadow live capture."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/shadow_report_builder.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Helpers to materialize Build-11 daily Shadow report metrics from real runtime payloads."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/shadow_runtime.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Minimal real Build-11 Shadow orchestration."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/shadow_runtime_inputs.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Input and runtime evidence builders for the governed Shadow runtime."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/shadow_runtime_judgments.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Judgment and comparison helpers for the governed Shadow runtime."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/shadow_runtime_portfolio.py",
+    "owner_page_candidate": "trading",
+    "reason": "Portfolio judgment helpers for the governed Shadow runtime."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/shadow_runtime_shared.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Shared constants for the governed Shadow runtime."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/shadow_runtime_validation.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Validation and governance helpers for the governed Shadow runtime."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/shadow_vps_service_telegram_alerting.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Build-11 operated Telegram alerting seam for the Shadow VPS service."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/shadow_websocket_ingest.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Bridge injected WebSocket streams into canonical historical snapshot batches."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/protocols/vps_recovery_warmup.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Build-17 VPS recovery and warm-up proof helpers."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/regime_classifier/__init__.py",
+    "owner_page_candidate": "lab",
+    "reason": "Typed regime classification helpers."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/regime_classifier/regime_lite.py",
+    "owner_page_candidate": "lab",
+    "reason": "Typed three-state regime helper with bounded hysteresis and cooldown."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/risk_backbone/btc_factor_guard/portfolio_beta_calculator.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-4 / btc_factor_guard / portfolio_beta_calculator"
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "src/risk_backbone/exposure_budgeter/exposure_reporter.py",
+    "owner_page_candidate": "unknown",
+    "reason": "Build-4 / exposure_budgeter / exposure_reporter"
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "src/risk_backbone/info_stress_monitor.py",
+    "owner_page_candidate": "unknown",
+    "reason": "Bounded information-stress detector and risk precheck for entry vetoes."
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "src/risk_backbone/loss_budgeter/daily_pnl_breaker.py",
+    "owner_page_candidate": "unknown",
+    "reason": "Typed daily PnL breaker with persistent same-day shadow lock."
+  },
+  {
+    "kind": "orphan_candidate",
+    "file_path": "src/risk_backbone/risk_runtime_models.py",
+    "owner_page_candidate": "unknown",
+    "reason": "Public models and hook contracts for the Build-4 risk runtime."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/__init__.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-5 - scoring_backbone: auditable hard/soft/rank runtime."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/break_even_filter.py",
+    "owner_page_candidate": "trading",
+    "reason": "Additive doc20 economics seam for break-even / CE / EV-net gating."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/engine_a_cost_thresholds.py",
+    "owner_page_candidate": "trading",
+    "reason": "Allowed upstream signed-threshold resolver for Engine A cost inputs."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/engine_b_breakout_thresholds.py",
+    "owner_page_candidate": "trading",
+    "reason": "Allowed upstream signed-threshold resolver for Engine B anti-breakout thresholds."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/engine_b_cost_thresholds.py",
+    "owner_page_candidate": "trading",
+    "reason": "Allowed upstream signed-threshold resolver for Engine B cost inputs."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/engine_b_excess_thresholds.py",
+    "owner_page_candidate": "trading",
+    "reason": "Allowed upstream signed-threshold resolver for Engine B excess thresholds."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/engine_b_invalidation_thresholds.py",
+    "owner_page_candidate": "trading",
+    "reason": "Allowed upstream signed-threshold resolver for Engine B invalidation thresholds."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/engine_c_continuation_thresholds.py",
+    "owner_page_candidate": "trading",
+    "reason": "Allowed upstream signed-threshold resolver for Engine C continuation inputs."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/engine_c_cost_thresholds.py",
+    "owner_page_candidate": "trading",
+    "reason": "Allowed upstream signed-threshold resolver for Engine C cost inputs."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/engine_d_coordination_thresholds.py",
+    "owner_page_candidate": "trading",
+    "reason": "Policy-governed upstream threshold resolver for Engine D coordination."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/engine_d_cost_thresholds.py",
+    "owner_page_candidate": "trading",
+    "reason": "Allowed upstream signed-threshold resolver for Engine D cost inputs."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/engine_d_first_episode_thresholds.py",
+    "owner_page_candidate": "trading",
+    "reason": "Allowed upstream signed-threshold resolver for Engine D first-episode linkage."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/ev_net_floor_thresholds.py",
+    "owner_page_candidate": "trading",
+    "reason": "Shared signed-threshold resolver for the canonical EV-net floor seam."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/fee_aware_edge_gate.py",
+    "owner_page_candidate": "trading",
+    "reason": "Compatibility surface for the canonical execution-owned fee-aware edge gate."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/forecast_normalizer.py",
+    "owner_page_candidate": "trading",
+    "reason": "Additive doc20 forecast normalization seam for runtime-safe forecast scaling."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/hard_block_gate/__init__.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-5 / hard_block_gate â€” fatal binary blocking decisions."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/hard_block_gate/blocker_decision_builder.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-5 / hard_block_gate / blocker_decision_builder"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/hard_block_gate/blocker_evaluator.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-5 / hard_block_gate / blocker_evaluator"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/hard_block_gate/blocker_reason_encoder.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-5 / hard_block_gate / blocker_reason_encoder"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/hard_block_gate/blocker_registry.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-5 / hard_block_gate / blocker_registry"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/hard_block_gate/blocker_reporter.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-5 / hard_block_gate / blocker_reporter"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/penalty_aggregator/__init__.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-5 / penalty_aggregator â€” gradual non-fatal penalties."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/penalty_aggregator/penalty_cap_guard.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-5 / penalty_aggregator / penalty_cap_guard"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/penalty_aggregator/penalty_registry.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-5 / penalty_aggregator / penalty_registry"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/penalty_aggregator/penalty_reporter.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-5 / penalty_aggregator / penalty_reporter"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/penalty_aggregator/score_penalty_builder.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-5 / penalty_aggregator / score_penalty_builder"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/penalty_aggregator/size_penalty_builder.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-5 / penalty_aggregator / size_penalty_builder"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/ranking_router/__init__.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-5 / ranking_router â€” rank and select opportunities within portfolio framework."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/ranking_router/candidate_pool_builder.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-5 / ranking_router / candidate_pool_builder"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/ranking_router/portfolio_compatibility_checker.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-5 / ranking_router / portfolio_compatibility_checker"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/ranking_router/ranking_reporter.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-5 / ranking_router / ranking_reporter"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/ranking_router/ranking_score_builder.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-5 / ranking_router / ranking_score_builder"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/ranking_router/selection_resolver.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-5 / ranking_router / selection_resolver"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/raw_score_builder/__init__.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-5 / raw_score_builder â€” construct readable, stable raw scores."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/raw_score_builder/feature_selector.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-5 / raw_score_builder / feature_selector"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/raw_score_builder/raw_score_calculator.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-5 / raw_score_builder / raw_score_calculator"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/raw_score_builder/score_component_breakdown.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-5 / raw_score_builder / score_component_breakdown"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/raw_score_builder/score_reporter.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-5 / raw_score_builder / score_reporter"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/scoring_runtime.py",
+    "owner_page_candidate": "trading",
+    "reason": "Build-5 / scoring_backbone / scoring_runtime"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/scoring_backbone/scoring_runtime_support.py",
+    "owner_page_candidate": "trading",
+    "reason": "Support contracts and helpers for the Build-5 scoring runtime."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/secrets_manager/__init__.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Bounded sealed-secrets helpers for local/runtime credential loading."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/secrets_manager/__main__.py",
+    "owner_page_candidate": "shadow",
+    "reason": "production module"
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/secrets_manager/_dpapi.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Platform dispatch for bounded secret protection backends."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/secrets_manager/_dpapi_posix.py",
+    "owner_page_candidate": "shadow",
+    "reason": "POSIX keyring-backed secret protection shim."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/secrets_manager/_dpapi_windows.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Windows DPAPI backend used by the sealed-secrets slice."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/secrets_manager/cli.py",
+    "owner_page_candidate": "shadow",
+    "reason": "CLI entrypoint for the bounded sealed-secrets slice."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/secrets_manager/loader.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Load sealed secret envelopes without leaking plaintext outside memory."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/venue_adapters/__init__.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Venue adapters for concrete exchange integrations."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/venue_adapters/binance_spot/__init__.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Bounded Binance Spot adapter surfaces for P0-1."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/venue_adapters/binance_spot/account_feature_provider.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Bounded read-only Binance provider for weekly halal account-feature audits."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/venue_adapters/binance_spot/bootstrap.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Bootstrap helpers for building the bounded Binance Spot execution adapter."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/venue_adapters/binance_spot/error_classifier.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Bounded Binance Spot order API error classification."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/venue_adapters/binance_spot/execution_adapter.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Bounded Binance Spot execution adapter for the Build-3 runtime."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/venue_adapters/binance_spot/order_translator.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Translate internal execution intents into bounded Binance Spot order requests."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/venue_adapters/binance_spot/orderbook_manager.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Snapshot + delta replay manager for Binance Spot order-book streams."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/venue_adapters/binance_spot/rate_limiter.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Bounded Binance REST quota tracking with header sync and 429 backoff."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/venue_adapters/binance_spot/rest_client.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Bounded async REST client for Binance Spot."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/venue_adapters/binance_spot/time_sync.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Clock synchronization helpers for Binance Spot."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/venue_adapters/binance_spot/user_data_events.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Bounded authenticated Binance user-data event parsing for execution runtime."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/venue_adapters/binance_spot/user_data_ws_client.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Bounded authenticated Binance user-data websocket source for execution runtime."
+  },
+  {
+    "kind": "coded_not_displayed",
+    "file_path": "src/venue_adapters/binance_spot/ws_client.py",
+    "owner_page_candidate": "shadow",
+    "reason": "Bounded websocket depth client with explicit stale/resync state."
+  },
+  {
+    "kind": "not_yet_persisted",
+    "metric_name": "model_risk",
+    "source_file": "src/cockpit/state_model_risk.py",
+    "owner_page_candidate": "lab"
+  },
+  {
+    "kind": "not_yet_persisted",
+    "metric_name": "refusal_journal",
+    "source_file": "src/cockpit/state_refusal_journal.py",
+    "owner_page_candidate": "lab"
+  }
+]

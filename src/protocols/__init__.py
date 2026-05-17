@@ -136,6 +136,10 @@ from protocols.shadow_dashboard import (
     build_shadow_projection,
 )
 from protocols.engine_judgment_dashboard import build_engine_judgment_projection
+from protocols.replay_governance_projection import (
+    ReplayGovernanceProjection,
+    project_replay_governance,
+)
 from protocols.shadow_day_counter import ShadowDayCounter, ShadowProfile
 from protocols.shadow_runtime import (
     build_shadow_runtime_evidence,
@@ -554,6 +558,8 @@ __all__ = [
     "build_shadow_projection",
     "build_shadow_dashboard_section",
     "build_engine_judgment_projection",
+    "ReplayGovernanceProjection",
+    "project_replay_governance",
     "ArtifactHookActionInput",
     "ComposedArtifactHookEffect",
     "compose_artifact_hook_actions",

@@ -1,0 +1,42 @@
+<section class="card" id="lab-vps-transfer">
+    <div class="card__head">
+        <h3>Lab → VPS Transfer</h3>
+        <span class="card__sub">{{ vm.operational_proof.lab_vps_transfer.overall_status }}</span>
+    </div>
+    <div class="card__body">
+        <table class="data-table data-table--compact">
+            <tbody>
+                <tr><th>Source status</th><td>{{ vm.operational_proof.lab_vps_transfer.source_status }}</td></tr>
+                <tr><th>Hash matches</th><td>{{ vm.operational_proof.lab_vps_transfer.hash_match_count }}</td></tr>
+                <tr><th>Missing on VPS</th><td>{{ vm.operational_proof.lab_vps_transfer.missing_on_vps_count }}</td></tr>
+                <tr><th>Missing on Local</th><td>{{ vm.operational_proof.lab_vps_transfer.missing_on_local_count }}</td></tr>
+                <tr><th>Mismatches</th><td>{{ vm.operational_proof.lab_vps_transfer.mismatch_count }}</td></tr>
+            </tbody>
+        </table>
+        <table class="data-table data-table--compact">
+            <thead>
+                <tr><th>Artifact</th><th>Status</th><th>Local</th><th>VPS</th></tr>
+            </thead>
+            <tbody>
+            {% for item in vm.operational_proof.lab_vps_transfer.items %}
+                <tr>
+                    <td><code>{{ item.name }}</code></td>
+                    <td>{{ item.status }}</td>
+                    <td>
+                        <code>{{ item.local_ref or item.local_hash or 'n/a' }}</code>
+                        {% if item.local_lineage_version %}
+                        <div class="muted small">{{ item.local_lineage_version }}</div>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <code>{{ item.vps_ref or item.vps_hash or 'n/a' }}</code>
+                        {% if item.vps_lineage_version %}
+                        <div class="muted small">{{ item.vps_lineage_version }}</div>
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>

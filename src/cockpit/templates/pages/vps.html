@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+
+{% block title %}VPS - {{ vm.welcome_message }}{% endblock %}
+
+{% block content %}
+
+<section class="welcome-banner">
+    <div class="welcome-banner__inner">
+        <div>
+            <h1 class="welcome-banner__title">VPS / Build-17</h1>
+            <p class="welcome-banner__sub">
+                Host metrics, process health, queue state, operator recommendations, and live-complete status.
+            </p>
+        </div>
+        <div class="welcome-banner__amount">
+            <span class="welcome-banner__label">Build-17 status</span>
+            <span class="welcome-banner__value">{{ vm.runtime.monitoring_payload.last_live_complete_status if vm.runtime.monitoring_payload else 'not_configured' }}</span>
+        </div>
+    </div>
+</section>
+
+<section class="stat-row">
+    <div class="stat-card">
+        <div class="stat-card__head"><span class="stat-card__pair">CPU</span></div>
+        <div class="stat-card__price">{{ "%.1f"|format(vm.runtime.monitoring_payload.process.cpu_pct if vm.runtime.monitoring_payload else 0.0) }}%</div>
+        <div class="stat-card__foot">source={{ vm.runtime.monitoring_payload.process.sampling_mode if vm.runtime.monitoring_payload else 'n/a' }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-card__head"><span class="stat-card__pair">RAM</span></div>
+        <div class="stat-card__price">{{ "%.1f"|format(vm.runtime.monitoring_payload.process.ram_pct if vm.runtime.monitoring_payload else 0.0) }}%</div>
+        <div class="stat-card__foot">rss={{ "%.1f"|format(vm.runtime.monitoring_payload.process.rss_mb if vm.runtime.monitoring_payload else 0.0) }} MB</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-card__head"><span class="stat-card__pair">Disk</span></div>
+        <div class="stat-card__price">{{ "%.1f"|format(vm.runtime.monitoring_payload.disk.used_pct if vm.runtime.monitoring_payload else 0.0) }}%</div>
+        <div class="stat-card__foot">free={{ "%.1f"|format(vm.runtime.monitoring_payload.disk.free_gb if vm.runtime.monitoring_payload else 0.0) }} GB</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-card__head"><span class="stat-card__pair">Queue</span></div>
+        <div class="stat-card__price">{{ vm.operational_proof.queue_trace.consumption_status }}</div>
+        <div class="stat-card__foot">pending={{ vm.operational_proof.queue_trace.pending_count }}</div>
+    </div>
+</section>
+
+<section class="grid-2">
+    <div class="card">
+        <div class="card__head">
+            <h3>Process and Build-17 State</h3>
+            <span class="card__sub">Immediate host view</span>
+        </div>
+        <div class="card__body">
+            {% if vm.runtime.monitoring_payload %}
+            <table class="data-table data-table--compact">
+                <tbody>
+                    <tr><th>PID</th><td>{{ vm.runtime.monitoring_payload.process.pid }}</td></tr>
+                    <tr><th>Threads</th><td>{{ vm.runtime.monitoring_payload.process.thread_count }}</td></tr>
+                    <tr><th>Raw service status</th><td>{{ vm.operational_proof.service_liveness.service_status }}</td></tr>
+                    <tr><th>Control ready</th><td>{{ vm.operational_proof.service_liveness.control_ready }}</td></tr>
+                    <tr><th>Loop count</th><td>{{ vm.operational_proof.service_liveness.main_loop_count }}</td></tr>
+                    <tr><th>Heartbeat age</th><td>{{ "%.1fs"|format(vm.operational_proof.service_liveness.heartbeat_age_seconds) if vm.operational_proof.service_liveness.heartbeat_age_seconds is not none else 'n/a' }}</td></tr>
+                    <tr><th>Build-17 status</th><td>{{ vm.runtime.monitoring_payload.last_live_complete_status }}</td></tr>
+                    <tr><th>Build-17 verdict</th><td>{{ vm.runtime.monitoring_payload.last_live_complete_verdict }}</td></tr>
+                    <tr><th>Run state</th><td>{{ vm.runtime.monitoring_payload.last_live_complete_run_state }}</td></tr>
+                    <tr><th>Operator recommendation</th><td>{{ vm.runtime.monitoring_payload.last_live_complete_operator_report_recommendation or 'n/a' }}</td></tr>
+                </tbody>
+            </table>
+            {% else %}
+            <p class="muted">No monitoring payload available.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    {% include "partials/_disk_growth.html" %}
+</section>
+
+<section class="grid-2">
+    {% include "partials/_service_liveness.html" %}
+    {% include "partials/_queue_trace.html" %}
+</section>
+
+<section class="card">
+    <div class="card__head">
+        <h3>Operator Alerts</h3>
+        <span class="card__sub">{{ vm.runtime.alerts|length }} active</span>
+    </div>
+    <div class="card__body">
+        {% if vm.runtime.alerts %}
+        <table class="data-table data-table--compact">
+            <thead>
+                <tr><th>ID</th><th>Severity</th><th>Category</th><th>Message</th></tr>
+            </thead>
+            <tbody>
+            {% for alert in vm.runtime.alerts %}
+                <tr>
+                    <td><code>{{ alert.alert_id }}</code></td>
+                    <td>{{ alert.severity }}</td>
+                    <td>{{ alert.category }}</td>
+                    <td>{{ alert.message }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="muted">No cockpit-derived VPS alerts.</p>
+        {% endif %}
+    </div>
+</section>
+
+{% endblock %}

@@ -1,0 +1,20 @@
+{# Renders a single pair-metric card. Caller passes ``metric`` (PairMetric). #}
+<div class="stat-card">
+    <div class="stat-card__head">
+        <div class="stat-card__pair">
+            <span class="stat-card__icon">●</span>
+            <span class="stat-card__label">{{ metric.pair }}</span>
+        </div>
+        <span class="stat-card__change stat-card__change--{{ metric.change_24h_pct|change_class }}">
+            {{ metric.change_24h_pct|change }}
+        </span>
+    </div>
+    <div class="stat-card__price">{{ metric.price|price }}</div>
+    <div class="stat-card__foot">
+        {% if metric.last_update_ts %}
+            <span class="stat-card__source">live capture</span>
+        {% else %}
+            <span class="stat-card__source stat-card__source--muted">awaiting capture…</span>
+        {% endif %}
+    </div>
+</div>

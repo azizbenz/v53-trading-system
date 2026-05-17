@@ -10,6 +10,7 @@ from calibration_methods.energy_distance import (
     EnergyDistanceError,
     EnergyDistanceResult,
     _energy_statistic,
+    compute_raw_energy_distance_statistic,
     compute_energy_distance_test,
 )
 
@@ -56,6 +57,32 @@ def test_energy_statistic_exceeds_half_point_for_unit_mean_shift_anchor() -> Non
     x, y = _gaussian_pair(size=500, seed_x=20260420, seed_y=20260421, mean_y=1.0)
     stat = _energy_statistic(x, y)
     assert stat > 0.5
+
+
+def test_raw_energy_distance_same_distribution_anchor_is_small() -> None:
+    """Raw E_n,m seam: same-distribution magnitude stays near zero under H0."""
+
+    shadow, backtest = _gaussian_pair(
+        size=100,
+        seed_x=20240424,
+        seed_y=20240425,
+    )
+    raw_statistic = compute_raw_energy_distance_statistic(shadow, backtest)
+
+    assert raw_statistic < 0.05
+
+
+def test_scaled_energy_statistic_is_scale_factor_times_raw_statistic() -> None:
+    shadow, backtest = _gaussian_pair(
+        size=100,
+        seed_x=20240424,
+        seed_y=20240425,
+    )
+    raw_statistic = compute_raw_energy_distance_statistic(shadow, backtest)
+    scaled_statistic = _energy_statistic(shadow, backtest)
+    expected_scale = (len(shadow) * len(backtest)) / (len(shadow) + len(backtest))
+
+    assert scaled_statistic == pytest.approx(expected_scale * raw_statistic)
 
 
 def test_energy_statistic_is_symmetric() -> None:

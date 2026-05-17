@@ -12,6 +12,7 @@ from smoke_bootstrap_recovery.smoke_models import (
     StateSanityResult,
 )
 from smoke_bootstrap_recovery.smoke_reporter import (
+    build_build1_core_health_payload,
     build_smoke_report,
     format_smoke_report,
 )
@@ -200,6 +201,63 @@ class TestFormatSmokeReport:
         report = build_smoke_report(reports)
         text = format_smoke_report(report)
         assert "something broke" in text
+
+
+@pytest.mark.build1
+class TestBuild1CoreHealthPayload:
+    def test_payload_marks_green_when_manifest_dag_guardrails_and_smoke_pass(self):
+        manifest_sanity = StateSanityResult(
+            module_name="manifest_registry",
+            status=SmokeStatus.PASS,
+            checks_passed=2,
+        )
+        dag_sanity = StateSanityResult(
+            module_name="dag_validator",
+            status=SmokeStatus.PASS,
+            checks_passed=2,
+        )
+        guardrail_sanity = StateSanityResult(
+            module_name="smoke_bootstrap_recovery",
+            status=SmokeStatus.PASS,
+            checks_passed=2,
+        )
+        report = build_smoke_report(
+            (
+                ModuleSmokeReport(module_name="manifest_registry", bootstrap=_pass_bootstrap("manifest_registry"), recovery=_pass_recovery("manifest_registry"), state_sanity=manifest_sanity, requires_recovery=True, requires_sanity=True),
+                ModuleSmokeReport(module_name="dag_validator", bootstrap=_pass_bootstrap("dag_validator"), recovery=_pass_recovery("dag_validator"), state_sanity=dag_sanity, requires_recovery=True, requires_sanity=True),
+                ModuleSmokeReport(module_name="smoke_bootstrap_recovery", bootstrap=_pass_bootstrap("smoke_bootstrap_recovery"), recovery=_pass_recovery("smoke_bootstrap_recovery"), state_sanity=guardrail_sanity, requires_recovery=True, requires_sanity=True),
+            )
+        )
+
+        payload = build_build1_core_health_payload(report)
+
+        assert payload["build1_manifest_status"] == "PASS"
+        assert payload["build1_dag_status"] == "PASS"
+        assert payload["build1_guardrail_status"] == "PASS"
+        assert payload["build1_smoke_status"] == "PASS"
+        assert payload["build1_core_health_status"] == "PASS"
+
+    def test_payload_marks_blocked_when_guardrails_fail(self):
+        guardrail_sanity = StateSanityResult(
+            module_name="smoke_bootstrap_recovery",
+            status=SmokeStatus.FAIL,
+            checks_passed=1,
+            checks_failed=1,
+            anomalies=("engineering_guardrails: new_violations=1",),
+        )
+        report = build_smoke_report(
+            (
+                ModuleSmokeReport(module_name="manifest_registry", bootstrap=_pass_bootstrap("manifest_registry"), recovery=_pass_recovery("manifest_registry"), state_sanity=_pass_sanity("manifest_registry"), requires_recovery=True, requires_sanity=True),
+                ModuleSmokeReport(module_name="dag_validator", bootstrap=_pass_bootstrap("dag_validator"), recovery=_pass_recovery("dag_validator"), state_sanity=_pass_sanity("dag_validator"), requires_recovery=True, requires_sanity=True),
+                ModuleSmokeReport(module_name="smoke_bootstrap_recovery", bootstrap=_pass_bootstrap("smoke_bootstrap_recovery"), recovery=_pass_recovery("smoke_bootstrap_recovery"), state_sanity=guardrail_sanity, requires_recovery=True, requires_sanity=True),
+            )
+        )
+
+        payload = build_build1_core_health_payload(report)
+
+        assert payload["build1_guardrail_status"] == "FAIL"
+        assert payload["build1_core_health_status"] == "BLOCKED"
+        assert payload["reason_codes"] == ["engineering_guardrails: new_violations=1"]
 
 
 # ─── FULL BUILD-1 INTEGRATION ───────────────────────────────────────

@@ -10,6 +10,7 @@ import pytest
 import backtest_artifact_import.export_dir_bridge as export_dir_bridge_module
 from backtest_artifact_import import (
     ArtifactUploadContext,
+    build_contract_validation_capital_profiles,
     build_lab_fixture_signature_envelope,
     build_artifact_export_bundle_from_replay_import_context,
     build_import_context_from_replay_plan,
@@ -207,6 +208,123 @@ def test_build_import_context_from_export_dir_builds_typed_import_request():
         assert context.import_request.payload_bundle is not None
         assert context.expected_feature_ids == ("sweep_score_1m",)
         assert decision.accepted is True
+    finally:
+        shutil.rmtree(export_dir, ignore_errors=True)
+
+
+def test_build_import_context_from_export_dir_uses_embedded_feature_lineage_lock():
+    export_dir = _scratch_dir("export_embedded_lineage")
+    execute_local_replay_export(
+        export_dir,
+        ReplayExecutionInput(
+            run_manifest=ReplayRunManifest(
+                run_id="run-export-embedded-lineage-1",
+                strategy_id="strategy-a-embedded-lineage",
+                strategy_version="a.v2.0",
+                strategy_classification=StrategyClassification.A_VARIANT,
+                lineage_version="a.v2.0.r3",
+                profile_scope=ProfileId.COMPLETE,
+                engine_scope=("engine_a", "engine_c"),
+                tested_pairs=("BTCUSDT",),
+                dataset_manifest_id="dataset-export-embedded-lineage",
+                timeframe_scope="2026-03-01/2026-03-31",
+                feature_set_version="1.0.0",
+                transform_set_version="1.0.0",
+                formula_set_version="formula.v2",
+                scoring_version="score.v2",
+                regime_version="regime.v2",
+                risk_policy_version="risk.v2",
+                cost_model_version="cost.v2",
+                performance_mode="research_fast_mode",
+                artifact_schema_version="1.0.0",
+                artifact_hash="artifact-hash-embedded-lineage",
+                clock_id="clock-local-export-embedded-lineage",
+                start_timestamp_ms=1_700_000_000_000,
+                end_timestamp_ms=1_700_003_600_000,
+                tick_count=120,
+                record_count=120,
+            ),
+            total_opportunities=2,
+            dtr_records=(
+                build_dtr(
+                    dtr_id="run-export-embedded-lineage-1:dtr:1",
+                    pair="BTCUSDT",
+                    engine_id="engine_a",
+                    decision_state=DecisionState.SELECTED,
+                    expected_cost=0.0010,
+                    realized_cost=0.0011,
+                    gross_return=0.0020,
+                    ce_expected=0.0006,
+                    runtime_mode="local_replay",
+                    input_source="local_replay",
+                    timestamp=1_700_000_000.0,
+                ),
+            ),
+            feature_bridge_payload={
+                "bridge": "ok",
+                "dataset_id": "dataset-export-embedded-lineage",
+                "feature_set_version": "1.0.0",
+                "transform_set_version": "1.0.0",
+                "pairs": ["BTCUSDT"],
+                "engines": ["engine_a", "engine_c"],
+                "feature_keys": ["snapshot_last_price", "snapshot_spread_bps"],
+                "recognized_feature_keys": [],
+                "feature_lineage_lock": {
+                    "feature_set_version": "1.0.0",
+                    "transform_set_version": "1.0.0",
+                    "records": [
+                        {
+                            "feature_id": "snapshot_last_price",
+                            "family": PhysicsFeatureFamily.MICROPRICE_DEVIATION.value,
+                            "source_inputs": ["snapshot_event"],
+                            "transform_ids": [TransformWhitelistId.CAPRATIO.value],
+                            "equation_id": "shadow.live.derived.snapshot_last_price",
+                            "feature_set_version": "1.0.0",
+                            "transform_set_version": "1.0.0",
+                        },
+                        {
+                            "feature_id": "snapshot_spread_bps",
+                            "family": PhysicsFeatureFamily.SPREAD_REGIME.value,
+                            "source_inputs": ["snapshot_event"],
+                            "transform_ids": [TransformWhitelistId.CLIP01.value],
+                            "equation_id": "shadow.live.derived.snapshot_spread_bps",
+                            "feature_set_version": "1.0.0",
+                            "transform_set_version": "1.0.0",
+                        },
+                    ],
+                },
+                "transform_whitelist_lock": {
+                    "transform_set_version": "1.0.0",
+                    "allowed_transform_ids": [
+                        TransformWhitelistId.CAPRATIO.value,
+                        TransformWhitelistId.CLIP01.value,
+                    ],
+                },
+            },
+            parity_diagnostics_payload={
+                "parity_status": "ok",
+                "dataset_id": "dataset-export-embedded-lineage",
+                "decision_match_rate": 1.0,
+            },
+            review_notes=("embedded lineage export",),
+        ),
+    )
+
+    try:
+        context = build_import_context_from_export_dir(
+            export_dir,
+            lifecycle_policy=ArtifactLifecyclePolicy(ttl_max_days=30, rule_half_life_days=7),
+            training_end=date(2026, 4, 6),
+            governance_reference_date=date(2026, 4, 6),
+            drift_score_threshold=0.85,
+        )
+
+        assert context.expected_feature_ids == ("snapshot_last_price", "snapshot_spread_bps")
+        assert context.feature_lineage_lock.records[0].feature_id == "snapshot_last_price"
+        assert context.transform_whitelist_lock.allowed_transform_ids == (
+            TransformWhitelistId.CAPRATIO,
+            TransformWhitelistId.CLIP01,
+        )
     finally:
         shutil.rmtree(export_dir, ignore_errors=True)
 
@@ -714,6 +832,67 @@ def test_build_upload_request_from_export_dir_materializes_typed_upload_request(
         assert upload_request.governance_reference_date == date(2026, 4, 6)
         assert import_request.governance_reference_date == date(2026, 4, 6)
         assert decision.accepted is True
+    finally:
+        shutil.rmtree(export_dir, ignore_errors=True)
+
+
+def test_discover_local_replay_export_collects_capital_profile_supplementary_refs() -> None:
+    export_dir = _export_dir()
+
+    try:
+        capital_dir = export_dir / "capital_profiles"
+        capital_dir.mkdir(parents=True, exist_ok=True)
+        for profile in build_contract_validation_capital_profiles()[:2]:
+            (capital_dir / f"{profile.capital_bucket}.json").write_text(
+                profile.model_dump_json(indent=2),
+                encoding="utf-8",
+            )
+
+        discovery = discover_local_replay_export(export_dir)
+
+        assert len(discovery.payload_bundle.supplementary_refs) >= 2
+        assert any(ref.endswith("400.json") for ref in discovery.payload_bundle.supplementary_refs)
+        assert any(ref.endswith("500.json") for ref in discovery.payload_bundle.supplementary_refs)
+    finally:
+        shutil.rmtree(export_dir, ignore_errors=True)
+
+
+def test_discover_local_replay_export_collects_promotion_artifact_supplementary_refs() -> None:
+    export_dir = _export_dir()
+
+    try:
+        (export_dir / "engine_promotion" / "engine_c").mkdir(parents=True, exist_ok=True)
+        (export_dir / "pair_promotion" / "BTCUSDT").mkdir(parents=True, exist_ok=True)
+        (export_dir / "strategy_promotion" / "strategy-a").mkdir(parents=True, exist_ok=True)
+        (export_dir / "sample_size_survival" / "engine" / "engine_c").mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+        (export_dir / "engine_promotion" / "engine_c" / "run.json").write_text(
+            '{"schema_version":"v1","engine_id":"engine_c"}',
+            encoding="utf-8",
+        )
+        (export_dir / "pair_promotion" / "BTCUSDT" / "run.json").write_text(
+            '{"schema_version":"v1","pair":"BTCUSDT"}',
+            encoding="utf-8",
+        )
+        (export_dir / "strategy_promotion" / "strategy-a" / "run.json").write_text(
+            '{"schema_version":"v1","strategy_id":"strategy-a"}',
+            encoding="utf-8",
+        )
+        (
+            export_dir / "sample_size_survival" / "engine" / "engine_c" / "run.json"
+        ).write_text(
+            '{"schema_version":"v1","scope":"engine","id":"engine_c"}',
+            encoding="utf-8",
+        )
+
+        discovery = discover_local_replay_export(export_dir)
+
+        assert any("engine_promotion" in ref for ref in discovery.payload_bundle.supplementary_refs)
+        assert any("pair_promotion" in ref for ref in discovery.payload_bundle.supplementary_refs)
+        assert any("strategy_promotion" in ref for ref in discovery.payload_bundle.supplementary_refs)
+        assert any("sample_size_survival" in ref for ref in discovery.payload_bundle.supplementary_refs)
     finally:
         shutil.rmtree(export_dir, ignore_errors=True)
 

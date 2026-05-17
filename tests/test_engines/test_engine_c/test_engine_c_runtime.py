@@ -12,7 +12,9 @@ from engines.engine_c import (
     EngineCVoidValidationInput,
     EngineCVoidValidationOutcome,
 )
-from engines.engine_c.engine_c_runner import EngineCInput
+from engines.engine_c.engine_c_runtime import _ENGINE_C_FEATURE_WEIGHTS
+from engines.engine_c.engine_c_runner import EngineCInput, run_engine_c
+from engines.engine_c.engine_c_runtime_support import build_scoring_candidate
 from interface_contracts import (
     BetStructure,
     ConditioningFamily,
@@ -194,6 +196,36 @@ def test_runtime_emits_signal_and_accepts_through_risk(repo_tmp_path: Path):
     assert accepted_log.duplication_overlap_with_engine_a == 0.28
     assert accepted_log.queue_pressure == pytest.approx(0.36)
     assert result.forecast_signal_candidate is None
+
+
+def test_scoring_candidate_marks_shared_physics_mapping_partial_for_engine_c() -> None:
+    runtime_input = _runtime_input(
+        supplementary_refs=("E:/shadow/regime_detector_artifact.summary.json",),
+    )
+    engine_output = run_engine_c(runtime_input.engine_inputs)
+
+    candidate = build_scoring_candidate(runtime_input, engine_output, _ENGINE_C_FEATURE_WEIGHTS)
+
+    assert candidate.supplementary_refs == ("E:/shadow/regime_detector_artifact.summary.json",)
+    assert candidate.carriage_statuses == ("local_math_only", "shared_scoring_physics_partial")
+    assert candidate.carriage_reason_codes == (
+        "SCORING_SHARED_PHYSICS_MAPPING_NOT_PROVEN",
+        "HUMAN_DECISION_REQUIRED_FOR_C_D_SHARED_CARRIAGE",
+        "REGIME_SCORING_REINJECTION_PARTIAL",
+    )
+    assert candidate.shared_physics_mapping_status == "PARTIAL_BY_DESIGN"
+    assert candidate.engine_role == (
+        "Breakout / continuation engine with fake-breakout protection and toxic-flow veto/context."
+    )
+    assert candidate.execution_fragility == pytest.approx(0.0)
+    assert candidate.market_toxicity == pytest.approx(0.0)
+    assert candidate.spread_regime_penalty == pytest.approx(0.0)
+    assert candidate.participation_penalty == pytest.approx(0.0)
+    assert candidate.cost_model_completeness_status == "NOT_PROVEN"
+    assert candidate.fee_source_status == "NOT_PROVEN"
+    assert candidate.impact_source_status == "NOT_PROVEN"
+    assert candidate.fill_realism_status == "NOT_PROVEN"
+    assert candidate.realized_slippage_status == "NOT_PROVEN"
 
 
 def test_runtime_emits_additive_forecast_signal_when_strategy_id_is_provided(repo_tmp_path: Path) -> None:
@@ -585,6 +617,36 @@ class _FixedRiskRuntime:
         self._candidate = candidate
         self._now = now
         return self._evaluation
+
+
+def test_runtime_surfaces_partial_by_design_and_not_proven_cost_statuses_to_risk(
+    repo_tmp_path: Path,
+) -> None:
+    base = _base_risk_evaluation()
+    risk_runtime = _FixedRiskRuntime(base)
+    runtime = _runtime(repo_tmp_path, "engine_c_risk_candidate_statuses", risk_runtime=risk_runtime)
+
+    result = runtime.evaluate(_runtime_input(strategy_id="strategy-c-breakout"), now=69.0)
+
+    assert result.risk_evaluation is not None
+    candidate = risk_runtime._candidate
+    assert isinstance(candidate, RiskCandidate)
+    assert candidate.shared_physics_mapping_status == "PARTIAL_BY_DESIGN"
+    assert candidate.engine_role == (
+        "Breakout / continuation engine with fake-breakout protection and toxic-flow veto/context."
+    )
+    assert candidate.execution_fragility == pytest.approx(0.0)
+    assert candidate.market_toxicity == pytest.approx(0.0)
+    assert candidate.spread_regime_penalty == pytest.approx(0.0)
+    assert candidate.execution_fragility_status == "NOT_PROVEN"
+    assert candidate.market_toxicity_status == "NOT_PROVEN"
+    assert candidate.spread_regime_penalty_status == "NOT_PROVEN"
+    assert candidate.participation_penalty_status == "NOT_PROVEN"
+    assert candidate.cost_model_completeness_status == "NOT_PROVEN"
+    assert candidate.fee_source_status == "NOT_PROVEN"
+    assert candidate.impact_source_status == "NOT_PROVEN"
+    assert candidate.fill_realism_status == "NOT_PROVEN"
+    assert candidate.realized_slippage_status == "NOT_PROVEN"
 
 
 def test_runner_returns_no_trade_status(repo_tmp_path: Path) -> None:

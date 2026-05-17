@@ -1,0 +1,27 @@
+schema_version: calibration.v1
+artifact_id: v53-binance-thresholds-v1
+version: v1
+produced_by: manual-calibration
+generated_at: "2026-04-26T00:00:00+00:00"
+
+thresholds:
+  - threshold_id: THR-X01
+    value: 1000
+    description: "Max allowed clock drift between local system and Binance server (ms)"
+    source_module: venue_adapters.binance_spot.time_sync
+    calibration_artifact: v53-binance-thresholds-v1
+    notes: "Binance recv_window default is 5000ms; 1000ms drift is conservative safe margin"
+
+  - threshold_id: THR-X02
+    value: 30.0
+    description: "Max allowed silence gap on websocket stream before flagging (s)"
+    source_module: venue_adapters.binance_spot.time_sync
+    calibration_artifact: v53-binance-thresholds-v1
+    notes: "Aligned with websocket_silence_threshold_s in binance_adapter.yml"
+
+signature:
+  mode: human_attestation
+  signed_by: aziz.benz@gmail.com
+  signed_at: "2026-04-26T00:00:00+00:00"
+  payload_hash_sha256: ""
+  note: "Initial calibration for shadow warmup unblock — THR-X01/THR-X02 conservative defaults"

@@ -1,4 +1,4 @@
-"""Bounded score-fusion math for the Local-Lab ML confidence layer."""
+"""Bounded non-positive score-fusion math for the Local-Lab ML confidence layer."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class MlFusionResult(BaseModel, frozen=True):
-    """Typed result of additive ML score fusion."""
+    """Typed result of bounded non-positive ML score modulation."""
 
     base_score: float
     fused_score: float
@@ -45,11 +45,14 @@ def validate_alpha(alpha: float) -> float:
 
 
 def confidence_to_multiplier_delta(*, ml_confidence: float, alpha: float) -> float:
-    """Return the exact bounded multiplier delta implied by ML confidence."""
+    """Return the exact bounded non-positive multiplier delta implied by ML confidence."""
 
     normalized_alpha = validate_alpha(alpha)
     normalized_confidence = _clip_ml_confidence(ml_confidence)
-    return normalized_alpha * (normalized_confidence - 0.5)
+    return min(
+        0.0,
+        normalized_alpha * (normalized_confidence - 0.5),
+    )
 
 
 def apply_ml_score_fusion(
@@ -59,7 +62,7 @@ def apply_ml_score_fusion(
     alpha: float,
     artifact_ready: bool = True,
 ) -> MlFusionResult:
-    """Apply the exact bounded fusion formula or degrade gracefully to baseline."""
+    """Apply bounded non-positive modulation or degrade gracefully to baseline."""
 
     if not math.isfinite(base_score):
         raise ValueError("base_score must be finite")
