@@ -256,10 +256,55 @@ def _report_preview_rows(rows: tuple[dict[str, object], ...]) -> tuple[dict[str,
     return tuple(preview)
 
 
+def _parse_effective_utc(raw_value: object) -> datetime | None:
+    value = str(raw_value or "").strip()
+    if not value:
+        return None
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
+
+
+def _resolve_replay_window(
+    replay_start: str,
+    replay_end: str,
+) -> tuple[datetime | None, datetime | None]:
+    start_dt = _parse_effective_utc(replay_start)
+    end_dt = _parse_effective_utc(replay_end)
+    if end_dt is None and len(str(replay_end or "").strip()) == 10:
+        date_only_end = _parse_effective_utc(f"{replay_end}T23:59:59+00:00")
+        end_dt = date_only_end
+    return start_dt, end_dt
+
+
+def _row_temporally_matches(
+    row: dict[str, object],
+    *,
+    replay_start_dt: datetime | None,
+    replay_end_dt: datetime | None,
+) -> bool:
+    effective_from_dt = _parse_effective_utc(row.get("effective_from_utc"))
+    effective_to_dt = _parse_effective_utc(row.get("effective_to_utc"))
+    if effective_from_dt is None and effective_to_dt is None:
+        return False
+    if replay_end_dt is not None and effective_from_dt is not None and effective_from_dt > replay_end_dt:
+        return False
+    if replay_start_dt is not None and effective_to_dt is not None and effective_to_dt < replay_start_dt:
+        return False
+    return True
+
+
 def load_historical_metadata_cache(
     root: Path | None,
     *,
     requested_pairs: tuple[str, ...] = (),
+    replay_start: str = "",
+    replay_end: str = "",
 ) -> HistoricalMetadataCacheResult:
     """Load the local Bybit metadata cache without making any network calls."""
 
@@ -358,6 +403,7 @@ def load_historical_metadata_cache(
         )
     normalized_rows = tuple(_canonicalize_metadata_row(row) for row in raw_rows)
     covered_pairs, missing_pairs = _rows_cover_requested_pairs(normalized_rows, requested_pairs)
+    replay_start_dt, replay_end_dt = _resolve_replay_window(replay_start, replay_end)
     fetched_at_utc = str(
         next(
             (
@@ -374,16 +420,47 @@ def load_historical_metadata_cache(
     else:
         historical_status = BYBIT_HISTORICAL_METADATA_READY
         blocker_codes = ()
-    metadata_temporal_status = str(
-        next(
-            (
-                row.get("metadata_temporal_status")
-                for row in normalized_rows
-                if str(row.get("metadata_temporal_status") or "").strip()
-            ),
-            CURRENT_METADATA_PROXY,
+    requested_pair_set = {_normalize_pair(pair) for pair in requested_pairs if pair}
+    rows_by_pair: dict[str, list[dict[str, object]]] = {}
+    for row in normalized_rows:
+        pair = _normalize_pair(row.get("symbol") or row.get("pair"))
+        if not pair:
+            continue
+        rows_by_pair.setdefault(pair, []).append(row)
+    temporal_match_ready = bool(requested_pair_set)
+    if replay_start_dt is None and replay_end_dt is None:
+        temporal_match_ready = False
+    else:
+        for pair in requested_pair_set:
+            pair_rows = rows_by_pair.get(pair, [])
+            if not any(
+                _row_temporally_matches(
+                    row,
+                    replay_start_dt=replay_start_dt,
+                    replay_end_dt=replay_end_dt,
+                )
+                and str(row.get("metadata_temporal_status") or "").strip()
+                not in {"", CURRENT_METADATA_PROXY}
+                for row in pair_rows
+            ):
+                temporal_match_ready = False
+                break
+    metadata_temporal_status = (
+        "HISTORICAL_METADATA_WINDOW_MATCH_READY"
+        if temporal_match_ready
+        else str(
+            next(
+                (
+                    row.get("metadata_temporal_status")
+                    for row in normalized_rows
+                    if str(row.get("metadata_temporal_status") or "").strip()
+                ),
+                CURRENT_METADATA_PROXY,
+            )
         )
     )
+    if metadata_temporal_status == CURRENT_METADATA_PROXY:
+        blocker_codes = tuple(dict.fromkeys((*blocker_codes, "CURRENT_METADATA_PROXY")))
     return HistoricalMetadataCacheResult(
         historical_metadata_status=historical_status,
         metadata_schema_status="METADATA_SCHEMA_READY",

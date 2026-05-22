@@ -21,6 +21,7 @@ from cockpit.action_support import (
     OUTPUT_ROOT_EXISTS_NON_EMPTY,
     OUTPUT_ROOT_READY,
     StrategyLadderControlAction,
+    is_a2_research_acceptable_blocker,
     is_valid_raw_source_manifest_path,
     resolve_output_root,
 )
@@ -32,6 +33,7 @@ from cockpit.backtest_state_support import (
     phase_id_for_action,
     phase_label_for_action,
     request_hash_for_normalized_request,
+    workflow_parent_hash_for_normalized_request,
     workflow_request_hash_for_normalized_request,
 )
 from cockpit.form_state_support import BacktestFormState
@@ -131,6 +133,129 @@ def _load_phase_a1_workflow_preview(workflow_root: Path) -> BacktestPreviewManif
         return None
 
 
+def _load_json_dict(path: Path) -> dict[str, object]:
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _check_a2_upstream_launch_ready(phase_a2_manifest_path: Path) -> tuple[bool, str]:
+    payload = _load_json_dict(phase_a2_manifest_path)
+    if not payload:
+        return False, "A2_MANIFEST_MISSING_CANNOT_PROCEED"
+    status = str(payload.get("data_factory_status") or "").strip()
+    blockers = tuple(
+        str(item).strip()
+        for item in (payload.get("blocker_codes") or ())
+        if str(item).strip()
+    )
+    if status.startswith("DATA_FACTORY_BLOCKED_BY") or status == "DATA_FACTORY_BLOCKED":
+        return False, f"A2_BLOCKED_UPSTREAM:{status}"
+    non_research_blockers = tuple(
+        code for code in blockers if not is_a2_research_acceptable_blocker(code)
+    )
+    if non_research_blockers:
+        return False, (
+            "A2_CRITICAL_BLOCKER_UPSTREAM:"
+            + ",".join(sorted(non_research_blockers))
+        )
+    return True, ""
+
+
+def _iter_workflow_roots(
+    *,
+    output_root_text: str,
+    jobs_root: Path | None,
+) -> tuple[Path, ...]:
+    roots: list[Path] = []
+    if output_root_text:
+        runs_root = Path(output_root_text).expanduser() / "runs"
+        if runs_root.is_dir():
+            roots.extend(path for path in runs_root.iterdir() if path.is_dir())
+    if jobs_root is not None:
+        workflows_root = jobs_root / "workflows"
+        if workflows_root.is_dir():
+            roots.extend(
+                path for path in workflows_root.iterdir() if path.is_dir() and path not in roots
+            )
+    return tuple(roots)
+
+
+def _phase_b1_runner_root(*, workflow_root: Path, workflow_run_id: str) -> Path:
+    return (
+        workflow_root
+        / workflow_phase_dirname(PHASE_B1)
+        / "backtest_strategy_ladder"
+        / workflow_run_id
+    )
+
+
+def resolve_phase_b1_replay_input_candidates_path(
+    *,
+    workflow_root: Path,
+    workflow_run_id: str,
+) -> Path | None:
+    run_root = _phase_b1_runner_root(
+        workflow_root=workflow_root,
+        workflow_run_id=workflow_run_id,
+    )
+    preselection_summary_path = run_root / "reports" / "preselection_summary.json"
+    preselection_candidates_path = run_root / "preselection_candidates.jsonl"
+    preselection_summary = _load_json_dict(preselection_summary_path)
+    preselection_status = str(preselection_summary.get("status", "")).strip()
+    if (
+        preselection_status == "ENGINE_NATIVE_PRESELECTION_READY"
+        and preselection_candidates_path.is_file()
+    ):
+        return preselection_candidates_path
+    return None
+
+
+def _reuse_existing_phase_a1_workflow(
+    *,
+    normalized_request: Patch6NormalizedRequest,
+    workflow_request_hash: str,
+    requested_workflow_run_id: str,
+    output_root_text: str,
+    jobs_root: Path | None,
+) -> Patch6NormalizedRequest:
+    if normalized_request.phase_id == PHASE_A1:
+        return normalized_request
+    requested_workflow_run_id = (requested_workflow_run_id or "").strip()
+    matching_candidates: list[tuple[float, str]] = []
+    for workflow_root in _iter_workflow_roots(
+        output_root_text=output_root_text,
+        jobs_root=jobs_root,
+    ):
+        preview = _load_phase_a1_workflow_preview(workflow_root)
+        if preview is None:
+            continue
+        if preview.workflow_request_hash != workflow_request_hash:
+            continue
+        preview_path = workflow_root / workflow_phase_dirname(PHASE_A1) / "source_date_preview_manifest.json"
+        try:
+            mtime = preview_path.stat().st_mtime
+        except OSError:
+            mtime = 0.0
+        matching_candidates.append((mtime, preview.workflow_run_id))
+    if not matching_candidates:
+        return normalized_request
+    matching_candidates.sort(reverse=True)
+    if requested_workflow_run_id:
+        for _, workflow_run_id in matching_candidates:
+            if workflow_run_id == requested_workflow_run_id:
+                return normalized_request.model_copy(
+                    update={"workflow_run_id": requested_workflow_run_id}
+                )
+    return normalized_request.model_copy(
+        update={"workflow_run_id": matching_candidates[0][1]}
+    )
+
+
 def _reuse_matching_workflow_parent(
     *,
     normalized_request: Patch6NormalizedRequest,
@@ -139,10 +264,28 @@ def _reuse_matching_workflow_parent(
     output_root_text: str,
     jobs_root: Path | None,
 ) -> Patch6NormalizedRequest:
+    parent_hash = workflow_parent_hash_for_normalized_request(normalized_request)
+
+    def _workflow_matches_parent(workflow_root: Path) -> bool:
+        phase_a1_preview = _load_phase_a1_workflow_preview(workflow_root)
+        if phase_a1_preview is not None:
+            return (
+                workflow_parent_hash_for_normalized_request(
+                    phase_a1_preview.normalized_request
+                )
+                == parent_hash
+            )
+        workflow_manifest = read_workflow_manifest(workflow_root)
+        if workflow_manifest is None:
+            return False
+        return (
+            workflow_manifest.pairs == normalized_request.pair_subset
+            and workflow_manifest.start == normalized_request.start
+            and workflow_manifest.end == normalized_request.end
+        )
+
     requested_workflow_run_id = (requested_workflow_run_id or "").strip()
     if not requested_workflow_run_id:
-        return normalized_request
-    if requested_workflow_run_id == normalized_request.workflow_run_id:
         return normalized_request
     candidate_workflow_roots = [
         _workflow_root_for_run_id(
@@ -150,62 +293,16 @@ def _reuse_matching_workflow_parent(
             output_root_text=output_root_text,
             jobs_root=jobs_root,
         )
-    ]
+    ] if requested_workflow_run_id else []
     if jobs_root is not None:
         jobs_root_candidate = jobs_root / "workflows" / requested_workflow_run_id
         if jobs_root_candidate not in candidate_workflow_roots:
             candidate_workflow_roots.append(jobs_root_candidate)
-    phase_a1_preview = None
     for requested_workflow_root in candidate_workflow_roots:
-        phase_a1_preview = _load_phase_a1_workflow_preview(requested_workflow_root)
-        if phase_a1_preview is not None:
-            break
-    if phase_a1_preview is not None:
-        existing_workflow_hash = workflow_request_hash_for_normalized_request(
-            phase_a1_preview.normalized_request
-        )
-        if existing_workflow_hash == workflow_request_hash:
+        if _workflow_matches_parent(requested_workflow_root):
             return normalized_request.model_copy(
                 update={"workflow_run_id": requested_workflow_run_id}
             )
-    for requested_workflow_root in candidate_workflow_roots:
-        workflow_manifest = read_workflow_manifest(requested_workflow_root)
-        if workflow_manifest is None:
-            continue
-        if workflow_manifest.pairs != normalized_request.pair_subset:
-            continue
-        if workflow_manifest.start != normalized_request.start:
-            continue
-        if workflow_manifest.end != normalized_request.end:
-            continue
-        if workflow_manifest.ml_mode != normalized_request.ml_mode:
-            continue
-        if workflow_manifest.candidate_discovery_mode != normalized_request.candidate_discovery_mode:
-            continue
-        if int(workflow_manifest.engine_native_sample_size) != int(
-            normalized_request.engine_native_sample_size
-        ):
-            continue
-        if bool(workflow_manifest.allow_broad_run) != bool(normalized_request.allow_broad_run):
-            continue
-        if bool(workflow_manifest.small_scope_enabled) != bool(
-            normalized_request.small_scope_enabled
-        ):
-            continue
-        if bool(workflow_manifest.full_scan_enabled) != bool(normalized_request.full_scan_enabled):
-            continue
-        if bool(workflow_manifest.no_full_scan_enabled) != bool(
-            normalized_request.no_full_scan_enabled
-        ):
-            continue
-        if (
-            workflow_manifest.silver_storage_mode_requested
-            and workflow_manifest.silver_storage_mode_requested != normalized_request.silver_storage_mode
-        ):
-            continue
-        return normalized_request.model_copy(
-            update={"workflow_run_id": requested_workflow_run_id}
-        )
     return normalized_request
 _PAIR_DATE_PATTERN = re.compile(r"^(?P<pair>[A-Z0-9/_-]+)_(?P<date>\d{4}-\d{2}-\d{2})$")
 _PAIR_TF_DATE_PATTERN = re.compile(
@@ -245,6 +342,37 @@ class BacktestSourcePreview(BaseModel, frozen=True):
     files_matched: int = 0
     files_skipped_by_date_filter: int = 0
     matched_paths_preview: tuple[str, ...] = ()
+
+
+class MlOverlayIntakePreview(BaseModel, frozen=True):
+    source_status: str = "ML_HANDOFF_RUN_NOT_SELECTED"
+    run_root: str = ""
+    handoff_report_ref: str = ""
+    backtest_input_ref: str = ""
+    artifact_summary_ref: str = ""
+    frozen_ml_artifact_path: str = ""
+    frozen_ml_artifact_hash: str = ""
+    rolling_ml_window_plan_path: str = ""
+    rolling_ml_window_plan_markdown_ref: str = ""
+    rolling_ml_window_plan_status: str = ""
+    rolling_ml_required_artifact_count: int = 0
+    pair: str = ""
+    timeframe: str = ""
+    timeframe_scope: tuple[str, ...] = ()
+    feature_names: tuple[str, ...] = ()
+    train_start: str = ""
+    train_end: str = ""
+    requested_backtest_start: str = ""
+    requested_backtest_end: str = ""
+    artifact_stale_after: str = ""
+    max_valid_backtest_end: str = ""
+    train_days: int = 0
+    validation_days: int = 0
+    freshness_days: int = 0
+    chunk_days: int = 0
+    ready: bool = False
+    check_status: str = "ML_CHECK_NOT_PROVEN"
+    blocker_codes: tuple[str, ...] = ()
 
 
 class BacktestPreflightPreview(BaseModel, frozen=True):
@@ -297,6 +425,11 @@ class BacktestPreflightPreview(BaseModel, frozen=True):
     candidate_discovery_limit_reason: str = ""
     candidate_discovery_mode: str = "SAMPLE_CAPPED_DEBUG"
     candidate_discovery_cap_status: str = "CANDIDATE_DISCOVERY_LIMIT_NOT_PROVEN"
+    # Patch P4b (2026-05-22) — visibility of parent-path expansion per source kind.
+    # Empty when admin path is already a pair dir OR no pairs requested.
+    # Populated with the expanded sub-paths (one per requested pair) when admin
+    # points at a parent dir containing multiple pair subdirs.
+    parent_path_expansion: dict[str, tuple[str, ...]] = Field(default_factory=dict)
     silver_storage_mode_requested: str = "jsonl_debug"
     silver_storage_mode_effective: str = "jsonl_debug"
     silver_storage_status: str = "SILVER_STORAGE_NOT_PROVEN"
@@ -311,6 +444,336 @@ class BacktestPreflightPreview(BaseModel, frozen=True):
     blockers: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
     command_preview: str = ""
+    ml_overlay_intake: MlOverlayIntakePreview = MlOverlayIntakePreview()
+
+
+def _json_payload(path: Path) -> dict[str, object] | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return payload
+
+
+def _text_value(value: object) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    return text
+
+
+def _int_value(value: object) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _string_tuple(value: object) -> tuple[str, ...]:
+    if isinstance(value, (list, tuple)):
+        return tuple(
+            item_text
+            for item in value
+            if (item_text := _text_value(item))
+        )
+    item_text = _text_value(value)
+    return ((item_text,) if item_text else ())
+
+
+def _resolve_ml_handoff_run_root(selected_form: BacktestFormState) -> Path | None:
+    candidate_values = [
+        (selected_form.ml_handoff_run_root or "").strip(),
+        (selected_form.frozen_ml_artifact_path or "").strip(),
+        (selected_form.rolling_ml_window_plan_path or "").strip(),
+    ]
+    for candidate_text in candidate_values:
+        if not candidate_text:
+            continue
+        candidate = Path(candidate_text).expanduser()
+        if candidate.is_file():
+            return candidate.parent
+        if candidate.suffix.lower() == ".json":
+            return candidate.parent
+        return candidate
+    return None
+
+
+def _build_ml_overlay_intake_preview(
+    *,
+    selected_form: BacktestFormState,
+) -> MlOverlayIntakePreview:
+    run_root = _resolve_ml_handoff_run_root(selected_form)
+    if run_root is None:
+        return MlOverlayIntakePreview()
+    run_root_text = str(run_root.resolve(strict=False))
+    if not run_root.exists():
+        return MlOverlayIntakePreview(
+            source_status="ML_HANDOFF_RUN_ROOT_NOT_FOUND",
+            run_root=run_root_text,
+            check_status="ML_CHECK_BLOCKED",
+            blocker_codes=("ML_HANDOFF_RUN_ROOT_NOT_FOUND",),
+        )
+    if not run_root.is_dir():
+        return MlOverlayIntakePreview(
+            source_status="ML_HANDOFF_RUN_ROOT_NOT_DIRECTORY",
+            run_root=run_root_text,
+            check_status="ML_CHECK_BLOCKED",
+            blocker_codes=("ML_HANDOFF_RUN_ROOT_NOT_DIRECTORY",),
+        )
+
+    handoff_report_path = run_root / "strategy_ladder_ml_lab_handoff_report.json"
+    backtest_input_path = run_root / "strategy_ladder_backtest_ml_input.json"
+    artifact_summary_path = (
+        run_root / "strategy_ladder_expected_edge_ml_model_bundle.summary.json"
+    )
+    blockers: list[str] = []
+    handoff_payload = _json_payload(handoff_report_path) if handoff_report_path.is_file() else None
+    backtest_input_payload = _json_payload(backtest_input_path) if backtest_input_path.is_file() else None
+    artifact_summary_payload = (
+        _json_payload(artifact_summary_path) if artifact_summary_path.is_file() else None
+    )
+    if handoff_payload is None:
+        blockers.append("ML_HANDOFF_REPORT_NOT_FOUND")
+    if backtest_input_payload is None:
+        blockers.append("ML_HANDOFF_BACKTEST_INPUT_NOT_FOUND")
+
+    pair = ""
+    timeframe = ""
+    timeframe_scope: tuple[str, ...] = ()
+    feature_names: tuple[str, ...] = ()
+    train_start = ""
+    train_end = ""
+    requested_backtest_start = ""
+    requested_backtest_end = ""
+    artifact_stale_after = ""
+    max_valid_backtest_end = ""
+    frozen_ml_artifact_path = ""
+    frozen_ml_artifact_hash = ""
+    rolling_ml_window_plan_path = ""
+    rolling_ml_window_plan_markdown_ref = ""
+    rolling_ml_window_plan_status = ""
+    rolling_ml_required_artifact_count = 0
+    train_days = 0
+    validation_days = 0
+    freshness_days = 0
+    chunk_days = 0
+    handoff_status = ""
+    handoff_ready = False
+
+    if handoff_payload is not None:
+        handoff_status = _text_value(handoff_payload.get("status"))
+        handoff_ready = bool(handoff_payload.get("ready"))
+        pair = _text_value(handoff_payload.get("pair"))
+        timeframe = _text_value(handoff_payload.get("timeframe"))
+        feature_names = _string_tuple(handoff_payload.get("feature_names"))
+        train_start = _normalize_boundary_text(_text_value(handoff_payload.get("train_start")))
+        train_end = _normalize_boundary_text(_text_value(handoff_payload.get("train_end")))
+        requested_backtest_start = _normalize_boundary_text(
+            _text_value(handoff_payload.get("requested_backtest_start"))
+        )
+        requested_backtest_end = _normalize_boundary_text(
+            _text_value(handoff_payload.get("requested_backtest_end"))
+        )
+        artifact_stale_after = _text_value(handoff_payload.get("artifact_stale_after"))
+        max_valid_backtest_end = _normalize_boundary_text(
+            _text_value(handoff_payload.get("max_valid_backtest_end"))
+        )
+        rolling_ml_window_plan_markdown_ref = _text_value(
+            handoff_payload.get("rolling_ml_window_plan_markdown_ref")
+        )
+        rolling_ml_window_plan_status = _text_value(
+            handoff_payload.get("rolling_ml_window_plan_status")
+        )
+        rolling_ml_required_artifact_count = _int_value(
+            handoff_payload.get("rolling_ml_required_artifact_count")
+        )
+        train_days = _int_value(handoff_payload.get("train_days"))
+        validation_days = _int_value(handoff_payload.get("validation_days"))
+        freshness_days = _int_value(handoff_payload.get("freshness_days"))
+        chunk_days = _int_value(handoff_payload.get("chunk_days"))
+        blocking_reasons = _string_tuple(handoff_payload.get("blocking_reasons"))
+        if not handoff_ready:
+            blockers.append(handoff_status or "ML_HANDOFF_NOT_READY")
+            blockers.extend(blocking_reasons)
+
+    if backtest_input_payload is not None:
+        pair = _text_value(backtest_input_payload.get("pair")) or pair
+        timeframe = _text_value(backtest_input_payload.get("timeframe")) or timeframe
+        timeframe_scope = _string_tuple(backtest_input_payload.get("timeframe_scope"))
+        requested_backtest_start = (
+            _normalize_boundary_text(
+                _text_value(backtest_input_payload.get("requested_backtest_start"))
+            )
+            or requested_backtest_start
+        )
+        requested_backtest_end = (
+            _normalize_boundary_text(
+                _text_value(backtest_input_payload.get("requested_backtest_end"))
+            )
+            or requested_backtest_end
+        )
+        artifact_stale_after = (
+            _text_value(backtest_input_payload.get("artifact_stale_after"))
+            or artifact_stale_after
+        )
+        max_valid_backtest_end = (
+            _normalize_boundary_text(
+                _text_value(backtest_input_payload.get("max_valid_backtest_end"))
+            )
+            or max_valid_backtest_end
+        )
+        frozen_ml_artifact_path = _text_value(
+            backtest_input_payload.get("frozen_ml_artifact_path")
+        )
+        frozen_ml_artifact_hash = _text_value(
+            backtest_input_payload.get("frozen_ml_artifact_hash")
+        )
+        rolling_ml_window_plan_path = _text_value(
+            backtest_input_payload.get("rolling_ml_window_plan_ref")
+        )
+        train_days = _int_value(backtest_input_payload.get("train_days")) or train_days
+        validation_days = (
+            _int_value(backtest_input_payload.get("validation_days")) or validation_days
+        )
+        freshness_days = (
+            _int_value(backtest_input_payload.get("freshness_days")) or freshness_days
+        )
+        chunk_days = _int_value(backtest_input_payload.get("chunk_days")) or chunk_days
+
+    if artifact_summary_payload is not None:
+        timeframe_scope = timeframe_scope or _string_tuple(
+            artifact_summary_payload.get("timeframe_scope")
+        )
+        feature_names = feature_names or _string_tuple(
+            artifact_summary_payload.get("feature_names")
+        )
+
+    if not timeframe_scope and timeframe:
+        timeframe_scope = tuple(
+            item.strip()
+            for item in timeframe.split(",")
+            if item.strip()
+        )
+    if not frozen_ml_artifact_path and handoff_payload is not None:
+        frozen_ml_artifact_path = (
+            _text_value(handoff_payload.get("transport_artifact_ref"))
+            or _text_value(handoff_payload.get("source_artifact_ref"))
+        )
+    if not frozen_ml_artifact_hash and handoff_payload is not None:
+        frozen_ml_artifact_hash = _text_value(handoff_payload.get("artifact_hash"))
+    if not rolling_ml_window_plan_path and handoff_payload is not None:
+        rolling_ml_window_plan_path = _text_value(
+            handoff_payload.get("rolling_ml_window_plan_ref")
+        )
+
+    if not frozen_ml_artifact_path:
+        blockers.append("FROZEN_ML_ARTIFACT_PATH_NOT_PROVEN")
+    elif not Path(frozen_ml_artifact_path).expanduser().is_file():
+        blockers.append("FROZEN_ML_ARTIFACT_PATH_NOT_FOUND")
+    if not frozen_ml_artifact_hash:
+        blockers.append("FROZEN_ML_ARTIFACT_HASH_NOT_PROVEN")
+    if rolling_ml_window_plan_path and not Path(rolling_ml_window_plan_path).expanduser().is_file():
+        blockers.append("ROLLING_ML_WINDOW_PLAN_PATH_NOT_FOUND")
+
+    selected_start = _normalize_boundary_text(selected_form.start)
+    selected_end = _normalize_boundary_text(selected_form.end)
+    if requested_backtest_start and (not selected_start or selected_start == train_start):
+        selected_start = requested_backtest_start
+    if requested_backtest_end and (not selected_end or selected_end == train_end):
+        selected_end = requested_backtest_end
+    effective_start = selected_start or requested_backtest_start
+    effective_end = selected_end or requested_backtest_end
+    if requested_backtest_start and effective_start and effective_start < requested_backtest_start:
+        blockers.append("BACKTEST_START_BEFORE_ML_REQUESTED_WINDOW")
+    if requested_backtest_end and effective_end and effective_end < requested_backtest_start:
+        blockers.append("BACKTEST_END_BEFORE_ML_REQUESTED_WINDOW")
+    if max_valid_backtest_end and effective_end and effective_end > max_valid_backtest_end:
+        blockers.append("BACKTEST_END_EXCEEDS_ML_ARTIFACT_VALIDITY")
+    if max_valid_backtest_end and effective_start and effective_start > max_valid_backtest_end:
+        blockers.append("BACKTEST_START_EXCEEDS_ML_ARTIFACT_VALIDITY")
+
+    blocker_codes = tuple(dict.fromkeys(code for code in blockers if code))
+    ready = not blocker_codes and handoff_ready
+    return MlOverlayIntakePreview(
+        source_status=(
+            handoff_status
+            or ("ML_HANDOFF_RUN_READY" if ready else "ML_HANDOFF_RUN_BLOCKED")
+        ),
+        run_root=run_root_text,
+        handoff_report_ref=(
+            str(handoff_report_path.resolve(strict=False))
+            if handoff_report_path.is_file()
+            else ""
+        ),
+        backtest_input_ref=(
+            str(backtest_input_path.resolve(strict=False))
+            if backtest_input_path.is_file()
+            else ""
+        ),
+        artifact_summary_ref=(
+            str(artifact_summary_path.resolve(strict=False))
+            if artifact_summary_path.is_file()
+            else ""
+        ),
+        frozen_ml_artifact_path=frozen_ml_artifact_path,
+        frozen_ml_artifact_hash=frozen_ml_artifact_hash,
+        rolling_ml_window_plan_path=rolling_ml_window_plan_path,
+        rolling_ml_window_plan_markdown_ref=rolling_ml_window_plan_markdown_ref,
+        rolling_ml_window_plan_status=rolling_ml_window_plan_status,
+        rolling_ml_required_artifact_count=rolling_ml_required_artifact_count,
+        pair=pair,
+        timeframe=timeframe,
+        timeframe_scope=timeframe_scope,
+        feature_names=feature_names,
+        train_start=train_start,
+        train_end=train_end,
+        requested_backtest_start=requested_backtest_start,
+        requested_backtest_end=requested_backtest_end,
+        artifact_stale_after=artifact_stale_after,
+        max_valid_backtest_end=max_valid_backtest_end,
+        train_days=train_days,
+        validation_days=validation_days,
+        freshness_days=freshness_days,
+        chunk_days=chunk_days,
+        ready=ready,
+        check_status=("ML_CHECK_OK" if ready else "ML_CHECK_BLOCKED"),
+        blocker_codes=blocker_codes,
+    )
+
+
+def _apply_ml_overlay_intake_to_form(
+    *,
+    selected_form: BacktestFormState,
+    intake: MlOverlayIntakePreview,
+) -> BacktestFormState:
+    if not intake.run_root:
+        return selected_form
+    update: dict[str, object] = {}
+    if intake.pair and not selected_form.pairs:
+        update["pairs"] = (intake.pair,)
+    selected_start = _normalize_boundary_text(selected_form.start)
+    selected_end = _normalize_boundary_text(selected_form.end)
+    if intake.requested_backtest_start and (
+        not selected_start or selected_start == intake.train_start
+    ):
+        update["start"] = intake.requested_backtest_start
+    if intake.requested_backtest_end and (
+        not selected_end or selected_end == intake.train_end
+    ):
+        update["end"] = intake.requested_backtest_end
+    if intake.frozen_ml_artifact_path:
+        update["frozen_ml_artifact_path"] = intake.frozen_ml_artifact_path
+    if intake.frozen_ml_artifact_hash:
+        update["frozen_ml_artifact_hash"] = intake.frozen_ml_artifact_hash
+    if intake.rolling_ml_window_plan_path:
+        update["rolling_ml_window_plan_path"] = intake.rolling_ml_window_plan_path
+    if intake.freshness_days > 0:
+        update["ml_artifact_freshness_days"] = intake.freshness_days
+    if not update:
+        return selected_form
+    return selected_form.model_copy(update=update)
 
 
 def _normalize_boundary_text(raw_value: str) -> str:
@@ -437,6 +900,75 @@ def infer_pair_universe_from_paths(paths: tuple[str, ...]) -> tuple[tuple[str, .
         if symbol and symbol not in inferred:
             inferred.append(symbol)
     return tuple(inferred), len(inferred) > 1
+
+
+# Patch P4 (2026-05-22) — pattern parent + scan helper for multi-pair backtest.
+# Lets the admin point at `L:\ordre book part 1\` (parent) instead of
+# `L:\ordre book part 1\BTCUSDT\` (mono pair) and resolves to one Path per
+# selected pair. Returns the unchanged path tuple when the parent already
+# resolves to a known pair symbol.
+def expand_parent_path_to_pair_paths(
+    raw_path: str,
+    *,
+    pair_universe: tuple[str, ...] = (),
+) -> tuple[Path, ...]:
+    """Expand a parent directory into one Path per pair found on filesystem.
+
+    Args:
+        raw_path: the operator-provided path (may be a parent dir or a pair dir).
+        pair_universe: optional tuple of pair names to filter the expansion.
+            When empty, every subdirectory that looks like a pair symbol is kept.
+
+    Returns:
+        Tuple of resolved Paths. Empty if the parent does not exist.
+        - If raw_path is already a pair dir (matches a pair symbol) → ``(Path(raw_path),)``
+        - If raw_path is a parent dir → ``(Path(raw_path) / pair for pair in resolved)``
+        - If parent dir does not exist → ``()``
+    """
+    cleaned = (raw_path or "").strip().strip('"').strip("'")
+    if not cleaned:
+        return ()
+
+    parent_dir = Path(cleaned)
+    if not parent_dir.exists():
+        return ()
+
+    leaf_symbol = infer_pair_symbol_from_path(cleaned)
+    if leaf_symbol:
+        # Path already targets a single pair → preserve mono behaviour.
+        return (parent_dir,)
+
+    if not parent_dir.is_dir():
+        return ()
+
+    try:
+        candidate_subdirs = [entry for entry in parent_dir.iterdir() if entry.is_dir()]
+    except (OSError, PermissionError):
+        return ()
+
+    discovered_pair_names: list[str] = []
+    name_to_path: dict[str, Path] = {}
+    for subdir in candidate_subdirs:
+        normalized = normalize_pair_symbol(subdir.name)
+        if not _looks_like_pair_symbol(normalized):
+            continue
+        if normalized in name_to_path:
+            continue
+        name_to_path[normalized] = subdir
+        discovered_pair_names.append(normalized)
+
+    if not discovered_pair_names:
+        return ()
+
+    if pair_universe:
+        wanted = tuple(dict.fromkeys(normalize_pair_symbol(p) for p in pair_universe))
+        resolved = tuple(
+            name_to_path[name] for name in wanted if name in name_to_path
+        )
+    else:
+        resolved = tuple(name_to_path[name] for name in sorted(discovered_pair_names))
+
+    return resolved
 
 
 def _infer_date_from_path(path: Path) -> str:
@@ -665,6 +1197,11 @@ def _build_preview_command(
     pairs: tuple[str, ...],
     start: str,
     end: str,
+    ml_mode: str,
+    frozen_ml_artifact_path: str,
+    frozen_ml_artifact_hash: str,
+    rolling_ml_window_plan_path: str,
+    ml_artifact_freshness_days: int,
     output_root: str,
     workflow_run_id: str,
     engine_native_sample_size: int,
@@ -703,6 +1240,27 @@ def _build_preview_command(
         )
     else:
         parts.extend(["--input-root", output_root])
+    if job_kind != CockpitBacktestJobKind.STRATEGY_LADDER_DATA_FACTORY:
+        parts.extend(["--ml-mode", ml_mode or "ML_MODE_OFF"])
+        if ml_mode == "ML_MODE_OVERLAY_FROZEN":
+            if frozen_ml_artifact_path:
+                parts.extend(["--frozen-ml-artifact-path", frozen_ml_artifact_path])
+            if frozen_ml_artifact_hash:
+                parts.extend(["--frozen-ml-artifact-hash", frozen_ml_artifact_hash])
+            if job_kind == CockpitBacktestJobKind.STRATEGY_LADDER_RUNNER:
+                if rolling_ml_window_plan_path:
+                    parts.extend(
+                        [
+                            "--rolling-ml-window-plan-path",
+                            rolling_ml_window_plan_path,
+                        ]
+                    )
+                parts.extend(
+                    [
+                        "--ml-artifact-freshness-days",
+                        str(max(int(ml_artifact_freshness_days), 1)),
+                    ]
+                )
     if baseline_export_dir:
         parts.extend(["--baseline-export-dir", baseline_export_dir])
     for selected in (orderbook_path, trades_path, klines_path):
@@ -759,6 +1317,11 @@ def build_patch6_preflight_preview(
     selected_form: BacktestFormState,
     jobs_root: Path | None,
 ) -> BacktestPreflightPreview:
+    ml_overlay_intake = _build_ml_overlay_intake_preview(selected_form=selected_form)
+    selected_form = _apply_ml_overlay_intake_to_form(
+        selected_form=selected_form,
+        intake=ml_overlay_intake,
+    )
     normalized_request = build_patch6_normalized_request(selected_form)
     action_name = normalized_request.action_name
     dry_run = normalized_request.dry_run
@@ -912,6 +1475,29 @@ def build_patch6_preflight_preview(
         pair_blockers.append("PAIR_NOT_AVAILABLE_AFTER_DATE_PRUNING")
     if len(required_source_pairs) >= 2 and len({tuple(sorted(pairs)) for pairs in required_source_pairs if pairs}) > 1:
         pair_mismatch_reason_codes.append("PAIR_MISMATCH_BETWEEN_SOURCES")
+    ml_mode = (selected_form.ml_mode or "ML_MODE_OFF").strip() or "ML_MODE_OFF"
+    frozen_ml_artifact_path = (selected_form.frozen_ml_artifact_path or "").strip()
+    frozen_ml_artifact_hash = (selected_form.frozen_ml_artifact_hash or "").strip()
+    rolling_ml_window_plan_path = (
+        selected_form.rolling_ml_window_plan_path or ""
+    ).strip()
+    if ml_mode == "ML_MODE_TRAINING_LAB_ONLY":
+        pair_blockers.append("ML_TRAINING_DISABLED_FOR_BASELINE")
+    elif ml_mode == "ML_MODE_OVERLAY_FROZEN":
+        pair_blockers.extend(ml_overlay_intake.blocker_codes)
+        if action_name in {
+            StrategyLadderControlAction.PHASE_A1_PREVIEW.value,
+            StrategyLadderControlAction.PHASE_A2_DATA_FACTORY.value,
+            StrategyLadderControlAction.DATA_FACTORY_DRY_RUN.value,
+            StrategyLadderControlAction.DATA_FACTORY_SMALL_SCOPE_RUN.value,
+        }:
+            pair_blockers.append("ML_OVERLAY_UNSUPPORTED_FOR_DATA_FACTORY")
+        if not frozen_ml_artifact_path or not frozen_ml_artifact_hash:
+            pair_blockers.append("ML_OVERLAY_FROZEN_REQUIRES_ARTIFACT_PATH_AND_HASH")
+        elif not Path(frozen_ml_artifact_path).expanduser().is_file():
+            pair_blockers.append("FROZEN_ML_ARTIFACT_PATH_NOT_FOUND")
+        if rolling_ml_window_plan_path and not Path(rolling_ml_window_plan_path).expanduser().is_file():
+            pair_blockers.append("ROLLING_ML_WINDOW_PLAN_PATH_NOT_FOUND")
 
     for source_name, source_preview in selected_sources.items():
         if source_name == "metadata":
@@ -941,6 +1527,26 @@ def build_patch6_preflight_preview(
         )
         if (path or "").strip()
     )
+    # Patch P4b (2026-05-22) — compute parent-path expansion for audit visibility.
+    # Empty when admin already points at a pair-dir or no pairs requested.
+    parent_path_expansion: dict[str, tuple[str, ...]] = {}
+    if requested_pairs:
+        for source_kind, source_path in (
+            ("orderbook", selected_form.orderbook_path),
+            ("trades", selected_form.trades_path),
+            ("klines", selected_form.klines_path),
+            ("metadata", selected_form.metadata_path),
+        ):
+            expanded = expand_parent_path_to_pair_paths(
+                source_path,
+                pair_universe=requested_pairs,
+            )
+            # Only surface when expansion actually multiplies (i.e. parent dir
+            # detected with >1 sub-paths). Mono pair-dir returns 1-tuple — skip.
+            if len(expanded) >= 2:
+                parent_path_expansion[source_kind] = tuple(
+                    str(path) for path in expanded
+                )
     output_candidate = output_root_text
     if output_candidate:
         output_candidate = str(Path(output_candidate).expanduser() / "runs" / "__preview__")
@@ -1004,9 +1610,20 @@ def build_patch6_preflight_preview(
         detected_pairs=detected_pairs,
         active_pairs_after_pruning=active_pairs_after_pruning,
     )
-    requested_workflow_run_id = normalized_request.workflow_run_id
+    force_new_workflow = normalized_request.phase_id == PHASE_A1
+    requested_workflow_run_id = (
+        "" if force_new_workflow else normalized_request.workflow_run_id
+    )
     normalized_request, workflow_request_hash = canonicalize_workflow_identity(
-        normalized_request
+        normalized_request,
+        force_new_workflow=force_new_workflow,
+    )
+    normalized_request = _reuse_existing_phase_a1_workflow(
+        normalized_request=normalized_request,
+        workflow_request_hash=workflow_request_hash,
+        requested_workflow_run_id=requested_workflow_run_id,
+        output_root_text=output_root_text,
+        jobs_root=jobs_root,
     )
     normalized_request = _reuse_matching_workflow_parent(
         normalized_request=normalized_request,
@@ -1015,6 +1632,11 @@ def build_patch6_preflight_preview(
         output_root_text=output_root_text,
         jobs_root=jobs_root,
     )
+    if (
+        requested_workflow_run_id
+        and requested_workflow_run_id != normalized_request.workflow_run_id
+    ):
+        warnings.append("SELECTED_WORKFLOW_REPLACED_BY_NEW_PARENT_IDENTITY")
     request_hash = request_hash_for_normalized_request(normalized_request)
     workflow_run_id = normalized_request.workflow_run_id
     preview_id = f"preview-{request_hash[:16]}"
@@ -1036,13 +1658,24 @@ def build_patch6_preflight_preview(
         or max(int(normalized_request.engine_native_sample_size), 0) > 0
     )
     candidate_discovery_limit_reason = (
-        "ENGINE_NATIVE_SAMPLE_CAP_ACTIVE"
+        (
+            "TEMPORAL_STRATIFIED_SAMPLE_BUDGET_ACTIVE"
+            if normalized_request.candidate_discovery_mode in {
+                "TEMPORAL_STRATIFIED",
+                "TEMPORAL_STRATIFIED_SAMPLE_BUDGET",
+            }
+            else "ENGINE_NATIVE_SAMPLE_CAP_ACTIVE"
+        )
         if candidate_discovery_limited
         else ""
     )
     candidate_discovery_cap_status = (
         "CANDIDATE_DISCOVERY_SAMPLE_CAPPED"
-        if normalized_request.candidate_discovery_mode == "SAMPLE_CAPPED_DEBUG"
+        if normalized_request.candidate_discovery_mode in {
+            "SAMPLE_CAPPED_DEBUG",
+            "TEMPORAL_STRATIFIED",
+            "TEMPORAL_STRATIFIED_SAMPLE_BUDGET",
+        }
         else (
             "CANDIDATE_DISCOVERY_FULL_SCAN_ENABLED"
             if normalized_request.full_scan_enabled
@@ -1089,15 +1722,34 @@ def build_patch6_preflight_preview(
     phase_a2_gold_root = phase_a2_root / "gold"
     phase_a2_silver_index_path = phase_a2_root / "silver_index.json"
     phase_b1_candidate_events_path = (
-        phase_b1_root
-        / "backtest_strategy_ladder"
-        / workflow_run_id
+        _phase_b1_runner_root(
+            workflow_root=workflow_root,
+            workflow_run_id=workflow_run_id,
+        )
         / "fast_candidates"
         / "candidate_events.jsonl"
+    )
+    phase_b1_preselection_summary_path = (
+        _phase_b1_runner_root(
+            workflow_root=workflow_root,
+            workflow_run_id=workflow_run_id,
+        )
+        / "reports"
+        / "preselection_summary.json"
+    )
+    phase_b1_preselected_candidates_path = resolve_phase_b1_replay_input_candidates_path(
+        workflow_root=workflow_root,
+        workflow_run_id=workflow_run_id,
     )
     if normalized_request.phase_id == PHASE_B1:
         if not phase_a2_manifest_path.is_file():
             pair_blockers.append("PHASE_B1_REQUIRES_A2_DATA_FACTORY_ARTIFACTS")
+        else:
+            a2_launch_ready, a2_reason = _check_a2_upstream_launch_ready(
+                phase_a2_manifest_path
+            )
+            if not a2_launch_ready:
+                pair_blockers.append(a2_reason)
         if not phase_a2_gold_root.is_dir():
             pair_blockers.append("FEATURE_STORE_NOT_MATERIALIZED_FOR_B1")
         if not phase_a2_silver_index_path.is_file():
@@ -1105,10 +1757,20 @@ def build_patch6_preflight_preview(
     elif normalized_request.phase_id == PHASE_B2:
         if not phase_a2_manifest_path.is_file():
             pair_blockers.append("PHASE_B2_REQUIRES_A2_DATA_FACTORY_ARTIFACTS")
+        else:
+            a2_launch_ready, a2_reason = _check_a2_upstream_launch_ready(
+                phase_a2_manifest_path
+            )
+            if not a2_launch_ready:
+                pair_blockers.append(a2_reason)
         if not phase_a2_silver_index_path.is_file():
             pair_blockers.append("SILVER_INDEX_NOT_MATERIALIZED_FOR_B2")
         if not phase_b1_candidate_events_path.is_file():
             pair_blockers.append("PHASE_B2_REQUIRES_B1_CANDIDATE_EVENTS")
+        if not phase_b1_preselection_summary_path.is_file():
+            pair_blockers.append("PHASE_B2_REQUIRES_B1_NATIVE_PRESELECTION")
+        elif phase_b1_preselected_candidates_path is None:
+            pair_blockers.append("PHASE_B2_REQUIRES_B1_PRESELECTED_CANDIDATES")
     command_preview = ""
     if launch_ready:
         command_preview = _build_preview_command(
@@ -1123,6 +1785,11 @@ def build_patch6_preflight_preview(
             pairs=normalized_request.pair_subset,
             start=normalized_request.start,
             end=normalized_request.end,
+            ml_mode=normalized_request.ml_mode,
+            frozen_ml_artifact_path=normalized_request.frozen_ml_artifact_path,
+            frozen_ml_artifact_hash=normalized_request.frozen_ml_artifact_hash,
+            rolling_ml_window_plan_path=normalized_request.rolling_ml_window_plan_path,
+            ml_artifact_freshness_days=normalized_request.ml_artifact_freshness_days,
             output_root=effective_output_root,
             workflow_run_id=workflow_run_id,
             engine_native_sample_size=normalized_request.engine_native_sample_size,
@@ -1261,6 +1928,8 @@ def build_patch6_preflight_preview(
         blockers=tuple(dict.fromkeys(pair_blockers)),
         warnings=tuple(dict.fromkeys(warnings)),
         command_preview=command_preview,
+        ml_overlay_intake=ml_overlay_intake,
+        parent_path_expansion=parent_path_expansion,
     )
 
 
@@ -1269,10 +1938,19 @@ def load_patch6_preflight_preview(
     selected_form: BacktestFormState,
     preview_manifest: BacktestPreviewManifest | None,
 ) -> BacktestPreflightPreview:
+    ml_overlay_intake = _build_ml_overlay_intake_preview(selected_form=selected_form)
+    selected_form = _apply_ml_overlay_intake_to_form(
+        selected_form=selected_form,
+        intake=ml_overlay_intake,
+    )
     normalized_request = build_patch6_normalized_request(selected_form)
-    requested_workflow_run_id = normalized_request.workflow_run_id
+    force_new_workflow = normalized_request.phase_id == PHASE_A1
+    requested_workflow_run_id = (
+        "" if force_new_workflow else normalized_request.workflow_run_id
+    )
     normalized_request, workflow_request_hash = canonicalize_workflow_identity(
-        normalized_request
+        normalized_request,
+        force_new_workflow=force_new_workflow,
     )
     normalized_request = _reuse_matching_workflow_parent(
         normalized_request=normalized_request,
@@ -1357,6 +2035,7 @@ def load_patch6_preflight_preview(
                 blockers=preview_manifest.blockers,
                 warnings=preview_manifest.warnings,
                 command_preview=preview_manifest.command_preview,
+                ml_overlay_intake=ml_overlay_intake,
             )
     return BacktestPreflightPreview(
         inspection_status="PREVIEW_NOT_GENERATED",
@@ -1375,6 +2054,7 @@ def load_patch6_preflight_preview(
             "MANUAL_REFRESH_REQUIRED_FOR_BACKTEST_PREVIEW",
             "Use Generate Preview to scan selected source folders.",
         ),
+        ml_overlay_intake=ml_overlay_intake,
     )
 
 

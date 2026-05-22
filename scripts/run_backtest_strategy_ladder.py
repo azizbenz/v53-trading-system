@@ -52,6 +52,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ml-mode", default="ML_MODE_OFF", help="ML mode for the baseline runner. Training mode is rejected.")
     parser.add_argument("--frozen-ml-artifact-path", default="", help="Frozen ML artifact path for ML_MODE_OVERLAY_FROZEN.")
     parser.add_argument("--frozen-ml-artifact-hash", default="", help="Frozen ML artifact hash for ML_MODE_OVERLAY_FROZEN.")
+    # Patch P3 (2026-05-22) — explicit mono|multi mode for the C1-aware provider.
+    parser.add_argument(
+        "--expected-edge-artifact-mode",
+        default="MONO_PAIR_LEGACY",
+        choices=("MONO_PAIR_LEGACY", "MULTI_PAIR_C1"),
+        help="Expected-edge artifact loader mode (mono frozen bundle vs C1 multi-pair manifest).",
+    )
     parser.add_argument(
         "--rolling-ml-window-plan-path",
         default="",
@@ -166,6 +173,7 @@ def main(argv: list[str] | None = None) -> int:
             else None
         ),
         frozen_ml_artifact_hash=args.frozen_ml_artifact_hash or None,
+        expected_edge_artifact_mode=args.expected_edge_artifact_mode,
         rolling_ml_window_plan_path=(
             Path(args.rolling_ml_window_plan_path).resolve()
             if args.rolling_ml_window_plan_path

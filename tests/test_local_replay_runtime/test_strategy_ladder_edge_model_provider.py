@@ -24,6 +24,10 @@ from local_replay_runtime.strategy_ladder_economic_provenance import (
     expected_edge_backtest_truth_status,
     is_expected_edge_backtest_truth,
 )
+from local_replay_runtime.strategy_ladder_multiframe_ml_bundle import (
+    StrategyLadderMlMultiTimeframeBundle,
+    StrategyLadderMlTimeframeSlice,
+)
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
@@ -77,6 +81,17 @@ def _build_expected_edge_artifact() -> MlModelArtifact:
         },
         stale_after=now + timedelta(days=7),
     )
+
+
+def _build_promotion_grade_expected_edge_artifact() -> MlModelArtifact:
+    base_artifact = _build_expected_edge_artifact()
+    payload = base_artifact.model_dump()
+    payload.pop("artifact_hash", None)
+    payload["training_metrics"] = {
+        **base_artifact.training_metrics,
+        "strategy_ladder_label_fidelity": "LABEL_STORE_PROMOTION_GRADE_CANDIDATE",
+    }
+    return MlModelArtifact.create(**payload)
 
 
 def test_estimate_edge_uptrend(tmp_path: Path) -> None:
@@ -282,3 +297,138 @@ def test_load_governed_expected_edge_model_with_research_only_label_fidelity_sta
     assert result.anti_leakage_status == "EXPECTED_EDGE_ANTI_LEAKAGE_PROVEN"
     assert "EXPECTED_EDGE_LABEL_FIDELITY_NOT_PROMOTION_GRADE" in result.blocker_codes
     assert "EXPECTED_EDGE_PROXY_BLOCKED" in result.blocker_codes
+
+
+def test_load_governed_expected_edge_model_accepts_multiframe_bundle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact_1m = _build_promotion_grade_expected_edge_artifact()
+    artifact_5m = _build_promotion_grade_expected_edge_artifact()
+    artifact_1m_path = tmp_path / "edge_1m.json"
+    artifact_5m_path = tmp_path / "edge_5m.json"
+    artifact_1m_path.write_text(artifact_1m.model_dump_json(indent=2), encoding="utf-8")
+    artifact_5m_path.write_text(artifact_5m.model_dump_json(indent=2), encoding="utf-8")
+    for artifact, artifact_path in ((artifact_1m, artifact_1m_path), (artifact_5m, artifact_5m_path)):
+        proof = build_ml_anti_leakage_proof_artifact(
+            artifact,
+            test_start=date(2025, 4, 2),
+            test_end=date(2025, 4, 30),
+            created_at=datetime(2026, 5, 9, tzinfo=UTC),
+        )
+        (artifact_path.parent / ML_ANTI_LEAKAGE_PROOF_FILENAME).write_text(
+            proof.model_dump_json(indent=2),
+            encoding="utf-8",
+        )
+    bundle = StrategyLadderMlMultiTimeframeBundle.create(
+        pair="BTCUSDT",
+        timeframe_scope=("1m", "5m"),
+        feature_names=artifact_1m.feature_names,
+        calibration_version="v1",
+        created_at=datetime(2026, 5, 9, tzinfo=UTC),
+        slices=(
+            StrategyLadderMlTimeframeSlice(
+                timeframe="1m",
+                artifact_ref=str(artifact_1m_path.resolve()),
+                artifact_hash=artifact_1m.artifact_hash,
+                feature_hash=artifact_1m.feature_hash,
+                feature_names=artifact_1m.feature_names,
+            ),
+            StrategyLadderMlTimeframeSlice(
+                timeframe="5m",
+                artifact_ref=str(artifact_5m_path.resolve()),
+                artifact_hash=artifact_5m.artifact_hash,
+                feature_hash=artifact_5m.feature_hash,
+                feature_names=artifact_5m.feature_names,
+            ),
+        ),
+    )
+    bundle_path = tmp_path / "edge_bundle.json"
+    bundle_path.write_text(bundle.model_dump_json(indent=2), encoding="utf-8")
+
+    class _FakeBooster:
+        def predict(self, _rows):
+            return [0.0012]
+
+    monkeypatch.setattr(
+        "local_replay_runtime.strategy_ladder_edge_model_provider._load_lightgbm_booster",
+        lambda artifact, artifact_path: _FakeBooster(),
+    )
+
+    result = load_governed_expected_edge_model_artifact(
+        bundle_path,
+        expected_artifact_hash=bundle.artifact_hash,
+        now=datetime(2026, 5, 9, tzinfo=UTC),
+    )
+
+    assert result.model is not None
+    assert result.status == "EXPECTED_EDGE_GOVERNED_BACKTEST_LABELS_READY"
+    estimate = result.model.estimate_expected_edge_bps(
+        pair="BTCUSDT",
+        timeframe="5m",
+        timestamp_ms=1_700_000_000_000,
+        feature_values={"edge_score": 0.25},
+    )
+    assert estimate.edge_bps == pytest.approx(12.0)
+    assert estimate.artifact_hash == bundle.artifact_hash
+    assert estimate.feature_hash == bundle.feature_hash
+
+
+def test_multiframe_bundle_blocks_unknown_timeframe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact = _build_promotion_grade_expected_edge_artifact()
+    artifact_path = tmp_path / "edge_1m.json"
+    artifact_path.write_text(artifact.model_dump_json(indent=2), encoding="utf-8")
+    proof = build_ml_anti_leakage_proof_artifact(
+        artifact,
+        test_start=date(2025, 4, 2),
+        test_end=date(2025, 4, 30),
+        created_at=datetime(2026, 5, 9, tzinfo=UTC),
+    )
+    (artifact_path.parent / ML_ANTI_LEAKAGE_PROOF_FILENAME).write_text(
+        proof.model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    bundle = StrategyLadderMlMultiTimeframeBundle.create(
+        pair="BTCUSDT",
+        timeframe_scope=("1m",),
+        feature_names=artifact.feature_names,
+        calibration_version="v1",
+        created_at=datetime(2026, 5, 9, tzinfo=UTC),
+        slices=(
+            StrategyLadderMlTimeframeSlice(
+                timeframe="1m",
+                artifact_ref=str(artifact_path.resolve()),
+                artifact_hash=artifact.artifact_hash,
+                feature_hash=artifact.feature_hash,
+                feature_names=artifact.feature_names,
+            ),
+        ),
+    )
+    bundle_path = tmp_path / "edge_bundle.json"
+    bundle_path.write_text(bundle.model_dump_json(indent=2), encoding="utf-8")
+
+    class _FakeBooster:
+        def predict(self, _rows):
+            return [0.0012]
+
+    monkeypatch.setattr(
+        "local_replay_runtime.strategy_ladder_edge_model_provider._load_lightgbm_booster",
+        lambda artifact, artifact_path: _FakeBooster(),
+    )
+    result = load_governed_expected_edge_model_artifact(
+        bundle_path,
+        expected_artifact_hash=bundle.artifact_hash,
+        now=datetime(2026, 5, 9, tzinfo=UTC),
+    )
+
+    estimate = result.model.estimate_expected_edge_bps(
+        pair="BTCUSDT",
+        timeframe="15m",
+        timestamp_ms=1_700_000_000_000,
+        feature_values={"edge_score": 0.25},
+    )
+    assert estimate.edge_bps == 0.0
+    assert estimate.detector_status == "TIMEFRAME_NOT_IN_BUNDLE"

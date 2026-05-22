@@ -807,6 +807,7 @@ def _expected_edge_readiness_audit(
     summary: StrategyLadderReportSummary,
     label_summary: StrategyLadderB2LabelStoreSummary,
     label_quality: StrategyLadderB2LabelStoreQualityReport,
+    records: tuple[_ReplayRecord, ...],
     scenario_rows: tuple[dict[str, object], ...],
 ) -> dict[str, object]:
     scenario_index = {
@@ -815,7 +816,17 @@ def _expected_edge_readiness_audit(
         if isinstance(row, dict)
     }
     expected_edge_row = scenario_index.get("expected_edge_governed", {})
+    expected_edge_survival_count = int(
+        expected_edge_row.get("counterfactual_survival_count") or 0
+    )
     expected_edge_delta = int(expected_edge_row.get("delta_vs_canonical_selected") or 0)
+    executed_label_status = (
+        "EXECUTED_REPLAY_LABELS_MISSING"
+        if label_summary.replay_grounded_label_count <= 0
+        else "EXECUTED_REPLAY_LABELS_PARTIAL"
+        if label_summary.replay_grounded_label_count < label_summary.row_count
+        else "EXECUTED_REPLAY_LABELS_COMPLETE"
+    )
     label_richness_status = (
         "LABEL_RICHNESS_NOT_READY"
         if label_summary.row_count <= 0
@@ -875,6 +886,46 @@ def _expected_edge_readiness_audit(
         if expected_edge_delta > 0
         else "EXPECTED_EDGE_COUNTERFACTUAL_UPLIFT_NOT_PROVEN"
     )
+    native_no_trade_record_count = sum(
+        1
+        for record in records
+        if "ENGINE_NATIVE_NO_TRADE" in record.blocking_reason_codes
+    )
+    records_remaining_if_expected_edge_governed = sum(
+        1 for record in records if not _scenario_survives(record, "expected_edge_governed")
+    )
+    native_no_trade_independent_blocker_count = sum(
+        1
+        for record in records
+        if "ENGINE_NATIVE_NO_TRADE" in record.blocking_reason_codes
+        and not _scenario_survives(record, "expected_edge_governed")
+    )
+    native_no_trade_independent_blockers_by_engine = dict(
+        sorted(
+            Counter(
+                record.engine_id
+                for record in records
+                if "ENGINE_NATIVE_NO_TRADE" in record.blocking_reason_codes
+                and not _scenario_survives(record, "expected_edge_governed")
+            ).items()
+        )
+    )
+    remaining_gate_counts_if_expected_edge_governed = dict(
+        sorted(
+            Counter(
+                _scenario_first_gate(record, "expected_edge_governed")
+                for record in records
+                if not _scenario_survives(record, "expected_edge_governed")
+            ).items()
+        )
+    )
+    expected_edge_single_unblocker_status = (
+        "EXPECTED_EDGE_SINGLE_UNBLOCKER_NOT_PROVEN"
+        if expected_edge_survival_count <= 0
+        else "EXPECTED_EDGE_NOT_SINGLE_UNBLOCKER"
+        if records_remaining_if_expected_edge_governed > 0
+        else "EXPECTED_EDGE_POSSIBLE_SINGLE_UNBLOCKER"
+    )
     if (
         label_summary.row_count <= 0
         or anti_leakage_path_status != "ANTI_LEAKAGE_PATH_READY"
@@ -893,10 +944,13 @@ def _expected_edge_readiness_audit(
         verdict = "EXPECTED_EDGE_TRAINING_READY_FOR_FIRST_FROZEN_ARTIFACT"
     key_findings = [
         f"label_source_type={label_summary.label_source_type}",
+        f"executed_label_status={executed_label_status}",
         f"replay_grounded_label_count={label_summary.replay_grounded_label_count}",
         f"proxy_execution_label_count={label_summary.proxy_execution_label_count}",
         f"mfe_mae_availability={label_quality.mfe_mae_availability}",
         f"expected_edge_counterfactual_delta={expected_edge_delta}",
+        f"expected_edge_single_unblocker_status={expected_edge_single_unblocker_status}",
+        f"native_no_trade_independent_blocker_count={native_no_trade_independent_blocker_count}",
         f"execution_realism_status={execution_realism_status}",
     ]
     payload = {
@@ -908,6 +962,7 @@ def _expected_edge_readiness_audit(
         "phase_run_id": summary.phase_run_id,
         "final_status": summary.final_status,
         "verdict": verdict,
+        "executed_label_status": executed_label_status,
         "label_richness_status": label_richness_status,
         "replay_grounded_coverage_status": replay_grounded_coverage_status,
         "mfe_mae_status": mfe_mae_status,
@@ -915,6 +970,12 @@ def _expected_edge_readiness_audit(
         "walk_forward_status": walk_forward_status,
         "execution_realism_status": execution_realism_status,
         "counterfactual_uplift_status": counterfactual_uplift_status,
+        "expected_edge_single_unblocker_status": expected_edge_single_unblocker_status,
+        "records_remaining_if_expected_edge_governed": records_remaining_if_expected_edge_governed,
+        "native_no_trade_record_count": native_no_trade_record_count,
+        "native_no_trade_independent_blocker_count": native_no_trade_independent_blocker_count,
+        "native_no_trade_independent_blockers_by_engine": native_no_trade_independent_blockers_by_engine,
+        "remaining_first_gate_counts_if_expected_edge_governed": remaining_gate_counts_if_expected_edge_governed,
         "scientifically_valid_now": verdict
         == "EXPECTED_EDGE_TRAINING_READY_FOR_FIRST_FROZEN_ARTIFACT",
         "label_store_summary_ref": str((run_dir / "ml_label_store" / LABEL_STORE_SUMMARY_FILENAME).resolve()),
@@ -1006,6 +1067,7 @@ def _format_expected_edge_readiness_markdown(payload: dict[str, object]) -> str:
         "",
         f"- run_id: {payload.get('run_id')}",
         f"- verdict: {payload.get('verdict')}",
+        f"- executed_label_status: {payload.get('executed_label_status')}",
         f"- label_richness_status: {payload.get('label_richness_status')}",
         f"- replay_grounded_coverage_status: {payload.get('replay_grounded_coverage_status')}",
         f"- mfe_mae_status: {payload.get('mfe_mae_status')}",
@@ -1013,6 +1075,9 @@ def _format_expected_edge_readiness_markdown(payload: dict[str, object]) -> str:
         f"- walk_forward_status: {payload.get('walk_forward_status')}",
         f"- execution_realism_status: {payload.get('execution_realism_status')}",
         f"- counterfactual_uplift_status: {payload.get('counterfactual_uplift_status')}",
+        f"- expected_edge_single_unblocker_status: {payload.get('expected_edge_single_unblocker_status')}",
+        f"- records_remaining_if_expected_edge_governed: {payload.get('records_remaining_if_expected_edge_governed')}",
+        f"- native_no_trade_independent_blocker_count: {payload.get('native_no_trade_independent_blocker_count')}",
         "",
         "## Key Findings",
     ]
@@ -1120,6 +1185,7 @@ def write_strategy_ladder_gate_waterfall_reports(
         summary=summary,
         label_summary=label_summary,
         label_quality=label_quality,
+        records=records,
         scenario_rows=scenario_rows,
     )
     gate_waterfall_path = reports_dir / GATE_WATERFALL_ANALYSIS_FILENAME

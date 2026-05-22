@@ -9,6 +9,11 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field, model_validator
 
+from local_replay_runtime.strategy_ladder_edge_model_provider_multi_pair import (
+    EXPECTED_EDGE_ARTIFACT_MODE_MONO_PAIR_LEGACY,
+    EXPECTED_EDGE_ARTIFACT_MODES,
+)
+
 
 FeatureScalar = str | int | float | bool | None
 
@@ -87,6 +92,7 @@ class StrategyLadderRequest(BaseModel, frozen=True):
     ml_mode: str = "ML_MODE_OFF"
     frozen_ml_artifact_path: Path | None = None
     frozen_ml_artifact_hash: str | None = None
+    expected_edge_artifact_mode: str = EXPECTED_EDGE_ARTIFACT_MODE_MONO_PAIR_LEGACY
     rolling_ml_window_plan_path: Path | None = None
     ml_artifact_freshness_days: int = Field(default=30, ge=1)
     execution_runtime_projection_path: Path | None = None
@@ -195,6 +201,11 @@ class StrategyLadderRequest(BaseModel, frozen=True):
             self.frozen_ml_artifact_path is None or not self.frozen_ml_artifact_hash
         ):
             raise ValueError("StrategyLadderRequest ML_MODE_OVERLAY_FROZEN requires artifact path and hash")
+        if self.expected_edge_artifact_mode not in EXPECTED_EDGE_ARTIFACT_MODES:
+            raise ValueError(
+                f"StrategyLadderRequest unsupported expected_edge_artifact_mode: "
+                f"{self.expected_edge_artifact_mode!r} (allowed: {EXPECTED_EDGE_ARTIFACT_MODES})"
+            )
         if self.b1_5_policy_mode not in {
             "conservative_hard_only",
             "strict_fail_closed",
@@ -484,6 +495,10 @@ class StrategyLadderCandidateSummary(BaseModel, frozen=True):
     candidate_discovery_limit_reason: str = ""
     candidate_discovery_mode: str = "SAMPLE_CAPPED_DEBUG"
     candidate_discovery_cap_status: str = "CANDIDATE_DISCOVERY_LIMIT_NOT_PROVEN"
+    temporal_bucket_granularity: str = ""
+    temporal_bucket_count_available: int = Field(default=0, ge=0)
+    temporal_bucket_count_selected: int = Field(default=0, ge=0)
+    temporal_bucket_coverage_ratio: float | None = Field(default=None, ge=0.0, le=1.0)
     preselection_status: str = "ENGINE_NATIVE_PRESELECTION_NOT_PROVEN"
     replay_input_mode_status: str = "PRESELECTED_ONLY"
     preselected_only: bool = True
@@ -709,6 +724,10 @@ class StrategyLadderRunManifest(BaseModel, frozen=True):
     candidate_discovery_limit_reason: str = ""
     candidate_discovery_mode: str = "SAMPLE_CAPPED_DEBUG"
     candidate_discovery_cap_status: str = "CANDIDATE_DISCOVERY_LIMIT_NOT_PROVEN"
+    temporal_bucket_granularity: str = ""
+    temporal_bucket_count_available: int = Field(default=0, ge=0)
+    temporal_bucket_count_selected: int = Field(default=0, ge=0)
+    temporal_bucket_coverage_ratio: float | None = Field(default=None, ge=0.0, le=1.0)
     preselection_status: str = "ENGINE_NATIVE_PRESELECTION_NOT_PROVEN"
     replay_input_mode_status: str = "PRESELECTED_ONLY"
     preselected_only: bool = True
@@ -793,6 +812,21 @@ class StrategyLadderRunManifest(BaseModel, frozen=True):
     candidate_engine_native_count: int = Field(default=0, ge=0)
     candidate_proxy_count: int = Field(default=0, ge=0)
     executed_trade_count: int = Field(default=0, ge=0)
+    statistical_validation_status: str = "STATISTICAL_VALIDATION_NOT_PROVEN"
+    statistical_validation_observation_count: int = Field(default=0, ge=0)
+    statistical_validation_trial_count: int = Field(default=1, ge=1)
+    statistical_validation_benchmark_sharpe: float = 0.0
+    statistical_validation_acceptance_floor: float = Field(default=0.95, gt=0.0, lt=1.0)
+    statistical_validation_sample_sharpe: float | None = None
+    statistical_validation_psr: float | None = Field(default=None, ge=0.0, le=1.0)
+    statistical_validation_dsr: float | None = Field(default=None, ge=0.0, le=1.0)
+    statistical_validation_stationary_block_length: int = Field(default=1, ge=1)
+    statistical_validation_effective_sample_size: float | None = Field(default=None, ge=0.0)
+    statistical_validation_min_trl_required: float | None = Field(default=None, ge=0.0)
+    statistical_validation_min_trl_satisfied: bool = False
+    statistical_validation_psr_passes_floor: bool = False
+    statistical_validation_dsr_passes_floor: bool = False
+    statistical_validation_blocker_codes: tuple[str, ...] = ()
     # Audit 2026-05-06 (P3a) — Statut du pont microstructure vers les
     # engine runners natifs. Etats possibles :
     # - "ENGINE_NATIVE_NOT_REQUESTED" : engine_native_mode=False (defaut, comportement legacy)
@@ -847,6 +881,10 @@ class StrategyLadderReportSummary(BaseModel, frozen=True):
     candidate_discovery_limit_reason: str = ""
     candidate_discovery_mode: str = "SAMPLE_CAPPED_DEBUG"
     candidate_discovery_cap_status: str = "CANDIDATE_DISCOVERY_LIMIT_NOT_PROVEN"
+    temporal_bucket_granularity: str = ""
+    temporal_bucket_count_available: int = Field(default=0, ge=0)
+    temporal_bucket_count_selected: int = Field(default=0, ge=0)
+    temporal_bucket_coverage_ratio: float | None = Field(default=None, ge=0.0, le=1.0)
     preselection_status: str = "ENGINE_NATIVE_PRESELECTION_NOT_PROVEN"
     replay_input_mode_status: str = "PRESELECTED_ONLY"
     preselected_only: bool = True
@@ -919,6 +957,22 @@ class StrategyLadderReportSummary(BaseModel, frozen=True):
     expected_edge_blocker_codes: tuple[str, ...] = ()
     candidate_engine_native_count: int = Field(default=0, ge=0)
     candidate_proxy_count: int = Field(default=0, ge=0)
+    executed_trade_count: int = Field(default=0, ge=0)
+    statistical_validation_status: str = "STATISTICAL_VALIDATION_NOT_PROVEN"
+    statistical_validation_observation_count: int = Field(default=0, ge=0)
+    statistical_validation_trial_count: int = Field(default=1, ge=1)
+    statistical_validation_benchmark_sharpe: float = 0.0
+    statistical_validation_acceptance_floor: float = Field(default=0.95, gt=0.0, lt=1.0)
+    statistical_validation_sample_sharpe: float | None = None
+    statistical_validation_psr: float | None = Field(default=None, ge=0.0, le=1.0)
+    statistical_validation_dsr: float | None = Field(default=None, ge=0.0, le=1.0)
+    statistical_validation_stationary_block_length: int = Field(default=1, ge=1)
+    statistical_validation_effective_sample_size: float | None = Field(default=None, ge=0.0)
+    statistical_validation_min_trl_required: float | None = Field(default=None, ge=0.0)
+    statistical_validation_min_trl_satisfied: bool = False
+    statistical_validation_psr_passes_floor: bool = False
+    statistical_validation_dsr_passes_floor: bool = False
+    statistical_validation_blocker_codes: tuple[str, ...] = ()
     engine_native_status: str = "ENGINE_NATIVE_NOT_REQUESTED"
     engine_native_records_built: int = Field(default=0, ge=0)
     depth_status_distribution: dict[str, int] = Field(default_factory=dict)

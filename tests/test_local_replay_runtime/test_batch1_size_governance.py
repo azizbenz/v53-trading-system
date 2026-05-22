@@ -133,6 +133,66 @@ def test_data_factory_skips_2024_file_when_range_is_2025_04_29_to_30() -> None:
         shutil.rmtree(scratch, ignore_errors=True)
 
 
+def test_data_factory_allows_one_hour_warmup_before_logical_start() -> None:
+    scratch = _scratch_dir("date_warmup")
+    try:
+        raw_root = scratch / "raw"
+        _write_csv(
+            raw_root / "klines" / "BTCUSDT_1_2025-04-28.csv",
+            "startTime,open,high,low,close,volume,turnover",
+            [
+                "1745881140000,93980,94000,93970,93990,8,751920",
+                "1745881200000,93990,94010,93980,94000,7,658000",
+            ],
+        )
+        _write_csv(
+            raw_root / "klines" / "BTCUSDT_1_2025-04-29.csv",
+            "startTime,open,high,low,close,volume,turnover",
+            [
+                "1745884800000,94000,94020,93990,94010,10,940100",
+                "1745884860000,94010,94030,94000,94020,9,846180",
+            ],
+        )
+        report_root = scratch / "factory"
+        result = run_strategy_ladder_data_factory(
+            StrategyLadderDataFactoryRequest(
+                run_id="date-warmup-test",
+                input_root=report_root,
+                raw_roots=(raw_root,),
+                silver_root=report_root / "silver",
+                gold_root=report_root / "gold",
+                pairs=("BTCUSDT",),
+                timeframes=("1m",),
+                data_types=("klines",),
+                start="2025-04-29",
+                end="2025-04-29",
+                dry_run=False,
+            )
+        )
+        kline_entries = [
+            entry
+            for entry in result.silver_index
+            if entry.data_type == "ohlcv" and entry.timeframe == "1m"
+        ]
+        assert {entry.date for entry in kline_entries} == {"2025-04-28", "2025-04-29"}
+        quality = result.data_quality_report
+        assert quality.date_filter_start == "2025-04-29"
+        assert quality.date_filter_end == "2025-04-29"
+        assert quality.date_filter_effective_start == "2025-04-28"
+        assert quality.replay_context_lookback_ms == 3_600_000
+        assert (
+            quality.silver_index_date_range_status
+            == "SILVER_INDEX_DATE_RANGE_CONSISTENT"
+        )
+        assert quality.silver_index_date_range_violation_count == 0
+        assert result.manifest.start == "2025-04-29"
+        assert result.manifest.end == "2025-04-29"
+        assert result.manifest.effective_start == "2025-04-28"
+        assert result.manifest.replay_context_lookback_ms == 3_600_000
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
 def test_data_factory_blocks_non_dry_run_without_dates() -> None:
     scratch = _scratch_dir("non_dry_no_dates")
     try:

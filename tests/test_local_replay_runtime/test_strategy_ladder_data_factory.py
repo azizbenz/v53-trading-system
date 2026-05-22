@@ -43,6 +43,13 @@ def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
     )
 
 
+def _read_jsonl_any(path: Path) -> list[dict[str, object]]:
+    if path.name.endswith(".jsonl.gz"):
+        with gzip.open(path, "rt", encoding="utf-8-sig") as handle:
+            return [json.loads(line) for line in handle if line.strip()]
+    return [json.loads(line) for line in path.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
+
+
 def _write_csv(path: Path, header: str, rows: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join([header, *rows]) + "\n", encoding="utf-8")
@@ -237,11 +244,7 @@ def test_data_factory_normalizes_inputs_builds_gold_and_keeps_dynamic_pair_unive
 
         gold_rows = []
         for path in result.gold_feature_manifest.feature_paths:
-            gold_rows.extend(
-                json.loads(line)
-                for line in Path(path).read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            )
+            gold_rows.extend(_read_jsonl_any(Path(path)))
 
         assert result.manifest.data_factory_status == "DATA_FACTORY_READY"
         assert result.pair_universe_report.pair_universe_status == "PAIR_UNIVERSE_READY"
@@ -259,6 +262,211 @@ def test_data_factory_normalizes_inputs_builds_gold_and_keeps_dynamic_pair_unive
         assert gold_rows[0]["trade_feature_status"] == "TRADE_FEATURE_STATUS_READY"
         assert gold_rows[0]["orderbook_feature_status"] == "ORDERBOOK_FEATURE_STATUS_READY"
         assert [row["timestamp_ms"] for row in gold_rows] == sorted(row["timestamp_ms"] for row in gold_rows)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_data_factory_accepts_partial_day_ohlcv_via_severity_classifier_2026_05_21() -> None:
+    """Patch D1+D2 (2026-05-21) — severity classifier OHLCV temporal completeness.
+
+    Raw Bybit L: dumps sont systématiquement tronqués à 1000 rows max
+    (limite GET endpoint non-paginé). 1m=1000/1440=69%, 10m=100/144=69% :
+    research-acceptable via PARTIAL_DAY_ACCEPTED, plus de fail-close.
+    """
+    scratch = _scratch_dir("data_factory_ohlcv_temporal_gate")
+    shutil.rmtree(scratch, ignore_errors=True)
+    try:
+        raw_root = scratch / "raw"
+        _write_csv(
+            raw_root / "trades" / "BTCUSDT_2025-01-01.csv",
+            "id,timestamp,price,volume,side",
+            [
+                "1,1735689600000,94000,0.01,buy",
+                "2,1735689660000,94010,0.02,sell",
+            ],
+        )
+        rows_1m = [
+            f"{1735689600000 + index * 60_000},94000,94100,93900,94010,10,940100"
+            for index in range(1000)
+        ]
+        rows_10m = [
+            f"{1735689600000 + index * 600_000},94000,94100,93900,94010,10,940100"
+            for index in range(100)
+        ]
+        _write_csv(
+            raw_root / "klines" / "BTCUSDT_1_2025-01-01.csv",
+            "startTime,open,high,low,close,volume,turnover",
+            rows_1m,
+        )
+        _write_csv(
+            raw_root / "klines" / "BTCUSDT_10_2025-01-01.csv",
+            "startTime,open,high,low,close,volume,turnover",
+            rows_10m,
+        )
+        _write_jsonl(
+            raw_root / "orderbook" / "snapshot" / "BTCUSDT_2025-01-01.data",
+            [
+                {
+                    "topic": "orderbook.200.BTCUSDT",
+                    "type": "snapshot",
+                    "timestamp_ms": 1735689600000,
+                    "seq": 1,
+                    "data": {"b": _book_levels("bid"), "a": _book_levels("ask")},
+                },
+            ],
+        )
+        _write_jsonl(
+            raw_root / "orderbook" / "delta" / "BTCUSDT_2025-01-01.data",
+            [
+                {
+                    "topic": "orderbook.200.BTCUSDT",
+                    "type": "delta",
+                    "timestamp_ms": 1735689660000,
+                    "u": 2,
+                    "data": {"b": [["94000.0", "1.0"]], "a": [["94010.0", "0"]]},
+                },
+            ],
+        )
+        _write_csv(
+            raw_root / "metadata" / "symbol_filters.csv",
+            "pair,min_notional,tick_size,step_size,maker_fee,taker_fee",
+            ["BTCUSDT,10,0.10,0.001,0.001,0.001"],
+        )
+
+        result = run_strategy_ladder_data_factory(
+            StrategyLadderDataFactoryRequest(
+                run_id="df-ohlcv-gate",
+                input_root=scratch / "factory",
+                raw_roots=(raw_root,),
+                silver_root=scratch / "factory" / "silver",
+                gold_root=scratch / "factory" / "gold",
+                pairs=("BTCUSDT",),
+                timeframes=("1m", "10m"),
+                start="2025-01-01",
+                end="2025-01-01",
+            )
+        )
+
+        # Avec severity classifier (D1+D2 patch), 69% rows = research-acceptable
+        # → data_factory_status NE PLUS BLOCKED par OHLCV temporal seul
+        assert result.manifest.data_factory_status != "DATA_FACTORY_BLOCKED_BY_OHLCV_TEMPORAL_COMPLETENESS"
+        # Statut OHLCV temporal devient PARTIAL_DAY_ACCEPTED (recherche-acceptable)
+        assert (
+            result.manifest.ohlcv_temporal_completeness_status
+            == "OHLCV_TEMPORAL_COMPLETENESS_PARTIAL_DAY_ACCEPTED"
+        )
+        # blocked_entry_count = 0 car aucun entry n'est hard-fail (juste partial)
+        assert result.manifest.ohlcv_temporal_blocked_entry_count == 0
+        assert result.manifest.ohlcv_temporal_critical_timeframes == ("1m", "10m")
+        # Nouveaux blocker codes : PARTIAL_DAY_ACCEPTED (research-acceptable)
+        assert "OHLCV_1M_PARTIAL_DAY_ACCEPTED" in result.manifest.blocker_codes
+        assert "OHLCV_10M_PARTIAL_DAY_ACCEPTED" in result.manifest.blocker_codes
+        # Anciens codes _BLOCKED ne doivent PAS être présents
+        assert "OHLCV_1M_TEMPORAL_COMPLETENESS_BLOCKED" not in result.manifest.blocker_codes
+        assert "OHLCV_10M_TEMPORAL_COMPLETENESS_BLOCKED" not in result.manifest.blocker_codes
+        assert result.data_quality_report.raw_source_typing_status in {
+            "RAW_SOURCE_TYPED_READY",
+            "RAW_SOURCE_TYPE_INFERRED",
+            "RAW_SOURCE_TYPE_AMBIGUOUS",
+        }
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_data_factory_still_fail_closes_when_ohlcv_below_research_threshold_2026_05_21() -> None:
+    """Patch D1+D2 (2026-05-21) — sous le seuil 65% research, on reste BLOCKED.
+
+    Garantit que le severity classifier ne dégrade PAS l'enforcement pour les
+    cas vraiment cassés. 500/1440 = 35% → BLOCKED (sous le floor research 65%).
+    """
+    scratch = _scratch_dir("data_factory_ohlcv_below_research_threshold")
+    shutil.rmtree(scratch, ignore_errors=True)
+    try:
+        raw_root = scratch / "raw"
+        _write_csv(
+            raw_root / "trades" / "BTCUSDT_2025-01-01.csv",
+            "id,timestamp,price,volume,side",
+            [
+                "1,1735689600000,94000,0.01,buy",
+                "2,1735689660000,94010,0.02,sell",
+            ],
+        )
+        # 500/1440 = 35% < 65% threshold → BLOCKED
+        rows_1m = [
+            f"{1735689600000 + index * 60_000},94000,94100,93900,94010,10,940100"
+            for index in range(500)
+        ]
+        # 50/144 = 35% < 65% threshold → BLOCKED
+        rows_10m = [
+            f"{1735689600000 + index * 600_000},94000,94100,93900,94010,10,940100"
+            for index in range(50)
+        ]
+        _write_csv(
+            raw_root / "klines" / "BTCUSDT_1_2025-01-01.csv",
+            "startTime,open,high,low,close,volume,turnover",
+            rows_1m,
+        )
+        _write_csv(
+            raw_root / "klines" / "BTCUSDT_10_2025-01-01.csv",
+            "startTime,open,high,low,close,volume,turnover",
+            rows_10m,
+        )
+        _write_jsonl(
+            raw_root / "orderbook" / "snapshot" / "BTCUSDT_2025-01-01.data",
+            [
+                {
+                    "topic": "orderbook.200.BTCUSDT",
+                    "type": "snapshot",
+                    "timestamp_ms": 1735689600000,
+                    "seq": 1,
+                    "data": {"b": _book_levels("bid"), "a": _book_levels("ask")},
+                },
+            ],
+        )
+        _write_jsonl(
+            raw_root / "orderbook" / "delta" / "BTCUSDT_2025-01-01.data",
+            [
+                {
+                    "topic": "orderbook.200.BTCUSDT",
+                    "type": "delta",
+                    "timestamp_ms": 1735689660000,
+                    "u": 2,
+                    "data": {"b": [["94000.0", "1.0"]], "a": [["94010.0", "0"]]},
+                },
+            ],
+        )
+        _write_csv(
+            raw_root / "metadata" / "symbol_filters.csv",
+            "pair,min_notional,tick_size,step_size,maker_fee,taker_fee",
+            ["BTCUSDT,10,0.10,0.001,0.001,0.001"],
+        )
+
+        result = run_strategy_ladder_data_factory(
+            StrategyLadderDataFactoryRequest(
+                run_id="df-ohlcv-below-floor",
+                input_root=scratch / "factory",
+                raw_roots=(raw_root,),
+                silver_root=scratch / "factory" / "silver",
+                gold_root=scratch / "factory" / "gold",
+                pairs=("BTCUSDT",),
+                timeframes=("1m", "10m"),
+                start="2025-01-01",
+                end="2025-01-01",
+            )
+        )
+
+        assert (
+            result.manifest.data_factory_status
+            == "DATA_FACTORY_BLOCKED_BY_OHLCV_TEMPORAL_COMPLETENESS"
+        )
+        assert (
+            result.manifest.ohlcv_temporal_completeness_status
+            == "OHLCV_TEMPORAL_COMPLETENESS_BLOCKED"
+        )
+        assert result.manifest.ohlcv_temporal_blocked_entry_count == 2
+        assert "OHLCV_1M_TEMPORAL_COMPLETENESS_BLOCKED" in result.manifest.blocker_codes
+        assert "OHLCV_10M_TEMPORAL_COMPLETENESS_BLOCKED" in result.manifest.blocker_codes
+        assert "OHLCV_1M_PARTIAL_DAY_ACCEPTED" not in result.manifest.blocker_codes
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
@@ -354,10 +562,9 @@ def test_data_factory_filters_timeframes_limits_gold_and_defers_trade_slippage(
         assert all("features_5m" in path for path in result.gold_feature_manifest.feature_paths)
         assert not any("features_10m" in path for path in result.gold_feature_manifest.feature_paths)
         gold_rows = [
-            json.loads(line)
+            row
             for path in result.gold_feature_manifest.feature_paths
-            for line in Path(path).read_text(encoding="utf-8").splitlines()
-            if line.strip()
+            for row in _read_jsonl_any(Path(path))
         ]
         assert len(gold_rows) == 3
         assert {row["timeframe"] for row in gold_rows} == {"5m"}
@@ -528,11 +735,7 @@ def test_gold_features_do_not_leak_orderbook_depth_across_dates() -> None:
 
         gold_rows = []
         for path in manifest.feature_paths:
-            gold_rows.extend(
-                json.loads(line)
-                for line in Path(path).read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            )
+            gold_rows.extend(_read_jsonl_any(Path(path)))
 
         assert manifest.feature_row_count == 1
         assert gold_rows[0]["book_depth_source_status"] == "BOOK_DEPTH_NOT_PROVEN"
@@ -1078,6 +1281,82 @@ def test_orderbook_sequence_gap_report_is_written() -> None:
         shutil.rmtree(scratch, ignore_errors=True)
 
 
+def test_data_factory_manifest_propagates_silver_gap_blockers() -> None:
+    scratch = _scratch_dir("manifest_propagates_silver_gap_blockers")
+    shutil.rmtree(scratch, ignore_errors=True)
+    try:
+        raw_root = scratch / "raw"
+        _copy_orderbook_fixture(raw_root, "2025-04-29_BTCUSDT_ob200_seq_gap.data")
+        factory_root = scratch / "factory"
+        result = run_strategy_ladder_data_factory(
+            StrategyLadderDataFactoryRequest(
+                run_id="df-manifest-silver-gap-blockers",
+                input_root=factory_root,
+                raw_roots=(raw_root,),
+                silver_root=factory_root / "silver",
+                gold_root=factory_root / "gold",
+                pairs=("BTCUSDT",),
+                data_types=("orderbook",),
+            )
+        )
+
+        assert "SILVER_MISSING_TRADES" in result.manifest.blocker_codes
+        assert "SILVER_MISSING_OHLCV" in result.manifest.blocker_codes
+        manifest_payload = json.loads(
+            (factory_root / "data_factory_manifest.json").read_text(encoding="utf-8")
+        )
+        quality_payload = json.loads(
+            (factory_root / "data_quality_report.json").read_text(encoding="utf-8")
+        )
+        assert "SILVER_MISSING_TRADES" in manifest_payload["blocker_codes"]
+        assert "SILVER_MISSING_OHLCV" in manifest_payload["blocker_codes"]
+        assert "SILVER_MISSING_TRADES" in quality_payload["blocker_codes"]
+        assert "SILVER_MISSING_OHLCV" in quality_payload["blocker_codes"]
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_data_factory_manifest_surfaces_runtime_parity_ready_when_training_and_runtime_match() -> None:
+    scratch = _scratch_dir("manifest_propagates_runtime_parity_blocker")
+    shutil.rmtree(scratch, ignore_errors=True)
+    try:
+        raw_root = scratch / "raw"
+        _write_btcusdt_trades_sample(raw_root)
+        _write_btcusdt_kline_fixture(raw_root)
+        factory_root = scratch / "factory"
+        result = run_strategy_ladder_data_factory(
+            StrategyLadderDataFactoryRequest(
+                run_id="df-manifest-runtime-parity",
+                input_root=factory_root,
+                raw_roots=(raw_root,),
+                silver_root=factory_root / "silver",
+                gold_root=factory_root / "gold",
+                pairs=("BTCUSDT",),
+                data_types=("trades", "klines"),
+                timeframes=("1m",),
+                start="2025-04-29",
+                end="2025-04-29",
+                small_scope=True,
+            )
+        )
+
+        parity_payload = json.loads(
+            (factory_root / "runtime_feature_parity_manifest.json").read_text(encoding="utf-8")
+        )
+        assert parity_payload["status"] == "RUNTIME_PARITY_SCHEMA_MATCH_READY"
+        manifest_payload = json.loads(
+            (factory_root / "data_factory_manifest.json").read_text(encoding="utf-8")
+        )
+        quality_payload = json.loads(
+            (factory_root / "data_quality_report.json").read_text(encoding="utf-8")
+        )
+        assert "RUNTIME_PARITY_BLOCKED_BY_MISSING_RUNTIME_FEATURES" not in result.manifest.blocker_codes
+        assert "RUNTIME_PARITY_BLOCKED_BY_MISSING_RUNTIME_FEATURES" not in manifest_payload["blocker_codes"]
+        assert "RUNTIME_PARITY_BLOCKED_BY_MISSING_RUNTIME_FEATURES" not in quality_payload["blocker_codes"]
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
 def test_fetch_bybit_spot_metadata_cache_writes_local_cache_files() -> None:
     scratch = _scratch_dir("bybit_metadata_fetch")
     shutil.rmtree(scratch, ignore_errors=True)
@@ -1140,6 +1419,57 @@ def test_fetch_bybit_spot_metadata_cache_writes_local_cache_files() -> None:
         report_payload = json.loads(report_path.read_text(encoding="utf-8"))
         assert report_payload["metadata_temporal_status"] == "CURRENT_METADATA_PROXY"
         assert report_payload["pairs_fetched"] == ["BNBUSDT", "BTCUSDT"]
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_data_factory_generates_raw_source_manifest_and_numeric_expected_edge_feature_manifest() -> None:
+    scratch = _scratch_dir("generated_raw_manifest_expected_edge_manifest")
+    shutil.rmtree(scratch, ignore_errors=True)
+    try:
+        raw_root = scratch / "raw"
+        _write_csv(
+            raw_root / "trades" / "BTCUSDT_2025-04-29.csv",
+            "id,timestamp,price,volume,side",
+            ["1,1745884800000,63000,0.01,buy"],
+        )
+        _write_csv(
+            raw_root / "klines" / "BTCUSDT_1_2025-04-29.csv",
+            "startTime,open,high,low,close,volume,turnover",
+            ["1745884800000,63000,63050,62980,63010,5,315050"],
+        )
+        result = run_strategy_ladder_data_factory(
+            StrategyLadderDataFactoryRequest(
+                run_id="df-generated-raw-manifest",
+                input_root=scratch / "factory",
+                raw_roots=(raw_root,),
+                silver_root=scratch / "factory" / "silver",
+                gold_root=scratch / "factory" / "gold",
+                pairs=("BTCUSDT",),
+                data_types=("trades", "klines"),
+                timeframes=("1m",),
+                start="2025-04-29",
+                end="2025-04-29",
+                small_scope=True,
+            )
+        )
+
+        manifest_path = Path(result.manifest.raw_source_manifest_path)
+        assert manifest_path.is_file()
+        raw_source_payload = json.loads((scratch / "factory" / "raw_source_report.json").read_text(encoding="utf-8"))
+        assert raw_source_payload["raw_source_manifest_path"] == str(manifest_path.resolve())
+        assert raw_source_payload["raw_source_provenance_status"] == "RAW_SOURCE_MANIFEST_GENERATED"
+        assert any(
+            code in {"RAW_SOURCE_TYPE_INFERRED", "RAW_SOURCE_TYPE_AMBIGUOUS"}
+            for code in raw_source_payload["blocker_codes"]
+        )
+        expected_edge_payload = json.loads((scratch / "factory" / "expected_edge_feature_manifest.json").read_text(encoding="utf-8"))
+        assert expected_edge_payload["purge_window_minutes"] == 1
+        assert expected_edge_payload["embargo_window_minutes"] == 1
+        assert "break_even_bps" in expected_edge_payload["feature_names"]
+        assert "session_tags" not in expected_edge_payload["feature_names"]
+        assert result.manifest.pair_generalization_status == "SINGLE_PAIR_RESEARCH_ONLY"
+        assert "SINGLE_PAIR_RESEARCH_ONLY" in result.manifest.blocker_codes
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
@@ -1210,11 +1540,7 @@ def test_data_factory_reads_historical_metadata_cache_and_surfaces_bybit_status(
         assert result.data_quality_report.fee_provenance_status != "ACCOUNT_FEE_VERIFIED"
 
         gold_path = Path(result.gold_feature_manifest.feature_paths[0])
-        gold_rows = [
-            json.loads(line)
-            for line in gold_path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
+        gold_rows = _read_jsonl_any(gold_path)
         assert gold_rows
         assert gold_rows[0]["min_notional"] == 10.0
     finally:
@@ -1378,10 +1704,9 @@ def test_data_factory_emits_fragility_false_breakout_features_and_metadata_ready
         )
 
         gold_rows = [
-            json.loads(line)
+            row
             for path in result.gold_feature_manifest.feature_paths
-            for line in Path(path).read_text(encoding="utf-8").splitlines()
-            if line.strip()
+            for row in _read_jsonl_any(Path(path))
         ]
         assert gold_rows
         first_row = gold_rows[0]

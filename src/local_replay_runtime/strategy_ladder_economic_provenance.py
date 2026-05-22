@@ -28,6 +28,7 @@ PHILOSOPHIE PRESERVEE :
 
 from __future__ import annotations
 
+import gzip
 import json
 import math
 from dataclasses import dataclass, field
@@ -104,6 +105,7 @@ class EconomicProvenance:
     expected_edge_model_status: str = "EXPECTED_EDGE_MODEL_NOT_USED"
     expected_edge_model_artifact_hash: str | None = None
     expected_edge_model_feature_hash: str | None = None
+    measured_cost_governance: dict[str, object] = field(default_factory=dict)
 
     @property
     def aggregated_provenance(self) -> str:
@@ -178,6 +180,7 @@ class ExpectedEdgeModelProtocol(Protocol):
         self,
         *,
         pair: str,
+        timeframe: str | None = None,
         timestamp_ms: int,
         feature_values: Mapping[str, object] | None = None,
         route_features: Mapping[str, object] | None = None,
@@ -526,7 +529,11 @@ def _measure_slippage_from_kyle_lambda(
     points: list[KyleTradePoint] = []
     extended_start_ms = timestamp_ms - lookback_ms
     try:
-        with trade_path.open("r", encoding="utf-8-sig") as handle:
+        if trade_path.name.lower().endswith(".gz"):
+            handle_cm = gzip.open(trade_path, "rt", encoding="utf-8-sig")
+        else:
+            handle_cm = trade_path.open("r", encoding="utf-8-sig")
+        with handle_cm as handle:
             for line in handle:
                 stripped = line.strip()
                 if not stripped:
@@ -555,12 +562,18 @@ def _measure_slippage_from_kyle_lambda(
     if len(points) < 2:
         return None, f"INSUFFICIENT_TRADES:{len(points)}<2"
 
+    window_seconds = max(1.0, lookback_ms / 1000.0)
+    # Kyle lambda requires at least 2 populated intervals. Using one bucket
+    # equal to the full lookback (e.g. 60s window -> 60s bucket) makes the
+    # measurement fail almost deterministically on otherwise healthy data.
+    bucket_seconds = min(60.0, max(1.0, window_seconds / 4.0))
+
     try:
         record = compute_kyle_lambda(
             points,
             pair=pair,
-            window_seconds=max(1.0, lookback_ms / 1000.0),
-            bucket_seconds=min(60.0, max(1.0, lookback_ms / 1000.0)),
+            window_seconds=window_seconds,
+            bucket_seconds=bucket_seconds,
             standard_quote_notional=standard_notional_usdt,
         )
     except Exception as exc:  # noqa: BLE001
@@ -582,6 +595,7 @@ def compute_economic_provenance(
     timestamp_ms: int,
     book_status: str,
     pair: str = "",
+    timeframe: str | None = None,
     raw_book_path: Path | str | None = None,
     raw_trade_path: Path | str | None = None,
     raw_ohlcv_path: Path | str | None = None,
@@ -712,6 +726,7 @@ def compute_economic_provenance(
         try:
             edge_estimate = expected_edge_model.estimate_expected_edge_bps(
                 pair=pair,
+                timeframe=timeframe,
                 timestamp_ms=timestamp_ms,
                 feature_values=expected_edge_feature_values,
                 route_features=expected_edge_route_features,

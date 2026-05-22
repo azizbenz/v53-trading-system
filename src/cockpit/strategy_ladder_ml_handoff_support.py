@@ -8,9 +8,17 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from cockpit.action_support import CockpitBacktestJobKind, CockpitBacktestJobRecord
+from cockpit.action_support import (
+    CockpitBacktestJobKind,
+    CockpitBacktestJobRecord,
+    CockpitBacktestJobStatus,
+)
 from cockpit.form_state_support import LabMlHandoffFormState
 from interface_contracts import MlAntiLeakageProofArtifact, MlLiveDriftSnapshot, MlModelArtifact
+from local_replay_runtime.pair_capability_discovery import (
+    PairCapability,
+    discover_pair_capabilities,
+)
 
 
 _TRAINING_SOURCE_MODULE = "src/local_replay_runtime/strategy_ladder_expected_edge_training.py"
@@ -106,11 +114,31 @@ class StrategyLadderMlHandoffDashboardSummary(BaseModel, frozen=True):
 
     source_status: str = "missing"
     job_id: str = ""
+    latest_job_status: str = "JOB_NOT_PROVEN"
+    latest_job_pid: int = 0
+    latest_job_pid_alive: bool = False
+    latest_job_requested_at_iso: str = ""
+    latest_job_started_at_iso: str = ""
+    latest_job_finished_at_iso: str = ""
+    latest_job_latest_activity_iso: str = ""
+    latest_job_duration_seconds: float | None = None
+    latest_job_progress_pct: int = 0
+    latest_job_eta_minutes: float = 0.0
+    latest_job_produced_file_count: int = 0
+    latest_job_output_ref_count: int = 0
+    latest_job_stdout_log_size_kb: float = 0.0
+    latest_job_stdout_log_path: str = ""
+    latest_job_output_root: str = ""
+    latest_job_error_summary: str = ""
+    latest_job_blockers: tuple[str, ...] = ()
+    latest_job_stage_statuses: dict[str, str] = Field(default_factory=dict)
+    latest_job_can_cancel: bool = False
     artifact_id: str = ""
     status: str = "STRATEGY_LADDER_ML_LAB_HANDOFF_NOT_RUN"
     ready: bool = False
     pair: str = ""
     timeframe: str = ""
+    timeframe_scope: tuple[str, ...] = ()
     calibration_version: str = ""
     kline_root: str = ""
     label_store_dataset_path: str = ""
@@ -228,6 +256,49 @@ def _candidate_report_paths(
         if path.is_file():
             candidates.append((job.job_id, path))
     return tuple(candidates)
+
+
+def _ml_jobs(
+    jobs: tuple[CockpitBacktestJobRecord, ...],
+) -> tuple[CockpitBacktestJobRecord, ...]:
+    return tuple(
+        job
+        for job in jobs
+        if job.job_kind == CockpitBacktestJobKind.STRATEGY_LADDER_ML_LAB_HANDOFF
+    )
+
+
+def _job_summary_updates(
+    job: CockpitBacktestJobRecord | None,
+) -> dict[str, object]:
+    if job is None:
+        return {}
+    return {
+        "latest_job_status": job.status.value,
+        "latest_job_pid": job.pid,
+        "latest_job_pid_alive": job.pid_alive,
+        "latest_job_requested_at_iso": job.requested_at_iso,
+        "latest_job_started_at_iso": job.started_at_iso,
+        "latest_job_finished_at_iso": job.finished_at_iso,
+        "latest_job_latest_activity_iso": job.latest_activity_iso,
+        "latest_job_duration_seconds": job.duration_seconds,
+        "latest_job_progress_pct": job.progress_pct,
+        "latest_job_eta_minutes": job.eta_minutes,
+        "latest_job_produced_file_count": job.produced_file_count,
+        "latest_job_output_ref_count": job.output_ref_count,
+        "latest_job_stdout_log_size_kb": job.stdout_log_size_kb,
+        "latest_job_stdout_log_path": job.stdout_log_path,
+        "latest_job_output_root": job.output_root,
+        "latest_job_error_summary": job.error_summary,
+        "latest_job_blockers": tuple(job.blockers),
+        "latest_job_stage_statuses": dict(job.stage_statuses),
+        "latest_job_can_cancel": job.status
+        in {
+            CockpitBacktestJobStatus.JOB_CREATED,
+            CockpitBacktestJobStatus.JOB_RUNNING,
+            CockpitBacktestJobStatus.JOB_CANCELLING,
+        },
+    }
 
 
 def _load_model(path_ref: str, model_type: type[BaseModel]) -> BaseModel | None:
@@ -400,6 +471,82 @@ def _preview_rolling_plan(
         return None
 
 
+# Patch P2 (2026-05-22) — primitive discovery filesystem-driven des paires.
+# Réutilisée par Lab handoff (P2) et Backtest form (P3) via wrappers spécialisés.
+def _discover_pair_capabilities_from_paths(
+    *,
+    klines_root: str,
+    trades_root: str,
+    orderbook_root: str,
+) -> tuple[PairCapability, ...]:
+    """Primitive : scan filesystem and return capability matrix sorted by name.
+
+    Returns () if klines_root is missing/invalid (template falls back to mono).
+    Tolerates missing trades/orderbook roots (those flags become False).
+    """
+    klines_clean = (klines_root or "").strip()
+    if not klines_clean:
+        return ()
+    klines_path = Path(klines_clean)
+    if not klines_path.is_dir():
+        return ()
+
+    trades_clean = (trades_root or "").strip()
+    trades_path = (
+        Path(trades_clean) if trades_clean and Path(trades_clean).is_dir() else None
+    )
+    orderbook_clean = (orderbook_root or "").strip()
+    orderbook_path = (
+        Path(orderbook_clean)
+        if orderbook_clean and Path(orderbook_clean).is_dir()
+        else None
+    )
+
+    try:
+        capabilities = discover_pair_capabilities(
+            klines_root=klines_path,
+            trades_root=trades_path,
+            orderbook_root=orderbook_path,
+            metadata_pairs=(),
+        )
+    except (OSError, ValueError):
+        return ()
+
+    return tuple(capabilities[pair] for pair in sorted(capabilities.keys()))
+
+
+# Patch P2 (2026-05-22) — wrapper Lab handoff.
+def discover_lab_pair_capabilities(
+    form_state: LabMlHandoffFormState | None,
+) -> tuple[PairCapability, ...]:
+    """Discover available pairs from filesystem using the Lab form state roots."""
+    if form_state is None:
+        return ()
+    return _discover_pair_capabilities_from_paths(
+        klines_root=form_state.kline_root,
+        trades_root=form_state.trades_root,
+        orderbook_root=form_state.orderbook_root,
+    )
+
+
+# Patch P3 (2026-05-22) — wrapper Backtest form.
+def discover_backtest_pair_capabilities(
+    backtest_form: object | None,
+) -> tuple[PairCapability, ...]:
+    """Discover available pairs from filesystem using the Backtest form roots.
+
+    Accepts any object exposing klines_path / trades_path / orderbook_path
+    attributes (typically `BacktestFormState`). Returns () when no kline path.
+    """
+    if backtest_form is None:
+        return ()
+    return _discover_pair_capabilities_from_paths(
+        klines_root=getattr(backtest_form, "klines_path", "") or "",
+        trades_root=getattr(backtest_form, "trades_path", "") or "",
+        orderbook_root=getattr(backtest_form, "orderbook_path", "") or "",
+    )
+
+
 def _feature_row(feature_name: str) -> StrategyLadderMlHandoffFeatureRow:
     registry = _FEATURE_REGISTRY.get(feature_name, {})
     return StrategyLadderMlHandoffFeatureRow(
@@ -546,7 +693,15 @@ def read_strategy_ladder_ml_handoff_dashboard_summary(
 ) -> StrategyLadderMlHandoffDashboardSummary:
     """Read the latest Strategy Ladder ML handoff report produced by IA Lab."""
 
-    candidates = _candidate_report_paths(jobs)
+    ml_jobs = _ml_jobs(jobs)
+    latest_ml_job = ml_jobs[0] if ml_jobs else None
+    latest_job_updates = _job_summary_updates(latest_ml_job)
+    latest_job_report_path = (
+        Path(latest_ml_job.output_root) / "strategy_ladder_ml_lab_handoff_report.json"
+        if latest_ml_job is not None and latest_ml_job.output_root
+        else None
+    )
+    candidates = _candidate_report_paths(ml_jobs)
     if not candidates:
         preview_plan = _preview_rolling_plan(form_state)
         feature_names = (
@@ -555,8 +710,17 @@ def read_strategy_ladder_ml_handoff_dashboard_summary(
             else ()
         )
         return StrategyLadderMlHandoffDashboardSummary(
-            source_status=("preview" if preview_plan is not None else "missing"),
-            status="STRATEGY_LADDER_ML_LAB_HANDOFF_NOT_RUN",
+            source_status=(
+                "job_only"
+                if latest_ml_job is not None
+                else ("preview" if preview_plan is not None else "missing")
+            ),
+            job_id=(latest_ml_job.job_id if latest_ml_job is not None else ""),
+            status=(
+                latest_ml_job.status.value
+                if latest_ml_job is not None
+                else "STRATEGY_LADDER_ML_LAB_HANDOFF_NOT_RUN"
+            ),
             pair=("" if form_state is None else form_state.pair),
             timeframe=("" if form_state is None else form_state.timeframe),
             train_start=("" if form_state is None else form_state.train_start),
@@ -599,11 +763,74 @@ def read_strategy_ladder_ml_handoff_dashboard_summary(
             feature_rows=_build_feature_rows(feature_names),
             equation_rows=_build_equation_rows(feature_names),
             module_rows=_module_rows(),
+            **latest_job_updates,
         )
-    job_id, report_path = max(
-        candidates,
-        key=lambda item: item[1].stat().st_mtime,
-    )
+    if latest_job_report_path is not None and latest_job_report_path.is_file():
+        job_id, report_path = latest_ml_job.job_id, latest_job_report_path
+    else:
+        if latest_ml_job is not None and latest_job_report_path is not None:
+            preview_plan = _preview_rolling_plan(form_state)
+            feature_names = (
+                _csv_tuple(form_state.feature_names)
+                if form_state is not None
+                else ()
+            )
+            return StrategyLadderMlHandoffDashboardSummary(
+                source_status="job_only",
+                job_id=latest_ml_job.job_id,
+                status=latest_ml_job.status.value,
+                pair=("" if form_state is None else form_state.pair),
+                timeframe=("" if form_state is None else form_state.timeframe),
+                train_start=("" if form_state is None else form_state.train_start),
+                train_end=("" if form_state is None else form_state.train_end),
+                requested_backtest_start=(
+                    "" if form_state is None else form_state.requested_backtest_start
+                ),
+                requested_backtest_end=(
+                    "" if preview_plan is None else preview_plan.backtest_end_date
+                ),
+                rolling_ml_window_plan_status=(
+                    "" if preview_plan is None else preview_plan.status
+                ),
+                rolling_ml_required_artifact_count=(
+                    0 if preview_plan is None else preview_plan.required_artifact_count
+                ),
+                rolling_ml_effective_chunk_days=(
+                    0 if preview_plan is None else preview_plan.effective_chunk_days
+                ),
+                rolling_train_days=(
+                    DEFAULT_ROLLING_TRAIN_DAYS
+                    if form_state is None
+                    else form_state.train_days
+                ),
+                rolling_validation_days=(
+                    DEFAULT_ROLLING_VALIDATION_DAYS
+                    if form_state is None
+                    else form_state.validation_days
+                ),
+                rolling_freshness_days=(
+                    DEFAULT_ROLLING_FRESHNESS_DAYS
+                    if form_state is None
+                    else form_state.freshness_days
+                ),
+                rolling_chunk_days=(
+                    DEFAULT_ROLLING_CHUNK_DAYS
+                    if form_state is None
+                    else form_state.chunk_days
+                ),
+                rolling_plan_chunks=(
+                    () if preview_plan is None else preview_plan.chunks
+                ),
+                feature_names=feature_names,
+                feature_rows=_build_feature_rows(feature_names),
+                equation_rows=_build_equation_rows(feature_names),
+                module_rows=_module_rows(),
+                **latest_job_updates,
+            )
+        job_id, report_path = max(
+            candidates,
+            key=lambda item: item[1].stat().st_mtime,
+        )
     payload = _load_json(report_path)
     if not payload:
         return StrategyLadderMlHandoffDashboardSummary(
@@ -611,6 +838,8 @@ def read_strategy_ladder_ml_handoff_dashboard_summary(
             job_id=job_id,
             handoff_report_ref=str(report_path.resolve()),
             module_rows=_module_rows(),
+            status=(latest_ml_job.status.value if latest_ml_job is not None else "invalid"),
+            **latest_job_updates,
         )
 
     training_report_payload = _load_json(Path(_string(payload, "training_report_ref")))
@@ -644,12 +873,13 @@ def read_strategy_ladder_ml_handoff_dashboard_summary(
             best_params_json = ""
     return StrategyLadderMlHandoffDashboardSummary(
         source_status="ok",
-        job_id=job_id,
+        job_id=(latest_ml_job.job_id if latest_ml_job is not None else job_id),
         artifact_id=_string(payload, "artifact_id"),
         status=_string(payload, "status"),
         ready=bool(payload.get("ready")),
         pair=_string(payload, "pair"),
         timeframe=_string(payload, "timeframe"),
+        timeframe_scope=_string_tuple(payload, "timeframe_scope"),
         calibration_version=(
             _string(training_report_payload, "calibration_version")
             or (artifact.calibration_version if isinstance(artifact, MlModelArtifact) else "")
@@ -872,6 +1102,7 @@ def read_strategy_ladder_ml_handoff_dashboard_summary(
         feature_rows=_build_feature_rows(feature_names),
         equation_rows=_build_equation_rows(feature_names),
         module_rows=_module_rows(),
+        **latest_job_updates,
     )
 
 

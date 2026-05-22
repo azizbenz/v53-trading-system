@@ -14,6 +14,7 @@ import pytest
 
 import local_replay_runtime.strategy_ladder_runner as strategy_ladder_runner_module
 from local_replay_runtime.strategy_ladder_candidate_discovery import (
+    apply_strategy_ladder_candidate_budget,
     discover_strategy_ladder_candidates,
 )
 from local_replay_runtime.strategy_ladder_complete_enabler_support import (
@@ -27,6 +28,9 @@ from local_replay_runtime.strategy_ladder_detailed_replay import (
 from local_replay_runtime.strategy_ladder_edge_model_provider import (
     EdgeEstimate,
     GovernedExpectedEdgeModelLoadResult,
+)
+from local_replay_runtime.strategy_ladder_engine_native_preselection import (
+    StrategyLadderEngineNativePreselectionBuildResult,
 )
 from local_replay_runtime.strategy_ladder_feature_store import (
     load_strategy_ladder_feature_store,
@@ -53,15 +57,22 @@ from local_replay_runtime.strategy_ladder_window_index import (
 )
 from local_replay_runtime.strategy_ladder_runner import (
     _count_executed_trades,
+    _compute_statistical_validation_result,
+    _build_report_summary,
+    _promotion_fidelity_blockers,
+    _stage_final_status,
     _build_engine_ab_direction_cost_diagnosis,
     _build_cost_parity,
     _build_engine_c_diagnosis,
     _build_engine_d_diagnosis,
     _build_engine_no_trade_diagnosis_payload,
+    _expected_edge_model_feature_maps,
     _expected_edge_model_reference_at,
     _blocker_assessment,
     _select_engine_specific_reason_counts,
     _summarize_raw_window_linkage,
+    _resolve_run_raw_source_manifest_path,
+    _persist_progress_run_manifest,
     run_backtest_strategy_ladder,
 )
 from interface_contracts.strategy_ladder_workflow_support import (
@@ -99,6 +110,57 @@ def _write_jsonl_gz(path: Path, rows: list[dict[str, object]]) -> None:
 def _write_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _read_jsonl_any(path: Path) -> list[dict[str, object]]:
+    if path.suffix == ".gz":
+        with gzip.open(path, "rt", encoding="utf-8-sig") as handle:
+            return [json.loads(line) for line in handle if line.strip()]
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8-sig").splitlines()
+        if line.strip()
+    ]
+
+
+def test_resolve_run_raw_source_manifest_path_falls_back_to_a2_manifest() -> None:
+    scratch = _scratch_dir("resolve_raw_source_manifest_path")
+    try:
+        phase_a2_root = scratch / "phase_a2_data_factory"
+        manifest_path = phase_a2_root / "raw_source_manifest.json"
+        silver_index_path = phase_a2_root / "silver_index.json"
+        _write_json(manifest_path, {"schema_version": "v1"})
+        _write_json(
+            phase_a2_root / "data_factory_manifest.json",
+            {
+                "schema_version": "v1",
+                "raw_source_manifest_path": str(manifest_path.resolve()),
+            },
+        )
+        _write_json(silver_index_path, {"schema_version": "v1", "entries": []})
+
+        request = StrategyLadderRequest(
+            run_id="run-raw-source-fallback",
+            input_root=scratch,
+            feature_store_root=scratch,
+            raw_root=scratch,
+            output_root=scratch / "output",
+            pairs=("BTCUSDT",),
+            engines=("engine_a",),
+            timeframes=("5m",),
+            start="2025-07-21",
+            end="2025-07-22",
+        )
+
+        resolved = _resolve_run_raw_source_manifest_path(
+            request=request,
+            silver_index_path=silver_index_path,
+            data_factory_base_root=phase_a2_root,
+        )
+
+        assert resolved == str(manifest_path.resolve())
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
 
 
 def _write_csv(path: Path, header: str, rows: list[str]) -> None:
@@ -164,6 +226,50 @@ def _book_depth20_row(timestamp_ms: int) -> dict[str, object]:
     }
 
 
+def test_temporal_stratified_candidate_budget_covers_multiple_days() -> None:
+    rows = tuple(
+        StrategyLadderFeatureRow.model_validate(
+            _feature_row(
+                engine_id="engine_a",
+                timestamp_ms=timestamp_ms,
+            )
+        )
+        for timestamp_ms in (
+            1_714_000_000_000,
+            1_714_000_300_000,
+            1_714_000_600_000,
+            1_714_000_900_000,
+            1_714_086_400_000,
+            1_714_086_700_000,
+            1_714_087_000_000,
+            1_714_087_300_000,
+        )
+    )
+    _, discovered = discover_strategy_ladder_candidates(
+        run_id="run-temporal-stratified",
+        rows=rows,
+    )
+
+    result = apply_strategy_ladder_candidate_budget(
+        discovered,
+        sample_cap_per_engine=2,
+        candidate_discovery_mode="TEMPORAL_STRATIFIED",
+    )
+
+    assert result.limited is True
+    assert len(result.candidates) == 2
+    assert result.limit_reason == "TEMPORAL_STRATIFIED_SAMPLE_BUDGET_ACTIVE"
+    assert result.temporal_bucket_granularity == "day"
+    assert result.temporal_bucket_count_available == 2
+    assert result.temporal_bucket_count_selected == 2
+    assert result.temporal_bucket_coverage_ratio == pytest.approx(1.0)
+    selected_days = {
+        datetime.fromtimestamp(event.resolved_timestamp_ms / 1000.0, tz=UTC).date().isoformat()
+        for event in result.candidates
+    }
+    assert len(selected_days) == 2
+
+
 def test_count_executed_trades_accepts_lowercase_replay_states() -> None:
     rows = (
         StrategyLadderBucketReplayResult(
@@ -198,6 +304,246 @@ def test_count_executed_trades_accepts_lowercase_replay_states() -> None:
     )
 
     assert _count_executed_trades(rows) == 2
+
+
+def test_compute_statistical_validation_result_uses_proven_executed_returns() -> None:
+    request = StrategyLadderRequest(
+        run_id="stat-validation",
+        input_root=Path("input"),
+        feature_store_root=Path("feature"),
+        raw_root=Path("raw"),
+        output_root=Path("output"),
+        timeframes=("5m",),
+    )
+    rows = (
+        StrategyLadderBucketReplayResult(
+            candidate_id="c1",
+            pair="BTCUSDT",
+            engine_id="engine_a",
+            strategy_id="engine_a.long",
+            capital_bucket=400,
+            timestamp_ms=1,
+            execution_state="executed",
+            executed_notional=100.0,
+            executed_only_net_return=0.010,
+            executed_only_net_return_status="EXECUTED_NET_RETURN_PROVEN",
+        ),
+        StrategyLadderBucketReplayResult(
+            candidate_id="c2",
+            pair="BTCUSDT",
+            engine_id="engine_a",
+            strategy_id="engine_a.long",
+            capital_bucket=400,
+            timestamp_ms=2,
+            execution_state="executed",
+            executed_notional=100.0,
+            executed_only_net_return=0.020,
+            executed_only_net_return_status="EXECUTED_NET_RETURN_PROVEN",
+        ),
+    )
+
+    result = _compute_statistical_validation_result(
+        request=request,
+        bucket_results=rows,
+    )
+
+    assert result.status == "STATISTICAL_VALIDATION_INSUFFICIENT_EXECUTIONS"
+    assert result.observation_count == 2
+    assert result.blocker_codes == ("STATISTICAL_VALIDATION_INSUFFICIENT_EXECUTIONS",)
+
+
+def test_compute_statistical_validation_result_emits_psr_and_dsr() -> None:
+    request = StrategyLadderRequest(
+        run_id="stat-validation-ready",
+        input_root=Path("input"),
+        feature_store_root=Path("feature"),
+        raw_root=Path("raw"),
+        output_root=Path("output"),
+        timeframes=("5m",),
+    )
+    rows = tuple(
+        StrategyLadderBucketReplayResult(
+            candidate_id=f"c{index}",
+            pair="BTCUSDT",
+            engine_id="engine_a",
+            strategy_id="engine_a.long",
+            capital_bucket=400,
+            timestamp_ms=index,
+            execution_state="executed",
+            executed_notional=100.0,
+            executed_only_net_return=net_return,
+            executed_only_net_return_status="EXECUTED_NET_RETURN_PROVEN",
+        )
+        for index, net_return in enumerate((0.010, 0.018, 0.014, 0.021, 0.017), start=1)
+    )
+
+    result = _compute_statistical_validation_result(
+        request=request,
+        bucket_results=rows,
+    )
+
+    assert result.status == "STATISTICAL_VALIDATION_READY"
+    assert result.observation_count == 5
+    assert result.trial_count == 1
+    assert result.stationary_block_length >= 1
+    assert result.effective_sample_size is not None
+    assert result.min_trl_required is not None
+    assert result.min_trl_satisfied is True
+    assert result.sample_sharpe is not None
+    assert result.psr is not None and result.psr >= 0.95
+    assert result.dsr is not None and result.dsr >= 0.95
+    assert result.blocker_codes == ()
+
+
+def test_build_report_summary_carries_statistical_validation_fields() -> None:
+    request = StrategyLadderRequest(
+        run_id="stat-summary",
+        input_root=Path("input"),
+        feature_store_root=Path("feature"),
+        raw_root=Path("raw"),
+        output_root=Path("output"),
+    )
+    run_manifest = StrategyLadderRunManifest(
+        run_id="stat-summary",
+        statistical_validation_status="STATISTICAL_VALIDATION_READY",
+        statistical_validation_observation_count=7,
+        statistical_validation_trial_count=3,
+        statistical_validation_benchmark_sharpe=0.0,
+        statistical_validation_acceptance_floor=0.95,
+        statistical_validation_sample_sharpe=1.23,
+        statistical_validation_psr=0.98,
+        statistical_validation_dsr=0.96,
+        statistical_validation_stationary_block_length=2,
+        statistical_validation_effective_sample_size=5.0,
+        statistical_validation_min_trl_required=4.1,
+        statistical_validation_min_trl_satisfied=True,
+        statistical_validation_psr_passes_floor=True,
+        statistical_validation_dsr_passes_floor=True,
+        statistical_validation_blocker_codes=(),
+        executed_trade_count=7,
+    )
+
+    summary = _build_report_summary(
+        request=request,
+        run_manifest=run_manifest,
+        capital_profiles=(),
+        engine_artifacts=(),
+        pair_artifacts=(),
+        strategy_artifacts=(),
+        sample_artifacts=(),
+        bucket_results=(),
+        evidence_projection={},
+    )
+
+    assert summary.executed_trade_count == 7
+    assert summary.statistical_validation_status == "STATISTICAL_VALIDATION_READY"
+    assert summary.statistical_validation_observation_count == 7
+    assert summary.statistical_validation_trial_count == 3
+    assert summary.statistical_validation_psr == pytest.approx(0.98)
+    assert summary.statistical_validation_dsr == pytest.approx(0.96)
+    assert summary.statistical_validation_stationary_block_length == 2
+    assert summary.statistical_validation_effective_sample_size == pytest.approx(5.0)
+    assert summary.statistical_validation_min_trl_required == pytest.approx(4.1)
+    assert summary.statistical_validation_min_trl_satisfied is True
+
+
+def test_compute_statistical_validation_result_blocks_when_min_trl_not_satisfied(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        strategy_ladder_runner_module,
+        "infer_stationary_block_length",
+        lambda _values: 12,
+    )
+    request = StrategyLadderRequest(
+        run_id="stat-validation-mintrl",
+        input_root=Path("input"),
+        feature_store_root=Path("feature"),
+        raw_root=Path("raw"),
+        output_root=Path("output"),
+        timeframes=("5m",),
+    )
+    rows = tuple(
+        StrategyLadderBucketReplayResult(
+            candidate_id=f"c{index}",
+            pair="BTCUSDT",
+            engine_id="engine_a",
+            strategy_id="engine_a.long",
+            capital_bucket=400,
+            timestamp_ms=index,
+            execution_state="executed",
+            executed_notional=100.0,
+            executed_only_net_return=net_return,
+            executed_only_net_return_status="EXECUTED_NET_RETURN_PROVEN",
+        )
+        for index, net_return in enumerate((0.010, 0.018, 0.014, 0.021, 0.017), start=1)
+    )
+
+    result = _compute_statistical_validation_result(
+        request=request,
+        bucket_results=rows,
+    )
+
+    assert result.status == "STATISTICAL_VALIDATION_MINTRL_NOT_SATISFIED"
+    assert result.effective_sample_size == pytest.approx(5.0 / 12.0)
+    assert result.min_trl_required is not None
+    assert result.min_trl_satisfied is False
+    assert "STATISTICAL_VALIDATION_MINTRL_NOT_SATISFIED" in result.blocker_codes
+
+
+def test_promotion_fidelity_blockers_include_statistical_validation_failures() -> None:
+    blockers = _promotion_fidelity_blockers(
+        candidate_truth_status="CANDIDATE_ENGINE_NATIVE_READY",
+        expected_edge_truth_status="EXPECTED_EDGE_GOVERNED_BACKTEST_TRUTH",
+        economic_constants_provenance="FULLY_MEASURED",
+        execution_fidelity_gap_codes=(),
+        statistical_validation_status="STATISTICAL_VALIDATION_BELOW_FLOOR",
+        statistical_validation_blocker_codes=("STATISTICAL_VALIDATION_PSR_BELOW_FLOOR",),
+    )
+
+    assert "STATISTICAL_VALIDATION_BELOW_FLOOR" in blockers
+    assert "STATISTICAL_VALIDATION_PSR_BELOW_FLOOR" in blockers
+
+
+def test_stage_final_status_blocks_when_statistical_validation_is_not_ready() -> None:
+    request = StrategyLadderRequest(
+        run_id="stat-final-status",
+        input_root=Path("input"),
+        feature_store_root=Path("feature"),
+        raw_root=Path("raw"),
+        output_root=Path("output"),
+    )
+
+    status = _stage_final_status(
+        request=request,
+        feature_store_status="FEATURE_STORE_READY",
+        candidate_export_status="CANDIDATE_EXPORT_READY",
+        raw_window_status="RAW_WINDOW_READY",
+        detailed_replay_status="DETAILED_REPLAY_READY",
+        capital_profile_count=1,
+        promotion_artifact_count=3,
+        executed_trade_count=5,
+        detailed_replay_record_count=10,
+        statistical_validation_status="STATISTICAL_VALIDATION_BELOW_FLOOR",
+    )
+
+    assert status == "STRATEGY_LADDER_BLOCKED_BY_STATISTICAL_VALIDATION"
+
+
+def test_expected_edge_model_feature_maps_promote_microstructure_payload_fields() -> None:
+    discovery_status, candidate_events = discover_strategy_ladder_candidates(
+        run_id="fixture-run",
+        rows=(StrategyLadderFeatureRow.model_validate(_feature_row()),),
+    )
+
+    assert discovery_status == "CANDIDATE_DISCOVERY_READY"
+    assert len(candidate_events) == 1
+
+    feature_values, route_features = _expected_edge_model_feature_maps(candidate_events[0])
+
+    assert feature_values["spread_bps"] == 4.0
+    assert feature_values["slippage_bps"] == 3.0
+    assert feature_values["book_depth_levels"] == 20
+    assert route_features["route_spread_bps"] == 4.0
+    assert route_features["route_slippage_bps"] == 3.0
 
 
 def test_feature_store_loader_supports_jsonl_and_rejects_future_leak() -> None:
@@ -957,7 +1303,7 @@ def test_strategy_ladder_runner_materializes_native_candidates_and_blocks_proxy_
         refusal_rows = [
             json.loads(line)
             for line in (run_dir / "refusal_ledger.jsonl").read_text(encoding="utf-8").splitlines()
-            if line
+            if line and not bool(json.loads(line).get("artifact_header"))
         ]
         assert refusal_rows
         assert refusal_rows[0]["execution_state"] == "hard_blocked"
@@ -1560,6 +1906,9 @@ def test_strategy_ladder_runner_hydrates_b2_from_consumed_a2_and_b1_artifacts() 
         assert "OUTPUT_ROOT_EXISTS_NON_EMPTY" not in phase_b2.blocker_codes
         assert phase_b2.phase_output_root == str(b2_root.resolve())
         assert phase_b2.produced_artifact_refs["run_manifest.json"].endswith("run_manifest.json")
+        assert not (
+            b2_root / "backtest_strategy_ladder" / "run-b2-hydration" / "run_manifest.progress.json"
+        ).exists()
         assert phase_b2.produced_artifact_refs["strategy_ladder_summary.json"].endswith(
             "strategy_ladder_summary.json"
         )
@@ -1709,6 +2058,264 @@ def test_b1_successful_rerun_replaces_stale_parent_workflow_phase_record() -> No
         assert phase_b1.consumed_artifact_refs["phase_a2_silver_index"].endswith(
             "silver_index.json"
         )
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_progress_run_manifest_does_not_overwrite_canonical_run_manifest() -> None:
+    scratch = _scratch_dir("progress_run_manifest_separation")
+    shutil.rmtree(scratch, ignore_errors=True)
+    try:
+        run_dir = scratch / "run"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        canonical_manifest = StrategyLadderRunManifest(
+            run_id="canonical-run",
+            workflow_run_id="workflow-demo",
+            phase_run_id="phase_b2-final",
+            output_root=str(run_dir.resolve()),
+            final_status="STRATEGY_LADDER_BLOCKED_BY_NO_EXECUTED_TRADES",
+            raw_window_extraction_status="RAW_WINDOW_READY",
+            detailed_replay_status="DETAILED_REPLAY_READY",
+        )
+        (run_dir / "run_manifest.json").write_text(
+            json.dumps(canonical_manifest.model_dump(mode="json"), indent=2),
+            encoding="utf-8",
+        )
+
+        progress_manifest = StrategyLadderRunManifest(
+            run_id="canonical-run",
+            workflow_run_id="workflow-demo",
+            phase_run_id="phase_b2-progress",
+            output_root=str(run_dir.resolve()),
+            final_status="STRATEGY_LADDER_BLOCKED_BY_RAW_WINDOWS",
+            raw_window_extraction_status="RAW_WINDOW_NOT_PROVEN",
+            detailed_replay_status="DETAILED_REPLAY_NOT_PROVEN",
+        )
+        _persist_progress_run_manifest(run_dir, progress_manifest)
+
+        canonical_payload = json.loads(
+            (run_dir / "run_manifest.json").read_text(encoding="utf-8")
+        )
+        progress_payload = json.loads(
+            (run_dir / "run_manifest.progress.json").read_text(encoding="utf-8")
+        )
+
+        assert canonical_payload["phase_run_id"] == "phase_b2-final"
+        assert canonical_payload["final_status"] == "STRATEGY_LADDER_BLOCKED_BY_NO_EXECUTED_TRADES"
+        assert progress_payload["phase_run_id"] == "phase_b2-progress"
+        assert progress_payload["final_status"] == "STRATEGY_LADDER_BLOCKED_BY_RAW_WINDOWS"
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_fast_only_b1_with_engine_native_mode_runs_native_materialization_and_preselection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scratch = _scratch_dir("b1_fast_only_engine_native")
+    shutil.rmtree(scratch, ignore_errors=True)
+    try:
+        workflow_root = scratch / "workflow_root"
+        a2_root = workflow_root / "phase_a2_data_factory"
+        feature_root = a2_root / "gold"
+        raw_root = scratch / "raw_root"
+        b1_root = workflow_root / "phase_b1_candidate_discovery"
+        workflow_manifest_path = workflow_root / "workflow_manifest.json"
+        timestamp_ms = 1_711_929_600_000
+
+        _write_json(
+            a2_root / "data_factory_manifest.json",
+            {
+                "data_factory_status": "DATA_FACTORY_READY",
+                "raw_source_status": "RAW_SOURCE_READY",
+                "pair_universe_status": "PAIR_UNIVERSE_READY",
+                "silver_index_status": "SILVER_INDEX_READY",
+                "gold_feature_store_status": "FEATURE_STORE_READY",
+            },
+        )
+        _write_json(a2_root / "raw_source_report.json", {"raw_source_status": "RAW_SOURCE_READY"})
+        _write_json(a2_root / "pair_universe_report.json", {"pair_universe_status": "PAIR_UNIVERSE_READY"})
+        _write_json(
+            a2_root / "data_quality_report.json",
+            {"orderbook_schema_status": "ORDERBOOK_SCHEMA_READY"},
+        )
+        _write_json(
+            a2_root / "gold_feature_manifest.json",
+            {"gold_feature_store_status": "FEATURE_STORE_READY", "feature_row_count": 1},
+        )
+        _write_jsonl(
+            feature_root / "features.jsonl",
+            [_feature_row(pair="BTCUSDT", engine_id="engine_a", timeframe="5m", timestamp_ms=timestamp_ms)],
+        )
+        _write_json(a2_root / "silver_index.json", {"status": "SILVER_INDEX_READY", "entries": []})
+        raw_root.mkdir(parents=True, exist_ok=True)
+
+        ensure_workflow_manifest(
+            workflow_root=workflow_root,
+            workflow_run_id="workflow-b1-fast-native",
+            request_hash="workflow-b1-fast-native-hash",
+            phase_id=PHASE_B1,
+            pairs=("BTCUSDT",),
+            start="2024-04-01",
+            end="2024-04-01",
+            ml_mode="ML_MODE_OFF",
+            candidate_discovery_mode="FULL_DISCOVERY",
+            engine_native_sample_size=25,
+            engine_count=4,
+            allow_broad_run=False,
+            small_scope_enabled=False,
+            full_scan_enabled=True,
+            no_full_scan_enabled=False,
+            silver_storage_mode_requested="jsonl_gz",
+            silver_storage_mode_effective="jsonl_gz",
+        )
+
+        calls = {"extract": 0, "materialize": 0, "preselect": 0}
+
+        def _fake_extract(*args: object, **kwargs: object) -> StrategyLadderRawWindowExtractionResult:
+            calls["extract"] += 1
+            manifest = StrategyLadderRawWindowManifest(
+                candidate_id="candidate-engine-a",
+                pair="BTCUSDT",
+                engine_id="engine_a",
+                strategy_id="engine_a",
+                timestamp_ms=timestamp_ms,
+                window_start_ms=timestamp_ms - 300_000,
+                window_end_ms=timestamp_ms + 300_000,
+                raw_trade_path=str((scratch / "raw_windows" / "trade.jsonl").resolve()),
+                raw_book_path=str((scratch / "raw_windows" / "book.jsonl").resolve()),
+                raw_book_delta_path=str((scratch / "raw_windows" / "book_delta.jsonl").resolve()),
+                raw_ohlcv_path=str((scratch / "raw_windows" / "ohlcv.jsonl").resolve()),
+                raw_metadata_path="",
+                raw_sources_used=("raw_root_01",),
+                book_depth_levels_available=20,
+                book_depth_source_status="BOOK_DEPTH20_AVAILABLE",
+                source_coverage_status="RAW_WINDOW_SOURCE_COVERAGE_COMPLETE",
+                window_extraction_status="RAW_WINDOW_READY",
+                input_data_hash="raw-window-hash",
+                method_version_hash="strategy_ladder.gold.v1",
+                artifact_hash="raw-window-artifact-hash",
+            )
+            return StrategyLadderRawWindowExtractionResult(
+                status="RAW_WINDOW_READY",
+                manifests=(manifest,),
+                indexed_lookup_metrics=StrategyLadderWindowLookupMetrics(),
+                window_cache_metrics=StrategyLadderWindowCacheMetrics(),
+            )
+
+        def _fake_materialize(
+            *,
+            candidate_events: tuple[StrategyLadderCandidateEvent, ...],
+            **kwargs: object,
+        ) -> strategy_ladder_runner_module._EngineNativeCandidateMaterialization:
+            calls["materialize"] += 1
+            source_event = candidate_events[0]
+            payload = dict(source_event.compatibility_payload or {})
+            payload.update(
+                {
+                    "engine_native_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+                    "engine_native_decision": "emit",
+                    "engine_native_reason_codes": [],
+                    "engine_native_no_trade_reasons": [],
+                    "expected_edge_provenance": "GOVERNED_ML_ARTIFACT_BACKTEST_TRUTH",
+                    "hard_block_reasons": [],
+                }
+            )
+            materialized = source_event.model_copy(
+                update={
+                    "candidate_source": "ENGINE_NATIVE",
+                    "compatibility_payload": payload,
+                    "preliminary_reason_codes": ("ENGINE_NATIVE_RUNNER_INVOKED",),
+                }
+            )
+            return strategy_ladder_runner_module._EngineNativeCandidateMaterialization(
+                candidate_events=(materialized,),
+                candidate_discovery_status="CANDIDATE_DISCOVERY_ENGINE_NATIVE_READY",
+                engine_native_status="ENGINE_NATIVE_FULL_PATH_READY",
+                engine_native_records_built=12,
+                engine_native_runner_invocation_count=1,
+                expected_edge_proxy_count=0,
+                expected_edge_governed_count=1,
+                blocker_codes=(),
+            )
+
+        def _fake_preselect(
+            *,
+            run_dir: Path,
+            materialized_candidate_events: tuple[StrategyLadderCandidateEvent, ...],
+            **kwargs: object,
+        ) -> StrategyLadderEngineNativePreselectionBuildResult:
+            calls["preselect"] += 1
+            preselection_candidates_path = run_dir / "preselection_candidates.jsonl"
+            _write_jsonl(
+                preselection_candidates_path,
+                [json.loads(event.model_dump_json()) for event in materialized_candidate_events],
+            )
+            _write_json(
+                run_dir / "reports" / "preselection_summary.json",
+                {"status": "ENGINE_NATIVE_PRESELECTION_READY"},
+            )
+            _write_jsonl(run_dir / "preselection_rejection_ledger.jsonl", [])
+            return StrategyLadderEngineNativePreselectionBuildResult(
+                status="ENGINE_NATIVE_PRESELECTION_READY",
+                preselection_candidates_path=str(preselection_candidates_path.resolve()),
+                preselection_summary_path=str((run_dir / "reports" / "preselection_summary.json").resolve()),
+                preselection_rejection_ledger_path=str((run_dir / "preselection_rejection_ledger.jsonl").resolve()),
+                discovery_pre_candidate_count=1,
+                engine_native_preselected_count=1,
+                preselection_hard_rejected_count=0,
+                preselection_soft_flagged_count=0,
+                preselection_passed_count=1,
+                b2_replay_candidate_count=1,
+                preselection_rejection_count=0,
+                replay_savings_estimate_count=0,
+            )
+
+        monkeypatch.setattr(strategy_ladder_runner_module, "extract_strategy_ladder_raw_windows", _fake_extract)
+        monkeypatch.setattr(strategy_ladder_runner_module, "_materialize_engine_native_candidates", _fake_materialize)
+        monkeypatch.setattr(
+            strategy_ladder_runner_module,
+            "build_strategy_ladder_engine_native_preselection",
+            _fake_preselect,
+        )
+
+        result = run_backtest_strategy_ladder(
+            StrategyLadderRequest(
+                run_id="run-b1-fast-native",
+                input_root=b1_root,
+                feature_store_root=feature_root,
+                raw_root=raw_root,
+                output_root=b1_root,
+                pairs=("BTCUSDT",),
+                engines=("engine_a",),
+                capital_buckets=(400,),
+                timeframes=("5m",),
+                start="2024-04-01",
+                end="2024-04-01",
+                fast_only=True,
+                engine_native_mode=True,
+                preselected_only=True,
+                resume=False,
+                workflow_run_id="workflow-b1-fast-native",
+                phase_run_id="phase_b1-fast-native",
+                parent_workflow_ref=str(workflow_manifest_path),
+                engine_native_sample_size=25,
+                candidate_discovery_mode="FULL_DISCOVERY",
+                silver_index_path=a2_root / "silver_index.json",
+                small_scope_enabled=False,
+                full_scan_enabled=True,
+                no_full_scan_enabled=False,
+            )
+        )
+
+        assert calls == {"extract": 1, "materialize": 1, "preselect": 1}
+        assert result.run_manifest.fast_only is True
+        assert result.run_manifest.raw_window_extraction_status == "RAW_WINDOW_READY"
+        assert result.run_manifest.engine_native_status == "ENGINE_NATIVE_FULL_PATH_READY"
+        assert result.run_manifest.preselection_status == "ENGINE_NATIVE_PRESELECTION_READY"
+        assert result.run_manifest.candidate_engine_native_count == 1
+        assert result.run_manifest.engine_native_preselected_count == 1
+        assert result.run_manifest.candidate_truth_status == "CANDIDATE_ENGINE_NATIVE_READY"
+        assert result.run_manifest.replay_input_mode_status == "PRESELECTED_ONLY"
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
@@ -2012,11 +2619,11 @@ def test_raw_window_extraction_uses_silver_index_and_preserves_multi_source_line
         assert manifest.raw_ohlcv_path is not None
         assert Path(manifest.raw_trade_path).name == "trades.jsonl"
         assert Path(manifest.raw_book_path).name == "orderbook_snapshot.jsonl"
-        assert Path(manifest.raw_book_delta_path).name == "orderbook_delta.jsonl"
+        assert Path(manifest.raw_book_delta_path).suffix in {".jsonl", ".gz"}
         assert Path(manifest.raw_ohlcv_path).name == "ohlcv.jsonl"
         assert Path(manifest.raw_trade_path).read_text(encoding="utf-8").strip()
         assert Path(manifest.raw_book_path).read_text(encoding="utf-8").strip()
-        assert Path(manifest.raw_book_delta_path).read_text(encoding="utf-8").strip()
+        assert _read_jsonl_any(Path(manifest.raw_book_delta_path))
         assert Path(manifest.raw_ohlcv_path).read_text(encoding="utf-8").strip()
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
@@ -2147,7 +2754,10 @@ def test_raw_window_extraction_keeps_pre_window_snapshot_anchor_for_delta_replay
         assert manifest.raw_book_path is not None
         assert manifest.raw_book_delta_path is not None
         snapshot_rows = Path(manifest.raw_book_path).read_text(encoding="utf-8").strip().splitlines()
-        delta_rows = Path(manifest.raw_book_delta_path).read_text(encoding="utf-8").strip().splitlines()
+        delta_rows = [
+            json.dumps(row)
+            for row in _read_jsonl_any(Path(manifest.raw_book_delta_path))
+        ]
         assert len(snapshot_rows) == 1
         assert len(delta_rows) == 1
         assert json.loads(snapshot_rows[0])["timestamp_ms"] == candidate_ts - 120_000
@@ -2645,6 +3255,59 @@ def test_engine_d_missing_closed_episode_journal_is_classified_explicitly() -> N
         assert diagnosis["closed_episode_source_status"] == "REQUIRED_FOR_ENGINE_D_BUT_NO_VALID_EPISODE_SOURCE"
         assert diagnosis["reentry_age_status"] == "REENTRY_AGE_BLOCKED_BY_MISSING_FIRST_EPISODE"
         assert "ENGINE_D_HISTORY_BLOCKED_BY_MISSING_CLOSED_EPISODE_JOURNAL" in diagnosis["suspected_wiring_gaps"]
+        assert diagnosis["recommended_next_action"] == "BUILD_CLOSED_EPISODE_JOURNAL_FOR_ENGINE_D"
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_engine_d_empty_closed_episode_journal_is_not_classified_as_missing_journal() -> None:
+    scratch = _scratch_dir("engine_d_empty_closed_episode_journal")
+    try:
+        scratch.mkdir(parents=True, exist_ok=True)
+        manifest_path = scratch / "closed_episode_manifest.json"
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "status": "CLOSED_EPISODE_JOURNAL_EMPTY_NO_VALID_EPISODES",
+                    "path": str((scratch / "closed_episodes.jsonl").resolve()),
+                    "record_count": 0,
+                    "source_status": "REQUIRED_FOR_ENGINE_D_BUT_NO_VALID_EPISODE_SOURCE",
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        diagnosis = _build_engine_d_diagnosis(
+            candidate_rows=[
+                {
+                    "engine_id": "engine_d",
+                    "candidate_id": "cand-d-empty",
+                    "timestamp_ms": 1,
+                    "pair": "BTCUSDT",
+                    "timeframe": "5m",
+                    "compatibility_payload": {
+                        "engine_native_builder_status": "ENGINE_D_INPUT_BUILDER_READY_NO_FIRST_EPISODE",
+                    },
+                }
+            ],
+            reason_counter=Counter(
+                {
+                    "ENGINE_D_HISTORY_BLOCKED_BY_MISSING_CLOSED_EPISODE_JOURNAL": 1,
+                    "engine_d.no_trade.history_weak": 1,
+                }
+            ),
+            common_reason_codes={
+                "ENGINE_NATIVE_NO_TRADE",
+                "EXPECTED_EDGE_PROXY_BLOCKED",
+            },
+            workflow_root=scratch,
+        )
+
+        assert diagnosis["closed_episode_journal_status"] == "CLOSED_EPISODE_JOURNAL_EMPTY_NO_VALID_EPISODES"
+        assert diagnosis["engine_d_history_input_status"] == "REQUIRED_FOR_ENGINE_D_BUT_NO_VALID_EPISODE_SOURCE"
+        assert diagnosis["recommended_next_action"] == "PRODUCE_VALID_CLOSED_EPISODES_BEFORE_EVALUATING_ENGINE_D"
+        assert "ENGINE_D_HISTORY_BLOCKED_BY_MISSING_CLOSED_EPISODE_JOURNAL" not in diagnosis["suspected_wiring_gaps"]
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
@@ -2750,6 +3413,31 @@ def test_engine_c_feature_present_but_not_consumed_is_distinguished_from_missing
         gold_manifest_payload=gold_manifest_payload,
     )
     assert consumed_but_fragile["engine_c_microstructure_consumption_status"] == "ENGINE_C_MICROSTRUCTURE_CONSUMED_BUT_BLOCKED_BY_FRAGILITY"
+
+
+def test_engine_c_with_no_b2_candidates_is_classified_as_upstream_preselection() -> None:
+    diagnosis = _build_engine_c_diagnosis(
+        candidate_rows=[],
+        reason_counter=Counter(),
+        common_reason_codes={
+            "ENGINE_NATIVE_NO_TRADE",
+            "EXPECTED_EDGE_PROXY_BLOCKED",
+        },
+        gold_manifest_payload={
+            "feature_groups_ready": [
+                "ofi_features",
+                "queue_pressure",
+                "vpin_features",
+                "spread_features",
+                "depth_features",
+            ]
+        },
+    )
+
+    assert diagnosis["engine_c_microstructure_input_status"] == "ENGINE_C_NOT_PRESENT_IN_B2"
+    assert diagnosis["first_blocking_layer"] == "upstream_preselection"
+    assert diagnosis["suspected_wiring_gaps"] == ()
+    assert diagnosis["recommended_next_action"] == "AUDIT_ENGINE_C_B1_BREAKOUT_ELIGIBILITY"
 
 
 def test_engine_ab_direction_cost_diagnosis_counts_non_long_without_forcing_trade() -> None:
@@ -2904,6 +3592,114 @@ def test_engine_no_trade_diagnosis_payload_blocks_profitability_claim() -> None:
         shutil.rmtree(scratch, ignore_errors=True)
 
 
+def test_engine_no_trade_diagnosis_payload_uses_engine_specific_next_actions() -> None:
+    scratch = _scratch_dir("engine_no_trade_payload_next_actions")
+    try:
+        run_dir = scratch / "run"
+        _write_jsonl(
+            run_dir / "fast_candidates" / "candidate_events.jsonl",
+            [
+                {
+                    "candidate_id": "cand-d",
+                    "timestamp_ms": 1,
+                    "pair": "BTCUSDT",
+                    "timeframe": "5m",
+                    "engine_id": "engine_d",
+                    "compatibility_payload": {
+                        "engine_native_builder_status": "ENGINE_D_INPUT_BUILDER_READY_NO_FIRST_EPISODE",
+                    },
+                }
+            ],
+        )
+        _write_jsonl(
+            run_dir / "refusal_ledger.jsonl",
+            [
+                {
+                    "candidate_id": "cand-d",
+                    "engine_id": "engine_d",
+                    "capital_bucket": 400,
+                    "execution_state": "hard_blocked",
+                    "reason_codes": [
+                        "ENGINE_NATIVE_NO_TRADE",
+                        "EXPECTED_EDGE_PROXY_BLOCKED",
+                        "FEE_AWARE_EDGE_PROXY_BLOCKED",
+                        "BREAK_EVEN_PROXY_BLOCKED",
+                        "ENGINE_D_HISTORY_BLOCKED_BY_MISSING_CLOSED_EPISODE_JOURNAL",
+                        "engine_d.no_trade.history_weak",
+                    ],
+                }
+            ],
+        )
+        _write_json(
+            run_dir / "reports" / "engine_matrix.json",
+            [
+                {
+                    "engine_id": "engine_c",
+                    "record_count": 0,
+                    "selected_count": 0,
+                    "hard_blocked_count": 0,
+                },
+                {
+                    "engine_id": "engine_d",
+                    "record_count": 1,
+                    "selected_count": 0,
+                    "hard_blocked_count": 1,
+                },
+            ],
+        )
+        _write_json(
+            run_dir / "closed_episode_manifest.json",
+            {
+                "status": "CLOSED_EPISODE_JOURNAL_EMPTY_NO_VALID_EPISODES",
+                "path": str((run_dir / "closed_episodes.jsonl").resolve()),
+                "record_count": 0,
+                "source_status": "REQUIRED_FOR_ENGINE_D_BUT_NO_VALID_EPISODE_SOURCE",
+            },
+        )
+
+        payload = _build_engine_no_trade_diagnosis_payload(
+            summary=StrategyLadderReportSummary(
+                run_id="run-diagnosis-next-actions",
+                workflow_run_id="run-diagnosis-next-actions",
+                phase_run_id="phase-b2",
+                final_status="STRATEGY_LADDER_BLOCKED_BY_NO_EXECUTED_TRADES",
+                candidate_count=1,
+                engine_native_candidate_count=1,
+                replay_record_count=1,
+                executed_count=0,
+                governed_evidence_status="EVIDENCE_AUDIT_NOT_CONFIRMED",
+                run_manifest_evidence_class="SCRATCH_ONLY",
+                refusal_ledger_evidence_class="SCRATCH_ONLY",
+                sample_size_survival_evidence_class="SCRATCH_ONLY",
+            ),
+            run_manifest=StrategyLadderRunManifest(
+                run_id="run-diagnosis-next-actions",
+                start="2025-05-03",
+                end="2025-05-04",
+                pairs=("BTCUSDT",),
+            ),
+            run_dir=run_dir,
+            operator_artifact_refs={
+                "refusal_ledger": str((run_dir / "refusal_ledger.jsonl").resolve())
+            },
+            gold_manifest_payload={
+                "feature_groups_ready": [
+                    "ofi_features",
+                    "queue_pressure",
+                    "vpin_features",
+                    "spread_features",
+                    "depth_features",
+                ]
+            },
+        )
+
+        ranking = {row["rank"]: row for row in payload["next_action_ranking"]}
+        assert ranking["B"]["action"] == "PRODUCE_VALID_CLOSED_EPISODES_BEFORE_EVALUATING_ENGINE_D"
+        assert ranking["C"]["action"] == "AUDIT_ENGINE_C_B1_BREAKOUT_ELIGIBILITY"
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
 def test_strategy_ladder_runner_feeds_engine_cd_promotion_artifacts() -> None:
     scratch = _scratch_dir("engine_cd")
     shutil.rmtree(scratch, ignore_errors=True)
@@ -2956,6 +3752,7 @@ def test_strategy_ladder_runner_feeds_engine_cd_promotion_artifacts() -> None:
             "STRATEGY_LADDER_RAN_WITH_PARTIAL_EVIDENCE",
             "STRATEGY_LADDER_MEASURED_ARTIFACTS_PRODUCED",
             "STRATEGY_LADDER_BLOCKED_BY_NO_EXECUTED_TRADES",
+            "STRATEGY_LADDER_BLOCKED_BY_STATISTICAL_VALIDATION",
         }
     finally:
         shutil.rmtree(scratch, ignore_errors=True)

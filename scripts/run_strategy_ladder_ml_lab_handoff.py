@@ -47,7 +47,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--export-dir", required=True, help="Handoff export directory.")
     parser.add_argument("--pair", default="BTCUSDT", help="Pair to train.")
-    parser.add_argument("--timeframe", default="1m", help="Kline timeframe, for example 1m.")
+    parser.add_argument(
+        "--timeframe",
+        default="1m",
+        help="Kline timeframe or timeframe CSV, for example 1m or 1m,5m,10m.",
+    )
     parser.add_argument("--train-start", required=True, help="Inclusive training data start date.")
     parser.add_argument("--train-end", required=True, help="Inclusive training data end date.")
     parser.add_argument(

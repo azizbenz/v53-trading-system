@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -15,6 +17,24 @@ from local_replay_runtime.strategy_ladder_models import (
     StrategyLadderFeatureRow,
     deterministic_payload_hash,
 )
+
+
+_TEMPORAL_STRATIFIED_CANDIDATE_MODES = {
+    "TEMPORAL_STRATIFIED",
+    "TEMPORAL_STRATIFIED_SAMPLE_BUDGET",
+}
+
+
+@dataclass(frozen=True)
+class StrategyLadderCandidateBudgetResult:
+    candidates: tuple[StrategyLadderCandidateEvent, ...]
+    limited: bool
+    limit_reason: str
+    cap_status: str
+    temporal_bucket_granularity: str = ""
+    temporal_bucket_count_available: int = 0
+    temporal_bucket_count_selected: int = 0
+    temporal_bucket_coverage_ratio: float | None = None
 
 
 def _candidate_id(
@@ -203,6 +223,116 @@ def cap_strategy_ladder_candidates(
     return tuple(capped), limited
 
 
+def _is_temporal_stratified_candidate_mode(candidate_discovery_mode: str) -> bool:
+    return candidate_discovery_mode.strip().upper() in _TEMPORAL_STRATIFIED_CANDIDATE_MODES
+
+
+def _temporal_bucket_key(event: StrategyLadderCandidateEvent) -> str:
+    return datetime.fromtimestamp(event.resolved_timestamp_ms / 1000.0, tz=UTC).date().isoformat()
+
+
+def _cap_strategy_ladder_candidates_temporal_stratified(
+    candidates: tuple[StrategyLadderCandidateEvent, ...],
+    *,
+    sample_cap_per_engine: int,
+) -> StrategyLadderCandidateBudgetResult:
+    if sample_cap_per_engine <= 0:
+        return StrategyLadderCandidateBudgetResult(
+            candidates=candidates,
+            limited=False,
+            limit_reason="",
+            cap_status="CANDIDATE_DISCOVERY_LIMIT_NOT_PROVEN",
+        )
+
+    candidate_ids_by_engine_bucket: dict[str, dict[str, list[str]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    available_bucket_keys: set[str] = set()
+    for event in candidates:
+        bucket_key = _temporal_bucket_key(event)
+        available_bucket_keys.add(bucket_key)
+        candidate_ids_by_engine_bucket[event.engine_id][bucket_key].append(event.candidate_id)
+
+    selected_ids: set[str] = set()
+    for buckets_by_key in candidate_ids_by_engine_bucket.values():
+        ordered_bucket_keys = sorted(buckets_by_key)
+        if not ordered_bucket_keys:
+            continue
+        base_quota = sample_cap_per_engine // len(ordered_bucket_keys)
+        remainder = sample_cap_per_engine % len(ordered_bucket_keys)
+        leftovers: dict[str, list[str]] = {}
+        selected_count = 0
+        for index, bucket_key in enumerate(ordered_bucket_keys):
+            quota = base_quota + (1 if index < remainder else 0)
+            bucket_candidate_ids = buckets_by_key[bucket_key]
+            take = min(quota, len(bucket_candidate_ids))
+            selected_ids.update(bucket_candidate_ids[:take])
+            leftovers[bucket_key] = bucket_candidate_ids[take:]
+            selected_count += take
+        remaining_budget = sample_cap_per_engine - selected_count
+        while remaining_budget > 0:
+            progress = False
+            for bucket_key in ordered_bucket_keys:
+                bucket_leftovers = leftovers[bucket_key]
+                if not bucket_leftovers:
+                    continue
+                selected_ids.add(bucket_leftovers.pop(0))
+                remaining_budget -= 1
+                progress = True
+                if remaining_budget <= 0:
+                    break
+            if not progress:
+                break
+
+    selected_candidates = tuple(
+        event for event in candidates if event.candidate_id in selected_ids
+    )
+    selected_bucket_keys = {_temporal_bucket_key(event) for event in selected_candidates}
+    available_bucket_count = len(available_bucket_keys)
+    selected_bucket_count = len(selected_bucket_keys)
+    return StrategyLadderCandidateBudgetResult(
+        candidates=selected_candidates,
+        limited=len(selected_candidates) < len(candidates),
+        limit_reason="TEMPORAL_STRATIFIED_SAMPLE_BUDGET_ACTIVE",
+        cap_status="CANDIDATE_DISCOVERY_SAMPLE_CAPPED",
+        temporal_bucket_granularity="day",
+        temporal_bucket_count_available=available_bucket_count,
+        temporal_bucket_count_selected=selected_bucket_count,
+        temporal_bucket_coverage_ratio=(
+            selected_bucket_count / float(available_bucket_count)
+            if available_bucket_count > 0
+            else None
+        ),
+    )
+
+
+def apply_strategy_ladder_candidate_budget(
+    candidates: tuple[StrategyLadderCandidateEvent, ...],
+    *,
+    sample_cap_per_engine: int,
+    candidate_discovery_mode: str,
+) -> StrategyLadderCandidateBudgetResult:
+    if _is_temporal_stratified_candidate_mode(candidate_discovery_mode):
+        return _cap_strategy_ladder_candidates_temporal_stratified(
+            candidates,
+            sample_cap_per_engine=sample_cap_per_engine,
+        )
+    capped, limited = cap_strategy_ladder_candidates(
+        candidates,
+        sample_cap_per_engine=sample_cap_per_engine,
+    )
+    return StrategyLadderCandidateBudgetResult(
+        candidates=capped,
+        limited=limited,
+        limit_reason="ENGINE_NATIVE_SAMPLE_CAP_ACTIVE" if limited else "",
+        cap_status=(
+            "CANDIDATE_DISCOVERY_SAMPLE_CAPPED"
+            if limited
+            else "CANDIDATE_DISCOVERY_LIMIT_NOT_PROVEN"
+        ),
+    )
+
+
 def export_strategy_ladder_candidates(
     output_dir: Path,
     *,
@@ -240,6 +370,10 @@ def export_strategy_ladder_candidates(
     per_engine_candidate_count: int | None = None,
     engine_native_candidate_count: int | None = None,
     candidate_source_status: str | None = None,
+    temporal_bucket_granularity: str = "",
+    temporal_bucket_count_available: int = 0,
+    temporal_bucket_count_selected: int = 0,
+    temporal_bucket_coverage_ratio: float | None = None,
 ) -> StrategyLadderCandidateSummary:
     """Write canonical candidate export artifacts for one run."""
 
@@ -323,6 +457,10 @@ def export_strategy_ladder_candidates(
         candidate_discovery_limit_reason=candidate_discovery_limit_reason,
         candidate_discovery_mode=candidate_discovery_mode,
         candidate_discovery_cap_status=candidate_discovery_cap_status,
+        temporal_bucket_granularity=temporal_bucket_granularity,
+        temporal_bucket_count_available=temporal_bucket_count_available,
+        temporal_bucket_count_selected=temporal_bucket_count_selected,
+        temporal_bucket_coverage_ratio=temporal_bucket_coverage_ratio,
         preselection_status=preselection_status,
         replay_input_mode_status=replay_input_mode_status,
         preselected_only=preselected_only,
@@ -379,6 +517,8 @@ def load_strategy_ladder_candidate_summary(
 
 
 __all__ = [
+    "StrategyLadderCandidateBudgetResult",
+    "apply_strategy_ladder_candidate_budget",
     "cap_strategy_ladder_candidates",
     "discover_strategy_ladder_candidates",
     "export_strategy_ladder_candidates",

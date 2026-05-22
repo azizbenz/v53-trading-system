@@ -30,6 +30,9 @@ from local_replay_runtime.strategy_ladder_window_index import (
 )
 
 _RAW_WINDOW_PROGRESS_EVERY = 50
+_ENGINE_C_STRUCTURAL_LOOKBACK_MS = 60 * 60 * 1000
+_ECONOMIC_EDGE_OHLCV_LOOKBACK_MS = 60 * 60 * 1000
+_REPLAY_OUTCOME_OHLCV_POST_BARS = 10
 
 
 @dataclass(frozen=True)
@@ -123,6 +126,33 @@ def _hint_path(candidate: StrategyLadderCandidateEvent, key: str, raw_root: Path
     return path if path.exists() else None
 
 
+def _timeframe_to_ms(raw_value: str | None) -> int | None:
+    if not raw_value:
+        return None
+    normalized = raw_value.strip().lower()
+    if not normalized:
+        return None
+    unit = normalized[-1]
+    if unit.isdigit():
+        try:
+            return int(normalized) * 60_000
+        except ValueError:
+            return None
+    try:
+        magnitude = int(normalized[:-1])
+    except ValueError:
+        return None
+    if magnitude <= 0:
+        return None
+    if unit == "m":
+        return magnitude * 60_000
+    if unit == "h":
+        return magnitude * 60 * 60_000
+    if unit == "d":
+        return magnitude * 24 * 60 * 60_000
+    return None
+
+
 def _is_gzip_path(path: Path) -> bool:
     return path.name.lower().endswith(".gz")
 
@@ -195,16 +225,21 @@ def _write_window_slices(
         grouped.setdefault(request.source_path.resolve(), []).append(request)
 
     parsed_row_count = 0
+    initialized_targets: set[Path] = set()
     for source_path, source_requests in grouped.items():
         for request in source_requests:
             request.target_path.parent.mkdir(parents=True, exist_ok=True)
-        handles = [
-            (
-                request,
-                request.target_path.open("w", encoding="utf-8", newline="\n"),
+        handles = []
+        for request in source_requests:
+            target_resolved = request.target_path.resolve()
+            mode = "a" if target_resolved in initialized_targets else "w"
+            handles.append(
+                (
+                    request,
+                    request.target_path.open(mode, encoding="utf-8", newline="\n"),
+                )
             )
-            for request in source_requests
-        ]
+            initialized_targets.add(target_resolved)
         anchor_lines: dict[_WindowSliceRequest, tuple[int, str] | None] = {
             request: None for request in source_requests
         }
@@ -314,6 +349,48 @@ def _shared_materialized_window_path(
     )
 
 
+def _entries_source_hash(
+    entries: tuple[StrategyLadderSilverIndexEntry, ...],
+) -> str | None:
+    if not entries:
+        return None
+    payload: list[dict[str, object]] = []
+    for entry in entries:
+        path = str(Path(entry.path).resolve()) if entry.path else ""
+        token = str(entry.file_hash or path).strip()
+        if not token:
+            return None
+        payload.append(
+            {
+                "token": token,
+                "source_id": entry.source_id,
+                "date": entry.date,
+                "min_timestamp_ms": entry.min_timestamp_ms,
+                "max_timestamp_ms": entry.max_timestamp_ms,
+            }
+        )
+    return deterministic_payload_hash(payload)
+
+
+def _dedupe_slice_requests(
+    requests: tuple[_WindowSliceRequest, ...],
+) -> tuple[_WindowSliceRequest, ...]:
+    deduped: dict[
+        tuple[str, str, int, int, bool],
+        _WindowSliceRequest,
+    ] = {}
+    for request in requests:
+        key = (
+            str(request.source_path.resolve()),
+            str(request.target_path.resolve()),
+            request.window_start_ms,
+            request.window_end_ms,
+            request.include_anchor_before_start,
+        )
+        deduped.setdefault(key, request)
+    return tuple(deduped.values())
+
+
 def _infer_depth_levels(path: Path | None) -> int | None:
     if path is None or not path.exists():
         return None
@@ -394,7 +471,14 @@ def _materialized_path_has_rows(
 ) -> bool:
     if not path:
         return False
-    return slice_counts.get(str(Path(path).resolve()), 0) > 0
+    resolved = str(Path(path).resolve())
+    if slice_counts.get(resolved, 0) > 0:
+        return True
+    try:
+        file_path = Path(path)
+        return file_path.is_file() and file_path.stat().st_size > 0
+    except OSError:
+        return False
 
 
 def _resolve_component_path(
@@ -413,6 +497,51 @@ def _resolve_component_path(
     else:
         matches = _search_paths(raw_root, candidate.pair, token)
     return matches[0] if matches else None
+
+
+def _effective_slice_bounds(
+    *,
+    candidate: StrategyLadderCandidateEvent,
+    source_type: str,
+    logical_window_start_ms: int,
+    logical_window_end_ms: int,
+) -> tuple[int, int]:
+    """Return the materialized slice bounds for one source type.
+
+    The manifest keeps the logical replay window unchanged. Some engine builders
+    need extra pre-history inside the materialized file itself; otherwise the
+    replay path silently degrades into fallback geometry.
+    """
+
+    pad_before_ms = 0
+    pad_after_ms = 0
+    if source_type == "ohlcv":
+        # Economic provenance edge fallback is causal and requires one hour of
+        # prior OHLCV context. Without this, B2 native replay silently
+        # degenerates to DEFAULT_TO_CALIBRATE 5.0 bps for A/B/D as soon as the
+        # logical replay window is shorter than the edge lookback.
+        pad_before_ms = max(pad_before_ms, _ECONOMIC_EDGE_OHLCV_LOOKBACK_MS)
+        # Replay outcome evidence measures h1/h5/h10 forward returns and
+        # MFE/MAE over the first 10 future bars. Keep the manifest logical
+        # window unchanged, but materialize enough future OHLCV rows for the
+        # evidence layer to avoid false MISSING_POST_WINDOW blockers.
+        timeframe_ms = _timeframe_to_ms(candidate.timeframe)
+        if timeframe_ms is not None:
+            pad_after_ms = max(
+                pad_after_ms,
+                timeframe_ms * _REPLAY_OUTCOME_OHLCV_POST_BARS,
+            )
+    if candidate.engine_id == "engine_c" and source_type in {"trades", "ohlcv"}:
+        # Engine C doc21 breakout reconstruction requires one hour of
+        # pre-break OHLCV/trade lookback. Without this, every governed replay
+        # window degrades to DETECTED_FALLBACK_INWINDOW_RANGE and appears
+        # "late" even when the candidate timestamp itself is valid.
+        pad_before_ms = max(pad_before_ms, _ENGINE_C_STRUCTURAL_LOOKBACK_MS)
+    padded_end_ms = max(
+        logical_window_end_ms,
+        candidate.resolved_timestamp_ms + pad_after_ms,
+    )
+    return max(0, logical_window_start_ms - pad_before_ms), padded_end_ms
 
 
 def _load_silver_index(
@@ -529,21 +658,33 @@ def _resolve_from_silver_index(
     for candidate in candidate_events:
         window_start_ms = max(0, candidate.resolved_timestamp_ms - window_before_ms)
         window_end_ms = candidate.resolved_timestamp_ms + window_after_ms
+        trade_slice_start_ms, trade_slice_end_ms = _effective_slice_bounds(
+            candidate=candidate,
+            source_type="trades",
+            logical_window_start_ms=window_start_ms,
+            logical_window_end_ms=window_end_ms,
+        )
+        ohlcv_slice_start_ms, ohlcv_slice_end_ms = _effective_slice_bounds(
+            candidate=candidate,
+            source_type="ohlcv",
+            logical_window_start_ms=window_start_ms,
+            logical_window_end_ms=window_end_ms,
+        )
         manifest_dir = output_dir / candidate.pair / candidate.candidate_id
         trade_entries = _entries_for_candidate(
             entries=entries,
             window_index=window_index,
             pair=candidate.pair,
-            window_start_ms=window_start_ms,
-            window_end_ms=window_end_ms,
+            window_start_ms=trade_slice_start_ms,
+            window_end_ms=trade_slice_end_ms,
             data_types=("trades",),
         )
         ohlcv_entries = _entries_for_candidate(
             entries=entries,
             window_index=window_index,
             pair=candidate.pair,
-            window_start_ms=window_start_ms,
-            window_end_ms=window_end_ms,
+            window_start_ms=ohlcv_slice_start_ms,
+            window_end_ms=ohlcv_slice_end_ms,
             data_types=("ohlcv", "klines"),
             timeframe=candidate.timeframe,
         )
@@ -609,10 +750,10 @@ def _resolve_from_silver_index(
             dict.fromkeys(
                 item.source_id
                 for item in (
-                    trade_entry,
+                    *trade_entries,
                     snapshot_entry,
                     delta_entry,
-                    ohlcv_entry,
+                    *ohlcv_entries,
                     metadata_entry,
                     generic_book_entry,
                 )
@@ -622,14 +763,14 @@ def _resolve_from_silver_index(
         raw_trade_path = trade_entry.path if trade_entry is not None else None
         if trade_entry is not None and trade_entry.path:
             trade_slice_path = manifest_dir / "trades.jsonl"
-            if trade_entry.file_hash:
+            if len(trade_entries) == 1 and trade_entry.file_hash:
                 trade_slice_path = _shared_materialized_window_path(
                     output_dir,
                     source_type="trades",
                     pair=candidate.pair,
                     timeframe=candidate.timeframe or "",
-                    window_start_ms=window_start_ms,
-                    window_end_ms=window_end_ms,
+                    window_start_ms=trade_slice_start_ms,
+                    window_end_ms=trade_slice_end_ms,
                     depth=None,
                     source_hash=trade_entry.file_hash,
                     include_anchor_before_start=False,
@@ -640,8 +781,8 @@ def _resolve_from_silver_index(
                         source_type="trades",
                         pair=candidate.pair,
                         timeframe=candidate.timeframe or "",
-                        window_start_ms=window_start_ms,
-                        window_end_ms=window_end_ms,
+                        window_start_ms=trade_slice_start_ms,
+                        window_end_ms=trade_slice_end_ms,
                         depth=None,
                         source_hash=trade_entry.file_hash,
                         include_anchor_before_start=False,
@@ -650,12 +791,22 @@ def _resolve_from_silver_index(
                     )
                 )
             else:
+                for entry in trade_entries:
+                    pending_slices.append(
+                        _WindowSliceRequest(
+                            source_path=Path(entry.path),
+                            target_path=trade_slice_path,
+                            window_start_ms=trade_slice_start_ms,
+                            window_end_ms=trade_slice_end_ms,
+                        )
+                    )
+            if len(trade_entries) == 1 and not trade_entry.file_hash:
                 pending_slices.append(
                     _WindowSliceRequest(
                         source_path=Path(trade_entry.path),
                         target_path=trade_slice_path,
-                        window_start_ms=window_start_ms,
-                        window_end_ms=window_end_ms,
+                        window_start_ms=trade_slice_start_ms,
+                        window_end_ms=trade_slice_end_ms,
                     )
                 )
             raw_trade_path = str(trade_slice_path.resolve())
@@ -742,57 +893,64 @@ def _resolve_from_silver_index(
             raw_book_path = str(book_slice_path.resolve())
 
         raw_book_delta_path = delta_entry.path if delta_entry is not None else None
-        if delta_entry is not None and delta_entry.path:
-            delta_slice_path = manifest_dir / "orderbook_delta.jsonl"
-            if delta_entry.file_hash:
-                delta_slice_path = _shared_materialized_window_path(
-                    output_dir,
-                    source_type="orderbook_delta",
-                    pair=candidate.pair,
-                    timeframe=candidate.timeframe or "",
-                    window_start_ms=window_start_ms,
-                    window_end_ms=window_end_ms,
-                    depth=None,
-                    source_hash=delta_entry.file_hash,
-                    include_anchor_before_start=False,
-                    filename="orderbook_delta.jsonl",
+        delta_slice_start_ms = window_start_ms
+        # When replay evidence reconstructs book state from a snapshot anchor,
+        # it must replay every subsequent delta from that anchor forward.
+        # If we slice deltas only from the logical replay window start, later
+        # in-window deltas can be applied on top of a stale snapshot and leave
+        # the book permanently crossed/incoherent.
+        if (
+            snapshot_entry is not None
+            and snapshot_entry.min_timestamp_ms is not None
+        ):
+            try:
+                delta_slice_start_ms = min(
+                    delta_slice_start_ms,
+                    int(snapshot_entry.min_timestamp_ms),
                 )
-                cache_requests.append(
-                    StrategyLadderWindowCacheRequest(
+            except (TypeError, ValueError):
+                delta_slice_start_ms = window_start_ms
+        if delta_entry is not None and delta_entry.path:
+            if len(delta_entries) == 1 and delta_entry.file_hash:
+                raw_book_delta_path = str(Path(delta_entry.path).resolve())
+            else:
+                delta_slice_path = manifest_dir / "orderbook_delta.jsonl"
+                delta_source_hash = _entries_source_hash(delta_entries)
+                if delta_source_hash:
+                    delta_slice_path = _shared_materialized_window_path(
+                        output_dir,
                         source_type="orderbook_delta",
                         pair=candidate.pair,
                         timeframe=candidate.timeframe or "",
-                        window_start_ms=window_start_ms,
+                        window_start_ms=delta_slice_start_ms,
                         window_end_ms=window_end_ms,
-                        depth=None,
-                        source_hash=delta_entry.file_hash,
-                        include_anchor_before_start=False,
-                        source_path=Path(delta_entry.path),
-                        target_path=delta_slice_path,
+                        depth=book_levels,
+                        source_hash=delta_source_hash,
+                        include_anchor_before_start=delta_slice_start_ms < window_start_ms,
+                        filename="orderbook_delta.jsonl",
                     )
-                )
-            else:
-                pending_slices.append(
-                    _WindowSliceRequest(
-                        source_path=Path(delta_entry.path),
-                        target_path=delta_slice_path,
-                        window_start_ms=window_start_ms,
-                        window_end_ms=window_end_ms,
+                for entry in delta_entries:
+                    pending_slices.append(
+                        _WindowSliceRequest(
+                            source_path=Path(entry.path),
+                            target_path=delta_slice_path,
+                            window_start_ms=delta_slice_start_ms,
+                            window_end_ms=window_end_ms,
+                        )
                     )
-                )
-            raw_book_delta_path = str(delta_slice_path.resolve())
+                raw_book_delta_path = str(delta_slice_path.resolve())
 
         raw_ohlcv_path = ohlcv_entry.path if ohlcv_entry is not None else None
         if ohlcv_entry is not None and ohlcv_entry.path:
             ohlcv_slice_path = manifest_dir / "ohlcv.jsonl"
-            if ohlcv_entry.file_hash:
+            if len(ohlcv_entries) == 1 and ohlcv_entry.file_hash:
                 ohlcv_slice_path = _shared_materialized_window_path(
                     output_dir,
                     source_type="ohlcv",
                     pair=candidate.pair,
                     timeframe=candidate.timeframe or "",
-                    window_start_ms=window_start_ms,
-                    window_end_ms=window_end_ms,
+                    window_start_ms=ohlcv_slice_start_ms,
+                    window_end_ms=ohlcv_slice_end_ms,
                     depth=None,
                     source_hash=ohlcv_entry.file_hash,
                     include_anchor_before_start=False,
@@ -803,8 +961,8 @@ def _resolve_from_silver_index(
                         source_type="ohlcv",
                         pair=candidate.pair,
                         timeframe=candidate.timeframe or "",
-                        window_start_ms=window_start_ms,
-                        window_end_ms=window_end_ms,
+                        window_start_ms=ohlcv_slice_start_ms,
+                        window_end_ms=ohlcv_slice_end_ms,
                         depth=None,
                         source_hash=ohlcv_entry.file_hash,
                         include_anchor_before_start=False,
@@ -813,12 +971,22 @@ def _resolve_from_silver_index(
                     )
                 )
             else:
+                for entry in ohlcv_entries:
+                    pending_slices.append(
+                        _WindowSliceRequest(
+                            source_path=Path(entry.path),
+                            target_path=ohlcv_slice_path,
+                            window_start_ms=ohlcv_slice_start_ms,
+                            window_end_ms=ohlcv_slice_end_ms,
+                        )
+                    )
+            if len(ohlcv_entries) == 1 and not ohlcv_entry.file_hash:
                 pending_slices.append(
                     _WindowSliceRequest(
                         source_path=Path(ohlcv_entry.path),
                         target_path=ohlcv_slice_path,
-                        window_start_ms=window_start_ms,
-                        window_end_ms=window_end_ms,
+                        window_start_ms=ohlcv_slice_start_ms,
+                        window_end_ms=ohlcv_slice_end_ms,
                     )
                 )
             raw_ohlcv_path = str(ohlcv_slice_path.resolve())
@@ -860,7 +1028,10 @@ def _resolve_from_silver_index(
         )
         for miss in cache_plan.misses
     )
-    slice_stats = _write_window_slices(tuple((*pending_slices, *cached_slice_requests)))
+    slice_requests = _dedupe_slice_requests(
+        tuple((*pending_slices, *cached_slice_requests))
+    )
+    slice_stats = _write_window_slices(slice_requests)
     slice_counts = dict(slice_stats.slice_counts)
     slice_counts.update(window_cache.materialize_cache_hits(cache_plan))
     slice_counts.update(

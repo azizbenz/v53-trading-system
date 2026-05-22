@@ -9,6 +9,7 @@ from local_replay_runtime.strategy_ladder_models import (
     StrategyLadderBucketReplayResult,
     StrategyLadderCandidateEvent,
     StrategyLadderRawWindowManifest,
+    StrategyLadderSharedReplayPayload,
 )
 from local_replay_runtime.strategy_ladder_operator_artifacts import (
     write_strategy_ladder_operator_artifacts,
@@ -22,6 +23,18 @@ def _scratch_dir(label: str) -> Path:
     output_dir = base_dir / f"{label}_{uuid4().hex}"
     output_dir.mkdir(parents=True, exist_ok=False)
     return output_dir
+
+
+def _load_jsonl_data_rows(path: Path) -> list[dict[str, object]]:
+    return [
+        payload
+        for payload in (
+            json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+        if not bool(payload.get("artifact_header"))
+    ]
 
 
 def test_write_strategy_ladder_operator_artifacts_materializes_ledgers() -> None:
@@ -71,6 +84,7 @@ def test_write_strategy_ladder_operator_artifacts_materializes_ledgers() -> None
                 window_end_ms=1745888400000,
                 raw_trade_path="K:/run/trades.jsonl",
                 raw_book_path="K:/run/orderbook.jsonl",
+                raw_book_delta_path="K:/run/orderbook_delta.jsonl",
                 raw_ohlcv_path="K:/run/ohlcv.jsonl",
                 book_depth_levels_available=20,
                 book_depth_source_status="BOOK_DEPTH20_AVAILABLE",
@@ -86,6 +100,7 @@ def test_write_strategy_ladder_operator_artifacts_materializes_ledgers() -> None
                 window_end_ms=1745888460000,
                 raw_trade_path="K:/run/trades.jsonl",
                 raw_book_path="K:/run/orderbook.jsonl",
+                raw_book_delta_path="K:/run/orderbook_delta.jsonl",
                 raw_ohlcv_path="K:/run/ohlcv.jsonl",
                 book_depth_levels_available=20,
                 book_depth_source_status="BOOK_DEPTH20_AVAILABLE",
@@ -180,16 +195,8 @@ def test_write_strategy_ladder_operator_artifacts_materializes_ledgers() -> None
         assert Path(refs["fill_realism_report"]).is_file()
         assert Path(refs["execution_realism_summary"]).is_file()
 
-        trade_rows = [
-            json.loads(line)
-            for line in Path(refs["trade_detail_ledger"]).read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
-        refusal_rows = [
-            json.loads(line)
-            for line in Path(refs["refusal_ledger"]).read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
+        trade_rows = _load_jsonl_data_rows(Path(refs["trade_detail_ledger"]))
+        refusal_rows = _load_jsonl_data_rows(Path(refs["refusal_ledger"]))
         timeframe_rows = json.loads(Path(refs["timeframe_matrix"]).read_text(encoding="utf-8"))
         assert len(trade_rows) == 1
         assert trade_rows[0]["candidate_id"] == "cand-executed"
@@ -200,6 +207,12 @@ def test_write_strategy_ladder_operator_artifacts_materializes_ledgers() -> None
         assert refusal_rows[0]["refusal_category"] == "phantom"
         assert timeframe_rows[0]["timeframe"] == "5m"
         assert (Path(refs["candidate_replay_window_root"]) / "cand-phantom.json").is_file()
+        replay_window_payload = json.loads(
+            (Path(refs["candidate_replay_window_root"]) / "cand-phantom.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert replay_window_payload["raw_book_delta_path"] == "K:/run/orderbook_delta.jsonl"
         closed_episode_manifest = json.loads(
             Path(refs["closed_episode_manifest"]).read_text(encoding="utf-8")
         )
@@ -207,6 +220,98 @@ def test_write_strategy_ladder_operator_artifacts_materializes_ledgers() -> None
             closed_episode_manifest["status"]
             == "CLOSED_EPISODE_JOURNAL_EMPTY_NO_VALID_EPISODES"
         )
+        execution_summary = json.loads(
+            Path(refs["execution_realism_summary"]).read_text(encoding="utf-8")
+        )
+        assert execution_summary["spread_status_counts"]["SPREAD_MEASURED_FROM_BOOK"] == 1
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_execution_realism_reports_hydrate_shared_spread_payloads() -> None:
+    scratch = _scratch_dir("operator_artifacts_shared_spread")
+    try:
+        run_dir = scratch / "backtest_strategy_ladder" / "run-shared-spread"
+        shared_path = run_dir / "detailed_replay" / "shared" / "cand-shared.json"
+        shared_path.parent.mkdir(parents=True, exist_ok=True)
+        shared_payload = StrategyLadderSharedReplayPayload(
+            candidate_id="cand-shared",
+            pair="BTCUSDT",
+            engine_id="engine_c",
+            strategy_id="strategy_ladder",
+            timestamp_ms=1745884800000,
+            shared_parity_payload={
+                "measured_spread_report": {"status": "SPREAD_MEASURED_FROM_BOOK"},
+            },
+        )
+        shared_path.write_text(
+            shared_payload.model_dump_json(indent=2),
+            encoding="utf-8",
+        )
+        candidate_events = (
+            StrategyLadderCandidateEvent(
+                run_id="run-shared-spread",
+                candidate_id="cand-shared",
+                timestamp_ms=1745884800000,
+                pair="BTCUSDT",
+                timeframe="5m",
+                engine_id="engine_c",
+                strategy_id="strategy_ladder",
+                compatibility_payload={"side": "buy"},
+            ),
+        )
+        raw_windows = (
+            StrategyLadderRawWindowManifest(
+                candidate_id="cand-shared",
+                pair="BTCUSDT",
+                engine_id="engine_c",
+                timestamp_ms=1745884800000,
+                window_start_ms=1745881200000,
+                window_end_ms=1745888400000,
+                raw_trade_path="K:/run/trades.jsonl",
+                raw_book_path="K:/run/orderbook.jsonl",
+                raw_ohlcv_path="K:/run/ohlcv.jsonl",
+                book_depth_source_status="BOOK_DEPTH20_AVAILABLE",
+                window_extraction_status="RAW_WINDOW_READY",
+                source_coverage_status="RAW_WINDOW_SOURCE_READY",
+            ),
+        )
+        bucket_results = (
+            StrategyLadderBucketReplayResult(
+                candidate_id="cand-shared",
+                pair="BTCUSDT",
+                engine_id="engine_c",
+                strategy_id="strategy_ladder",
+                capital_bucket=400,
+                timestamp_ms=1745884800000,
+                execution_state="executed",
+                fill_realism_status="FILL_REALISM_PARTIAL_REPLAY",
+                cost_parity_status="REPLAY_LIVE_COST_PARITY_BLOCKED_BY_TELEMETRY",
+                book_depth_source_status="BOOK_DEPTH20_AVAILABLE",
+                parity_payload={
+                    "measured_slippage_report": {
+                        "status": "SLIPPAGE_ESTIMATED_FROM_DEPTH20"
+                    }
+                },
+                shared_payload_ref=str(shared_path.resolve()),
+            ),
+        )
+
+        refs = write_strategy_ladder_operator_artifacts(
+            run_dir=run_dir,
+            candidate_events=candidate_events,
+            raw_window_manifests=raw_windows,
+            bucket_results=bucket_results,
+            replay_artifact_refs={"cand-shared": "K:/run/detailed_replay/cand-shared.json"},
+            replay_bucket_refs={
+                "cand-shared": ("K:/run/detailed_replay/by_bucket/400/cand-shared.json",)
+            },
+        )
+
+        spread_report = json.loads(
+            Path(refs["measured_spread_report"]).read_text(encoding="utf-8")
+        )
+        assert spread_report["rows"][0]["status"] == "SPREAD_MEASURED_FROM_BOOK"
         execution_summary = json.loads(
             Path(refs["execution_realism_summary"]).read_text(encoding="utf-8")
         )

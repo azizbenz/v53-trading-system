@@ -23,7 +23,8 @@ from local_replay_runtime.strategy_ladder_models import (
 )
 
 
-LABEL_STORE_DATASET_FILENAME = "strategy_ladder_b2_label_store.jsonl"
+LABEL_STORE_DATASET_FILENAME = "strategy_ladder_replay_label_store.jsonl"
+LEGACY_LABEL_STORE_DATASET_FILENAMES = ("strategy_ladder_b2_label_store.jsonl",)
 LABEL_STORE_SUMMARY_FILENAME = "label_store_summary.json"
 LABEL_STORE_QUALITY_REPORT_FILENAME = "label_store_quality_report.json"
 DEFAULT_WALK_FORWARD_TRAIN_DAYS = 180
@@ -85,10 +86,26 @@ def _coerce_int(raw_value: object) -> int | None:
     return value if value >= 0 else None
 
 
+_EXPECTED_EDGE_AUGMENTED_FEATURE_KEYS = (
+    "spread_bps",
+    "slippage_bps",
+    "latency_penalty_bps",
+    "book_depth_levels",
+    "break_even_bps",
+    # Patch F16-B (2026-05-21) — microstructure canoniques V5.3 ajoutées
+    # au feature dict pour permettre training expected-edge enrichi.
+    # Capturées depuis bridge.vpin_record/ofi_record/queue_pressure_record
+    # par strategy_ladder_runner et merged dans compatibility_payload.
+    "vpin",
+    "cumulative_ofi",
+    "queue_pressure",
+)
+
+
 def _numeric_feature_values(payload: dict[str, object]) -> dict[str, float]:
     feature_values = payload.get("feature_values")
     if not isinstance(feature_values, dict):
-        return {}
+        feature_values = {}
     normalized: dict[str, float] = {}
     for key, raw_value in feature_values.items():
         name = str(key).strip()
@@ -98,6 +115,13 @@ def _numeric_feature_values(payload: dict[str, object]) -> dict[str, float]:
         if value is None:
             continue
         normalized[name] = value
+    for key in _EXPECTED_EDGE_AUGMENTED_FEATURE_KEYS:
+        if key in normalized:
+            continue
+        value = _coerce_float(payload.get(key))
+        if value is None:
+            continue
+        normalized[key] = value
     return normalized
 
 
@@ -318,7 +342,13 @@ class StrategyLadderB2LabelStoreBuilderRequest(BaseModel, frozen=True):
 class StrategyLadderB2LabelStoreRow(BaseModel, frozen=True):
     """Canonical supervised label row derived from one B2 replay candidate."""
 
-    schema_version: str = Field(default="strategy_ladder.b2_label_store_row.v1", min_length=1)
+    # Patch F16-B (2026-05-21) — schema_version bumped v1 → v2 pour ajout des
+    # 3 features microstructure canoniques V5.3 : vpin / cumulative_ofi /
+    # queue_pressure. Backward-compat : champs optionnels nullables, anciens
+    # label stores v1 chargent avec None défauts. Source de ces valeurs :
+    # `engine_native_adapter.py:586-630` qui produit `bridge.vpin_record.value`,
+    # `bridge.ofi_record.value`, `bridge.queue_pressure_record.value`.
+    schema_version: str = Field(default="strategy_ladder.b2_label_store_row.v2", min_length=1)
     candidate_id: str = Field(..., min_length=1)
     engine_id: str = Field(..., min_length=1)
     pair: str = Field(..., min_length=1)
@@ -337,6 +367,10 @@ class StrategyLadderB2LabelStoreRow(BaseModel, frozen=True):
     expected_ce_net: float | None = None
     executed_only_net_return: float | None = None
     break_even_bps: float | None = None
+    # F16-B microstructure canoniques V5.3 (ajout 2026-05-21)
+    vpin: float | None = None
+    cumulative_ofi: float | None = None
+    queue_pressure: float | None = None
     mfe_bps: float | None = None
     mae_bps: float | None = None
     holding_time_ms: int | None = Field(default=None, ge=0)
@@ -682,12 +716,28 @@ def _build_rows(
                     or f"{result.candidate_id}:{result.capital_bucket}"
                 ),
                 feature_vector_ref=feature_vector_ref,
-                spread_bps=_coerce_float(compatibility.get("spread_bps")),
+                spread_bps=_pick_float(
+                    parity,
+                    compatibility,
+                    keys=("measured_spread_bps", "spread_bps_measured", "spread_bps"),
+                ),
+                # Patch F16-B (2026-05-21) — microstructure canoniques V5.3
+                # capturées dans compatibility_payload par strategy_ladder_runner
+                # depuis bridge.vpin_record / ofi_record / queue_pressure_record
+                # (engine_native_adapter:586-630).
+                vpin=_coerce_float(compatibility.get("vpin")),
+                cumulative_ofi=_coerce_float(compatibility.get("cumulative_ofi")),
+                queue_pressure=_coerce_float(compatibility.get("queue_pressure")),
                 fee_bps=_pick_float(parity, compatibility, keys=("replay_fee_bps", "fee_bps")),
                 slippage_bps=_pick_float(
                     parity,
                     compatibility,
-                    keys=("replay_slippage_bps", "slippage_bps"),
+                    keys=(
+                        "measured_slippage_bps",
+                        "slippage_bps_measured",
+                        "replay_slippage_bps",
+                        "slippage_bps",
+                    ),
                 ),
                 adverse_selection_bps=_pick_float(
                     parity,

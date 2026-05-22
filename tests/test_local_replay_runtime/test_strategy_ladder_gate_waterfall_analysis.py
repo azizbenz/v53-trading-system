@@ -230,6 +230,7 @@ def _write_replay_artifacts(run_root: Path) -> None:
             "1m",
             1_735_689_600_000,
             (
+                "ENGINE_NATIVE_NO_TRADE",
                 "EXPECTED_EDGE_NOT_GOVERNED_FOR_BACKTEST_TRUTH",
                 "EXPECTED_EDGE_PROXY_BLOCKED",
                 "BREAK_EVEN_PROXY_BLOCKED",
@@ -254,6 +255,7 @@ def _write_replay_artifacts(run_root: Path) -> None:
             "5m",
             1_735_690_200_000,
             (
+                "ENGINE_NATIVE_NO_TRADE",
                 "BUILD14_READER:execution_fragility_score:ELEVATED",
                 "BUILD14_READER:false_breakout_model:ELEVATED",
             ),
@@ -264,6 +266,7 @@ def _write_replay_artifacts(run_root: Path) -> None:
             "10m",
             1_735_690_500_000,
             (
+                "ENGINE_NATIVE_NO_TRADE",
                 "ENGINE_D_HISTORY_BLOCKED_BY_MISSING_CLOSED_EPISODE_JOURNAL",
                 "engine_d.no_trade.history_weak",
             ),
@@ -405,5 +408,20 @@ def test_gate_waterfall_generates_engine_timeframe_and_readiness_reports() -> No
     readiness = _read_json(run_root / "reports" / "expected_edge_readiness_audit.json")
     assert readiness["status"] == "EXPECTED_EDGE_READINESS_AUDIT_READY"
     assert readiness["verdict"] == "EXPECTED_EDGE_TRAINING_RESEARCH_ONLY_ALLOWED"
+    assert readiness["executed_label_status"] == "EXECUTED_REPLAY_LABELS_MISSING"
     assert readiness["anti_leakage_path_status"] == "ANTI_LEAKAGE_PATH_READY"
     assert readiness["counterfactual_uplift_status"] == "EXPECTED_EDGE_COUNTERFACTUAL_UPLIFT_PRESENT"
+    assert readiness["expected_edge_single_unblocker_status"] == "EXPECTED_EDGE_NOT_SINGLE_UNBLOCKER"
+    assert readiness["records_remaining_if_expected_edge_governed"] == 3
+    assert readiness["native_no_trade_record_count"] == 3
+    assert readiness["native_no_trade_independent_blocker_count"] == 3
+    assert readiness["native_no_trade_independent_blockers_by_engine"] == {
+        "engine_a": 1,
+        "engine_c": 1,
+        "engine_d": 1,
+    }
+    assert readiness["remaining_first_gate_counts_if_expected_edge_governed"] == {
+        "direction_layer": 1,
+        "fragility_layer": 1,
+        "governance_promotion_layer": 1,
+    }

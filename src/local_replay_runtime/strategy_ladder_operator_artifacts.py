@@ -19,6 +19,7 @@ from local_replay_runtime.strategy_ladder_models import (
     StrategyLadderBucketReplayResult,
     StrategyLadderCandidateEvent,
     StrategyLadderRawWindowManifest,
+    StrategyLadderSharedReplayPayload,
     deterministic_payload_hash,
 )
 
@@ -40,6 +41,7 @@ class StrategyLadderCandidateReplayWindowManifest(BaseModel, frozen=True):
     source_coverage_status: str = "RAW_WINDOW_SOURCE_NOT_PROVEN"
     raw_trade_path: str = ""
     raw_book_path: str = ""
+    raw_book_delta_path: str = ""
     raw_ohlcv_path: str = ""
     raw_metadata_path: str = ""
     replay_artifact_path: str = ""
@@ -242,6 +244,9 @@ def build_candidate_replay_window_manifests(
             ),
             raw_trade_path=manifest.raw_trade_path or "" if manifest is not None else "",
             raw_book_path=manifest.raw_book_path or "" if manifest is not None else "",
+            raw_book_delta_path=(
+                manifest.raw_book_delta_path or "" if manifest is not None else ""
+            ),
             raw_ohlcv_path=manifest.raw_ohlcv_path or "" if manifest is not None else "",
             raw_metadata_path=manifest.raw_metadata_path or "" if manifest is not None else "",
             replay_artifact_path=replay_artifact_refs.get(candidate.candidate_id, ""),
@@ -699,9 +704,25 @@ def _write_closed_episode_journal_artifacts(
         bucket_results=bucket_results,
     )
     journal_path = run_dir / "closed_episodes.jsonl"
+    header_row = {
+        "schema_version": "v1",
+        "artifact_header": True,
+        "evidence_class": "SCRATCH_ONLY",
+        "status": (
+            "CLOSED_EPISODE_JOURNAL_READY"
+            if episode_refs
+            else "CLOSED_EPISODE_JOURNAL_EMPTY_NO_VALID_EPISODES"
+        ),
+        "record_count": len(episode_refs),
+    }
     jsonl_payload = "\n".join(
-        json.dumps(row, sort_keys=True, ensure_ascii=True)
-        for row in episode_refs
+        [
+            json.dumps(header_row, sort_keys=True, ensure_ascii=True),
+            *(
+                json.dumps(row, sort_keys=True, ensure_ascii=True)
+                for row in episode_refs
+            ),
+        ]
     )
     if jsonl_payload:
         jsonl_payload = f"{jsonl_payload}\n"
@@ -738,8 +759,12 @@ def _collect_execution_report_rows(
     bucket_results: tuple[StrategyLadderBucketReplayResult, ...],
 ) -> tuple[dict[str, object], ...]:
     rows: list[dict[str, object]] = []
+    shared_payload_cache: dict[str, StrategyLadderSharedReplayPayload] = {}
     for result in bucket_results:
-        parity = result.parity_payload if isinstance(result.parity_payload, dict) else {}
+        parity = _hydrate_execution_parity_payload(
+            result=result,
+            shared_payload_cache=shared_payload_cache,
+        )
         rows.append(
             {
                 "candidate_id": result.candidate_id,
@@ -754,6 +779,37 @@ def _collect_execution_report_rows(
             }
         )
     return tuple(rows)
+
+
+def _hydrate_execution_parity_payload(
+    *,
+    result: StrategyLadderBucketReplayResult,
+    shared_payload_cache: dict[str, StrategyLadderSharedReplayPayload],
+) -> dict[str, object]:
+    parity = (
+        dict(result.parity_payload)
+        if isinstance(result.parity_payload, dict)
+        else {}
+    )
+    shared_ref = str(result.shared_payload_ref or "").strip()
+    if not shared_ref:
+        return parity
+    try:
+        shared_path = Path(shared_ref)
+    except OSError:
+        return parity
+    if not shared_path.is_file():
+        return parity
+    cache_key = str(shared_path.resolve())
+    shared_payload = shared_payload_cache.get(cache_key)
+    if shared_payload is None:
+        shared_payload = StrategyLadderSharedReplayPayload.model_validate_json(
+            shared_path.read_text(encoding="utf-8-sig")
+        )
+        shared_payload_cache[cache_key] = shared_payload
+    merged = dict(shared_payload.shared_parity_payload)
+    merged.update(parity)
+    return merged
 
 
 def _status_count(rows: tuple[dict[str, object], ...], key: str) -> dict[str, int]:
@@ -871,7 +927,19 @@ def _write_execution_realism_reports(
 
 def _write_jsonl_rows(path: Path, rows: tuple[BaseModel, ...]) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    text = "\n".join(row.model_dump_json() for row in rows) + ("\n" if rows else "")
+    header_payload = json.dumps(
+        {
+            "schema_version": "v1",
+            "artifact_header": True,
+            "evidence_class": "SCRATCH_ONLY" if not rows else "AUDIT_ROWS_PRESENT",
+            "status": "LEDGER_READY" if rows else "LEDGER_EMPTY_NO_ROWS",
+            "record_count": len(rows),
+        },
+        sort_keys=True,
+        ensure_ascii=True,
+    )
+    lines = [header_payload, *(row.model_dump_json() for row in rows)]
+    text = "\n".join(lines) + "\n"
     atomic_write_text(path, text)
     return path
 

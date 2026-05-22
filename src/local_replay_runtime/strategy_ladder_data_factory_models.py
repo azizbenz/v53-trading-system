@@ -39,6 +39,8 @@ class StrategyLadderRawSourceReport(BaseModel, frozen=True):
 
     schema_version: str = Field(default="v1", min_length=1)
     sources: tuple[StrategyLadderRawSource, ...] = ()
+    raw_source_manifest_path: str = ""
+    raw_source_provenance_status: str = "RAW_SOURCE_PROVENANCE_NOT_PROVEN"
     raw_source_status: str = "RAW_SOURCE_NOT_PROVEN"
     raw_source_typing_status: str = "RAW_SOURCE_TYPE_NOT_PROVEN"
     pair_inference_status: str = "PAIR_NOT_DETECTED"
@@ -162,6 +164,7 @@ class StrategyLadderDataQualityReport(BaseModel, frozen=True):
     fee_provenance_status: str = "FEE_PROVENANCE_NOT_PROVEN"
     metadata_temporal_status: str = "METADATA_TEMPORAL_NOT_PROVEN"
     metadata_fetched_at_utc: str = ""
+    metadata_temporal_drift_days: float | None = None
     metadata_preview_rows: tuple[dict[str, object], ...] = ()
     capital_bucket_metadata_status: str = "CAPITAL_BUCKET_NOT_PROVEN"
     timestamp_unit_status: str = "TIMESTAMP_UNIT_NOT_PROVEN"
@@ -177,10 +180,13 @@ class StrategyLadderDataQualityReport(BaseModel, frozen=True):
     pair_mismatch_reason_codes: tuple[str, ...] = ()
     ignored_source_pairs: tuple[str, ...] = ()
     active_pairs_after_pruning: tuple[str, ...] = ()
+    pair_generalization_status: str = "PAIR_GENERALIZATION_NOT_PROVEN"
     blocker_codes: tuple[str, ...] = ()
     # Patch 6 batch 1 — date pruning before file open.
     date_filter_start: str = ""
     date_filter_end: str = ""
+    date_filter_effective_start: str = ""
+    replay_context_lookback_ms: int = Field(default=0, ge=0)
     files_seen: int = Field(default=0, ge=0)
     files_skipped_by_date_filter: int = Field(default=0, ge=0)
     date_pruning_status: str = "DATE_PRUNING_NOT_PROVEN"
@@ -192,6 +198,10 @@ class StrategyLadderDataQualityReport(BaseModel, frozen=True):
     # Patch 6 batch 1 — silver storage governance.
     silver_storage_format: str = "jsonl"
     silver_storage_status: str = "SILVER_STORAGE_NOT_PROVEN"
+    raw_source_typing_status: str = "RAW_SOURCE_TYPE_NOT_PROVEN"
+    ohlcv_temporal_completeness_status: str = "OHLCV_TEMPORAL_COMPLETENESS_NOT_PROVEN"
+    ohlcv_temporal_blocked_entry_count: int = Field(default=0, ge=0)
+    ohlcv_temporal_critical_timeframes: tuple[str, ...] = ()
     artifact_hash: str | None = None
     created_at: datetime | None = None
 
@@ -255,12 +265,16 @@ class StrategyLadderDataFactoryManifest(BaseModel, frozen=True):
     run_id: str = Field(..., min_length=1)
     raw_roots: tuple[str, ...] = ()
     raw_source_manifest_path: str = ""
+    raw_source_provenance_status: str = "RAW_SOURCE_PROVENANCE_NOT_PROVEN"
+    raw_source_typing_status: str = "RAW_SOURCE_TYPE_NOT_PROVEN"
     historical_metadata_root: str = ""
     silver_root: str = ""
     gold_root: str = ""
     pairs: tuple[str, ...] = ()
     start: str = ""
     end: str = ""
+    effective_start: str = ""
+    replay_context_lookback_ms: int = Field(default=0, ge=0)
     data_types: tuple[str, ...] = ()
     compression: str = ""
     resume: bool = False
@@ -278,10 +292,15 @@ class StrategyLadderDataFactoryManifest(BaseModel, frozen=True):
     metadata_source_mode: str = "LOCAL_METADATA_CACHE"
     fee_provenance_status: str = "FEE_PROVENANCE_NOT_PROVEN"
     metadata_temporal_status: str = "METADATA_TEMPORAL_NOT_PROVEN"
+    metadata_temporal_drift_days: float | None = None
+    pair_generalization_status: str = "PAIR_GENERALIZATION_NOT_PROVEN"
     compression_status: str = "COMPRESSION_NOT_PROVEN"
     silver_storage_format: str = "jsonl"
     silver_storage_status: str = "SILVER_STORAGE_NOT_PROVEN"
     silver_bloat_ratio: float | None = None
+    ohlcv_temporal_completeness_status: str = "OHLCV_TEMPORAL_COMPLETENESS_NOT_PROVEN"
+    ohlcv_temporal_blocked_entry_count: int = Field(default=0, ge=0)
+    ohlcv_temporal_critical_timeframes: tuple[str, ...] = ()
     date_pruning_status: str = "DATE_PRUNING_NOT_PROVEN"
     silver_index_date_range_status: str = "SILVER_INDEX_DATE_RANGE_NOT_PROVEN"
     raw_scan_budget_status: str = "DRY_RUN_SCOPE_NOT_PROVEN"

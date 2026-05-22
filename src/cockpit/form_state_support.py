@@ -30,6 +30,14 @@ class BacktestFormState(BaseModel, frozen=True):
     start: str = ""
     end: str = ""
     ml_mode: str = "ML_MODE_OFF"
+    # Patch P3 (2026-05-22) — explicit mono|multi mode selector for the C1-aware
+    # provider. Default keeps backward-compat with the frozen mono bundle path.
+    expected_edge_artifact_mode: str = "MONO_PAIR_LEGACY"
+    ml_handoff_run_root: str = ""
+    frozen_ml_artifact_path: str = ""
+    frozen_ml_artifact_hash: str = ""
+    rolling_ml_window_plan_path: str = ""
+    ml_artifact_freshness_days: int = 30
     allow_broad_run: str = ""
     confirm_broad_run: str = ""
     candidate_discovery_mode: str = "SAMPLE_CAPPED_DEBUG"
@@ -71,6 +79,9 @@ class LabMlHandoffFormState(BaseModel, frozen=True):
     metadata_root: str = ""
     handoff_export_dir: str = ""
     pair: str = "BTCUSDT"
+    # Patch P2 (2026-05-22) — multi-select tuple. Empty → fallback to mono `pair`.
+    # Order preserved (admin selection order), dedup applied at construction.
+    selected_pairs: tuple[str, ...] = ()
     timeframe: str = "1m"
     train_start: str = ""
     train_end: str = ""

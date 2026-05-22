@@ -19,6 +19,7 @@ from local_replay_runtime.replay_execution_runtime import (
 )
 from local_replay_runtime.strategy_ladder_replay_evidence import (
     StrategyLadderReplayEvidenceCache,
+    build_measured_cost_governance_payload,
     build_measured_spread_payload,
     build_replay_outcome_payload,
     build_strategy_ladder_replay_evidence,
@@ -48,6 +49,11 @@ _SHARED_PARITY_KEYS = (
     "build14_shadow_applied_fields",
     "build14_shadow_adjustment_factors",
     "build14_shadow_reason_codes",
+    "book_staleness_ms",
+    "best_bid",
+    "best_ask",
+    "mid_price",
+    "spread_source_status",
     "measured_spread_report",
     "measured_spread_bps",
     "replay_outcome_report",
@@ -439,6 +445,15 @@ def run_strategy_ladder_detailed_replay(
         }
         shared_parity_payload["measured_spread_report"] = shared_measured_spread
         shared_parity_payload["replay_outcome_report"] = shared_replay_outcome
+        shared_parity_payload["book_staleness_ms"] = shared_measured_spread.get(
+            "staleness_ms"
+        )
+        shared_parity_payload["best_bid"] = shared_measured_spread.get("best_bid")
+        shared_parity_payload["best_ask"] = shared_measured_spread.get("best_ask")
+        shared_parity_payload["mid_price"] = shared_measured_spread.get("mid_price")
+        shared_parity_payload["spread_source_status"] = shared_measured_spread.get(
+            "status"
+        )
         if shared_measured_spread.get("spread_bps") is not None:
             shared_parity_payload["measured_spread_bps"] = shared_measured_spread.get(
                 "spread_bps"
@@ -561,9 +576,60 @@ def run_strategy_ladder_detailed_replay(
                 execution_state=execution_state,
                 evidence_cache=evidence_cache,
             )
+            cost_governance = build_measured_cost_governance_payload(
+                measured_spread=shared_measured_spread,
+                measured_slippage=replay_evidence.measured_slippage,
+                fee_bps=_coalesce_numeric(candidate_payload, "fee_bps", 0.0),
+                fee_source_status=str(
+                    candidate_payload.get("fee_source_status")
+                    or "FEE_SOURCE_NOT_PROVEN"
+                ),
+                latency_penalty_bps=_coalesce_numeric(
+                    candidate_payload,
+                    "latency_penalty_bps",
+                    0.0,
+                ),
+                latency_source_status=str(
+                    candidate_payload.get("latency_source_status")
+                    or candidate_payload.get("latency_provenance")
+                    or "STATIC_CONSERVATIVE_VENUE_MODEL"
+                ),
+            )
             parity_payload["measured_slippage_report"] = replay_evidence.measured_slippage
             parity_payload["adverse_selection_report"] = replay_evidence.adverse_selection
             parity_payload["fill_realism_report"] = replay_evidence.fill_realism
+            parity_payload["cost_source_used_for_break_even"] = cost_governance.get(
+                "cost_source_used_for_break_even"
+            )
+            parity_payload["cost_source_used_for_expected_ce_net"] = cost_governance.get(
+                "cost_source_used_for_expected_ce_net"
+            )
+            parity_payload["expected_cost_truth_status"] = cost_governance.get(
+                "expected_cost_truth_status"
+            )
+            parity_payload["expected_cost_block_reason"] = cost_governance.get(
+                "expected_cost_block_reason"
+            )
+            parity_payload["book_staleness_ms"] = cost_governance.get("book_staleness_ms")
+            parity_payload["spread_source_status"] = cost_governance.get(
+                "spread_source_status"
+            )
+            parity_payload["slippage_source_status"] = cost_governance.get(
+                "slippage_source_status"
+            )
+            parity_payload["best_bid"] = cost_governance.get("best_bid")
+            parity_payload["best_ask"] = cost_governance.get("best_ask")
+            parity_payload["mid_price"] = cost_governance.get("mid_price")
+            parity_payload["depth_fill_ratio"] = cost_governance.get("depth_fill_ratio")
+            parity_payload["partial_fill_status"] = cost_governance.get(
+                "partial_fill_status"
+            )
+            parity_payload["impact_source_status"] = cost_governance.get(
+                "impact_source_status"
+            )
+            parity_payload["fill_realism_status"] = cost_governance.get(
+                "fill_realism_status"
+            )
             if replay_evidence.measured_slippage.get("walk_cost_bps") is not None:
                 parity_payload["measured_slippage_bps"] = replay_evidence.measured_slippage.get(
                     "walk_cost_bps"
@@ -606,13 +672,13 @@ def run_strategy_ladder_detailed_replay(
                     or "FEE_SOURCE_NOT_PROVEN"
                 ),
                 impact_source_status=str(
-                    (candidate.compatibility_payload or {}).get("impact_source_status")
-                    or parity_payload.get("impact_source_status")
+                    parity_payload.get("impact_source_status")
+                    or (candidate.compatibility_payload or {}).get("impact_source_status")
                     or _impact_source_from_book_status(book_status)
                 ),
                 fill_realism_status=str(
-                    (candidate.compatibility_payload or {}).get("fill_realism_status")
-                    or parity_payload.get("fill_realism_status")
+                    parity_payload.get("fill_realism_status")
+                    or (candidate.compatibility_payload or {}).get("fill_realism_status")
                     or replay_evidence.fill_realism.get("status")
                     or "FILL_REALISM_NOT_PROVEN"
                 ),

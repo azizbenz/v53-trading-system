@@ -452,6 +452,30 @@ def _build_json_manifests(path: Path) -> tuple[RawMarketFileManifest, ...]:
             str(item.get("symbol") or item.get("pair") or item.get("s") or "")
         )
         rows_by_symbol[candidate_symbol] = rows_by_symbol.get(candidate_symbol, 0) + 1
+    # Patch D3 (2026-05-21) — détection metadata-like records pour ne pas
+    # escalader vers SCHEMA_UNKNOWN. Cohérence avec _build_csv_manifests:322
+    # qui détecte metadata par header (symbol/pair/tick_size/qty_step) et
+    # accepte RAW_FILE_TIME_RANGE_NOT_PROVEN sans SCHEMA_UNKNOWN. Avant ce fix,
+    # symbol_metadata.jsonl (généré par bybit_historical_metadata.py) était
+    # systématiquement SCHEMA_UNKNOWN car les metadata n'ont pas de timestamps,
+    # ce qui déclenchait BRONZE_INDEX_BLOCKED_BY_SCHEMA en aval.
+    metadata_marker_keys = frozenset({
+        "tick_size", "qty_step", "min_notional", "min_order_qty",
+        "maker_fee_rate", "taker_fee_rate", "base_coin", "quote_coin",
+    })
+    has_metadata_markers = any(
+        bool(metadata_marker_keys & {str(k).lower() for k in item.keys()})
+        for item in records
+        if isinstance(item, dict)
+    )
+
+    def _resolve_metadata_status_override() -> str | None:
+        if start_timestamp_ms is not None:
+            return None
+        if has_metadata_markers:
+            return None  # accept TIME_RANGE_NOT_PROVEN (default for metadata)
+        return "RAW_FILE_SCHEMA_UNKNOWN"
+
     if rows_by_symbol:
         return tuple(
             _manifest(
@@ -464,7 +488,7 @@ def _build_json_manifests(path: Path) -> tuple[RawMarketFileManifest, ...]:
                 end_timestamp_ms=end_timestamp_ms,
                 row_count=row_count,
                 sha256=sha256,
-                status_override="RAW_FILE_SCHEMA_UNKNOWN" if start_timestamp_ms is None else None,
+                status_override=_resolve_metadata_status_override(),
             )
             for row_symbol, row_count in sorted(rows_by_symbol.items())
         )
@@ -479,7 +503,7 @@ def _build_json_manifests(path: Path) -> tuple[RawMarketFileManifest, ...]:
             end_timestamp_ms=end_timestamp_ms,
             row_count=len(records),
             sha256=sha256,
-            status_override="RAW_FILE_SCHEMA_UNKNOWN" if start_timestamp_ms is None else None,
+            status_override=_resolve_metadata_status_override(),
         ),
     )
 
@@ -572,7 +596,125 @@ def scan_bybit_raw_root(
                     continue
                 seen.add(identity)
                 manifests.append(manifest)
-    return tuple(sorted(manifests, key=lambda item: (item.symbol, item.source_type, item.path)))
+    # Patch D4 (2026-05-21) — déduplication ZIP/extracted.
+    # Avant ce fix, un orderbook ob200.data.zip ET son contenu extrait
+    # ob200.data étaient tous deux indexés comme fichiers distincts (paths
+    # différents) → duplicate_timestamp_count gonflé (4 sur run f9bb2bdc :
+    # 2 jours × 2 source_types delta+snapshot). Dédup par signature contenu
+    # (symbol, source_type, start_ts, end_ts, row_count). En cas de doublon,
+    # on garde la version non-zip (format != "zip") pour faciliter le parsing
+    # downstream qui n'a pas à décompresser à chaque fois.
+    content_seen: dict[tuple[str, str, int | None, int | None, int], RawMarketFileManifest] = {}
+    for manifest in manifests:
+        key = (
+            manifest.symbol,
+            manifest.source_type,
+            manifest.start_timestamp_ms,
+            manifest.end_timestamp_ms,
+            manifest.row_count,
+        )
+        existing = content_seen.get(key)
+        if existing is None:
+            content_seen[key] = manifest
+            continue
+        # Doublon détecté : choisir la version non-zip si possible
+        existing_is_zip = (existing.format or "").lower() == "zip"
+        new_is_zip = (manifest.format or "").lower() == "zip"
+        if existing_is_zip and not new_is_zip:
+            content_seen[key] = manifest
+        # sinon (les deux non-zip, ou les deux zip, ou existing déjà non-zip),
+        # on garde existing → silently skip ce manifest doublon
+    deduplicated_manifests = tuple(content_seen.values())
+    return tuple(sorted(deduplicated_manifests, key=lambda item: (item.symbol, item.source_type, item.path)))
+
+
+# Patch F2-A (2026-05-21) — timeframe extractor + interval lookup.
+# Avant ce fix, le gap detection groupait toutes les klines (1m, 5m, 10m, 15m)
+# sous source_type="klines" et triait par start_ts, ce qui mélangeait les
+# timeframes et masquait les vrais gaps. Sur run f9bb2bdc, le "gap de 60s"
+# rapporté était un artefact : transition normale entre dernière barre 1m
+# d'un jour (23:59:00) et première barre 15m du jour suivant (00:00:00).
+# Le VRAI gap (7h21min de truncation Bybit 1000-cap sur fichiers 1m) était
+# masqué. Le fix groupe les klines par (source_type, timeframe) et utilise
+# l'interval timeframe pour calculer le vrai end_ms = last_start + interval.
+_KLINE_TIMEFRAME_INTERVAL_MS: dict[str, int] = {
+    "1m": 60_000,
+    "3m": 3 * 60_000,
+    "5m": 5 * 60_000,
+    "10m": 10 * 60_000,
+    "15m": 15 * 60_000,
+    "30m": 30 * 60_000,
+    "1h": 60 * 60_000,
+    "60m": 60 * 60_000,
+    "4h": 4 * 60 * 60_000,
+    "1d": 24 * 60 * 60_000,
+}
+_KLINE_PATH_TIMEFRAME_PATTERN = re.compile(
+    r"[/\\\\]klines[/\\\\][A-Z0-9]+[/\\\\](?P<tf>\d+[mhd]?)[/\\\\]"
+    r"|BTCUSDT_(?P<tf2>\d+[mhd]?)_\d{4}-\d{2}-\d{2}\.csv",
+    re.IGNORECASE,
+)
+
+
+def _extract_kline_timeframe(path: str) -> str | None:
+    """Extract kline timeframe label (e.g. '1m', '15m') from a raw kline path.
+
+    Patch F2-A — supports two patterns:
+    - Directory based: `L:/klines/BTCUSDT/1/2025/BTCUSDT_1_2025-07-23.csv` → "1m"
+    - Filename based: `BTCUSDT_15_2025-07-24.csv` → "15m"
+
+    Returns None if not parseable (caller falls back to generic source_type key).
+    """
+    if not path:
+        return None
+    match = _KLINE_PATH_TIMEFRAME_PATTERN.search(path)
+    if match is None:
+        return None
+    raw = match.group("tf") or match.group("tf2")
+    if not raw:
+        return None
+    raw = raw.lower()
+    # Default suffix interpretation : digits-only → minutes (Bybit convention)
+    if raw.isdigit():
+        return f"{raw}m"
+    return raw
+
+
+def _gap_group_key(manifest: RawMarketFileManifest) -> str:
+    """Patch F2-A — gap detection key per timeframe for klines, per source_type others.
+
+    Klines (1m, 5m, 10m, 15m) sont indexés sous le même source_type="klines"
+    par le raw manifest. Pour détecter les vrais gaps temporels, il faut les
+    grouper par timeframe (sinon transitions naturelles entre barre 1m et 15m
+    sont confondues avec des gaps).
+    """
+    if manifest.source_type == "klines":
+        timeframe = _extract_kline_timeframe(manifest.path)
+        if timeframe is not None:
+            return f"klines:{timeframe}"
+    return manifest.source_type
+
+
+def _effective_end_timestamp_ms(manifest: RawMarketFileManifest) -> int:
+    """Patch F2-A — compute true end_ms for kline manifests.
+
+    OHLCV bars use start_ms as their timestamp ; the "end" of a kline file is
+    actually `last_bar_start_ms + interval_ms` (la barre couvre
+    [start, start+interval[). Sans ce calcul, comparer end_ms d'un fichier 1m
+    (23:59:00) avec start_ms du fichier suivant (00:00:00) donne 60s de "gap"
+    alors qu'il n'y a pas de trou réel (la barre 23:59 finit naturellement à
+    24:00 = 00:00 next day).
+    """
+    base_end = manifest.end_timestamp_ms or 0
+    if manifest.source_type != "klines":
+        return base_end
+    timeframe = _extract_kline_timeframe(manifest.path)
+    if timeframe is None:
+        return base_end
+    interval = _KLINE_TIMEFRAME_INTERVAL_MS.get(timeframe)
+    if interval is None:
+        return base_end
+    return base_end + interval
 
 
 def build_bronze_market_index(
@@ -601,28 +743,42 @@ def build_bronze_market_index(
     )
     proven_starts = tuple(item.start_timestamp_ms for item in relevant if item.start_timestamp_ms is not None)
     proven_ends = tuple(item.end_timestamp_ms for item in relevant if item.end_timestamp_ms is not None)
-    ordered_by_type = sorted(
+    # Patch F2-A — sort + group by (gap_group_key, start_ts) au lieu de
+    # (source_type, start_ts). Les klines sont sub-groupées par timeframe pour
+    # éviter de mélanger 1m/5m/10m/15m dans la même séquence de gap detection.
+    ordered_by_group = sorted(
         (item for item in relevant if item.start_timestamp_ms is not None and item.end_timestamp_ms is not None),
-        key=lambda item: (item.source_type, item.start_timestamp_ms or 0, item.end_timestamp_ms or 0, item.path),
+        key=lambda item: (
+            _gap_group_key(item),
+            item.start_timestamp_ms or 0,
+            item.end_timestamp_ms or 0,
+            item.path,
+        ),
     )
     gap_count = 0
     largest_gap_ms = 0
     duplicate_timestamp_count = 0
     out_of_order_count = 0
-    previous_by_type: dict[str, RawMarketFileManifest] = {}
-    for manifest in ordered_by_type:
-        previous = previous_by_type.get(manifest.source_type)
+    previous_by_group: dict[str, RawMarketFileManifest] = {}
+    for manifest in ordered_by_group:
+        group_key = _gap_group_key(manifest)
+        previous = previous_by_group.get(group_key)
         if previous is not None:
-            if (manifest.start_timestamp_ms or 0) < (previous.start_timestamp_ms or 0):
+            previous_effective_end = _effective_end_timestamp_ms(previous)
+            current_start = manifest.start_timestamp_ms or 0
+            if current_start < (previous.start_timestamp_ms or 0):
                 out_of_order_count += 1
-            if manifest.start_timestamp_ms == previous.start_timestamp_ms and manifest.end_timestamp_ms == previous.end_timestamp_ms:
+            if (
+                manifest.start_timestamp_ms == previous.start_timestamp_ms
+                and manifest.end_timestamp_ms == previous.end_timestamp_ms
+            ):
                 duplicate_timestamp_count += 1
-            if (manifest.start_timestamp_ms or 0) > (previous.end_timestamp_ms or 0):
-                gap = (manifest.start_timestamp_ms or 0) - (previous.end_timestamp_ms or 0)
+            if current_start > previous_effective_end:
+                gap = current_start - previous_effective_end
                 if gap > 0:
                     gap_count += 1
                     largest_gap_ms = max(largest_gap_ms, gap)
-        previous_by_type[manifest.source_type] = manifest
+        previous_by_group[group_key] = manifest
     status = "BRONZE_INDEX_READY"
     if any(item.source_status == "RAW_FILE_SCHEMA_UNKNOWN" for item in relevant):
         status = "BRONZE_INDEX_BLOCKED_BY_SCHEMA"

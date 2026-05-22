@@ -1,0 +1,141 @@
+{
+  "schema_version": "strategy_ladder.replay_bridge_viability.v1",
+  "generated_at": "2026-05-18T22:05:32.823276+00:00",
+  "workflow_root": "K:\\v5.3 backtest\\output2\\runs\\strategy_ladder_workflow-03a3ffe88660751e",
+  "diagnostic_only": true,
+  "cases": [
+    {
+      "engine_id": "engine_d",
+      "candidate_id": "48b82f87706a27fee4dd60e0",
+      "timeframe": "15m",
+      "synthetic_expected_edge_bps": 30.0,
+      "synthetic_expected_cost_bps": 1.675,
+      "builder_status": "ENGINE_D_INPUT_BUILDER_INSUFFICIENT_BARS",
+      "input_provenance": "BUILDER_NO_FIRST_EPISODE_DEFAULTS",
+      "runner_status": "ENGINE_NATIVE_RUNNER_INVOKED",
+      "native_decision": "no_trade",
+      "production_decision_state": "hard_blocked",
+      "hard_block_reasons": [
+        "ENGINE_NATIVE_NO_TRADE",
+        "ENGINE_D_HISTORY_BLOCKED_BY_MISSING_CLOSED_EPISODE_JOURNAL",
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak",
+        "history_weak"
+      ],
+      "native_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "native_no_trade_reasons": [
+        "history_weak"
+      ],
+      "records_built": 1,
+      "raw_window_status": "RAW_WINDOW_NOT_PROVEN",
+      "book_depth_source_status": "BOOK_DEPTH20_AVAILABLE"
+    },
+    {
+      "engine_id": "engine_b",
+      "candidate_id": "6bd1dd944545e9edd9fde7ec",
+      "timeframe": "5m",
+      "synthetic_expected_edge_bps": 30.0,
+      "synthetic_expected_cost_bps": 1.675,
+      "builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "input_provenance": "BUILDER_FROM_BRIDGE_HEURISTIC_TO_CALIBRATE",
+      "runner_status": "ENGINE_NATIVE_RUNNER_INVOKED",
+      "native_decision": "no_trade",
+      "production_decision_state": "hard_blocked",
+      "hard_block_reasons": [
+        "ENGINE_NATIVE_NO_TRADE",
+        "engine_internal.engine_b.excess.no_excess",
+        "engine_b.excess.no_excess",
+        "no_excess"
+      ],
+      "native_reason_codes": [
+        "engine_internal.engine_b.excess.no_excess",
+        "engine_b.excess.no_excess"
+      ],
+      "native_no_trade_reasons": [
+        "no_excess"
+      ],
+      "records_built": 4,
+      "raw_window_status": "RAW_WINDOW_NOT_PROVEN",
+      "book_depth_source_status": "BOOK_DEPTH20_AVAILABLE"
+    },
+    {
+      "engine_id": "engine_a",
+      "candidate_id": "17e5c14dd6dfaa009a438a8f",
+      "timeframe": "5m",
+      "synthetic_expected_edge_bps": 30.0,
+      "synthetic_expected_cost_bps": 1.675,
+      "builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "input_provenance": "BUILDER_OHLCV_HEURISTIC_TO_CALIBRATE",
+      "runner_status": "ENGINE_NATIVE_RUNNER_INVOKED",
+      "native_decision": "emit",
+      "production_decision_state": "selected",
+      "hard_block_reasons": [
+        "engine_a.emit.valid",
+        "engine_internal.engine_a.structure.marginal",
+        "engine_internal.engine_a.context.neutral",
+        "economics.engine_a.cost.feasible",
+        "scoring.engine_a.conviction.medium",
+        "engine_a.structure.marginal",
+        "engine_a.context.neutral",
+        "engine_a.cost.feasible",
+        "engine_a.conviction.medium"
+      ],
+      "native_reason_codes": [
+        "engine_a.emit.valid",
+        "engine_internal.engine_a.structure.marginal",
+        "engine_internal.engine_a.context.neutral",
+        "economics.engine_a.cost.feasible",
+        "scoring.engine_a.conviction.medium",
+        "engine_a.structure.marginal",
+        "engine_a.context.neutral",
+        "engine_a.cost.feasible",
+        "engine_a.conviction.medium"
+      ],
+      "native_no_trade_reasons": [],
+      "records_built": 2,
+      "raw_window_status": "RAW_WINDOW_NOT_PROVEN",
+      "book_depth_source_status": "BOOK_DEPTH20_AVAILABLE"
+    },
+    {
+      "engine_id": "engine_c",
+      "candidate_id": "2f6fd2366b9a4818ee882ab0",
+      "timeframe": "5m",
+      "synthetic_expected_edge_bps": 30.0,
+      "synthetic_expected_cost_bps": 1.675,
+      "builder_status": "ENGINE_C_INPUT_BUILDER_READY_FALLBACK_INWINDOW_RANGE",
+      "input_provenance": "BUILDER_DOC21_HEURISTIC_TO_CALIBRATE",
+      "runner_status": "ENGINE_NATIVE_RUNNER_INVOKED",
+      "native_decision": "no_trade",
+      "production_decision_state": "hard_blocked",
+      "hard_block_reasons": [
+        "ENGINE_NATIVE_NO_TRADE",
+        "engine_internal.engine_c.breakout.unstructured",
+        "engine_c.no_trade.breakout_unstructured",
+        "engine_internal.engine_c.breakout.structured_breakout",
+        "engine_c.breakout.structured_breakout",
+        "engine_internal.engine_c.continuation.late_extension",
+        "engine_c.continuation.late_extension",
+        "engine_c.microstructure.confirmed",
+        "breakout_unstructured"
+      ],
+      "native_reason_codes": [
+        "engine_internal.engine_c.breakout.unstructured",
+        "engine_c.no_trade.breakout_unstructured",
+        "engine_internal.engine_c.breakout.structured_breakout",
+        "engine_c.breakout.structured_breakout",
+        "engine_internal.engine_c.continuation.late_extension",
+        "engine_c.continuation.late_extension",
+        "engine_c.microstructure.confirmed"
+      ],
+      "native_no_trade_reasons": [
+        "breakout_unstructured"
+      ],
+      "records_built": 3,
+      "raw_window_status": "RAW_WINDOW_NOT_PROVEN",
+      "book_depth_source_status": "BOOK_DEPTH20_AVAILABLE"
+    }
+  ]
+}

@@ -39,6 +39,7 @@ from cockpit.form_state_support import (
     read_backtest_form_state,
     write_backtest_form_state,
 )
+from cockpit.strategy_ladder_workflow_support import PHASE_B2
 from local_replay_runtime.backtest_proof_matrix import (
     build_backtest_proof_matrix,
     emit_backtest_proof_matrix,
@@ -331,6 +332,179 @@ def test_backtest_form_state_round_trips_output_root() -> None:
         shutil.rmtree(scratch, ignore_errors=True)
 
 
+def test_preflight_derives_ml_overlay_inputs_from_handoff_run_folder() -> None:
+    scratch = _scratch_dir("preflight_ml_handoff_folder")
+    try:
+        run_root = scratch / "ml_handoff" / "runs" / "strategy_ladder_ml_lab_handoff-ready"
+        run_root.mkdir(parents=True, exist_ok=True)
+        artifact_path = run_root / "strategy_ladder_expected_edge_ml_model_bundle.json"
+        artifact_path.write_text("{}", encoding="utf-8")
+        rolling_plan_path = run_root / "rolling_ml_window_plan.json"
+        rolling_plan_path.write_text("{}", encoding="utf-8")
+        (run_root / "rolling_ml_window_plan.md").write_text("# rolling plan", encoding="utf-8")
+        artifact_hash = "3df347bc6f5338117e585c5c9c6d802c8ab605def5521fd8fffc953edb4a072d"
+        (run_root / "strategy_ladder_backtest_ml_input.json").write_text(
+            json.dumps(
+                {
+                    "status": "STRATEGY_LADDER_BACKTEST_ML_INPUT_READY",
+                    "ml_mode": "ML_MODE_OVERLAY_FROZEN",
+                    "pair": "BTCUSDT",
+                    "timeframe": "1m,5m,10m,15m",
+                    "timeframe_scope": ["1m", "5m", "10m", "15m"],
+                    "frozen_ml_artifact_path": str(artifact_path),
+                    "frozen_ml_artifact_hash": artifact_hash,
+                    "rolling_ml_window_plan_ref": str(rolling_plan_path),
+                    "requested_backtest_start": "2025-07-18",
+                    "requested_backtest_end": "2025-08-01",
+                    "artifact_stale_after": "2025-08-16T23:00:00+00:00",
+                    "max_valid_backtest_end": "2025-08-16",
+                    "train_days": 180,
+                    "validation_days": 30,
+                    "freshness_days": 30,
+                    "chunk_days": 15,
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_root / "strategy_ladder_ml_lab_handoff_report.json").write_text(
+            json.dumps(
+                {
+                    "status": "STRATEGY_LADDER_ML_LAB_HANDOFF_READY",
+                    "ready": True,
+                    "pair": "BTCUSDT",
+                    "timeframe": "1m,5m,10m,15m",
+                    "feature_names": ["close_return", "high_low_range", "volume"],
+                    "train_start": "2025-05-02",
+                    "train_end": "2025-07-17",
+                    "requested_backtest_start": "2025-07-18",
+                    "requested_backtest_end": "2025-08-01",
+                    "artifact_stale_after": "2025-08-16T23:00:00+00:00",
+                    "max_valid_backtest_end": "2025-08-16",
+                    "artifact_hash": artifact_hash,
+                    "rolling_ml_window_plan_ref": str(rolling_plan_path),
+                    "rolling_ml_window_plan_markdown_ref": str(run_root / "rolling_ml_window_plan.md"),
+                    "rolling_ml_window_plan_status": "ROLLING_PLAN_READY",
+                    "rolling_ml_required_artifact_count": 1,
+                    "train_days": 180,
+                    "validation_days": 30,
+                    "freshness_days": 30,
+                    "chunk_days": 15,
+                    "blocking_reasons": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_root / "strategy_ladder_expected_edge_ml_model_bundle.summary.json").write_text(
+            json.dumps(
+                {
+                    "timeframe_scope": ["1m", "5m", "10m", "15m"],
+                    "feature_names": ["close_return", "high_low_range", "volume"],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        preview = build_patch6_preflight_preview(
+            selected_form=BacktestFormState(
+                action_name="PHASE_B2_DETAILED_REPLAY",
+                phase_id=PHASE_B2,
+                workflow_phase=PHASE_B2,
+                ml_mode="ML_MODE_OVERLAY_FROZEN",
+                ml_handoff_run_root=str(run_root),
+            ),
+            jobs_root=scratch / "jobs",
+        )
+
+        assert preview.ml_overlay_intake.check_status == "ML_CHECK_OK"
+        assert preview.ml_overlay_intake.max_valid_backtest_end == "2025-08-16"
+        assert preview.normalized_request.frozen_ml_artifact_path == str(artifact_path)
+        assert preview.normalized_request.frozen_ml_artifact_hash == artifact_hash
+        assert preview.normalized_request.rolling_ml_window_plan_path == str(rolling_plan_path)
+        assert preview.normalized_request.start == "2025-07-18"
+        assert preview.normalized_request.end == "2025-08-01"
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_preflight_infers_ml_handoff_run_root_from_stage3_artifact_directory() -> None:
+    scratch = _scratch_dir("preflight_ml_handoff_inferred_root")
+    try:
+        run_root = scratch / "ml_handoff" / "runs" / "strategy_ladder_ml_lab_handoff-ready"
+        run_root.mkdir(parents=True, exist_ok=True)
+        artifact_path = run_root / "strategy_ladder_expected_edge_ml_model_bundle.json"
+        artifact_path.write_text("{}", encoding="utf-8")
+        rolling_plan_path = run_root / "rolling_ml_window_plan.json"
+        rolling_plan_path.write_text("{}", encoding="utf-8")
+        (run_root / "strategy_ladder_ml_lab_handoff_report.json").write_text(
+            json.dumps(
+                {
+                    "status": "STRATEGY_LADDER_ML_LAB_HANDOFF_READY",
+                    "ready": True,
+                    "pair": "BTCUSDT",
+                    "timeframe": "1m,5m,10m,15m",
+                    "feature_names": ["close_return", "high_low_range", "volume"],
+                    "train_start": "2025-05-02",
+                    "train_end": "2025-07-17",
+                    "requested_backtest_start": "2025-07-18",
+                    "requested_backtest_end": "2025-08-01",
+                    "artifact_stale_after": "2025-08-16T23:00:00+00:00",
+                    "max_valid_backtest_end": "2025-08-16",
+                    "artifact_hash": "abc123",
+                    "rolling_ml_window_plan_ref": str(rolling_plan_path),
+                    "rolling_ml_window_plan_status": "ROLLING_PLAN_READY",
+                    "rolling_ml_required_artifact_count": 1,
+                    "train_days": 180,
+                    "validation_days": 30,
+                    "freshness_days": 30,
+                    "chunk_days": 15,
+                    "blocking_reasons": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_root / "strategy_ladder_backtest_ml_input.json").write_text(
+            json.dumps(
+                {
+                    "status": "STRATEGY_LADDER_BACKTEST_ML_INPUT_READY",
+                    "ml_mode": "ML_MODE_OVERLAY_FROZEN",
+                    "pair": "BTCUSDT",
+                    "timeframe_scope": ["1m", "5m", "10m", "15m"],
+                    "frozen_ml_artifact_path": str(artifact_path),
+                    "frozen_ml_artifact_hash": "abc123",
+                    "rolling_ml_window_plan_ref": str(rolling_plan_path),
+                    "requested_backtest_start": "2025-07-18",
+                    "requested_backtest_end": "2025-08-01",
+                    "max_valid_backtest_end": "2025-08-16",
+                    "freshness_days": 30,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        preview = build_patch6_preflight_preview(
+            selected_form=BacktestFormState(
+                action_name="PHASE_B2_DETAILED_REPLAY",
+                phase_id=PHASE_B2,
+                workflow_phase=PHASE_B2,
+                ml_mode="ML_MODE_OVERLAY_FROZEN",
+                frozen_ml_artifact_path=str(run_root),
+                rolling_ml_window_plan_path="K:\\stale\\other_run\\rolling_ml_window_plan.json",
+                start="2025-05-02",
+                end="2025-07-17",
+            ),
+            jobs_root=scratch / "jobs",
+        )
+
+        assert preview.ml_overlay_intake.check_status == "ML_CHECK_OK"
+        assert preview.ml_overlay_intake.run_root == str(run_root.resolve(strict=False))
+        assert preview.normalized_request.frozen_ml_artifact_path == str(artifact_path)
+        assert preview.normalized_request.rolling_ml_window_plan_path == str(rolling_plan_path)
+        assert preview.normalized_request.start == "2025-07-18"
+        assert preview.normalized_request.end == "2025-08-01"
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
 # ---------------------------------------------------------------------------
 # Date guard — DATE_RANGE_REQUIRED_FOR_NON_DRY_RUN
 # ---------------------------------------------------------------------------
@@ -548,6 +722,42 @@ def test_proof_matrix_blocked_when_blocker_codes_present() -> None:
         )
         assert "TIMESTAMP_UNIT_AMBIGUOUS" in matrix.blocker_codes
         assert matrix.overall_backtest_proof_status == "BACKTEST_PROOF_BLOCKED"
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_proof_matrix_keeps_research_only_for_inferred_source_and_current_metadata_proxy() -> None:
+    scratch = _scratch_dir("proof_matrix_research_only_provenance")
+    try:
+        manifest = _ready_data_factory_manifest()
+        manifest.update(
+            {
+                "raw_source_provenance_status": "RAW_SOURCE_MANIFEST_GENERATED",
+                "raw_source_typing_status": "RAW_SOURCE_TYPE_INFERRED",
+                "blocker_codes": [
+                    "RAW_SOURCE_TYPE_INFERRED",
+                    "CURRENT_METADATA_PROXY",
+                ],
+            }
+        )
+        _write_manifest(scratch, manifest)
+        _write_quality_report(
+            scratch,
+            {
+                "metadata_temporal_status": "CURRENT_METADATA_PROXY",
+                "metadata_temporal_drift_days": 281.0,
+                "raw_source_typing_status": "RAW_SOURCE_TYPE_INFERRED",
+                "blocker_codes": [
+                    "RAW_SOURCE_TYPE_INFERRED",
+                    "CURRENT_METADATA_PROXY",
+                ],
+            },
+        )
+        matrix = build_backtest_proof_matrix(output_root=scratch, run_id="df-test")
+        assert matrix.raw_source_typing_status == "RAW_SOURCE_TYPE_INFERRED"
+        assert matrix.metadata_temporal_status == "CURRENT_METADATA_PROXY"
+        assert matrix.metadata_temporal_drift_days == 281.0
+        assert matrix.overall_backtest_proof_status == "BACKTEST_PROOF_RESEARCH_ONLY"
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 

@@ -1,0 +1,377 @@
+{
+  "schema_version": "strategy_ladder.replay_builder_surface_audit.v1",
+  "generated_at": "2026-05-18T23:01:15.059614+00:00",
+  "workflow_root": "K:\\v5.3 backtest\\output2\\runs\\strategy_ladder_workflow-03a3ffe88660751e",
+  "diagnostic_only": true,
+  "synthetic_expected_edge_bps": 30.0,
+  "synthetic_expected_cost_bps": 1.675,
+  "engine_summaries": [
+    {
+      "engine_id": "engine_c",
+      "total_windows": 48,
+      "emit_count": 0,
+      "no_trade_count": 48,
+      "builder_status_counts": {
+        "ENGINE_C_INPUT_BUILDER_READY_FALLBACK_INWINDOW_RANGE": 48
+      },
+      "decision_counts": {
+        "no_trade": 48
+      },
+      "no_trade_reason_counts": {
+        "breakout_unstructured": 48
+      },
+      "sample_emit_cases": [],
+      "sample_no_trade_cases": [
+        {
+          "candidate_id": "2f6fd2366b9a4818ee882ab0",
+          "timeframe": "5m",
+          "decision": "no_trade",
+          "builder_status": "ENGINE_C_INPUT_BUILDER_READY_FALLBACK_INWINDOW_RANGE",
+          "input_provenance": "BUILDER_DOC21_HEURISTIC_TO_CALIBRATE",
+          "no_trade_reasons": [
+            "breakout_unstructured"
+          ],
+          "reason_codes": [
+            "engine_internal.engine_c.breakout.unstructured",
+            "engine_c.no_trade.breakout_unstructured",
+            "engine_internal.engine_c.breakout.structured_breakout",
+            "engine_c.breakout.structured_breakout",
+            "engine_internal.engine_c.continuation.late_extension",
+            "engine_c.continuation.late_extension",
+            "engine_c.microstructure.confirmed"
+          ],
+          "metrics": {
+            "breakout_strength": 1.0,
+            "range_quality": 0.0,
+            "compression_quality": 0.0,
+            "volume_confirmation": 0.0,
+            "followthrough_room": 0.12031173891863978,
+            "extension_pct": 0.8796882610813602,
+            "retrace_risk": 0.0,
+            "cumulative_ofi": null,
+            "queue_pressure": null,
+            "vpin": 0.5326184652545494,
+            "kyle_lambda": 34.79811424644521,
+            "entry_price": 119405.6,
+            "breakout_level": 119225.0,
+            "range_low": 119019.7,
+            "range_high": 119225.0
+          }
+        },
+        {
+          "candidate_id": "ef38f8e9c43194620f668420",
+          "timeframe": "5m",
+          "decision": "no_trade",
+          "builder_status": "ENGINE_C_INPUT_BUILDER_READY_FALLBACK_INWINDOW_RANGE",
+          "input_provenance": "BUILDER_DOC21_HEURISTIC_TO_CALIBRATE",
+          "no_trade_reasons": [
+            "breakout_unstructured"
+          ],
+          "reason_codes": [
+            "engine_internal.engine_c.breakout.unstructured",
+            "engine_c.no_trade.breakout_unstructured",
+            "engine_internal.engine_c.breakout.structured_breakout",
+            "engine_c.breakout.structured_breakout",
+            "engine_internal.engine_c.continuation.late_extension",
+            "engine_c.continuation.late_extension",
+            "engine_c.microstructure.confirmed"
+          ],
+          "metrics": {
+            "breakout_strength": 1.0,
+            "range_quality": 0.0,
+            "compression_quality": 0.0,
+            "volume_confirmation": 0.0,
+            "followthrough_room": 0.0,
+            "extension_pct": 1.0,
+            "retrace_risk": 0.904,
+            "cumulative_ofi": null,
+            "queue_pressure": null,
+            "vpin": 0.5124820964369537,
+            "kyle_lambda": 20.154603176408038,
+            "entry_price": 119483.7,
+            "breakout_level": 119177.0,
+            "range_low": 119052.0,
+            "range_high": 119177.0
+          }
+        },
+        {
+          "candidate_id": "000042d48abae6de810a17ac",
+          "timeframe": "5m",
+          "decision": "no_trade",
+          "builder_status": "ENGINE_C_INPUT_BUILDER_READY_FALLBACK_INWINDOW_RANGE",
+          "input_provenance": "BUILDER_DOC21_HEURISTIC_TO_CALIBRATE",
+          "no_trade_reasons": [
+            "breakout_unstructured"
+          ],
+          "reason_codes": [
+            "engine_internal.engine_c.breakout.unstructured",
+            "engine_c.no_trade.breakout_unstructured",
+            "engine_internal.engine_c.breakout.structured_breakout",
+            "engine_c.breakout.structured_breakout",
+            "engine_internal.engine_c.continuation.late_extension",
+            "engine_c.continuation.late_extension",
+            "engine_c.microstructure.confirmed"
+          ],
+          "metrics": {
+            "breakout_strength": 1.0,
+            "range_quality": 0.0,
+            "compression_quality": 0.0,
+            "volume_confirmation": 0.0,
+            "followthrough_room": 0.0,
+            "extension_pct": 1.0,
+            "retrace_risk": 0.0,
+            "cumulative_ofi": null,
+            "queue_pressure": null,
+            "vpin": 0.4832295387365111,
+            "kyle_lambda": 5.529323919953638,
+            "entry_price": 120267.8,
+            "breakout_level": 119837.2,
+            "range_low": 119637.2,
+            "range_high": 119837.2
+          }
+        },
+        {
+          "candidate_id": "d02949c2b50a103d1ab8f4e2",
+          "timeframe": "5m",
+          "decision": "no_trade",
+          "builder_status": "ENGINE_C_INPUT_BUILDER_READY_FALLBACK_INWINDOW_RANGE",
+          "input_provenance": "BUILDER_DOC21_HEURISTIC_TO_CALIBRATE",
+          "no_trade_reasons": [
+            "breakout_unstructured"
+          ],
+          "reason_codes": [
+            "engine_internal.engine_c.breakout.unstructured",
+            "engine_c.no_trade.breakout_unstructured",
+            "engine_internal.engine_c.breakout.structured_breakout",
+            "engine_c.breakout.structured_breakout",
+            "engine_internal.engine_c.continuation.late_extension",
+            "engine_c.continuation.late_extension",
+            "engine_c.microstructure.confirmed"
+          ],
+          "metrics": {
+            "breakout_strength": 1.0,
+            "range_quality": 0.0,
+            "compression_quality": 0.0,
+            "volume_confirmation": 0.0,
+            "followthrough_room": 0.2864992150705996,
+            "extension_pct": 0.7135007849294004,
+            "retrace_risk": 0.6758241758241953,
+            "cumulative_ofi": null,
+            "queue_pressure": null,
+            "vpin": 0.5081642591454678,
+            "kyle_lambda": 12.979114692217196,
+            "entry_price": 120101.7,
+            "breakout_level": 119919.9,
+            "range_low": 119665.1,
+            "range_high": 119919.9
+          }
+        },
+        {
+          "candidate_id": "cbc75c6369fead31325bb7f3",
+          "timeframe": "5m",
+          "decision": "no_trade",
+          "builder_status": "ENGINE_C_INPUT_BUILDER_READY_FALLBACK_INWINDOW_RANGE",
+          "input_provenance": "BUILDER_DOC21_HEURISTIC_TO_CALIBRATE",
+          "no_trade_reasons": [
+            "breakout_unstructured"
+          ],
+          "reason_codes": [
+            "engine_internal.engine_c.breakout.unstructured",
+            "engine_c.no_trade.breakout_unstructured",
+            "engine_internal.engine_c.breakout.structured_breakout",
+            "engine_c.breakout.structured_breakout",
+            "engine_internal.engine_c.continuation.late_extension",
+            "engine_c.continuation.late_extension",
+            "engine_c.microstructure.confirmed"
+          ],
+          "metrics": {
+            "breakout_strength": 1.0,
+            "range_quality": 0.0,
+            "compression_quality": 0.0,
+            "volume_confirmation": 0.0,
+            "followthrough_room": 0.33663366336639167,
+            "extension_pct": 0.6633663366336083,
+            "retrace_risk": 0.8486562942008836,
+            "cumulative_ofi": null,
+            "queue_pressure": null,
+            "vpin": 0.3778899306017134,
+            "kyle_lambda": 8.410825306690048,
+            "entry_price": 117915.1,
+            "breakout_level": 117962.0,
+            "range_low": 117962.0,
+            "range_high": 118032.7
+          }
+        }
+      ]
+    },
+    {
+      "engine_id": "engine_d",
+      "total_windows": 250,
+      "emit_count": 0,
+      "no_trade_count": 250,
+      "builder_status_counts": {
+        "ENGINE_D_INPUT_BUILDER_INSUFFICIENT_BARS": 80,
+        "ENGINE_D_INPUT_BUILDER_READY_NO_FIRST_EPISODE": 170
+      },
+      "decision_counts": {
+        "no_trade": 250
+      },
+      "no_trade_reason_counts": {
+        "history_weak": 250
+      },
+      "sample_emit_cases": [],
+      "sample_no_trade_cases": [
+        {
+          "candidate_id": "48b82f87706a27fee4dd60e0",
+          "timeframe": "15m",
+          "decision": "no_trade",
+          "builder_status": "ENGINE_D_INPUT_BUILDER_INSUFFICIENT_BARS",
+          "input_provenance": "BUILDER_NO_FIRST_EPISODE_DEFAULTS",
+          "no_trade_reasons": [
+            "history_weak"
+          ],
+          "reason_codes": [
+            "engine_internal.engine_d.history.weak",
+            "engine_d.no_trade.history_weak"
+          ],
+          "metrics": {
+            "prior_trade_quality": 0.0,
+            "reformation_quality": 0.0,
+            "pullback_quality": 0.0,
+            "continuation_room": 0.0,
+            "concentration_headroom": 1.0,
+            "marginal_edge": 1.0,
+            "reentry_lateness": 1.0,
+            "anti_revenge_state": "",
+            "last_fresh_a_detection_at_ns": null,
+            "marginal_portfolio_gain": 0.0,
+            "covered_share_by_engine_a": 0.0,
+            "duplication_overlap_with_engine_a": 0.0,
+            "entry_price": 119052.1,
+            "reentry_anchor_price": 119052.1
+          }
+        },
+        {
+          "candidate_id": "a0511c597d9b7e827696e73b",
+          "timeframe": "5m",
+          "decision": "no_trade",
+          "builder_status": "ENGINE_D_INPUT_BUILDER_INSUFFICIENT_BARS",
+          "input_provenance": "BUILDER_NO_FIRST_EPISODE_DEFAULTS",
+          "no_trade_reasons": [
+            "history_weak"
+          ],
+          "reason_codes": [
+            "engine_internal.engine_d.history.weak",
+            "engine_d.no_trade.history_weak"
+          ],
+          "metrics": {
+            "prior_trade_quality": 0.0,
+            "reformation_quality": 0.0,
+            "pullback_quality": 0.0,
+            "continuation_room": 0.0,
+            "concentration_headroom": 1.0,
+            "marginal_edge": 1.0,
+            "reentry_lateness": 1.0,
+            "anti_revenge_state": "",
+            "last_fresh_a_detection_at_ns": null,
+            "marginal_portfolio_gain": 0.0,
+            "covered_share_by_engine_a": 0.0,
+            "duplication_overlap_with_engine_a": 0.0,
+            "entry_price": 119225.0,
+            "reentry_anchor_price": 119225.0
+          }
+        },
+        {
+          "candidate_id": "9dc24621d34bb9c3e793b1f1",
+          "timeframe": "5m",
+          "decision": "no_trade",
+          "builder_status": "ENGINE_D_INPUT_BUILDER_READY_NO_FIRST_EPISODE",
+          "input_provenance": "BUILDER_NO_FIRST_EPISODE_DEFAULTS",
+          "no_trade_reasons": [
+            "history_weak"
+          ],
+          "reason_codes": [
+            "engine_internal.engine_d.history.weak",
+            "engine_d.no_trade.history_weak"
+          ],
+          "metrics": {
+            "prior_trade_quality": 0.0,
+            "reformation_quality": 0.3798798798798857,
+            "pullback_quality": 0.09121621621624154,
+            "continuation_room": 0.5349099099099143,
+            "concentration_headroom": 1.0,
+            "marginal_edge": 1.0,
+            "reentry_lateness": 1.0,
+            "anti_revenge_state": "",
+            "last_fresh_a_detection_at_ns": null,
+            "marginal_portfolio_gain": 0.0,
+            "covered_share_by_engine_a": 0.0,
+            "duplication_overlap_with_engine_a": 0.0,
+            "entry_price": 119052.1,
+            "reentry_anchor_price": 119052.1
+          }
+        },
+        {
+          "candidate_id": "f95861835ce3d48cb2fcf38e",
+          "timeframe": "5m",
+          "decision": "no_trade",
+          "builder_status": "ENGINE_D_INPUT_BUILDER_READY_NO_FIRST_EPISODE",
+          "input_provenance": "BUILDER_NO_FIRST_EPISODE_DEFAULTS",
+          "no_trade_reasons": [
+            "history_weak"
+          ],
+          "reason_codes": [
+            "engine_internal.engine_d.history.weak",
+            "engine_d.no_trade.history_weak"
+          ],
+          "metrics": {
+            "prior_trade_quality": 0.0,
+            "reformation_quality": 0.6372622622622666,
+            "pullback_quality": 0.42060810810813615,
+            "continuation_room": 0.9426614114114055,
+            "concentration_headroom": 1.0,
+            "marginal_edge": 1.0,
+            "reentry_lateness": 1.0,
+            "anti_revenge_state": "",
+            "last_fresh_a_detection_at_ns": null,
+            "marginal_portfolio_gain": 0.0,
+            "covered_share_by_engine_a": 0.0,
+            "duplication_overlap_with_engine_a": 0.0,
+            "entry_price": 119169.1,
+            "reentry_anchor_price": 119169.1
+          }
+        },
+        {
+          "candidate_id": "999160fc066df26389f6d67f",
+          "timeframe": "15m",
+          "decision": "no_trade",
+          "builder_status": "ENGINE_D_INPUT_BUILDER_INSUFFICIENT_BARS",
+          "input_provenance": "BUILDER_NO_FIRST_EPISODE_DEFAULTS",
+          "no_trade_reasons": [
+            "history_weak"
+          ],
+          "reason_codes": [
+            "engine_internal.engine_d.history.weak",
+            "engine_d.no_trade.history_weak"
+          ],
+          "metrics": {
+            "prior_trade_quality": 0.0,
+            "reformation_quality": 0.0,
+            "pullback_quality": 0.0,
+            "continuation_room": 0.0,
+            "concentration_headroom": 1.0,
+            "marginal_edge": 1.0,
+            "reentry_lateness": 1.0,
+            "anti_revenge_state": "",
+            "last_fresh_a_detection_at_ns": null,
+            "marginal_portfolio_gain": 0.0,
+            "covered_share_by_engine_a": 0.0,
+            "duplication_overlap_with_engine_a": 0.0,
+            "entry_price": 119483.7,
+            "reentry_anchor_price": 119483.7
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -38,6 +38,18 @@ from pathlib import Path
 from typing import Mapping
 
 from interface_contracts import MlAntiLeakageProofArtifact, MlModelArtifact
+from local_replay_runtime.strategy_ladder_edge_model_provider_multi_pair import (
+    EXPECTED_EDGE_ARTIFACT_MODE_MONO_PAIR_LEGACY,
+    EXPECTED_EDGE_ARTIFACT_MODE_MULTI_PAIR_C1,
+    EXPECTED_EDGE_ARTIFACT_MODES,
+    MULTI_PAIR_C1_ARTIFACT_KIND,
+    GovernedMultiPairExpectedEdgeModel,
+    StrategyLadderMultiPairC1Manifest,
+    load_multi_pair_c1_expected_edge_model,
+)
+from local_replay_runtime.strategy_ladder_multiframe_ml_bundle import (
+    StrategyLadderMlMultiTimeframeBundle,
+)
 
 
 _EXPECTED_EDGE_LABEL_HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -220,10 +232,12 @@ class GovernedExpectedEdgeModel:
         self,
         *,
         pair: str,
+        timeframe: str | None = None,
         timestamp_ms: int,
         feature_values: Mapping[str, object] | None = None,
         route_features: Mapping[str, object] | None = None,
     ) -> EdgeEstimate:
+        del timeframe
         del timestamp_ms  # timestamp is carried by the caller and kept for audit symmetry.
         if pair and self.pair_universe and pair not in self.pair_universe:
             return EdgeEstimate(
@@ -302,6 +316,70 @@ class GovernedExpectedEdgeModel:
         )
 
 
+@dataclass(frozen=True)
+class GovernedExpectedEdgeMultiTimeframeModel:
+    """Bundle router that selects the governed edge model by candidate timeframe."""
+
+    artifact_path: Path
+    artifact_hash: str
+    feature_hash: str
+    timeframe_scope: tuple[str, ...]
+    models_by_timeframe: dict[str, GovernedExpectedEdgeModel]
+
+    def estimate_expected_edge_bps(
+        self,
+        *,
+        pair: str,
+        timeframe: str | None = None,
+        timestamp_ms: int,
+        feature_values: Mapping[str, object] | None = None,
+        route_features: Mapping[str, object] | None = None,
+    ) -> EdgeEstimate:
+        resolved_timeframe = str(timeframe or "").strip()
+        if not resolved_timeframe:
+            return EdgeEstimate(
+                edge_bps=0.0,
+                provenance="EDGE_MODEL_BLOCKED:TIMEFRAME_NOT_PROVIDED",
+                n_lookback_bars_used=0,
+                median_abs_forward_return=0.0,
+                detector_status="TIMEFRAME_NOT_PROVIDED",
+                warnings=("EDGE_MODEL_TIMEFRAME_NOT_PROVIDED",),
+                artifact_hash=self.artifact_hash,
+                feature_hash=self.feature_hash,
+                model_status="GOVERNED_EDGE_MODEL_BLOCKED",
+            )
+        if resolved_timeframe not in self.models_by_timeframe:
+            return EdgeEstimate(
+                edge_bps=0.0,
+                provenance="EDGE_MODEL_BLOCKED:TIMEFRAME_NOT_IN_BUNDLE",
+                n_lookback_bars_used=0,
+                median_abs_forward_return=0.0,
+                detector_status="TIMEFRAME_NOT_IN_BUNDLE",
+                warnings=(f"EDGE_MODEL_TIMEFRAME_NOT_IN_BUNDLE:{resolved_timeframe}",),
+                artifact_hash=self.artifact_hash,
+                feature_hash=self.feature_hash,
+                model_status="GOVERNED_EDGE_MODEL_BLOCKED",
+            )
+        estimate = self.models_by_timeframe[resolved_timeframe].estimate_expected_edge_bps(
+            pair=pair,
+            timeframe=resolved_timeframe,
+            timestamp_ms=timestamp_ms,
+            feature_values=feature_values,
+            route_features=route_features,
+        )
+        return EdgeEstimate(
+            edge_bps=estimate.edge_bps,
+            provenance=estimate.provenance,
+            n_lookback_bars_used=estimate.n_lookback_bars_used,
+            median_abs_forward_return=estimate.median_abs_forward_return,
+            detector_status=estimate.detector_status,
+            warnings=estimate.warnings,
+            artifact_hash=self.artifact_hash,
+            feature_hash=self.feature_hash,
+            model_status=estimate.model_status,
+        )
+
+
 def _load_lightgbm_booster(artifact: MlModelArtifact, artifact_path: Path) -> object:
     try:
         lightgbm = __import__("lightgbm")
@@ -318,13 +396,43 @@ def _load_lightgbm_booster(artifact: MlModelArtifact, artifact_path: Path) -> ob
     raise RuntimeError("MODEL_PAYLOAD_MISSING")
 
 
+def _read_unique_value(
+    values: list[object],
+    *,
+    missing_default: object,
+) -> object:
+    unique = tuple(dict.fromkeys(values))
+    if not unique:
+        return missing_default
+    return unique[0] if len(unique) == 1 else missing_default
+
+
 def load_governed_expected_edge_model_artifact(
     artifact_path: Path | str | None,
     *,
     expected_artifact_hash: str | None,
     now: datetime | None = None,
+    expected_edge_artifact_mode: str = EXPECTED_EDGE_ARTIFACT_MODE_MONO_PAIR_LEGACY,
 ) -> GovernedExpectedEdgeModelLoadResult:
-    """Load and validate a frozen MlModelArtifact for governed edge scoring."""
+    """Load and validate a frozen MlModelArtifact for governed edge scoring.
+
+    `expected_edge_artifact_mode` (Patch P1, 2026-05-22) selects between :
+      - `MONO_PAIR_LEGACY` (default, backward-compat) — parses MlModelArtifact
+        or StrategyLadderMlMultiTimeframeBundle.
+      - `MULTI_PAIR_C1` — parses StrategyLadderMultiPairC1Manifest (produced by
+        the C1.3.C orchestrator) and wraps the LightGBM Booster via
+        GovernedMultiPairExpectedEdgeModel.
+    """
+
+    if expected_edge_artifact_mode not in EXPECTED_EDGE_ARTIFACT_MODES:
+        return GovernedExpectedEdgeModelLoadResult(
+            model=None,
+            status="GOVERNED_EDGE_MODEL_MODE_UNKNOWN",
+            blocker_codes=(
+                f"GOVERNED_EDGE_MODEL_MODE_UNKNOWN:{expected_edge_artifact_mode}",
+            ),
+            warnings=(f"GOVERNED_EDGE_MODEL_MODE_UNKNOWN:{expected_edge_artifact_mode}",),
+        )
 
     if artifact_path is None:
         return GovernedExpectedEdgeModelLoadResult(
@@ -353,16 +461,184 @@ def load_governed_expected_edge_model_artifact(
             ),
             warnings=(f"GOVERNED_EDGE_MODEL_PATH_NOT_FOUND:{path}",),
         )
-    try:
-        artifact = MlModelArtifact.model_validate_json(path.read_text(encoding="utf-8-sig"))
-    except Exception as exc:  # noqa: BLE001 - invalid artifact must fail closed.
+    raw_payload = path.read_text(encoding="utf-8-sig")
+
+    if expected_edge_artifact_mode == EXPECTED_EDGE_ARTIFACT_MODE_MULTI_PAIR_C1:
+        return load_multi_pair_c1_expected_edge_model(
+            manifest_path=path,
+            raw_payload=raw_payload,
+            expected_artifact_hash=expected_artifact_hash,
+        )
+
+    if MULTI_PAIR_C1_ARTIFACT_KIND in raw_payload:
         return GovernedExpectedEdgeModelLoadResult(
             model=None,
-            status=f"GOVERNED_EDGE_MODEL_INVALID_ARTIFACT:{type(exc).__name__}",
+            status="GOVERNED_EDGE_MODEL_MODE_MISMATCH:RECEIVED_MULTI_PAIR_C1_EXPECTED_LEGACY",
             training_artifact_ref=training_artifact_ref,
-            blocker_codes=("GOVERNED_EDGE_MODEL_INVALID_ARTIFACT",),
-            warnings=(f"GOVERNED_EDGE_MODEL_INVALID_ARTIFACT:{type(exc).__name__}",),
+            blocker_codes=(
+                "GOVERNED_EDGE_MODEL_MODE_MISMATCH:RECEIVED_MULTI_PAIR_C1_EXPECTED_LEGACY",
+            ),
+            warnings=(
+                "GOVERNED_EDGE_MODEL_MODE_MISMATCH:RECEIVED_MULTI_PAIR_C1_EXPECTED_LEGACY",
+            ),
         )
+
+    artifact: MlModelArtifact | None = None
+    multiframe_bundle: StrategyLadderMlMultiTimeframeBundle | None = None
+    try:
+        artifact = MlModelArtifact.model_validate_json(raw_payload)
+    except Exception:
+        try:
+            multiframe_bundle = StrategyLadderMlMultiTimeframeBundle.model_validate_json(raw_payload)
+        except Exception as exc:  # noqa: BLE001 - invalid artifact must fail closed.
+            return GovernedExpectedEdgeModelLoadResult(
+                model=None,
+                status=f"GOVERNED_EDGE_MODEL_INVALID_ARTIFACT:{type(exc).__name__}",
+                training_artifact_ref=training_artifact_ref,
+                blocker_codes=("GOVERNED_EDGE_MODEL_INVALID_ARTIFACT",),
+                warnings=(f"GOVERNED_EDGE_MODEL_INVALID_ARTIFACT:{type(exc).__name__}",),
+            )
+
+    if multiframe_bundle is not None:
+        if expected_artifact_hash and multiframe_bundle.artifact_hash != expected_artifact_hash:
+            return GovernedExpectedEdgeModelLoadResult(
+                model=None,
+                status="GOVERNED_EDGE_MODEL_HASH_MISMATCH",
+                training_artifact_ref=training_artifact_ref,
+                artifact_hash=multiframe_bundle.artifact_hash,
+                feature_hash=multiframe_bundle.feature_hash,
+                blocker_codes=("GOVERNED_EDGE_MODEL_HASH_MISMATCH",),
+                warnings=("GOVERNED_EDGE_MODEL_HASH_MISMATCH",),
+            )
+        reference_now = now or datetime.now(tz=UTC)
+        if reference_now.tzinfo is None:
+            reference_now = reference_now.replace(tzinfo=UTC)
+        slice_results: list[tuple[str, GovernedExpectedEdgeModelLoadResult]] = []
+        models_by_timeframe: dict[str, GovernedExpectedEdgeModel] = {}
+        for item in multiframe_bundle.slices:
+            slice_result = load_governed_expected_edge_model_artifact(
+                item.artifact_ref,
+                expected_artifact_hash=item.artifact_hash,
+                now=reference_now,
+            )
+            slice_results.append((item.timeframe, slice_result))
+            if (
+                slice_result.status != "EXPECTED_EDGE_GOVERNED_BACKTEST_LABELS_READY"
+                or slice_result.model is None
+                or not isinstance(slice_result.model, GovernedExpectedEdgeModel)
+            ):
+                blockers = tuple(
+                    dict.fromkeys(
+                        (
+                            *(f"TIMEFRAME_{item.timeframe}:{code}" for code in slice_result.blocker_codes),
+                            f"TIMEFRAME_{item.timeframe}:EDGE_MODEL_SLICE_NOT_READY",
+                        )
+                    )
+                )
+                warnings = tuple(
+                    dict.fromkeys(
+                        (
+                            *(f"TIMEFRAME_{item.timeframe}:{code}" for code in slice_result.warnings),
+                            f"EDGE_MODEL_SLICE_NOT_READY:{item.timeframe}",
+                        )
+                    )
+                )
+                return GovernedExpectedEdgeModelLoadResult(
+                    model=None,
+                    status="GOVERNED_EDGE_MODEL_BLOCKED:TIMEFRAME_SLICE_NOT_READY",
+                    training_artifact_ref=training_artifact_ref,
+                    artifact_hash=multiframe_bundle.artifact_hash,
+                    feature_hash=multiframe_bundle.feature_hash,
+                    blocker_codes=blockers,
+                    warnings=warnings,
+                )
+            models_by_timeframe[item.timeframe] = slice_result.model
+        label_source = str(
+            _read_unique_value(
+                [result.label_source for _timeframe, result in slice_results],
+                missing_default="EXPECTED_EDGE_LABEL_SOURCE_MULTIFRAME_MIXED",
+            )
+        )
+        label_fidelity = str(
+            _read_unique_value(
+                [result.label_fidelity for _timeframe, result in slice_results],
+                missing_default="EXPECTED_EDGE_GOVERNANCE_CANDIDATE",
+            )
+        )
+        anti_leakage_status = str(
+            _read_unique_value(
+                [result.anti_leakage_status for _timeframe, result in slice_results],
+                missing_default="EXPECTED_EDGE_ANTI_LEAKAGE_BLOCKED",
+            )
+        )
+        walkforward_status = str(
+            _read_unique_value(
+                [result.walkforward_status for _timeframe, result in slice_results],
+                missing_default="EXPECTED_EDGE_WALKFORWARD_NOT_DECLARED",
+            )
+        )
+        horizon_minutes = _read_unique_value(
+            [result.horizon_minutes for _timeframe, result in slice_results],
+            missing_default=None,
+        )
+        purge_window_minutes = _read_unique_value(
+            [result.purge_window_minutes for _timeframe, result in slice_results],
+            missing_default=None,
+        )
+        embargo_window_minutes = _read_unique_value(
+            [result.embargo_window_minutes for _timeframe, result in slice_results],
+            missing_default=None,
+        )
+        if (
+            label_source == "EXPECTED_EDGE_LABEL_SOURCE_MULTIFRAME_MIXED"
+            or anti_leakage_status != "EXPECTED_EDGE_ANTI_LEAKAGE_PROVEN"
+            or walkforward_status != "EXPECTED_EDGE_WALKFORWARD_DECLARED"
+            or horizon_minutes is None
+            or purge_window_minutes is None
+            or embargo_window_minutes is None
+        ):
+            return GovernedExpectedEdgeModelLoadResult(
+                model=None,
+                status="GOVERNED_EDGE_MODEL_BLOCKED:TIMEFRAME_SCOPE_NOT_GOVERNED",
+                training_artifact_ref=training_artifact_ref,
+                artifact_hash=multiframe_bundle.artifact_hash,
+                feature_hash=multiframe_bundle.feature_hash,
+                label_source=label_source,
+                label_fidelity=label_fidelity,
+                anti_leakage_status=anti_leakage_status,
+                walkforward_status=walkforward_status,
+                horizon_minutes=None if horizon_minutes is None else int(horizon_minutes),
+                purge_window_minutes=None if purge_window_minutes is None else int(purge_window_minutes),
+                embargo_window_minutes=None if embargo_window_minutes is None else int(embargo_window_minutes),
+                blocker_codes=("GOVERNED_EDGE_MODEL_MULTIFRAME_GOVERNANCE_BLOCKED",),
+                warnings=("GOVERNED_EDGE_MODEL_MULTIFRAME_GOVERNANCE_BLOCKED",),
+            )
+        return GovernedExpectedEdgeModelLoadResult(
+            model=GovernedExpectedEdgeMultiTimeframeModel(
+                artifact_path=path,
+                artifact_hash=multiframe_bundle.artifact_hash,
+                feature_hash=multiframe_bundle.feature_hash,
+                timeframe_scope=multiframe_bundle.timeframe_scope,
+                models_by_timeframe=models_by_timeframe,
+            ),
+            status="EXPECTED_EDGE_GOVERNED_BACKTEST_LABELS_READY",
+            training_artifact_ref=training_artifact_ref,
+            artifact_hash=multiframe_bundle.artifact_hash,
+            feature_hash=multiframe_bundle.feature_hash,
+            label_source=label_source,
+            label_fidelity=label_fidelity,
+            anti_leakage_status=anti_leakage_status,
+            walkforward_status=walkforward_status,
+            horizon_minutes=int(horizon_minutes),
+            purge_window_minutes=int(purge_window_minutes),
+            embargo_window_minutes=int(embargo_window_minutes),
+            blocker_codes=(
+                "EXPECTED_EDGE_GOVERNED_SHADOW_REQUIRED",
+                "EXPECTED_EDGE_NOT_PROMOTION_GRADE",
+            ),
+        )
+
+    assert artifact is not None
 
     label_source = _expected_edge_label_source(artifact)
     label_fidelity_declared = _expected_edge_label_fidelity_declared(artifact)
@@ -677,9 +953,17 @@ def estimate_forward_return_edge_bps(
 
 
 __all__ = [
+    "EXPECTED_EDGE_ARTIFACT_MODE_MONO_PAIR_LEGACY",
+    "EXPECTED_EDGE_ARTIFACT_MODE_MULTI_PAIR_C1",
+    "EXPECTED_EDGE_ARTIFACT_MODES",
+    "MULTI_PAIR_C1_ARTIFACT_KIND",
     "EdgeEstimate",
     "GovernedExpectedEdgeModel",
+    "GovernedExpectedEdgeMultiTimeframeModel",
     "GovernedExpectedEdgeModelLoadResult",
+    "GovernedMultiPairExpectedEdgeModel",
+    "StrategyLadderMultiPairC1Manifest",
     "estimate_forward_return_edge_bps",
     "load_governed_expected_edge_model_artifact",
+    "load_multi_pair_c1_expected_edge_model",
 ]

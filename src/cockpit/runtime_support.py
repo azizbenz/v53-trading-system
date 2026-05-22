@@ -146,6 +146,8 @@ class StrategyLadderBacktestSummary(BaseModel, frozen=True):
     final_status: str = "not_present"
     data_factory_status: str = "DATA_FACTORY_NOT_PROVEN"
     raw_source_status: str = "RAW_SOURCE_NOT_PROVEN"
+    raw_source_provenance_status: str = "RAW_SOURCE_PROVENANCE_NOT_PROVEN"
+    raw_source_typing_status: str = "RAW_SOURCE_TYPE_NOT_PROVEN"
     pair_universe_status: str = "PAIR_UNIVERSE_NOT_PROVEN"
     available_pair_count: int = 0
     requested_pair_count: int = 0
@@ -162,6 +164,7 @@ class StrategyLadderBacktestSummary(BaseModel, frozen=True):
     missing_metadata_pairs: tuple[str, ...] = ()
     metadata_temporal_status: str = "METADATA_TEMPORAL_NOT_PROVEN"
     metadata_fetched_at_utc: str = ""
+    metadata_temporal_drift_days: float | None = None
     fee_provenance_status: str = "NOT_PROVEN"
     capital_bucket_metadata_status: str = "CAPITAL_BUCKET_NOT_PROVEN"
     metadata_preview_rows: tuple[dict[str, object], ...] = ()
@@ -175,6 +178,7 @@ class StrategyLadderBacktestSummary(BaseModel, frozen=True):
     capital_profile_generation_status: str = "CAPITAL_PROFILE_NOT_PROVEN"
     promotion_artifact_status: str = "PROMOTION_ARTIFACTS_NOT_PROVEN"
     sample_size_survival_status: str = "SAMPLE_SIZE_NOT_PROVEN"
+    statistical_validation_status: str = "not_present"
     feature_row_count: int = 0
     candidate_sample_cap: int = 0
     effective_engine_native_sample_size: int = 10
@@ -206,6 +210,9 @@ class StrategyLadderBacktestSummary(BaseModel, frozen=True):
     preselection_top_soft_advisory_reasons: tuple[dict[str, object], ...] = ()
     preselection_rejection_rows: tuple[dict[str, object], ...] = ()
     sample_size_survival_count: int = 0
+    statistical_validation_observation_count: int = 0
+    statistical_validation_trial_count: int = 0
+    statistical_validation_stationary_block_length: int = 0
     unique_candidate_count: int = 0
     base_event_count: int = 0
     per_engine_candidate_count: int | None = None
@@ -215,9 +222,20 @@ class StrategyLadderBacktestSummary(BaseModel, frozen=True):
     promotion_record_count: int = 0
     capital_bucket_record_count: int = 0
     replay_expansion_factor: float | None = None
+    statistical_validation_benchmark_sharpe: float | None = None
+    statistical_validation_acceptance_floor: float | None = None
+    statistical_validation_sample_sharpe: float | None = None
+    statistical_validation_psr: float | None = None
+    statistical_validation_dsr: float | None = None
+    statistical_validation_effective_sample_size: float | None = None
+    statistical_validation_min_trl_required: float | None = None
     replay_expansion_axis: str = ""
+    statistical_validation_min_trl_satisfied: bool = False
+    statistical_validation_psr_passes_floor: bool = False
+    statistical_validation_dsr_passes_floor: bool = False
     candidate_source_status: str = "CANDIDATE_SOURCE_NOT_PROVEN"
     count_semantics_validator_codes: tuple[str, ...] = ()
+    statistical_validation_blocker_codes: tuple[str, ...] = ()
     matrix_count_inflation_status: str = "COUNT_SEMANTICS_NOT_PROVEN"
     raw_windows_total: int = 0
     trade_windows_found: int = 0
@@ -1371,6 +1389,12 @@ def _read_strategy_ladder_summary(
                 manifest_payload = _load_json(
                     output_root / "data_factory_manifest.json", default={}
                 )
+                data_quality_payload = _load_json(
+                    output_root / "data_quality_report.json", default={}
+                )
+                raw_source_payload = _load_json(
+                    output_root / "raw_source_report.json", default={}
+                )
                 pair_payload = _load_json(
                     output_root / "pair_universe_report.json", default={}
                 )
@@ -1386,6 +1410,21 @@ def _read_strategy_ladder_summary(
                     summary["raw_source_status"] = str(
                         manifest_payload.get(
                             "raw_source_status", "RAW_SOURCE_NOT_PROVEN"
+                        )
+                    )
+                    summary["raw_source_provenance_status"] = str(
+                        manifest_payload.get(
+                            "raw_source_provenance_status",
+                            "RAW_SOURCE_PROVENANCE_NOT_PROVEN",
+                        )
+                    )
+                    summary["raw_source_typing_status"] = str(
+                        raw_source_payload.get(
+                            "raw_source_typing_status",
+                            manifest_payload.get(
+                                "raw_source_typing_status",
+                                "RAW_SOURCE_TYPE_NOT_PROVEN",
+                            ),
                         )
                     )
                     summary["pair_universe_status"] = str(
@@ -1452,6 +1491,29 @@ def _read_strategy_ladder_summary(
                             "METADATA_TEMPORAL_NOT_PROVEN",
                         )
                     )
+                    metadata_fetched_at_utc = str(
+                        data_quality_payload.get(
+                            "metadata_fetched_at_utc",
+                            manifest_payload.get(
+                                "metadata_fetched_at_utc",
+                                summary["metadata_fetched_at_utc"],
+                            ),
+                        )
+                    )
+                    if metadata_fetched_at_utc:
+                        summary["metadata_fetched_at_utc"] = metadata_fetched_at_utc
+                    drift_value = manifest_payload.get("metadata_temporal_drift_days")
+                    if not isinstance(drift_value, (int, float)):
+                        drift_value = data_quality_payload.get("metadata_temporal_drift_days")
+                    if isinstance(drift_value, (int, float)):
+                        summary["metadata_temporal_drift_days"] = float(drift_value)
+                    else:
+                        summary["metadata_temporal_drift_days"] = (
+                            _calculate_metadata_temporal_drift_days(
+                                fetched_at_utc=summary["metadata_fetched_at_utc"],
+                                replay_end=str(manifest_payload.get("end") or ""),
+                            )
+                        )
                     if not summary["backtest_proof_matrix_path"]:
                         summary["orderbook_reconstruction_status"] = str(
                             manifest_payload.get(
@@ -1599,6 +1661,18 @@ def _read_strategy_ladder_summary(
                 summary["raw_source_status"] = str(
                     payload.get("raw_source_status", summary["raw_source_status"])
                 )
+                summary["raw_source_provenance_status"] = str(
+                    payload.get(
+                        "raw_source_provenance_status",
+                        summary["raw_source_provenance_status"],
+                    )
+                )
+                summary["raw_source_typing_status"] = str(
+                    payload.get(
+                        "raw_source_typing_status",
+                        summary["raw_source_typing_status"],
+                    )
+                )
                 summary["pair_universe_status"] = str(
                     payload.get(
                         "pair_universe_status", summary["pair_universe_status"]
@@ -1623,6 +1697,9 @@ def _read_strategy_ladder_summary(
                 summary["ml_mode_status"] = str(
                     payload.get("ml_mode_status", summary["ml_mode_status"])
                 )
+                drift_value = payload.get("metadata_temporal_drift_days")
+                if isinstance(drift_value, (int, float)):
+                    summary["metadata_temporal_drift_days"] = float(drift_value)
                 summary["feature_store_status"] = str(
                     payload.get("feature_store_status", "FEATURE_STORE_NOT_PROVEN")
                 )
@@ -1658,6 +1735,12 @@ def _read_strategy_ladder_summary(
                         "sample_size_survival_status", "SAMPLE_SIZE_NOT_PROVEN"
                     )
                 )
+                summary["statistical_validation_status"] = str(
+                    payload.get(
+                        "statistical_validation_status",
+                        summary["statistical_validation_status"],
+                    )
+                )
                 for numeric_key in (
                     "candidate_count",
                     "feature_row_count",
@@ -1673,6 +1756,9 @@ def _read_strategy_ladder_summary(
                     "depth20_found",
                     "depth20_missing",
                     "sample_size_survival_count",
+                    "statistical_validation_observation_count",
+                    "statistical_validation_trial_count",
+                    "statistical_validation_stationary_block_length",
                     "unique_candidate_count",
                     "base_event_count",
                     "engine_native_candidate_count",
@@ -1705,6 +1791,26 @@ def _read_strategy_ladder_summary(
                 replay_expansion_factor = payload.get("replay_expansion_factor")
                 if isinstance(replay_expansion_factor, (int, float)):
                     summary["replay_expansion_factor"] = float(replay_expansion_factor)
+                for float_key in (
+                    "statistical_validation_benchmark_sharpe",
+                    "statistical_validation_acceptance_floor",
+                    "statistical_validation_sample_sharpe",
+                    "statistical_validation_psr",
+                    "statistical_validation_dsr",
+                    "statistical_validation_effective_sample_size",
+                    "statistical_validation_min_trl_required",
+                ):
+                    value = payload.get(float_key)
+                    if isinstance(value, (int, float)):
+                        summary[float_key] = float(value)
+                for bool_key in (
+                    "statistical_validation_min_trl_satisfied",
+                    "statistical_validation_psr_passes_floor",
+                    "statistical_validation_dsr_passes_floor",
+                ):
+                    value = payload.get(bool_key)
+                    if isinstance(value, bool):
+                        summary[bool_key] = value
                 for key, default in (
                     ("candidate_truth_status", "CANDIDATE_TRUTH_NOT_PROVEN"),
                     ("expected_edge_truth_status", "EXPECTED_EDGE_TRUTH_NOT_PROVEN"),
@@ -1746,6 +1852,13 @@ def _read_strategy_ladder_summary(
                 if isinstance(count_semantics_validator_codes, list):
                     summary["count_semantics_validator_codes"] = tuple(
                         str(item) for item in count_semantics_validator_codes[:20]
+                    )
+                statistical_validation_blocker_codes = payload.get(
+                    "statistical_validation_blocker_codes"
+                )
+                if isinstance(statistical_validation_blocker_codes, list):
+                    summary["statistical_validation_blocker_codes"] = tuple(
+                        str(item) for item in statistical_validation_blocker_codes[:20]
                     )
                 evidence_projection = (
                     _load_governed_audit_evidence_projection(run_dir)
@@ -2798,7 +2911,7 @@ def _load_all_jsonl_rows(path: Path) -> list[dict[str, object]]:
                     payload = json.loads(stripped)
                 except json.JSONDecodeError:
                     continue
-                if isinstance(payload, dict):
+                if isinstance(payload, dict) and not bool(payload.get("artifact_header")):
                     rows.append(payload)
     except OSError:
         return []
@@ -3769,6 +3882,18 @@ def _parse_iso(raw_value: str) -> datetime | None:
         return datetime.fromisoformat(raw_value)
     except ValueError:
         return None
+
+
+def _calculate_metadata_temporal_drift_days(
+    *,
+    fetched_at_utc: str,
+    replay_end: str,
+) -> float | None:
+    fetched_at = _parse_iso(fetched_at_utc)
+    replay_end_dt = _parse_iso(f"{replay_end}T23:59:59+00:00") if replay_end else None
+    if fetched_at is None or replay_end_dt is None:
+        return None
+    return round(abs((fetched_at - replay_end_dt).total_seconds()) / 86_400.0, 3)
 
 
 def _timestamp_ms() -> int:

@@ -122,7 +122,7 @@
                         <div class="operator-panel__sub">Choose the workflow phase, candidate breadth, and storage mode before scanning the folders.</div>
                     </div>
                 </div>
-                <div class="form-grid form-grid--wide">
+                <div class="form-grid form-grid--wide stage3-run-controls-grid">
             <label>
                 Phase
                 <select name="action_name">
@@ -154,8 +154,30 @@
                 <input type="text" name="baseline_export_dir" placeholder="E:\strategy_ladder\baseline_export" value="{{ vm.selected_form.baseline_export_dir }}">
             </label>
             <label>
-                Pair subset (optional CSV; inferred from paths if empty) &rarr; <code>--pairs</code>
-                <input type="text" name="pairs" placeholder="BTCUSDT,ETHUSDT" value="{{ vm.selected_form.pairs_csv }}">
+                Pair subset{% if vm.backtest_discovered_pair_capabilities %} (multi-select checkbox){% else %} (optional CSV; inferred from paths if empty){% endif %} &rarr; <code>--pairs</code>
+                {% if vm.backtest_discovered_pair_capabilities %}
+                    <div class="lab-pair-multiselect" role="group" aria-label="Available pairs (filesystem-discovered)">
+                        {% for cap in vm.backtest_discovered_pair_capabilities %}
+                            <label class="lab-pair-option">
+                                <input type="checkbox" name="selected_pairs" value="{{ cap.pair }}"{% if cap.pair in (vm.selected_form.pairs or ()) %} checked{% endif %}>
+                                <span class="lab-pair-option__name">{{ cap.pair }}</span>
+                                {% if cap.microstructure_capable %}
+                                    <span class="cap-badge cap-badge--full" title="orderbook + klines + trades available">FULL</span>
+                                {% elif cap.training_capable %}
+                                    <span class="cap-badge cap-badge--legacy" title="klines + trades only (no microstructure)">LEGACY</span>
+                                {% else %}
+                                    <span class="cap-badge cap-badge--insufficient" title="missing klines or trades">INSUFFICIENT</span>
+                                {% endif %}
+                                {% if not cap.has_orderbook %}<span class="cap-badge cap-badge--missing" title="no orderbook">no-OB</span>{% endif %}
+                            </label>
+                        {% endfor %}
+                    </div>
+                    <input type="hidden" name="pairs" value="{{ vm.selected_form.pairs_csv }}">
+                    <p class="muted" style="margin: 4px 0 0;">Selection overrides the CSV fallback. Uncheck all to revert to inference from paths.</p>
+                {% else %}
+                    <input type="text" name="pairs" placeholder="BTCUSDT,ETHUSDT" value="{{ vm.selected_form.pairs_csv }}">
+                    <p class="muted" style="margin: 4px 0 0;">Type orderbook/klines/trades root then refresh — multi-select checkbox appears when filesystem discovery succeeds.</p>
+                {% endif %}
             </label>
             <label>
                 Candidate discovery mode
@@ -164,6 +186,7 @@
                     <option value="SAMPLE_CAPPED_DEBUG"{% if _candidate_mode == 'SAMPLE_CAPPED_DEBUG' %} selected{% endif %}>SAMPLE_CAPPED_DEBUG</option>
                     <option value="BROAD_DIAGNOSTIC"{% if _candidate_mode == 'BROAD_DIAGNOSTIC' %} selected{% endif %}>BROAD_DIAGNOSTIC</option>
                     <option value="FULL_DISCOVERY"{% if _candidate_mode == 'FULL_DISCOVERY' %} selected{% endif %}>FULL_DISCOVERY</option>
+                    <option value="TEMPORAL_STRATIFIED"{% if _candidate_mode == 'TEMPORAL_STRATIFIED' %} selected{% endif %}>TEMPORAL_STRATIFIED</option>
                 </select>
             </label>
             <label>
@@ -223,59 +246,188 @@
                 </div>
             </label>
             <label>
-                Output root (optional) &rarr; <code>--output-root</code>
+                Workflow output root (silver/gold/B1/B2 artifacts) &rarr; <code>--output-root</code>
                 <div class="field-row">
                     <input id="output_root" type="text" name="output_root" placeholder="J:\v53_backtest_outputs\BTCUSDT_2025_04_29_30" value="{{ vm.selected_form.output_root }}">
                         <button class="button button--ghost js-browse-folder" type="button" data-target="output_root">Browse...</button>
                 </div>
+                <p class="muted" style="margin: 6px 0 0;">
+                    This root receives workflow artifacts such as <code>silver/</code>, <code>gold/</code>, candidate exports, replay windows, and phase manifests.
+                    It is distinct from <code>export_dir</code>/<code>baseline_export_dir</code>.
+                    If left blank, the cockpit defaults to <code>build/cockpit/backtest_jobs/workflows/&lt;workflow-id&gt;</code>.
+                </p>
             </label>
                 </div>
             </div>
             <div class="operator-panel">
-                <div class="operator-panel__head">
-                    <div>
-                        <h4>Stage 3 - Date and run controls</h4>
-                        <div class="operator-panel__sub">Lock the window, opt into broad runs with the checkbox, then launch only from the matching workflow preview.</div>
+                {% set _ml_mode = vm.selected_form.ml_mode or 'ML_MODE_OFF' %}
+                {% set _ml_intake_defined = vm.backtest_preflight.ml_overlay_intake is defined %}
+                {% if vm.backtest_preflight.ml_overlay_intake is defined %}
+                {% set _ml_intake = vm.backtest_preflight.ml_overlay_intake %}
+                {% else %}
+                {% set _ml_intake = namespace(
+                    requested_backtest_start='',
+                    requested_backtest_end='',
+                    frozen_ml_artifact_path='',
+                    frozen_ml_artifact_hash='',
+                    rolling_ml_window_plan_path='',
+                    freshness_days=0,
+                    timeframe_scope=(),
+                    timeframe='',
+                    feature_names=(),
+                    check_status='ML_CHECK_NOT_PROVEN',
+                    source_status='ML_HANDOFF_RUN_NOT_SELECTED',
+                    pair='',
+                    train_start='',
+                    train_end='',
+                    max_valid_backtest_end='',
+                    artifact_stale_after='',
+                    rolling_ml_window_plan_status='',
+                    blocker_codes=()
+                ) %}
+                {% endif %}
+                {% set _selected_ml_handoff_run_root = vm.selected_form.ml_handoff_run_root if vm.selected_form.ml_handoff_run_root is defined else '' %}
+                {% set _resolved_start = vm.selected_form.start or _ml_intake.requested_backtest_start %}
+                {% set _resolved_end = vm.selected_form.end or _ml_intake.requested_backtest_end %}
+                {% if _selected_ml_handoff_run_root and not _ml_intake_defined %}
+                {% set _resolved_artifact_path = '' %}
+                {% set _resolved_artifact_hash = '' %}
+                {% set _resolved_rolling_plan = '' %}
+                {% set _resolved_freshness_days = vm.selected_form.ml_artifact_freshness_days or 30 %}
+                {% else %}
+                {% set _resolved_artifact_path = _ml_intake.frozen_ml_artifact_path or vm.selected_form.frozen_ml_artifact_path %}
+                {% set _resolved_artifact_hash = _ml_intake.frozen_ml_artifact_hash or vm.selected_form.frozen_ml_artifact_hash %}
+                {% set _resolved_rolling_plan = _ml_intake.rolling_ml_window_plan_path or vm.selected_form.rolling_ml_window_plan_path %}
+                {% set _resolved_freshness_days = _ml_intake.freshness_days or vm.selected_form.ml_artifact_freshness_days or 30 %}
+                {% endif %}
+                {% set _resolved_timeframe_scope = _ml_intake.timeframe_scope or ((_ml_intake.timeframe,) if _ml_intake.timeframe else ()) %}
+                <div class="stage3-shell">
+                    <div class="stage3-shell__hero">
+                        <div class="stage3-shell__hero-main">
+                            <div class="stage3-shell__hero-icon" aria-hidden="true">🗓</div>
+                            <div>
+                                <div class="stage3-shell__hero-title">Stage 3 · Date and run controls</div>
+                                <div class="stage3-shell__hero-subtitle">Lock the window, opt into broad runs with the checkbox, then launch only from the matching workflow preview.</div>
+                            </div>
+                        </div>
+                        <label class="stage3-mode-card">
+                            <span class="stage3-mode-card__label">ML mode</span>
+                            <select name="ml_mode">
+                                <option value="ML_MODE_OFF"{% if _ml_mode == 'ML_MODE_OFF' %} selected{% endif %}>ML_MODE_OFF</option>
+                                <option value="ML_MODE_OVERLAY_FROZEN"{% if _ml_mode == 'ML_MODE_OVERLAY_FROZEN' %} selected{% endif %}>ML_MODE_OVERLAY_FROZEN</option>
+                            </select>
+                            {% if (vm.selected_form.action_name in ['PHASE_A1_PREVIEW', 'PHASE_A2_DATA_FACTORY']) and _ml_mode == 'ML_MODE_OVERLAY_FROZEN' %}
+                            <span class="field-note">A1/A2 are data-factory phases. ML overlay is blocked there by design. Use <code>ML_MODE_OFF</code> for A1/A2, then switch back to <code>ML_MODE_OVERLAY_FROZEN</code> on B1/B2.</span>
+                            {% endif %}
+                        </label>
+                    </div>
+
+                    <div class="stage3-card-grid">
+                        <label class="stage3-control-card">
+                            <span class="stage3-control-card__icon" aria-hidden="true">📅</span>
+                            <span class="stage3-control-card__title">Start (optional)</span>
+                            <code class="stage3-control-card__cli">--start</code>
+                            <input type="text" name="start" placeholder="2026-01-01" value="{{ _resolved_start }}">
+                        </label>
+
+                        <label class="stage3-control-card">
+                            <span class="stage3-control-card__icon" aria-hidden="true">📅</span>
+                            <span class="stage3-control-card__title">End (optional)</span>
+                            <code class="stage3-control-card__cli">--end</code>
+                            <input type="text" name="end" placeholder="2026-01-31" value="{{ _resolved_end }}">
+                        </label>
+
+                        <label class="stage3-control-card stage3-control-card--wide">
+                            <span class="stage3-control-card__icon" aria-hidden="true">⟲</span>
+                            <span class="stage3-control-card__title">IA Lab handoff run folder (preferred)</span>
+                            <code class="stage3-control-card__cli">folder intake - derives artifact, hash, rolling plan, and validity window</code>
+                            <input id="ml_handoff_run_root" type="text" name="ml_handoff_run_root" placeholder="K:\v5.3 backtest\output2\ml_handoffstrategy\runs\strategy_ladder_ml_lab_handoff-..." value="{{ _selected_ml_handoff_run_root }}">
+                            <button class="button button--ghost js-browse-folder" type="button" data-target="ml_handoff_run_root">Browse folder...</button>
+                            <span class="field-note">Preferred operator flow: provide one governed IA Lab run folder. The cockpit reads the exact backtest input and handoff report from that run.</span>
+                        </label>
+
+                        <label class="stage3-control-card stage3-control-card--wide">
+                            <span class="stage3-control-card__icon" aria-hidden="true">❄</span>
+                            <span class="stage3-control-card__title">Frozen ML artifact path (required for overlay)</span>
+                            <code class="stage3-control-card__cli">--frozen-ml-artifact-path</code>
+                            <input id="frozen_ml_artifact_path" type="text" name="frozen_ml_artifact_path" placeholder="K:\v5.3 backtest\output2\ml_handoffstrategy\runs\...\strategy_ladder_expected_edge_ml_model_bundle.json" value="{{ _resolved_artifact_path }}">
+                            <button class="button button--ghost js-browse-folder" type="button" data-target="frozen_ml_artifact_path">Browse folder...</button>
+                            <span class="field-note">Auto-filled from the IA Lab handoff run when the folder above is provided. Manual override stays possible, but the run folder remains the governed source of truth.</span>
+                        </label>
+
+                        <label class="stage3-control-card stage3-control-card--wide">
+                            <span class="stage3-control-card__icon" aria-hidden="true">#</span>
+                            <span class="stage3-control-card__title">Frozen ML artifact hash (required for overlay)</span>
+                            <code class="stage3-control-card__cli">--frozen-ml-artifact-hash</code>
+                            <input type="text" name="frozen_ml_artifact_hash" placeholder="sha256 hash from IA Lab handoff" value="{{ _resolved_artifact_hash }}">
+                        </label>
+
+                        <label class="stage3-control-card stage3-control-card--wide">
+                            <span class="stage3-control-card__icon" aria-hidden="true">P</span>
+                            <span class="stage3-control-card__title">Rolling ML plan (optional, runner only)</span>
+                            <code class="stage3-control-card__cli">--rolling-ml-window-plan-path</code>
+                            <input id="rolling_ml_window_plan_path" type="text" name="rolling_ml_window_plan_path" placeholder="K:\v5.3 backtest\output2\ml_handoffstrategy\runs\...\rolling_ml_window_plan.json" value="{{ _resolved_rolling_plan }}">
+                            <button class="button button--ghost js-browse-folder" type="button" data-target="rolling_ml_window_plan_path">Browse folder...</button>
+                            <span class="field-note">Loaded from the handoff run when available. Required only when the backtest window outlives one frozen artifact.</span>
+                        </label>
+
+                        <label class="stage3-control-card">
+                            <span class="stage3-control-card__icon" aria-hidden="true">◔</span>
+                            <span class="stage3-control-card__title">ML artifact freshness days</span>
+                            <code class="stage3-control-card__cli">--ml-artifact-freshness-days</code>
+                            <input type="number" min="1" name="ml_artifact_freshness_days" value="{{ _resolved_freshness_days }}">
+                        </label>
+
+                        {# Patch P3 (2026-05-22) — explicit mono|multi C1 mode selector #}
+                        {% set _selected_mode = vm.selected_form.expected_edge_artifact_mode or 'MONO_PAIR_LEGACY' %}
+                        <label class="stage3-control-card">
+                            <span class="stage3-control-card__icon" aria-hidden="true">⌥</span>
+                            <span class="stage3-control-card__title">Expected-edge artifact mode</span>
+                            <code class="stage3-control-card__cli">--expected-edge-artifact-mode</code>
+                            <select name="expected_edge_artifact_mode">
+                                <option value="MONO_PAIR_LEGACY"{% if _selected_mode == 'MONO_PAIR_LEGACY' %} selected{% endif %}>MONO_PAIR_LEGACY (frozen bundle)</option>
+                                <option value="MULTI_PAIR_C1"{% if _selected_mode == 'MULTI_PAIR_C1' %} selected{% endif %}>MULTI_PAIR_C1 (C1.3.C manifest)</option>
+                            </select>
+                            <span class="field-note">MULTI_PAIR_C1 requires a manifest JSON with <code>artifact_kind=MULTI_PAIR_C1_EXPECTED_EDGE</code> and <code>pair_id_encoding</code> covering the selected pairs.</span>
+                        </label>
+
+                        <label class="stage3-control-card stage3-control-card--checkbox">
+                            <span class="stage3-control-card__icon" aria-hidden="true">🛡</span>
+                            <span class="stage3-control-card__title">Allow broad run</span>
+                            <span class="stage3-control-card__note">(explicit operator confirmation)</span>
+                            <input type="checkbox" name="allow_broad_run" value="true"{% if vm.selected_form.allow_broad_run in ('1', 'true', 'yes', 'on', True) %} checked{% endif %}>
+                        </label>
+
+                        <label class="stage3-control-card stage3-control-card--checkbox">
+                            <span class="stage3-control-card__icon" aria-hidden="true">◎</span>
+                            <span class="stage3-control-card__title">Small scope</span>
+                            <input type="checkbox" name="small_scope_enabled" value="true"{% if vm.selected_form.small_scope_enabled in ('1', 'true', 'yes', 'on', True) %} checked{% endif %}>
+                        </label>
+
+                        <label class="stage3-control-card stage3-control-card--checkbox">
+                            <span class="stage3-control-card__icon" aria-hidden="true">⌕</span>
+                            <span class="stage3-control-card__title">Full scan enabled</span>
+                            <input type="checkbox" name="full_scan_enabled" value="true"{% if vm.selected_form.full_scan_enabled in ('1', 'true', 'yes', 'on', True) %} checked{% endif %}>
+                        </label>
+
+                        <label class="stage3-control-card">
+                            <span class="stage3-control-card__icon" aria-hidden="true">◫</span>
+                            <span class="stage3-control-card__title">B1.5 policy mode</span>
+                            {% set _b15_policy_mode = vm.selected_form.b1_5_policy_mode or ('diagnostic_full_replay' if vm.selected_form.diagnostic_full_replay in ('1', 'true', 'yes', 'on', True) else 'conservative_hard_only') %}
+                            <select name="b1_5_policy_mode">
+                                <option value="conservative_hard_only"{% if _b15_policy_mode == 'conservative_hard_only' %} selected{% endif %}>conservative_hard_only</option>
+                                <option value="strict_fail_closed"{% if _b15_policy_mode == 'strict_fail_closed' %} selected{% endif %}>strict_fail_closed</option>
+                                <option value="diagnostic_full_replay"{% if _b15_policy_mode == 'diagnostic_full_replay' %} selected{% endif %}>diagnostic_full_replay</option>
+                            </select>
+                        </label>
+
+                        <label class="stage3-control-card stage3-control-card--checkbox">
+                            <span class="stage3-control-card__icon" aria-hidden="true">◌</span>
+                            <span class="stage3-control-card__title">Debug storage override</span>
+                            <input type="checkbox" name="debug_storage_override" value="true"{% if vm.selected_form.debug_storage_override in ('1', 'true', 'yes', 'on', True) %} checked{% endif %}>
+                        </label>
                     </div>
                 </div>
-                <div class="form-grid form-grid--wide">
-            <label>
-                Start (optional) &rarr; <code>--start</code>
-                <input type="text" name="start" placeholder="2026-01-01" value="{{ vm.selected_form.start }}">
-            </label>
-            <label>
-                End (optional) &rarr; <code>--end</code>
-                <input type="text" name="end" placeholder="2026-01-31" value="{{ vm.selected_form.end }}">
-            </label>
-            <label>
-                ML mode
-                <input type="text" name="ml_mode" value="{{ vm.selected_form.ml_mode or 'ML_MODE_OFF' }}" readonly>
-            </label>
-            <label>
-                <span>Allow broad run (explicit operator confirmation)</span>
-                <input type="checkbox" name="allow_broad_run" value="true"{% if vm.selected_form.allow_broad_run in ('1', 'true', 'yes', 'on', True) %} checked{% endif %}>
-            </label>
-            <label>
-                <span>Small scope</span>
-                <input type="checkbox" name="small_scope_enabled" value="true"{% if vm.selected_form.small_scope_enabled in ('1', 'true', 'yes', 'on', True) %} checked{% endif %}>
-            </label>
-            <label>
-                <span>Full scan enabled</span>
-                <input type="checkbox" name="full_scan_enabled" value="true"{% if vm.selected_form.full_scan_enabled in ('1', 'true', 'yes', 'on', True) %} checked{% endif %}>
-            </label>
-            <label>
-                B1.5 policy mode
-                {% set _b15_policy_mode = vm.selected_form.b1_5_policy_mode or ('diagnostic_full_replay' if vm.selected_form.diagnostic_full_replay in ('1', 'true', 'yes', 'on', True) else 'conservative_hard_only') %}
-                <select name="b1_5_policy_mode">
-                    <option value="conservative_hard_only"{% if _b15_policy_mode == 'conservative_hard_only' %} selected{% endif %}>conservative_hard_only</option>
-                    <option value="strict_fail_closed"{% if _b15_policy_mode == 'strict_fail_closed' %} selected{% endif %}>strict_fail_closed</option>
-                    <option value="diagnostic_full_replay"{% if _b15_policy_mode == 'diagnostic_full_replay' %} selected{% endif %}>diagnostic_full_replay</option>
-                </select>
-            </label>
-            <label>
-                <span>Debug storage override</span>
-                <input type="checkbox" name="debug_storage_override" value="true"{% if vm.selected_form.debug_storage_override in ('1', 'true', 'yes', 'on', True) %} checked{% endif %}>
-            </label>
             <details class="form-grid__advanced" style="grid-column: 1 / -1;">
                 <summary>Advanced — raw source manifest (.json only)</summary>
                 <label>
@@ -291,7 +443,7 @@
             <input type="hidden" name="request_hash" value="{{ vm.backtest_preflight.request_hash }}">
             <input type="hidden" name="workflow_run_id" value="{{ vm.backtest_preflight.workflow_run_id }}">
                 </div>
-            <div class="form-actions form-actions--dual">
+            <div class="form-actions form-actions--dual form-actions--row-fixed">
                     <button class="button button--info" type="submit" name="intent" value="preview">Generate Preview</button>
                 <button id="backtest-launch-button" class="button button--primary" type="submit" name="intent" value="launch"{% if not vm.backtest_preflight.preview_id or vm.backtest_preflight.phase_id == 'PHASE_A1' %} disabled{% endif %}>Launch Selected Phase</button>
             </div>
@@ -364,6 +516,44 @@
                         <li>Failure proof: explicit exit code in audited record</li>
                         <li>Baseline diff input: configured on demand</li>
                     </ul>
+                </div>
+            </div>
+
+            <div class="card backtest-monitor-card" id="backtest-ml-check-card">
+                <div class="card__head">
+                    <div class="card__head-main">
+                        <h3>ML check</h3>
+                        <span class="card__sub">Green if the handoff run is ready, files are present, and the current Stage 3 dates stay inside artifact validity</span>
+                    </div>
+                    <span class="monitor-badge monitor-badge--idle">{{ status_chip(_ml_intake.check_status) }}</span>
+                </div>
+                <div class="card__body">
+                    <table class="data-table data-table--compact">
+                        <tbody>
+                            <tr><th>Source</th><td>{{ status_chip(_ml_intake.source_status) }}</td></tr>
+                            <tr><th>Pair</th><td>{{ _ml_intake.pair or 'n/a' }}</td></tr>
+                            <tr><th>Timeframe scope</th><td>{{ (_resolved_timeframe_scope | join(', ')) if _resolved_timeframe_scope else (_ml_intake.timeframe or 'n/a') }}</td></tr>
+                            <tr><th>Features</th><td>{{ (_ml_intake.feature_names | join(', ')) if _ml_intake.feature_names else 'n/a' }}</td></tr>
+                            <tr><th>Train window</th><td>{{ (_ml_intake.train_start ~ ' -> ' ~ _ml_intake.train_end) if _ml_intake.train_start or _ml_intake.train_end else 'n/a' }}</td></tr>
+                            <tr><th>Requested backtest</th><td>{{ (_ml_intake.requested_backtest_start ~ ' -> ' ~ _ml_intake.requested_backtest_end) if _ml_intake.requested_backtest_start or _ml_intake.requested_backtest_end else 'n/a' }}</td></tr>
+                            <tr><th>Max valid backtest end</th><td>{{ _ml_intake.max_valid_backtest_end or 'n/a' }}</td></tr>
+                            <tr><th>Artifact stale after</th><td>{{ _ml_intake.artifact_stale_after or 'n/a' }}</td></tr>
+                            <tr><th>Rolling plan</th><td>{{ status_chip(_ml_intake.rolling_ml_window_plan_status or 'not_proven') }}</td></tr>
+                        </tbody>
+                    </table>
+                    {% if _selected_ml_handoff_run_root and not _ml_intake_defined %}
+                    <p class="field-note">This live cockpit process has not loaded the new IA Lab folder-intake Python logic yet. Restart the cockpit to replace stale manual values with governed artifact data from the selected run folder.</p>
+                    {% elif _ml_intake.blocker_codes %}
+                    <ul class="small-list">
+                        {% for blocker in _ml_intake.blocker_codes %}
+                        <li>{{ blocker }}</li>
+                        {% endfor %}
+                    </ul>
+                    {% elif _ml_intake.check_status == 'ML_CHECK_OK' %}
+                    <p class="field-note">ML check ok. The cockpit has a governed handoff report, a backtest input file, an artifact path/hash, and a valid window for the current Stage 3 dates.</p>
+                    {% else %}
+                    <p class="field-note">No governed IA Lab handoff run has been parsed yet for Stage 3.</p>
+                    {% endif %}
                 </div>
             </div>
         </div>
@@ -445,6 +635,38 @@
                     <li>{{ vm.backtest_preflight.output_root_blocker }}</li>
                     <li>Selected output path: <code>{{ vm.backtest_preflight.output_root_selected }}</code></li>
                     <li>create timestamped subfolder: <code>{{ vm.backtest_preflight.output_root_timestamped_suggestion or 'n/a' }}</code></li>
+                </ul>
+            </div>
+            {% endif %}
+            {% if not vm.backtest_preflight.output_root_selected %}
+            <div class="operator-note-surface operator-note-surface--warn" style="margin-top: 12px;">
+                <h5>Workflow artifact root defaulted</h5>
+                <ul class="small-list">
+                    <li><code>output_root</code> is empty, so A2 silver/gold and B1/B2 workflow artifacts will be written under <code>{{ vm.backtest_preflight.output_root_effective_preview or 'not_ready' }}</code>.</li>
+                    <li><code>export_dir</code> and <code>baseline_export_dir</code> do not control this workflow artifact root.</li>
+                    <li>If you want a `K:\...` workflow folder to receive silver/gold for this workflow, fill <code>Workflow output root</code> explicitly before launching <strong>A2</strong>.</li>
+                </ul>
+            </div>
+            {% endif %}
+            {% set _b1_requires_a2 = ('PHASE_B1_REQUIRES_A2_DATA_FACTORY_ARTIFACTS' in vm.backtest_preflight.blockers) or (vm.source_preview_state and 'PHASE_B1_REQUIRES_A2_DATA_FACTORY_ARTIFACTS' in vm.source_preview_state.blockers) %}
+            {% if _b1_requires_a2 %}
+            <div class="operator-note-surface operator-note-surface--danger" style="margin-top: 12px;">
+                <h5>B1 is waiting for A2 on the same workflow</h5>
+                <ul class="small-list">
+                    <li>Current workflow: <code>{{ vm.selected_form.workflow_run_id or 'not_proven' }}</code></li>
+                    <li>Expected workflow artifact root: <code>{{ vm.backtest_preflight.output_root_effective_preview or 'not_ready' }}</code></li>
+                    <li>B1 does not reuse A2 artifacts from another workflow. Run <strong>A2</strong> first for this same workflow and this same artifact root, then relaunch B1.</li>
+                    <li><code>ML_MODE_OVERLAY_FROZEN</code> is not the blocker in this case. The missing upstream A2 data-factory artifacts are.</li>
+                </ul>
+            </div>
+            {% endif %}
+            {% if 'SELECTED_WORKFLOW_REPLACED_BY_NEW_PARENT_IDENTITY' in vm.backtest_preflight.warnings %}
+            <div class="operator-note-surface operator-note-surface--warn" style="margin-top: 12px;">
+                <h5>Selected workflow could not be reused</h5>
+                <ul class="small-list">
+                    <li>The current request no longer matches the parent identity of the workflow you started from, so the cockpit created a new workflow id: <code>{{ vm.backtest_preflight.workflow_run_id }}</code>.</li>
+                    <li>This usually happens when the Stage 3 dates or source scope changed, including when an IA Lab handoff injects a different backtest window.</li>
+                    <li>If you want to reuse existing A2 artifacts, keep the same workflow window and relaunch from that same workflow. Otherwise rerun A1 and A2 for the new window first.</li>
                 </ul>
             </div>
             {% endif %}
@@ -839,6 +1061,22 @@
                     <span class="status-kpi__value">{{ vm.runtime.strategy_ladder_summary.trade_count if vm.runtime.strategy_ladder_summary.trade_count else 'NOT_PROVEN' }}</span>
                 </div>
             </div>
+            {% set _raw_source_inferred = vm.runtime.strategy_ladder_summary.raw_source_typing_status in ('RAW_SOURCE_TYPE_INFERRED', 'RAW_SOURCE_TYPE_AMBIGUOUS') %}
+            {% set _metadata_proxy = vm.runtime.strategy_ladder_summary.metadata_temporal_status == 'CURRENT_METADATA_PROXY' %}
+            {% if _raw_source_inferred or _metadata_proxy %}
+            <div class="operator-note-surface operator-note-surface--danger backtest-provenance-alert" style="margin-bottom: 12px;">
+                <h5>Research-only provenance alert</h5>
+                <ul class="small-list">
+                    {% if _raw_source_inferred %}
+                    <li>Raw source typing is inferred, not venue-verified: {{ vm.runtime.strategy_ladder_summary.raw_source_typing_status }}.</li>
+                    {% endif %}
+                    {% if _metadata_proxy %}
+                    <li>Historical metadata still uses a current proxy: {{ vm.runtime.strategy_ladder_summary.metadata_temporal_status }}{% if vm.runtime.strategy_ladder_summary.metadata_temporal_drift_days is not none %} (temporal drift={{ vm.runtime.strategy_ladder_summary.metadata_temporal_drift_days }} days){% endif %}.</li>
+                    {% endif %}
+                    <li>Keep this workflow in research-only mode until provenance and temporal metadata are governed.</li>
+                </ul>
+            </div>
+            {% endif %}
             <div class="status-section" style="margin-bottom: 12px;">
                 <h5>Canonical status surface</h5>
             <table class="data-table data-table--compact">
@@ -851,6 +1089,8 @@
                     <tr><th>Final status</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.final_status) }}</td></tr>
                     <tr><th>Data Factory</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.data_factory_status) }}</td></tr>
                     <tr><th>Raw sources</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.raw_source_status) }}</td></tr>
+                    <tr><th>Raw source provenance</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.raw_source_provenance_status) }}</td></tr>
+                    <tr><th>Raw source typing</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.raw_source_typing_status) }}</td></tr>
                     <tr><th>Pair universe</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.pair_universe_status) }}</td></tr>
                     <tr><th>Available pairs</th><td>{{ vm.runtime.strategy_ladder_summary.available_pair_count }}</td></tr>
                     <tr><th>Missing requested pairs</th><td>{{ vm.runtime.strategy_ladder_summary.missing_requested_pairs|join(', ') if vm.runtime.strategy_ladder_summary.missing_requested_pairs else 'none' }}</td></tr>
@@ -862,6 +1102,7 @@
                     <tr><th>Historical metadata</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.historical_metadata_status) }}</td></tr>
                     <tr><th>Metadata source mode</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.metadata_source_mode) }}</td></tr>
                     <tr><th>Metadata temporal status</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.metadata_temporal_status) }}</td></tr>
+                    <tr><th>Metadata temporal drift (days)</th><td>{{ vm.runtime.strategy_ladder_summary.metadata_temporal_drift_days if vm.runtime.strategy_ladder_summary.metadata_temporal_drift_days is not none else 'NOT_PROVEN' }}</td></tr>
                     <tr><th>Fee provenance</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.fee_provenance_status) }}</td></tr>
                     <tr><th>Orderbook reconstruction</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.orderbook_reconstruction_status) }}</td></tr>
                     <tr><th>Orderbook sequence</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.sequence_gap_status) }}</td></tr>
@@ -883,6 +1124,25 @@
                     <tr><th>Capital profiles</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.capital_profile_generation_status) }}</td></tr>
                     <tr><th>Promotion artifacts</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.promotion_artifact_status) }}</td></tr>
                     <tr><th>Sample size</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.sample_size_survival_status) }}</td></tr>
+                    <tr><th>Statistical validation</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.statistical_validation_status) }}</td></tr>
+                    <tr><th>Executed trades</th><td>{{ vm.runtime.strategy_ladder_summary.executed_count }}</td></tr>
+                    <tr><th>Statistical observations</th><td>{{ vm.runtime.strategy_ladder_summary.statistical_validation_observation_count }}</td></tr>
+                    <tr><th>Statistical trials</th><td>{{ vm.runtime.strategy_ladder_summary.statistical_validation_trial_count }}</td></tr>
+                    <tr><th>Stationary block length</th><td>{{ vm.runtime.strategy_ladder_summary.statistical_validation_stationary_block_length or 'not_proven' }}</td></tr>
+                    {% set _stat_effective_sample_size = vm.runtime.strategy_ladder_summary.statistical_validation_effective_sample_size if vm.runtime.strategy_ladder_summary.statistical_validation_effective_sample_size is defined else none %}
+                    {% set _stat_min_trl_required = vm.runtime.strategy_ladder_summary.statistical_validation_min_trl_required if vm.runtime.strategy_ladder_summary.statistical_validation_min_trl_required is defined else none %}
+                    {% set _stat_sample_sharpe = vm.runtime.strategy_ladder_summary.statistical_validation_sample_sharpe if vm.runtime.strategy_ladder_summary.statistical_validation_sample_sharpe is defined else none %}
+                    {% set _stat_psr = vm.runtime.strategy_ladder_summary.statistical_validation_psr if vm.runtime.strategy_ladder_summary.statistical_validation_psr is defined else none %}
+                    {% set _stat_dsr = vm.runtime.strategy_ladder_summary.statistical_validation_dsr if vm.runtime.strategy_ladder_summary.statistical_validation_dsr is defined else none %}
+                    <tr><th>Effective sample size</th><td>{{ _stat_effective_sample_size | round(3) if _stat_effective_sample_size is not none else 'not_proven' }}</td></tr>
+                    <tr><th>MinTRL required</th><td>{{ _stat_min_trl_required | round(3) if _stat_min_trl_required is not none else 'not_proven' }}</td></tr>
+                    <tr><th>MinTRL satisfied</th><td>{{ 'yes' if vm.runtime.strategy_ladder_summary.statistical_validation_min_trl_satisfied else 'no' }}</td></tr>
+                    <tr><th>Sample Sharpe</th><td>{{ _stat_sample_sharpe | round(3) if _stat_sample_sharpe is not none else 'not_proven' }}</td></tr>
+                    <tr><th>PSR</th><td>{{ _stat_psr | round(4) if _stat_psr is not none else 'not_proven' }}</td></tr>
+                    <tr><th>PSR floor</th><td>{{ 'pass' if vm.runtime.strategy_ladder_summary.statistical_validation_psr_passes_floor else 'not_proven' }}</td></tr>
+                    <tr><th>DSR</th><td>{{ _stat_dsr | round(4) if _stat_dsr is not none else 'not_proven' }}</td></tr>
+                    <tr><th>DSR floor</th><td>{{ 'pass' if vm.runtime.strategy_ladder_summary.statistical_validation_dsr_passes_floor else 'not_proven' }}</td></tr>
+                    <tr><th>Statistical blockers</th><td>{{ vm.runtime.strategy_ladder_summary.statistical_validation_blocker_codes | join(', ') if vm.runtime.strategy_ladder_summary.statistical_validation_blocker_codes else 'none' }}</td></tr>
                     <tr><th>Execution label source</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.execution_label_source) }}</td></tr>
                     <tr><th>Fee model source</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.fee_model_source) }}</td></tr>
                     <tr><th>Spread model source</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.spread_model_source) }}</td></tr>
@@ -1274,7 +1534,7 @@
 {% endif %}
 
 {% if vm.runtime.strategy_ladder_summary.engine_no_trade_diagnosis_status != 'ENGINE_NO_TRADE_DIAGNOSIS_NOT_PROVEN' %}
-<section class="card">
+<section class="card backtest-wide-table-card">
     <div class="card__head">
         <h3>Engine No-Trade Diagnosis</h3>
         <span class="card__sub">Per-engine B2 blocker diagnosis without weakening gates</span>
@@ -1890,6 +2150,7 @@
                             <li>Cost parity: {{ vm.runtime.strategy_ladder_summary.replay_cost_parity_status }}</li>
                             <li>Executed-only economics: {{ vm.runtime.strategy_ladder_summary.replay_executed_only_net_return_status }}</li>
                             <li>True drawdown: {{ vm.runtime.strategy_ladder_summary.replay_true_net_equity_drawdown_status }}</li>
+                            <li>Statistical validation: {{ vm.runtime.strategy_ladder_summary.statistical_validation_status }}</li>
                             <li>Capital bucket: {{ vm.runtime.strategy_ladder_summary.capital_bucket_metadata_status }}</li>
                             <li>Sample size: {{ vm.runtime.strategy_ladder_summary.sample_size_survival_status }}</li>
                             <li>Live eligibility: {{ vm.runtime.strategy_ladder_summary.live_trading_eligibility_status }}</li>
@@ -2171,7 +2432,7 @@
     </div>
 </section>
 
-<section class="grid-3">
+<section class="grid-3 backtest-ledger-grid">
     <div class="card">
         <div class="card__head">
             <h3>Trade Detail Ledger</h3>
@@ -2253,7 +2514,7 @@
     </div>
 </section>
 
-<section class="grid-3">
+<section class="grid-3 backtest-matrix-grid">
     <div class="card">
         <div class="card__head">
             <h3>Engine Matrix</h3>
@@ -2394,6 +2655,19 @@
         );
     }
 
+    function folderSeedFromValue(rawValue) {
+        const value = (rawValue || "").trim();
+        if (!value) {
+            return "";
+        }
+        const normalized = value.replaceAll("/", "\\");
+        const lastSegment = normalized.split("\\").filter(Boolean).pop() || "";
+        if (lastSegment.includes(".")) {
+            return normalized.slice(0, Math.max(normalized.lastIndexOf("\\"), 0));
+        }
+        return value;
+    }
+
     function clearPickerState() {
         window.sessionStorage.removeItem(pickerStateKey);
     }
@@ -2404,7 +2678,7 @@
         savePickerState();
         loadDrives();
         const input = document.getElementById(targetId);
-        const initial = initialPath || (input && input.value ? input.value : "");
+        const initial = folderSeedFromValue(initialPath || (input && input.value ? input.value : ""));
         if (initial) {
             loadDirectory(initial);
         } else {
@@ -2455,7 +2729,7 @@
 
     async function tryNativePicker(targetId) {
         const input = document.getElementById(targetId);
-        const initial = input && input.value ? input.value : currentPath;
+        const initial = folderSeedFromValue(input && input.value ? input.value : currentPath);
         const payload = await fetchJson(`/backtest/picker/native?path=${encodeURIComponent(initial || "")}`);
         if (payload.status === "FOLDER_PICKER_SELECTED" && payload.selected_path && input) {
             input.value = payload.selected_path;
@@ -2776,6 +3050,36 @@
 
 <script>
 (() => {
+    function repairBacktestContentPlacement() {
+        const layout = document.querySelector("body > .layout");
+        const main = layout?.querySelector(":scope > .main");
+        const content = main?.querySelector(":scope > main.content");
+        if (!layout || !main || !content) {
+            return;
+        }
+
+        const misplacedSections = Array.from(layout.children).filter((node) => {
+            if (!(node instanceof HTMLElement)) {
+                return false;
+            }
+            if (node === main || node.matches("aside.sidebar")) {
+                return false;
+            }
+            return node.matches("section");
+        });
+
+        misplacedSections.forEach((section) => {
+            content.appendChild(section);
+        });
+
+        const footer = layout.querySelector(":scope > footer.footer");
+        if (footer && footer.parentElement !== main) {
+            main.appendChild(footer);
+        }
+    }
+
+    repairBacktestContentPlacement();
+
     const statusUrl = "/backtest/status.json";
     const pollIntervalMs = 4000;
     let requestInFlight = false;
@@ -2903,12 +3207,14 @@
             </tr>
         `).join("");
         host.innerHTML = `
-            <table class="data-table data-table--compact">
-                <thead>
-                    <tr><th>Job</th><th>Status</th><th>Progress</th><th>ETA (min)</th><th>Outputs</th><th>Logs</th><th>Error</th></tr>
-                </thead>
-                <tbody>${rows}</tbody>
-            </table>
+            <div class="recent-jobs-scroll">
+                <table class="data-table data-table--compact">
+                    <thead>
+                        <tr><th>Job</th><th>Status</th><th>Progress</th><th>ETA (min)</th><th>Outputs</th><th>Logs</th><th>Error</th></tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>
         `;
     }
 

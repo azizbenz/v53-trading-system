@@ -1,0 +1,707 @@
+{
+  "schema_version": "v53.engine_math_canary_audit.v1",
+  "generated_at": "2026-05-22T21:03:44.118977+00:00",
+  "row_count": 14,
+  "rows": [
+    {
+      "engine_id": "engine_a",
+      "threshold_name": "min_direction",
+      "threshold_value": 0.2,
+      "threshold_unit": "signed_score_-1_to_1",
+      "tested_input_values": [
+        0.199999999,
+        0.2,
+        0.200000001
+      ],
+      "derived_metric_name": "direction_score",
+      "derived_metric_values": [
+        0.199999999,
+        0.2,
+        0.200000001
+      ],
+      "tested_values": [
+        0.199999999,
+        0.2,
+        0.200000001
+      ],
+      "compared_value_kind": "INPUT_VALUE",
+      "comparison_expression": "direction_score >= 0.20",
+      "output_decision": [
+        "unfavorable",
+        "favorable",
+        "favorable"
+      ],
+      "expected_decision": [
+        "unfavorable",
+        "favorable",
+        "favorable"
+      ],
+      "pass": true,
+      "exact_operator_used": "< blocks ; >= survives",
+      "epsilon_behavior": {
+        "below": {
+          "input": 0.199999999,
+          "derived": 0.199999999
+        },
+        "at": {
+          "input": 0.2,
+          "derived": 0.2
+        },
+        "above": {
+          "input": 0.200000001,
+          "derived": 0.200000001
+        }
+      }
+    },
+    {
+      "engine_id": "engine_a",
+      "threshold_name": "marginal",
+      "threshold_value": 0.3,
+      "threshold_unit": "score_0_to_1",
+      "tested_input_values": [
+        0.899999996,
+        0.9,
+        0.900000004
+      ],
+      "derived_metric_name": "structure_score",
+      "derived_metric_values": [
+        0.299999999,
+        0.3,
+        0.300000001
+      ],
+      "tested_values": [
+        0.299999999,
+        0.3,
+        0.300000001
+      ],
+      "compared_value_kind": "DERIVED_SCORE",
+      "comparison_expression": "structure_score >= 0.30",
+      "output_decision": [
+        "unfavorable",
+        "marginal",
+        "marginal"
+      ],
+      "expected_decision": [
+        "unfavorable",
+        "marginal",
+        "marginal"
+      ],
+      "pass": true,
+      "exact_operator_used": "score >= threshold",
+      "epsilon_behavior": {
+        "below": {
+          "input": 0.899999996,
+          "derived": 0.299999999
+        },
+        "at": {
+          "input": 0.9,
+          "derived": 0.3
+        },
+        "above": {
+          "input": 0.900000004,
+          "derived": 0.300000001
+        }
+      }
+    },
+    {
+      "engine_id": "engine_a",
+      "threshold_name": "favorable",
+      "threshold_value": 0.6,
+      "threshold_unit": "score_0_to_1",
+      "tested_input_values": [
+        0.299999996,
+        0.3,
+        0.300000004
+      ],
+      "derived_metric_name": "structure_score",
+      "derived_metric_values": [
+        0.599999999,
+        0.6,
+        0.6000000010000001
+      ],
+      "tested_values": [
+        0.599999999,
+        0.6,
+        0.6000000010000001
+      ],
+      "compared_value_kind": "DERIVED_SCORE",
+      "comparison_expression": "structure_score >= 0.60",
+      "output_decision": [
+        "marginal",
+        "favorable",
+        "favorable"
+      ],
+      "expected_decision": [
+        "marginal",
+        "favorable",
+        "favorable"
+      ],
+      "pass": true,
+      "exact_operator_used": "score >= threshold",
+      "epsilon_behavior": {
+        "below": {
+          "input": 0.299999996,
+          "derived": 0.599999999
+        },
+        "at": {
+          "input": 0.3,
+          "derived": 0.6
+        },
+        "above": {
+          "input": 0.300000004,
+          "derived": 0.6000000010000001
+        }
+      }
+    },
+    {
+      "engine_id": "engine_b",
+      "threshold_name": "z_marginal",
+      "threshold_value": 1.0,
+      "threshold_unit": "sigma_units",
+      "tested_input_values": [
+        -0.999999999,
+        -1.0,
+        -1.000000001
+      ],
+      "derived_metric_name": "abs_z_score",
+      "derived_metric_values": [
+        0.999999999,
+        1.0,
+        1.000000001
+      ],
+      "tested_values": [
+        0.999999999,
+        1.0,
+        1.000000001
+      ],
+      "compared_value_kind": "DERIVED_SCORE",
+      "comparison_expression": "abs(z_score) >= 1.0",
+      "output_decision": [
+        "no_excess",
+        "marginal",
+        "marginal"
+      ],
+      "expected_decision": [
+        "no_excess",
+        "marginal",
+        "marginal"
+      ],
+      "pass": true,
+      "exact_operator_used": "< no_excess ; >= threshold survives",
+      "epsilon_behavior": {
+        "below": {
+          "input": -0.999999999,
+          "derived": 0.999999999
+        },
+        "at": {
+          "input": -1.0,
+          "derived": 1.0
+        },
+        "above": {
+          "input": -1.000000001,
+          "derived": 1.000000001
+        }
+      }
+    },
+    {
+      "engine_id": "engine_b",
+      "threshold_name": "z_star",
+      "threshold_value": 1.5,
+      "threshold_unit": "sigma_units",
+      "tested_input_values": [
+        -1.499999999,
+        -1.5,
+        -1.500000001
+      ],
+      "derived_metric_name": "abs_z_score",
+      "derived_metric_values": [
+        1.499999999,
+        1.5,
+        1.500000001
+      ],
+      "tested_values": [
+        1.499999999,
+        1.5,
+        1.500000001
+      ],
+      "compared_value_kind": "DERIVED_SCORE",
+      "comparison_expression": "abs(z_score) >= 1.5",
+      "output_decision": [
+        "marginal",
+        "exploitable",
+        "exploitable"
+      ],
+      "expected_decision": [
+        "marginal",
+        "exploitable",
+        "exploitable"
+      ],
+      "pass": true,
+      "exact_operator_used": "< no_excess ; >= threshold survives",
+      "epsilon_behavior": {
+        "below": {
+          "input": -1.499999999,
+          "derived": 1.499999999
+        },
+        "at": {
+          "input": -1.5,
+          "derived": 1.5
+        },
+        "above": {
+          "input": -1.500000001,
+          "derived": 1.500000001
+        }
+      }
+    },
+    {
+      "engine_id": "engine_b",
+      "threshold_name": "delta_safe",
+      "threshold_value": 0.0008,
+      "threshold_unit": "decimal_return",
+      "tested_input_values": [
+        0.0010114990000000001,
+        0.0010115,
+        0.001011501
+      ],
+      "derived_metric_name": "expected_gain_minus_expected_cost",
+      "derived_metric_values": [
+        0.0007999990000000001,
+        0.0008,
+        0.0008000009999999999
+      ],
+      "tested_values": [
+        0.0007999990000000001,
+        0.0008,
+        0.0008000009999999999
+      ],
+      "compared_value_kind": "COST_DECIMAL",
+      "comparison_expression": "(expected_gain - expected_cost) > delta_safe",
+      "output_decision": [
+        "infeasible",
+        "infeasible",
+        "feasible"
+      ],
+      "expected_decision": [
+        "infeasible",
+        "infeasible",
+        "feasible"
+      ],
+      "pass": true,
+      "exact_operator_used": "expected_gain <= break_even blocks ; CE < ce_min marginal",
+      "epsilon_behavior": {
+        "below": {
+          "input": 0.0010114990000000001,
+          "derived": 0.0007999990000000001
+        },
+        "at": {
+          "input": 0.0010115,
+          "derived": 0.0008
+        },
+        "above": {
+          "input": 0.001011501,
+          "derived": 0.0008000009999999999
+        }
+      }
+    },
+    {
+      "engine_id": "engine_b",
+      "threshold_name": "ce_min",
+      "threshold_value": 0.0002,
+      "threshold_unit": "decimal_return_per_hour",
+      "tested_input_values": [
+        0.001211499,
+        0.0012115,
+        0.0012115009999999998
+      ],
+      "derived_metric_name": "ce_expected",
+      "derived_metric_values": [
+        0.00019999980000000002,
+        0.0002,
+        0.0002000002
+      ],
+      "tested_values": [
+        0.00019999980000000002,
+        0.0002,
+        0.0002000002
+      ],
+      "compared_value_kind": "COST_DECIMAL",
+      "comparison_expression": "ce_expected >= ce_min once expected_gain > break_even",
+      "output_decision": [
+        "marginal",
+        "feasible",
+        "feasible"
+      ],
+      "expected_decision": [
+        "marginal",
+        "feasible",
+        "feasible"
+      ],
+      "pass": true,
+      "exact_operator_used": "CE < ce_min marginal ; CE >= ce_min feasible once break-even is cleared",
+      "epsilon_behavior": {
+        "below": {
+          "input": 0.001211499,
+          "derived": 0.00019999980000000002
+        },
+        "at": {
+          "input": 0.0012115,
+          "derived": 0.0002
+        },
+        "above": {
+          "input": 0.0012115009999999998,
+          "derived": 0.0002000002
+        }
+      }
+    },
+    {
+      "engine_id": "engine_c",
+      "threshold_name": "breakout_strength_min",
+      "threshold_value": 0.55,
+      "threshold_unit": "score_0_to_1",
+      "tested_input_values": [
+        0.5499999990000001,
+        0.55,
+        0.550000001
+      ],
+      "derived_metric_name": "breakout_strength",
+      "derived_metric_values": [
+        0.5499999990000001,
+        0.55,
+        0.550000001
+      ],
+      "tested_values": [
+        0.5499999990000001,
+        0.55,
+        0.550000001
+      ],
+      "compared_value_kind": "INPUT_VALUE",
+      "comparison_expression": "breakout_strength >= 0.55",
+      "output_decision": [
+        "no_trade",
+        "emit",
+        "emit"
+      ],
+      "expected_decision": [
+        "no_trade",
+        "emit",
+        "emit"
+      ],
+      "pass": true,
+      "exact_operator_used": "< blocks ; >= survives",
+      "epsilon_behavior": {
+        "below": {
+          "input": 0.5499999990000001,
+          "derived": 0.5499999990000001
+        },
+        "at": {
+          "input": 0.55,
+          "derived": 0.55
+        },
+        "above": {
+          "input": 0.550000001,
+          "derived": 0.550000001
+        }
+      }
+    },
+    {
+      "engine_id": "engine_c",
+      "threshold_name": "range_quality_min",
+      "threshold_value": 0.5,
+      "threshold_unit": "score_0_to_1",
+      "tested_input_values": [
+        0.499999999,
+        0.5,
+        0.500000001
+      ],
+      "derived_metric_name": "range_quality",
+      "derived_metric_values": [
+        0.499999999,
+        0.5,
+        0.500000001
+      ],
+      "tested_values": [
+        0.499999999,
+        0.5,
+        0.500000001
+      ],
+      "compared_value_kind": "INPUT_VALUE",
+      "comparison_expression": "range_quality >= 0.50",
+      "output_decision": [
+        "no_trade",
+        "emit",
+        "emit"
+      ],
+      "expected_decision": [
+        "no_trade",
+        "emit",
+        "emit"
+      ],
+      "pass": true,
+      "exact_operator_used": "< blocks ; >= survives",
+      "epsilon_behavior": {
+        "below": {
+          "input": 0.499999999,
+          "derived": 0.499999999
+        },
+        "at": {
+          "input": 0.5,
+          "derived": 0.5
+        },
+        "above": {
+          "input": 0.500000001,
+          "derived": 0.500000001
+        }
+      }
+    },
+    {
+      "engine_id": "engine_c",
+      "threshold_name": "breakout_score_min",
+      "threshold_value": 0.62,
+      "threshold_unit": "score_0_to_1",
+      "tested_input_values": [
+        0.842857142,
+        0.842857143,
+        0.842857144
+      ],
+      "derived_metric_name": "breakout_score",
+      "derived_metric_values": [
+        0.6199999997,
+        0.62000000005,
+        0.6200000003999999
+      ],
+      "tested_values": [
+        0.6199999997,
+        0.62000000005,
+        0.6200000003999999
+      ],
+      "compared_value_kind": "DERIVED_SCORE",
+      "comparison_expression": "breakout_score >= 0.62",
+      "output_decision": [
+        "no_trade",
+        "emit",
+        "emit"
+      ],
+      "expected_decision": [
+        "no_trade",
+        "emit",
+        "emit"
+      ],
+      "pass": true,
+      "exact_operator_used": "< blocks ; >= survives",
+      "epsilon_behavior": {
+        "below": {
+          "input": 0.842857142,
+          "derived": 0.6199999997
+        },
+        "at": {
+          "input": 0.842857143,
+          "derived": 0.62000000005
+        },
+        "above": {
+          "input": 0.842857144,
+          "derived": 0.6200000003999999
+        }
+      }
+    },
+    {
+      "engine_id": "engine_c",
+      "threshold_name": "fake_breakout_risk_max",
+      "threshold_value": 0.65,
+      "threshold_unit": "score_0_to_1",
+      "tested_input_values": [
+        0.222222222,
+        0.222222223,
+        0.222222224
+      ],
+      "derived_metric_name": "fake_breakout_risk",
+      "derived_metric_values": [
+        0.6499999999,
+        0.6500000003499999,
+        0.6500000008
+      ],
+      "tested_values": [
+        0.6499999999,
+        0.6500000003499999,
+        0.6500000008
+      ],
+      "compared_value_kind": "RISK_SCORE",
+      "comparison_expression": "fake_breakout_risk < 0.65",
+      "output_decision": [
+        "emit",
+        "no_trade",
+        "no_trade"
+      ],
+      "expected_decision": [
+        "emit",
+        "no_trade",
+        "no_trade"
+      ],
+      "pass": true,
+      "exact_operator_used": ">= blocks ; < survives",
+      "epsilon_behavior": {
+        "below": {
+          "input": 0.222222222,
+          "derived": 0.6499999999
+        },
+        "at": {
+          "input": 0.222222223,
+          "derived": 0.6500000003499999
+        },
+        "above": {
+          "input": 0.222222224,
+          "derived": 0.6500000008
+        }
+      }
+    },
+    {
+      "engine_id": "engine_d",
+      "threshold_name": "history_min",
+      "threshold_value": 0.55,
+      "threshold_unit": "score_0_to_1",
+      "tested_input_values": [
+        0.59090909,
+        0.590909091,
+        0.590909092
+      ],
+      "derived_metric_name": "history_score",
+      "derived_metric_values": [
+        0.5499999995,
+        0.55000000005,
+        0.5500000006
+      ],
+      "tested_values": [
+        0.5499999995,
+        0.55000000005,
+        0.5500000006
+      ],
+      "compared_value_kind": "DERIVED_SCORE",
+      "comparison_expression": "history_score >= 0.55",
+      "output_decision": [
+        "no_trade",
+        "emit",
+        "emit"
+      ],
+      "expected_decision": [
+        "no_trade",
+        "emit",
+        "emit"
+      ],
+      "pass": true,
+      "exact_operator_used": "< blocks ; >= survives",
+      "epsilon_behavior": {
+        "below": {
+          "input": 0.59090909,
+          "derived": 0.5499999995
+        },
+        "at": {
+          "input": 0.590909091,
+          "derived": 0.55000000005
+        },
+        "above": {
+          "input": 0.590909092,
+          "derived": 0.5500000006
+        }
+      }
+    },
+    {
+      "engine_id": "engine_d",
+      "threshold_name": "reformation_min",
+      "threshold_value": 0.58,
+      "threshold_unit": "score_0_to_1",
+      "tested_input_values": [
+        0.566666666,
+        0.566666667,
+        0.566666668
+      ],
+      "derived_metric_name": "reformation_score",
+      "derived_metric_values": [
+        0.5799999997,
+        0.5800000001500001,
+        0.5800000005999999
+      ],
+      "tested_values": [
+        0.5799999997,
+        0.5800000001500001,
+        0.5800000005999999
+      ],
+      "compared_value_kind": "DERIVED_SCORE",
+      "comparison_expression": "reformation_score >= 0.58",
+      "output_decision": [
+        "no_trade",
+        "emit",
+        "emit"
+      ],
+      "expected_decision": [
+        "no_trade",
+        "emit",
+        "emit"
+      ],
+      "pass": true,
+      "exact_operator_used": "< blocks ; >= survives",
+      "epsilon_behavior": {
+        "below": {
+          "input": 0.566666666,
+          "derived": 0.5799999997
+        },
+        "at": {
+          "input": 0.566666667,
+          "derived": 0.5800000001500001
+        },
+        "above": {
+          "input": 0.566666668,
+          "derived": 0.5800000005999999
+        }
+      }
+    },
+    {
+      "engine_id": "engine_d",
+      "threshold_name": "concentration_max",
+      "threshold_value": 0.64,
+      "threshold_unit": "score_0_to_1",
+      "tested_input_values": [
+        0.066666667,
+        0.066666666666,
+        0.066666665
+      ],
+      "derived_metric_name": "concentration_risk",
+      "derived_metric_values": [
+        0.6399999997999999,
+        0.6400000000004,
+        0.640000001
+      ],
+      "tested_values": [
+        0.6399999997999999,
+        0.6400000000004,
+        0.640000001
+      ],
+      "compared_value_kind": "RISK_SCORE",
+      "comparison_expression": "concentration_risk < 0.64",
+      "output_decision": [
+        "emit",
+        "no_trade",
+        "no_trade"
+      ],
+      "expected_decision": [
+        "emit",
+        "no_trade",
+        "no_trade"
+      ],
+      "pass": true,
+      "exact_operator_used": ">= blocks ; < survives",
+      "epsilon_behavior": {
+        "below": {
+          "input": 0.066666667,
+          "derived": 0.6399999997999999
+        },
+        "at": {
+          "input": 0.066666666666,
+          "derived": 0.6400000000004
+        },
+        "above": {
+          "input": 0.066666665,
+          "derived": 0.640000001
+        }
+      }
+    }
+  ]
+}

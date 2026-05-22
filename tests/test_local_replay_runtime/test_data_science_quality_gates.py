@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import json
 from pathlib import Path
 import shutil
@@ -29,10 +30,19 @@ def _scratch_dir(label: str) -> Path:
 
 def _write_jsonl(path: Path, rows: tuple[dict[str, object], ...]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        "\n".join(json.dumps(row) for row in rows) + "\n",
-        encoding="utf-8",
-    )
+    payload = "\n".join(json.dumps(row) for row in rows) + "\n"
+    if path.name.endswith(".jsonl.gz"):
+        with gzip.open(path, "wt", encoding="utf-8") as handle:
+            handle.write(payload)
+        return
+    path.write_text(payload, encoding="utf-8")
+
+
+def _read_jsonl_any(path: Path) -> list[dict[str, object]]:
+    if path.name.endswith(".jsonl.gz"):
+        with gzip.open(path, "rt", encoding="utf-8-sig") as handle:
+            return [json.loads(line) for line in handle if line.strip()]
+    return [json.loads(line) for line in path.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
 
 
 def test_quality_gates_report_ready_for_research_when_all_groups_are_declared_and_refs_are_present() -> None:
@@ -41,7 +51,7 @@ def test_quality_gates_report_ready_for_research_when_all_groups_are_declared_an
     try:
         gold_root = scratch / "gold"
         _write_jsonl(
-            gold_root / "features_1m" / "BTCUSDT" / "2025" / "04" / "29.jsonl",
+            gold_root / "features_1m" / "BTCUSDT" / "2025" / "04.jsonl.gz",
             (
                 {
                     "timestamp_ms": 1_745_884_800_000,
@@ -110,6 +120,7 @@ def test_quality_gates_report_ready_for_research_when_all_groups_are_declared_an
         )
         runtime_parity_manifest = build_runtime_feature_parity_manifest(
             gold_manifest=gold_manifest,
+            expected_edge_manifest=expected_edge_manifest,
             source_silver_index_ref=str((scratch / "silver_index.json").resolve()),
         )
         write_quality_reports(
@@ -137,6 +148,8 @@ def test_quality_gates_report_ready_for_research_when_all_groups_are_declared_an
             backtest_manifest=backtest_manifest,
         )
         assert expected_edge_manifest.status == "EXPECTED_EDGE_FEATURE_DATASET_READY"
+        assert "spread_bps" in expected_edge_manifest.feature_names
+        assert "book_depth_levels" in expected_edge_manifest.feature_names
         assert quality_report.status == "DATA_SCIENCE_READY_FOR_RESEARCH"
         assert quality_report.feature_timestamp_aligned == "FEATURE_TIMESTAMP_ALIGNED"
         assert quality_report.source_refs_non_empty == "SOURCE_REFS_NON_EMPTY"
@@ -146,5 +159,7 @@ def test_quality_gates_report_ready_for_research_when_all_groups_are_declared_an
         assert (scratch / "runtime_feature_parity_manifest.json").is_file()
         assert (scratch / "raw_data_processing_report.md").is_file()
         assert (scratch / "raw_data_processing_report.json").is_file()
+        parity_payload = json.loads((scratch / "runtime_feature_parity_manifest.json").read_text(encoding="utf-8"))
+        assert parity_payload["status"] == "RUNTIME_PARITY_SCHEMA_MATCH_READY"
     finally:
         shutil.rmtree(scratch, ignore_errors=True)

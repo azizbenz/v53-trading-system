@@ -40,6 +40,7 @@ from cockpit.backtest_preflight import (
     build_patch6_preflight_preview,
     infer_pair_symbol_from_path,
     infer_pair_universe_from_paths,
+    resolve_phase_b1_replay_input_candidates_path,
 )
 from cockpit.backtest_state_support import (
     BacktestPreviewManifest,
@@ -57,6 +58,7 @@ from cockpit.backtest_state_support import (
 from cockpit.form_state_support import (
     BacktestFormState,
     LabMlHandoffFormState,
+    read_lab_ml_handoff_form_state,
     read_backtest_form_state,
     write_lab_ml_handoff_form_state,
     write_backtest_form_state,
@@ -72,6 +74,9 @@ from cockpit.strategy_ladder_workflow_support import (
     workflow_phase_dirname,
 )
 from cockpit.runtime_support import read_runtime_surfaces
+from cockpit.strategy_ladder_ml_handoff_support import (
+    read_strategy_ladder_ml_handoff_dashboard_summary,
+)
 from cockpit.state import (
     CockpitPaths,
     build_dashboard_view_model,
@@ -172,6 +177,7 @@ def _adopt_launch_state_into_form(
             "start": launch_state.start,
             "end": launch_state.end,
             "ml_mode": launch_state.ml_mode,
+            "ml_handoff_run_root": "",
             "allow_broad_run": _checkbox_text(bool(launch_state.allow_broad_run)),
             "candidate_discovery_mode": launch_state.candidate_discovery_mode,
             "engine_native_sample_size": max(
@@ -226,7 +232,20 @@ def _build_lab_ml_handoff_form_state(
     shap_summary_ref: str,
     signed_by: str,
     intent: str,
+    selected_pairs: list[str] | tuple[str, ...] | None = None,
 ) -> LabMlHandoffFormState:
+    # Patch P2 — normalize multi-select : strip, upper, dedup (preserve order).
+    normalized_selected: tuple[str, ...] = ()
+    if selected_pairs:
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for raw_name in selected_pairs:
+            cleaned = (raw_name or "").strip().upper()
+            if not cleaned or cleaned in seen:
+                continue
+            seen.add(cleaned)
+            ordered.append(cleaned)
+        normalized_selected = tuple(ordered)
     return LabMlHandoffFormState(
         kline_root=(kline_root or "").strip(),
         b2_run_root=(b2_run_root or "").strip(),
@@ -235,6 +254,7 @@ def _build_lab_ml_handoff_form_state(
         metadata_root=(metadata_root or "").strip(),
         handoff_export_dir=(handoff_export_dir or "").strip(),
         pair=(pair or "BTCUSDT").strip().upper() or "BTCUSDT",
+        selected_pairs=normalized_selected,
         timeframe=(timeframe or "1m").strip() or "1m",
         train_start=(train_start or "").strip(),
         train_end=(train_end or "").strip(),
@@ -270,21 +290,43 @@ def _sync_lab_handoff_into_backtest_form(
         or current_form.export_dir
         or lab_form.kline_root
     )
+    preserved_output_root = (current_form.output_root or "").strip()
+    lab_export_root = (lab_form.handoff_export_dir or "").strip()
+    if preserved_output_root and lab_export_root:
+        try:
+            preserved_path = Path(preserved_output_root).expanduser().resolve(strict=False)
+            lab_export_path = Path(lab_export_root).expanduser().resolve(strict=False)
+        except OSError:
+            preserved_path = None
+            lab_export_path = None
+        if preserved_path is not None and lab_export_path is not None and preserved_path == lab_export_path:
+            preserved_output_root = ""
+    # Patch P2 — propagate multi-select if admin selected ≥1 paires explicitly,
+    # otherwise fall back to mono `pair` for backward-compat.
+    propagated_pairs: tuple[str, ...]
+    if lab_form.selected_pairs:
+        propagated_pairs = lab_form.selected_pairs
+    elif lab_form.pair:
+        propagated_pairs = (lab_form.pair,)
+    else:
+        propagated_pairs = ()
     return current_form.model_copy(
         update={
             "action_name": StrategyLadderControlAction.PHASE_A1_PREVIEW.value,
             "phase_id": PHASE_A1,
             "workflow_phase": PHASE_A1,
             "export_dir": preview_export_dir,
-            "pairs": ((lab_form.pair,) if lab_form.pair else ()),
+            "pairs": propagated_pairs,
             "start": lab_form.train_start,
             "end": lab_form.train_end,
             "ml_mode": "ML_MODE_OFF",
+            "ml_handoff_run_root": "",
             "orderbook_path": lab_form.orderbook_root,
             "klines_path": lab_form.kline_root,
             "trades_path": lab_form.trades_root,
             "metadata_path": lab_form.metadata_root,
-            "output_root": lab_form.handoff_export_dir,
+            # Keep IA Lab export roots isolated from backtest workflow roots.
+            "output_root": preserved_output_root,
         }
     )
 
@@ -819,6 +861,33 @@ def create_app(
         }
         return JSONResponse(content=_jsonable(payload))
 
+    @app.get("/lab/status.json")
+    def lab_status_snapshot() -> JSONResponse:
+        jobs_root = app.state.paths.backtest_jobs_root
+        backtest_jobs = (
+            load_backtest_job_records(jobs_root, limit=24)
+            if jobs_root is not None
+            else ()
+        )
+        ml_jobs = tuple(
+            job
+            for job in backtest_jobs
+            if job.job_kind == CockpitBacktestJobKind.STRATEGY_LADDER_ML_LAB_HANDOFF
+        )
+        latest_job = ml_jobs[0] if ml_jobs else None
+        handoff = read_strategy_ladder_ml_handoff_dashboard_summary(
+            backtest_jobs,
+            form_state=read_lab_ml_handoff_form_state(jobs_root),
+        )
+        payload = {
+            "generated_at": datetime.now(UTC),
+            "summary": _build_backtest_status_summary(ml_jobs),
+            "latest_job": _serialize_backtest_job(latest_job),
+            "ml_jobs": [_serialize_backtest_job(record) for record in ml_jobs[:8]],
+            "handoff": handoff,
+        }
+        return JSONResponse(content=_jsonable(payload))
+
     @app.get("/backtest/candidate-detail.json")
     def backtest_candidate_detail(candidate_id: str = "") -> JSONResponse:
         selected_candidate_id = candidate_id.strip()
@@ -979,6 +1048,8 @@ def create_app(
         metadata_root: str = Form(""),
         handoff_export_dir: str = Form(""),
         pair: str = Form("BTCUSDT"),
+        # Patch P2 (2026-05-22) — multi-select. Empty list → mono `pair` fallback.
+        selected_pairs: list[str] = Form(default=[]),
         timeframe: str = Form("1m"),
         train_start: str = Form(...),
         train_end: str = Form(...),
@@ -1013,6 +1084,7 @@ def create_app(
             metadata_root=metadata_root,
             handoff_export_dir=handoff_export_dir,
             pair=pair,
+            selected_pairs=selected_pairs,
             timeframe=timeframe,
             train_start=train_start,
             train_end=train_end,
@@ -1171,7 +1243,16 @@ def create_app(
         silver_storage_mode: str = Form("jsonl_debug"),
         debug_storage_override: str = Form(""),
         ml_mode: str = Form("ML_MODE_OFF"),
+        # Patch P3 (2026-05-22) — explicit mono|multi mode selector.
+        expected_edge_artifact_mode: str = Form("MONO_PAIR_LEGACY"),
+        ml_handoff_run_root: str = Form(""),
+        frozen_ml_artifact_path: str = Form(""),
+        frozen_ml_artifact_hash: str = Form(""),
+        rolling_ml_window_plan_path: str = Form(""),
+        ml_artifact_freshness_days: int = Form(30),
         signed_by: str = Form("cockpit_operator"),
+        # Patch P3 (2026-05-22) — multi-select pair checkbox (overrides CSV `pairs`).
+        selected_pairs: list[str] = Form(default=[]),
     ) -> RedirectResponse:
         jobs_root = app.state.paths.backtest_jobs_root
         if jobs_root is None:
@@ -1212,7 +1293,19 @@ def create_app(
                 raw_manifest_path = Path(manifest_raw).expanduser()
             else:
                 manifest_blocker = RAW_SOURCE_MANIFEST_INVALID_PATH_TYPE
-        raw_pair_tokens = [part.strip() for part in pairs.split(",") if part.strip()]
+        # Patch P3 (2026-05-22) — multi-select checkbox takes priority over CSV
+        # `pairs`. Strip / dedup / preserve order.
+        if selected_pairs:
+            seen_selected: set[str] = set()
+            raw_pair_tokens: list[str] = []
+            for raw_name in selected_pairs:
+                cleaned = (raw_name or "").strip()
+                if not cleaned or cleaned in seen_selected:
+                    continue
+                seen_selected.add(cleaned)
+                raw_pair_tokens.append(cleaned)
+        else:
+            raw_pair_tokens = [part.strip() for part in pairs.split(",") if part.strip()]
         rerouted_pair_tokens: list[str] = []
         for token in raw_pair_tokens:
             if is_path_like_pair_token(token):
@@ -1254,6 +1347,12 @@ def create_app(
             start=start,
             end=end,
             ml_mode=ml_mode,
+            expected_edge_artifact_mode=expected_edge_artifact_mode or "MONO_PAIR_LEGACY",
+            ml_handoff_run_root=ml_handoff_run_root,
+            frozen_ml_artifact_path=frozen_ml_artifact_path,
+            frozen_ml_artifact_hash=frozen_ml_artifact_hash,
+            rolling_ml_window_plan_path=rolling_ml_window_plan_path,
+            ml_artifact_freshness_days=max(int(ml_artifact_freshness_days), 1),
             allow_broad_run=allow_broad_run,
             confirm_broad_run=confirm_broad_run,
             candidate_discovery_mode=candidate_discovery_mode,
@@ -1395,8 +1494,6 @@ def create_app(
                 blocked_reason = manifest_blocker
             elif ambiguity_blocker:
                 blocked_reason = ambiguity_blocker
-            elif ml_mode != "ML_MODE_OFF":
-                blocked_reason = "ML_TRAINING_DISABLED_FOR_BASELINE"
             elif not preflight.preview_launchable and preflight.blockers:
                 blocked_reason = preflight.blockers[0]
             elif not preflight.preview_launchable:
@@ -1424,17 +1521,26 @@ def create_app(
                 else None
             )
             candidate_events_path = (
-                phase_b1_root
-                / "backtest_strategy_ladder"
-                / preflight.workflow_run_id
-                / "fast_candidates"
-                / "candidate_events.jsonl"
+                resolve_phase_b1_replay_input_candidates_path(
+                    workflow_root=workflow_root,
+                    workflow_run_id=preflight.workflow_run_id,
+                )
                 if parsed_action == StrategyLadderControlAction.PHASE_B2_DETAILED_REPLAY
                 else None
             )
             metadata_root_path = (
                 Path(preflight.normalized_request.historical_metadata_root).expanduser()
                 if preflight.normalized_request.historical_metadata_root
+                else None
+            )
+            frozen_ml_artifact_path_obj = (
+                Path(preflight.normalized_request.frozen_ml_artifact_path).expanduser()
+                if preflight.normalized_request.frozen_ml_artifact_path
+                else None
+            )
+            rolling_ml_window_plan_path_obj = (
+                Path(preflight.normalized_request.rolling_ml_window_plan_path).expanduser()
+                if preflight.normalized_request.rolling_ml_window_plan_path
                 else None
             )
             if metadata_root_path is not None and not preflight.command_preview and not blocked_reason:
@@ -1458,7 +1564,12 @@ def create_app(
                 end=preflight.normalized_request.end,
                 allow_broad_run=allow_broad,
                 blocked_reason=blocked_reason,
-                ml_mode_status="ML_MODE_OFF",
+                ml_mode_status=preflight.normalized_request.ml_mode,
+                frozen_ml_artifact_path=frozen_ml_artifact_path_obj,
+                frozen_ml_artifact_hash=preflight.normalized_request.frozen_ml_artifact_hash,
+                expected_edge_artifact_mode=expected_edge_artifact_mode,
+                rolling_ml_window_plan_path=rolling_ml_window_plan_path_obj,
+                ml_artifact_freshness_days=preflight.normalized_request.ml_artifact_freshness_days,
                 operator_output_root=operator_output_root,
                 engine_native_mode=(
                     parsed_job_kind
@@ -1787,6 +1898,7 @@ def _serialize_backtest_job(record: object | None) -> dict[str, object] | None:
         "output_ref_count": getattr(record, "output_ref_count", 0),
         "stdout_log_size_kb": getattr(record, "stdout_log_size_kb", 0.0),
         "stdout_log_path": getattr(record, "stdout_log_path", ""),
+        "output_root": getattr(record, "output_root", ""),
         "error_summary": getattr(record, "error_summary", ""),
         "blockers": list(getattr(record, "blockers", ()) or ()),
         "stage_statuses": getattr(record, "stage_statuses", {}) or {},

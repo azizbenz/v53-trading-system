@@ -52,6 +52,13 @@ _OVERALL_STATUSES: frozenset[str] = frozenset(
         "BACKTEST_PROOF_NOT_PROVEN",
     }
 )
+_RESEARCH_ONLY_BLOCKER_CODES: frozenset[str] = frozenset(
+    {
+        "RAW_SOURCE_TYPE_INFERRED",
+        "CURRENT_METADATA_PROXY",
+        "SINGLE_PAIR_RESEARCH_ONLY",
+    }
+)
 
 _MAX_DASHBOARD_ORDERBOOK_PATHS = 10
 
@@ -82,6 +89,8 @@ class BacktestProofMatrix(BaseModel, frozen=True):
 
     # Data Factory layer.
     data_factory_status: str = "NOT_PROVEN"
+    raw_source_provenance_status: str = "RAW_SOURCE_PROVENANCE_NOT_PROVEN"
+    raw_source_typing_status: str = "RAW_SOURCE_TYPE_NOT_PROVEN"
     silver_index_status: str = "NOT_PROVEN"
     gold_feature_store_status: str = "NOT_PROVEN"
     trade_schema_status: str = "NOT_PROVEN"
@@ -95,6 +104,7 @@ class BacktestProofMatrix(BaseModel, frozen=True):
     missing_metadata_pairs: tuple[str, ...] = ()
     metadata_temporal_status: str = "METADATA_TEMPORAL_NOT_PROVEN"
     metadata_fetched_at_utc: str = ""
+    metadata_temporal_drift_days: float | None = None
 
     # Patch 6 batch 1 — Orderbook snapshot/delta/recon/depth20 separation.
     orderbook_snapshot_status: str = "ORDERBOOK_SNAPSHOT_NOT_PROVEN"
@@ -232,6 +242,14 @@ def _int_field(payload: dict[str, object], key: str, default: int = 0) -> int:
         return int(payload.get(key) or default)
     except (TypeError, ValueError):
         return default
+
+
+def _float_field(payload: dict[str, object], key: str) -> float | None:
+    try:
+        raw = payload.get(key)
+        return float(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _merged_string_field(
@@ -591,6 +609,20 @@ def build_backtest_proof_matrix(
         "historical_metadata_status",
         "BYBIT_HISTORICAL_METADATA_NOT_PROVEN",
     )
+    raw_source_provenance_status = _str_field(
+        manifest_payload,
+        "raw_source_provenance_status",
+        "RAW_SOURCE_PROVENANCE_NOT_PROVEN",
+    )
+    raw_source_typing_status = _str_field(
+        manifest_payload,
+        "raw_source_typing_status",
+        _str_field(
+            quality_payload,
+            "raw_source_typing_status",
+            "RAW_SOURCE_TYPE_NOT_PROVEN",
+        ),
+    )
     historical_metadata_metric_status = _classify_data_metric(
         historical_metadata_status,
         ready_token="BYBIT_HISTORICAL_METADATA_READY",
@@ -618,6 +650,10 @@ def build_backtest_proof_matrix(
     )
     silver_storage_status = _str_field(
         quality_payload, "silver_storage_status", "SILVER_STORAGE_NOT_PROVEN"
+    )
+    metadata_temporal_drift_days = _float_field(
+        quality_payload,
+        "metadata_temporal_drift_days",
     )
     compression_payload = _read_json(output_root / "compression_report.json")
     silver_bloat_ratio_raw = compression_payload.get("silver_bloat_ratio")
@@ -1200,8 +1236,16 @@ def build_backtest_proof_matrix(
             metric_gaps.append(entry)
 
     # --- Overall roll-up -------------------------------------------------------
-    if deduped_blockers:
+    research_only_blockers = tuple(
+        code for code in deduped_blockers if code in _RESEARCH_ONLY_BLOCKER_CODES
+    )
+    hard_blockers = tuple(
+        code for code in deduped_blockers if code not in _RESEARCH_ONLY_BLOCKER_CODES
+    )
+    if hard_blockers:
         overall = "BACKTEST_PROOF_BLOCKED"
+    elif research_only_blockers:
+        overall = "BACKTEST_PROOF_RESEARCH_ONLY"
     elif executed_only_economics_status == "READY" and engine_promotion_status == "READY":
         overall = "BACKTEST_PROOF_READY"
     elif data_factory_status == "READY" and (
@@ -1226,6 +1270,8 @@ def build_backtest_proof_matrix(
         ml_mode=ml_mode,
         output_root=str(output_root.resolve()),
         data_factory_status=data_factory_status,
+        raw_source_provenance_status=raw_source_provenance_status,
+        raw_source_typing_status=raw_source_typing_status,
         silver_index_status=silver_index_status,
         gold_feature_store_status=gold_feature_store_status,
         trade_schema_status=trade_schema_status,
@@ -1239,6 +1285,7 @@ def build_backtest_proof_matrix(
         missing_metadata_pairs=missing_metadata_pairs,
         metadata_temporal_status=metadata_temporal_status,
         metadata_fetched_at_utc=metadata_fetched_at_utc,
+        metadata_temporal_drift_days=metadata_temporal_drift_days,
         # Patch 6 batch 1 — orderbook snapshot/delta separation.
         orderbook_snapshot_status=orderbook_summary["snapshot_status"],
         orderbook_delta_status=orderbook_summary["delta_status"],

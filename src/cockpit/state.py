@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -517,6 +517,14 @@ class DashboardViewModel:
     model_risk: ModelRiskRegisterSnapshot
     refusal_journal: RefusalJournalSnapshot
     operational_proof: "OperationalProofSnapshot"
+    # Patch P2 (2026-05-22) — capability discovery for the IA Lab multi-pair UI.
+    # Empty tuple when no kline_root yet ; template falls back to mono input.
+    # Element type is `local_replay_runtime.pair_capability_discovery.PairCapability`
+    # (kept as object to avoid a top-level cockpit/state import cycle risk).
+    lab_discovered_pair_capabilities: tuple[object, ...] = field(default_factory=tuple)
+    # Patch P3 (2026-05-22) — same surface for the Backtest page (paths come from
+    # BacktestFormState.{klines_path,trades_path,orderbook_path}).
+    backtest_discovered_pair_capabilities: tuple[object, ...] = field(default_factory=tuple)
 
 
 class OperationalProofSnapshot(BaseModel, frozen=True):
@@ -698,7 +706,10 @@ def _align_preview_context_with_current_form(
     normalized_request, _ = canonicalize_workflow_identity(
         build_patch6_normalized_request(selected_form)
     )
-    current_workflow_run_id = normalized_request.workflow_run_id
+    current_workflow_run_id = (
+        (selected_form.workflow_run_id or "").strip()
+        or normalized_request.workflow_run_id
+    )
     preview_workflow_run_id = ""
     if source_preview_state is not None and source_preview_state.workflow_run_id:
         preview_workflow_run_id = source_preview_state.workflow_run_id
@@ -831,12 +842,34 @@ def build_dashboard_view_model(
     )
     selected_form = read_backtest_form_state(paths.backtest_jobs_root)
     lab_ml_handoff_form = read_lab_ml_handoff_form_state(paths.backtest_jobs_root)
+    # Patch P2/P3 (2026-05-22) — discover pairs from filesystem for both Lab + Backtest UI.
+    from cockpit.strategy_ladder_ml_handoff_support import (
+        discover_backtest_pair_capabilities,
+        discover_lab_pair_capabilities,
+    )
+    lab_discovered_pair_capabilities = discover_lab_pair_capabilities(lab_ml_handoff_form)
+    backtest_discovered_pair_capabilities = discover_backtest_pair_capabilities(selected_form)
+    current_form_state = read_current_form_state(paths.backtest_jobs_root)
     source_preview_state = read_source_preview_state(paths.backtest_jobs_root)
     preview_manifest = (
         read_preview_manifest(paths.backtest_jobs_root, source_preview_state.preview_id)
         if source_preview_state is not None and source_preview_state.preview_id
         else None
     )
+    if (
+        source_preview_state is None
+        and preview_manifest is None
+        and current_form_state is not None
+        and current_form_state.preview_id
+    ):
+        preview_manifest = read_preview_manifest(
+            paths.backtest_jobs_root,
+            current_form_state.preview_id,
+        )
+        if preview_manifest is not None:
+            source_preview_state = current_form_state.model_copy(
+                update={"state_name": "source_preview_state"},
+            )
     source_preview_state, preview_manifest = _align_preview_context_with_current_form(
         selected_form=selected_form,
         source_preview_state=source_preview_state,
@@ -846,7 +879,6 @@ def build_dashboard_view_model(
         selected_form=selected_form,
         preview_manifest=preview_manifest,
     )
-    current_form_state = read_current_form_state(paths.backtest_jobs_root)
     if current_form_state is None:
         current_form_state = _build_ephemeral_current_form_state(
             selected_form,
@@ -997,6 +1029,8 @@ def build_dashboard_view_model(
         runtime=runtime,
         selected_form=selected_form,
         lab_ml_handoff_form=lab_ml_handoff_form,
+        lab_discovered_pair_capabilities=lab_discovered_pair_capabilities,
+        backtest_discovered_pair_capabilities=backtest_discovered_pair_capabilities,
         backtest_preflight=backtest_preflight,
         current_form_state=current_form_state,
         source_preview_state=source_preview_state,

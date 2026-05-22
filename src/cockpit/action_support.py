@@ -388,6 +388,10 @@ class CockpitBacktestJobRecord(BaseModel, frozen=True):
     stage_summary_path: str = ""
     allow_broad_run: bool = False
     ml_mode_status: str = "ML_MODE_OFF"
+    frozen_ml_artifact_path: str = ""
+    frozen_ml_artifact_hash: str = ""
+    rolling_ml_window_plan_path: str = ""
+    ml_artifact_freshness_days: int = 30
     candidate_discovery_mode: str = "SAMPLE_CAPPED_DEBUG"
     engine_native_sample_size: int = _DEFAULT_ENGINE_NATIVE_SAMPLE_SIZE
     b1_5_policy_mode: str = "conservative_hard_only"
@@ -601,6 +605,11 @@ def launch_backtest_job(
     allow_broad_run: bool = False,
     blocked_reason: str = "",
     ml_mode_status: str = "ML_MODE_OFF",
+    frozen_ml_artifact_path: Path | None = None,
+    frozen_ml_artifact_hash: str = "",
+    expected_edge_artifact_mode: str = "MONO_PAIR_LEGACY",
+    rolling_ml_window_plan_path: Path | None = None,
+    ml_artifact_freshness_days: int = 30,
     operator_output_root: str = "",
     engine_native_mode: bool = False,
     engine_native_sample_size: int = _DEFAULT_ENGINE_NATIVE_SAMPLE_SIZE,
@@ -740,6 +749,11 @@ def launch_backtest_job(
             end=end,
             allow_broad_run=allow_broad_run,
             ml_mode_status=ml_mode_status,
+            frozen_ml_artifact_path=frozen_ml_artifact_path,
+            frozen_ml_artifact_hash=frozen_ml_artifact_hash,
+            expected_edge_artifact_mode=expected_edge_artifact_mode,
+            rolling_ml_window_plan_path=rolling_ml_window_plan_path,
+            ml_artifact_freshness_days=ml_artifact_freshness_days,
             engine_native_mode=engine_native_mode,
             engine_native_sample_size=engine_native_sample_size,
             candidate_discovery_mode=candidate_discovery_mode,
@@ -856,6 +870,18 @@ def launch_backtest_job(
         ),
         allow_broad_run=allow_broad_run,
         ml_mode_status=ml_mode_status,
+        frozen_ml_artifact_path=(
+            str(frozen_ml_artifact_path.resolve())
+            if frozen_ml_artifact_path is not None
+            else ""
+        ),
+        frozen_ml_artifact_hash=frozen_ml_artifact_hash,
+        rolling_ml_window_plan_path=(
+            str(rolling_ml_window_plan_path.resolve())
+            if rolling_ml_window_plan_path is not None
+            else ""
+        ),
+        ml_artifact_freshness_days=max(int(ml_artifact_freshness_days), 1),
         candidate_discovery_mode=candidate_discovery_mode,
         engine_native_sample_size=engine_native_sample_size,
         b1_5_policy_mode=b1_5_policy_mode,
@@ -920,6 +946,10 @@ def launch_backtest_job(
         end=end,
         engine_native_mode=engine_native_mode,
         engine_native_sample_size=engine_native_sample_size,
+        frozen_ml_artifact_path=frozen_ml_artifact_path,
+        frozen_ml_artifact_hash=frozen_ml_artifact_hash,
+        rolling_ml_window_plan_path=rolling_ml_window_plan_path,
+        ml_artifact_freshness_days=ml_artifact_freshness_days,
         b1_5_policy_mode=b1_5_policy_mode,
         preselected_only=preselected_only,
         diagnostic_full_replay=diagnostic_full_replay,
@@ -1057,6 +1087,11 @@ def _build_backtest_command(
     end: str,
     allow_broad_run: bool,
     ml_mode_status: str,
+    frozen_ml_artifact_path: Path | None,
+    frozen_ml_artifact_hash: str,
+    expected_edge_artifact_mode: str = "MONO_PAIR_LEGACY",
+    rolling_ml_window_plan_path: Path | None,
+    ml_artifact_freshness_days: int,
     engine_native_mode: bool,
     engine_native_sample_size: int,
     candidate_discovery_mode: str = "SAMPLE_CAPPED_DEBUG",
@@ -1216,6 +1251,33 @@ def _build_backtest_command(
             "--b1-5-policy-mode",
             b1_5_policy_mode,
         ]
+        if ml_mode_status == "ML_MODE_OVERLAY_FROZEN":
+            if frozen_ml_artifact_path is not None:
+                command.extend(
+                    ["--frozen-ml-artifact-path", str(frozen_ml_artifact_path.resolve())]
+                )
+            if frozen_ml_artifact_hash:
+                command.extend(["--frozen-ml-artifact-hash", frozen_ml_artifact_hash])
+            if rolling_ml_window_plan_path is not None:
+                command.extend(
+                    [
+                        "--rolling-ml-window-plan-path",
+                        str(rolling_ml_window_plan_path.resolve()),
+                    ]
+                )
+            command.extend(
+                [
+                    "--ml-artifact-freshness-days",
+                    str(max(int(ml_artifact_freshness_days), 1)),
+                ]
+            )
+            # Patch P3 (2026-05-22) — always emit explicit mode (default safe).
+            command.extend(
+                [
+                    "--expected-edge-artifact-mode",
+                    expected_edge_artifact_mode or "MONO_PAIR_LEGACY",
+                ]
+            )
         if preselected_only and not diagnostic_full_replay:
             command.append("--preselected-only")
         if diagnostic_full_replay:
@@ -1315,6 +1377,13 @@ def _build_backtest_command(
             "--silver-storage-mode",
             silver_storage_mode,
         ]
+        if ml_mode_status == "ML_MODE_OVERLAY_FROZEN":
+            if frozen_ml_artifact_path is not None:
+                command.extend(
+                    ["--frozen-ml-artifact-path", str(frozen_ml_artifact_path.resolve())]
+                )
+            if frozen_ml_artifact_hash:
+                command.extend(["--frozen-ml-artifact-hash", frozen_ml_artifact_hash])
         if small_scope_enabled:
             command.append("--small-scope")
         if no_full_scan_enabled:
@@ -1645,6 +1714,49 @@ def _read_json_payload(path: Path) -> dict[str, object]:
     return payload if isinstance(payload, dict) else {}
 
 
+_A2_RESEARCH_ACCEPTABLE_BLOCKERS: frozenset[str] = frozenset(
+    {
+        "RAW_SOURCE_TYPE_INFERRED",
+        "CURRENT_METADATA_PROXY",
+        "SINGLE_PAIR_RESEARCH_ONLY",
+        "SILVER_STORAGE_AUTO_COMPRESSED_FOR_BROAD_RUN",
+        "BRONZE_GAPS_TOLERATED_RESEARCH_GRADE",
+    }
+)
+
+
+def is_a2_research_acceptable_blocker(blocker_code: str) -> bool:
+    code = str(blocker_code or "").strip()
+    if not code:
+        return False
+    if code in _A2_RESEARCH_ACCEPTABLE_BLOCKERS:
+        return True
+    if code.startswith("OHLCV_") and code.endswith("_PARTIAL_DAY_ACCEPTED"):
+        return True
+    if code.startswith("BRONZE_GAP_") and code.endswith("_PROMOTION_TOLERANCE"):
+        return True
+    return False
+
+
+def _resolve_a2_phase_status_from_manifest(output_root: Path) -> str:
+    payload = _read_json_payload(output_root / "data_factory_manifest.json")
+    if not payload:
+        return ""
+    status = str(payload.get("data_factory_status") or "").strip()
+    blockers = tuple(
+        str(item).strip()
+        for item in (payload.get("blocker_codes") or ())
+        if str(item).strip()
+    )
+    if status.startswith("DATA_FACTORY_BLOCKED_BY") or status == "DATA_FACTORY_BLOCKED":
+        return PHASE_STATUS_DATA_FACTORY_BLOCKED
+    if blockers and any(not is_a2_research_acceptable_blocker(code) for code in blockers):
+        return PHASE_STATUS_DATA_FACTORY_BLOCKED
+    if status in {"DATA_FACTORY_READY", "DATA_FACTORY_PARTIAL"}:
+        return PHASE_STATUS_DATA_FACTORY_READY
+    return ""
+
+
 def _harvest_pair_universe_blockers(report_path: Path) -> tuple[str, ...]:
     payload = _read_json_payload(report_path)
     if not payload:
@@ -1730,6 +1842,12 @@ def _collect_output_refs(output_root: Path) -> tuple[str, ...]:
         output_root / "first_run_stage_summary.json",
         output_root / "raw_window_failure_report.json",
         output_root / "pair_universe_report.json",
+        output_root / "strategy_ladder_ml_lab_handoff_report.json",
+        output_root / "strategy_ladder_backtest_ml_input.json",
+        output_root / "strategy_ladder_expected_edge_ml_model_artifact.json",
+        output_root / "strategy_ladder_expected_edge_ml_model_artifact.summary.json",
+        output_root / "rolling_ml_window_plan.json",
+        output_root / "rolling_ml_window_plan.md",
     )
     for path in preferred_paths:
         if path.is_file():
@@ -1778,6 +1896,10 @@ def _write_patch6_job_request(
     end: str,
     engine_native_mode: bool,
     engine_native_sample_size: int,
+    frozen_ml_artifact_path: Path | None,
+    frozen_ml_artifact_hash: str,
+    rolling_ml_window_plan_path: Path | None,
+    ml_artifact_freshness_days: int,
     b1_5_policy_mode: str,
     preselected_only: bool,
     diagnostic_full_replay: bool,
@@ -1824,6 +1946,18 @@ def _write_patch6_job_request(
             "end": end,
             "engine_native_mode": engine_native_mode,
             "engine_native_sample_size": engine_native_sample_size,
+            "frozen_ml_artifact_path": (
+                str(frozen_ml_artifact_path.resolve())
+                if frozen_ml_artifact_path is not None
+                else ""
+            ),
+            "frozen_ml_artifact_hash": frozen_ml_artifact_hash,
+            "rolling_ml_window_plan_path": (
+                str(rolling_ml_window_plan_path.resolve())
+                if rolling_ml_window_plan_path is not None
+                else ""
+            ),
+            "ml_artifact_freshness_days": max(int(ml_artifact_freshness_days), 1),
             "b1_5_policy_mode": b1_5_policy_mode,
             "preselected_only": preselected_only,
             "diagnostic_full_replay": diagnostic_full_replay,
@@ -1848,6 +1982,10 @@ def _write_patch6_job_request(
                 else ""
             ),
             "ml_mode_status": record.ml_mode_status,
+            "frozen_ml_artifact_path": record.frozen_ml_artifact_path,
+            "frozen_ml_artifact_hash": record.frozen_ml_artifact_hash,
+            "rolling_ml_window_plan_path": record.rolling_ml_window_plan_path,
+            "ml_artifact_freshness_days": record.ml_artifact_freshness_days,
             "allow_broad_run": record.allow_broad_run,
             "candidate_discovery_mode": record.candidate_discovery_mode,
             "engine_native_sample_size": record.engine_native_sample_size,
@@ -1891,6 +2029,10 @@ def _write_patch6_job_status(path: Path, record: CockpitBacktestJobRecord) -> No
             "log_path": record.stdout_log_path,
             "stage_summary_path": record.stage_summary_path,
             "ml_mode_status": record.ml_mode_status,
+            "frozen_ml_artifact_path": record.frozen_ml_artifact_path,
+            "frozen_ml_artifact_hash": record.frozen_ml_artifact_hash,
+            "rolling_ml_window_plan_path": record.rolling_ml_window_plan_path,
+            "ml_artifact_freshness_days": record.ml_artifact_freshness_days,
             "allow_broad_run": record.allow_broad_run,
             "candidate_discovery_mode": record.candidate_discovery_mode,
             "engine_native_sample_size": record.engine_native_sample_size,
@@ -1960,6 +2102,14 @@ def _phase_status_from_finished_record(record: CockpitBacktestJobRecord) -> str:
     if record.phase_id == PHASE_A2:
         if "SILVER_STORAGE_BLOAT_BLOCKER" in record.blockers:
             return PHASE_STATUS_STORAGE_BLOCKED
+        output_root = Path(record.output_root) if record.output_root else Path()
+        manifest_phase_status = _resolve_a2_phase_status_from_manifest(output_root)
+        if manifest_phase_status:
+            return manifest_phase_status
+        if record.blockers and any(
+            not is_a2_research_acceptable_blocker(code) for code in record.blockers
+        ):
+            return PHASE_STATUS_DATA_FACTORY_BLOCKED
         if record.status.value in {"JOB_COMPLETED", "JOB_COMPLETED_WITH_BLOCKERS"}:
             return PHASE_STATUS_DATA_FACTORY_READY
         return PHASE_STATUS_DATA_FACTORY_BLOCKED
@@ -2086,6 +2236,8 @@ def _reconcile_stale_job_record(
                 for value in inventory_refs.values()
                 if isinstance(value, str) and value.strip()
             )
+    if not output_refs and output_root.is_dir():
+        output_refs = _collect_output_refs(output_root)
     reconciled = record.model_copy(
         update={
             "status": final_status,
@@ -2140,6 +2292,7 @@ __all__ = [
     "infer_pair_symbol_from_path",
     "infer_pair_universe_from_paths",
     "is_path_like_pair_token",
+    "is_a2_research_acceptable_blocker",
     "is_valid_raw_source_manifest_path",
     "launch_backtest_job",
     "request_job_cancel",

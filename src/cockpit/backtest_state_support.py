@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from uuid import uuid4
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -71,6 +72,10 @@ class Patch6NormalizedRequest(BaseModel, frozen=True):
     workflow_run_id: str = ""
     dry_run: bool = True
     ml_mode: str = "ML_MODE_OFF"
+    frozen_ml_artifact_path: str = ""
+    frozen_ml_artifact_hash: str = ""
+    rolling_ml_window_plan_path: str = ""
+    ml_artifact_freshness_days: int = 30
     candidate_discovery_mode: str = "SAMPLE_CAPPED_DEBUG"
     engine_native_sample_size: int = 10
     b1_5_policy_mode: str = "conservative_hard_only"
@@ -118,6 +123,10 @@ class CockpitPatch6State(BaseModel, frozen=True):
     output_root_effective: str = ""
     dry_run: bool = True
     ml_mode: str = "ML_MODE_OFF"
+    frozen_ml_artifact_path: str = ""
+    frozen_ml_artifact_hash: str = ""
+    rolling_ml_window_plan_path: str = ""
+    ml_artifact_freshness_days: int = 30
     candidate_discovery_mode: str = "SAMPLE_CAPPED_DEBUG"
     engine_native_sample_size: int = 10
     b1_5_policy_mode: str = "conservative_hard_only"
@@ -299,6 +308,8 @@ def build_patch6_normalized_request(
     derived_full_scan = explicit_full_scan or candidate_discovery_mode in {
         "BROAD_DIAGNOSTIC",
         "FULL_DISCOVERY",
+        "TEMPORAL_STRATIFIED",
+        "TEMPORAL_STRATIFIED_SAMPLE_BUDGET",
     }
     if allow_broad_run and not str(state.full_scan_enabled or "").strip():
         derived_full_scan = True
@@ -309,6 +320,10 @@ def build_patch6_normalized_request(
         workflow_run_id=(state.workflow_run_id or "").strip(),
         dry_run=phase_id == PHASE_A1,
         ml_mode=(state.ml_mode or "ML_MODE_OFF").strip() or "ML_MODE_OFF",
+        frozen_ml_artifact_path=(state.frozen_ml_artifact_path or "").strip(),
+        frozen_ml_artifact_hash=(state.frozen_ml_artifact_hash or "").strip(),
+        rolling_ml_window_plan_path=(state.rolling_ml_window_plan_path or "").strip(),
+        ml_artifact_freshness_days=max(int(state.ml_artifact_freshness_days or 30), 1),
         candidate_discovery_mode=candidate_discovery_mode,
         engine_native_sample_size=max(int(state.engine_native_sample_size or 10), 0),
         b1_5_policy_mode=requested_policy_mode,
@@ -358,6 +373,12 @@ def workflow_request_hash_for_normalized_request(request: Patch6NormalizedReques
         "raw_source_manifest_path": _canonical_hash_path(request.raw_source_manifest_path),
         "output_root_selected": _canonical_hash_path(request.output_root_selected),
         "ml_mode": request.ml_mode,
+        "frozen_ml_artifact_path": _canonical_hash_path(request.frozen_ml_artifact_path),
+        "frozen_ml_artifact_hash": request.frozen_ml_artifact_hash,
+        "rolling_ml_window_plan_path": _canonical_hash_path(
+            request.rolling_ml_window_plan_path
+        ),
+        "ml_artifact_freshness_days": request.ml_artifact_freshness_days,
         "candidate_discovery_mode": request.candidate_discovery_mode,
         "engine_native_sample_size": request.engine_native_sample_size,
         "b1_5_policy_mode": request.b1_5_policy_mode,
@@ -374,11 +395,34 @@ def workflow_request_hash_for_normalized_request(request: Patch6NormalizedReques
     return hashlib.sha256(encoded).hexdigest()
 
 
+def workflow_parent_hash_for_normalized_request(request: Patch6NormalizedRequest) -> str:
+    payload = {
+        "pairs": request.pair_subset,
+        "start": request.start,
+        "end": request.end,
+        "orderbook_root": _canonical_hash_path(request.orderbook_root),
+        "trades_root": _canonical_hash_path(request.trades_root),
+        "klines_root": _canonical_hash_path(request.klines_root),
+        "historical_metadata_root": _canonical_hash_path(request.historical_metadata_root),
+        "raw_source_manifest_path": _canonical_hash_path(request.raw_source_manifest_path),
+        "output_root_selected": _canonical_hash_path(request.output_root_selected),
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def canonicalize_workflow_identity(
     request: Patch6NormalizedRequest,
+    *,
+    force_new_workflow: bool = False,
 ) -> tuple[Patch6NormalizedRequest, str]:
     workflow_request_hash = workflow_request_hash_for_normalized_request(request)
-    workflow_run_id = f"strategy_ladder_workflow-{workflow_request_hash[:16]}"
+    if force_new_workflow:
+        workflow_run_id = (
+            f"strategy_ladder_workflow-{workflow_request_hash[:8]}{uuid4().hex[:8]}"
+        )
+    else:
+        workflow_run_id = f"strategy_ladder_workflow-{workflow_request_hash[:16]}"
     if request.workflow_run_id == workflow_run_id:
         return request, workflow_request_hash
     return request.model_copy(update={"workflow_run_id": workflow_run_id}), workflow_request_hash
@@ -424,6 +468,10 @@ def build_patch6_state(
         output_root_effective=output_root_effective,
         dry_run=normalized_request.dry_run,
         ml_mode=normalized_request.ml_mode,
+        frozen_ml_artifact_path=normalized_request.frozen_ml_artifact_path,
+        frozen_ml_artifact_hash=normalized_request.frozen_ml_artifact_hash,
+        rolling_ml_window_plan_path=normalized_request.rolling_ml_window_plan_path,
+        ml_artifact_freshness_days=normalized_request.ml_artifact_freshness_days,
         candidate_discovery_mode=normalized_request.candidate_discovery_mode,
         engine_native_sample_size=normalized_request.engine_native_sample_size,
         b1_5_policy_mode=normalized_request.b1_5_policy_mode,
@@ -726,6 +774,7 @@ __all__ = [
     "read_preview_manifest",
     "read_source_preview_state",
     "request_hash_for_normalized_request",
+    "workflow_parent_hash_for_normalized_request",
     "workflow_request_hash_for_normalized_request",
     "write_current_form_state",
     "write_launch_request_state",

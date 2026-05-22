@@ -329,6 +329,32 @@ def test_classify_slippage_model_source_caller_override_is_canonical() -> None:
     )
 
 
+def test_classify_slippage_model_source_depth20_book_walk_is_canonical() -> None:
+    from local_replay_runtime.shadow_execution_simulator import (
+        _classify_slippage_model_source,
+    )
+    assert (
+        _classify_slippage_model_source(
+            slippage_provenance="MEASURED_FROM_DEPTH20_BOOK_WALK",
+            has_slippage_model=False,
+        )
+        == "CANONICAL_EXECUTION_BACKBONE"
+    )
+
+
+def test_classify_slippage_model_source_stale_depth20_is_audit_only() -> None:
+    from local_replay_runtime.shadow_execution_simulator import (
+        _classify_slippage_model_source,
+    )
+    assert (
+        _classify_slippage_model_source(
+            slippage_provenance="MEASURED_FROM_DEPTH20_BOOK_WALK_STALE",
+            has_slippage_model=False,
+        )
+        == "MEASURED_STALE_AUDIT_ONLY"
+    )
+
+
 def test_classify_slippage_model_source_default_falls_back_to_replay_proxy() -> None:
     """`DEFAULT_TO_CALIBRATE` (Kyle measurement echec ou non tente) +
     sans `config.slippage_model` → `REPLAY_PROXY`."""

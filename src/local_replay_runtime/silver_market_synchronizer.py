@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
 from interface_contracts.atomic_io import atomic_write_json
@@ -14,6 +15,69 @@ from local_replay_runtime.raw_data_processing_contracts import (
 from local_replay_runtime.strategy_ladder_data_factory_models import (
     StrategyLadderSilverIndexEntry,
 )
+
+
+# Patch F2 (2026-05-21) — Bronze gap severity classifier.
+# Remplace le check binaire `if gap_count > 0 → BRONZE_GAPS_PRESENT`
+# par une classification 3-tiers (TOLERANCE / RESEARCH_GRADE / BLOCKED).
+# Permet d'accepter des gaps mineurs (≤60s/jour boundary) en research-grade
+# tout en restant fail-closed sur les gaps massifs (>60s ou >10 total).
+@dataclass(frozen=True)
+class BronzeGapSeverityThresholds:
+    """Doctrinal thresholds for bronze gap severity classification.
+
+    Research-acceptable defaults : tolère jusqu'à 10 gaps totaux et 60s max
+    par gap individuel (boundaries jour entre fichiers raw consécutifs).
+    Promotion-acceptable defaults plus stricts : ≤2 gaps, ≤5s max.
+
+    Cohérence avec patch P1 OHLCV severity : research-grade flag explicit
+    + fail-closed pour les violations doctrinales.
+    """
+
+    research_max_gap_ms: int = 60_000  # 1 min max single gap (research OK)
+    research_max_total_gap_count: int = 10  # ≤10 gaps total
+    promotion_max_gap_ms: int = 5_000  # 5 sec max single gap (promotion strict)
+    promotion_max_total_gap_count: int = 2  # ≤2 gaps total
+
+
+def classify_bronze_gap_severity(
+    *,
+    gap_count: int,
+    largest_gap_ms: int,
+    thresholds: BronzeGapSeverityThresholds | None = None,
+) -> tuple[str, tuple[str, ...]]:
+    """Classify bronze gap severity into 3-tier taxonomy.
+
+    Returns (severity_status, blocker_codes_to_emit).
+
+    3 statuts possibles :
+    - BRONZE_GAPS_WITHIN_TOLERANCE : gap_count = 0 (aucun blocker)
+    - BRONZE_GAPS_TOLERATED_RESEARCH_GRADE : gaps mineurs, research-OK
+      mais promotion-blocked. Blockers : ..._EXCEEDS_PROMOTION_TOLERANCE.
+    - BRONZE_GAPS_BLOCKED : gaps trop importants pour research.
+      Blockers : ..._EXCEEDS_RESEARCH_TOLERANCE (hard fail-close).
+    """
+    cfg = thresholds or BronzeGapSeverityThresholds()
+    if gap_count <= 0:
+        return "BRONZE_GAPS_WITHIN_TOLERANCE", ()
+
+    research_blockers: list[str] = []
+    if largest_gap_ms > cfg.research_max_gap_ms:
+        research_blockers.append("BRONZE_GAP_LARGEST_EXCEEDS_RESEARCH_TOLERANCE")
+    if gap_count > cfg.research_max_total_gap_count:
+        research_blockers.append("BRONZE_GAP_COUNT_EXCEEDS_RESEARCH_TOLERANCE")
+    if research_blockers:
+        return "BRONZE_GAPS_BLOCKED", tuple(research_blockers)
+
+    promotion_blockers: list[str] = []
+    if largest_gap_ms > cfg.promotion_max_gap_ms:
+        promotion_blockers.append("BRONZE_GAP_LARGEST_EXCEEDS_PROMOTION_TOLERANCE")
+    if gap_count > cfg.promotion_max_total_gap_count:
+        promotion_blockers.append("BRONZE_GAP_COUNT_EXCEEDS_PROMOTION_TOLERANCE")
+    if promotion_blockers:
+        return "BRONZE_GAPS_TOLERATED_RESEARCH_GRADE", tuple(promotion_blockers)
+
+    return "BRONZE_GAPS_WITHIN_TOLERANCE", ()
 
 
 def _entry_status(entries: tuple[StrategyLadderSilverIndexEntry, ...], *, allowed_schema_prefix: str) -> str:
@@ -82,8 +146,17 @@ def build_silver_synchronized_market_manifest(
         blocker_codes.append("SILVER_MISSING_ORDERBOOK")
     if missing_ohlcv_count:
         blocker_codes.append("SILVER_MISSING_OHLCV")
-    if bronze_index.gap_count > 0:
-        blocker_codes.append("BRONZE_GAPS_PRESENT")
+    # Patch F2 (2026-05-21) — severity classifier remplace BRONZE_GAPS_PRESENT.
+    # Backward-compat doctrinal : si gaps > research_tolerance → BLOCKED
+    # (équivalent fail-close ancien comportement). Si gaps mineurs (≤10 total,
+    # ≤60s individuel) → TOLERATED_RESEARCH_GRADE avec blockers PROMOTION-only.
+    bronze_gap_severity_status, bronze_gap_severity_blockers = (
+        classify_bronze_gap_severity(
+            gap_count=bronze_index.gap_count,
+            largest_gap_ms=bronze_index.largest_gap_ms,
+        )
+    )
+    blocker_codes.extend(bronze_gap_severity_blockers)
     if bronze_index.index_status == "BRONZE_INDEX_BLOCKED_BY_SCHEMA":
         blocker_codes.append("BRONZE_SCHEMA_BLOCKER")
     silver_sync_status = "SILVER_SYNC_READY"
@@ -124,6 +197,14 @@ def build_silver_quality_report(
 ) -> dict[str, object]:
     """Build one compact quality report for operator diagnostics."""
 
+    # Patch F2 (2026-05-21) — re-compute severity for the operator report.
+    # Idempotent : reuses thresholds defaults, juste pour exposer le tier
+    # à l'audit (le status est aussi dérivable depuis blocker_codes mais
+    # exposé explicit pour scripts downstream).
+    bronze_gap_severity_status, _ = classify_bronze_gap_severity(
+        gap_count=bronze_index.gap_count,
+        largest_gap_ms=bronze_index.largest_gap_ms,
+    )
     return {
         "schema_version": "v1",
         "symbol": manifest.symbol,
@@ -137,6 +218,7 @@ def build_silver_quality_report(
         "missing_ohlcv_count": manifest.missing_ohlcv_count,
         "bronze_gap_count": bronze_index.gap_count,
         "bronze_largest_gap_ms": bronze_index.largest_gap_ms,
+        "bronze_gap_severity_status": bronze_gap_severity_status,
         "source_file_refs": list(manifest.source_file_refs),
         "blocker_codes": list(manifest.blocker_codes),
     }
@@ -165,8 +247,10 @@ def load_silver_synchronized_market_manifest(path: Path) -> SilverSynchronizedMa
 
 
 __all__ = [
+    "BronzeGapSeverityThresholds",
     "build_silver_quality_report",
     "build_silver_synchronized_market_manifest",
+    "classify_bronze_gap_severity",
     "load_silver_synchronized_market_manifest",
     "write_silver_market_reports",
 ]

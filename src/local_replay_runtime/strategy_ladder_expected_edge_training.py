@@ -24,6 +24,8 @@ from calibration_methods import (
 )
 from interface_contracts import MlModelArtifact, MlModelWindow
 from local_replay_runtime.strategy_ladder_b2_label_store_builder import (
+    LABEL_STORE_DATASET_FILENAME,
+    LEGACY_LABEL_STORE_DATASET_FILENAMES,
     LABEL_STORE_QUALITY_REPORT_FILENAME,
     LABEL_STORE_SUMMARY_FILENAME,
     StrategyLadderB2LabelStoreBuilderRequest,
@@ -37,11 +39,44 @@ from local_replay_runtime.strategy_ladder_b2_label_store_builder import (
 STRATEGY_LADDER_EXPECTED_EDGE_TARGET_POLICY = "B2_REPLAY_EXECUTION_AWARE_NET_EDGE.v1"
 LEGACY_STRATEGY_LADDER_EXPECTED_EDGE_TARGET_POLICY = "ABS_FORWARD_CLOSE_RETURN"
 DEFAULT_EXPECTED_EDGE_FEATURE_NAMES = ("close_return", "high_low_range", "volume")
+# Patch F16-B (2026-05-21) — ajout de 3 microstructure canoniques V5.3
+# (vpin, cumulative_ofi, queue_pressure) capturées depuis bridge engine_native_adapter
+# et persistées dans StrategyLadderB2LabelStoreRow v2.
+REPLAY_MICROSTRUCTURE_EXPECTED_EDGE_FEATURE_NAMES = (
+    "spread_bps",
+    "slippage_bps",
+    "book_depth_levels",
+    "break_even_bps",
+    "fragility_score",
+    "false_breakout_context",
+    "vpin",
+    "cumulative_ofi",
+    "queue_pressure",
+)
+SUPPORTED_EXPECTED_EDGE_FEATURE_NAMES = (
+    *DEFAULT_EXPECTED_EDGE_FEATURE_NAMES,
+    *REPLAY_MICROSTRUCTURE_EXPECTED_EDGE_FEATURE_NAMES,
+)
+_SUPPORTED_FEATURE_NAME_SET = frozenset(SUPPORTED_EXPECTED_EDGE_FEATURE_NAMES)
 _LEGACY_FEATURE_NAME_SET = frozenset(DEFAULT_EXPECTED_EDGE_FEATURE_NAMES)
 
 
 class StrategyLadderExpectedEdgeTrainingRequest(BaseModel, frozen=True):
-    """Request for a bounded Strategy Ladder expected-edge ML artifact."""
+    """Request for a bounded Strategy Ladder expected-edge ML artifact.
+
+    DOCTRINE V5.3 — Patch MP3 (2026-05-21) : Training is **MONO-PAIR** par doctrine.
+    Le champ ``pair: str`` (singulier) reflète cette contrainte structurelle :
+    chaque artifact d'entraînement est ancré sur un seul pair (typiquement
+    "BTCUSDT" research-only, multi-pair étant Phase F13 future).
+
+    **Multi-pair generalization** (F13) est explicitement HORS SCOPE de ce
+    request model. Pour du data sourcing multi-pair, utiliser le data factory
+    avec ``pairs: tuple[str, ...]`` — c'est une étape antérieure indépendante.
+
+    Multi-timeframe par contre est SUPPORTÉ (1m/5m/10m/15m) : un artifact par
+    timeframe, mais sur le MÊME pair. Pour Phase B P0-A, on entraîne 4 artifacts
+    LightGBM (un par tf) tous ancrés sur BTCUSDT.
+    """
 
     artifact_id: str = Field(..., min_length=1)
     calibration_version: str = Field(..., min_length=1)
@@ -49,6 +84,7 @@ class StrategyLadderExpectedEdgeTrainingRequest(BaseModel, frozen=True):
     b2_run_root: Path | None = None
     label_store_dataset_path: Path | None = None
     output_dir: Path
+    # DOCTRINE MONO-PAIR — Patch MP3 (2026-05-21) — voir docstring classe.
     pair: str = Field(default="BTCUSDT", min_length=1)
     timeframe: str = Field(default="1m", min_length=1)
     train_start: str = Field(..., min_length=1)
@@ -67,7 +103,37 @@ class StrategyLadderExpectedEdgeTrainingRequest(BaseModel, frozen=True):
         normalized = tuple(dict.fromkeys(item.strip() for item in value if item.strip()))
         if not normalized:
             raise ValueError("feature_names must not be empty")
+        unsupported = tuple(item for item in normalized if item not in _SUPPORTED_FEATURE_NAME_SET)
+        if unsupported:
+            raise ValueError(
+                f"unsupported Strategy Ladder expected-edge features: {unsupported}"
+            )
         return normalized
+
+    @field_validator("pair", mode="before")
+    @classmethod
+    def _validate_mono_pair_doctrine(cls, value: object) -> str:
+        """Patch MP3 (2026-05-21) — doctrine mono-pair training strict.
+
+        Reject explicitly any non-str input (list, tuple, iterable) with a
+        clear V5.3 doctrinal message. Pydantic's default str coercion would
+        accept `tuple` and silently use repr(). This validator catches the
+        common multi-pair anti-pattern (`pair=("BTCUSDT", "ETHUSDT")`) with
+        actionable guidance.
+        """
+        if isinstance(value, (list, tuple, set, frozenset)):
+            raise ValueError(
+                f"DOCTRINE_MONO_PAIR_TRAINING — pair must be a single str (got {type(value).__name__} "
+                f"with {len(value) if hasattr(value, '__len__') else '?'} entries). "
+                "V5.3 expected-edge training is MONO-PAIR by doctrine. For multi-pair sourcing "
+                "use data_factory.pairs (multi-pair container). For multi-pair training, "
+                "instantiate ONE StrategyLadderExpectedEdgeTrainingRequest PER pair (F13 future scope)."
+            )
+        if not isinstance(value, str):
+            raise ValueError(
+                f"DOCTRINE_MONO_PAIR_TRAINING — pair must be str (got {type(value).__name__})"
+            )
+        return value
 
     @model_validator(mode="after")
     def _validate_sources(self) -> "StrategyLadderExpectedEdgeTrainingRequest":
@@ -79,6 +145,18 @@ class StrategyLadderExpectedEdgeTrainingRequest(BaseModel, frozen=True):
             raise ValueError(
                 "StrategyLadderExpectedEdgeTrainingRequest requires kline_root or "
                 "a replay-grounded label-store source"
+            )
+        requested_microstructure_features = tuple(
+            name for name in self.feature_names if name not in _LEGACY_FEATURE_NAME_SET
+        )
+        if (
+            requested_microstructure_features
+            and self.b2_run_root is None
+            and self.label_store_dataset_path is None
+        ):
+            raise ValueError(
+                "Strategy Ladder microstructure expected-edge features require "
+                "b2_run_root or label_store_dataset_path"
             )
         return self
 
@@ -203,13 +281,12 @@ def _iter_days(start: date, end: date) -> tuple[date, ...]:
     return tuple(days)
 
 
-def _resolve_kline_path(root: Path, *, pair: str, timeframe_code: str, day: date) -> Path:
+def _resolve_kline_paths(root: Path, *, pair: str, timeframe_code: str, day: date) -> tuple[Path, ...]:
     pair_root = root if root.name.upper() == pair.upper() else root / pair
+    filename = f"{pair}_{timeframe_code}_{day.isoformat()}.csv"
     return (
-        pair_root
-        / timeframe_code
-        / f"{day.year:04d}"
-        / f"{pair}_{timeframe_code}_{day.isoformat()}.csv"
+        pair_root / timeframe_code / f"{day.year:04d}" / filename,
+        pair_root / timeframe_code / filename,
     )
 
 
@@ -288,16 +365,23 @@ def load_strategy_ladder_expected_edge_kline_bars(
     bars: list[_KlineBar] = []
     file_count = 0
     for day in _iter_days(start_day, end_day):
-        path = _resolve_kline_path(
-            request.kline_root,
-            pair=request.pair,
-            timeframe_code=timeframe_code,
-            day=day,
+        resolved_path = next(
+            (
+                candidate
+                for candidate in _resolve_kline_paths(
+                    request.kline_root,
+                    pair=request.pair,
+                    timeframe_code=timeframe_code,
+                    day=day,
+                )
+                if candidate.is_file()
+            ),
+            None,
         )
-        if not path.is_file():
+        if resolved_path is None:
             continue
         file_count += 1
-        bars.extend(_read_kline_csv(path))
+        bars.extend(_read_kline_csv(resolved_path))
     return _KlineLoadResult(
         bars=tuple(sorted(bars, key=lambda item: item.timestamp)),
         file_count=file_count,
@@ -456,7 +540,14 @@ def _build_replay_grounded_training_rows(
                 embargo_window_minutes=request.target_horizon_minutes,
             )
         )
-        dataset_path = (label_store_output_dir / "strategy_ladder_b2_label_store.jsonl").resolve()
+        dataset_candidates = (
+            (label_store_output_dir / LABEL_STORE_DATASET_FILENAME).resolve(),
+            *(
+                (label_store_output_dir / legacy_name).resolve()
+                for legacy_name in LEGACY_LABEL_STORE_DATASET_FILENAMES
+            ),
+        )
+        dataset_path = next((path for path in dataset_candidates if path.is_file()), dataset_candidates[0])
         summary_path, quality_report_path = _label_store_paths_from_dataset(dataset_path)
     else:
         if request.label_store_dataset_path is None:
@@ -533,6 +624,24 @@ def _build_training_rows(
     if _uses_replay_label_store(request):
         return _build_replay_grounded_training_rows(request)
     return _build_legacy_kline_training_rows(request)
+
+
+def _training_dataset_load_failure_reason(exc: OSError | ValueError) -> str:
+    detail = str(exc).strip()
+    if detail and re.fullmatch(r"[A-Z0-9_:.+-]+", detail):
+        return f"TRAINING_DATASET_LOAD_FAILED:{detail}"
+    return f"TRAINING_DATASET_LOAD_FAILED:{type(exc).__name__}"
+
+
+def _ml_trainer_failure_reason(exc: Exception) -> str:
+    detail = str(exc).strip()
+    if detail and re.fullmatch(r"[A-Z0-9_:.+-]+", detail):
+        return f"ML_TRAINER_FAILED:{detail}"
+    if detail:
+        normalized = re.sub(r"[^A-Za-z0-9]+", "_", detail).strip("_").upper()
+        if normalized:
+            return f"ML_TRAINER_FAILED:{normalized}"
+    return f"ML_TRAINER_FAILED:{type(exc).__name__}"
 
 
 def build_strategy_ladder_expected_edge_training_rows(
@@ -649,7 +758,7 @@ def train_strategy_ladder_expected_edge_artifact(
                 else LEGACY_STRATEGY_LADDER_EXPECTED_EDGE_TARGET_POLICY
             ),
             label_store_dataset_path=request.label_store_dataset_path,
-            blocking_reasons=(f"TRAINING_DATASET_LOAD_FAILED:{type(exc).__name__}",),
+            blocking_reasons=(_training_dataset_load_failure_reason(exc),),
             training_report_path=report_path,
         )
         return _write_training_report(report, report_path)
@@ -709,7 +818,7 @@ def train_strategy_ladder_expected_edge_artifact(
             break_even_clearance_rate=build_result.break_even_clearance_rate,
             mfe_availability_rate=build_result.mfe_availability_rate,
             mae_availability_rate=build_result.mae_availability_rate,
-            blocking_reasons=(f"ML_TRAINER_FAILED:{type(exc).__name__}",),
+            blocking_reasons=(_ml_trainer_failure_reason(exc),),
             training_report_path=report_path,
         )
         return _write_training_report(report, report_path)
@@ -920,6 +1029,8 @@ def build_fixture_expected_edge_artifact(
 
 __all__ = [
     "DEFAULT_EXPECTED_EDGE_FEATURE_NAMES",
+    "REPLAY_MICROSTRUCTURE_EXPECTED_EDGE_FEATURE_NAMES",
+    "SUPPORTED_EXPECTED_EDGE_FEATURE_NAMES",
     "LEGACY_STRATEGY_LADDER_EXPECTED_EDGE_TARGET_POLICY",
     "STRATEGY_LADDER_EXPECTED_EDGE_TARGET_POLICY",
     "StrategyLadderExpectedEdgeTrainingReport",

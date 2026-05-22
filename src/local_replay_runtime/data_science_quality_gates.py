@@ -27,17 +27,40 @@ RAW_DATA_PROCESSING_REPORT_MD_FILENAME = "raw_data_processing_report.md"
 def build_runtime_feature_parity_manifest(
     *,
     gold_manifest: GoldMicrostructureFeatureManifest,
+    expected_edge_manifest: ExpectedEdgeFeatureManifest,
     source_silver_index_ref: str,
 ) -> RuntimeFeatureParityManifest:
-    """Build the runtime/shadow placeholder contract without activating live parity."""
+    """Build the governed training-vs-runtime feature parity contract."""
 
+    training_feature_names = tuple(sorted(expected_edge_manifest.feature_names))
+    runtime_feature_names = tuple(sorted(gold_manifest.feature_names))
+    runtime_feature_set = set(runtime_feature_names)
+    training_feature_set = set(training_feature_names)
+    missing_runtime_feature_names = tuple(
+        sorted(name for name in training_feature_set if name not in runtime_feature_set)
+    )
+    extra_runtime_feature_names = tuple(
+        sorted(name for name in runtime_feature_set if name not in training_feature_set)
+    )
+    blocker_codes: tuple[str, ...] = ()
+    status = "RUNTIME_PARITY_SCHEMA_MATCH_READY"
+    if not training_feature_names:
+        status = "RUNTIME_PARITY_BLOCKED_BY_EMPTY_TRAINING_FEATURE_SET"
+        blocker_codes = ("RUNTIME_PARITY_BLOCKED_BY_EMPTY_TRAINING_FEATURE_SET",)
+    elif missing_runtime_feature_names:
+        status = "RUNTIME_PARITY_BLOCKED_BY_MISSING_RUNTIME_FEATURES"
+        blocker_codes = ("RUNTIME_PARITY_BLOCKED_BY_MISSING_RUNTIME_FEATURES",)
     return finalize_hashed_model(
         RuntimeFeatureParityManifest(
-            status="RUNTIME_PARITY_NOT_PROVEN",
+            status=status,
             source_gold_feature_refs=gold_manifest.output_paths,
             source_silver_index_ref=source_silver_index_ref,
             feature_hash=gold_manifest.feature_hash,
-            blocker_codes=("RUNTIME_PARITY_NOT_PROVEN",),
+            training_feature_names=training_feature_names,
+            runtime_feature_names=runtime_feature_names,
+            missing_runtime_feature_names=missing_runtime_feature_names,
+            extra_runtime_feature_names=extra_runtime_feature_names,
+            blocker_codes=blocker_codes,
         )
     )
 

@@ -61,7 +61,13 @@ class MlTrainingRow(BaseModel, frozen=True):
 
 
 class MlTrainerRequest(BaseModel, frozen=True):
-    """LAB_ONLY bounded LightGBM training request."""
+    """LAB_ONLY bounded LightGBM training request.
+
+    Patch C1.3.B (2026-05-21) — extended with optional `categorical_feature_names`
+    and `sample_weights` for multi-pair training support (pair_id as native
+    LightGBM categorical + balance imbalance via inverse-frequency weighting).
+    Both default empty tuples → 100% backward-compat with mono-pair callers.
+    """
 
     artifact_id: str = Field(..., min_length=1)
     calibration_version: str = Field(..., min_length=1)
@@ -74,6 +80,14 @@ class MlTrainerRequest(BaseModel, frozen=True):
     early_stopping_rounds: int = 50
     max_depth: int = 6
     shap_summary_ref: str | None = None
+    # Patch C1.3.B (2026-05-21) — multi-pair extensions (optional, default empty).
+    # categorical_feature_names : noms de features à passer comme native LightGBM
+    # categorical (e.g. ("pair_id",) pour multi-pair training). Empty = aucune
+    # categorical, training reste 100% numeric (mono-pair par défaut).
+    categorical_feature_names: tuple[str, ...] = ()
+    # sample_weights : poids per-row pour balance imbalance multi-pair.
+    # Si fourni, longueur DOIT == len(rows). Empty = uniform weights (defaut).
+    sample_weights: tuple[float, ...] = ()
 
     @model_validator(mode="after")
     def validate_request(self) -> "MlTrainerRequest":
@@ -89,6 +103,24 @@ class MlTrainerRequest(BaseModel, frozen=True):
             raise ValueError("MlTrainerRequest requires early_stopping_rounds == 50")
         if self.max_depth != 6:
             raise ValueError("MlTrainerRequest requires max_depth == 6")
+        # Patch C1.3.B — validate sample_weights length matches rows when provided.
+        if self.sample_weights and len(self.sample_weights) != len(self.rows):
+            raise ValueError(
+                f"MlTrainerRequest sample_weights length ({len(self.sample_weights)}) "
+                f"must match rows length ({len(self.rows)}) or be empty"
+            )
+        # Patch C1.3.B — validate categorical features are present in actual feature dicts.
+        if self.categorical_feature_names:
+            sample_feature_names = set(self.rows[0].features.keys())
+            missing = tuple(
+                name for name in self.categorical_feature_names
+                if name not in sample_feature_names
+            )
+            if missing:
+                raise ValueError(
+                    f"MlTrainerRequest categorical_feature_names {missing} not found in row features. "
+                    f"Available features: {sorted(sample_feature_names)}"
+                )
         return self
 
 
@@ -254,24 +286,46 @@ def _train_booster(
     valid_targets: list[float],
     feature_names: tuple[str, ...],
     early_stopping_rounds: int,
+    categorical_feature_names: tuple[str, ...] = (),
+    train_sample_weights: tuple[float, ...] = (),
+    valid_sample_weights: tuple[float, ...] = (),
 ) -> Any:  # noqa: Any
+    """Train a LightGBM booster.
+
+    Patch C1.3.B (2026-05-21) — added optional categorical_feature_names and
+    sample_weights for multi-pair training (pair_id categorical + balance).
+    Defaults preserve mono-pair behavior unchanged.
+    """
     train_matrix_array = _to_numpy_matrix(train_matrix)
     train_targets_array = _to_numpy_vector(train_targets)
     valid_matrix_array = _to_numpy_matrix(valid_matrix)
     valid_targets_array = _to_numpy_vector(valid_targets)
-    train_set = lightgbm.Dataset(
-        train_matrix_array,
-        label=train_targets_array,
-        feature_name=list(feature_names),
-        free_raw_data=False,
-    )
-    valid_set = lightgbm.Dataset(
-        valid_matrix_array,
-        label=valid_targets_array,
-        feature_name=list(feature_names),
-        free_raw_data=False,
-        reference=train_set,
-    )
+    # Patch C1.3.B — build kwargs lazily for Dataset to avoid touching defaults
+    # when no categorical / weights are provided (preserves byte-equal hashes
+    # for legacy mono-pair runs).
+    train_kwargs: dict[str, Any] = {
+        "label": train_targets_array,
+        "feature_name": list(feature_names),
+        "free_raw_data": False,
+    }
+    if categorical_feature_names:
+        train_kwargs["categorical_feature"] = list(categorical_feature_names)
+    if train_sample_weights:
+        train_kwargs["weight"] = _to_numpy_vector(list(train_sample_weights))
+    train_set = lightgbm.Dataset(train_matrix_array, **train_kwargs)
+
+    valid_kwargs: dict[str, Any] = {
+        "label": valid_targets_array,
+        "feature_name": list(feature_names),
+        "free_raw_data": False,
+        "reference": train_set,
+    }
+    if categorical_feature_names:
+        valid_kwargs["categorical_feature"] = list(categorical_feature_names)
+    if valid_sample_weights:
+        valid_kwargs["weight"] = _to_numpy_vector(list(valid_sample_weights))
+    valid_set = lightgbm.Dataset(valid_matrix_array, **valid_kwargs)
+
     callbacks: list[Any] = []
     if hasattr(lightgbm, "early_stopping"):
         callbacks.append(lightgbm.early_stopping(early_stopping_rounds))
@@ -294,13 +348,25 @@ def _evaluate_params_with_bagging(
     bagging_folds: int,
     seed: int,
     early_stopping_rounds: int,
+    categorical_feature_names: tuple[str, ...] = (),
+    train_sample_weights: tuple[float, ...] = (),
+    valid_sample_weights: tuple[float, ...] = (),
 ) -> float:
+    """Patch C1.3.B — propagation categorical_feature_names + sample_weights.
+
+    sample_weights len must match train_rows / validation_rows respectively
+    when provided. Bagging sub-sets the weights according to the bag indices.
+    """
     bags = _bootstrap_bags(len(train_rows), folds=bagging_folds, seed=seed)
     validation_matrix, validation_targets = _rows_to_matrix(validation_rows, feature_names)
     bag_scores: list[float] = []
     for bag in bags:
         bag_rows = tuple(train_rows[index] for index in bag)
         train_matrix, train_targets = _rows_to_matrix(bag_rows, feature_names)
+        # Patch C1.3.B — sub-set sample_weights pour le bag courant.
+        bag_train_weights: tuple[float, ...] = ()
+        if train_sample_weights:
+            bag_train_weights = tuple(train_sample_weights[i] for i in bag)
         booster = _train_booster(
             lightgbm,
             params=params,
@@ -310,6 +376,9 @@ def _evaluate_params_with_bagging(
             valid_targets=validation_targets,
             feature_names=feature_names,
             early_stopping_rounds=early_stopping_rounds,
+            categorical_feature_names=categorical_feature_names,
+            train_sample_weights=bag_train_weights,
+            valid_sample_weights=valid_sample_weights,
         )
         predictions = _predict_booster(booster, validation_matrix)
         bag_scores.append(_strategy_sharpe(predictions, validation_targets))
@@ -338,7 +407,10 @@ def _resolve_best_params(
     train_rows: tuple[MlTrainingRow, ...],
     validation_rows: tuple[MlTrainingRow, ...],
     feature_names: tuple[str, ...],
+    train_sample_weights: tuple[float, ...] = (),
+    valid_sample_weights: tuple[float, ...] = (),
 ) -> tuple[dict[str, Any], int]:  # noqa: Any
+    """Patch C1.3.B — propagation sample_weights + categorical to bagging."""
     lightgbm = _load_lightgbm()
     optuna = _load_optuna()
     base_params = _default_lightgbm_params(request)
@@ -362,6 +434,9 @@ def _resolve_best_params(
             bagging_folds=request.bagging_folds,
             seed=request.training_seed,
             early_stopping_rounds=request.early_stopping_rounds,
+            categorical_feature_names=request.categorical_feature_names,
+            train_sample_weights=train_sample_weights,
+            valid_sample_weights=valid_sample_weights,
         )
 
     study.optimize(objective, n_trials=trial_count)
@@ -373,7 +448,12 @@ def _resolve_best_params(
 def train_lightgbm_ml_artifact(
     request: MlTrainerRequest,
 ) -> MlTrainerResult:
-    """Train a deterministic Local-Lab-only LightGBM model and emit its artifact."""
+    """Train a deterministic Local-Lab-only LightGBM model and emit its artifact.
+
+    Patch C1.3.B (2026-05-21) — propagates optional categorical_feature_names
+    and sample_weights from MlTrainerRequest to LightGBM. The walk-forward
+    split aligns sample_weights with rows by index (rows[i] ↔ weights[i]).
+    """
 
     feature_names = _resolve_feature_names(request.rows)
     dataset_hash = _dataset_hash(request.rows)
@@ -383,11 +463,28 @@ def train_lightgbm_ml_artifact(
         train_days=request.walk_forward_train_days,
         validation_days=request.walk_forward_test_days,
     )
+    # Patch C1.3.B — align sample_weights with walk-forward split using row
+    # identity (timestamp + pair) for deterministic mapping.
+    train_sample_weights: tuple[float, ...] = ()
+    valid_sample_weights: tuple[float, ...] = ()
+    if request.sample_weights:
+        weight_by_row_key = {
+            (row.timestamp, row.pair): weight
+            for row, weight in zip(request.rows, request.sample_weights, strict=True)
+        }
+        train_sample_weights = tuple(
+            weight_by_row_key[(row.timestamp, row.pair)] for row in train_rows
+        )
+        valid_sample_weights = tuple(
+            weight_by_row_key[(row.timestamp, row.pair)] for row in validation_rows
+        )
     best_params, optuna_trials_used = _resolve_best_params(
         request,
         train_rows=train_rows,
         validation_rows=validation_rows,
         feature_names=feature_names,
+        train_sample_weights=train_sample_weights,
+        valid_sample_weights=valid_sample_weights,
     )
     lightgbm = _load_lightgbm()
     train_matrix, train_targets = _rows_to_matrix(train_rows, feature_names)
@@ -401,6 +498,9 @@ def train_lightgbm_ml_artifact(
         valid_targets=validation_targets,
         feature_names=feature_names,
         early_stopping_rounds=request.early_stopping_rounds,
+        categorical_feature_names=request.categorical_feature_names,
+        train_sample_weights=train_sample_weights,
+        valid_sample_weights=valid_sample_weights,
     )
     train_predictions = _predict_booster(booster, train_matrix)
     validation_predictions = _predict_booster(booster, validation_matrix)

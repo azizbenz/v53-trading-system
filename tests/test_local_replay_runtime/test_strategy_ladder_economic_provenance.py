@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import gzip
 
 import pytest
 
@@ -35,6 +36,14 @@ def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
         "\n".join(json.dumps(row, separators=(",", ":")) for row in rows) + "\n",
         encoding="utf-8",
     )
+
+
+def _write_jsonl_gz(path: Path, rows: list[dict[str, object]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with gzip.open(path, "wt", encoding="utf-8") as handle:
+        handle.write(
+            "\n".join(json.dumps(row, separators=(",", ":")) for row in rows) + "\n"
+        )
 
 
 def _book_snapshot(
@@ -234,6 +243,62 @@ def test_compute_economic_provenance_without_book_falls_back(tmp_path: Path) -> 
     assert any(
         "SPREAD_FALLBACK" in w for w in prov.measurement_warnings
     )
+
+
+def test_compute_economic_provenance_measures_slippage_from_kyle_lambda_with_60s_lookback(
+    tmp_path: Path,
+) -> None:
+    trade_path = tmp_path / "trades.jsonl"
+    base = 1_700_000_000_000
+    _write_jsonl(
+        trade_path,
+        [
+            {"timestamp_ms": base + 0, "price": 100.0, "qty": 1.0},
+            {"timestamp_ms": base + 15_000, "price": 100.2, "qty": 2.0},
+            {"timestamp_ms": base + 30_000, "price": 100.0, "qty": 1.5},
+            {"timestamp_ms": base + 45_000, "price": 100.3, "qty": 3.0},
+            {"timestamp_ms": base + 55_000, "price": 100.5, "qty": 2.5},
+        ],
+    )
+
+    prov = compute_economic_provenance(
+        timestamp_ms=base + 55_000,
+        book_status="BOOK_DEPTH20_AVAILABLE",
+        raw_trade_path=trade_path,
+        venue="bybit",
+    )
+
+    assert prov.slippage_provenance == "MEASURED_FROM_KYLE_LAMBDA"
+    assert prov.slippage_bps >= 0.0
+    assert not any("SLIPPAGE_FALLBACK" in w for w in prov.measurement_warnings)
+
+
+def test_compute_economic_provenance_measures_slippage_from_gzip_trade_file(
+    tmp_path: Path,
+) -> None:
+    trade_path = tmp_path / "trades.jsonl.gz"
+    base = 1_700_000_000_000
+    _write_jsonl_gz(
+        trade_path,
+        [
+            {"timestamp_ms": base + 0, "price": 100.0, "qty": 1.0},
+            {"timestamp_ms": base + 15_000, "price": 100.2, "qty": 2.0},
+            {"timestamp_ms": base + 30_000, "price": 100.0, "qty": 1.5},
+            {"timestamp_ms": base + 45_000, "price": 100.3, "qty": 3.0},
+            {"timestamp_ms": base + 55_000, "price": 100.5, "qty": 2.5},
+        ],
+    )
+
+    prov = compute_economic_provenance(
+        timestamp_ms=base + 55_000,
+        book_status="BOOK_DEPTH20_AVAILABLE",
+        pair="BTCUSDT",
+        raw_trade_path=trade_path,
+        venue="bybit",
+    )
+
+    assert prov.slippage_provenance == "MEASURED_FROM_KYLE_LAMBDA"
+    assert prov.slippage_bps >= 0.0
 
 
 def test_compute_economic_provenance_overrides_apply(tmp_path: Path) -> None:

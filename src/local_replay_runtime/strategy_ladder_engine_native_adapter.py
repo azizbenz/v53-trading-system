@@ -33,6 +33,7 @@ bloque tant que le structure-resolver n'est pas livre (session future).
 
 from __future__ import annotations
 
+import gzip
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -119,7 +120,12 @@ def _iter_jsonl(path: Path) -> list[dict[str, object]]:
     if not path.exists():
         return []
     out: list[dict[str, object]] = []
-    with path.open("r", encoding="utf-8-sig") as handle:
+    opener = (
+        lambda: gzip.open(path, "rt", encoding="utf-8-sig")
+        if str(path).endswith(".gz")
+        else path.open("r", encoding="utf-8-sig")
+    )
+    with opener() as handle:
         for line in handle:
             stripped = line.strip()
             if not stripped:

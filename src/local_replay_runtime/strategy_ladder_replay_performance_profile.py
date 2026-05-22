@@ -91,6 +91,8 @@ class StrategyLadderReplayPerformanceProfiler:
     def __init__(self, *, run_id: str) -> None:
         self._run_id = run_id
         self._created_at = datetime.now(tz=UTC)
+        self._started_wall = perf_counter()
+        self._started_cpu = process_time()
         self._phase_data: dict[str, dict[str, object]] = defaultdict(
             lambda: {
                 "phase_name": "",
@@ -292,10 +294,10 @@ class StrategyLadderReplayPerformanceProfiler:
                 key=lambda item: item[1]["phase_name"],
             )
         )
-        total_wall_time_s = round(sum(phase.wall_time_s for phase in phases), 6)
-        total_cpu_time_s = round(sum(phase.cpu_time_s for phase in phases), 6)
+        total_wall_time_s = round(max(perf_counter() - self._started_wall, 0.0), 6)
+        total_cpu_time_s = round(max(process_time() - self._started_cpu, 0.0), 6)
         total_io_wait_estimate_s = round(
-            sum(phase.io_wait_estimate_s for phase in phases),
+            max(total_wall_time_s - total_cpu_time_s, 0.0),
             6,
         )
         hotspots = tuple(

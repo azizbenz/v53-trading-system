@@ -467,6 +467,8 @@ def build_engine_d_input_from_window(
             fe_ctx.get("first_episode_close_reason") or ""
         ),
         "consecutive_stop_count": int(fe_ctx.get("consecutive_stop_count") or 0),
+        "last_stop_at_ns": fe_ctx.get("last_stop_at_ns"),
+        "last_fresh_a_detection_at_ns": fe_ctx.get("last_fresh_a_detection_at_ns"),
         "anti_revenge_state": str(fe_ctx.get("anti_revenge_state") or ""),
         # 8 champs structurels REQUIRED
         "prior_trade_quality": summary.prior_trade_quality,
@@ -478,6 +480,15 @@ def build_engine_d_input_from_window(
         "reentry_lateness": summary.reentry_lateness,
         "structure_reformed_detected": bool(
             fe_ctx.get("structure_reformed_detected", True)
+        ),
+        "duplication_overlap_with_engine_a": float(
+            fe_ctx.get("duplication_overlap_with_engine_a") or 0.0
+        ),
+        "marginal_portfolio_gain": float(
+            fe_ctx.get("marginal_portfolio_gain") or 0.0
+        ),
+        "covered_share_by_engine_a": float(
+            fe_ctx.get("covered_share_by_engine_a") or 0.0
         ),
         # Defaults canoniques
         "regime": "",

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from local_replay_runtime.strategy_ladder_b2_label_store_builder import (
+    LABEL_STORE_DATASET_FILENAME,
     LABEL_STORE_QUALITY_REPORT_FILENAME,
     LABEL_STORE_SUMMARY_FILENAME,
     StrategyLadderB2LabelStoreBuilderRequest,
@@ -45,6 +46,7 @@ def _write_candidate_events(run_root: Path) -> None:
                 "available_at_timestamp_ms": 1_735_689_540_000,
                 "spread_bps": 4.0,
                 "slippage_bps": 2.0,
+                "book_depth_levels": 20,
                 "break_even_bps": 7.0,
                 "feature_values": {
                     "close_return": 0.01,
@@ -68,6 +70,7 @@ def _write_candidate_events(run_root: Path) -> None:
                 "available_at_timestamp_ms": 1_735_774_940_000,
                 "spread_bps": 3.0,
                 "slippage_bps": 1.5,
+                "book_depth_levels": 20,
                 "break_even_bps": 8.0,
                 "feature_values": {
                     "close_return": -0.02,
@@ -331,7 +334,7 @@ def test_b2_label_store_builder_propagates_grounded_and_proxy_rows() -> None:
     assert result.replay_grounded_label_count == 1
     assert result.proxy_execution_label_count == 1
 
-    dataset_path = output_dir / "strategy_ladder_b2_label_store.jsonl"
+    dataset_path = output_dir / LABEL_STORE_DATASET_FILENAME
     rows = [
         StrategyLadderB2LabelStoreRow.model_validate_json(line)
         for line in dataset_path.read_text(encoding="utf-8").splitlines()
@@ -350,6 +353,10 @@ def test_b2_label_store_builder_propagates_grounded_and_proxy_rows() -> None:
     assert exec_row.fee_bps == 1.2
     assert exec_row.slippage_bps == 0.8
     assert exec_row.adverse_selection_bps == 0.4
+    assert exec_row.feature_values["spread_bps"] == 4.0
+    assert exec_row.feature_values["slippage_bps"] == 2.0
+    assert exec_row.feature_values["book_depth_levels"] == 20.0
+    assert exec_row.feature_values["break_even_bps"] == 7.0
     assert exec_row.evidence_class == "REPLAY_EXECUTED_ONLY_NET_RETURN"
     assert exec_row.execution_fidelity_status == "EXECUTION_FIDELITY_READY"
     assert exec_row.replay_grounded_label_flag is True

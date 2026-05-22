@@ -160,6 +160,10 @@ class RuntimeFeatureParityManifest(BaseModel, frozen=True):
     source_gold_feature_refs: tuple[str, ...] = ()
     source_silver_index_ref: str = ""
     feature_hash: str | None = None
+    training_feature_names: tuple[str, ...] = ()
+    runtime_feature_names: tuple[str, ...] = ()
+    missing_runtime_feature_names: tuple[str, ...] = ()
+    extra_runtime_feature_names: tuple[str, ...] = ()
     blocker_codes: tuple[str, ...] = ()
     artifact_hash: str | None = None
 

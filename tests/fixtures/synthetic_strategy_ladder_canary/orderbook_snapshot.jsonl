@@ -1,0 +1,5 @@
+{"scenario_id":"SCENARIO_A_LONG_PASS_NATIVE","timestamp_ms":1700100000000,"update_id":1,"bids":[[100.0,5.0],[99.95,7.0],[99.9,10.0]],"asks":[[100.1,5.0],[100.15,7.0],[100.2,10.0]]}
+{"scenario_id":"SCENARIO_A_NEGATIVE_DIRECTION_BLOCK","timestamp_ms":1700110000000,"update_id":10,"bids":[[100.0,5.0],[99.95,7.0],[99.9,10.0]],"asks":[[100.1,5.0],[100.15,7.0],[100.2,10.0]]}
+{"scenario_id":"SCENARIO_C_BREAKOUT_PASS","timestamp_ms":1700150000000,"update_id":20,"bids":[[101.9,4.0],[101.8,6.0],[101.7,8.0]],"asks":[[102.0,4.0],[102.1,6.0],[102.2,8.0]]}
+{"scenario_id":"SCENARIO_C_NO_BREAKOUT","timestamp_ms":1700155800000,"update_id":30,"bids":[[101.0,4.0],[100.95,6.0],[100.9,8.0]],"asks":[[101.1,4.0],[101.15,6.0],[101.2,8.0]]}
+{"scenario_id":"SCENARIO_D_REENTRY_PASS","timestamp_ms":1700170000000,"update_id":40,"bids":[[101.8,4.0],[101.75,6.0],[101.7,8.0]],"asks":[[101.9,4.0],[101.95,6.0],[102.0,8.0]]}

@@ -8,9 +8,19 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 import hashlib
 import json
+import math
 from pathlib import Path
-from statistics import median
+from statistics import NormalDist, median
 
+from calibration_methods.dsr import (
+    DeflatedSharpeRatioError,
+    compute_deflated_sharpe_ratio,
+)
+from calibration_methods.psr import (
+    ProbabilisticSharpeRatioError,
+    compute_probabilistic_sharpe_ratio,
+)
+from calibration_methods.bootstrap import infer_stationary_block_length
 from local_replay_runtime.capital_profile_builder import (
     CapitalProfileBuildInput,
     build_capital_bucket_profile,
@@ -72,7 +82,7 @@ from local_replay_runtime.strategy_ladder_operator_artifacts import (
     write_strategy_ladder_operator_artifacts,
 )
 from local_replay_runtime.strategy_ladder_candidate_discovery import (
-    cap_strategy_ladder_candidates,
+    apply_strategy_ladder_candidate_budget,
     discover_strategy_ladder_candidates,
     export_strategy_ladder_candidates,
     load_strategy_ladder_candidate_events,
@@ -129,6 +139,11 @@ from local_replay_runtime.strategy_ladder_raw_window_extractor import (
 )
 from local_replay_runtime.strategy_ladder_replay_performance_profile import (
     StrategyLadderReplayPerformanceProfiler,
+)
+from local_replay_runtime.strategy_ladder_replay_evidence import (
+    build_measured_cost_governance_payload,
+    build_measured_slippage_payload,
+    build_measured_spread_payload,
 )
 from meta_minimal.dtr_core.dtr_record_builder import DTRRecord
 from portfolio_minimal.allocation_router.capital_viability import (
@@ -224,7 +239,7 @@ def _load_jsonl_rows(path: Path) -> list[dict[str, object]]:
                     payload = json.loads(stripped)
                 except json.JSONDecodeError:
                     continue
-                if isinstance(payload, dict):
+                if isinstance(payload, dict) and not bool(payload.get("artifact_header")):
                     rows.append(payload)
     except OSError:
         return []
@@ -272,6 +287,35 @@ def _resolve_data_factory_payloads(
             else (base / "silver_index.json").resolve()
         ),
     }
+
+
+def _resolve_run_raw_source_manifest_path(
+    *,
+    request: StrategyLadderRequest,
+    silver_index_path: Path | None = None,
+    data_factory_base_root: Path | None = None,
+) -> str:
+    if request.raw_source_manifest_path is not None:
+        return str(request.raw_source_manifest_path.resolve())
+
+    candidate_roots: list[Path] = []
+    if data_factory_base_root is not None:
+        candidate_roots.append(data_factory_base_root.resolve())
+    if silver_index_path is not None:
+        candidate_roots.append(silver_index_path.resolve().parent)
+    if request.parent_workflow_ref:
+        workflow_root = Path(request.parent_workflow_ref).resolve().parent
+        candidate_roots.append(workflow_root / "phase_a2_data_factory")
+
+    for root in candidate_roots:
+        manifest_payload = _load_json_payload(root / "data_factory_manifest.json")
+        manifest_path = str(manifest_payload.get("raw_source_manifest_path") or "").strip()
+        if manifest_path:
+            return manifest_path
+        candidate_path = root / "raw_source_manifest.json"
+        if candidate_path.is_file():
+            return str(candidate_path.resolve())
+    return ""
 
 
 def _hash_file_bytes(path: Path) -> str:
@@ -831,6 +875,8 @@ def _promotion_fidelity_blockers(
     expected_edge_truth_status: str,
     economic_constants_provenance: str,
     execution_fidelity_gap_codes: tuple[str, ...],
+    statistical_validation_status: str = "STATISTICAL_VALIDATION_NOT_PROVEN",
+    statistical_validation_blocker_codes: tuple[str, ...] = (),
 ) -> tuple[str, ...]:
     blockers: list[str] = []
     if candidate_truth_status != "CANDIDATE_ENGINE_NATIVE_READY":
@@ -839,6 +885,11 @@ def _promotion_fidelity_blockers(
         blockers.append(expected_edge_truth_status)
     if economic_constants_provenance != "FULLY_MEASURED":
         blockers.append(economic_constants_provenance)
+    if statistical_validation_status != "STATISTICAL_VALIDATION_READY":
+        blockers.append(statistical_validation_status)
+    blockers.extend(
+        str(code) for code in statistical_validation_blocker_codes if str(code)
+    )
     blockers.extend(str(code) for code in execution_fidelity_gap_codes if str(code))
     return tuple(dict.fromkeys(code for code in blockers if code))
 
@@ -1178,6 +1229,7 @@ def _stage_final_status(
     promotion_artifact_count: int,
     executed_trade_count: int = -1,
     detailed_replay_record_count: int = -1,
+    statistical_validation_status: str = "STATISTICAL_VALIDATION_NOT_PROVEN",
 ) -> str:
     # Audit 2026-05-06: gate ajoutée pour bloquer la promotion d'un run
     # qui n'a produit AUCUN trade exécuté (cas typique du proxy
@@ -1199,6 +1251,12 @@ def _stage_final_status(
         and detailed_replay_record_count > 0
     ):
         return "STRATEGY_LADDER_BLOCKED_BY_NO_EXECUTED_TRADES"
+    if (
+        executed_trade_count > 0
+        and detailed_replay_record_count > 0
+        and statistical_validation_status != "STATISTICAL_VALIDATION_READY"
+    ):
+        return "STRATEGY_LADDER_BLOCKED_BY_STATISTICAL_VALIDATION"
     if raw_window_status == "RAW_WINDOW_PARTIAL" or detailed_replay_status == "DETAILED_REPLAY_PARTIAL":
         return "STRATEGY_LADDER_RAN_WITH_PARTIAL_EVIDENCE"
     if candidate_export_status != "CANDIDATE_EXPORT_READY":
@@ -1219,6 +1277,159 @@ def _count_executed_trades(
             (result.executed_notional is not None and result.executed_notional > 0.0)
             or (result.reduced_notional is not None and result.reduced_notional > 0.0)
         )
+    )
+
+
+@dataclass(frozen=True)
+class _StatisticalValidationResult:
+    status: str
+    observation_count: int
+    trial_count: int
+    benchmark_sharpe: float
+    acceptance_floor: float
+    sample_sharpe: float | None = None
+    psr: float | None = None
+    dsr: float | None = None
+    stationary_block_length: int = 1
+    effective_sample_size: float | None = None
+    min_trl_required: float | None = None
+    min_trl_satisfied: bool = False
+    psr_passes_floor: bool = False
+    dsr_passes_floor: bool = False
+    blocker_codes: tuple[str, ...] = ()
+
+
+def _compute_min_trl_required(
+    *,
+    sample_sharpe: float,
+    benchmark_sharpe: float,
+    skewness: float,
+    kurtosis: float,
+    acceptance_floor: float,
+) -> float | None:
+    if (
+        not math.isfinite(sample_sharpe)
+        or not math.isfinite(benchmark_sharpe)
+        or not math.isfinite(skewness)
+        or not math.isfinite(kurtosis)
+        or not (0.0 < acceptance_floor < 1.0)
+        or sample_sharpe <= benchmark_sharpe
+    ):
+        return None
+    sharpe_gap = sample_sharpe - benchmark_sharpe
+    if sharpe_gap <= 0.0:
+        return None
+    inner = 1.0 - (skewness * sample_sharpe) + (((kurtosis - 1.0) / 4.0) * sample_sharpe**2)
+    if not math.isfinite(inner) or inner <= 0.0:
+        return None
+    z_score = NormalDist().inv_cdf(acceptance_floor)
+    required = 1.0 + ((inner * (z_score**2)) / (sharpe_gap**2))
+    if not math.isfinite(required) or required <= 0.0:
+        return None
+    return required
+
+
+def _compute_statistical_validation_result(
+    *,
+    request: StrategyLadderRequest,
+    bucket_results: tuple[StrategyLadderBucketReplayResult, ...],
+    benchmark_sharpe: float = 0.0,
+    acceptance_floor: float = 0.95,
+) -> _StatisticalValidationResult:
+    proven_returns = tuple(
+        float(result.executed_only_net_return)
+        for result in bucket_results
+        if result.executed_only_net_return is not None
+        and result.executed_only_net_return_status == "EXECUTED_NET_RETURN_PROVEN"
+        and math.isfinite(float(result.executed_only_net_return))
+    )
+    trial_seams = {
+        (result.pair, result.engine_id, result.strategy_id)
+        for result in bucket_results
+        if result.pair and result.engine_id and result.strategy_id
+    }
+    timeframe_multiplier = max(len(request.timeframes), 1)
+    trial_count = max(len(trial_seams) * timeframe_multiplier, 1)
+    observation_count = len(proven_returns)
+    if observation_count < 3:
+        return _StatisticalValidationResult(
+            status="STATISTICAL_VALIDATION_INSUFFICIENT_EXECUTIONS",
+            observation_count=observation_count,
+            trial_count=trial_count,
+            benchmark_sharpe=benchmark_sharpe,
+            acceptance_floor=acceptance_floor,
+            effective_sample_size=float(observation_count),
+            blocker_codes=("STATISTICAL_VALIDATION_INSUFFICIENT_EXECUTIONS",),
+        )
+    try:
+        psr_result = compute_probabilistic_sharpe_ratio(
+            proven_returns,
+            benchmark_sharpe=benchmark_sharpe,
+            acceptance_floor=acceptance_floor,
+        )
+        dsr_result = compute_deflated_sharpe_ratio(
+            proven_returns,
+            trial_count=trial_count,
+            acceptance_floor=acceptance_floor,
+        )
+    except (ProbabilisticSharpeRatioError, DeflatedSharpeRatioError, ValueError):
+        return _StatisticalValidationResult(
+            status="STATISTICAL_VALIDATION_INVALID_RETURNS",
+            observation_count=observation_count,
+            trial_count=trial_count,
+            benchmark_sharpe=benchmark_sharpe,
+            acceptance_floor=acceptance_floor,
+            blocker_codes=("STATISTICAL_VALIDATION_INVALID_RETURNS",),
+        )
+    stationary_block_length = max(infer_stationary_block_length(proven_returns), 1)
+    effective_sample_size = observation_count / float(stationary_block_length)
+    min_trl_required = _compute_min_trl_required(
+        sample_sharpe=psr_result.sample_sharpe,
+        benchmark_sharpe=benchmark_sharpe,
+        skewness=psr_result.skewness,
+        kurtosis=psr_result.kurtosis,
+        acceptance_floor=acceptance_floor,
+    )
+    min_trl_satisfied = (
+        min_trl_required is not None and effective_sample_size >= min_trl_required
+    )
+    blocker_codes: list[str] = []
+    if not psr_result.passes_floor:
+        blocker_codes.append("STATISTICAL_VALIDATION_PSR_BELOW_FLOOR")
+    if not dsr_result.passes_floor:
+        blocker_codes.append("STATISTICAL_VALIDATION_DSR_BELOW_FLOOR")
+    if min_trl_required is None:
+        blocker_codes.append("STATISTICAL_VALIDATION_MINTRL_NOT_COMPUTABLE")
+    elif not min_trl_satisfied:
+        blocker_codes.append("STATISTICAL_VALIDATION_MINTRL_NOT_SATISFIED")
+    return _StatisticalValidationResult(
+        status=(
+            "STATISTICAL_VALIDATION_READY"
+            if not blocker_codes
+            else (
+                "STATISTICAL_VALIDATION_MINTRL_NOT_SATISFIED"
+                if (
+                    "STATISTICAL_VALIDATION_MINTRL_NOT_SATISFIED" in blocker_codes
+                    and "STATISTICAL_VALIDATION_PSR_BELOW_FLOOR" not in blocker_codes
+                    and "STATISTICAL_VALIDATION_DSR_BELOW_FLOOR" not in blocker_codes
+                )
+                else "STATISTICAL_VALIDATION_BELOW_FLOOR"
+            )
+        ),
+        observation_count=observation_count,
+        trial_count=trial_count,
+        benchmark_sharpe=benchmark_sharpe,
+        acceptance_floor=acceptance_floor,
+        sample_sharpe=psr_result.sample_sharpe,
+        psr=psr_result.psr,
+        dsr=dsr_result.dsr,
+        stationary_block_length=stationary_block_length,
+        effective_sample_size=effective_sample_size,
+        min_trl_required=min_trl_required,
+        min_trl_satisfied=min_trl_satisfied,
+        psr_passes_floor=psr_result.passes_floor,
+        dsr_passes_floor=dsr_result.passes_floor,
+        blocker_codes=tuple(blocker_codes),
     )
 
 
@@ -1285,6 +1496,79 @@ def _expected_cost_from_provenance(provenance: EconomicProvenance) -> float:
     ) / 10_000.0
 
 
+def _apply_b2_measured_cost_governance(
+    *,
+    candidate: StrategyLadderCandidateEvent,
+    window: StrategyLadderRawWindowManifest | None,
+    provenance: EconomicProvenance,
+    planned_notional: float,
+) -> EconomicProvenance:
+    measured_spread = build_measured_spread_payload(
+        window_manifest=window,
+        decision_timestamp_ms=candidate.resolved_timestamp_ms,
+    )
+    measured_slippage = build_measured_slippage_payload(
+        candidate=candidate,
+        window_manifest=window,
+        planned_notional=planned_notional,
+        decision_timestamp_ms=candidate.resolved_timestamp_ms,
+    )
+    cost_governance = build_measured_cost_governance_payload(
+        measured_spread=measured_spread,
+        measured_slippage=measured_slippage,
+        fee_bps=provenance.fee_bps,
+        fee_source_status=provenance.fee_provenance,
+        latency_penalty_bps=provenance.latency_penalty_bps,
+        latency_source_status=provenance.latency_provenance,
+    )
+    spread_bps = provenance.spread_bps
+    spread_provenance = provenance.spread_provenance
+    measured_spread_bps = cost_governance.get("spread_bps_measured")
+    if isinstance(measured_spread_bps, (int, float)):
+        spread_bps = float(measured_spread_bps)
+        spread_provenance = str(
+            cost_governance.get("spread_provenance_for_payload") or provenance.spread_provenance
+        )
+    elif str(cost_governance.get("expected_cost_block_reason") or "").strip():
+        spread_bps = 0.0
+        spread_provenance = "DEFAULT_BY_BOOK_STATUS"
+
+    slippage_bps = provenance.slippage_bps
+    slippage_provenance = provenance.slippage_provenance
+    measured_slippage_bps = cost_governance.get("slippage_bps_measured")
+    if isinstance(measured_slippage_bps, (int, float)):
+        slippage_bps = float(measured_slippage_bps)
+        slippage_provenance = str(
+            cost_governance.get("slippage_provenance_for_payload")
+            or provenance.slippage_provenance
+        )
+    elif str(cost_governance.get("expected_cost_block_reason") or "").strip():
+        slippage_bps = 0.0
+        slippage_provenance = "DEFAULT_TO_CALIBRATE"
+
+    measurement_warnings = tuple(provenance.measurement_warnings)
+    block_reason = str(cost_governance.get("expected_cost_block_reason") or "").strip()
+    if block_reason and block_reason not in measurement_warnings:
+        measurement_warnings = (*measurement_warnings, block_reason)
+    return EconomicProvenance(
+        expected_edge_bps=provenance.expected_edge_bps,
+        expected_edge_provenance=provenance.expected_edge_provenance,
+        spread_bps=spread_bps,
+        spread_provenance=spread_provenance,
+        slippage_bps=slippage_bps,
+        slippage_provenance=slippage_provenance,
+        latency_penalty_bps=provenance.latency_penalty_bps,
+        latency_provenance=provenance.latency_provenance,
+        fee_bps=provenance.fee_bps,
+        fee_provenance=provenance.fee_provenance,
+        measurement_warnings=measurement_warnings,
+        expected_edge_model_status=provenance.expected_edge_model_status,
+        expected_edge_model_artifact_hash=provenance.expected_edge_model_artifact_hash,
+        expected_edge_model_feature_hash=provenance.expected_edge_model_feature_hash,
+        measured_cost_governance=cost_governance,
+    )
+
+
 def _expected_edge_model_feature_maps(
     candidate: StrategyLadderCandidateEvent,
 ) -> tuple[dict[str, object], dict[str, object]]:
@@ -1295,6 +1579,19 @@ def _expected_edge_model_feature_maps(
         if isinstance(raw_feature_values, dict)
         else {}
     )
+    for key in (
+        "spread_bps",
+        "slippage_bps",
+        "latency_penalty_bps",
+        "book_depth_levels",
+        "break_even_bps",
+    ):
+        if key in feature_values:
+            continue
+        raw_value = payload.get(key)
+        if raw_value in (None, ""):
+            continue
+        feature_values[key] = raw_value
     route_features: dict[str, object] = {
         "route_raw_score": _coerce_float(payload.get("raw_score"), 0.0),
         "route_penalized_score": _coerce_float(payload.get("penalized_score"), 0.0),
@@ -1338,7 +1635,7 @@ def _economic_provenance_for_candidate(
 ) -> EconomicProvenance:
     payload = dict(candidate.compatibility_payload or {})
     feature_values, route_features = _expected_edge_model_feature_maps(candidate)
-    return compute_economic_provenance(
+    base_provenance = compute_economic_provenance(
         timestamp_ms=candidate.resolved_timestamp_ms,
         book_status=(
             window.book_depth_source_status
@@ -1346,6 +1643,7 @@ def _economic_provenance_for_candidate(
             else str(payload.get("book_depth_source_status") or "BOOK_DEPTH_NOT_PROVEN")
         ),
         pair=candidate.pair,
+        timeframe=candidate.timeframe,
         raw_book_path=window.raw_book_path if window is not None else None,
         raw_trade_path=window.raw_trade_path if window is not None else None,
         raw_ohlcv_path=window.raw_ohlcv_path if window is not None else None,
@@ -1356,6 +1654,12 @@ def _economic_provenance_for_candidate(
         expected_edge_route_features=route_features,
         silver_exchange=silver_exchange,
         silver_market_type=silver_market_type,
+    )
+    return _apply_b2_measured_cost_governance(
+        candidate=candidate,
+        window=window,
+        provenance=base_provenance,
+        planned_notional=_planned_notional_from_payload(payload),
     )
 
 
@@ -1386,6 +1690,37 @@ def _engine_output_payload(output: object | None) -> dict[str, object]:
         dumped = output.model_dump(mode="json")
         return dumped if isinstance(dumped, dict) else {"value": dumped}
     return {"value": str(output)}
+
+
+def _extract_engine_d_first_episode_context(
+    payload: dict[str, object],
+) -> dict[str, object] | None:
+    first_episode_fields = (
+        "origin_context_id",
+        "origin_trade_id",
+        "link_type",
+        "first_episode_id",
+        "first_episode_engine_id",
+        "first_episode_close_reason",
+        "consecutive_stop_count",
+        "last_stop_at_ns",
+        "last_fresh_a_detection_at_ns",
+        "anti_revenge_state",
+        "prior_trade_quality",
+        "duplication_overlap_with_engine_a",
+        "marginal_portfolio_gain",
+        "covered_share_by_engine_a",
+        "concentration_headroom",
+        "reentry_lateness",
+        "structure_reformed_detected",
+        "reentry_anchor_price",
+    )
+    context = {
+        field: payload[field]
+        for field in first_episode_fields
+        if field in payload and payload[field] not in (None, "", (), [], {})
+    }
+    return context or None
 
 
 def _build14_reader_observed_value(
@@ -1494,6 +1829,42 @@ def _native_production_decision_state(decision: str, target_state: str) -> str:
     return target_state if target_state in canonical_states else "evaluated"
 
 
+# Patch F16-B (2026-05-21) — extraction des scalaires microstructure canoniques
+# V5.3 (VPIN, OFI, queue_pressure) depuis un bridge result. Backward-compat :
+# accepte n'importe quel objet ayant les attributs `vpin_record`, `ofi_record`,
+# `queue_pressure_record` ; retourne None si absent. Source des records :
+# `engine_native_adapter.py:586-630` (compute_vpin/_ofi/_queue_pressure).
+def _extract_bridge_microstructure_scalars(
+    bridge_or_result: object | None,
+) -> dict[str, float | None]:
+    scalars: dict[str, float | None] = {
+        "vpin": None,
+        "cumulative_ofi": None,
+        "queue_pressure": None,
+    }
+    if bridge_or_result is None:
+        return scalars
+    vpin_record = getattr(bridge_or_result, "vpin_record", None)
+    if vpin_record is not None:
+        try:
+            scalars["vpin"] = float(vpin_record.value)
+        except (TypeError, ValueError, AttributeError):
+            pass
+    ofi_record = getattr(bridge_or_result, "ofi_record", None)
+    if ofi_record is not None:
+        try:
+            scalars["cumulative_ofi"] = float(ofi_record.value)
+        except (TypeError, ValueError, AttributeError):
+            pass
+    queue_record = getattr(bridge_or_result, "queue_pressure_record", None)
+    if queue_record is not None:
+        try:
+            scalars["queue_pressure"] = float(queue_record.value)
+        except (TypeError, ValueError, AttributeError):
+            pass
+    return scalars
+
+
 def _materialize_native_candidate_event(
     *,
     candidate: StrategyLadderCandidateEvent,
@@ -1507,6 +1878,7 @@ def _materialize_native_candidate_event(
     build14_application: StrategyLadderBuild14Application | None,
     records_built: int,
     runner_invoked: bool,
+    bridge_microstructure_scalars: dict[str, float | None] | None = None,
 ) -> StrategyLadderCandidateEvent:
     payload = dict(candidate.compatibility_payload or {})
     decision = _enum_value(getattr(engine_output, "decision", "not_invoked"))
@@ -1517,6 +1889,11 @@ def _materialize_native_candidate_event(
     edge_is_truth = is_expected_edge_backtest_truth(
         economic_provenance.expected_edge_provenance
     )
+    cost_governance = dict(economic_provenance.measured_cost_governance or {})
+    cost_block_reason = str(cost_governance.get("expected_cost_block_reason") or "").strip()
+    cost_usage_break_even = str(
+        cost_governance.get("cost_source_used_for_break_even") or ""
+    ).strip()
     reason_codes = _engine_output_reason_codes(engine_output)
     no_trade_reasons = _engine_output_no_trade_reasons(engine_output)
     hard_block_reasons = _payload_tuple(payload, "hard_block_reasons")
@@ -1541,6 +1918,8 @@ def _materialize_native_candidate_event(
                 "BREAK_EVEN_PROXY_BLOCKED",
             ],
         )
+    if cost_block_reason:
+        native_blockers = _merge_codes(list(native_blockers), [cost_block_reason])
     if lower_engine_id == "engine_d" and (
         "history_weak" in engine_history_reason_set
         or "engine_d.no_trade.history_weak" in engine_history_reason_set
@@ -1550,7 +1929,11 @@ def _materialize_native_candidate_event(
             ["ENGINE_D_HISTORY_BLOCKED_BY_MISSING_CLOSED_EPISODE_JOURNAL"],
         )
 
-    target_state = "selected" if is_emit and edge_is_truth else "hard_blocked"
+    target_state = (
+        "selected"
+        if is_emit and edge_is_truth and cost_usage_break_even == "measured"
+        else "hard_blocked"
+    )
     native_output = _engine_output_payload(engine_output)
     native_output_hash = deterministic_payload_hash(native_output)
     engine_input_hash = deterministic_payload_hash(engine_input_payload)
@@ -1601,10 +1984,21 @@ def _materialize_native_candidate_event(
         native_output=native_output,
         build14_application=build14_application,
     )
+    # Patch F16-B (2026-05-21) — merge VPIN/OFI/queue scalaires bridge dans
+    # le payload de compatibilité. Permet à `strategy_ladder_b2_label_store_builder`
+    # de lire ces 3 features microstructure canoniques V5.3 via
+    # `compatibility.get("vpin"/"cumulative_ofi"/"queue_pressure")` au même
+    # titre que spread_bps. Backward-compat : dict vide si aucun bridge fourni.
+    microstructure_bridge_payload: dict[str, object] = {}
+    if bridge_microstructure_scalars:
+        for key, value in bridge_microstructure_scalars.items():
+            if value is not None:
+                microstructure_bridge_payload[key] = value
     updated_payload = {
         **payload,
         **build14_payload,
         **selected_engine_fields,
+        **microstructure_bridge_payload,
         "candidate_source": "ENGINE_NATIVE" if runner_invoked else "ENGINE_NATIVE_UNAVAILABLE",
         "candidate_data_source_label": "ENGINE_NATIVE_A_B_C_D_RUNNER",
         "raw_score": raw_score,
@@ -1623,11 +2017,41 @@ def _materialize_native_candidate_event(
         "economic_provenance": economic_provenance.aggregated_provenance,
         "economic_measurement_warnings": economic_provenance.measurement_warnings,
         "spread_bps": economic_provenance.spread_bps,
+        "spread_provenance": economic_provenance.spread_provenance,
         "slippage_bps": economic_provenance.slippage_bps,
+        "slippage_provenance": economic_provenance.slippage_provenance,
         "latency_penalty_bps": economic_provenance.latency_penalty_bps,
+        "latency_source_status": economic_provenance.latency_provenance,
         "fee_bps": economic_provenance.fee_bps,
         "fee_source_status": economic_provenance.fee_provenance,
-        "impact_source_status": economic_provenance.slippage_provenance,
+        "impact_source_status": (
+            str(cost_governance.get("impact_source_status") or "").strip()
+            or economic_provenance.slippage_provenance
+        ),
+        "measured_spread_report": cost_governance.get("measured_spread_report"),
+        "measured_slippage_report": cost_governance.get("measured_slippage_report"),
+        "book_staleness_ms": cost_governance.get("book_staleness_ms"),
+        "best_bid": cost_governance.get("best_bid"),
+        "best_ask": cost_governance.get("best_ask"),
+        "mid_price": cost_governance.get("mid_price"),
+        "spread_bps_measured": cost_governance.get("spread_bps_measured"),
+        "slippage_bps_measured": cost_governance.get("slippage_bps_measured"),
+        "depth_fill_ratio": cost_governance.get("depth_fill_ratio"),
+        "partial_fill_status": cost_governance.get("partial_fill_status"),
+        "spread_source_status": cost_governance.get("spread_source_status"),
+        "slippage_source_status": cost_governance.get("slippage_source_status"),
+        "cost_source_used_for_break_even": cost_governance.get(
+            "cost_source_used_for_break_even"
+        ),
+        "cost_source_used_for_expected_ce_net": cost_governance.get(
+            "cost_source_used_for_expected_ce_net"
+        ),
+        "expected_cost_truth_status": cost_governance.get("expected_cost_truth_status"),
+        "expected_cost_block_reason": cost_governance.get("expected_cost_block_reason"),
+        "fill_realism_status": (
+            str(cost_governance.get("fill_realism_status") or "").strip()
+            or payload.get("fill_realism_status")
+        ),
         "target_decision_state": target_state,
         "production_decision_state": _native_production_decision_state(
             decision,
@@ -1730,6 +2154,9 @@ def _run_native_engine_candidate(
     records_built = 0
     runner_invoked = False
     build14_application: StrategyLadderBuild14Application | None = None
+    # Patch F16-B (2026-05-21) — VPIN/OFI/queue_pressure capturés depuis bridge
+    # par engine et propagés au payload pour persistence en label store.
+    bridge_microstructure_scalars: dict[str, float | None] | None = None
 
     if window is None:
         return (
@@ -1770,6 +2197,7 @@ def _run_native_engine_candidate(
                 raw_book_delta_path=window.raw_book_delta_path,
             )
             records_built = bridge.n_records_built
+            bridge_microstructure_scalars = _extract_bridge_microstructure_scalars(bridge)
             builder = build_engine_a_input_from_window(
                 candidate_id=candidate.candidate_id,
                 pair=candidate.pair,
@@ -1812,6 +2240,9 @@ def _run_native_engine_candidate(
                 if builder.bridge_result is not None
                 else 0
             )
+            bridge_microstructure_scalars = _extract_bridge_microstructure_scalars(
+                builder.bridge_result
+            )
             builder_status = builder.builder_status
             builder_warnings = builder.builder_warnings
             builder_provenance = builder.engine_b_input_provenance
@@ -1838,6 +2269,7 @@ def _run_native_engine_candidate(
                 raw_book_delta_path=window.raw_book_delta_path,
             )
             records_built = bridge.n_records_built
+            bridge_microstructure_scalars = _extract_bridge_microstructure_scalars(bridge)
             builder = build_engine_c_input_from_window(
                 candidate_id=candidate.candidate_id,
                 pair=candidate.pair,
@@ -1886,6 +2318,7 @@ def _run_native_engine_candidate(
                 window_end_ms=window.window_end_ms,
                 raw_trade_path=window.raw_trade_path,
                 raw_ohlcv_path=window.raw_ohlcv_path,
+                first_episode_context=_extract_engine_d_first_episode_context(payload),
                 expected_gain=expected_gain,
                 expected_cost=expected_cost,
                 candidate_size=candidate_size,
@@ -1894,6 +2327,9 @@ def _run_native_engine_candidate(
                 builder.bridge_result.n_records_built
                 if builder.bridge_result is not None
                 else 0
+            )
+            bridge_microstructure_scalars = _extract_bridge_microstructure_scalars(
+                builder.bridge_result
             )
             builder_status = builder.builder_status
             builder_warnings = builder.builder_warnings
@@ -1938,6 +2374,7 @@ def _run_native_engine_candidate(
             build14_application=build14_application,
             records_built=records_built,
             runner_invoked=runner_invoked,
+            bridge_microstructure_scalars=bridge_microstructure_scalars,
         ),
         records_built,
         runner_invoked,
@@ -2227,6 +2664,10 @@ def _build_report_summary(
         candidate_discovery_limit_reason=run_manifest.candidate_discovery_limit_reason,
         candidate_discovery_mode=run_manifest.candidate_discovery_mode,
         candidate_discovery_cap_status=run_manifest.candidate_discovery_cap_status,
+        temporal_bucket_granularity=run_manifest.temporal_bucket_granularity,
+        temporal_bucket_count_available=run_manifest.temporal_bucket_count_available,
+        temporal_bucket_count_selected=run_manifest.temporal_bucket_count_selected,
+        temporal_bucket_coverage_ratio=run_manifest.temporal_bucket_coverage_ratio,
         preselection_status=run_manifest.preselection_status,
         replay_input_mode_status=run_manifest.replay_input_mode_status,
         preselected_only=run_manifest.preselected_only,
@@ -2299,6 +2740,22 @@ def _build_report_summary(
         expected_edge_blocker_codes=run_manifest.expected_edge_blocker_codes,
         candidate_engine_native_count=run_manifest.candidate_engine_native_count,
         candidate_proxy_count=run_manifest.candidate_proxy_count,
+        executed_trade_count=run_manifest.executed_trade_count,
+        statistical_validation_status=run_manifest.statistical_validation_status,
+        statistical_validation_observation_count=run_manifest.statistical_validation_observation_count,
+        statistical_validation_trial_count=run_manifest.statistical_validation_trial_count,
+        statistical_validation_benchmark_sharpe=run_manifest.statistical_validation_benchmark_sharpe,
+        statistical_validation_acceptance_floor=run_manifest.statistical_validation_acceptance_floor,
+        statistical_validation_sample_sharpe=run_manifest.statistical_validation_sample_sharpe,
+        statistical_validation_psr=run_manifest.statistical_validation_psr,
+        statistical_validation_dsr=run_manifest.statistical_validation_dsr,
+        statistical_validation_stationary_block_length=run_manifest.statistical_validation_stationary_block_length,
+        statistical_validation_effective_sample_size=run_manifest.statistical_validation_effective_sample_size,
+        statistical_validation_min_trl_required=run_manifest.statistical_validation_min_trl_required,
+        statistical_validation_min_trl_satisfied=run_manifest.statistical_validation_min_trl_satisfied,
+        statistical_validation_psr_passes_floor=run_manifest.statistical_validation_psr_passes_floor,
+        statistical_validation_dsr_passes_floor=run_manifest.statistical_validation_dsr_passes_floor,
+        statistical_validation_blocker_codes=run_manifest.statistical_validation_blocker_codes,
         engine_native_status=run_manifest.engine_native_status,
         engine_native_records_built=run_manifest.engine_native_records_built,
         depth_status_distribution={
@@ -2486,6 +2943,37 @@ def _write_reports(
         f"- capital_profile_generation_status: {summary.capital_profile_generation_status}",
         f"- promotion_artifact_status: {proxy_surface.promotion_artifact_status}",
         f"- sample_size_survival_status: {summary.sample_size_survival_status}",
+        f"- statistical_validation_status: {summary.statistical_validation_status}",
+        f"- statistical_validation_observation_count: {summary.statistical_validation_observation_count}",
+        f"- statistical_validation_trial_count: {summary.statistical_validation_trial_count}",
+        f"- statistical_validation_acceptance_floor: {summary.statistical_validation_acceptance_floor}",
+        f"- statistical_validation_stationary_block_length: {summary.statistical_validation_stationary_block_length}",
+        (
+            f"- statistical_validation_effective_sample_size: {summary.statistical_validation_effective_sample_size}"
+            if summary.statistical_validation_effective_sample_size is not None
+            else "- statistical_validation_effective_sample_size: NOT_PROVEN"
+        ),
+        (
+            f"- statistical_validation_min_trl_required: {summary.statistical_validation_min_trl_required}"
+            if summary.statistical_validation_min_trl_required is not None
+            else "- statistical_validation_min_trl_required: NOT_PROVEN"
+        ),
+        f"- statistical_validation_min_trl_satisfied: {summary.statistical_validation_min_trl_satisfied}",
+        (
+            f"- statistical_validation_sample_sharpe: {summary.statistical_validation_sample_sharpe}"
+            if summary.statistical_validation_sample_sharpe is not None
+            else "- statistical_validation_sample_sharpe: NOT_PROVEN"
+        ),
+        (
+            f"- statistical_validation_psr: {summary.statistical_validation_psr}"
+            if summary.statistical_validation_psr is not None
+            else "- statistical_validation_psr: NOT_PROVEN"
+        ),
+        (
+            f"- statistical_validation_dsr: {summary.statistical_validation_dsr}"
+            if summary.statistical_validation_dsr is not None
+            else "- statistical_validation_dsr: NOT_PROVEN"
+        ),
         f"- candidate_truth_status: {summary.candidate_truth_status}",
         f"- expected_edge_truth_status: {summary.expected_edge_truth_status}",
         f"- engine_native_status: {summary.engine_native_status}",
@@ -3321,6 +3809,8 @@ def _build_engine_d_diagnosis(
     workflow_root: Path,
 ) -> dict[str, object]:
     journal_state = _find_closed_episode_journal(workflow_root)
+    journal_status = str(journal_state["status"])
+    journal_record_count = int(journal_state["record_count"])
     compat_rows = tuple(_candidate_compatibility_payload(row) for row in candidate_rows)
     first_episode_present = any(
         any(str(compat.get(field) or "").strip() for field in ("first_episode_id", "first_episode_engine_id", "first_episode_close_reason"))
@@ -3334,27 +3824,49 @@ def _build_engine_d_diagnosis(
     reentry_age_present = any(isinstance(compat.get("reentry_lateness"), (int, float)) for compat in compat_rows)
     if first_episode_present:
         first_episode_ref_status = "FIRST_EPISODE_REF_PRESENT"
-    elif int(journal_state["record_count"]) > 0:
+    elif journal_record_count > 0:
         first_episode_ref_status = "FIRST_EPISODE_REF_NOT_LINKED"
     else:
         first_episode_ref_status = "FIRST_EPISODE_REF_MISSING"
-    if str(journal_state["status"]) == "CLOSED_EPISODE_JOURNAL_NOT_GENERATED":
+    if journal_status == "CLOSED_EPISODE_JOURNAL_NOT_GENERATED":
         history_input_status = "REQUIRED_FOR_ENGINE_D_BUT_NOT_AVAILABLE_IN_B2"
-    elif int(journal_state["record_count"]) <= 0:
+    elif journal_record_count <= 0:
         history_input_status = "REQUIRED_FOR_ENGINE_D_BUT_NO_VALID_EPISODE_SOURCE"
     elif not first_episode_present:
         history_input_status = "ENGINE_D_HISTORY_INPUT_NOT_CONSUMED"
     else:
         history_input_status = "ENGINE_D_HISTORY_INPUT_READY"
     suspected_wiring_gaps: list[str] = []
-    if history_input_status != "ENGINE_D_HISTORY_INPUT_READY":
+    if history_input_status == "REQUIRED_FOR_ENGINE_D_BUT_NOT_AVAILABLE_IN_B2":
         suspected_wiring_gaps.extend(
             [
                 "ENGINE_D_HISTORY_BLOCKED_BY_MISSING_CLOSED_EPISODE_JOURNAL",
-                str(journal_state["status"]),
+                journal_status,
                 history_input_status,
             ]
         )
+        recommended_next_action = "BUILD_CLOSED_EPISODE_JOURNAL_FOR_ENGINE_D"
+    elif history_input_status == "REQUIRED_FOR_ENGINE_D_BUT_NO_VALID_EPISODE_SOURCE":
+        suspected_wiring_gaps.extend(
+            [
+                journal_status,
+                history_input_status,
+            ]
+        )
+        recommended_next_action = (
+            "PRODUCE_VALID_CLOSED_EPISODES_BEFORE_EVALUATING_ENGINE_D"
+        )
+    elif history_input_status == "ENGINE_D_HISTORY_INPUT_NOT_CONSUMED":
+        suspected_wiring_gaps.extend(
+            [
+                journal_status,
+                history_input_status,
+                first_episode_ref_status,
+            ]
+        )
+        recommended_next_action = "LINK_FIRST_EPISODE_REFS_FOR_ENGINE_D"
+    else:
+        recommended_next_action = "NO_ACTION_REQUIRED"
     top_reason_rows = _top_reason_rows(
         reason_counter,
         common_reason_codes=common_reason_codes,
@@ -3395,7 +3907,7 @@ def _build_engine_d_diagnosis(
             if code in reason_counter
         ],
         "suspected_wiring_gaps": tuple(dict.fromkeys(suspected_wiring_gaps)),
-        "recommended_next_action": "BUILD_CLOSED_EPISODE_JOURNAL_FOR_ENGINE_D",
+        "recommended_next_action": recommended_next_action,
     }
 
 
@@ -3406,6 +3918,25 @@ def _build_engine_c_diagnosis(
     common_reason_codes: set[str],
     gold_manifest_payload: dict[str, object],
 ) -> dict[str, object]:
+    if not candidate_rows:
+        return {
+            "engine_c_microstructure_input_status": "ENGINE_C_NOT_PRESENT_IN_B2",
+            "engine_c_microstructure_consumption_status": "ENGINE_C_NOT_PRESENT_IN_B2",
+            "vpin_context_status": "ENGINE_C_NOT_PRESENT_IN_B2",
+            "ofi_context_status": "ENGINE_C_NOT_PRESENT_IN_B2",
+            "queue_pressure_context_status": "ENGINE_C_NOT_PRESENT_IN_B2",
+            "spread_context_status": "ENGINE_C_NOT_PRESENT_IN_B2",
+            "depth_context_status": "ENGINE_C_NOT_PRESENT_IN_B2",
+            "fragility_context_status": "ENGINE_C_NOT_PRESENT_IN_B2",
+            "false_breakout_context_status": "ENGINE_C_NOT_PRESENT_IN_B2",
+            "micro_edge_entry_timing_status": "ENGINE_C_NOT_PRESENT_IN_B2",
+            "micro_edge_exit_governor_status": "ENGINE_C_NOT_PRESENT_IN_B2",
+            "fragility_block_status": "ENGINE_C_NOT_PRESENT_IN_B2",
+            "first_blocking_layer": "upstream_preselection",
+            "healthy_blockers": [],
+            "suspected_wiring_gaps": (),
+            "recommended_next_action": "AUDIT_ENGINE_C_B1_BREAKOUT_ELIGIBILITY",
+        }
     ready_groups = {
         str(group)
         for group in (gold_manifest_payload.get("feature_groups_ready") or ())
@@ -3588,6 +4119,29 @@ def _build_engine_c_diagnosis(
             "FIX_ENGINE_C_MICROSTRUCTURE_CONSUMPTION"
             if suspected_wiring_gaps
             else "BUILD_EXPECTED_EDGE_GOVERNED_DATASET"
+        ),
+    }
+
+
+_NEXT_ACTION_RATIONALES: dict[str, str] = {
+    "RUN_BACKTEST_CIRCUIT_COVERAGE_SCAN": "Measure feature-generation, payload transport, and engine-consumption coverage end to end.",
+    "BUILD_CLOSED_EPISODE_JOURNAL_FOR_ENGINE_D": "Engine D requires closed-episode history and the journal is not generated yet.",
+    "PRODUCE_VALID_CLOSED_EPISODES_BEFORE_EVALUATING_ENGINE_D": "Engine D has no valid closed-episode source yet; generating an empty journal is not sufficient.",
+    "LINK_FIRST_EPISODE_REFS_FOR_ENGINE_D": "Engine D has closed episodes on disk but they are not linked into replay payloads.",
+    "AUDIT_ENGINE_C_B1_BREAKOUT_ELIGIBILITY": "Engine C is filtered out before B2 and should be audited at B1 breakout eligibility first.",
+    "FIX_ENGINE_C_MICROSTRUCTURE_CONSUMPTION": "Gold feature groups exist, but core Engine C microstructure inputs are missing or not consumed in replay payloads.",
+    "BUILD_EXPECTED_EDGE_GOVERNED_DATASET": "Expected-edge governance stays fail-closed and blocks selection for every replay record.",
+    "UPGRADE_EXECUTION_REALISM_FOR_SPREAD_SLIPPAGE_ADVERSE_SELECTION": "Execution realism remains a healthy blocker even after selection issues are understood.",
+}
+
+
+def _next_action_row(rank: str, action: str) -> dict[str, str]:
+    return {
+        "rank": rank,
+        "action": action,
+        "rationale": _NEXT_ACTION_RATIONALES.get(
+            action,
+            "Investigate the engine-specific blocker before widening the backtest claim.",
         ),
     }
 
@@ -3846,32 +4400,25 @@ def _build_engine_no_trade_diagnosis_payload(
     hard_blocked_count_total = sum(
         int(row.get("hard_blocked_count") or 0) for row in engine_rows
     )
+    engine_index = {
+        str(row.get("engine_id") or ""): row
+        for row in engine_rows
+        if isinstance(row, dict) and str(row.get("engine_id") or "")
+    }
+    engine_d_action = str(
+        (engine_index.get("engine_d") or {}).get("recommended_next_action")
+        or "BUILD_CLOSED_EPISODE_JOURNAL_FOR_ENGINE_D"
+    )
+    engine_c_action = str(
+        (engine_index.get("engine_c") or {}).get("recommended_next_action")
+        or "FIX_ENGINE_C_MICROSTRUCTURE_CONSUMPTION"
+    )
     next_action_ranking = [
-        {
-            "rank": "A",
-            "action": "RUN_BACKTEST_CIRCUIT_COVERAGE_SCAN",
-            "rationale": "Measure feature-generation, payload transport, and engine-consumption coverage end to end.",
-        },
-        {
-            "rank": "B",
-            "action": "BUILD_CLOSED_EPISODE_JOURNAL_FOR_ENGINE_D",
-            "rationale": "Engine D requires closed-episode history and currently runs without a generated journal.",
-        },
-        {
-            "rank": "C",
-            "action": "FIX_ENGINE_C_MICROSTRUCTURE_CONSUMPTION",
-            "rationale": "Gold feature groups exist, but core Engine C microstructure inputs are missing or not consumed in replay payloads.",
-        },
-        {
-            "rank": "D",
-            "action": "BUILD_EXPECTED_EDGE_GOVERNED_DATASET",
-            "rationale": "Expected-edge governance stays fail-closed and blocks selection for every replay record.",
-        },
-        {
-            "rank": "E",
-            "action": "UPGRADE_EXECUTION_REALISM_FOR_SPREAD_SLIPPAGE_ADVERSE_SELECTION",
-            "rationale": "Execution realism remains a healthy blocker even after selection issues are understood.",
-        },
+        _next_action_row("A", "RUN_BACKTEST_CIRCUIT_COVERAGE_SCAN"),
+        _next_action_row("B", engine_d_action),
+        _next_action_row("C", engine_c_action),
+        _next_action_row("D", "BUILD_EXPECTED_EDGE_GOVERNED_DATASET"),
+        _next_action_row("E", "UPGRADE_EXECUTION_REALISM_FOR_SPREAD_SLIPPAGE_ADVERSE_SELECTION"),
     ]
     return {
         "schema_version": "v1",
@@ -4022,7 +4569,41 @@ def _persist_progress_run_manifest(
             ),
         }
     )
+    atomic_write_json(
+        run_dir / "run_manifest.progress.json",
+        manifest.model_dump(mode="json"),
+    )
+    if progress_callback is not None:
+        progress_callback(manifest)
+    return manifest
+
+
+def _clear_progress_run_manifest(run_dir: Path) -> None:
+    progress_path = run_dir / "run_manifest.progress.json"
+    try:
+        progress_path.unlink()
+    except FileNotFoundError:
+        return
+    except OSError:
+        return
+
+
+def _persist_canonical_run_manifest(
+    run_dir: Path,
+    manifest: StrategyLadderRunManifest,
+    *,
+    progress_callback: StrategyLadderProgressCallback | None = None,
+) -> StrategyLadderRunManifest:
+    manifest = manifest.model_copy(
+        update={
+            "updated_at": datetime.now(tz=UTC),
+            "artifact_hash": deterministic_payload_hash(
+                manifest.model_dump(mode="json")
+            ),
+        }
+    )
     atomic_write_json(run_dir / "run_manifest.json", manifest.model_dump(mode="json"))
+    _clear_progress_run_manifest(run_dir)
     if progress_callback is not None:
         progress_callback(manifest)
     return manifest
@@ -4190,10 +4771,14 @@ def _build_progress_manifest(
     engine_native_status: str | None = None,
     engine_native_records_built: int = 0,
 ) -> StrategyLadderRunManifest:
+    resolved_raw_source_manifest_path = _resolve_run_raw_source_manifest_path(
+        request=request,
+        silver_index_path=silver_index_path,
+    )
     if engine_native_status is None:
         engine_native_status = (
             "ENGINE_NATIVE_PENDING"
-            if request.engine_native_mode and candidate_count > 0 and not request.fast_only and not request.dry_run
+            if request.engine_native_mode and candidate_count > 0 and not request.dry_run
             else "ENGINE_NATIVE_NOT_REQUESTED"
         )
     if candidate_proxy_count is None:
@@ -4241,9 +4826,21 @@ def _build_progress_manifest(
     )
     engine_count = max(len(request.engines) or 4, 4)
     candidate_sample_cap = effective_sample_cap * engine_count
+    temporal_stratified_mode = request.candidate_discovery_mode.strip().upper() in {
+        "TEMPORAL_STRATIFIED",
+        "TEMPORAL_STRATIFIED_SAMPLE_BUDGET",
+    }
+    temporal_bucket_granularity = ""
+    temporal_bucket_count_available = 0
+    temporal_bucket_count_selected = 0
+    temporal_bucket_coverage_ratio = None
     if candidate_count > 0 and effective_sample_cap > 0 and candidate_count >= candidate_sample_cap:
         candidate_discovery_cap_status = "CANDIDATE_DISCOVERY_SAMPLE_CAPPED"
-        candidate_discovery_limit_reason = "ENGINE_NATIVE_SAMPLE_CAP_ACTIVE"
+        candidate_discovery_limit_reason = (
+            "TEMPORAL_STRATIFIED_SAMPLE_BUDGET_ACTIVE"
+            if temporal_stratified_mode
+            else "ENGINE_NATIVE_SAMPLE_CAP_ACTIVE"
+        )
         candidate_discovery_limited = True
     elif candidate_count > 0 and request.full_scan_enabled:
         candidate_discovery_cap_status = "CANDIDATE_DISCOVERY_EXHAUSTED"
@@ -4274,11 +4871,7 @@ def _build_progress_manifest(
         feature_store_root=str(request.feature_store_root.resolve()),
         raw_root=str(request.raw_root.resolve()),
         raw_roots=tuple(str(path.resolve()) for path in request.raw_roots),
-        raw_source_manifest_path=(
-            str(request.raw_source_manifest_path.resolve())
-            if request.raw_source_manifest_path is not None
-            else ""
-        ),
+        raw_source_manifest_path=resolved_raw_source_manifest_path,
         silver_index_path=str(silver_index_path.resolve()) if silver_index_ready else "",
         output_root=str(run_dir.resolve()),
         workflow_run_id=request.workflow_run_id,
@@ -4316,7 +4909,11 @@ def _build_progress_manifest(
         effective_engine_native_sample_size=effective_sample_cap,
         engine_count=engine_count,
         candidate_cap_formula=(
-            f"{engine_count} engines x {effective_sample_cap}"
+            (
+                f"{engine_count} engines x {effective_sample_cap} (temporal_stratified/day)"
+                if temporal_stratified_mode
+                else f"{engine_count} engines x {effective_sample_cap}"
+            )
         ),
         small_scope_enabled=request.small_scope_enabled,
         full_scan_enabled=request.full_scan_enabled,
@@ -4325,6 +4922,10 @@ def _build_progress_manifest(
         candidate_discovery_limit_reason=candidate_discovery_limit_reason,
         candidate_discovery_mode=request.candidate_discovery_mode,
         candidate_discovery_cap_status=candidate_discovery_cap_status,
+        temporal_bucket_granularity=temporal_bucket_granularity,
+        temporal_bucket_count_available=temporal_bucket_count_available,
+        temporal_bucket_count_selected=temporal_bucket_count_selected,
+        temporal_bucket_coverage_ratio=temporal_bucket_coverage_ratio,
         candidate_count=candidate_count,
         raw_window_count=raw_window_count,
         detailed_replay_count=detailed_replay_count,
@@ -4391,6 +4992,11 @@ def run_backtest_strategy_ladder(
     gold_manifest_payload = data_factory_payloads["gold_manifest"]
     silver_index_report_payload = data_factory_payloads["silver_index_report"]
     silver_index_path = Path(str(data_factory_payloads["silver_index_path"]))
+    resolved_raw_source_manifest_path = _resolve_run_raw_source_manifest_path(
+        request=request,
+        silver_index_path=silver_index_path,
+        data_factory_base_root=data_factory_root,
+    )
     silver_index_ready = silver_index_path.is_file() and bool(
         silver_index_report_payload.get("entries")
     )
@@ -4445,6 +5051,7 @@ def run_backtest_strategy_ladder(
             request.frozen_ml_artifact_path,
             expected_artifact_hash=request.frozen_ml_artifact_hash,
             now=expected_edge_model_reference_at,
+            expected_edge_artifact_mode=request.expected_edge_artifact_mode,
         )
     expected_edge_model = expected_edge_model_load_result.model
     expected_edge_model_load_status = expected_edge_model_load_result.status
@@ -4531,9 +5138,22 @@ def run_backtest_strategy_ladder(
                     rows=feature_result.rows,
                 )
             )
-            candidate_events, discovery_capped = cap_strategy_ladder_candidates(
+            budget_result = apply_strategy_ladder_candidate_budget(
                 discovered_candidate_events,
                 sample_cap_per_engine=effective_sample_cap,
+                candidate_discovery_mode=request.candidate_discovery_mode,
+            )
+            candidate_events = budget_result.candidates
+            discovery_capped = budget_result.limited
+            temporal_bucket_granularity = budget_result.temporal_bucket_granularity
+            temporal_bucket_count_available = (
+                budget_result.temporal_bucket_count_available
+            )
+            temporal_bucket_count_selected = (
+                budget_result.temporal_bucket_count_selected
+            )
+            temporal_bucket_coverage_ratio = (
+                budget_result.temporal_bucket_coverage_ratio
             )
         if discovery_capped and candidate_events:
             candidate_discovery_status = "CANDIDATE_DISCOVERY_SAMPLE_CAPPED"
@@ -4554,7 +5174,14 @@ def run_backtest_strategy_ladder(
                     candidate_sample_cap=effective_sample_cap * engine_count,
                     effective_engine_native_sample_size=effective_sample_cap,
                     engine_count=engine_count,
-                    candidate_cap_formula=f"{engine_count} engines x {effective_sample_cap}",
+                    candidate_cap_formula=(
+                        f"{engine_count} engines x {effective_sample_cap} (temporal_stratified/day)"
+                        if request.candidate_discovery_mode.strip().upper() in {
+                            "TEMPORAL_STRATIFIED",
+                            "TEMPORAL_STRATIFIED_SAMPLE_BUDGET",
+                        }
+                        else f"{engine_count} engines x {effective_sample_cap}"
+                    ),
                     small_scope_enabled=request.small_scope_enabled,
                     full_scan_enabled=request.full_scan_enabled,
                     no_full_scan_enabled=request.no_full_scan_enabled,
@@ -4562,7 +5189,7 @@ def run_backtest_strategy_ladder(
                     or request.candidate_discovery_mode == "SAMPLE_CAPPED_DEBUG"
                     or request.small_scope_enabled,
                     candidate_discovery_limit_reason=(
-                        "ENGINE_NATIVE_SAMPLE_CAP_ACTIVE"
+                        budget_result.limit_reason
                         if discovery_capped
                         or request.candidate_discovery_mode == "SAMPLE_CAPPED_DEBUG"
                         or request.small_scope_enabled
@@ -4570,7 +5197,7 @@ def run_backtest_strategy_ladder(
                     ),
                     candidate_discovery_mode=request.candidate_discovery_mode,
                     candidate_discovery_cap_status=(
-                        "CANDIDATE_DISCOVERY_SAMPLE_CAPPED"
+                        budget_result.cap_status
                         if discovery_capped or (
                             candidate_events and len(candidate_events) == effective_sample_cap * engine_count
                         )
@@ -4580,6 +5207,10 @@ def run_backtest_strategy_ladder(
                             else "CANDIDATE_DISCOVERY_FULL_SCAN_ENABLED"
                         )
                     ),
+                    temporal_bucket_granularity=temporal_bucket_granularity,
+                    temporal_bucket_count_available=temporal_bucket_count_available,
+                    temporal_bucket_count_selected=temporal_bucket_count_selected,
+                    temporal_bucket_coverage_ratio=temporal_bucket_coverage_ratio,
                 )
             candidate_export_status = candidate_summary.candidate_export_status
             candidate_source_truth_events = candidate_events
@@ -4775,7 +5406,9 @@ def run_backtest_strategy_ladder(
             progress_callback=progress_callback,
         )
 
-    if not request.fast_only and not request.dry_run and candidate_events:
+    native_preselection_enabled = request.engine_native_mode and not request.dry_run
+
+    if (not request.fast_only or native_preselection_enabled) and not request.dry_run and candidate_events:
         try:
             with performance_profiler.phase(
                 "raw_window_extraction",
@@ -4900,12 +5533,7 @@ def run_backtest_strategy_ladder(
         progress_callback=progress_callback,
     )
 
-    if (
-        request.engine_native_mode
-        and not request.fast_only
-        and not request.dry_run
-        and candidate_events
-    ):
+    if request.engine_native_mode and not request.dry_run and candidate_events:
         native_materialization = _materialize_engine_native_candidates(
             candidate_events=candidate_events,
             raw_window_manifests=raw_window_manifests,
@@ -4989,7 +5617,14 @@ def run_backtest_strategy_ladder(
             candidate_cap_formula=(
                 candidate_summary.candidate_cap_formula
                 if candidate_summary is not None and candidate_summary.candidate_cap_formula
-                else f"{engine_count} engines x {effective_sample_cap}"
+                else (
+                    f"{engine_count} engines x {effective_sample_cap} (temporal_stratified/day)"
+                    if request.candidate_discovery_mode.strip().upper() in {
+                        "TEMPORAL_STRATIFIED",
+                        "TEMPORAL_STRATIFIED_SAMPLE_BUDGET",
+                    }
+                    else f"{engine_count} engines x {effective_sample_cap}"
+                )
             ),
             small_scope_enabled=(
                 candidate_summary.small_scope_enabled
@@ -5015,7 +5650,14 @@ def run_backtest_strategy_ladder(
                 candidate_summary.candidate_discovery_limit_reason
                 if candidate_summary is not None
                 else (
-                    "ENGINE_NATIVE_SAMPLE_CAP_ACTIVE"
+                    (
+                        "TEMPORAL_STRATIFIED_SAMPLE_BUDGET_ACTIVE"
+                        if request.candidate_discovery_mode.strip().upper() in {
+                            "TEMPORAL_STRATIFIED",
+                            "TEMPORAL_STRATIFIED_SAMPLE_BUDGET",
+                        }
+                        else "ENGINE_NATIVE_SAMPLE_CAP_ACTIVE"
+                    )
                     if candidate_discovery_status == "CANDIDATE_DISCOVERY_SAMPLE_CAPPED"
                     else "DISCOVERY_EXHAUSTED_BEFORE_CAP"
                 )
@@ -5030,6 +5672,26 @@ def run_backtest_strategy_ladder(
                 if candidate_summary is not None
                 and candidate_summary.candidate_discovery_cap_status
                 else candidate_discovery_status
+            ),
+            temporal_bucket_granularity=(
+                candidate_summary.temporal_bucket_granularity
+                if candidate_summary is not None
+                else ""
+            ),
+            temporal_bucket_count_available=(
+                candidate_summary.temporal_bucket_count_available
+                if candidate_summary is not None
+                else 0
+            ),
+            temporal_bucket_count_selected=(
+                candidate_summary.temporal_bucket_count_selected
+                if candidate_summary is not None
+                else 0
+            ),
+            temporal_bucket_coverage_ratio=(
+                candidate_summary.temporal_bucket_coverage_ratio
+                if candidate_summary is not None
+                else None
             ),
             preselection_status=preselection_result.status,
             replay_input_mode_status=replay_input_mode_status,
@@ -5476,6 +6138,10 @@ def run_backtest_strategy_ladder(
     )
 
     executed_trade_count = _count_executed_trades(all_bucket_results)
+    statistical_validation_result = _compute_statistical_validation_result(
+        request=request,
+        bucket_results=all_bucket_results,
+    )
     trade_eligible_candidate_count = len(
         {
             result.candidate_id
@@ -5496,6 +6162,7 @@ def run_backtest_strategy_ladder(
         ),
         executed_trade_count=executed_trade_count,
         detailed_replay_record_count=len(all_bucket_results),
+        statistical_validation_status=statistical_validation_result.status,
     )
     candidate_count_semantics = summarize_candidate_count_semantics(
         candidate_source_truth_events or materialized_candidate_events or candidate_events
@@ -5654,6 +6321,8 @@ def run_backtest_strategy_ladder(
         expected_edge_truth_status=expected_edge_truth_status,
         economic_constants_provenance=economic_constants_provenance,
         execution_fidelity_gap_codes=execution_fidelity_gap_codes,
+        statistical_validation_status=statistical_validation_result.status,
+        statistical_validation_blocker_codes=statistical_validation_result.blocker_codes,
     )
     promotion_artifact_status = _derive_promotion_artifact_status(
         engine_artifact_count=len(engine_artifacts),
@@ -5706,10 +6375,22 @@ def run_backtest_strategy_ladder(
         if candidate_summary is not None and candidate_summary.candidate_sample_cap > 0
         else resolved_effective_sample_size * resolved_engine_count
     )
+    resolved_candidate_discovery_mode = (
+        candidate_summary.candidate_discovery_mode
+        if candidate_summary is not None and candidate_summary.candidate_discovery_mode
+        else request.candidate_discovery_mode
+    )
     resolved_candidate_cap_formula = (
         candidate_summary.candidate_cap_formula
         if candidate_summary is not None and candidate_summary.candidate_cap_formula
-        else f"{resolved_engine_count} engines x {resolved_effective_sample_size}"
+        else (
+            f"{resolved_engine_count} engines x {resolved_effective_sample_size} (temporal_stratified/day)"
+            if resolved_candidate_discovery_mode in {
+                "TEMPORAL_STRATIFIED",
+                "TEMPORAL_STRATIFIED_SAMPLE_BUDGET",
+            }
+            else f"{resolved_engine_count} engines x {resolved_effective_sample_size}"
+        )
     )
     resolved_small_scope_enabled = (
         candidate_summary.small_scope_enabled
@@ -5743,11 +6424,6 @@ def run_backtest_strategy_ladder(
             else "DISCOVERY_EXHAUSTED_BEFORE_CAP"
         )
     )
-    resolved_candidate_discovery_mode = (
-        candidate_summary.candidate_discovery_mode
-        if candidate_summary is not None and candidate_summary.candidate_discovery_mode
-        else request.candidate_discovery_mode
-    )
     resolved_candidate_discovery_cap_status = (
         candidate_summary.candidate_discovery_cap_status
         if candidate_summary is not None and candidate_summary.candidate_discovery_cap_status
@@ -5766,6 +6442,26 @@ def run_backtest_strategy_ladder(
                 )
             )
         )
+    )
+    resolved_temporal_bucket_granularity = (
+        candidate_summary.temporal_bucket_granularity
+        if candidate_summary is not None and candidate_summary.temporal_bucket_granularity
+        else ""
+    )
+    resolved_temporal_bucket_count_available = (
+        candidate_summary.temporal_bucket_count_available
+        if candidate_summary is not None
+        else 0
+    )
+    resolved_temporal_bucket_count_selected = (
+        candidate_summary.temporal_bucket_count_selected
+        if candidate_summary is not None
+        else 0
+    )
+    resolved_temporal_bucket_coverage_ratio = (
+        candidate_summary.temporal_bucket_coverage_ratio
+        if candidate_summary is not None
+        else None
     )
     summary_inconsistency_codes: list[str] = []
     if data_factory_manifest_payload:
@@ -5825,11 +6521,7 @@ def run_backtest_strategy_ladder(
         feature_store_root=str(request.feature_store_root.resolve()),
         raw_root=str(request.raw_root.resolve()),
         raw_roots=tuple(str(path.resolve()) for path in request.raw_roots),
-        raw_source_manifest_path=(
-            str(request.raw_source_manifest_path.resolve())
-            if request.raw_source_manifest_path is not None
-            else ""
-        ),
+        raw_source_manifest_path=resolved_raw_source_manifest_path,
         silver_index_path=str(silver_index_path.resolve()) if silver_index_ready else "",
         output_root=str(run_dir.resolve()),
         workflow_run_id=request.workflow_run_id,
@@ -5889,6 +6581,7 @@ def run_backtest_strategy_ladder(
                 else ()
             ),
             *promotion_fidelity_blockers,
+            *statistical_validation_result.blocker_codes,
             *summary_inconsistency_codes,
         ),
         feature_row_count=feature_result.row_count,
@@ -5903,6 +6596,10 @@ def run_backtest_strategy_ladder(
         candidate_discovery_limit_reason=resolved_candidate_discovery_limit_reason,
         candidate_discovery_mode=resolved_candidate_discovery_mode,
         candidate_discovery_cap_status=resolved_candidate_discovery_cap_status,
+        temporal_bucket_granularity=resolved_temporal_bucket_granularity,
+        temporal_bucket_count_available=resolved_temporal_bucket_count_available,
+        temporal_bucket_count_selected=resolved_temporal_bucket_count_selected,
+        temporal_bucket_coverage_ratio=resolved_temporal_bucket_coverage_ratio,
         preselection_status=(
             preselection_result.status
             if preselection_result is not None
@@ -6011,6 +6708,21 @@ def run_backtest_strategy_ladder(
         candidate_engine_native_count=candidate_engine_native_count,
         candidate_proxy_count=candidate_proxy_count,
         executed_trade_count=executed_trade_count,
+        statistical_validation_status=statistical_validation_result.status,
+        statistical_validation_observation_count=statistical_validation_result.observation_count,
+        statistical_validation_trial_count=statistical_validation_result.trial_count,
+        statistical_validation_benchmark_sharpe=statistical_validation_result.benchmark_sharpe,
+        statistical_validation_acceptance_floor=statistical_validation_result.acceptance_floor,
+        statistical_validation_sample_sharpe=statistical_validation_result.sample_sharpe,
+        statistical_validation_psr=statistical_validation_result.psr,
+        statistical_validation_dsr=statistical_validation_result.dsr,
+        statistical_validation_stationary_block_length=statistical_validation_result.stationary_block_length,
+        statistical_validation_effective_sample_size=statistical_validation_result.effective_sample_size,
+        statistical_validation_min_trl_required=statistical_validation_result.min_trl_required,
+        statistical_validation_min_trl_satisfied=statistical_validation_result.min_trl_satisfied,
+        statistical_validation_psr_passes_floor=statistical_validation_result.psr_passes_floor,
+        statistical_validation_dsr_passes_floor=statistical_validation_result.dsr_passes_floor,
+        statistical_validation_blocker_codes=statistical_validation_result.blocker_codes,
         # Audit 2026-05-06 (P3a) — Statut du pont microstructure vers les
         # Native status now reflects full-path runner invocation before replay.
         engine_native_status=engine_native_status,
@@ -6022,6 +6734,7 @@ def run_backtest_strategy_ladder(
         update={"artifact_hash": deterministic_payload_hash(run_manifest.model_dump(mode="json"))}
     )
     atomic_write_json(run_dir / "run_manifest.json", run_manifest.model_dump(mode="json"))
+    _clear_progress_run_manifest(run_dir)
     replay_artifact_refs = {
         artifact.candidate_id: str((detailed_replay_dir / f"{artifact.candidate_id}.json").resolve())
         for artifact in detailed_result.candidate_artifacts
@@ -6148,7 +6861,7 @@ def run_backtest_strategy_ladder(
     )
     performance_profiler.write(run_dir)
     if operator_artifact_refs.get("timeframe_matrix"):
-        run_manifest = _persist_progress_run_manifest(
+        run_manifest = _persist_canonical_run_manifest(
             run_dir,
             run_manifest,
             progress_callback=progress_callback,

@@ -90,10 +90,12 @@ def _feature_names(rows) -> tuple[str, ...]:  # noqa: ANN001
     names: set[str] = set()
     for row in rows:
         names.update(str(key) for key in row.feature_values)
-        if row.spread_bps > 0.0:
+        if row.spread_bps is not None:
             names.add("spread_bps")
-        if row.slippage_bps > 0.0:
+        if row.slippage_bps is not None:
             names.add("slippage_bps")
+        if row.latency_penalty_bps is not None:
+            names.add("latency_penalty_bps")
         if row.book_depth_levels is not None:
             names.add("book_depth_levels")
     return tuple(sorted(names))

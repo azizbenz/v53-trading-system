@@ -1,0 +1,618 @@
+{
+  "schema_version": "v53.engine_math_canary_audit.v1",
+  "generated_at": "2026-05-22T21:03:44.114780+00:00",
+  "row_count": 14,
+  "rows": [
+    {
+      "equation_id": "A_DIRECTION_POLICY",
+      "engine_id": "engine_a",
+      "module_path": "src/engines/engine_a/engine_a_runner.py",
+      "function_name": "run_engine_a",
+      "formula_expected": "long-only gate: direction_score must be > 0 before any trade path",
+      "formula_implemented": "if inputs.direction_score <= 0: NO_TRADE",
+      "input_fields": [
+        "direction_score"
+      ],
+      "output_fields": [
+        "decision",
+        "reason_codes"
+      ],
+      "input_units": {
+        "direction_score": "signed_score_-1_to_1"
+      },
+      "output_units": {
+        "decision": "enum",
+        "reason_codes": "tuple[str]"
+      },
+      "threshold_name": "direction_score_non_long_gate",
+      "threshold_value": 0.0,
+      "threshold_unit": "signed_score_-1_to_1",
+      "reason_code_fail": [
+        "engine_internal.engine_a.direction.non_long",
+        "engine_a.input.non_long_direction"
+      ],
+      "reason_code_pass_or_marginal": [],
+      "expected_provenance": "engine_a_input_payload",
+      "existing_tests": [
+        "tests/test_engines/test_engine_a/test_engine_a.py::test_non_long_direction_branch"
+      ],
+      "missing_tests": [
+        "tests/engine_canary/test_engine_equations_canary.py::test_engine_a_negative_direction_never_becomes_long"
+      ]
+    },
+    {
+      "equation_id": "A_STRUCTURE_SCORE",
+      "engine_id": "engine_a",
+      "module_path": "src/engines/engine_a/structure_detector_a.py",
+      "function_name": "detect_structure",
+      "formula_expected": "0.30*abs(direction)+0.25*continuation+0.20*quality+0.10*zone+0.15*stability",
+      "formula_implemented": "ENGINE_A_STRUCTURE_WEIGHTS weighted sum with realized_kernel_vol_scale override for stability",
+      "input_fields": [
+        "direction_score",
+        "continuation_score",
+        "structure_quality",
+        "zone_proximity",
+        "trend_stability"
+      ],
+      "output_fields": [
+        "structure_score",
+        "verdict"
+      ],
+      "input_units": {
+        "direction_score": "signed_score_-1_to_1",
+        "continuation_score": "score_0_to_1",
+        "structure_quality": "score_0_to_1",
+        "zone_proximity": "score_0_to_1",
+        "trend_stability": "score_0_to_1"
+      },
+      "output_units": {
+        "structure_score": "score_0_to_1",
+        "verdict": "enum"
+      },
+      "threshold_name": "favorable/marginal/min_direction",
+      "threshold_value": "0.60/0.30/0.20",
+      "threshold_unit": "score_0_to_1",
+      "reason_code_fail": [],
+      "reason_code_pass_or_marginal": [],
+      "expected_provenance": "engine_a_input_payload",
+      "existing_tests": [
+        "tests/test_engines/test_engine_a/test_engine_a.py::test_structure_unfavorable_branch"
+      ],
+      "missing_tests": [
+        "tests/engine_canary/test_engine_equations_canary.py::test_engine_a_structure_detector_canary_cases"
+      ]
+    },
+    {
+      "equation_id": "A_COST_BREAK_EVEN",
+      "engine_id": "engine_a",
+      "module_path": "src/engines/engine_a/cost_feasibility_a.py",
+      "function_name": "check_cost_feasibility",
+      "formula_expected": "break_even=(expected_cost+kyle_uplift)+delta_safe ; CE=(expected_gain-(expected_cost+kyle_uplift))/holding_period",
+      "formula_implemented": "effective_expected_cost = expected_cost + kyle_lambda_cost_uplift ; expected_gain <= break_even blocks ; CE < ce_min marginal",
+      "input_fields": [
+        "expected_gain",
+        "expected_cost",
+        "kyle_lambda_cost_uplift",
+        "candidate_size",
+        "holding_period",
+        "delta_safe",
+        "ce_min"
+      ],
+      "output_fields": [
+        "expected_cost",
+        "break_even",
+        "ev_net",
+        "ce_expected",
+        "verdict"
+      ],
+      "input_units": {
+        "expected_gain": "decimal_return",
+        "expected_cost": "decimal_return",
+        "kyle_lambda_cost_uplift": "decimal_return",
+        "candidate_size": "notional_quote",
+        "holding_period": "hours",
+        "delta_safe": "decimal_return",
+        "ce_min": "decimal_return_per_hour"
+      },
+      "output_units": {
+        "expected_cost": "decimal_return",
+        "break_even": "decimal_return",
+        "ev_net": "quote_notional_return",
+        "ce_expected": "decimal_return_per_hour",
+        "verdict": "enum"
+      },
+      "threshold_name": "delta_safe/ce_min",
+      "threshold_value": "0.0005/0.0001",
+      "threshold_unit": "decimal_return",
+      "reason_code_fail": [
+        "engine_a.cost.break_even_not_cleared",
+        "engine_a.cost.ce_below_min"
+      ],
+      "reason_code_pass_or_marginal": [],
+      "expected_provenance": "economic_provenance",
+      "existing_tests": [
+        "tests/test_engines/test_engine_a/test_engine_a.py::test_cost_marginal_branch"
+      ],
+      "missing_tests": [
+        "tests/engine_canary/test_engine_equations_canary.py::test_unit_conversions_and_expected_cost_sum"
+      ]
+    },
+    {
+      "equation_id": "B_Z_SCORE_EXCESS",
+      "engine_id": "engine_b",
+      "module_path": "src/engines/engine_b/excess_detector_b.py",
+      "function_name": "detect_excess",
+      "formula_expected": "abs_z=abs(z_score); no_excess if abs_z<z_marginal; exploitable if abs_z>=z_star; invalid when z_score_valid is false",
+      "formula_implemented": "abs_z gating with z_marginal=1.0 z_star=1.5 z_max=4.0; excess_score=z_quality+range_bonus-expansion_penalty",
+      "input_fields": [
+        "z_score",
+        "z_score_valid",
+        "structure_is_range",
+        "recent_expansion"
+      ],
+      "output_fields": [
+        "abs_z",
+        "excess_score",
+        "verdict"
+      ],
+      "input_units": {
+        "z_score": "sigma_units",
+        "z_score_valid": "bool",
+        "structure_is_range": "score_0_to_1",
+        "recent_expansion": "score_0_to_1"
+      },
+      "output_units": {
+        "abs_z": "sigma_units",
+        "excess_score": "score_0_to_1",
+        "verdict": "enum"
+      },
+      "threshold_name": "z_marginal/z_star/z_max",
+      "threshold_value": "1.0/1.5/4.0",
+      "threshold_unit": "sigma_units",
+      "reason_code_fail": [
+        "engine_b.excess.no_excess",
+        "engine_b.excess.invalid"
+      ],
+      "reason_code_pass_or_marginal": [
+        "b.toxic_flow_fade",
+        "b.toxic_flow_fade_suppressed.correlation"
+      ],
+      "expected_provenance": "engine_b_input_payload",
+      "existing_tests": [
+        "tests/test_engines/test_engine_b/test_engine_b.py::test_excess_detector"
+      ],
+      "missing_tests": [
+        "tests/engine_canary/test_engine_equations_canary.py::test_engine_b_excess_threshold_cases"
+      ]
+    },
+    {
+      "equation_id": "B_DIRECTION_POLICY",
+      "engine_id": "engine_b",
+      "module_path": "src/engines/engine_b/engine_b_runner.py",
+      "function_name": "run_engine_b",
+      "formula_expected": "long-only mean reversion: z_score must be <= 0 for a long-compatible candidate",
+      "formula_implemented": "if mean_result.z_score > 0: NO_TRADE non_long",
+      "input_fields": [
+        "current_price",
+        "local_mean",
+        "local_std"
+      ],
+      "output_fields": [
+        "decision",
+        "reason_codes"
+      ],
+      "input_units": {
+        "current_price": "price_quote",
+        "local_mean": "price_quote",
+        "local_std": "price_quote"
+      },
+      "output_units": {
+        "decision": "enum",
+        "reason_codes": "tuple[str]"
+      },
+      "threshold_name": "z_score_sign",
+      "threshold_value": 0.0,
+      "threshold_unit": "sigma_units",
+      "reason_code_fail": [
+        "engine_internal.engine_b.direction.non_long",
+        "engine_b.direction.non_long"
+      ],
+      "reason_code_pass_or_marginal": [],
+      "expected_provenance": "engine_b_input_payload",
+      "existing_tests": [
+        "tests/test_engines/test_engine_b/test_engine_b.py::test_runner_rejects_positive_z_as_non_long"
+      ],
+      "missing_tests": [
+        "tests/engine_canary/test_engine_equations_canary.py::test_engine_b_negative_z_is_math_excess_but_positive_z_is_long_only_block"
+      ]
+    },
+    {
+      "equation_id": "B_COST_BREAK_EVEN",
+      "engine_id": "engine_b",
+      "module_path": "src/engines/engine_b/cost_feasibility_b.py",
+      "function_name": "check_cost_feasibility_b",
+      "formula_expected": "break_even=expected_cost+delta_safe ; EV_net=x*(expected_gain-expected_cost) ; CE=(expected_gain-expected_cost)/holding_period",
+      "formula_implemented": "expected_gain <= break_even infeasible ; ev_net <= 0 infeasible ; CE < ce_min marginal",
+      "input_fields": [
+        "expected_gain",
+        "expected_cost",
+        "candidate_size",
+        "holding_period",
+        "delta_safe",
+        "ce_min"
+      ],
+      "output_fields": [
+        "break_even",
+        "ev_net",
+        "ce_expected",
+        "verdict"
+      ],
+      "input_units": {
+        "expected_gain": "decimal_return",
+        "expected_cost": "decimal_return",
+        "candidate_size": "notional_quote",
+        "holding_period": "hours",
+        "delta_safe": "decimal_return",
+        "ce_min": "decimal_return_per_hour"
+      },
+      "output_units": {
+        "break_even": "decimal_return",
+        "ev_net": "quote_notional_return",
+        "ce_expected": "decimal_return_per_hour",
+        "verdict": "enum"
+      },
+      "threshold_name": "delta_safe/ce_min",
+      "threshold_value": "0.0008/0.0002",
+      "threshold_unit": "decimal_return",
+      "reason_code_fail": [
+        "break_even_not_cleared",
+        "ce_below_minimum"
+      ],
+      "reason_code_pass_or_marginal": [],
+      "expected_provenance": "economic_provenance",
+      "existing_tests": [
+        "tests/test_engines/test_engine_b/test_engine_b.py::test_cost_equality_to_break_even_is_infeasible"
+      ],
+      "missing_tests": [
+        "tests/engine_canary/test_engine_equations_canary.py::test_engine_b_cost_threshold_cases"
+      ]
+    },
+    {
+      "equation_id": "C_BREAKOUT_SCORE",
+      "engine_id": "engine_c",
+      "module_path": "src/engines/engine_c/signal_math_c.py",
+      "function_name": "compute_breakout_score",
+      "formula_expected": "0.35*breakout_strength+0.25*range_quality+0.20*compression_quality+0.20*volume_confirmation",
+      "formula_implemented": "compute_breakout_score weighted sum clamped to [0,1]",
+      "input_fields": [
+        "breakout_strength",
+        "range_quality",
+        "compression_quality",
+        "volume_confirmation"
+      ],
+      "output_fields": [
+        "breakout_score"
+      ],
+      "input_units": {
+        "breakout_strength": "score_0_to_1",
+        "range_quality": "score_0_to_1",
+        "compression_quality": "score_0_to_1",
+        "volume_confirmation": "score_0_to_1"
+      },
+      "output_units": {
+        "breakout_score": "score_0_to_1"
+      },
+      "threshold_name": "breakout_score_min",
+      "threshold_value": 0.62,
+      "threshold_unit": "score_0_to_1",
+      "reason_code_fail": [
+        "engine_c.breakout.unstructured"
+      ],
+      "reason_code_pass_or_marginal": [],
+      "expected_provenance": "engine_c_input_payload",
+      "existing_tests": [
+        "tests/test_engines/test_engine_c/test_engine_c.py::test_breakout_unstructured_branch"
+      ],
+      "missing_tests": [
+        "tests/engine_canary/test_engine_equations_canary.py::test_engine_c_breakout_threshold_cases"
+      ]
+    },
+    {
+      "equation_id": "C_FAKE_BREAKOUT_RISK",
+      "engine_id": "engine_c",
+      "module_path": "src/engines/engine_c/signal_math_c.py",
+      "function_name": "compute_fake_breakout_risk",
+      "formula_expected": "0.45*retrace_risk+0.30*rejection_wick_ratio+0.25*(1-volume_confirmation)",
+      "formula_implemented": "compute_fake_breakout_risk weighted sum clamped to [0,1]",
+      "input_fields": [
+        "retrace_risk",
+        "rejection_wick_ratio",
+        "volume_confirmation"
+      ],
+      "output_fields": [
+        "fake_breakout_risk"
+      ],
+      "input_units": {
+        "retrace_risk": "score_0_to_1",
+        "rejection_wick_ratio": "score_0_to_1",
+        "volume_confirmation": "score_0_to_1"
+      },
+      "output_units": {
+        "fake_breakout_risk": "score_0_to_1"
+      },
+      "threshold_name": "fake_breakout_risk_max",
+      "threshold_value": 0.65,
+      "threshold_unit": "score_0_to_1",
+      "reason_code_fail": [
+        "engine_c.fake_breakout.blocked"
+      ],
+      "reason_code_pass_or_marginal": [],
+      "expected_provenance": "engine_c_input_payload",
+      "existing_tests": [
+        "tests/test_engines/test_engine_c/test_engine_c.py::test_fake_breakout_blocked_branch"
+      ],
+      "missing_tests": [
+        "tests/engine_canary/test_engine_threshold_boundaries.py::test_engine_c_threshold_boundaries_with_epsilon"
+      ]
+    },
+    {
+      "equation_id": "D_HISTORY_SCORE",
+      "engine_id": "engine_d",
+      "module_path": "src/engines/engine_d/signal_math_d.py",
+      "function_name": "compute_history_score",
+      "formula_expected": "0.55*prior_trade_quality+0.25*pair_health+0.20*data_freshness",
+      "formula_implemented": "compute_history_score weighted sum clamped to [0,1]",
+      "input_fields": [
+        "prior_trade_quality",
+        "pair_health",
+        "data_freshness"
+      ],
+      "output_fields": [
+        "history_score"
+      ],
+      "input_units": {
+        "prior_trade_quality": "score_0_to_1",
+        "pair_health": "score_0_to_1",
+        "data_freshness": "score_0_to_1"
+      },
+      "output_units": {
+        "history_score": "score_0_to_1"
+      },
+      "threshold_name": "history_min",
+      "threshold_value": 0.55,
+      "threshold_unit": "score_0_to_1",
+      "reason_code_fail": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reason_code_pass_or_marginal": [],
+      "expected_provenance": "engine_d_input_payload",
+      "existing_tests": [
+        "tests/test_engines/test_engine_d/test_engine_d.py::test_history_weak_branch"
+      ],
+      "missing_tests": [
+        "tests/engine_canary/test_engine_equations_canary.py::test_engine_d_missing_history_and_threshold_cases"
+      ]
+    },
+    {
+      "equation_id": "D_REFORMATION_SCORE",
+      "engine_id": "engine_d",
+      "module_path": "src/engines/engine_d/signal_math_d.py",
+      "function_name": "compute_reformation_score",
+      "formula_expected": "0.45*reformation_quality+0.30*pullback_quality+0.25*context_score",
+      "formula_implemented": "compute_reformation_score weighted sum clamped to [0,1]",
+      "input_fields": [
+        "reformation_quality",
+        "pullback_quality",
+        "regime_favorability",
+        "pair_health",
+        "data_freshness",
+        "flow_coherence"
+      ],
+      "output_fields": [
+        "context_score",
+        "reformation_score"
+      ],
+      "input_units": {
+        "reformation_quality": "score_0_to_1",
+        "pullback_quality": "score_0_to_1",
+        "regime_favorability": "score_0_to_1",
+        "pair_health": "score_0_to_1",
+        "data_freshness": "score_0_to_1",
+        "flow_coherence": "score_0_to_1"
+      },
+      "output_units": {
+        "context_score": "score_0_to_1",
+        "reformation_score": "score_0_to_1"
+      },
+      "threshold_name": "reformation_min",
+      "threshold_value": 0.58,
+      "threshold_unit": "score_0_to_1",
+      "reason_code_fail": [
+        "engine_internal.engine_d.reformation.weak",
+        "engine_d.no_trade.reformation_weak"
+      ],
+      "reason_code_pass_or_marginal": [],
+      "expected_provenance": "engine_d_input_payload",
+      "existing_tests": [
+        "tests/test_engines/test_engine_d/test_engine_d.py::test_reformation_weak_branch"
+      ],
+      "missing_tests": [
+        "tests/engine_canary/test_engine_threshold_boundaries.py::test_engine_d_threshold_boundaries_with_epsilon"
+      ]
+    },
+    {
+      "equation_id": "D_CONCENTRATION_RISK",
+      "engine_id": "engine_d",
+      "module_path": "src/engines/engine_d/context_resolver_d.py",
+      "function_name": "resolve_engine_d_context",
+      "formula_expected": "0.60*(1-concentration_headroom)+0.40*reentry_lateness",
+      "formula_implemented": "concentration_risk = clamp(0.60*(1-headroom)+0.40*lateness)",
+      "input_fields": [
+        "concentration_headroom",
+        "reentry_lateness"
+      ],
+      "output_fields": [
+        "concentration_risk"
+      ],
+      "input_units": {
+        "concentration_headroom": "score_0_to_1",
+        "reentry_lateness": "score_0_to_1"
+      },
+      "output_units": {
+        "concentration_risk": "score_0_to_1"
+      },
+      "threshold_name": "concentration_max",
+      "threshold_value": 0.64,
+      "threshold_unit": "score_0_to_1",
+      "reason_code_fail": [
+        "engine_internal.engine_d.concentration.blocked",
+        "engine_d.no_trade.concentration_blocked"
+      ],
+      "reason_code_pass_or_marginal": [],
+      "expected_provenance": "engine_d_input_payload",
+      "existing_tests": [
+        "tests/test_engines/test_engine_d/test_engine_d.py::test_concentration_blocked_branch"
+      ],
+      "missing_tests": [
+        "tests/engine_canary/test_engine_equations_canary.py::test_engine_d_missing_history_and_threshold_cases"
+      ]
+    },
+    {
+      "equation_id": "SHARED_EXPECTED_EDGE_TRUTH",
+      "engine_id": "shared_b2",
+      "module_path": "src/local_replay_runtime/strategy_ladder_economic_provenance.py",
+      "function_name": "is_expected_edge_backtest_truth",
+      "formula_expected": "only MEASURED_* or GOVERNED_* provenance is usable as B2 truth; proxy/default/to_calibrate blocked",
+      "formula_implemented": "TO_CALIBRATE/DEFAULT/PROXY/UNKNOWN => false ; MEASURED_/GOVERNED_ => true",
+      "input_fields": [
+        "expected_edge_provenance"
+      ],
+      "output_fields": [
+        "expected_edge_truth_status"
+      ],
+      "input_units": {
+        "expected_edge_provenance": "string_label"
+      },
+      "output_units": {
+        "expected_edge_truth_status": "string_label"
+      },
+      "threshold_name": "expected_edge_truth_gate",
+      "threshold_value": "governed_or_measured_only",
+      "threshold_unit": "label",
+      "reason_code_fail": [
+        "EXPECTED_EDGE_PROXY_BLOCKED",
+        "EXPECTED_EDGE_NOT_GOVERNED_FOR_BACKTEST_TRUTH"
+      ],
+      "reason_code_pass_or_marginal": [
+        "EXPECTED_EDGE_GOVERNED_BACKTEST_TRUTH"
+      ],
+      "expected_provenance": "economic_provenance",
+      "existing_tests": [
+        "tests/test_local_replay_runtime/test_strategy_ladder_economic_provenance.py::test_expected_edge_backtest_truth_status"
+      ],
+      "missing_tests": [
+        "tests/engine_canary/test_engine_equations_canary.py::test_b2_proxy_expected_edge_never_becomes_truth"
+      ]
+    },
+    {
+      "equation_id": "SHARED_SPREAD_AND_DEPTH",
+      "engine_id": "shared_b2",
+      "module_path": "src/local_replay_runtime/strategy_ladder_replay_evidence.py",
+      "function_name": "build_measured_spread_payload/build_measured_slippage_payload",
+      "formula_expected": "spread_bps=(ask-bid)/mid*10000 ; depth_topk_notional=sum(price*size) ; depth_fill_ratio=filled_notional/planned_notional",
+      "formula_implemented": "spread from reconstructed book state; depth_top1/top5/top20 from top levels; walk_cost_bps from volume walk",
+      "input_fields": [
+        "best_bid",
+        "best_ask",
+        "levels",
+        "planned_notional"
+      ],
+      "output_fields": [
+        "spread_bps",
+        "depth_top1_notional",
+        "depth_top5_notional",
+        "depth_top20_notional",
+        "depth_fill_ratio",
+        "staleness_ms"
+      ],
+      "input_units": {
+        "best_bid": "price_quote",
+        "best_ask": "price_quote",
+        "levels": "price_qty_levels",
+        "planned_notional": "notional_quote"
+      },
+      "output_units": {
+        "spread_bps": "bps",
+        "depth_top1_notional": "notional_quote",
+        "depth_top5_notional": "notional_quote",
+        "depth_top20_notional": "notional_quote",
+        "depth_fill_ratio": "ratio_0_to_1",
+        "staleness_ms": "milliseconds"
+      },
+      "threshold_name": "book_freshness_warn_ms",
+      "threshold_value": 5000,
+      "threshold_unit": "milliseconds",
+      "reason_code_fail": [
+        "SPREAD_MEASURED_STALE_AUDIT_ONLY",
+        "SPREAD_BLOCKED_BY_MISSING_BOOK"
+      ],
+      "reason_code_pass_or_marginal": [
+        "SPREAD_MEASURED_FROM_BOOK",
+        "SLIPPAGE_ESTIMATED_FROM_DEPTH20"
+      ],
+      "expected_provenance": "replay_evidence",
+      "existing_tests": [
+        "tests/test_local_replay_runtime/test_strategy_ladder_replay_evidence.py::test_measured_spread"
+      ],
+      "missing_tests": [
+        "tests/engine_canary/test_engine_equations_canary.py::test_orderbook_depth_and_spread_canary"
+      ]
+    },
+    {
+      "equation_id": "SHARED_SHARIA_SIDE_POLICY",
+      "engine_id": "shared_policy",
+      "module_path": "src/sharia_compliance/trade_type_guard.py",
+      "function_name": "authorize_trade_type",
+      "formula_expected": "short forbidden; non-spot forbidden; leverage forbidden; margin forbidden",
+      "formula_implemented": "SHORT_FORBIDDEN / NON_SPOT_FORBIDDEN / LEVERAGE_FORBIDDEN / MARGIN_FORBIDDEN",
+      "input_fields": [
+        "side",
+        "metadata.product_type",
+        "metadata.leverage",
+        "metadata.margin_required"
+      ],
+      "output_fields": [
+        "allowed",
+        "reason_code"
+      ],
+      "input_units": {
+        "side": "label",
+        "metadata.product_type": "label",
+        "metadata.leverage": "multiple",
+        "metadata.margin_required": "bool"
+      },
+      "output_units": {
+        "allowed": "bool",
+        "reason_code": "string_label"
+      },
+      "threshold_name": "sharia_spot_long_only",
+      "threshold_value": "buy_or_inventory_reduce_only",
+      "threshold_unit": "policy_label",
+      "reason_code_fail": [
+        "SHORT_FORBIDDEN",
+        "NON_SPOT_FORBIDDEN",
+        "LEVERAGE_FORBIDDEN",
+        "MARGIN_FORBIDDEN"
+      ],
+      "reason_code_pass_or_marginal": [],
+      "expected_provenance": "execution_policy",
+      "existing_tests": [
+        "tests/test_sharia_compliance/test_trade_type_guard.py"
+      ],
+      "missing_tests": [
+        "tests/engine_canary/test_engine_equations_canary.py::test_sharia_spot_long_only_canary"
+      ]
+    }
+  ]
+}

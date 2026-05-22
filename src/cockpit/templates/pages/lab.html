@@ -5,6 +5,24 @@
 {% block content %}
 {% set handoff = vm.runtime.strategy_ladder_ml_handoff %}
 {% set handoff_form = vm.lab_ml_handoff_form %}
+{% set handoff_payload = handoff.model_dump() if handoff is not none and handoff.model_dump is defined else {} %}
+{% set handoff_job_id = handoff_payload.get('job_id', '') %}
+{% set handoff_status = handoff_payload.get('status', '') %}
+{% set handoff_latest_job_status = handoff_payload.get('latest_job_status', '') %}
+{% set handoff_latest_job_pid = handoff_payload.get('latest_job_pid', 0) %}
+{% set handoff_latest_job_pid_alive = handoff_payload.get('latest_job_pid_alive', false) %}
+{% set handoff_latest_job_progress_pct = handoff_payload.get('latest_job_progress_pct', 0) %}
+{% set handoff_latest_job_eta_minutes = handoff_payload.get('latest_job_eta_minutes', 0.0) %}
+{% set handoff_latest_job_activity = handoff_payload.get('latest_job_latest_activity_iso', '') %}
+{% set handoff_latest_job_duration_seconds = handoff_payload.get('latest_job_duration_seconds') %}
+{% set handoff_latest_job_produced = handoff_payload.get('latest_job_produced_file_count', 0) %}
+{% set handoff_latest_job_output_refs = handoff_payload.get('latest_job_output_ref_count', 0) %}
+{% set handoff_latest_job_stdout_size_kb = handoff_payload.get('latest_job_stdout_log_size_kb', 0.0) %}
+{% set handoff_latest_job_error = handoff_payload.get('latest_job_error_summary', '') %}
+{% set handoff_latest_job_blockers = handoff_payload.get('latest_job_blockers', ()) %}
+{% set handoff_latest_job_output_root = handoff_payload.get('latest_job_output_root', '') %}
+{% set handoff_latest_job_stdout_path = handoff_payload.get('latest_job_stdout_log_path', '') %}
+{% set monitor_active = handoff_latest_job_status in ['JOB_CREATED', 'JOB_RUNNING', 'JOB_CANCELLING'] %}
 
 <section class="welcome-banner">
     <div class="welcome-banner__inner">
@@ -45,13 +63,79 @@
             LAB_ONLY expected-edge training with explicit provenance. This surface keeps the artifact frozen for backtest,
             exposes the exact data roots and equations used, and stays fail-closed on stale or overlapping windows.
         </p>
+        <div class="grid-2" style="margin:0 0 1rem 0;">
+            <div class="card backtest-monitor-card{% if monitor_active %} backtest-monitor-card--active{% endif %}" id="lab-progress-card">
+                <div class="card__head">
+                    <div class="card__head-main">
+                        <h3>ML Training Progress</h3>
+                        <span class="card__sub">Observe the active IA Lab training job here first</span>
+                    </div>
+                    <span id="lab-progress-badge" class="monitor-badge {% if monitor_active %}monitor-badge--active{% else %}monitor-badge--idle{% endif %}">
+                        {{ 'active monitoring' if monitor_active else 'idle snapshot' }}
+                    </span>
+                </div>
+                <div class="card__body" id="lab-progress-body">
+                    {% if handoff_job_id %}
+                    <table class="data-table data-table--compact">
+                        <tbody>
+                            <tr><th>Job</th><td><code id="lab-latest-job-id">{{ handoff_job_id }}</code></td></tr>
+                            <tr><th>Status</th><td id="lab-latest-job-status">{{ handoff_latest_job_status or handoff_status or 'JOB_NOT_PROVEN' }}</td></tr>
+                            <tr><th>PID</th><td id="lab-latest-job-pid">{{ handoff_latest_job_pid or 'n/a' }}</td></tr>
+                            <tr><th>PID signal</th><td id="lab-latest-job-pid-state">{{ 'alive' if handoff_latest_job_pid_alive else 'dead_or_missing' }}</td></tr>
+                            <tr>
+                                <th>Progress</th>
+                                <td>
+                                    <div id="lab-latest-progress-bar" class="progress-bar" role="progressbar" aria-valuenow="{{ handoff_latest_job_progress_pct }}" aria-valuemin="0" aria-valuemax="100" style="background:#222;border:1px solid #555;width:120px;height:14px;display:inline-block;vertical-align:middle;">
+                                        <div id="lab-latest-progress-fill" class="progress-bar__fill" style="background:#3a8;width:{{ handoff_latest_job_progress_pct }}%;height:100%;"></div>
+                                    </div>
+                                    <span id="lab-latest-progress-pct" class="muted">{{ handoff_latest_job_progress_pct }}%</span>
+                                </td>
+                            </tr>
+                            <tr><th>ETA</th><td id="lab-latest-job-eta">{{ "%.1f"|format(handoff_latest_job_eta_minutes) if handoff_latest_job_eta_minutes > 0 else '-' }}</td></tr>
+                            <tr><th>Latest activity</th><td id="lab-latest-job-activity">{{ handoff_latest_job_activity or 'n/a' }}</td></tr>
+                            <tr><th>Duration</th><td id="lab-latest-job-duration">{{ "%.1fs"|format(handoff_latest_job_duration_seconds) if handoff_latest_job_duration_seconds is not none else 'n/a' }}</td></tr>
+                            <tr><th>Produced files</th><td id="lab-latest-job-produced">{{ handoff_latest_job_produced }}</td></tr>
+                            <tr><th>Output refs</th><td id="lab-latest-job-output-refs">{{ handoff_latest_job_output_refs }}</td></tr>
+                            <tr><th>Stdout log</th><td id="lab-latest-job-stdout">{{ "%.1f KB"|format(handoff_latest_job_stdout_size_kb) }}</td></tr>
+                            <tr><th>Error</th><td id="lab-latest-job-error">{{ handoff_latest_job_error or 'none' }}</td></tr>
+                            <tr><th>Blockers</th><td id="lab-latest-job-blockers">{{ handoff_latest_job_blockers|join(', ') if handoff_latest_job_blockers else 'none' }}</td></tr>
+                            <tr><th>Output root</th><td id="lab-latest-job-output-root"><code>{{ handoff_latest_job_output_root or 'n/a' }}</code></td></tr>
+                            <tr><th>Stdout path</th><td id="lab-latest-job-stdout-path"><code>{{ handoff_latest_job_stdout_path or 'n/a' }}</code></td></tr>
+                        </tbody>
+                    </table>
+                    {% else %}
+                    <p class="muted">No audited IA Lab training job recorded yet.</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="card backtest-monitor-card{% if monitor_active %} backtest-monitor-card--active{% endif %}" id="lab-runner-coverage-card">
+                <div class="card__head">
+                    <div class="card__head-main">
+                        <h3>ML Runner Coverage</h3>
+                        <span class="card__sub">What the cockpit can prove during training</span>
+                    </div>
+                    <span id="lab-runner-coverage-badge" class="monitor-badge {% if monitor_active %}monitor-badge--active{% else %}monitor-badge--idle{% endif %}">
+                        {{ 'live reading' if monitor_active else 'proof surface' }}
+                    </span>
+                </div>
+                <div class="card__body">
+                    <ul class="small-list">
+                        <li id="lab-runner-coverage-visibility">Runner visibility: {{ 'present' if handoff_job_id else 'not_yet_persisted' }}</li>
+                        <li>Progress proof: job status + timestamps + output refs</li>
+                        <li>Failure proof: explicit exit code, blockers, and stdout log path</li>
+                        <li>Governance proof: handoff report + frozen artifact sidecars when produced</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
         <div class="patch6-layout">
             <div class="patch6-form-column">
                 <form method="post" action="/lab/strategy-ladder-ml-handoff">
                     <div class="operator-token-row">
-                        <span class="operator-token operator-token--info">{{ handoff.status or 'not_run' }}</span>
-                        <span class="operator-token {% if handoff.ready %}operator-token--ok{% else %}operator-token--warn{% endif %}">{{ 'frozen-artifact-ready' if handoff.ready else 'fail-closed' }}</span>
-                        <span class="operator-token {% if handoff.anti_leakage_status == 'NO_FUTURE_DATA_LEAK_PROVEN' %}operator-token--ok{% else %}operator-token--warn{% endif %}">{{ handoff.anti_leakage_status or 'anti_leakage_unproven' }}</span>
+                        <span id="lab-handoff-status-token" class="operator-token operator-token--info">{{ handoff.status or 'not_run' }}</span>
+                        <span id="lab-handoff-ready-token" class="operator-token {% if handoff.ready %}operator-token--ok{% else %}operator-token--warn{% endif %}">{{ 'frozen-artifact-ready' if handoff.ready else 'fail-closed' }}</span>
+                        <span id="lab-handoff-anti-leakage-token" class="operator-token {% if handoff.anti_leakage_status == 'NO_FUTURE_DATA_LEAK_PROVEN' %}operator-token--ok{% else %}operator-token--warn{% endif %}">{{ handoff.anti_leakage_status or 'anti_leakage_unproven' }}</span>
                     </div>
 
                     <div class="operator-panel">
@@ -62,12 +146,66 @@
                             </div>
                         </div>
                         <div class="form-grid form-grid--wide">
-                            <label>Pair
-                                <input type="text" name="pair" value="{{ handoff_form.pair or handoff.pair or 'BTCUSDT' }}">
+                            <label>Pair{% if vm.lab_discovered_pair_capabilities %} (multi-select){% endif %}
+                                {% if vm.lab_discovered_pair_capabilities %}
+                                    <div class="lab-pair-multiselect" role="group" aria-label="Available pairs">
+                                        {% for cap in vm.lab_discovered_pair_capabilities %}
+                                            <label class="lab-pair-option">
+                                                <input type="checkbox" name="selected_pairs" value="{{ cap.pair }}"{% if cap.pair in handoff_form.selected_pairs %} checked{% endif %}>
+                                                <span class="lab-pair-option__name">{{ cap.pair }}</span>
+                                                {% if cap.microstructure_capable %}
+                                                    <span class="cap-badge cap-badge--full" title="orderbook + klines + trades available">FULL</span>
+                                                {% elif cap.training_capable %}
+                                                    <span class="cap-badge cap-badge--legacy" title="klines + trades only (no microstructure)">LEGACY</span>
+                                                {% else %}
+                                                    <span class="cap-badge cap-badge--insufficient" title="missing klines or trades">INSUFFICIENT</span>
+                                                {% endif %}
+                                                {% if not cap.has_orderbook %}<span class="cap-badge cap-badge--missing" title="no orderbook">no-OB</span>{% endif %}
+                                            </label>
+                                        {% endfor %}
+                                    </div>
+                                    <input type="hidden" name="pair" value="{{ handoff_form.pair or 'BTCUSDT' }}">
+                                    <p class="muted" style="margin: 4px 0 0;">Selection drives downstream pairs. Empty selection falls back to the hidden mono-pair value.</p>
+                                {% else %}
+                                    <input type="text" name="pair" value="{{ handoff_form.pair or handoff.pair or 'BTCUSDT' }}">
+                                    <p class="muted" style="margin: 4px 0 0;">Type kline_root then refresh — multi-select checkbox list appears when filesystem discovery succeeds.</p>
+                                {% endif %}
                             </label>
-                            <label>Timeframe
-                                <input type="text" name="timeframe" value="{{ handoff_form.timeframe or handoff.timeframe or '1m' }}">
-                            </label>
+                            <div class="lab-timeframe-picker">
+                                <span class="lab-timeframe-picker__label">Timeframe scope</span>
+                                <input id="lab_timeframe_value" type="hidden" name="timeframe" value="{{ handoff_form.timeframe or handoff.timeframe or '1m' }}">
+                                <div class="lab-timeframe-picker__mode">
+                                    <label class="lab-timeframe-picker__mode-option">
+                                        <input type="radio" name="lab_timeframe_mode_ui" value="single">
+                                        <span>Mono-timeframe</span>
+                                    </label>
+                                    <label class="lab-timeframe-picker__mode-option">
+                                        <input type="radio" name="lab_timeframe_mode_ui" value="multi">
+                                        <span>Multi-timeframe</span>
+                                    </label>
+                                </div>
+                                <div id="lab_timeframe_single_wrap" class="lab-timeframe-picker__panel">
+                                    <label class="lab-timeframe-picker__subfield">Primary timeframe
+                                        <select id="lab_timeframe_single">
+                                            {% for tf in ['1m', '5m', '10m', '15m'] %}
+                                            <option value="{{ tf }}">{{ tf }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </label>
+                                </div>
+                                <div id="lab_timeframe_multi_wrap" class="lab-timeframe-picker__panel lab-timeframe-picker__panel--checks" hidden>
+                                    <span class="lab-timeframe-picker__subfield">Select one or more timeframes</span>
+                                    <div class="lab-timeframe-picker__checks">
+                                        {% for tf in ['1m', '5m', '10m', '15m'] %}
+                                        <label class="lab-timeframe-picker__chip">
+                                            <input class="js-lab-timeframe-multi" type="checkbox" value="{{ tf }}">
+                                            <span>{{ tf }}</span>
+                                        </label>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                                <small id="lab_timeframe_scope_preview" class="muted">submitted value: <code>1m</code></small>
+                            </div>
                             <label>Calibration version
                                 <input type="text" name="calibration_version" value="{{ handoff_form.calibration_version or handoff.calibration_version or 'strategy_ladder_expected_edge.v1' }}">
                             </label>
@@ -151,32 +289,56 @@
                         </div>
                         <div class="form-grid form-grid--wide">
                             <label>ML train start
-                                <input type="date" name="train_start" value="{{ handoff_form.train_start or handoff.train_start }}" required>
+                                <input id="lab_train_start" type="date" name="train_start" value="{{ handoff_form.train_start }}" required>
                             </label>
                             <label>ML train end
-                                <input type="date" name="train_end" value="{{ handoff_form.train_end or handoff.train_end }}" required>
+                                <input id="lab_train_end" type="date" name="train_end" value="{{ handoff_form.train_end }}" required>
                             </label>
                             <label>Requested backtest start
-                                <input type="date" name="requested_backtest_start" value="{{ handoff_form.requested_backtest_start or handoff.requested_backtest_start }}">
+                                <input id="lab_requested_backtest_start" type="date" name="requested_backtest_start" value="{{ handoff_form.requested_backtest_start }}">
                             </label>
                             <label>Requested backtest days
-                                <input type="number" name="requested_backtest_days" value="{{ handoff_form.requested_backtest_days or 130 }}" min="1">
+                                <input id="lab_requested_backtest_days" type="number" name="requested_backtest_days" value="{{ handoff_form.requested_backtest_days or 130 }}" min="1">
                             </label>
                             <label>Rolling train days
-                                <input type="number" name="train_days" value="{{ handoff_form.train_days or handoff.rolling_train_days or 180 }}" min="1">
+                                <input id="lab_train_days" type="number" name="train_days" value="{{ handoff_form.train_days or 180 }}" min="1">
                             </label>
                             <label>Rolling validation days
-                                <input type="number" name="validation_days" value="{{ handoff_form.validation_days or handoff.rolling_validation_days or 30 }}" min="1">
+                                <input id="lab_validation_days" type="number" name="validation_days" value="{{ handoff_form.validation_days or 30 }}" min="1">
                             </label>
                             <label>Freshness days
-                                <input type="number" name="freshness_days" value="{{ handoff_form.freshness_days or handoff.rolling_freshness_days or 30 }}" min="1">
+                                <input id="lab_freshness_days" type="number" name="freshness_days" value="{{ handoff_form.freshness_days or 30 }}" min="1">
                             </label>
                             <label>Chunk days
-                                <input type="number" name="chunk_days" value="{{ handoff_form.chunk_days or handoff.rolling_chunk_days or 30 }}" min="1">
+                                <input id="lab_chunk_days" type="number" name="chunk_days" value="{{ handoff_form.chunk_days or 30 }}" min="1">
                             </label>
                             <label>Signed by
                                 <input type="text" name="signed_by" value="{{ handoff_form.signed_by or 'cockpit_operator' }}">
                             </label>
+                        </div>
+                        <div id="lab-window-preview-surface" class="operator-note-surface operator-note-surface--info" style="margin-top: 12px;">
+                            <strong>Governed timing preview</strong>
+                            <div class="preview-stat-grid" style="margin-top: 10px;">
+                                <div class="preview-stat">
+                                    <span class="preview-stat__label">Earliest backtest start</span>
+                                    <span id="lab-derived-backtest-start" class="preview-stat__value">n/a</span>
+                                </div>
+                                <div class="preview-stat">
+                                    <span class="preview-stat__label">Current backtest end</span>
+                                    <span id="lab-derived-backtest-end" class="preview-stat__value">n/a</span>
+                                </div>
+                                <div class="preview-stat">
+                                    <span class="preview-stat__label">Max valid backtest end</span>
+                                    <span id="lab-derived-max-valid-end" class="preview-stat__value">n/a</span>
+                                </div>
+                                <div class="preview-stat">
+                                    <span class="preview-stat__label">Validity days</span>
+                                    <span id="lab-derived-validity-days" class="preview-stat__value">n/a</span>
+                                </div>
+                            </div>
+                            <div id="lab-window-preview-note" class="muted" style="margin-top: 8px;">
+                                The form preview uses the current handoff rule: earliest backtest start = ML train end + 1 day guard.
+                            </div>
                         </div>
                         <div class="form-actions form-actions--dual">
                             <button class="button button--info" type="submit" name="intent" value="preview">Refresh Source Scope</button>
@@ -193,20 +355,24 @@
                             <h4>Training provenance snapshot</h4>
                             <p class="muted">Every field below is intended to stay traceable to a typed artifact, report, or explicit source module.</p>
                         </div>
-                        <span class="preview-badge {% if handoff.ready %}preview-badge--ok{% elif handoff.blocking_reasons %}preview-badge--danger{% else %}preview-badge--warn{% endif %}">{{ handoff.status or 'not_run' }}</span>
+                        <span id="lab-training-snapshot-badge" class="preview-badge {% if handoff.ready %}preview-badge--ok{% elif handoff.blocking_reasons or handoff.latest_job_error_summary or handoff.latest_job_blockers %}preview-badge--danger{% else %}preview-badge--warn{% endif %}">{{ handoff.status or 'not_run' }}</span>
                     </div>
                     <div class="preview-stat-grid" style="margin-top: 12px;">
                         <div class="preview-stat">
                             <span class="preview-stat__label">Artifact ID</span>
-                            <span class="preview-stat__value"><code>{{ handoff.artifact_id or 'not_run' }}</code></span>
+                            <span id="lab-artifact-id" class="preview-stat__value"><code>{{ handoff.artifact_id or 'not_run' }}</code></span>
                         </div>
                         <div class="preview-stat">
                             <span class="preview-stat__label">Job ID</span>
-                            <span class="preview-stat__value"><code>{{ handoff.job_id or 'not_run' }}</code></span>
+                            <span id="lab-snapshot-job-id" class="preview-stat__value"><code>{{ handoff.job_id or 'not_run' }}</code></span>
                         </div>
                         <div class="preview-stat">
                             <span class="preview-stat__label">Feature count</span>
                             <span class="preview-stat__value">{{ handoff.feature_names|length }}</span>
+                        </div>
+                        <div class="preview-stat">
+                            <span class="preview-stat__label">Timeframe scope</span>
+                            <span id="lab-timeframe-scope" class="preview-stat__value">{{ handoff.timeframe_scope|join(', ') if handoff.timeframe_scope else (handoff.timeframe or 'n/a') }}</span>
                         </div>
                         <div class="preview-stat">
                             <span class="preview-stat__label">Kline files</span>
@@ -214,17 +380,22 @@
                         </div>
                         <div class="preview-stat">
                             <span class="preview-stat__label">Training rows</span>
-                            <span class="preview-stat__value">{{ handoff.training_row_count }}</span>
+                            <span id="lab-training-row-count" class="preview-stat__value">{{ handoff.training_row_count }}</span>
                         </div>
                         <div class="preview-stat">
                             <span class="preview-stat__label">Governance drift</span>
-                            <span class="preview-stat__value">{{ handoff.live_drift_status or 'not_proven' }}</span>
+                            <span id="lab-live-drift-status" class="preview-stat__value">{{ handoff.live_drift_status or 'not_proven' }}</span>
                         </div>
                     </div>
                     <table class="data-table data-table--compact" style="margin-top:0.75rem;">
                         <tbody>
-                            <tr><th>Source</th><td>{{ handoff.source_status }}</td></tr>
-                            <tr><th>Ready</th><td>{{ handoff.ready }}</td></tr>
+                            <tr><th>Source</th><td id="lab-source-status">{{ handoff.source_status }}</td></tr>
+                            <tr><th>Ready</th><td id="lab-ready">{{ handoff.ready }}</td></tr>
+                            <tr><th>Latest job status</th><td id="lab-snapshot-job-status">{{ handoff.latest_job_status or 'JOB_NOT_PROVEN' }}</td></tr>
+                            <tr><th>Latest job error</th><td id="lab-snapshot-job-error">{{ handoff.latest_job_error_summary or 'none' }}</td></tr>
+                            <tr><th>Latest job blockers</th><td id="lab-snapshot-job-blockers">{{ handoff.latest_job_blockers|join(', ') if handoff.latest_job_blockers else 'none' }}</td></tr>
+                            <tr><th>ML train window (live)</th><td id="lab-train-window">{{ handoff.train_start or 'n/a' }} â†’ {{ handoff.train_end or 'n/a' }}</td></tr>
+                            <tr><th>Trainer rows (live)</th><td id="lab-trainer-rows">train={{ handoff.trainer_train_row_count }}, validation={{ handoff.trainer_validation_row_count }}</td></tr>
                             <tr><th>ML train window</th><td>{{ handoff.train_start or 'n/a' }} → {{ handoff.train_end or 'n/a' }}</td></tr>
                             <tr><th>Trainer rows</th><td>train={{ handoff.trainer_train_row_count }}, validation={{ handoff.trainer_validation_row_count }}</td></tr>
                             <tr><th>Backtest window</th><td>{{ handoff.requested_backtest_start or 'n/a' }} → {{ handoff.requested_backtest_end or 'n/a' }}</td></tr>
@@ -238,9 +409,12 @@
                             <tr><th>Rolling plan status</th><td>{{ handoff.rolling_ml_window_plan_status or 'not_generated' }}</td></tr>
                             <tr><th>Rolling plan artifact count</th><td>{{ handoff.rolling_ml_required_artifact_count or 'n/a' }}</td></tr>
                             <tr><th>Rolling plan params</th><td>train={{ handoff.rolling_train_days or 'n/a' }}, validation={{ handoff.rolling_validation_days or 'n/a' }}, freshness={{ handoff.rolling_freshness_days or 'n/a' }}, chunk={{ handoff.rolling_chunk_days or 'n/a' }}</td></tr>
+                            <tr><th>Blocking reasons (live)</th><td id="lab-blocking-reasons">{{ handoff.blocking_reasons|join(', ') if handoff.blocking_reasons else 'none' }}</td></tr>
+                            <tr><th>Backtest input (live)</th><td id="lab-backtest-input"><code>{{ handoff.backtest_input_ref or 'not_available' }}</code></td></tr>
                             <tr><th>Blocking reasons</th><td>{{ handoff.blocking_reasons|join(', ') if handoff.blocking_reasons else 'none' }}</td></tr>
                             <tr><th>Backtest input</th><td><code>{{ handoff.backtest_input_ref or 'not_available' }}</code></td></tr>
                             <tr><th>Rolling plan JSON</th><td><code>{{ handoff.rolling_ml_window_plan_ref or 'not_available' }}</code></td></tr>
+                            <tr><th>Artifact hash (live)</th><td id="lab-artifact-hash"><code>{{ handoff.artifact_hash or 'not_available' }}</code></td></tr>
                             <tr><th>Artifact hash</th><td><code>{{ handoff.artifact_hash or 'not_available' }}</code></td></tr>
                             <tr><th>Feature hash</th><td><code>{{ handoff.feature_hash or 'not_available' }}</code></td></tr>
                             <tr><th>Dataset hash</th><td><code>{{ handoff.dataset_hash or 'not_available' }}</code></td></tr>
@@ -853,6 +1027,468 @@
         console.warn("folder picker state restore failed", error);
         clearPickerState();
     }
+})();
+</script>
+
+<script>
+(() => {
+    const hiddenInput = document.getElementById("lab_timeframe_value");
+    const singleWrap = document.getElementById("lab_timeframe_single_wrap");
+    const multiWrap = document.getElementById("lab_timeframe_multi_wrap");
+    const singleSelect = document.getElementById("lab_timeframe_single");
+    const previewNode = document.getElementById("lab_timeframe_scope_preview");
+    const scopeNode = document.getElementById("lab-timeframe-scope");
+    const modeInputs = Array.from(document.querySelectorAll('input[name="lab_timeframe_mode_ui"]'));
+    const multiInputs = Array.from(document.querySelectorAll(".js-lab-timeframe-multi"));
+    const orderedTimeframes = ["1m", "5m", "10m", "15m"];
+    if (!hiddenInput || !singleWrap || !multiWrap || !singleSelect || !modeInputs.length || !multiInputs.length) {
+        return;
+    }
+
+    function normalizeTimeframes(rawValue) {
+        const seen = new Set();
+        return String(rawValue || "")
+            .split(",")
+            .map((value) => value.trim())
+            .filter((value) => value && orderedTimeframes.includes(value) && !seen.has(value) && seen.add(value));
+    }
+
+    function getMode() {
+        return modeInputs.find((input) => input.checked)?.value || "single";
+    }
+
+    function setMode(mode) {
+        modeInputs.forEach((input) => {
+            input.checked = input.value === mode;
+        });
+        const multiMode = mode === "multi";
+        singleWrap.hidden = multiMode;
+        multiWrap.hidden = !multiMode;
+    }
+
+    function updatePreview(scope) {
+        const value = scope.join(",") || "1m";
+        hiddenInput.value = value;
+        if (previewNode) {
+            previewNode.innerHTML = `submitted value: <code>${value}</code>`;
+        }
+        if (scopeNode) {
+            scopeNode.textContent = value;
+        }
+    }
+
+    function syncFromControls() {
+        if (getMode() === "multi") {
+            const scope = multiInputs.filter((input) => input.checked).map((input) => input.value);
+            if (!scope.length) {
+                multiInputs[0].checked = true;
+                updatePreview([multiInputs[0].value]);
+                return;
+            }
+            updatePreview(scope);
+            return;
+        }
+        updatePreview([singleSelect.value || "1m"]);
+    }
+
+    const initialScope = normalizeTimeframes(hiddenInput.value);
+    const effectiveInitialScope = initialScope.length ? initialScope : ["1m"];
+    setMode(effectiveInitialScope.length > 1 ? "multi" : "single");
+    singleSelect.value = effectiveInitialScope[0];
+    multiInputs.forEach((input) => {
+        input.checked = effectiveInitialScope.includes(input.value);
+    });
+    updatePreview(effectiveInitialScope);
+
+    modeInputs.forEach((input) => {
+        input.addEventListener("change", () => {
+            setMode(input.value);
+            syncFromControls();
+        });
+    });
+    singleSelect.addEventListener("change", syncFromControls);
+    multiInputs.forEach((input) => {
+        input.addEventListener("change", syncFromControls);
+    });
+})();
+</script>
+
+<script>
+(() => {
+    const trainEndInput = document.getElementById("lab_train_end");
+    const requestedStartInput = document.getElementById("lab_requested_backtest_start");
+    const requestedDaysInput = document.getElementById("lab_requested_backtest_days");
+    const freshnessDaysInput = document.getElementById("lab_freshness_days");
+    const previewSurface = document.getElementById("lab-window-preview-surface");
+    const previewNote = document.getElementById("lab-window-preview-note");
+    const derivedStartNode = document.getElementById("lab-derived-backtest-start");
+    const derivedEndNode = document.getElementById("lab-derived-backtest-end");
+    const derivedMaxNode = document.getElementById("lab-derived-max-valid-end");
+    const derivedValidityNode = document.getElementById("lab-derived-validity-days");
+    if (!trainEndInput || !requestedStartInput || !requestedDaysInput || !freshnessDaysInput) {
+        return;
+    }
+
+    let lastAutoRequestedStart = "";
+
+    function parseIsoDate(value) {
+        const text = String(value || "").trim();
+        if (!text) {
+            return null;
+        }
+        const parts = text.split("-");
+        if (parts.length !== 3) {
+            return null;
+        }
+        const [year, month, day] = parts.map((part) => Number(part));
+        if (!year || !month || !day) {
+            return null;
+        }
+        return new Date(Date.UTC(year, month - 1, day));
+    }
+
+    function formatIsoDate(value) {
+        if (!(value instanceof Date) || Number.isNaN(value.getTime())) {
+            return "";
+        }
+        return value.toISOString().slice(0, 10);
+    }
+
+    function addDays(value, days) {
+        const next = new Date(value.getTime());
+        next.setUTCDate(next.getUTCDate() + days);
+        return next;
+    }
+
+    function setPreviewText(node, value) {
+        if (node) {
+            node.textContent = value || "n/a";
+        }
+    }
+
+    function syncGovernedWindowPreview() {
+        const trainEnd = parseIsoDate(trainEndInput.value);
+        const requestedDays = Math.max(parseInt(requestedDaysInput.value || "0", 10) || 0, 1);
+        const freshnessDays = Math.max(parseInt(freshnessDaysInput.value || "0", 10) || 0, 1);
+        const currentRequestedStart = String(requestedStartInput.value || "").trim();
+        const earliestStart = trainEnd ? addDays(trainEnd, 1) : null;
+        const earliestStartIso = formatIsoDate(earliestStart);
+        const shouldAutofill = earliestStartIso && (!currentRequestedStart || currentRequestedStart === lastAutoRequestedStart);
+        if (shouldAutofill) {
+            requestedStartInput.value = earliestStartIso;
+            lastAutoRequestedStart = earliestStartIso;
+        } else if (currentRequestedStart) {
+            lastAutoRequestedStart = currentRequestedStart;
+        }
+
+        const requestedStart = parseIsoDate(requestedStartInput.value);
+        const requestedEnd = requestedStart ? addDays(requestedStart, requestedDays - 1) : null;
+        const maxValidEnd = trainEnd ? addDays(trainEnd, freshnessDays) : null;
+        const overlapsGuard = Boolean(earliestStart && requestedStart && requestedStart < earliestStart);
+
+        setPreviewText(derivedStartNode, earliestStartIso || "n/a");
+        setPreviewText(derivedEndNode, formatIsoDate(requestedEnd) || "n/a");
+        setPreviewText(derivedMaxNode, formatIsoDate(maxValidEnd) || "n/a");
+        setPreviewText(derivedValidityNode, freshnessDays > 0 ? `${freshnessDays} days` : "n/a");
+
+        if (previewSurface) {
+            previewSurface.classList.toggle("operator-note-surface--danger", overlapsGuard);
+            previewSurface.classList.toggle("operator-note-surface--info", !overlapsGuard);
+        }
+        if (previewNote) {
+            previewNote.textContent = overlapsGuard
+                ? `Requested backtest start ${requestedStartInput.value} is earlier than the earliest governed start ${earliestStartIso}.`
+                : "The form preview uses the current handoff rule: earliest backtest start = ML train end + 1 day guard.";
+        }
+    }
+
+    [trainEndInput, requestedStartInput, requestedDaysInput, freshnessDaysInput].forEach((input) => {
+        input.addEventListener("input", syncGovernedWindowPreview);
+        input.addEventListener("change", syncGovernedWindowPreview);
+    });
+    syncGovernedWindowPreview();
+})();
+</script>
+
+<script>
+(() => {
+    const initialHandoff = {{ handoff_payload|tojson }};
+    const statusUrl = "/lab/status.json";
+    const fallbackStatusUrl = "/backtest/status.json";
+    const pollIntervalMs = 2000;
+    let requestInFlight = false;
+
+    function esc(value) {
+        return String(value ?? "")
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;")
+            .replaceAll('"', "&quot;")
+            .replaceAll("'", "&#39;");
+    }
+
+    function setText(id, value) {
+        const node = document.getElementById(id);
+        if (node) {
+            node.textContent = value;
+        }
+    }
+
+    function setHtml(id, value) {
+        const node = document.getElementById(id);
+        if (node) {
+            node.innerHTML = value;
+        }
+    }
+
+    function formatEta(value) {
+        return value && value > 0 ? Number(value).toFixed(1) : "-";
+    }
+
+    function formatDuration(value) {
+        return value === null || value === undefined ? "n/a" : `${Number(value).toFixed(1)}s`;
+    }
+
+    function formatStdout(value) {
+        return value && value > 0 ? `${Number(value).toFixed(1)} KB` : "0.0 KB";
+    }
+
+    function latestMlJobFromBacktestPayload(payload) {
+        const records = Array.isArray(payload?.backtest_jobs) ? payload.backtest_jobs : [];
+        return (
+            records.find((record) => record && record.job_kind === "strategy_ladder_ml_lab_handoff")
+            || (payload?.latest_job?.job_kind === "strategy_ladder_ml_lab_handoff" ? payload.latest_job : null)
+            || null
+        );
+    }
+
+    function buildMlSummaryFromBacktestPayload(payload) {
+        const records = Array.isArray(payload?.backtest_jobs)
+            ? payload.backtest_jobs.filter((record) => record && record.job_kind === "strategy_ladder_ml_lab_handoff")
+            : [];
+        const runningStatuses = new Set(["JOB_CREATED", "JOB_RUNNING", "JOB_CANCELLING"]);
+        const completedStatuses = new Set(["JOB_COMPLETED", "JOB_COMPLETED_WITH_BLOCKERS", "JOB_CANCELLED", "JOB_KILLED"]);
+        const failedStatuses = new Set(["JOB_FAILED", "JOB_BLOCKED", "failed", "blocked"]);
+        let runningCount = 0;
+        let completedCount = 0;
+        let failedCount = 0;
+        let latestStatus = "not_present";
+        records.forEach((record, index) => {
+            const status = String(record?.status || "");
+            if (index === 0 && status) {
+                latestStatus = status;
+            }
+            if (runningStatuses.has(status)) {
+                runningCount += 1;
+            } else if (completedStatuses.has(status)) {
+                completedCount += 1;
+            } else if (failedStatuses.has(status)) {
+                failedCount += 1;
+            }
+        });
+        return {
+            requested_count: records.length,
+            running_count: runningCount,
+            completed_count: completedCount,
+            failed_count: failedCount,
+            latest_status: latestStatus,
+        };
+    }
+
+    function synthesizeHandoffFromJob(job, fallbackPayload) {
+        if (!job) {
+            return null;
+        }
+        const base = initialHandoff && typeof initialHandoff === "object" ? {...initialHandoff} : {};
+        const sourceStatus = fallbackPayload?.service?.running ? "fallback_live_job_snapshot" : "fallback_job_snapshot";
+        return {
+            ...base,
+            source_status: base.source_status || sourceStatus,
+            job_id: job.job_id || base.job_id || "",
+            latest_job_status: job.status || base.latest_job_status || "JOB_NOT_PROVEN",
+            latest_job_error_summary: job.error_summary || "",
+            latest_job_blockers: Array.isArray(job.blockers) ? job.blockers : [],
+            latest_job_duration_seconds: job.duration_seconds ?? base.latest_job_duration_seconds,
+            latest_job_progress_pct: job.progress_pct ?? base.latest_job_progress_pct ?? 0,
+            latest_job_eta_minutes: job.eta_minutes ?? base.latest_job_eta_minutes ?? 0,
+            latest_job_output_root: job.output_root || base.latest_job_output_root || "",
+            latest_job_stdout_log_path: job.stdout_log_path || base.latest_job_stdout_log_path || "",
+            latest_job_stdout_log_size_kb: job.stdout_log_size_kb ?? base.latest_job_stdout_log_size_kb ?? 0,
+            latest_job_produced_file_count: job.produced_file_count ?? base.latest_job_produced_file_count ?? 0,
+            latest_job_output_ref_count: job.output_ref_count ?? base.latest_job_output_ref_count ?? 0,
+            latest_job_latest_activity_iso: job.latest_activity_iso || base.latest_job_latest_activity_iso || "",
+            latest_job_pid: job.pid ?? base.latest_job_pid ?? 0,
+            latest_job_pid_alive: !!job.pid_alive,
+            status: job.stage_statuses?.status || base.status || job.status || "JOB_NOT_PROVEN",
+            ready: Boolean(base.ready),
+            blocking_reasons: Array.isArray(job.blockers) && job.blockers.length > 0
+                ? job.blockers
+                : (Array.isArray(base.blocking_reasons) ? base.blocking_reasons : []),
+        };
+    }
+
+    function applyMonitorState(isActive) {
+        const active = !!isActive;
+        ["lab-progress-card", "lab-runner-coverage-card"].forEach((id) => {
+            const node = document.getElementById(id);
+            if (node) {
+                node.classList.toggle("backtest-monitor-card--active", active);
+            }
+        });
+        [
+            ["lab-progress-badge", active ? "active monitoring" : "idle snapshot"],
+            ["lab-runner-coverage-badge", active ? "live reading" : "proof surface"],
+        ].forEach(([id, label]) => {
+            const node = document.getElementById(id);
+            if (node) {
+                node.textContent = label;
+                node.classList.toggle("monitor-badge--active", active);
+                node.classList.toggle("monitor-badge--idle", !active);
+            }
+        });
+        setText(
+            "lab-runner-coverage-visibility",
+            `Runner visibility: ${active ? "present" : "snapshot_only"}`,
+        );
+    }
+
+    function renderLatestJob(job) {
+        const host = document.getElementById("lab-progress-body");
+        if (!host) {
+            return;
+        }
+        if (!job) {
+            host.innerHTML = '<p class="muted">No audited IA Lab training job recorded yet.</p>';
+            return;
+        }
+        host.innerHTML = `
+            <table class="data-table data-table--compact">
+                <tbody>
+                    <tr><th>Job</th><td><code id="lab-latest-job-id">${esc(job.job_id || "n/a")}</code></td></tr>
+                    <tr><th>Status</th><td id="lab-latest-job-status">${esc(job.status || "n/a")}</td></tr>
+                    <tr><th>PID</th><td id="lab-latest-job-pid">${job.pid ? esc(job.pid) : "n/a"}</td></tr>
+                    <tr><th>PID signal</th><td id="lab-latest-job-pid-state">${job.pid_alive ? "alive" : "dead_or_missing"}</td></tr>
+                    <tr>
+                        <th>Progress</th>
+                        <td>
+                            <div id="lab-latest-progress-bar" class="progress-bar" role="progressbar" aria-valuenow="${esc(job.progress_pct ?? 0)}" aria-valuemin="0" aria-valuemax="100" style="background:#222;border:1px solid #555;width:120px;height:14px;display:inline-block;vertical-align:middle;">
+                                <div id="lab-latest-progress-fill" class="progress-bar__fill" style="background:#3a8;width:${esc(job.progress_pct ?? 0)}%;height:100%;"></div>
+                            </div>
+                            <span id="lab-latest-progress-pct" class="muted">${esc(job.progress_pct ?? 0)}%</span>
+                        </td>
+                    </tr>
+                    <tr><th>ETA</th><td id="lab-latest-job-eta">${esc(formatEta(job.eta_minutes))}</td></tr>
+                    <tr><th>Latest activity</th><td id="lab-latest-job-activity">${esc(job.latest_activity_iso || "n/a")}</td></tr>
+                    <tr><th>Duration</th><td id="lab-latest-job-duration">${esc(formatDuration(job.duration_seconds))}</td></tr>
+                    <tr><th>Produced files</th><td id="lab-latest-job-produced">${esc(job.produced_file_count ?? 0)}</td></tr>
+                    <tr><th>Output refs</th><td id="lab-latest-job-output-refs">${esc(job.output_ref_count ?? 0)}</td></tr>
+                    <tr><th>Stdout log</th><td id="lab-latest-job-stdout">${esc(formatStdout(job.stdout_log_size_kb))}</td></tr>
+                    <tr><th>Error</th><td id="lab-latest-job-error">${esc(job.error_summary || "none")}</td></tr>
+                    <tr><th>Blockers</th><td id="lab-latest-job-blockers">${esc((job.blockers || []).join(", ") || "none")}</td></tr>
+                    <tr><th>Output root</th><td id="lab-latest-job-output-root"><code>${esc(job.output_root || "n/a")}</code></td></tr>
+                    <tr><th>Stdout path</th><td id="lab-latest-job-stdout-path"><code>${esc(job.stdout_log_path || "n/a")}</code></td></tr>
+                </tbody>
+            </table>
+        `;
+    }
+
+    function applyHandoff(handoff) {
+        if (!handoff) {
+            return;
+        }
+        setText("lab-handoff-status-token", handoff.status || "not_run");
+        setText("lab-handoff-ready-token", handoff.ready ? "frozen-artifact-ready" : "fail-closed");
+        setText("lab-handoff-anti-leakage-token", handoff.anti_leakage_status || "anti_leakage_unproven");
+        if (handoff.source_status) {
+            setText("lab-source-status", handoff.source_status);
+        }
+        setText("lab-ready", String(!!handoff.ready));
+        if (handoff.latest_job_status) {
+            setText("lab-snapshot-job-status", handoff.latest_job_status);
+        }
+        setText("lab-snapshot-job-error", handoff.latest_job_error_summary || "none");
+        setText("lab-snapshot-job-blockers", (handoff.latest_job_blockers || []).join(", ") || "none");
+        setText("lab-train-window", `${handoff.train_start || "n/a"} â†’ ${handoff.train_end || "n/a"}`);
+        setText(
+            "lab-trainer-rows",
+            `train=${handoff.trainer_train_row_count ?? 0}, validation=${handoff.trainer_validation_row_count ?? 0}`,
+        );
+        setText("lab-blocking-reasons", (handoff.blocking_reasons || []).join(", ") || "none");
+        setHtml("lab-backtest-input", `<code>${esc(handoff.backtest_input_ref || "not_available")}</code>`);
+        setHtml("lab-artifact-hash", `<code>${esc(handoff.artifact_hash || "not_available")}</code>`);
+        setHtml("lab-artifact-id", `<code>${esc(handoff.artifact_id || "not_run")}</code>`);
+        setHtml("lab-snapshot-job-id", `<code>${esc(handoff.job_id || "not_run")}</code>`);
+        setText("lab-training-row-count", String(handoff.training_row_count ?? 0));
+        setText("lab-timeframe-scope", (handoff.timeframe_scope || []).join(", ") || handoff.timeframe || "n/a");
+        setText("lab-live-drift-status", handoff.live_drift_status || "not_proven");
+        const badge = document.getElementById("lab-training-snapshot-badge");
+        if (badge) {
+            badge.textContent = handoff.status || "not_run";
+            badge.classList.toggle("preview-badge--ok", !!handoff.ready);
+            badge.classList.toggle(
+                "preview-badge--danger",
+                !handoff.ready && (((handoff.blocking_reasons || []).length > 0) || ((handoff.latest_job_blockers || []).length > 0) || !!handoff.latest_job_error_summary),
+            );
+            badge.classList.toggle(
+                "preview-badge--warn",
+                !handoff.ready && !(((handoff.blocking_reasons || []).length > 0) || ((handoff.latest_job_blockers || []).length > 0) || !!handoff.latest_job_error_summary),
+            );
+        }
+    }
+
+    async function fetchLabStatusPayload() {
+        const response = await fetch(statusUrl, {headers: {"Accept": "application/json"}});
+        if (response.ok) {
+            const payload = await response.json();
+            return {
+                payload,
+                summary: payload.summary || {},
+                latestJob: payload.latest_job || null,
+                handoff: payload.handoff || null,
+            };
+        }
+        if (response.status !== 404) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        const fallbackResponse = await fetch(fallbackStatusUrl, {headers: {"Accept": "application/json"}});
+        if (!fallbackResponse.ok) {
+            throw new Error(`HTTP ${fallbackResponse.status}`);
+        }
+        const fallbackPayload = await fallbackResponse.json();
+        const latestJob = latestMlJobFromBacktestPayload(fallbackPayload);
+        return {
+            payload: fallbackPayload,
+            summary: buildMlSummaryFromBacktestPayload(fallbackPayload),
+            latestJob,
+            handoff: synthesizeHandoffFromJob(latestJob, fallbackPayload),
+        };
+    }
+
+    async function refreshStatus() {
+        if (requestInFlight) {
+            return;
+        }
+        requestInFlight = true;
+        try {
+            const state = await fetchLabStatusPayload();
+            const summary = state.summary || {};
+            applyMonitorState((summary.running_count ?? 0) > 0);
+            renderLatestJob(state.latestJob || null);
+            applyHandoff(state.handoff || null);
+        } catch (error) {
+            console.warn("lab status polling failed", error);
+        } finally {
+            requestInFlight = false;
+        }
+    }
+
+    window.setInterval(refreshStatus, pollIntervalMs);
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") {
+            refreshStatus();
+        }
+    });
+    refreshStatus();
 })();
 </script>
 

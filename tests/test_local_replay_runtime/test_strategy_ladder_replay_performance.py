@@ -3,10 +3,14 @@ from __future__ import annotations
 import gzip
 import json
 from pathlib import Path
+import time
 
 from local_replay_runtime.strategy_ladder_models import (
     StrategyLadderCandidateEvent,
     StrategyLadderRequest,
+)
+from local_replay_runtime.strategy_ladder_replay_performance_profile import (
+    StrategyLadderReplayPerformanceProfiler,
 )
 from local_replay_runtime.strategy_ladder_raw_window_extractor import (
     extract_strategy_ladder_raw_windows,
@@ -254,6 +258,22 @@ def test_window_index_reuses_cached_silver_lookup() -> None:
     assert metrics.indexed_lookup_hit_count == 1
 
 
+def test_replay_performance_profile_totals_use_profiler_span_not_phase_sum(
+    tmp_path: Path,
+) -> None:
+    profiler = StrategyLadderReplayPerformanceProfiler(run_id="run-profiler-span")
+    with profiler.phase("outer", status="OK"):
+        time.sleep(0.01)
+        with profiler.phase("inner", status="OK"):
+            time.sleep(0.02)
+    profile = profiler.write(tmp_path)
+
+    summed_wall = sum(phase.wall_time_s for phase in profile.phases)
+    assert profile.total_wall_time_s > 0.0
+    assert summed_wall > profile.total_wall_time_s
+    assert profile.total_io_wait_estimate_s >= 0.0
+
+
 def test_window_index_scans_raw_root_once_for_repeated_queries(tmp_path: Path) -> None:
     raw_root = tmp_path / "raw"
     _write_jsonl(raw_root / "BTCUSDT" / "trades.jsonl", [{"timestamp_ms": 1, "price": 1.0}])
@@ -309,20 +329,264 @@ def test_raw_window_cache_reuses_identical_silver_windows(tmp_path: Path) -> Non
     )
 
     assert first.status == "RAW_WINDOW_READY"
-    assert first.window_cache_metrics.cache_miss_count >= 4
-    assert first.window_cache_metrics.reused_extraction_count >= 4
+    assert first.window_cache_metrics.cache_miss_count >= 3
+    assert first.window_cache_metrics.reused_extraction_count >= 3
     assert (
         first.window_cache_metrics.hardlink_materialization_count
         + first.window_cache_metrics.copy_fallback_count
-    ) >= 4
+    ) >= 3
     assert len(first.manifests) == 2
     assert first.manifests[0].raw_trade_path == first.manifests[1].raw_trade_path
     assert first.manifests[0].raw_book_path == first.manifests[1].raw_book_path
     assert first.manifests[0].raw_book_delta_path == first.manifests[1].raw_book_delta_path
     assert first.manifests[0].raw_ohlcv_path == first.manifests[1].raw_ohlcv_path
-    assert second.window_cache_metrics.cache_hit_count >= 4
+    assert str(first.manifests[0].raw_book_delta_path).endswith(".jsonl.gz")
+    assert second.window_cache_metrics.cache_hit_count >= 3
     assert second.window_cache_metrics.cache_reuse_ratio is not None
     assert second.window_cache_metrics.cache_reuse_ratio > 0.0
+
+
+def test_raw_window_extraction_reuses_shared_multi_entry_orderbook_delta_windows(
+    tmp_path: Path,
+) -> None:
+    candidate_ts = 1_714_000_010_000
+    prior_day_delta_path = (
+        tmp_path
+        / "silver"
+        / "bybit"
+        / "spot"
+        / "orderbook_delta"
+        / "BTCUSDT"
+        / "2024"
+        / "04"
+        / "08.jsonl"
+    )
+    current_day_delta_path = (
+        tmp_path
+        / "silver"
+        / "bybit"
+        / "spot"
+        / "orderbook_delta"
+        / "BTCUSDT"
+        / "2024"
+        / "04"
+        / "09.jsonl"
+    )
+    snapshot_path = (
+        tmp_path
+        / "silver"
+        / "bybit"
+        / "spot"
+        / "orderbook_snapshot"
+        / "BTCUSDT"
+        / "2024"
+        / "04"
+        / "09.jsonl"
+    )
+    trades_path = (
+        tmp_path
+        / "silver"
+        / "bybit"
+        / "spot"
+        / "trades"
+        / "BTCUSDT"
+        / "2024"
+        / "04"
+        / "09.jsonl"
+    )
+    ohlcv_path = (
+        tmp_path
+        / "silver"
+        / "bybit"
+        / "spot"
+        / "ohlcv"
+        / "5m"
+        / "BTCUSDT"
+        / "2024"
+        / "04"
+        / "09.jsonl"
+    )
+    metadata_path = tmp_path / "silver" / "metadata" / "symbol_filters.jsonl"
+    _write_jsonl(
+        prior_day_delta_path,
+        [{"timestamp_ms": candidate_ts - 60_000, "u": 1}],
+    )
+    _write_jsonl(
+        current_day_delta_path,
+        [{"timestamp_ms": candidate_ts, "u": 2}],
+    )
+    _write_jsonl(
+        snapshot_path,
+        [{"timestamp_ms": candidate_ts - 120_000, "depth_levels": 20}],
+    )
+    _write_jsonl(trades_path, [{"timestamp_ms": candidate_ts, "price": 1.0}])
+    _write_jsonl(
+        ohlcv_path,
+        [{"timestamp_ms": candidate_ts, "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0}],
+    )
+    _write_jsonl(metadata_path, [{"pair": "BTCUSDT", "min_notional": 10.0}])
+    silver_index_path = tmp_path / "silver_index.json"
+    _write_json(
+        silver_index_path,
+        {
+            "schema_version": "v1",
+            "entries": [
+                {
+                    "source_id": "source_trades",
+                    "source_root": str((tmp_path / "raw_trades").resolve()),
+                    "source_priority": 10,
+                    "exchange": "bybit",
+                    "market_type": "spot",
+                    "data_type": "trades",
+                    "pair": "BTCUSDT",
+                    "timeframe": "",
+                    "date": "2024-04-09",
+                    "path": str(trades_path.resolve()),
+                    "storage_format": "jsonl",
+                    "min_timestamp_ms": candidate_ts,
+                    "max_timestamp_ms": candidate_ts,
+                    "row_count": 1,
+                    "file_hash": "hash-trades",
+                    "depth_source_status": "BOOK_DEPTH_NOT_PROVEN",
+                    "schema_status": "TRADE_SCHEMA_READY",
+                },
+                {
+                    "source_id": "source_snapshot",
+                    "source_root": str((tmp_path / "raw_book").resolve()),
+                    "source_priority": 20,
+                    "exchange": "bybit",
+                    "market_type": "spot",
+                    "data_type": "orderbook_snapshot",
+                    "pair": "BTCUSDT",
+                    "timeframe": "",
+                    "date": "2024-04-09",
+                    "path": str(snapshot_path.resolve()),
+                    "storage_format": "jsonl",
+                    "min_timestamp_ms": candidate_ts - 120_000,
+                    "max_timestamp_ms": candidate_ts,
+                    "row_count": 1,
+                    "file_hash": "hash-snapshot",
+                    "depth_source_status": "BOOK_DEPTH20_AVAILABLE",
+                    "schema_status": "ORDERBOOK_SCHEMA_READY",
+                },
+                {
+                    "source_id": "source_delta_prev",
+                    "source_root": str((tmp_path / "raw_book").resolve()),
+                    "source_priority": 20,
+                    "exchange": "bybit",
+                    "market_type": "spot",
+                    "data_type": "orderbook_delta",
+                    "pair": "BTCUSDT",
+                    "timeframe": "",
+                    "date": "2024-04-08",
+                    "path": str(prior_day_delta_path.resolve()),
+                    "storage_format": "jsonl",
+                    "min_timestamp_ms": candidate_ts - 60_000,
+                    "max_timestamp_ms": candidate_ts - 60_000,
+                    "row_count": 1,
+                    "file_hash": "hash-delta-prev",
+                    "depth_source_status": "BOOK_DEPTH20_AVAILABLE",
+                    "schema_status": "ORDERBOOK_SCHEMA_READY",
+                },
+                {
+                    "source_id": "source_delta_curr",
+                    "source_root": str((tmp_path / "raw_book").resolve()),
+                    "source_priority": 20,
+                    "exchange": "bybit",
+                    "market_type": "spot",
+                    "data_type": "orderbook_delta",
+                    "pair": "BTCUSDT",
+                    "timeframe": "",
+                    "date": "2024-04-09",
+                    "path": str(current_day_delta_path.resolve()),
+                    "storage_format": "jsonl",
+                    "min_timestamp_ms": candidate_ts,
+                    "max_timestamp_ms": candidate_ts,
+                    "row_count": 1,
+                    "file_hash": "hash-delta-curr",
+                    "depth_source_status": "BOOK_DEPTH20_AVAILABLE",
+                    "schema_status": "ORDERBOOK_SCHEMA_READY",
+                },
+                {
+                    "source_id": "source_ohlcv",
+                    "source_root": str((tmp_path / "raw_ohlcv").resolve()),
+                    "source_priority": 10,
+                    "exchange": "bybit",
+                    "market_type": "spot",
+                    "data_type": "ohlcv",
+                    "pair": "BTCUSDT",
+                    "timeframe": "5m",
+                    "date": "2024-04-09",
+                    "path": str(ohlcv_path.resolve()),
+                    "storage_format": "jsonl",
+                    "min_timestamp_ms": candidate_ts,
+                    "max_timestamp_ms": candidate_ts,
+                    "row_count": 1,
+                    "file_hash": "hash-ohlcv",
+                    "depth_source_status": "BOOK_DEPTH_NOT_PROVEN",
+                    "schema_status": "KLINE_SCHEMA_READY",
+                },
+                {
+                    "source_id": "source_meta",
+                    "source_root": str((tmp_path / "raw_meta").resolve()),
+                    "source_priority": 5,
+                    "exchange": "bybit",
+                    "market_type": "spot",
+                    "data_type": "metadata",
+                    "pair": "BTCUSDT",
+                    "timeframe": "",
+                    "date": "2024-04-09",
+                    "path": str(metadata_path.resolve()),
+                    "storage_format": "jsonl",
+                    "min_timestamp_ms": candidate_ts,
+                    "max_timestamp_ms": candidate_ts,
+                    "row_count": 1,
+                    "file_hash": "hash-meta",
+                    "depth_source_status": "BOOK_DEPTH_NOT_PROVEN",
+                    "schema_status": "METADATA_SCHEMA_READY",
+                },
+            ],
+        },
+    )
+    candidates = (
+        StrategyLadderCandidateEvent(
+            run_id="run-shared-delta",
+            candidate_id="cand-a",
+            timestamp_ms=candidate_ts,
+            pair="BTCUSDT",
+            timeframe="5m",
+            engine_id="engine_a",
+            strategy_id="engine_a",
+        ),
+        StrategyLadderCandidateEvent(
+            run_id="run-shared-delta",
+            candidate_id="cand-b",
+            timestamp_ms=candidate_ts,
+            pair="BTCUSDT",
+            timeframe="5m",
+            engine_id="engine_b",
+            strategy_id="engine_b",
+        ),
+    )
+
+    result = extract_strategy_ladder_raw_windows(
+        tmp_path / "raw_windows",
+        candidate_events=candidates,
+        silver_index_path=silver_index_path,
+    )
+
+    assert result.status == "RAW_WINDOW_READY"
+    assert len(result.manifests) == 2
+    assert result.manifests[0].raw_book_delta_path == result.manifests[1].raw_book_delta_path
+    assert "_shared_windows" in str(result.manifests[0].raw_book_delta_path)
+    assert "orderbook_delta" in str(result.manifests[0].raw_book_delta_path)
+    assert not list((tmp_path / "raw_windows" / "BTCUSDT").rglob("orderbook_delta.jsonl"))
+    delta_rows = [
+        json.loads(line)
+        for line in Path(str(result.manifests[0].raw_book_delta_path)).read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert [row["timestamp_ms"] for row in delta_rows] == [candidate_ts - 60_000, candidate_ts]
 
 
 def test_strategy_ladder_runner_writes_replay_performance_profile(tmp_path: Path) -> None:

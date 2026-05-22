@@ -181,6 +181,51 @@ def test_derive_structure_summary_choppy(tmp_path: Path) -> None:
     )
 
 
+def test_derive_structure_summary_preserves_recent_initial_expansion_signal(tmp_path: Path) -> None:
+    """Un breakout recent propre ne doit pas etre noye par un lookback choppy.
+
+    Engine A vise l'initial expansion. Si les 3 bars in-window sont
+    franchement haussiers et coherents, le builder doit privilegier cette
+    impulsion recente au lieu de diluer totalement le signal dans 1h de
+    contexte mixte.
+    """
+    bars: list[dict[str, object]] = []
+    base_ts = 1_700_000_000_000
+    # 12 bars de lookback volontairement mixtes/choppy
+    for i in range(12):
+        ts = base_ts - (12 - i) * 300_000
+        if i % 2 == 0:
+            bars.append(_bar(ts_ms=ts, o=100.0, h=101.0, l=99.2, c=99.7, v=10.0))
+        else:
+            bars.append(_bar(ts_ms=ts, o=99.7, h=100.9, l=99.4, c=100.2, v=10.0))
+    # 3 bars in-window nettes et haussieres = initial expansion premium
+    bars.extend(
+        [
+            _bar(ts_ms=base_ts, o=100.2, h=101.6, l=100.2, c=101.4, v=15.0),
+            _bar(ts_ms=base_ts + 300_000, o=101.4, h=102.4, l=101.3, c=102.1, v=16.0),
+            _bar(ts_ms=base_ts + 600_000, o=102.1, h=103.0, l=102.0, c=102.8, v=17.0),
+        ]
+    )
+
+    summary = derive_engine_a_structure_summary(
+        bars_full=bars,
+        window_start_ms=base_ts,
+        window_end_ms=base_ts + 600_000,
+    )
+
+    assert summary.detector_status == "DETECTED"
+    assert summary.n_lookback_bars_used == 12
+    assert summary.n_in_window_bars_used == 3
+    assert summary.direction_score > 0.2, (
+        "Le recent breakout doit garder un direction_score exploitable pour Engine A; "
+        f"got {summary.direction_score}"
+    )
+    assert summary.continuation_score > 0.5, (
+        "La continuation recente doit rester visible malgre le lookback choppy; "
+        f"got {summary.continuation_score}"
+    )
+
+
 def test_build_engine_a_input_produces_validatable_payload(tmp_path: Path) -> None:
     """Le payload doit passer EngineAInput.model_validate()."""
     ohlcv_path, ws, we = _build_synthetic_uptrend_dataset(

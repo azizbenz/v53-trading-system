@@ -1,0 +1,119 @@
+{
+  "schema_version": "v53.engine_math_canary_audit.v1",
+  "generated_at": "2026-05-22T21:08:10.970289+00:00",
+  "scenarios": [
+    {
+      "scenario_id": "SCENARIO_A_LONG_PASS_NATIVE",
+      "candidate_id": "a-long-pass",
+      "engine_id": "engine_a",
+      "expected_decision": "emit",
+      "expected_reason_codes": [],
+      "expected_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "expected_edge_truth_status": "EXPECTED_EDGE_GOVERNED_BACKTEST_TRUTH",
+      "expected_gain_decimal": 0.0032,
+      "expected_cost_decimal": 0.00068
+    },
+    {
+      "scenario_id": "SCENARIO_A_NEGATIVE_DIRECTION_BLOCK",
+      "candidate_id": "a-negative-direction",
+      "engine_id": "engine_a",
+      "expected_decision": "no_trade",
+      "expected_reason_codes": [
+        "engine_internal.engine_a.direction.non_long",
+        "engine_a.input.non_long_direction"
+      ],
+      "expected_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "expected_edge_truth_status": "EXPECTED_EDGE_GOVERNED_BACKTEST_TRUTH",
+      "expected_gain_decimal": 0.0032,
+      "expected_cost_decimal": 0.00068
+    },
+    {
+      "scenario_id": "SCENARIO_B_EXCESS_PASS",
+      "candidate_id": "b-excess-pass",
+      "engine_id": "engine_b",
+      "expected_decision": "emit",
+      "expected_reason_codes": [],
+      "expected_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "expected_edge_truth_status": "EXPECTED_EDGE_GOVERNED_BACKTEST_TRUTH",
+      "expected_gain_decimal": 0.003,
+      "expected_cost_decimal": 0.00068
+    },
+    {
+      "scenario_id": "SCENARIO_B_NO_EXCESS",
+      "candidate_id": "b-no-excess",
+      "engine_id": "engine_b",
+      "expected_decision": "no_trade",
+      "expected_reason_codes": [
+        "engine_internal.engine_b.excess.no_excess",
+        "engine_b.excess.no_excess"
+      ],
+      "expected_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "expected_edge_truth_status": "EXPECTED_EDGE_GOVERNED_BACKTEST_TRUTH",
+      "expected_gain_decimal": 0.003,
+      "expected_cost_decimal": 0.00068
+    },
+    {
+      "scenario_id": "SCENARIO_B_COST_FAIL",
+      "candidate_id": "b-cost-fail",
+      "engine_id": "engine_b",
+      "expected_decision": "no_trade",
+      "expected_reason_codes": [
+        "economics.engine_b.cost.infeasible",
+        "break_even_not_cleared"
+      ],
+      "expected_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "expected_edge_truth_status": "EXPECTED_EDGE_GOVERNED_BACKTEST_TRUTH",
+      "expected_gain_decimal": 0.0011,
+      "expected_cost_decimal": 0.00068
+    },
+    {
+      "scenario_id": "SCENARIO_C_BREAKOUT_PASS",
+      "candidate_id": "c-breakout-pass",
+      "engine_id": "engine_c",
+      "expected_decision": "emit",
+      "expected_reason_codes": [],
+      "expected_builder_status": "ENGINE_C_INPUT_BUILDER_READY",
+      "expected_edge_truth_status": "EXPECTED_EDGE_GOVERNED_BACKTEST_TRUTH",
+      "expected_gain_decimal": 0.012,
+      "expected_cost_decimal": 0.0025
+    },
+    {
+      "scenario_id": "SCENARIO_C_NO_BREAKOUT",
+      "candidate_id": "c-no-breakout",
+      "engine_id": "engine_c",
+      "expected_decision": "no_trade",
+      "expected_reason_codes": [
+        "engine_c.no_trade.non_long_breakout"
+      ],
+      "expected_builder_status": "ENGINE_C_INPUT_BUILDER_NO_BREAKOUT",
+      "expected_edge_truth_status": "EXPECTED_EDGE_GOVERNED_BACKTEST_TRUTH",
+      "expected_gain_decimal": 0.0042,
+      "expected_cost_decimal": 0.00068
+    },
+    {
+      "scenario_id": "SCENARIO_D_REENTRY_PASS",
+      "candidate_id": "d-reentry-pass",
+      "engine_id": "engine_d",
+      "expected_decision": "emit",
+      "expected_reason_codes": [],
+      "expected_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "expected_edge_truth_status": "EXPECTED_EDGE_GOVERNED_BACKTEST_TRUTH",
+      "expected_gain_decimal": 0.009,
+      "expected_cost_decimal": 0.002
+    },
+    {
+      "scenario_id": "SCENARIO_D_NO_HISTORY",
+      "candidate_id": "d-no-history",
+      "engine_id": "engine_d",
+      "expected_decision": "no_trade",
+      "expected_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "expected_builder_status": "ENGINE_D_INPUT_BUILDER_READY_NO_FIRST_EPISODE",
+      "expected_edge_truth_status": "EXPECTED_EDGE_GOVERNED_BACKTEST_TRUTH",
+      "expected_gain_decimal": 0.0035,
+      "expected_cost_decimal": 0.00068
+    }
+  ]
+}

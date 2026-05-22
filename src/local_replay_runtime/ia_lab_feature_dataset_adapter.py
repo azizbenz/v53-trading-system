@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 import gzip
 import io
 import json
+import math
 from pathlib import Path
 
 from interface_contracts.atomic_io import atomic_write_json
@@ -26,6 +27,15 @@ from local_replay_runtime.strategy_ladder_models import deterministic_payload_ha
 
 EXPECTED_EDGE_TRAINING_FEATURE_ROWS_FILENAME = "expected_edge_training_feature_rows.jsonl.gz"
 EXPECTED_EDGE_FEATURE_MANIFEST_FILENAME = "expected_edge_feature_manifest.json"
+DEFAULT_PURGE_WINDOW_MINUTES = 1
+DEFAULT_EMBARGO_WINDOW_MINUTES = 1
+
+_AUGMENTED_NUMERIC_FEATURE_KEYS = (
+    "spread_bps",
+    "slippage_bps",
+    "latency_penalty_bps",
+    "book_depth_levels",
+)
 
 
 def _boundary_ms(raw_value: str, *, end_of_day: bool) -> int | None:
@@ -86,6 +96,40 @@ def _dataset_rows(rows, *, selected_feature_names: tuple[str, ...]) -> tuple[dic
     return tuple(records)
 
 
+def _numeric_value_for_feature(row, feature_name: str) -> float | None:  # noqa: ANN001
+    raw_value = row.feature_values.get(feature_name)
+    if raw_value is None and feature_name in _AUGMENTED_NUMERIC_FEATURE_KEYS:
+        raw_value = getattr(row, feature_name, None)
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) else None
+
+
+def _resolve_training_feature_names(
+    rows,
+    *,
+    requested_feature_names: tuple[str, ...],
+    fallback_feature_names: tuple[str, ...],
+) -> tuple[str, ...]:  # noqa: ANN001
+    candidate_names = (
+        *requested_feature_names,
+        *fallback_feature_names,
+        *_AUGMENTED_NUMERIC_FEATURE_KEYS,
+    )
+    resolved: list[str] = []
+    seen: set[str] = set()
+    for feature_name in candidate_names:
+        name = str(feature_name or "").strip()
+        if not name or name in seen:
+            continue
+        if any(_numeric_value_for_feature(row, name) is not None for row in rows):
+            resolved.append(name)
+            seen.add(name)
+    return tuple(resolved)
+
+
 def build_expected_edge_feature_dataset(
     *,
     gold_root: Path,
@@ -96,8 +140,8 @@ def build_expected_edge_feature_dataset(
     start: str = "",
     end: str = "",
     feature_names: tuple[str, ...] = (),
-    purge_window_minutes: int = 0,
-    embargo_window_minutes: int = 0,
+    purge_window_minutes: int = DEFAULT_PURGE_WINDOW_MINUTES,
+    embargo_window_minutes: int = DEFAULT_EMBARGO_WINDOW_MINUTES,
     source_silver_index_ref: str = "",
     gold_manifest: GoldMicrostructureFeatureManifest | None = None,
 ) -> ExpectedEdgeFeatureManifest:
@@ -118,7 +162,12 @@ def build_expected_edge_feature_dataset(
         end_ms=_boundary_ms(end, end_of_day=True),
     )
     rows = result.rows
-    dataset_rows = _dataset_rows(rows, selected_feature_names=feature_names)
+    resolved_feature_names = _resolve_training_feature_names(
+        rows,
+        requested_feature_names=feature_names,
+        fallback_feature_names=resolved_gold_manifest.feature_names,
+    )
+    dataset_rows = _dataset_rows(rows, selected_feature_names=resolved_feature_names)
     output_dir.mkdir(parents=True, exist_ok=True)
     dataset_path = output_dir / EXPECTED_EDGE_TRAINING_FEATURE_ROWS_FILENAME
     if dataset_rows:
@@ -145,7 +194,7 @@ def build_expected_edge_feature_dataset(
             row_count=len(dataset_rows),
             pair_scope=resolved_gold_manifest.symbol_scope,
             timeframe_scope=resolved_gold_manifest.timeframe_scope,
-            feature_names=feature_names or resolved_gold_manifest.feature_names,
+            feature_names=resolved_feature_names,
             feature_groups_generated=resolved_gold_manifest.feature_groups_generated,
             feature_groups_missing=resolved_gold_manifest.feature_groups_missing,
             feature_hash=feature_hash,

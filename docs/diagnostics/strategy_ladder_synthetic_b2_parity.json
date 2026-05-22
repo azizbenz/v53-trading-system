@@ -1,0 +1,166 @@
+{
+  "schema_version": "strategy_ladder.synthetic_b2_parity.v1",
+  "generated_at": "2026-05-18T22:55:20.009540+00:00",
+  "diagnostic_only": true,
+  "asset_root": "E:\\claude  v5.3\\v53_trading_system\\.test_tmp\\strategy_ladder_synth_b2_parity_vd79cr7k",
+  "cases": [
+    {
+      "engine_id": "engine_a",
+      "case_id": "emit_viable_candidate",
+      "viability_direct_decision": "emit",
+      "builder_direct_decision": "emit",
+      "builder_path_decision": "emit",
+      "viability_vs_builder_status": "PARITY_OK",
+      "builder_vs_runner_status": "PARITY_OK",
+      "builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "input_provenance": "BUILDER_OHLCV_HEURISTIC_TO_CALIBRATE",
+      "runner_status": "ENGINE_NATIVE_RUNNER_INVOKED",
+      "records_built": 2,
+      "builder_reason_codes": [
+        "engine_a.emit.valid",
+        "engine_internal.engine_a.structure.favorable",
+        "engine_internal.engine_a.context.neutral",
+        "economics.engine_a.cost.feasible",
+        "scoring.engine_a.conviction.high",
+        "engine_a.structure.favorable",
+        "engine_a.context.neutral",
+        "engine_a.cost.feasible",
+        "engine_a.conviction.high"
+      ],
+      "builder_no_trade_reasons": [],
+      "notes": []
+    },
+    {
+      "engine_id": "engine_b",
+      "case_id": "emit_viable_candidate",
+      "viability_direct_decision": "emit",
+      "builder_direct_decision": "emit",
+      "builder_path_decision": "emit",
+      "viability_vs_builder_status": "PARITY_OK",
+      "builder_vs_runner_status": "PARITY_OK",
+      "builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "input_provenance": "BUILDER_FROM_BRIDGE_HEURISTIC_TO_CALIBRATE",
+      "runner_status": "ENGINE_NATIVE_RUNNER_INVOKED",
+      "records_built": 4,
+      "builder_reason_codes": [
+        "scoring.engine_b.conviction.medium",
+        "engine_internal.engine_b.excess.exploitable",
+        "economics.engine_b.cost.feasible",
+        "engine_b.conviction.medium",
+        "engine_b.excess.exploitable"
+      ],
+      "builder_no_trade_reasons": [],
+      "notes": []
+    },
+    {
+      "engine_id": "engine_c",
+      "case_id": "emit_viable_candidate",
+      "viability_direct_decision": "emit",
+      "builder_direct_decision": "no_trade",
+      "builder_path_decision": "no_trade",
+      "viability_vs_builder_status": "PARITY_MISMATCH",
+      "builder_vs_runner_status": "PARITY_OK",
+      "builder_status": "ENGINE_C_INPUT_BUILDER_READY",
+      "input_provenance": "BUILDER_DOC21_HEURISTIC_TO_CALIBRATE",
+      "runner_status": "ENGINE_NATIVE_RUNNER_INVOKED",
+      "records_built": 5,
+      "builder_reason_codes": [
+        "engine_internal.engine_c.continuation.not_viable",
+        "engine_c.no_trade.continuation_not_viable",
+        "engine_internal.engine_c.breakout.range_expansion",
+        "engine_c.breakout.range_expansion",
+        "engine_internal.engine_c.continuation.late_extension",
+        "engine_c.continuation.late_extension",
+        "engine_c.microstructure.confirmed",
+        "engine_internal.c.continuation_viability"
+      ],
+      "builder_no_trade_reasons": [
+        "continuation_not_viable"
+      ],
+      "notes": [
+        "ENGINE_C_VIABILITY_INPUT_GEOMETRY_INCONSISTENT_WITH_BUILDER_FORMULA"
+      ]
+    },
+    {
+      "engine_id": "engine_c",
+      "case_id": "emit_builder_aligned_candidate",
+      "viability_direct_decision": "emit",
+      "builder_direct_decision": "emit",
+      "builder_path_decision": "emit",
+      "viability_vs_builder_status": "PARITY_OK",
+      "builder_vs_runner_status": "PARITY_OK",
+      "builder_status": "ENGINE_C_INPUT_BUILDER_READY",
+      "input_provenance": "BUILDER_DOC21_HEURISTIC_TO_CALIBRATE",
+      "runner_status": "ENGINE_NATIVE_RUNNER_INVOKED",
+      "records_built": 5,
+      "builder_reason_codes": [
+        "engine_internal.engine_c.breakout.range_expansion",
+        "engine_c.breakout.range_expansion",
+        "engine_internal.engine_c.continuation.fresh_breakout",
+        "engine_c.continuation.fresh_breakout",
+        "scoring.engine_c.conviction.medium",
+        "engine_c.conviction.medium",
+        "engine_c.tier.tier_1",
+        "engine_c.microstructure.confirmed",
+        "economics.engine_c.cost.feasible",
+        "engine_c.invalidation.present"
+      ],
+      "builder_no_trade_reasons": [],
+      "notes": [
+        "DIRECT_INPUT_DERIVED_FROM_BUILDER_PAYLOAD_FOR_PARITY_ALIGNMENT"
+      ]
+    },
+    {
+      "engine_id": "engine_d",
+      "case_id": "emit_viable_candidate",
+      "viability_direct_decision": "emit",
+      "builder_direct_decision": "no_trade",
+      "builder_path_decision": "no_trade",
+      "viability_vs_builder_status": "PARITY_MISMATCH",
+      "builder_vs_runner_status": "PARITY_OK",
+      "builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "input_provenance": "BUILDER_WITH_FIRST_EPISODE_HEURISTIC_TO_CALIBRATE",
+      "runner_status": "ENGINE_NATIVE_RUNNER_INVOKED",
+      "records_built": 1,
+      "builder_reason_codes": [
+        "engine_internal.engine_d.reformation.weak",
+        "engine_d.no_trade.reformation_weak"
+      ],
+      "builder_no_trade_reasons": [
+        "reformation_weak"
+      ],
+      "notes": [
+        "ENGINE_D_FIRST_EPISODE_CONTEXT_CONSUMED"
+      ]
+    },
+    {
+      "engine_id": "engine_d",
+      "case_id": "emit_builder_aligned_candidate",
+      "viability_direct_decision": "emit",
+      "builder_direct_decision": "emit",
+      "builder_path_decision": "emit",
+      "viability_vs_builder_status": "PARITY_OK",
+      "builder_vs_runner_status": "PARITY_OK",
+      "builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "input_provenance": "BUILDER_WITH_FIRST_EPISODE_HEURISTIC_TO_CALIBRATE",
+      "runner_status": "ENGINE_NATIVE_RUNNER_INVOKED",
+      "records_built": 1,
+      "builder_reason_codes": [
+        "scoring.engine_d.conviction.medium",
+        "engine_internal.engine_d.link_type.prior_trade",
+        "engine_internal.engine_d.anti_revenge.reset_required",
+        "engine_internal.engine_d.reformation.detected",
+        "economics.engine_d.cost.feasible",
+        "engine_d.conviction.medium",
+        "engine_d.link_type.prior_trade",
+        "engine_d.anti_revenge.reset_required",
+        "engine_d.reformation.detected"
+      ],
+      "builder_no_trade_reasons": [],
+      "notes": [
+        "DIRECT_INPUT_DERIVED_FROM_BUILDER_PAYLOAD_FOR_PARITY_ALIGNMENT",
+        "ENGINE_D_FIRST_EPISODE_CONTEXT_CONSUMED"
+      ]
+    }
+  ]
+}

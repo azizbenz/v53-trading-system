@@ -95,6 +95,25 @@ from local_replay_runtime.strategy_ladder_raw_sources import (
 
 _TRADE_FIELDS = {"id", "timestamp", "price", "volume"}
 _KLINE_FIELDS = {"starttime", "open", "high", "low", "close", "volume", "turnover"}
+_REPLAY_CONTEXT_LOOKBACK_MS = 60 * 60 * 1000
+_CRITICAL_OHLCV_TIMEFRAME_INTERVALS_MS: dict[str, int] = {
+    "1m": 60_000,
+    "10m": 10 * 60_000,
+}
+_CRITICAL_OHLCV_EXPECTED_ROWS_PER_DAY: dict[str, int] = {
+    "1m": 1_440,
+    "10m": 144,
+}
+# Patch D1+D2 (2026-05-21) — severity classifier OHLCV temporal completeness.
+# Source raw L: dumps Bybit sont systématiquement tronqués à 1000 rows max
+# (limite GET endpoint Bybit non-paginé). Sur 1m=1440 attendus → 1000 disponibles
+# (69%); sur 10m=144 attendus → 100 disponibles (69%). Plutôt que fail-close
+# total, on accepte les jours partiels au-dessus d'un seuil research-acceptable
+# tout en flaggant pour audit. La promotion-grade exige le seuil strict 99%.
+# missing_candle_count / duplicate_candle_count > 0 restent fail-close
+# (gaps internes ou dupli ≠ truncation propre du suffix).
+_OHLCV_PARTIAL_DAY_RESEARCH_TOLERANCE_RATIO = 0.65
+_OHLCV_PARTIAL_DAY_PROMOTION_TOLERANCE_RATIO = 0.99
 _METADATA_FIELDS = {
     "venue",
     "exchange",
@@ -126,6 +145,107 @@ _METADATA_FIELDS = {
     "raw_payload_hash",
     "metadata_temporal_status",
 }
+
+
+def _compute_metadata_temporal_drift_days(
+    *,
+    fetched_at_utc: str,
+    end_date: str,
+) -> float | None:
+    if not fetched_at_utc or not end_date:
+        return None
+    try:
+        fetched_at = datetime.fromisoformat(fetched_at_utc)
+        replay_end = datetime.fromisoformat(f"{end_date}T23:59:59+00:00")
+    except ValueError:
+        return None
+    return round(abs((fetched_at - replay_end).total_seconds()) / 86_400.0, 3)
+
+
+def _assess_ohlcv_temporal_completeness(
+    *,
+    index_entries: tuple[StrategyLadderSilverIndexEntry, ...],
+    requested_timeframes: tuple[str, ...],
+) -> tuple[str, int, tuple[str, ...], tuple[str, ...]]:
+    critical_timeframes = tuple(
+        tf for tf in requested_timeframes if tf in _CRITICAL_OHLCV_EXPECTED_ROWS_PER_DAY
+    )
+    if not critical_timeframes:
+        return "OHLCV_TEMPORAL_COMPLETENESS_NOT_PROVEN", 0, (), ()
+    observed_entries_by_timeframe = {tf: 0 for tf in critical_timeframes}
+    blocker_codes: list[str] = []
+    blocked_entry_count = 0
+    partial_accepted_entry_count = 0
+    has_promotion_partial_only = False
+    for entry in index_entries:
+        if entry.data_type != "ohlcv":
+            continue
+        timeframe = entry.timeframe or ""
+        expected_rows = _CRITICAL_OHLCV_EXPECTED_ROWS_PER_DAY.get(timeframe)
+        expected_interval_ms = _CRITICAL_OHLCV_TIMEFRAME_INTERVALS_MS.get(timeframe)
+        if expected_rows is None or expected_interval_ms is None:
+            continue
+        observed_entries_by_timeframe[timeframe] = observed_entries_by_timeframe.get(
+            timeframe,
+            0,
+        ) + 1
+        # Patch D1+D2 (2026-05-21) — severity classifier
+        # Conditions FAIL-CLOSE NON tolerées (interval mismatch / gaps internes /
+        # dupli) — toujours BLOCKED car indique data integrity violée.
+        hard_fail = (
+            entry.expected_interval_ms != expected_interval_ms
+            or entry.missing_candle_count > 0
+            or entry.duplicate_candle_count > 0
+        )
+        if hard_fail:
+            blocker_codes.append(
+                f"OHLCV_{timeframe.upper()}_TEMPORAL_COMPLETENESS_BLOCKED"
+            )
+            blocked_entry_count += 1
+            continue
+        # Condition row_count != expected_rows : classifier par severity.
+        if entry.row_count == expected_rows:
+            continue  # READY pour ce row
+        ratio = (
+            entry.row_count / float(expected_rows) if expected_rows > 0 else 0.0
+        )
+        if ratio >= _OHLCV_PARTIAL_DAY_PROMOTION_TOLERANCE_RATIO:
+            # ≥99% : research-acceptable ET promotion-acceptable (rounding only)
+            continue
+        if ratio >= _OHLCV_PARTIAL_DAY_RESEARCH_TOLERANCE_RATIO:
+            # 65-99% : research-acceptable, promotion BLOCKED
+            blocker_codes.append(
+                f"OHLCV_{timeframe.upper()}_PARTIAL_DAY_ACCEPTED"
+            )
+            partial_accepted_entry_count += 1
+            has_promotion_partial_only = True
+            continue
+        # <65% : fail-close research et promotion
+        blocker_codes.append(
+            f"OHLCV_{timeframe.upper()}_TEMPORAL_COMPLETENESS_BLOCKED"
+        )
+        blocked_entry_count += 1
+    for timeframe, count in observed_entries_by_timeframe.items():
+        if count <= 0:
+            blocker_codes.append(
+                f"OHLCV_{timeframe.upper()}_TEMPORAL_COMPLETENESS_NOT_PROVEN"
+            )
+    deduped_blockers = tuple(dict.fromkeys(blocker_codes))
+    has_hard_block = any(
+        b.endswith("_TEMPORAL_COMPLETENESS_BLOCKED")
+        or b.endswith("_TEMPORAL_COMPLETENESS_NOT_PROVEN")
+        for b in deduped_blockers
+    )
+    if not deduped_blockers:
+        status = "OHLCV_TEMPORAL_COMPLETENESS_READY"
+    elif has_hard_block:
+        status = "OHLCV_TEMPORAL_COMPLETENESS_BLOCKED"
+    elif has_promotion_partial_only:
+        # Seulement PARTIAL_DAY_ACCEPTED → research-grade OK, promotion-grade NON
+        status = "OHLCV_TEMPORAL_COMPLETENESS_PARTIAL_DAY_ACCEPTED"
+    else:
+        status = "OHLCV_TEMPORAL_COMPLETENESS_BLOCKED"
+    return status, blocked_entry_count, critical_timeframes, deduped_blockers
 _PAIR_DATE_PATTERN = re.compile(r"^(?P<pair>[A-Z0-9]+)_(?P<date>\d{4}-\d{2}-\d{2})$")
 _PAIR_TF_DATE_PATTERN = re.compile(
     r"^(?P<pair>[A-Z0-9]+)_(?P<timeframe>[A-Za-z0-9]+)_(?P<date>\d{4}-\d{2}-\d{2})$"
@@ -276,6 +396,21 @@ def _span_days(start_ms: int | None, end_ms: int | None) -> int:
     if start_ms is None or end_ms is None or end_ms < start_ms:
         return 0
     return int((end_ms - start_ms) / 86_400_000) + 1
+
+
+def _effective_context_start_ms(start_ms: int | None) -> int | None:
+    if start_ms is None:
+        return None
+    return max(0, start_ms - _REPLAY_CONTEXT_LOOKBACK_MS)
+
+
+def _effective_context_start_text(normalized_start: str, effective_start_ms: int | None) -> str:
+    if effective_start_ms is None:
+        return ""
+    effective_dt = datetime.fromtimestamp(effective_start_ms / 1000.0, tz=UTC)
+    if _is_date_only_boundary(normalized_start):
+        return effective_dt.date().isoformat()
+    return effective_dt.isoformat(timespec="seconds")
 
 
 def _date_range_status_for_entry(
@@ -1082,6 +1217,15 @@ def _write_rows(
     return path.stat().st_size
 
 
+def _read_jsonl_lines(path: Path) -> list[str]:
+    if not path.exists():
+        return []
+    if path.name.lower().endswith(".jsonl.gz"):
+        with gzip.open(path, "rt", encoding="utf-8-sig") as handle:
+            return [line.rstrip("\n") for line in handle if line.strip()]
+    return path.read_text(encoding="utf-8-sig").splitlines()
+
+
 def _normalize_trade_file(
     *,
     classification: StrategyLadderRawFileClassification,
@@ -1290,7 +1434,9 @@ def _normalize_kline_file(
             }
         )
     normalized.sort(key=lambda item: int(item["timestamp_ms"]))
-    expected_interval_ms = 60_000 if classification.timeframe == "1m" else None
+    expected_interval_ms = _CRITICAL_OHLCV_TIMEFRAME_INTERVALS_MS.get(
+        classification.timeframe or ""
+    )
     missing_candle_count = 0
     if expected_interval_ms is not None and len(normalized_timestamps) > 1:
         ordered = sorted(normalized_timestamps)
@@ -1860,6 +2006,7 @@ def _write_gold_features(
 ) -> StrategyLadderGoldFeatureManifest:
     feature_paths: list[str] = []
     feature_row_count = 0
+    bytes_written = 0
     feature_groups: set[str] = {
         "kline_return_features",
         "kline_trend_features",
@@ -1970,7 +2117,7 @@ def _write_gold_features(
             year = date[:4] if date else "unknown"
             month = date[5:7] if len(date) >= 7 else "unknown"
             day = date[8:10] if len(date) >= 10 else "unknown"
-            output_path = request.gold_root / f"features_{entry.timeframe or '1m'}" / pair / year / month / f"{day}.jsonl"
+            output_path = request.gold_root / f"features_{entry.timeframe or '1m'}" / pair / year / f"{month}.jsonl.gz"
             feature_rows: list[dict[str, object]] = []
             entry_trade_entries = tuple(
                 item
@@ -2231,8 +2378,14 @@ def _write_gold_features(
                 feature_rows.append(feature_row.model_dump(mode="json"))
             if feature_rows:
                 output_path.parent.mkdir(parents=True, exist_ok=True)
-                atomic_write_text(output_path, _jsonl_dump_lines(feature_rows))
-                feature_paths.append(str(output_path.resolve()))
+                existing_size = output_path.stat().st_size if output_path.exists() else 0
+                merged_lines = [*_read_jsonl_lines(output_path), *_jsonl_dump_lines(feature_rows).splitlines()]
+                merged_rows = [json.loads(line) for line in merged_lines if line.strip()]
+                _write_rows(output_path, merged_rows, storage_format="jsonl-gz")
+                resolved_feature_path = str(output_path.resolve())
+                if resolved_feature_path not in feature_paths:
+                    feature_paths.append(resolved_feature_path)
+                bytes_written += max(output_path.stat().st_size - existing_size, 0)
                 feature_row_count += len(feature_rows)
                 # Patch 2026-05-15 — per-timeframe row accounting for the
                 # manifest. Falls back to "1m" only when the silver entry
@@ -2303,6 +2456,21 @@ def _write_report(path: Path, payload: BaseException | dict[str, object] | objec
         atomic_write_json(path, payload, indent=2)
 
 
+def _write_generated_raw_source_manifest(
+    *,
+    report_root: Path,
+    source_report: StrategyLadderRawSourceReport,
+) -> Path:
+    manifest_path = report_root / "raw_source_manifest.json"
+    payload = {
+        "schema_version": "v1",
+        "generated_by": "strategy_ladder_data_factory",
+        "sources": [source.model_dump(mode="json") for source in source_report.sources],
+    }
+    atomic_write_json(manifest_path, payload, indent=2)
+    return manifest_path.resolve()
+
+
 def run_strategy_ladder_data_factory(
     request: StrategyLadderDataFactoryRequest,
 ) -> StrategyLadderDataFactoryResult:
@@ -2321,6 +2489,11 @@ def run_strategy_ladder_data_factory(
     normalized_end = _normalize_boundary_text(request.end)
     start_ms = parse_time_boundary_to_ms(normalized_start)
     end_ms = parse_time_boundary_to_ms(normalized_end)
+    effective_start_ms = _effective_context_start_ms(start_ms)
+    effective_start_text = _effective_context_start_text(
+        normalized_start,
+        effective_start_ms,
+    )
     if end_ms is not None and _is_date_only_boundary(normalized_end):
         end_ms += 86_399_999
     date_boundaries_parseable = (
@@ -2332,6 +2505,8 @@ def run_strategy_ladder_data_factory(
     metadata_cache_result = load_historical_metadata_cache(
         request.historical_metadata_root,
         requested_pairs=request.pairs,
+        replay_start=normalized_start,
+        replay_end=normalized_end,
     )
     index_entries: list[StrategyLadderSilverIndexEntry] = []
     bytes_read = 0
@@ -2381,7 +2556,7 @@ def run_strategy_ladder_data_factory(
             if start_ms is not None or end_ms is not None:
                 probed_date = _probe_filename_date(path)
                 if probed_date and not _date_in_range(
-                    probed_date, start_ms=start_ms, end_ms=end_ms
+                    probed_date, start_ms=effective_start_ms, end_ms=end_ms
                 ):
                     files_skipped_by_date_filter += 1
                     files_skipped += 1
@@ -2434,7 +2609,7 @@ def run_strategy_ladder_data_factory(
     raw_scan_budget_status = "DRY_RUN_SCOPE_READY"
     raw_scan_budget_reason_codes: list[str] = []
     if request.dry_run:
-        span_days = _span_days(start_ms, end_ms)
+        span_days = _span_days(effective_start_ms, end_ms)
         if (
             request.storage_budget_limit_bytes > 0
             and preflight_storage_budget_report.raw_size_estimate
@@ -2487,7 +2662,11 @@ def run_strategy_ladder_data_factory(
             except ValueError:
                 file_start = None
                 file_end = None
-            if file_start is not None and start_ms is not None and file_end < start_ms:
+            if (
+                file_start is not None
+                and effective_start_ms is not None
+                and file_end < effective_start_ms
+            ):
                 files_skipped += 1
                 continue
             if file_end is not None and end_ms is not None and file_start > end_ms:
@@ -2648,6 +2827,20 @@ def run_strategy_ladder_data_factory(
         if any(status == "TIMESTAMP_UNIT_AMBIGUOUS" for status in timestamp_statuses):
             timestamp_unit_status = "TIMESTAMP_UNIT_AMBIGUOUS"
             blocker_codes.append("TIMESTAMP_UNIT_AMBIGUOUS")
+    metadata_temporal_drift_days = _compute_metadata_temporal_drift_days(
+        fetched_at_utc=metadata_cache_result.fetched_at_utc,
+        end_date=normalized_end,
+    )
+    (
+        ohlcv_temporal_completeness_status,
+        ohlcv_temporal_blocked_entry_count,
+        ohlcv_temporal_critical_timeframes,
+        ohlcv_temporal_blocker_codes,
+    ) = _assess_ohlcv_temporal_completeness(
+        index_entries=silver_index,
+        requested_timeframes=request.timeframes,
+    )
+    blocker_codes.extend(ohlcv_temporal_blocker_codes)
     orderbook_groups: dict[tuple[str, str], list[StrategyLadderSilverIndexEntry]] = {}
     for entry in silver_index:
         if entry.data_type not in {"orderbook_snapshot", "orderbook_delta", "orderbook"}:
@@ -2689,7 +2882,7 @@ def run_strategy_ladder_data_factory(
     silver_index_date_range_status, silver_index_date_range_violation_count = (
         _validate_silver_index_date_range(
             silver_index,
-            start_ms=start_ms,
+            start_ms=effective_start_ms,
             end_ms=end_ms,
         )
     )
@@ -2720,6 +2913,11 @@ def run_strategy_ladder_data_factory(
         data_factory_status = "DATA_FACTORY_BLOCKED_BY_RAW_DATA"
     if silver_index_date_range_status == "SILVER_INDEX_DATE_RANGE_VIOLATION":
         data_factory_status = "DATA_FACTORY_BLOCKED_BY_RAW_DATA"
+    if (
+        not request.dry_run
+        and ohlcv_temporal_completeness_status == "OHLCV_TEMPORAL_COMPLETENESS_BLOCKED"
+    ):
+        data_factory_status = "DATA_FACTORY_BLOCKED_BY_OHLCV_TEMPORAL_COMPLETENESS"
     if (
         request.historical_metadata_root is not None
         and historical_metadata_status != BYBIT_HISTORICAL_METADATA_READY
@@ -2761,6 +2959,16 @@ def run_strategy_ladder_data_factory(
     else:
         silver_storage_status = "SILVER_STORAGE_BLOAT_WARNING"
         blocker_codes.append("SILVER_STORAGE_BLOAT_WARNING")
+    active_pairs_after_pruning = tuple(
+        pair_inference_summary.get("active_pairs_after_pruning") or ()
+    )
+    pair_generalization_status = (
+        "MULTI_PAIR_GENERALIZATION_READY"
+        if len(active_pairs_after_pruning) >= 3
+        else "SINGLE_PAIR_RESEARCH_ONLY"
+    )
+    if pair_generalization_status != "MULTI_PAIR_GENERALIZATION_READY":
+        blocker_codes.append("SINGLE_PAIR_RESEARCH_ONLY")
     data_quality = finalize_hashed_model(
         StrategyLadderDataQualityReport(
             data_factory_status=data_factory_status,
@@ -2778,6 +2986,7 @@ def run_strategy_ladder_data_factory(
             fee_provenance_status=fee_provenance_status,
             metadata_temporal_status=metadata_temporal_status,
             metadata_fetched_at_utc=metadata_cache_result.fetched_at_utc,
+            metadata_temporal_drift_days=metadata_temporal_drift_days,
             metadata_preview_rows=metadata_cache_result.metadata_preview_rows,
             capital_bucket_metadata_status=capital_bucket_metadata_status,
             timestamp_unit_status=timestamp_unit_status,
@@ -2805,12 +3014,13 @@ def run_strategy_ladder_data_factory(
             ignored_source_pairs=tuple(
                 pair_inference_summary.get("ignored_source_pairs") or ()
             ),
-            active_pairs_after_pruning=tuple(
-                pair_inference_summary.get("active_pairs_after_pruning") or ()
-            ),
+            active_pairs_after_pruning=active_pairs_after_pruning,
+            pair_generalization_status=pair_generalization_status,
             blocker_codes=tuple(dict.fromkeys(blocker_codes)),
             date_filter_start=normalized_start or "",
             date_filter_end=normalized_end or "",
+            date_filter_effective_start=effective_start_text,
+            replay_context_lookback_ms=_REPLAY_CONTEXT_LOOKBACK_MS,
             files_seen=files_seen,
             files_skipped_by_date_filter=files_skipped_by_date_filter,
             date_pruning_status=date_pruning_status,
@@ -2823,6 +3033,10 @@ def run_strategy_ladder_data_factory(
             ),
             silver_storage_format=storage_format_token,
             silver_storage_status=silver_storage_status,
+            raw_source_typing_status=source_report.raw_source_typing_status,
+            ohlcv_temporal_completeness_status=ohlcv_temporal_completeness_status,
+            ohlcv_temporal_blocked_entry_count=ohlcv_temporal_blocked_entry_count,
+            ohlcv_temporal_critical_timeframes=ohlcv_temporal_critical_timeframes,
         )
     )
     silver_size_actual = sum(
@@ -2888,13 +3102,21 @@ def run_strategy_ladder_data_factory(
         StrategyLadderDataFactoryManifest(
             run_id=request.run_id,
             raw_roots=tuple(str(path.resolve()) for path in request.raw_roots),
-            raw_source_manifest_path=str(request.raw_source_manifest_path.resolve()) if request.raw_source_manifest_path is not None else "",
+            raw_source_manifest_path="",
+            raw_source_provenance_status=(
+                "RAW_SOURCE_MANIFEST_PROVIDED"
+                if request.raw_source_manifest_path is not None
+                else "RAW_SOURCE_MANIFEST_GENERATED"
+            ),
+            raw_source_typing_status=source_report.raw_source_typing_status,
             historical_metadata_root=str(request.historical_metadata_root.resolve()) if request.historical_metadata_root is not None else "",
             silver_root=str(request.silver_root.resolve()),
             gold_root=str(request.gold_root.resolve()),
             pairs=request.pairs,
             start=normalized_start,
             end=normalized_end,
+            effective_start=effective_start_text,
+            replay_context_lookback_ms=_REPLAY_CONTEXT_LOOKBACK_MS,
             data_types=request.data_types,
             compression=request.compression,
             resume=request.resume,
@@ -2912,10 +3134,15 @@ def run_strategy_ladder_data_factory(
             metadata_source_mode=metadata_cache_result.metadata_source_mode,
             fee_provenance_status=fee_provenance_status,
             metadata_temporal_status=metadata_temporal_status,
+            metadata_temporal_drift_days=metadata_temporal_drift_days,
+            pair_generalization_status=data_quality.pair_generalization_status,
             compression_status=("COMPRESSION_READY" if bytes_written > 0 else "COMPRESSION_NOT_PROVEN"),
             silver_storage_format=storage_format_token,
             silver_storage_status=silver_storage_status,
             silver_bloat_ratio=silver_bloat_ratio,
+            ohlcv_temporal_completeness_status=ohlcv_temporal_completeness_status,
+            ohlcv_temporal_blocked_entry_count=ohlcv_temporal_blocked_entry_count,
+            ohlcv_temporal_critical_timeframes=ohlcv_temporal_critical_timeframes,
             date_pruning_status=date_pruning_status,
             silver_index_date_range_status=silver_index_date_range_status,
             raw_scan_budget_status=raw_scan_budget_status,
@@ -2929,9 +3156,52 @@ def run_strategy_ladder_data_factory(
         )
     )
     _write_report(report_root / "data_factory_manifest.json", manifest)
+    generated_raw_source_manifest_path = (
+        request.raw_source_manifest_path.resolve()
+        if request.raw_source_manifest_path is not None
+        else _write_generated_raw_source_manifest(
+            report_root=report_root,
+            source_report=source_report,
+        )
+    )
     enriched_source_report = finalize_hashed_model(
         source_report.model_copy(
             update={
+                "sources": tuple(
+                    source.model_copy(
+                        update={
+                            "typing_status": (
+                                "RAW_SOURCE_TYPED_READY"
+                                if source.data_types
+                                else source.typing_status
+                            ),
+                            "reason_codes": tuple(
+                                dict.fromkeys(
+                                    (
+                                        *source.reason_codes,
+                                        *(
+                                            ("RAW_SOURCE_MANIFEST_GENERATED",)
+                                            if request.raw_source_manifest_path is None
+                                            else ("RAW_SOURCE_MANIFEST_PROVIDED",)
+                                        ),
+                                    )
+                                )
+                            ),
+                        }
+                    )
+                    for source in source_report.sources
+                ),
+                "raw_source_manifest_path": str(generated_raw_source_manifest_path),
+                "raw_source_provenance_status": (
+                    "RAW_SOURCE_MANIFEST_PROVIDED"
+                    if request.raw_source_manifest_path is not None
+                    else "RAW_SOURCE_MANIFEST_GENERATED"
+                ),
+                "raw_source_typing_status": (
+                    "RAW_SOURCE_TYPED_READY"
+                    if all(source.data_types for source in source_report.sources)
+                    else source_report.raw_source_typing_status
+                ),
                 "pair_inference_status": str(
                     pair_inference_summary.get("pair_inference_status")
                     or "PAIR_NOT_DETECTED"
@@ -2961,6 +3231,15 @@ def run_strategy_ladder_data_factory(
         )
     )
     _write_report(report_root / "raw_source_report.json", enriched_source_report)
+    manifest = finalize_hashed_model(
+        manifest.model_copy(
+            update={
+                "raw_source_manifest_path": str(generated_raw_source_manifest_path),
+                "raw_source_typing_status": enriched_source_report.raw_source_typing_status,
+            }
+        )
+    )
+    _write_report(report_root / "data_factory_manifest.json", manifest)
     _write_report(report_root / "pair_universe_report.json", pair_report)
     _write_report(report_root / "data_quality_report.json", data_quality)
     silver_index_report_path = report_root / "silver_index.json"
@@ -3045,7 +3324,9 @@ def run_strategy_ladder_data_factory(
         timeframes=request.timeframes,
         start=normalized_start,
         end=normalized_end,
-        feature_names=("close_return", "high_low_range", "volume"),
+        feature_names=canonical_gold_manifest.feature_names,
+        purge_window_minutes=1,
+        embargo_window_minutes=1,
         source_silver_index_ref=str(silver_index_report_path.resolve()),
         gold_manifest=canonical_gold_manifest,
     )
@@ -3058,6 +3339,7 @@ def run_strategy_ladder_data_factory(
     write_backtest_replay_dataset_manifest(report_root, backtest_manifest)
     runtime_parity_manifest = build_runtime_feature_parity_manifest(
         gold_manifest=canonical_gold_manifest,
+        expected_edge_manifest=expected_edge_manifest,
         source_silver_index_ref=str(silver_index_report_path.resolve()),
     )
     data_science_report = build_data_science_quality_report(
@@ -3074,6 +3356,38 @@ def run_strategy_ladder_data_factory(
         expected_edge_manifest=expected_edge_manifest,
         backtest_manifest=backtest_manifest,
     )
+    propagated_quality_blockers = tuple(
+        dict.fromkeys(
+            (
+                *data_quality.blocker_codes,
+                *silver_sync_manifest.blocker_codes,
+                *runtime_parity_manifest.blocker_codes,
+            )
+        )
+    )
+    if propagated_quality_blockers != data_quality.blocker_codes:
+        data_quality = finalize_hashed_model(
+            data_quality.model_copy(
+                update={"blocker_codes": propagated_quality_blockers}
+            )
+        )
+        _write_report(report_root / "data_quality_report.json", data_quality)
+    propagated_manifest_blockers = tuple(
+        dict.fromkeys(
+            (
+                *manifest.blocker_codes,
+                *silver_sync_manifest.blocker_codes,
+                *runtime_parity_manifest.blocker_codes,
+            )
+        )
+    )
+    if propagated_manifest_blockers != manifest.blocker_codes:
+        manifest = finalize_hashed_model(
+            manifest.model_copy(
+                update={"blocker_codes": propagated_manifest_blockers}
+            )
+        )
+        _write_report(report_root / "data_factory_manifest.json", manifest)
     # Patch 6 batch 1 — emit the storage budget report from real silver sizes.
     from local_replay_runtime.storage_budget_report import (
         StorageBudgetReport,

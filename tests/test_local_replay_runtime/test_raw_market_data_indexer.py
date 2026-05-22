@@ -160,3 +160,134 @@ def test_scan_bybit_raw_root_emits_symbol_scoped_metadata_manifests_from_cache_f
         assert manifests[0].row_count == 1
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_metadata_jsonl_with_markers_does_not_trigger_schema_unknown_2026_05_21() -> None:
+    """Patch D3 (2026-05-21) — metadata JSONL avec markers tick_size/qty_step
+    NE doit PAS être classifié SCHEMA_UNKNOWN. Avant ce fix, symbol_metadata.jsonl
+    (généré par bybit_historical_metadata.py) était systématiquement SCHEMA_UNKNOWN
+    car les metadata n'ont pas de timestamps, ce qui déclenchait
+    BRONZE_INDEX_BLOCKED_BY_SCHEMA en aval (silver_market_synchronizer.py:88).
+    """
+    scratch = _scratch_dir("metadata_jsonl_markers")
+    shutil.rmtree(scratch, ignore_errors=True)
+    try:
+        metadata_root = scratch / "metadata"
+        metadata_root.mkdir(parents=True, exist_ok=True)
+        jsonl_path = metadata_root / "symbol_metadata.jsonl"
+        records = [
+            {
+                "venue": "bybit",
+                "exchange": "bybit",
+                "market_type": "spot",
+                "symbol": "BTCUSDT",
+                "base_coin": "BTC",
+                "quote_coin": "USDT",
+                "status": "Trading",
+                "tick_size": "0.1",
+                "qty_step": "0.001",
+                "min_order_qty": "0.001",
+                "min_notional": "5",
+                "maker_fee_rate": "0.001",
+                "taker_fee_rate": "0.001",
+                "fetched_at_utc": "2026-05-15T00:00:00+00:00",
+            }
+        ]
+        with jsonl_path.open("w", encoding="utf-8") as handle:
+            for record in records:
+                handle.write(json.dumps(record) + "\n")
+
+        manifests = scan_bybit_raw_root(
+            raw_roots=(metadata_root,),
+            symbol="BTCUSDT",
+            source_types=("metadata",),
+        )
+        # Metadata JSONL avec markers détectés → status acceptable, PAS SCHEMA_UNKNOWN
+        btc_entries = [m for m in manifests if m.symbol == "BTCUSDT"]
+        assert btc_entries, "BTCUSDT metadata JSONL doit produire au moins 1 manifest"
+        for entry in btc_entries:
+            assert entry.source_status != "RAW_FILE_SCHEMA_UNKNOWN", (
+                f"Metadata JSONL avec markers ne doit PAS être SCHEMA_UNKNOWN, "
+                f"got status={entry.source_status}"
+            )
+        # Bronze index NE doit PAS être bloqué par schema sur ce metadata JSONL
+        bronze = build_bronze_market_index(manifests, symbol="BTCUSDT")
+        assert bronze.index_status != "BRONZE_INDEX_BLOCKED_BY_SCHEMA", (
+            f"Bronze index NE doit PAS être SCHEMA-bloqué par metadata JSONL valide, "
+            f"got status={bronze.index_status}"
+        )
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_zip_and_extracted_orderbook_deduplicated_in_scan_2026_05_21() -> None:
+    """Patch D4 (2026-05-21) — ZIP et son contenu extrait sont dédupliqués.
+
+    Avant ce fix, un orderbook ob200.data.zip ET son extrait étaient tous deux
+    indexés (paths différents) ce qui gonflait artificiellement
+    duplicate_timestamp_count dans le bronze index. Maintenant on dédupplique
+    par signature contenu (symbol, source_type, start_ts, end_ts, row_count)
+    et on préfère la version non-zip pour faciliter le parsing downstream.
+    """
+    scratch = _scratch_dir("zip_extract_dedup")
+    shutil.rmtree(scratch, ignore_errors=True)
+    try:
+        raw_root = scratch / "ordrebookpart1" / "BTCUSDT"
+        # Le ZIP
+        _write_orderbook_zip(raw_root / "2025-04-29_BTCUSDT_ob200.data.zip")
+        # Le contenu extrait (même payload)
+        extract_dir = raw_root / "2025-04-29_BTCUSDT_ob200.data"
+        extract_dir.mkdir(parents=True, exist_ok=True)
+        payload = "\n".join(
+            [
+                json.dumps(
+                    {
+                        "topic": "orderbook.200.BTCUSDT",
+                        "ts": 1_745_884_800_000,
+                        "type": "snapshot",
+                        "data": {"s": "BTCUSDT", "b": [["63000", "1.0"]], "a": [["63001", "1.2"]]},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "topic": "orderbook.200.BTCUSDT",
+                        "ts": 1_745_884_860_000,
+                        "type": "delta",
+                        "data": {"s": "BTCUSDT", "b": [["63000", "0.9"]], "a": [["63001", "1.3"]]},
+                    }
+                ),
+            ]
+        )
+        (extract_dir / "2025-04-29_BTCUSDT_ob200.data").write_text(payload + "\n", encoding="utf-8")
+
+        manifests = scan_bybit_raw_root(
+            raw_roots=(raw_root.parent,),
+            symbol="BTCUSDT",
+            start="2025-04-29",
+            end="2025-04-29",
+            source_types=("orderbook",),
+        )
+        # Avant fix : 4 manifests (zip × 2 source_types + extract × 2 source_types)
+        # Après fix : 2 manifests (1 par source_type, dedup par signature contenu)
+        source_types = [m.source_type for m in manifests]
+        assert source_types.count("orderbook_snapshot") == 1, (
+            f"Doit y avoir exactement 1 manifest orderbook_snapshot après dedup, "
+            f"got: {source_types}"
+        )
+        assert source_types.count("orderbook_delta") == 1, (
+            f"Doit y avoir exactement 1 manifest orderbook_delta après dedup, "
+            f"got: {source_types}"
+        )
+        # Préférence non-zip si extract dispo
+        for manifest in manifests:
+            assert (manifest.format or "").lower() != "zip", (
+                f"Dedup doit préférer la version non-zip, got format={manifest.format}"
+            )
+        # Bronze index : duplicate_timestamp_count = 0 après dedup
+        bronze = build_bronze_market_index(manifests, symbol="BTCUSDT")
+        assert bronze.duplicate_timestamp_count == 0, (
+            f"duplicate_timestamp_count doit être 0 après dedup, "
+            f"got: {bronze.duplicate_timestamp_count}"
+        )
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)

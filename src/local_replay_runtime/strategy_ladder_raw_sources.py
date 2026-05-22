@@ -200,6 +200,8 @@ def resolve_strategy_ladder_raw_sources(
         typing_status = "RAW_SOURCE_TYPE_AMBIGUOUS"
     elif any(item.typing_status == "RAW_SOURCE_TYPE_INFERRED" for item in resolved_sources):
         typing_status = "RAW_SOURCE_TYPE_INFERRED"
+    if typing_status in {"RAW_SOURCE_TYPE_INFERRED", "RAW_SOURCE_TYPE_AMBIGUOUS"}:
+        blockers.append(typing_status)
     report = StrategyLadderRawSourceReport(
         sources=resolved_sources,
         raw_source_status=overall_status,

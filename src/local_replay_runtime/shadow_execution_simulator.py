@@ -561,6 +561,8 @@ def _classify_slippage_model_source(
     Mapping :
       - "MEASURED_FROM_KYLE_LAMBDA"          → "CANONICAL_KYLE_LAMBDA_METER"
       - "MEASURED_FROM_KYLE_LAMBDA_OVERRIDE" → "CANONICAL_KYLE_LAMBDA_OVERRIDE"
+      - "MEASURED_FROM_DEPTH20_BOOK_WALK"    → "CANONICAL_EXECUTION_BACKBONE"
+      - "MEASURED_FROM_DEPTH20_BOOK_WALK_STALE" → "MEASURED_STALE_AUDIT_ONLY"
       - "DEFAULT_TO_CALIBRATE" / "" / autre  → "CANONICAL_EXECUTION_BACKBONE"
         si has_slippage_model, sinon "REPLAY_PROXY"
     """
@@ -568,6 +570,10 @@ def _classify_slippage_model_source(
         return "CANONICAL_KYLE_LAMBDA_METER"
     if slippage_provenance == "MEASURED_FROM_KYLE_LAMBDA_OVERRIDE":
         return "CANONICAL_KYLE_LAMBDA_OVERRIDE"
+    if slippage_provenance == "MEASURED_FROM_DEPTH20_BOOK_WALK":
+        return "CANONICAL_EXECUTION_BACKBONE"
+    if slippage_provenance == "MEASURED_FROM_DEPTH20_BOOK_WALK_STALE":
+        return "MEASURED_STALE_AUDIT_ONLY"
     if has_slippage_model:
         return "CANONICAL_EXECUTION_BACKBONE"
     return "REPLAY_PROXY"

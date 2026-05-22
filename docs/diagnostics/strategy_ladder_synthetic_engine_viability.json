@@ -1,0 +1,159 @@
+{
+  "schema_version": "strategy_ladder.synthetic_engine_viability.v1",
+  "generated_at": "2026-05-18T21:59:05.095029+00:00",
+  "diagnostic_only": true,
+  "overall_ok": true,
+  "cases": [
+    {
+      "engine_id": "engine_a",
+      "case_id": "emit_viable_candidate",
+      "objective": "prove engine_a can emit on a plausible long candidate",
+      "expected_decision": "emit",
+      "actual_decision": "emit",
+      "ok": true,
+      "no_trade_reasons": [],
+      "reason_codes": [
+        "engine_a.emit.valid",
+        "engine_internal.engine_a.structure.favorable",
+        "engine_internal.engine_a.context.confirming",
+        "economics.engine_a.cost.feasible",
+        "scoring.engine_a.conviction.high",
+        "engine_a.structure.favorable",
+        "engine_a.context.confirming",
+        "engine_a.cost.feasible",
+        "engine_a.conviction.high"
+      ],
+      "invalidation_present": true
+    },
+    {
+      "engine_id": "engine_a",
+      "case_id": "reject_non_long_candidate",
+      "objective": "prove engine_a rejects a deterministic non-long candidate",
+      "expected_decision": "no_trade",
+      "actual_decision": "no_trade",
+      "ok": true,
+      "no_trade_reasons": [
+        "non_long_direction"
+      ],
+      "reason_codes": [
+        "engine_internal.engine_a.direction.non_long",
+        "engine_a.input.non_long_direction"
+      ],
+      "invalidation_present": false
+    },
+    {
+      "engine_id": "engine_b",
+      "case_id": "emit_viable_candidate",
+      "objective": "prove engine_b can emit on a plausible mean-reversion candidate",
+      "expected_decision": "emit",
+      "actual_decision": "emit",
+      "ok": true,
+      "no_trade_reasons": [],
+      "reason_codes": [
+        "scoring.engine_b.conviction.medium",
+        "engine_internal.engine_b.excess.exploitable",
+        "economics.engine_b.cost.feasible",
+        "engine_b.conviction.medium",
+        "engine_b.excess.exploitable"
+      ],
+      "invalidation_present": true
+    },
+    {
+      "engine_id": "engine_b",
+      "case_id": "reject_non_long_candidate",
+      "objective": "prove engine_b rejects a deterministic non-long candidate",
+      "expected_decision": "no_trade",
+      "actual_decision": "no_trade",
+      "ok": true,
+      "no_trade_reasons": [
+        "non_long_direction"
+      ],
+      "reason_codes": [
+        "engine_internal.engine_b.direction.non_long",
+        "engine_b.direction.non_long"
+      ],
+      "invalidation_present": false
+    },
+    {
+      "engine_id": "engine_c",
+      "case_id": "emit_viable_candidate",
+      "objective": "prove engine_c can emit when breakout and microstructure align",
+      "expected_decision": "emit",
+      "actual_decision": "emit",
+      "ok": true,
+      "no_trade_reasons": [],
+      "reason_codes": [
+        "engine_internal.engine_c.breakout.range_expansion",
+        "engine_c.breakout.range_expansion",
+        "engine_internal.engine_c.continuation.fresh_breakout",
+        "engine_c.continuation.fresh_breakout",
+        "scoring.engine_c.conviction.medium",
+        "engine_c.conviction.medium",
+        "engine_c.tier.tier_1",
+        "engine_c.microstructure.confirmed",
+        "economics.engine_c.cost.feasible",
+        "engine_c.invalidation.present"
+      ],
+      "invalidation_present": true
+    },
+    {
+      "engine_id": "engine_c",
+      "case_id": "reject_unconfirmed_microstructure",
+      "objective": "prove engine_c rejects a breakout candidate when core microstructure proof is missing",
+      "expected_decision": "no_trade",
+      "actual_decision": "no_trade",
+      "ok": true,
+      "no_trade_reasons": [
+        "microstructure_unconfirmed"
+      ],
+      "reason_codes": [
+        "engine_internal.engine_c.microstructure.unconfirmed",
+        "engine_c.no_trade.microstructure_unconfirmed",
+        "engine_internal.engine_c.breakout.range_expansion",
+        "engine_c.breakout.range_expansion",
+        "engine_internal.engine_c.continuation.fresh_breakout",
+        "engine_c.continuation.fresh_breakout",
+        "engine_c.microstructure.missing",
+        "engine_internal.c.microstructure_missing"
+      ],
+      "invalidation_present": false
+    },
+    {
+      "engine_id": "engine_d",
+      "case_id": "emit_viable_candidate",
+      "objective": "prove engine_d can emit when prior-trade context and economics are healthy",
+      "expected_decision": "emit",
+      "actual_decision": "emit",
+      "ok": true,
+      "no_trade_reasons": [],
+      "reason_codes": [
+        "scoring.engine_d.conviction.high",
+        "engine_internal.engine_d.link_type.prior_trade",
+        "engine_internal.engine_d.anti_revenge.reset_required",
+        "engine_internal.engine_d.reformation.detected",
+        "economics.engine_d.cost.feasible",
+        "engine_d.conviction.high",
+        "engine_d.link_type.prior_trade",
+        "engine_d.anti_revenge.reset_required",
+        "engine_d.reformation.detected"
+      ],
+      "invalidation_present": true
+    },
+    {
+      "engine_id": "engine_d",
+      "case_id": "reject_history_weak_candidate",
+      "objective": "prove engine_d rejects a candidate with weak prior-trade quality",
+      "expected_decision": "no_trade",
+      "actual_decision": "no_trade",
+      "ok": true,
+      "no_trade_reasons": [
+        "history_weak"
+      ],
+      "reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "invalidation_present": false
+    }
+  ]
+}

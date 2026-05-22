@@ -48,6 +48,11 @@ from pathlib import Path
 
 _NS_PER_MS = 1_000_000
 _DEFAULT_LOOKBACK_MS = 60 * 60 * 1000  # 1h par defaut, comme engine_c
+_ENGINE_A_RECENT_STRUCTURE_MIN_BARS = 3
+_ENGINE_A_RECENT_DIRECTION_WEIGHT = 0.70
+_ENGINE_A_RECENT_CONTINUATION_WEIGHT = 0.70
+_ENGINE_A_RECENT_STRUCTURE_QUALITY_WEIGHT = 0.50
+_ENGINE_A_RECENT_TREND_STABILITY_WEIGHT = 0.60
 
 
 @dataclass(frozen=True)
@@ -337,14 +342,60 @@ def derive_engine_a_structure_summary(
             detector_status="INSUFFICIENT_BARS",
         )
 
+    combined_direction = _compute_direction_score(combined_bars)
+    combined_continuation = _compute_continuation_score(combined_bars)
+    combined_structure_quality = _compute_structure_quality(combined_bars)
+    combined_trend_stability = _compute_trend_stability(combined_bars)
+    direction_score = combined_direction
+    continuation_score = combined_continuation
+    structure_quality = combined_structure_quality
+    trend_stability = combined_trend_stability
+
+    if len(in_window_bars) >= _ENGINE_A_RECENT_STRUCTURE_MIN_BARS:
+        # Engine A cherche la toute premiere expansion propre. Le lookback doit
+        # fournir le contexte, mais il ne doit pas noyer un breakout recent
+        # lisible dans une moyenne d'une heure potentiellement choppy.
+        in_window_direction = _compute_direction_score(in_window_bars)
+        in_window_continuation = _compute_continuation_score(in_window_bars)
+        in_window_structure_quality = _compute_structure_quality(in_window_bars)
+        in_window_trend_stability = _compute_trend_stability(in_window_bars)
+        direction_score = _clamp_signed(
+            (
+                (1.0 - _ENGINE_A_RECENT_DIRECTION_WEIGHT) * combined_direction
+                + _ENGINE_A_RECENT_DIRECTION_WEIGHT * in_window_direction
+            )
+        )
+        continuation_score = _clamp01(
+            (
+                (1.0 - _ENGINE_A_RECENT_CONTINUATION_WEIGHT) * combined_continuation
+                + _ENGINE_A_RECENT_CONTINUATION_WEIGHT * in_window_continuation
+            )
+        )
+        structure_quality = _clamp01(
+            (
+                (1.0 - _ENGINE_A_RECENT_STRUCTURE_QUALITY_WEIGHT)
+                * combined_structure_quality
+                + _ENGINE_A_RECENT_STRUCTURE_QUALITY_WEIGHT
+                * in_window_structure_quality
+            )
+        )
+        trend_stability = _clamp01(
+            (
+                (1.0 - _ENGINE_A_RECENT_TREND_STABILITY_WEIGHT)
+                * combined_trend_stability
+                + _ENGINE_A_RECENT_TREND_STABILITY_WEIGHT
+                * in_window_trend_stability
+            )
+        )
+
     last_close = _bar_close(combined_bars[-1])
 
     summary = EngineAStructureSummary(
-        direction_score=_compute_direction_score(combined_bars),
-        continuation_score=_compute_continuation_score(combined_bars),
-        structure_quality=_compute_structure_quality(combined_bars),
+        direction_score=direction_score,
+        continuation_score=continuation_score,
+        structure_quality=structure_quality,
         zone_proximity=_compute_zone_proximity(combined_bars, last_close=last_close),
-        trend_stability=_compute_trend_stability(combined_bars),
+        trend_stability=trend_stability,
         n_lookback_bars_used=len(lookback_bars),
         n_in_window_bars_used=len(in_window_bars),
         detector_status="DETECTED",

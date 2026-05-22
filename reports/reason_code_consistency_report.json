@@ -1,0 +1,2041 @@
+{
+  "schema_version": "v53.engine_math_canary_audit.v1",
+  "generated_at": "2026-05-22T21:06:53.776873+00:00",
+  "workflow_root": "K:\\v5.3 backtest\\output2\\runs\\strategy_ladder_workflow-20260519-113403",
+  "pair_filter": "BTCUSDT",
+  "start_ms": 1752796800000,
+  "end_ms": 1752969599999,
+  "synthetic_all_ok": true,
+  "synthetic_results": [
+    {
+      "scenario_id": "SCENARIO_A_LONG_PASS_NATIVE",
+      "engine_id": "engine_a",
+      "expected_decision": "emit",
+      "actual_decision": "emit",
+      "expected_reason_codes": [],
+      "actual_reason_codes": [
+        "engine_a.emit.valid",
+        "engine_internal.engine_a.structure.favorable",
+        "engine_internal.engine_a.context.neutral",
+        "economics.engine_a.cost.feasible",
+        "scoring.engine_a.conviction.medium",
+        "engine_a.structure.favorable",
+        "engine_a.context.neutral",
+        "engine_a.cost.feasible",
+        "engine_a.conviction.medium"
+      ],
+      "expected_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "actual_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "expected_truth_status": "EXPECTED_EDGE_GOVERNED_BACKTEST_TRUTH",
+      "actual_expected_gain": 0.0032,
+      "actual_expected_cost": 0.0006799999999999999,
+      "ok": true
+    },
+    {
+      "scenario_id": "SCENARIO_A_NEGATIVE_DIRECTION_BLOCK",
+      "engine_id": "engine_a",
+      "expected_decision": "no_trade",
+      "actual_decision": "no_trade",
+      "expected_reason_codes": [
+        "engine_internal.engine_a.direction.non_long",
+        "engine_a.input.non_long_direction"
+      ],
+      "actual_reason_codes": [
+        "engine_internal.engine_a.direction.non_long",
+        "engine_a.input.non_long_direction"
+      ],
+      "expected_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "actual_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "expected_truth_status": "EXPECTED_EDGE_GOVERNED_BACKTEST_TRUTH",
+      "actual_expected_gain": 0.0032,
+      "actual_expected_cost": 0.0006799999999999999,
+      "ok": true
+    },
+    {
+      "scenario_id": "SCENARIO_B_EXCESS_PASS",
+      "engine_id": "engine_b",
+      "expected_decision": "emit",
+      "actual_decision": "emit",
+      "expected_reason_codes": [],
+      "actual_reason_codes": [
+        "scoring.engine_b.conviction.medium",
+        "engine_internal.engine_b.excess.exploitable",
+        "economics.engine_b.cost.feasible",
+        "engine_b.conviction.medium",
+        "engine_b.excess.exploitable"
+      ],
+      "expected_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "actual_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "expected_truth_status": "EXPECTED_EDGE_GOVERNED_BACKTEST_TRUTH",
+      "actual_expected_gain": 0.003,
+      "actual_expected_cost": 0.0006799999999999999,
+      "ok": true
+    },
+    {
+      "scenario_id": "SCENARIO_B_NO_EXCESS",
+      "engine_id": "engine_b",
+      "expected_decision": "no_trade",
+      "actual_decision": "no_trade",
+      "expected_reason_codes": [
+        "engine_internal.engine_b.excess.no_excess",
+        "engine_b.excess.no_excess"
+      ],
+      "actual_reason_codes": [
+        "engine_internal.engine_b.excess.no_excess",
+        "engine_b.excess.no_excess"
+      ],
+      "expected_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "actual_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "expected_truth_status": "EXPECTED_EDGE_GOVERNED_BACKTEST_TRUTH",
+      "actual_expected_gain": 0.003,
+      "actual_expected_cost": 0.0006799999999999999,
+      "ok": true
+    },
+    {
+      "scenario_id": "SCENARIO_B_COST_FAIL",
+      "engine_id": "engine_b",
+      "expected_decision": "no_trade",
+      "actual_decision": "no_trade",
+      "expected_reason_codes": [
+        "economics.engine_b.cost.infeasible",
+        "break_even_not_cleared"
+      ],
+      "actual_reason_codes": [
+        "economics.engine_b.cost.infeasible",
+        "break_even_not_cleared"
+      ],
+      "expected_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "actual_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "expected_truth_status": "EXPECTED_EDGE_GOVERNED_BACKTEST_TRUTH",
+      "actual_expected_gain": 0.0011,
+      "actual_expected_cost": 0.0006799999999999999,
+      "ok": true
+    },
+    {
+      "scenario_id": "SCENARIO_C_BREAKOUT_PASS",
+      "engine_id": "engine_c",
+      "expected_decision": "emit",
+      "actual_decision": "emit",
+      "expected_reason_codes": [],
+      "actual_reason_codes": [
+        "engine_internal.engine_c.breakout.range_expansion",
+        "engine_c.breakout.range_expansion",
+        "engine_internal.engine_c.continuation.fresh_breakout",
+        "engine_c.continuation.fresh_breakout",
+        "scoring.engine_c.conviction.medium",
+        "engine_c.conviction.medium",
+        "engine_c.tier.tier_1",
+        "engine_c.microstructure.confirmed",
+        "economics.engine_c.cost.feasible",
+        "engine_c.invalidation.present"
+      ],
+      "expected_builder_status": "ENGINE_C_INPUT_BUILDER_READY",
+      "actual_builder_status": "ENGINE_C_INPUT_BUILDER_READY",
+      "expected_truth_status": "EXPECTED_EDGE_GOVERNED_BACKTEST_TRUTH",
+      "actual_expected_gain": 0.012,
+      "actual_expected_cost": 0.0025,
+      "ok": true
+    },
+    {
+      "scenario_id": "SCENARIO_C_NO_BREAKOUT",
+      "engine_id": "engine_c",
+      "expected_decision": "no_trade",
+      "actual_decision": "no_trade",
+      "expected_reason_codes": [
+        "engine_c.no_trade.non_long_breakout"
+      ],
+      "actual_reason_codes": [
+        "engine_internal.engine_c.breakout.non_long",
+        "engine_c.no_trade.non_long_breakout",
+        "engine_internal.engine_c.breakout.structured_breakout",
+        "engine_c.breakout.structured_breakout",
+        "engine_internal.engine_c.continuation.fresh_breakout",
+        "engine_c.continuation.fresh_breakout",
+        "engine_c.microstructure.confirmed"
+      ],
+      "expected_builder_status": "ENGINE_C_INPUT_BUILDER_NO_BREAKOUT",
+      "actual_builder_status": "ENGINE_C_INPUT_BUILDER_NO_BREAKOUT",
+      "expected_truth_status": "EXPECTED_EDGE_GOVERNED_BACKTEST_TRUTH",
+      "actual_expected_gain": 0.0042,
+      "actual_expected_cost": 0.0006799999999999999,
+      "ok": true
+    },
+    {
+      "scenario_id": "SCENARIO_D_REENTRY_PASS",
+      "engine_id": "engine_d",
+      "expected_decision": "emit",
+      "actual_decision": "emit",
+      "expected_reason_codes": [],
+      "actual_reason_codes": [
+        "scoring.engine_d.conviction.high",
+        "engine_internal.engine_d.link_type.prior_trade",
+        "engine_internal.engine_d.anti_revenge.reset_required",
+        "engine_internal.engine_d.reformation.detected",
+        "economics.engine_d.cost.feasible",
+        "engine_d.conviction.high",
+        "engine_d.link_type.prior_trade",
+        "engine_d.anti_revenge.reset_required",
+        "engine_d.reformation.detected"
+      ],
+      "expected_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "actual_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "expected_truth_status": "EXPECTED_EDGE_GOVERNED_BACKTEST_TRUTH",
+      "actual_expected_gain": 0.009,
+      "actual_expected_cost": 0.002,
+      "ok": true
+    },
+    {
+      "scenario_id": "SCENARIO_D_NO_HISTORY",
+      "engine_id": "engine_d",
+      "expected_decision": "no_trade",
+      "actual_decision": "no_trade",
+      "expected_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "actual_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "expected_builder_status": "ENGINE_D_INPUT_BUILDER_READY_NO_FIRST_EPISODE",
+      "actual_builder_status": "ENGINE_D_INPUT_BUILDER_READY_NO_FIRST_EPISODE",
+      "expected_truth_status": "EXPECTED_EDGE_GOVERNED_BACKTEST_TRUTH",
+      "actual_expected_gain": 0.0035,
+      "actual_expected_cost": 0.0006799999999999999,
+      "ok": true
+    }
+  ],
+  "real_rows": [
+    {
+      "candidate_id": "54b7b55de38b8d33663db526",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "f599d561558f370c2c3401d9",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "f830a9c1c81cc727698b537c",
+      "engine_id": "engine_b",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "engine_internal.engine_b.excess.no_excess",
+        "engine_b.excess.no_excess"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_b.excess.no_excess",
+        "engine_b.excess.no_excess"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "a66bba533f90236e7b410670",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "ae79e36b0620bee3b5a912d4",
+      "engine_id": "engine_b",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "economics.engine_b.cost.infeasible",
+        "break_even_not_cleared"
+      ],
+      "reconstructed_reason_codes": [
+        "economics.engine_b.cost.infeasible",
+        "break_even_not_cleared"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "dd00f24da42147fe5eb7f20c",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "fd358f2d67e59005c9a57349",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "988e05979242d9e281dfcfdb",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "4ef9edddcbff74d28347d852",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "da0f80a1a3c33d8ed1c5c359",
+      "engine_id": "engine_a",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "economics.engine_a.cost.infeasible",
+        "engine_a.cost.infeasible",
+        "engine_a.cost.break_even_not_cleared"
+      ],
+      "reconstructed_reason_codes": [
+        "economics.engine_a.cost.infeasible",
+        "engine_a.cost.infeasible",
+        "engine_a.cost.break_even_not_cleared"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "b7a5147ba8e7a06d9d9a3351",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "2ded10779b8ce2f8719a2f03",
+      "engine_id": "engine_a",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "engine_internal.engine_a.structure.unfavorable",
+        "engine_a.structure.unfavorable"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_a.structure.unfavorable",
+        "engine_a.structure.unfavorable"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "cde90e63ad9f5e3275ef91b6",
+      "engine_id": "engine_a",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "economics.engine_a.cost.infeasible",
+        "engine_a.cost.infeasible",
+        "engine_a.cost.break_even_not_cleared"
+      ],
+      "reconstructed_reason_codes": [
+        "economics.engine_a.cost.infeasible",
+        "engine_a.cost.infeasible",
+        "engine_a.cost.break_even_not_cleared"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "39558fe178f71efe7d67029a",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "ef0c8c9d61440a5ba511aeec",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "d30caf31c141e7311039eebe",
+      "engine_id": "engine_a",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "economics.engine_a.cost.infeasible",
+        "engine_a.cost.infeasible",
+        "engine_a.cost.break_even_not_cleared"
+      ],
+      "reconstructed_reason_codes": [
+        "economics.engine_a.cost.infeasible",
+        "engine_a.cost.infeasible",
+        "engine_a.cost.break_even_not_cleared"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "63b161eab409dc51ebd9e000",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "5e18ceb3e753871692c336a9",
+      "engine_id": "engine_a",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "engine_internal.engine_a.structure.unfavorable",
+        "engine_a.structure.unfavorable"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_a.structure.unfavorable",
+        "engine_a.structure.unfavorable"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "d45f4e979a3e2a968572c35d",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "3903e87b4a3f41fc61aabeb1",
+      "engine_id": "engine_a",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "engine_internal.engine_a.structure.unfavorable",
+        "engine_a.structure.unfavorable"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_a.structure.unfavorable",
+        "engine_a.structure.unfavorable"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "b28b5274a207ebaac1ed2ef0",
+      "engine_id": "engine_a",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "engine_internal.engine_a.structure.unfavorable",
+        "engine_a.structure.unfavorable"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_a.structure.unfavorable",
+        "engine_a.structure.unfavorable"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "792ccb50a7012e960d3edb33",
+      "engine_id": "engine_b",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "economics.engine_b.cost.infeasible",
+        "break_even_not_cleared"
+      ],
+      "reconstructed_reason_codes": [
+        "economics.engine_b.cost.infeasible",
+        "break_even_not_cleared"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "a824075bb2fd3a41a94578ea",
+      "engine_id": "engine_b",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "economics.engine_b.cost.infeasible",
+        "break_even_not_cleared"
+      ],
+      "reconstructed_reason_codes": [
+        "economics.engine_b.cost.infeasible",
+        "break_even_not_cleared"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "9fe55ddc4b7a3952d04ee2e4",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "feaeabd19d166d6b06729678",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "1dd4e4d499fc538ab9628463",
+      "engine_id": "engine_a",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "engine_internal.engine_a.structure.unfavorable",
+        "engine_a.structure.unfavorable"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_a.structure.unfavorable",
+        "engine_a.structure.unfavorable"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "06381737b85564e0ef336203",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "feaf95ffd384a89e60bbcefd",
+      "engine_id": "engine_a",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "engine_internal.engine_a.structure.unfavorable",
+        "engine_a.structure.unfavorable"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_a.structure.unfavorable",
+        "engine_a.structure.unfavorable"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "2ec1a657d2aabbffedf4f232",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "ee83c43990f624001fd9d63d",
+      "engine_id": "engine_a",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "economics.engine_a.cost.infeasible",
+        "engine_a.cost.infeasible",
+        "engine_a.cost.break_even_not_cleared"
+      ],
+      "reconstructed_reason_codes": [
+        "economics.engine_a.cost.infeasible",
+        "engine_a.cost.infeasible",
+        "engine_a.cost.break_even_not_cleared"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "5b22e8f0265de258def9406a",
+      "engine_id": "engine_a",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "economics.engine_a.cost.infeasible",
+        "engine_a.cost.infeasible",
+        "engine_a.cost.break_even_not_cleared"
+      ],
+      "reconstructed_reason_codes": [
+        "economics.engine_a.cost.infeasible",
+        "engine_a.cost.infeasible",
+        "engine_a.cost.break_even_not_cleared"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "1b99e7ae58c3ff3ab809cb3e",
+      "engine_id": "engine_b",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "economics.engine_b.cost.infeasible",
+        "break_even_not_cleared"
+      ],
+      "reconstructed_reason_codes": [
+        "economics.engine_b.cost.infeasible",
+        "break_even_not_cleared"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "8b60cc3210312b629e46fcbe",
+      "engine_id": "engine_b",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "economics.engine_b.cost.infeasible",
+        "break_even_not_cleared"
+      ],
+      "reconstructed_reason_codes": [
+        "economics.engine_b.cost.infeasible",
+        "break_even_not_cleared"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "e5be36b8e5d698844d7ae72f",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "5a3a0b91655dfe0ff0a6121f",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "cc98190b3b4c61250364ae36",
+      "engine_id": "engine_a",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "economics.engine_a.cost.infeasible",
+        "engine_a.cost.infeasible",
+        "engine_a.cost.break_even_not_cleared"
+      ],
+      "reconstructed_reason_codes": [
+        "economics.engine_a.cost.infeasible",
+        "engine_a.cost.infeasible",
+        "engine_a.cost.break_even_not_cleared"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "7ad77ff8fdc8318fbae481e0",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "2b6ce6f5a3ceeba02466356f",
+      "engine_id": "engine_a",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "economics.engine_a.cost.infeasible",
+        "engine_a.cost.infeasible",
+        "engine_a.cost.break_even_not_cleared"
+      ],
+      "reconstructed_reason_codes": [
+        "economics.engine_a.cost.infeasible",
+        "engine_a.cost.infeasible",
+        "engine_a.cost.break_even_not_cleared"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "fd1992929a5d9733588cb1f0",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "a0d9a202d1fbce1425fc85ea",
+      "engine_id": "engine_a",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "economics.engine_a.cost.infeasible",
+        "engine_a.cost.infeasible",
+        "engine_a.cost.break_even_not_cleared"
+      ],
+      "reconstructed_reason_codes": [
+        "economics.engine_a.cost.infeasible",
+        "engine_a.cost.infeasible",
+        "engine_a.cost.break_even_not_cleared"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "b845adbbf5f8309e1c25f58d",
+      "engine_id": "engine_a",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "engine_internal.engine_a.structure.unfavorable",
+        "engine_a.structure.unfavorable"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_a.structure.unfavorable",
+        "engine_a.structure.unfavorable"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "e1050c96d05445583d0c151b",
+      "engine_id": "engine_b",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "engine_internal.engine_b.excess.no_excess",
+        "engine_b.excess.no_excess"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_b.excess.no_excess",
+        "engine_b.excess.no_excess"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "103af624c5cf9bb7906058b4",
+      "engine_id": "engine_b",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "engine_internal.engine_b.excess.no_excess",
+        "engine_b.excess.no_excess"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_b.excess.no_excess",
+        "engine_b.excess.no_excess"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "a34e3a4f6446cd0febb9c3e3",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "caaf8c2ce79635c257a2b151",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "400e5777ee6483438de3108c",
+      "engine_id": "engine_a",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "engine_internal.engine_a.direction.non_long",
+        "engine_a.input.non_long_direction"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_a.direction.non_long",
+        "engine_a.input.non_long_direction"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "cb44de8db1ae2402a69c944e",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "4527f8a383d97026a5c9f37e",
+      "engine_id": "engine_a",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "engine_internal.engine_a.structure.unfavorable",
+        "engine_a.structure.unfavorable"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_a.structure.unfavorable",
+        "engine_a.structure.unfavorable"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "d057560f90a52a75f73aac7e",
+      "engine_id": "engine_b",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "engine_internal.engine_b.excess.no_excess",
+        "engine_b.excess.no_excess"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_b.excess.no_excess",
+        "engine_b.excess.no_excess"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "752d89571debc0f7a77b43c7",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "b825c3a857820164ecd157ba",
+      "engine_id": "engine_a",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "economics.engine_a.cost.infeasible",
+        "engine_a.cost.infeasible",
+        "engine_a.cost.break_even_not_cleared"
+      ],
+      "reconstructed_reason_codes": [
+        "economics.engine_a.cost.infeasible",
+        "engine_a.cost.infeasible",
+        "engine_a.cost.break_even_not_cleared"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "47fc91f7953e2a07d1e1cd5b",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "fc4c2d3b94207c756082a38a",
+      "engine_id": "engine_a",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "economics.engine_a.cost.infeasible",
+        "engine_a.cost.infeasible",
+        "engine_a.cost.break_even_not_cleared"
+      ],
+      "reconstructed_reason_codes": [
+        "economics.engine_a.cost.infeasible",
+        "engine_a.cost.infeasible",
+        "engine_a.cost.break_even_not_cleared"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "b2a24bc925e9fe94f51e0628",
+      "engine_id": "engine_a",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "engine_internal.engine_a.structure.unfavorable",
+        "engine_a.structure.unfavorable"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_a.structure.unfavorable",
+        "engine_a.structure.unfavorable"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "4bcd88d58b9d4a08183a61ba",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "a7798f0aeeff28e3953f8aaf",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "84db2bb3f14c565d0efc682c",
+      "engine_id": "engine_a",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "engine_internal.engine_a.structure.unfavorable",
+        "engine_a.structure.unfavorable"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_a.structure.unfavorable",
+        "engine_a.structure.unfavorable"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "3b11e0b8420aff85d0bc2de6",
+      "engine_id": "engine_b",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "economics.engine_b.cost.infeasible",
+        "break_even_not_cleared"
+      ],
+      "reconstructed_reason_codes": [
+        "economics.engine_b.cost.infeasible",
+        "break_even_not_cleared"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "24efaf54a66e90a14396e860",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "4949715137b5c91cca50d36f",
+      "engine_id": "engine_a",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "engine_internal.engine_a.direction.non_long",
+        "engine_a.input.non_long_direction"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_a.direction.non_long",
+        "engine_a.input.non_long_direction"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "36598bcdafbb8f6cf694a02e",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "3eb47745ef9b57db07034689",
+      "engine_id": "engine_a",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "economics.engine_a.cost.infeasible",
+        "engine_a.cost.infeasible",
+        "engine_a.cost.break_even_not_cleared"
+      ],
+      "reconstructed_reason_codes": [
+        "economics.engine_a.cost.infeasible",
+        "engine_a.cost.infeasible",
+        "engine_a.cost.break_even_not_cleared"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "c3b50978a8440e65e3fac01c",
+      "engine_id": "engine_a",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "economics.engine_a.cost.infeasible",
+        "engine_a.cost.infeasible",
+        "engine_a.cost.break_even_not_cleared"
+      ],
+      "reconstructed_reason_codes": [
+        "economics.engine_a.cost.infeasible",
+        "engine_a.cost.infeasible",
+        "engine_a.cost.break_even_not_cleared"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "00a034c5efc2f6714963e944",
+      "engine_id": "engine_b",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "engine_internal.engine_b.excess.no_excess",
+        "engine_b.excess.no_excess"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_b.excess.no_excess",
+        "engine_b.excess.no_excess"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "f7dfc490c2774eae221fc2c3",
+      "engine_id": "engine_b",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "engine_internal.engine_b.excess.no_excess",
+        "engine_b.excess.no_excess"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_b.excess.no_excess",
+        "engine_b.excess.no_excess"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "7509ad30e4e6c2b279f8fe9b",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "82dfe443260d8b034946786f",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "43efcec31fbbdb5f3b572688",
+      "engine_id": "engine_a",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "engine_internal.engine_a.structure.unfavorable",
+        "engine_a.structure.unfavorable"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_a.structure.unfavorable",
+        "engine_a.structure.unfavorable"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "5baec511a74ce36070f0306d",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "46f46454c779a0c0b371e081",
+      "engine_id": "engine_a",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "economics.engine_a.cost.infeasible",
+        "engine_a.cost.infeasible",
+        "engine_a.cost.break_even_not_cleared"
+      ],
+      "reconstructed_reason_codes": [
+        "economics.engine_a.cost.infeasible",
+        "engine_a.cost.infeasible",
+        "engine_a.cost.break_even_not_cleared"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "79880b5864fb51c6aa00ba99",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "0edcf27c8bef8b8aadbadc77",
+      "engine_id": "engine_a",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "engine_internal.engine_a.structure.unfavorable",
+        "engine_a.structure.unfavorable"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_a.structure.unfavorable",
+        "engine_a.structure.unfavorable"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "fad6c6d1764fbca34d7769f7",
+      "engine_id": "engine_a",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "engine_internal.engine_a.direction.non_long",
+        "engine_a.input.non_long_direction"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_a.direction.non_long",
+        "engine_a.input.non_long_direction"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "5af9e2a2e4a2f8c9aebf6340",
+      "engine_id": "engine_b",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "engine_internal.engine_b.excess.no_excess",
+        "engine_b.excess.no_excess"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_b.excess.no_excess",
+        "engine_b.excess.no_excess"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "9330dfab4a1e940c2b891487",
+      "engine_id": "engine_b",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "engine_internal.engine_b.excess.no_excess",
+        "engine_b.excess.no_excess"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_b.excess.no_excess",
+        "engine_b.excess.no_excess"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "c4b676dd13d629c7034595c1",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "7418a29c314ed6b35de9a1a1",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "6d77c0eea7f23bba632cbb51",
+      "engine_id": "engine_a",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "engine_internal.engine_a.direction.non_long",
+        "engine_a.input.non_long_direction"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_a.direction.non_long",
+        "engine_a.input.non_long_direction"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "819e01c2691fc497795e281e",
+      "engine_id": "engine_b",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "economics.engine_b.cost.infeasible",
+        "break_even_not_cleared"
+      ],
+      "reconstructed_reason_codes": [
+        "economics.engine_b.cost.infeasible",
+        "break_even_not_cleared"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "b5acc4de3add4b70fb6e0c31",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "0bac10fa453bb581a1a0c480",
+      "engine_id": "engine_b",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "engine_internal.engine_b.excess.no_excess",
+        "engine_b.excess.no_excess"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_b.excess.no_excess",
+        "engine_b.excess.no_excess"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "fc2cebaf794bdedaf67e748f",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "922ee0ef454bc96c3902c9a9",
+      "engine_id": "engine_a",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "engine_internal.engine_a.direction.non_long",
+        "engine_a.input.non_long_direction"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_a.direction.non_long",
+        "engine_a.input.non_long_direction"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "1c9ce70e475971687bedfde8",
+      "engine_id": "engine_b",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "engine_internal.engine_b.excess.no_excess",
+        "engine_b.excess.no_excess"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_b.excess.no_excess",
+        "engine_b.excess.no_excess"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "a531ef284d11a539a09fd961",
+      "engine_id": "engine_b",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "engine_internal.engine_b.excess.no_excess",
+        "engine_b.excess.no_excess"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_b.excess.no_excess",
+        "engine_b.excess.no_excess"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "ad32ee0de418881e5d8ad4c1",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "4546b81313d85a5d008ad151",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "2a4fc1bfa1cec2e531f28faa",
+      "engine_id": "engine_b",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "engine_internal.engine_b.excess.no_excess",
+        "engine_b.excess.no_excess"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_b.excess.no_excess",
+        "engine_b.excess.no_excess"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "213a92a2b7ac381c7813311b",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "4ea317bb786eca08ead44de7",
+      "engine_id": "engine_b",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "economics.engine_b.cost.infeasible",
+        "break_even_not_cleared"
+      ],
+      "reconstructed_reason_codes": [
+        "economics.engine_b.cost.infeasible",
+        "break_even_not_cleared"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "3d2843cdfc3b6d691b98e458",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "d21f0f83e9df9b9d400fe116",
+      "engine_id": "engine_b",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "economics.engine_b.cost.infeasible",
+        "break_even_not_cleared"
+      ],
+      "reconstructed_reason_codes": [
+        "economics.engine_b.cost.infeasible",
+        "break_even_not_cleared"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "7b86ee23e8c8b46c7de8c737",
+      "engine_id": "engine_b",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "economics.engine_b.cost.infeasible",
+        "break_even_not_cleared"
+      ],
+      "reconstructed_reason_codes": [
+        "economics.engine_b.cost.infeasible",
+        "break_even_not_cleared"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "623cfeb663a96f3c6a8faa82",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "800308867058470f40eb2396",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "ba379574acbac88c2a546492",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "694469eb0c4830730c1184e1",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "f3d25388e15cdb471a2f9d2d",
+      "engine_id": "engine_a",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "engine_internal.engine_a.structure.unfavorable",
+        "engine_a.structure.unfavorable"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_a.structure.unfavorable",
+        "engine_a.structure.unfavorable"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "6e58e6f9669e75b7df7c36d0",
+      "engine_id": "engine_a",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "economics.engine_a.cost.infeasible",
+        "engine_a.cost.infeasible",
+        "engine_a.cost.break_even_not_cleared"
+      ],
+      "reconstructed_reason_codes": [
+        "economics.engine_a.cost.infeasible",
+        "engine_a.cost.infeasible",
+        "engine_a.cost.break_even_not_cleared"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "dd56e365dd3f6ab7a73cb180",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "0ad1f2afc47758af4eb0a692",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "2ecbcd2a7a0c94ee8e169ad2",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "e03526ab387a8c763e77e635",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "76f122e89324367bb7af4e7f",
+      "engine_id": "engine_a",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_A_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "engine_internal.engine_a.structure.unfavorable",
+        "engine_a.structure.unfavorable"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_a.structure.unfavorable",
+        "engine_a.structure.unfavorable"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "186cb29b07aeed140365a354",
+      "engine_id": "engine_b",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "reconstructed_builder_status": "ENGINE_B_INPUT_BUILDER_READY",
+      "recorded_reason_codes": [
+        "engine_internal.engine_b.excess.no_excess",
+        "engine_b.excess.no_excess"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_b.excess.no_excess",
+        "engine_b.excess.no_excess"
+      ],
+      "match": true
+    },
+    {
+      "candidate_id": "d2c5cf31253ff233f759880b",
+      "engine_id": "engine_d",
+      "recorded_decision": "no_trade",
+      "reconstructed_decision": "no_trade",
+      "recorded_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "reconstructed_builder_status": "ENGINE_D_INPUT_BUILDER_READY_WITH_FIRST_EPISODE",
+      "recorded_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "reconstructed_reason_codes": [
+        "engine_internal.engine_d.history.weak",
+        "engine_d.no_trade.history_weak"
+      ],
+      "match": true
+    }
+  ],
+  "real_mismatch_count": 0
+}

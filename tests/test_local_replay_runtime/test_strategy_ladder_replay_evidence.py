@@ -110,6 +110,7 @@ def test_replay_evidence_measures_book_and_marks_proxy_outcome(tmp_path: Path) -
     assert evidence.measured_spread["best_ask"] == 100.1
     assert evidence.measured_slippage["status"] == "SLIPPAGE_ESTIMATED_FROM_DEPTH20"
     assert evidence.measured_slippage["side"] == "buy"
+    assert evidence.measured_slippage["partial_fill_status"] == "FULL_DEPTH_FILL"
     assert evidence.replay_outcome["status"] == "REPLAY_OUTCOME_RESEARCH_ONLY"
     assert evidence.replay_outcome["entry_reference_status"] == "ENTRY_REFERENCE_DECISION_PRICE_PROXY"
     assert evidence.replay_outcome["mfe_mae_status"] == "MFE_MAE_AVAILABLE_PROXY_ENTRY_REFERENCE"
@@ -170,6 +171,220 @@ def test_replay_evidence_marks_unknown_side_without_fabricated_slippage(tmp_path
     assert evidence.measured_slippage["status"] == "SLIPPAGE_BLOCKED_BY_UNKNOWN_SIDE"
     assert evidence.measured_slippage["walk_cost_bps"] is None
     assert evidence.measured_slippage["impact_bps"] is None
+
+
+def test_replay_evidence_marks_stale_depth20_audit_only(tmp_path: Path) -> None:
+    snapshot_path = tmp_path / "orderbook_snapshot.jsonl"
+    delta_path = tmp_path / "orderbook_delta.jsonl"
+    ohlcv_path = tmp_path / "ohlcv.jsonl"
+    _write_jsonl(
+        snapshot_path,
+        [
+            {
+                "timestamp_ms": 1_699_999_990_000,
+                "update_id": 10,
+                "bids": [[99.9, 2.0]],
+                "asks": [[100.1, 2.0]],
+            }
+        ],
+    )
+    _write_jsonl(
+        delta_path,
+        [
+            {
+                "timestamp_ms": 1_699_999_994_000,
+                "update_id": 11,
+                "bids": [[100.0, 2.0]],
+                "asks": [[100.1, 2.0]],
+            }
+        ],
+    )
+    _write_jsonl(
+        ohlcv_path,
+        [
+            {
+                "timestamp_ms": 1_700_000_060_000,
+                "open": 100.0,
+                "high": 100.8,
+                "low": 99.9,
+                "close": 100.4,
+            }
+        ],
+    )
+    window = StrategyLadderRawWindowManifest(
+        candidate_id="cand-1",
+        pair="BTCUSDT",
+        engine_id="engine_c",
+        timestamp_ms=1_700_000_000_000,
+        window_start_ms=1_699_999_940_000,
+        window_end_ms=1_700_000_600_000,
+        raw_trade_path="",
+        raw_book_path=str(snapshot_path),
+        raw_book_delta_path=str(delta_path),
+        raw_ohlcv_path=str(ohlcv_path),
+    )
+
+    evidence = build_strategy_ladder_replay_evidence(
+        candidate=_candidate(),
+        window_manifest=window,
+        planned_notional=100.0,
+        execution_state="executed",
+    )
+
+    assert evidence.measured_spread["status"] == "SPREAD_MEASURED_STALE_AUDIT_ONLY"
+    assert (
+        evidence.measured_slippage["status"]
+        == "SLIPPAGE_ESTIMATED_FROM_STALE_DEPTH20_AUDIT_ONLY"
+    )
+    assert evidence.measured_slippage["partial_fill_status"] == "FULL_DEPTH_FILL"
+
+
+def test_replay_evidence_falls_back_when_explicit_delta_path_builds_inverted_book(
+    tmp_path: Path,
+) -> None:
+    snapshot_path = tmp_path / "orderbook_snapshot.jsonl"
+    derived_delta_path = tmp_path / "orderbook_delta.jsonl"
+    bad_delta_path = tmp_path / "bad_orderbook_delta.jsonl"
+    ohlcv_path = tmp_path / "ohlcv.jsonl"
+    _write_jsonl(
+        snapshot_path,
+        [
+            {
+                "timestamp_ms": 1_699_999_999_000,
+                "update_id": 10,
+                "bids": [[99.9, 2.0], [99.8, 3.0]],
+                "asks": [[100.1, 2.0], [100.2, 3.0]],
+            }
+        ],
+    )
+    _write_jsonl(
+        derived_delta_path,
+        [
+            {
+                "timestamp_ms": 1_700_000_000_000,
+                "update_id": 11,
+                "bids": [[100.0, 2.0]],
+                "asks": [[100.2, 2.0]],
+            }
+        ],
+    )
+    _write_jsonl(
+        bad_delta_path,
+        [
+            {
+                "timestamp_ms": 1_700_000_000_000,
+                "update_id": 11,
+                "bids": [[101.0, 2.0]],
+                "asks": [[99.0, 2.0]],
+            }
+        ],
+    )
+    _write_jsonl(
+        ohlcv_path,
+        [
+            {
+                "timestamp_ms": 1_700_000_060_000,
+                "open": 100.0,
+                "high": 101.2,
+                "low": 99.7,
+                "close": 100.8,
+            }
+        ],
+    )
+    manifest = StrategyLadderRawWindowManifest(
+        candidate_id="cand-1",
+        pair="BTCUSDT",
+        engine_id="engine_c",
+        timestamp_ms=1_700_000_000_000,
+        window_start_ms=1_699_999_940_000,
+        window_end_ms=1_700_000_600_000,
+        raw_book_path=str(snapshot_path),
+        raw_book_delta_path=str(bad_delta_path),
+        raw_ohlcv_path=str(ohlcv_path),
+    )
+
+    evidence = build_strategy_ladder_replay_evidence(
+        candidate=_candidate(),
+        window_manifest=manifest,
+        planned_notional=100.0,
+        execution_state="executed",
+    )
+
+    assert evidence.measured_spread["status"] == "SPREAD_MEASURED_FROM_BOOK"
+    assert evidence.measured_spread["source_path"] == str(derived_delta_path.resolve())
+    assert evidence.measured_spread["best_bid"] == 100.0
+    assert evidence.measured_spread["best_ask"] == 100.1
+
+
+def test_replay_evidence_retries_with_first_snapshot_after_window_start_when_older_anchor_stays_inverted(
+    tmp_path: Path,
+) -> None:
+    snapshot_path = tmp_path / "orderbook_snapshot.jsonl"
+    delta_path = tmp_path / "orderbook_delta.jsonl"
+    ohlcv_path = tmp_path / "ohlcv.jsonl"
+    _write_jsonl(
+        snapshot_path,
+        [
+            {
+                "timestamp_ms": 1_700_000_000_000,
+                "update_id": 10,
+                "bids": [[90.0, 2.0]],
+                "asks": [[90.1, 2.0]],
+            },
+            {
+                "timestamp_ms": 1_700_000_002_000,
+                "update_id": 20,
+                "bids": [[100.0, 2.0]],
+                "asks": [[100.1, 2.0]],
+            },
+        ],
+    )
+    _write_jsonl(
+        delta_path,
+        [
+            {
+                "timestamp_ms": 1_700_000_002_100,
+                "update_id": 21,
+                "bids": [[100.0, 2.5]],
+                "asks": [[100.1, 2.0]],
+            }
+        ],
+    )
+    _write_jsonl(
+        ohlcv_path,
+        [
+            {
+                "timestamp_ms": 1_700_000_060_000,
+                "open": 100.0,
+                "high": 101.2,
+                "low": 99.7,
+                "close": 100.8,
+            }
+        ],
+    )
+    manifest = StrategyLadderRawWindowManifest(
+        candidate_id="cand-1",
+        pair="BTCUSDT",
+        engine_id="engine_c",
+        timestamp_ms=1_700_000_002_100,
+        window_start_ms=1_700_000_001_950,
+        window_end_ms=1_700_000_002_600,
+        raw_book_path=str(snapshot_path),
+        raw_book_delta_path=str(delta_path),
+        raw_ohlcv_path=str(ohlcv_path),
+    )
+
+    evidence = build_strategy_ladder_replay_evidence(
+        candidate=_candidate(),
+        window_manifest=manifest,
+        planned_notional=100.0,
+        execution_state="executed",
+    )
+
+    assert evidence.measured_spread["status"] == "SPREAD_MEASURED_FROM_BOOK"
+    assert evidence.measured_spread["source_path"] == str(delta_path.resolve())
+    assert evidence.measured_spread["best_bid"] == 100.0
+    assert evidence.measured_spread["best_ask"] == 100.1
 
 
 def test_replay_evidence_reuses_book_and_ohlcv_cache_across_bucket_calls(
