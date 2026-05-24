@@ -392,6 +392,104 @@ def _date_in_range(
     return True
 
 
+def _gold_row_timestamp_ms(row: dict[str, object]) -> int:
+    try:
+        return int(row.get("timestamp_ms") or row.get("startTime") or row.get("starttime") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _gold_row_in_requested_window(
+    row: dict[str, object],
+    *,
+    start_ms: int | None,
+    end_ms: int | None,
+) -> bool:
+    timestamp_ms = _gold_row_timestamp_ms(row)
+    if start_ms is not None and timestamp_ms < start_ms:
+        return False
+    if end_ms is not None and timestamp_ms > end_ms:
+        return False
+    return True
+
+
+def _gold_row_has_temporal_book_coverage(
+    row: dict[str, object],
+    book_entries: tuple[StrategyLadderSilverIndexEntry, ...] = (),
+) -> bool:
+    timestamp_ms = _gold_row_timestamp_ms(row)
+    for entry in book_entries:
+        if entry.min_timestamp_ms is None or entry.max_timestamp_ms is None:
+            return True
+        if entry.min_timestamp_ms <= timestamp_ms <= entry.max_timestamp_ms:
+            return True
+    return False
+
+
+def _book_entries_covering_timestamp(
+    entries: tuple[StrategyLadderSilverIndexEntry, ...],
+    *,
+    timestamp_ms: int,
+) -> tuple[StrategyLadderSilverIndexEntry, ...]:
+    covered: list[StrategyLadderSilverIndexEntry] = []
+    for entry in entries:
+        if entry.min_timestamp_ms is None or entry.max_timestamp_ms is None:
+            covered.append(entry)
+            continue
+        if entry.min_timestamp_ms <= timestamp_ms <= entry.max_timestamp_ms:
+            covered.append(entry)
+    return tuple(covered)
+
+
+def _prioritize_requested_window_rows(
+    rows: tuple[dict[str, object], ...] | list[dict[str, object]],
+    *,
+    start_ms: int | None,
+    end_ms: int | None,
+    book_entries: tuple[StrategyLadderSilverIndexEntry, ...] = (),
+) -> list[dict[str, object]]:
+    if start_ms is None and end_ms is None and not book_entries:
+        return list(rows)
+    in_window_with_book: list[dict[str, object]] = []
+    in_window_without_book: list[dict[str, object]] = []
+    context_with_book: list[dict[str, object]] = []
+    context_without_book: list[dict[str, object]] = []
+    for row in rows:
+        in_window = _gold_row_in_requested_window(
+            row,
+            start_ms=start_ms,
+            end_ms=end_ms,
+        )
+        has_book = _gold_row_has_temporal_book_coverage(row, book_entries)
+        if in_window and has_book:
+            in_window_with_book.append(row)
+        elif in_window:
+            in_window_without_book.append(row)
+        elif has_book:
+            context_with_book.append(row)
+        else:
+            context_without_book.append(row)
+    return [
+        *in_window_with_book,
+        *in_window_without_book,
+        *context_with_book,
+        *context_without_book,
+    ]
+
+
+def _gold_entry_requested_window_rank(
+    entry: StrategyLadderSilverIndexEntry,
+    *,
+    start_ms: int | None,
+    end_ms: int | None,
+) -> tuple[int, str, str]:
+    if start_ms is None and end_ms is None:
+        return (0, entry.date or "", entry.timeframe or "")
+    if _date_in_range(entry.date or "", start_ms=start_ms, end_ms=end_ms):
+        return (0, entry.date or "", entry.timeframe or "")
+    return (1, entry.date or "", entry.timeframe or "")
+
+
 def _span_days(start_ms: int | None, end_ms: int | None) -> int:
     if start_ms is None or end_ms is None or end_ms < start_ms:
         return 0
@@ -422,6 +520,238 @@ def _date_range_status_for_entry(
     if not iso_date:
         return False
     return _date_in_range(iso_date, start_ms=start_ms, end_ms=end_ms)
+
+
+def _expected_date_scope(start: str, end: str) -> tuple[str, ...]:
+    if not start or not end:
+        return ()
+    try:
+        start_date = datetime.fromisoformat(f"{start[:10]}T00:00:00+00:00").date()
+        end_date = datetime.fromisoformat(f"{end[:10]}T00:00:00+00:00").date()
+    except ValueError:
+        return ()
+    if end_date < start_date:
+        return ()
+    days: list[str] = []
+    cursor = start_date
+    while cursor <= end_date:
+        days.append(cursor.isoformat())
+        cursor = datetime.fromtimestamp(
+            datetime.combine(cursor, datetime.min.time(), tzinfo=UTC).timestamp()
+            + 86_400,
+            tz=UTC,
+        ).date()
+    return tuple(days)
+
+
+def _data_type_dates(
+    silver_index: tuple[StrategyLadderSilverIndexEntry, ...],
+    *,
+    data_types: set[str],
+) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            {
+                entry.date
+                for entry in silver_index
+                if entry.data_type in data_types and entry.date and entry.row_count > 0
+            }
+        )
+    )
+
+
+def _coverage_status_for_dates(
+    *,
+    expected_dates: tuple[str, ...],
+    observed_dates: tuple[str, ...],
+    ready_status: str,
+    partial_status: str,
+    missing_status: str,
+) -> str:
+    if not expected_dates:
+        return ready_status if observed_dates else missing_status
+    observed = set(observed_dates)
+    if all(day in observed for day in expected_dates):
+        return ready_status
+    return partial_status if observed else missing_status
+
+
+def _build_data_factory_prod_safety_report(
+    *,
+    request: StrategyLadderDataFactoryRequest,
+    manifest: StrategyLadderDataFactoryManifest,
+    data_quality: StrategyLadderDataQualityReport,
+    silver_index: tuple[StrategyLadderSilverIndexEntry, ...],
+    gold_manifest: StrategyLadderGoldFeatureManifest,
+    storage_budget_report: object,
+    normalized_start: str,
+    normalized_end: str,
+) -> dict[str, object]:
+    expected_dates = _expected_date_scope(normalized_start, normalized_end)
+    trade_dates = _data_type_dates(silver_index, data_types={"trades"})
+    kline_dates = _data_type_dates(silver_index, data_types={"ohlcv", "klines"})
+    orderbook_dates = _data_type_dates(
+        silver_index,
+        data_types={"orderbook", "orderbook_snapshot", "orderbook_delta"},
+    )
+    depth20_dates = tuple(
+        sorted(
+            {
+                entry.date
+                for entry in silver_index
+                if entry.data_type in {"orderbook", "orderbook_snapshot", "orderbook_delta"}
+                and entry.date
+                and entry.row_count > 0
+                and entry.depth_source_status == "BOOK_DEPTH20_AVAILABLE"
+            }
+        )
+    )
+    trade_coverage_status = _coverage_status_for_dates(
+        expected_dates=expected_dates,
+        observed_dates=trade_dates,
+        ready_status="TRADES_WINDOW_COVERED",
+        partial_status="TRADES_WINDOW_PARTIAL",
+        missing_status="TRADES_WINDOW_MISSING",
+    )
+    kline_coverage_status = _coverage_status_for_dates(
+        expected_dates=expected_dates,
+        observed_dates=kline_dates,
+        ready_status="KLINES_WINDOW_COVERED",
+        partial_status="KLINES_WINDOW_PARTIAL",
+        missing_status="KLINES_WINDOW_MISSING",
+    )
+    orderbook_coverage_status = _coverage_status_for_dates(
+        expected_dates=expected_dates,
+        observed_dates=orderbook_dates,
+        ready_status="ORDERBOOK_WINDOW_COVERED",
+        partial_status="ORDERBOOK_WINDOW_PARTIAL",
+        missing_status="ORDERBOOK_WINDOW_MISSING",
+    )
+    depth20_coverage_status = _coverage_status_for_dates(
+        expected_dates=expected_dates,
+        observed_dates=depth20_dates,
+        ready_status="ORDERBOOK_DEPTH20_WINDOW_COVERED",
+        partial_status="ORDERBOOK_DEPTH20_WINDOW_PARTIAL",
+        missing_status="ORDERBOOK_DEPTH20_WINDOW_MISSING",
+    )
+    blocker_codes: list[str] = list(data_quality.blocker_codes)
+    if request.dry_run:
+        blocker_codes.append("DATA_FACTORY_DRY_RUN_NOT_PROD_SAFE")
+    if manifest.data_factory_status != "DATA_FACTORY_READY":
+        blocker_codes.append("DATA_FACTORY_NOT_READY")
+    if manifest.raw_source_status != "RAW_SOURCE_READY":
+        blocker_codes.append("RAW_SOURCE_NOT_READY")
+    if manifest.silver_index_status != "SILVER_INDEX_READY":
+        blocker_codes.append("SILVER_INDEX_NOT_READY")
+    if manifest.gold_feature_store_status not in {
+        "GOLD_FEATURE_STORE_READY",
+        "FEATURE_STORE_READY",
+    }:
+        blocker_codes.append("GOLD_FEATURE_STORE_NOT_READY")
+    if trade_coverage_status != "TRADES_WINDOW_COVERED":
+        blocker_codes.append("TRADES_WINDOW_NOT_COVERED")
+    if kline_coverage_status != "KLINES_WINDOW_COVERED":
+        blocker_codes.append("KLINES_WINDOW_NOT_COVERED")
+    if orderbook_coverage_status != "ORDERBOOK_WINDOW_COVERED":
+        blocker_codes.append("ORDERBOOK_WINDOW_NOT_COVERED")
+    if depth20_coverage_status != "ORDERBOOK_DEPTH20_WINDOW_COVERED":
+        blocker_codes.append("ORDERBOOK_DEPTH20_NOT_PROVEN")
+    if data_quality.ohlcv_temporal_completeness_status == "OHLCV_TEMPORAL_COMPLETENESS_BLOCKED":
+        blocker_codes.append("DATA_FACTORY_GAPS_EXCEED_TOLERANCE")
+    if data_quality.silver_index_date_range_status == "SILVER_INDEX_DATE_RANGE_VIOLATION":
+        blocker_codes.append("DATA_FACTORY_DATE_RANGE_VIOLATION")
+    if data_quality.historical_metadata_status != BYBIT_HISTORICAL_METADATA_READY:
+        blocker_codes.append("METADATA_NOT_PROD_PROVEN")
+    if data_quality.fee_provenance_status not in {
+        CONFIGURED_FEE_PROVENANCE_READY,
+        "FEE_SOURCE_PROVEN",
+        "FEE_PROVENANCE_READY",
+    }:
+        blocker_codes.append("FEE_PROVENANCE_NOT_PROD_PROVEN")
+    if manifest.pair_generalization_status != "MULTI_PAIR_GENERALIZATION_READY":
+        blocker_codes.append("SINGLE_PAIR_RESEARCH_ONLY")
+    if manifest.silver_storage_format != "jsonl_gz":
+        blocker_codes.append("SILVER_STORAGE_NOT_COMPRESSED")
+    if getattr(storage_budget_report, "storage_budget_status", "") not in {
+        "STORAGE_BUDGET_READY",
+        "STORAGE_BUDGET_WARNING",
+    }:
+        blocker_codes.append("STORAGE_BUDGET_NOT_READY")
+    if not normalized_start or not normalized_end:
+        blocker_codes.append("DATE_RANGE_NOT_PROVEN")
+
+    blocker_codes = list(dict.fromkeys(code for code in blocker_codes if code))
+    truth_blockers = {
+        "TRADES_WINDOW_NOT_COVERED",
+        "KLINES_WINDOW_NOT_COVERED",
+        "ORDERBOOK_WINDOW_NOT_COVERED",
+        "ORDERBOOK_DEPTH20_NOT_PROVEN",
+        "DATA_FACTORY_GAPS_EXCEED_TOLERANCE",
+        "DATA_FACTORY_DATE_RANGE_VIOLATION",
+        "DATA_FACTORY_NOT_READY",
+        "RAW_SOURCE_NOT_READY",
+        "SILVER_INDEX_NOT_READY",
+        "GOLD_FEATURE_STORE_NOT_READY",
+    }
+    truth_candidate_status = (
+        "DATA_FACTORY_TRUTH_CANDIDATE"
+        if not set(blocker_codes).intersection(truth_blockers)
+        else "DATA_FACTORY_TRUTH_CANDIDATE_BLOCKED"
+    )
+    prod_safety_status = (
+        "DATA_FACTORY_PROD_SAFE"
+        if not blocker_codes
+        else "RESEARCH_ONLY_NOT_PROD_SAFE"
+    )
+    return {
+        "schema_version": "strategy_ladder.data_factory_prod_safety_report.v1",
+        "run_id": request.run_id,
+        "prod_safety_status": prod_safety_status,
+        "truth_candidate_status": truth_candidate_status,
+        "prod_safe": prod_safety_status == "DATA_FACTORY_PROD_SAFE",
+        "requested_pairs": request.pairs,
+        "start": normalized_start,
+        "end": normalized_end,
+        "expected_dates": expected_dates,
+        "coverage": {
+            "trades": {
+                "status": trade_coverage_status,
+                "observed_dates": trade_dates,
+            },
+            "klines": {
+                "status": kline_coverage_status,
+                "observed_dates": kline_dates,
+            },
+            "orderbook": {
+                "status": orderbook_coverage_status,
+                "observed_dates": orderbook_dates,
+            },
+            "orderbook_depth20": {
+                "status": depth20_coverage_status,
+                "observed_dates": depth20_dates,
+            },
+        },
+        "quality_status": {
+            "data_factory_status": manifest.data_factory_status,
+            "raw_source_status": manifest.raw_source_status,
+            "silver_index_status": manifest.silver_index_status,
+            "gold_feature_store_status": manifest.gold_feature_store_status,
+            "ohlcv_temporal_completeness_status": data_quality.ohlcv_temporal_completeness_status,
+            "metadata_status": data_quality.historical_metadata_status,
+            "fee_provenance_status": data_quality.fee_provenance_status,
+            "pair_generalization_status": manifest.pair_generalization_status,
+            "silver_storage_format": manifest.silver_storage_format,
+            "silver_storage_status": manifest.silver_storage_status,
+            "storage_budget_status": getattr(storage_budget_report, "storage_budget_status", ""),
+            "gold_timeframes_generated": getattr(
+                gold_manifest,
+                "gold_timeframes_generated",
+                getattr(gold_manifest, "timeframe_scope", ()),
+            ),
+        },
+        "blocker_codes": tuple(blocker_codes),
+        "created_at": datetime.now(tz=UTC).isoformat(),
+    }
 
 
 def _raw_timestamp_value(row: dict[str, object]) -> object:
@@ -2058,14 +2388,28 @@ def _write_gold_features(
         if request.max_gold_feature_rows > 0
         else 0
     )
+    requested_start_ms = parse_time_boundary_to_ms(_normalize_boundary_text(request.start))
+    requested_end_ms = parse_time_boundary_to_ms(
+        _normalize_boundary_text(request.end),
+        end_of_day=True,
+    )
     for pair in available_pairs:
         if gold_row_limit and feature_row_count >= gold_row_limit:
             break
         kline_entries = tuple(
-            entry
-            for entry in _group_index_entries(index_entries, pair=pair, data_type="ohlcv")
-            if not requested_timeframes
-            or str(entry.timeframe or "").strip().lower() in requested_timeframes
+            sorted(
+                (
+                    entry
+                    for entry in _group_index_entries(index_entries, pair=pair, data_type="ohlcv")
+                    if not requested_timeframes
+                    or str(entry.timeframe or "").strip().lower() in requested_timeframes
+                ),
+                key=lambda entry: _gold_entry_requested_window_rank(
+                    entry,
+                    start_ms=requested_start_ms,
+                    end_ms=requested_end_ms,
+                ),
+            )
         )
         trade_entries = _group_index_entries(index_entries, pair=pair, data_type="trades")
         book_entries = tuple(
@@ -2108,11 +2452,6 @@ def _write_gold_features(
             rows = _load_jsonl_rows(Path(entry.path))
             if not rows:
                 continue
-            if gold_row_limit:
-                remaining_rows = gold_row_limit - feature_row_count
-                if remaining_rows <= 0:
-                    break
-                rows = rows[:remaining_rows]
             date = entry.date
             year = date[:4] if date else "unknown"
             month = date[5:7] if len(date) >= 7 else "unknown"
@@ -2134,31 +2473,17 @@ def _write_gold_features(
                 if entry_trade_entries
                 else "TRADE_FEATURE_STATUS_NOT_PROVEN"
             )
-            entry_orderbook_feature_status = "ORDERBOOK_FEATURE_STATUS_NOT_PROVEN"
-            if any(
-                item.depth_source_status == "BOOK_DEPTH20_AVAILABLE"
-                for item in entry_book_entries
-            ):
-                entry_orderbook_feature_status = "ORDERBOOK_FEATURE_STATUS_READY"
-            elif entry_book_entries:
-                entry_orderbook_feature_status = "ORDERBOOK_FEATURE_STATUS_PARTIAL"
-            entry_feature_sources_used = tuple(
-                token
-                for token, entries in (
-                    ("trades", entry_trade_entries),
-                    ("klines", (entry,)),
-                    ("orderbook", entry_book_entries),
-                    ("metadata", metadata_entries),
+            if gold_row_limit:
+                rows = _prioritize_requested_window_rows(
+                    rows,
+                    start_ms=requested_start_ms,
+                    end_ms=requested_end_ms,
+                    book_entries=entry_book_entries,
                 )
-                if entries
-            )
-            entry_candidate_data_source_label = "COMPAT_FEATURE_DISCOVERY"
-            if "orderbook" in entry_feature_sources_used:
-                entry_candidate_data_source_label = "ORDERBOOK_AWARE_DISCOVERY"
-            elif {"trades", "klines"} <= set(entry_feature_sources_used):
-                entry_candidate_data_source_label = "TRADE_KLINE_DISCOVERY"
-            elif "klines" in entry_feature_sources_used:
-                entry_candidate_data_source_label = "KLINE_ONLY_DISCOVERY"
+                remaining_rows = gold_row_limit - feature_row_count
+                if remaining_rows <= 0:
+                    break
+                rows = rows[:remaining_rows]
             trade_count = sum(item.row_count for item in entry_trade_entries)
             for index, row in enumerate(rows, start=1):
                 timestamp_ms = int(row.get("timestamp_ms") or 0)
@@ -2167,6 +2492,35 @@ def _write_gold_features(
                 high_price = float(row.get("high") or 0.0)
                 low_price = float(row.get("low") or 0.0)
                 volume = float(row.get("volume") or 0.0)
+                row_book_entries = _book_entries_covering_timestamp(
+                    entry_book_entries,
+                    timestamp_ms=timestamp_ms,
+                )
+                row_orderbook_feature_status = "ORDERBOOK_FEATURE_STATUS_NOT_PROVEN"
+                if any(
+                    item.depth_source_status == "BOOK_DEPTH20_AVAILABLE"
+                    for item in row_book_entries
+                ):
+                    row_orderbook_feature_status = "ORDERBOOK_FEATURE_STATUS_READY"
+                elif row_book_entries:
+                    row_orderbook_feature_status = "ORDERBOOK_FEATURE_STATUS_PARTIAL"
+                row_feature_sources_used = tuple(
+                    token
+                    for token, entries in (
+                        ("trades", entry_trade_entries),
+                        ("klines", (entry,)),
+                        ("orderbook", row_book_entries),
+                        ("metadata", metadata_entries),
+                    )
+                    if entries
+                )
+                row_candidate_data_source_label = "COMPAT_FEATURE_DISCOVERY"
+                if "orderbook" in row_feature_sources_used:
+                    row_candidate_data_source_label = "ORDERBOOK_AWARE_DISCOVERY"
+                elif {"trades", "klines"} <= set(row_feature_sources_used):
+                    row_candidate_data_source_label = "TRADE_KLINE_DISCOVERY"
+                elif "klines" in row_feature_sources_used:
+                    row_candidate_data_source_label = "KLINE_ONLY_DISCOVERY"
                 trailing_rows = rows[max(0, index - 20) : index]
                 trailing_mean_volume = (
                     sum(float(item.get("volume") or 0.0) for item in trailing_rows)
@@ -2175,7 +2529,7 @@ def _write_gold_features(
                 spread_bps = 0.0
                 depth_levels = None
                 book_status = "BOOK_DEPTH_NOT_PROVEN"
-                if entry_book_entries:
+                if row_book_entries:
                     depth_levels = max(
                         (
                             20
@@ -2185,14 +2539,14 @@ def _write_gold_features(
                             else 1
                             if item.depth_source_status == "BOOK_TOP_OF_BOOK_ONLY"
                             else 0
-                            for item in entry_book_entries
+                            for item in row_book_entries
                         ),
                         default=0,
                     )
                     book_status = next(
                         (
                             item.depth_source_status
-                            for item in entry_book_entries
+                            for item in row_book_entries
                             if item.depth_source_status
                         ),
                         "BOOK_DEPTH_NOT_PROVEN",
@@ -2230,7 +2584,7 @@ def _write_gold_features(
                     # ne contient pas le segment `silver/{venue}/spot/...`).
                     silver_exchange_for_call: str = ""
                     silver_market_type_for_call: str = "spot"
-                    for be in entry_book_entries:
+                    for be in row_book_entries:
                         be_dt = getattr(be, "data_type", "")
                         if be_dt in {"orderbook_snapshot", "orderbook"} and be.path:
                             snapshot_book_path = Path(be.path)
@@ -2357,18 +2711,18 @@ def _write_gold_features(
                           "taker_fee_rate": taker_fee_rate,
                           "book_depth_levels": depth_levels,
                           "book_depth_source_status": book_status,
-                          "book_depth_snapshot_count": len(entry_book_entries),
-                        "book_depth_event_count": len(entry_book_entries),
-                        "book_depth_missing_count": 0 if entry_book_entries else 1,
+                          "book_depth_snapshot_count": len(row_book_entries),
+                        "book_depth_event_count": len(row_book_entries),
+                        "book_depth_missing_count": 0 if row_book_entries else 1,
                         "book_depth_staleness_status": book_status,
                         "planned_notional": 100.0,
                         "allocation_fraction": 0.25,
                         "min_notional": pair_min_notional,
-                          "feature_sources_used": entry_feature_sources_used,
+                          "feature_sources_used": row_feature_sources_used,
                           "trade_feature_status": entry_trade_feature_status,
                           "kline_feature_status": kline_feature_status,
-                          "orderbook_feature_status": entry_orderbook_feature_status,
-                          "candidate_data_source_label": entry_candidate_data_source_label,
+                          "orderbook_feature_status": row_orderbook_feature_status,
+                          "candidate_data_source_label": row_candidate_data_source_label,
                           "compatibility_notes": (
                               "NOT_LIVE_ENGINE_PARITY",
                               "FRAGILITY_FALSE_BREAKOUT_DISCOVERY_GRADE",
@@ -2381,6 +2735,7 @@ def _write_gold_features(
                 existing_size = output_path.stat().st_size if output_path.exists() else 0
                 merged_lines = [*_read_jsonl_lines(output_path), *_jsonl_dump_lines(feature_rows).splitlines()]
                 merged_rows = [json.loads(line) for line in merged_lines if line.strip()]
+                merged_rows.sort(key=_gold_row_timestamp_ms)
                 _write_rows(output_path, merged_rows, storage_format="jsonl-gz")
                 resolved_feature_path = str(output_path.resolve())
                 if resolved_feature_path not in feature_paths:
@@ -3455,6 +3810,19 @@ def run_strategy_ladder_data_factory(
         )
     )
     write_storage_budget_report(report_root, storage_budget_report)
+    _write_report(
+        report_root / "data_factory_prod_safety_report.json",
+        _build_data_factory_prod_safety_report(
+            request=request,
+            manifest=manifest,
+            data_quality=data_quality,
+            silver_index=silver_index,
+            gold_manifest=canonical_gold_manifest,
+            storage_budget_report=storage_budget_report,
+            normalized_start=normalized_start,
+            normalized_end=normalized_end,
+        ),
+    )
     # Patch 6 batch 2 — emit the feature/threshold registry manifest.
     # Must be written BEFORE the proof matrix so the proof-matrix builder
     # can record the manifest path under feature_threshold_manifest_path.

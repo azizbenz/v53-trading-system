@@ -13,8 +13,13 @@ from cockpit.action_support import (
     CockpitBacktestJobRecord,
     CockpitBacktestJobStatus,
 )
-from cockpit.form_state_support import LabMlHandoffFormState
+from cockpit.form_state_support import BacktestFormState, LabMlHandoffFormState
 from interface_contracts import MlAntiLeakageProofArtifact, MlLiveDriftSnapshot, MlModelArtifact
+from local_replay_runtime.expected_edge_feature_promotion_registry import (
+    ExpectedEdgeFeatureVerdict,
+    FeaturePromotionEntry,
+    load_feature_promotion_registry,
+)
 from local_replay_runtime.pair_capability_discovery import (
     PairCapability,
     discover_pair_capabilities,
@@ -51,6 +56,116 @@ _FEATURE_REGISTRY: dict[str, dict[str, str]] = {
         "family": "volume_profile",
         "equation_id": "strategy_ladder.expected_edge.feature.volume_identity.v1",
         "expression": "volume",
+    },
+    "spread_bps": {
+        "family": "microstructure_cost",
+        "equation_id": "strategy_ladder.expected_edge.feature.spread_bps.v1",
+        "expression": "measured or replay spread in basis points",
+    },
+    "slippage_bps": {
+        "family": "microstructure_cost",
+        "equation_id": "strategy_ladder.expected_edge.feature.slippage_bps.v1",
+        "expression": "measured or replay slippage in basis points",
+    },
+    "book_depth_levels": {
+        "family": "microstructure_depth",
+        "equation_id": "strategy_ladder.expected_edge.feature.book_depth_levels.v1",
+        "expression": "observed order book depth level count",
+    },
+    "break_even_bps": {
+        "family": "microstructure_cost",
+        "equation_id": "strategy_ladder.expected_edge.feature.break_even_bps.v1",
+        "expression": "expected_cost + delta_safe expressed in basis points",
+    },
+    "fragility_score": {
+        "family": "execution_fragility",
+        "equation_id": "strategy_ladder.expected_edge.feature.fragility_score.v1",
+        "expression": "Build-14 execution fragility observed value or fallback",
+    },
+    "false_breakout_context": {
+        "family": "breakout_context",
+        "equation_id": "strategy_ladder.expected_edge.feature.false_breakout_context.v1",
+        "expression": "false breakout context scalar carried from engine payload",
+    },
+    "vpin": {
+        "family": "microstructure_flow",
+        "equation_id": "strategy_ladder.expected_edge.feature.vpin.v1",
+        "expression": "volume-synchronized probability of informed trading",
+    },
+    "cumulative_ofi": {
+        "family": "microstructure_flow",
+        "equation_id": "strategy_ladder.expected_edge.feature.cumulative_ofi.v1",
+        "expression": "cumulative order-flow imbalance over the replay window",
+    },
+    "queue_pressure": {
+        "family": "microstructure_flow",
+        "equation_id": "strategy_ladder.expected_edge.feature.queue_pressure.v1",
+        "expression": "top-of-book queue pressure over the replay window",
+    },
+    "kyle_lambda": {
+        "family": "impact_units",
+        "equation_id": "strategy_ladder.expected_edge.feature.kyle_lambda.v1",
+        "expression": "Kyle lambda impact coefficient measured from replay trades/book",
+    },
+    "realized_vol_current": {
+        "family": "volatility_regime",
+        "equation_id": "strategy_ladder.expected_edge.feature.realized_vol_current.v1",
+        "expression": "realized volatility measured on the current replay window",
+    },
+    "realized_vol_at_break": {
+        "family": "volatility_regime",
+        "equation_id": "strategy_ladder.expected_edge.feature.realized_vol_at_break.v1",
+        "expression": "realized volatility captured at breakout formation",
+    },
+    "latency_penalty_bps": {
+        "family": "execution_cost",
+        "equation_id": "strategy_ladder.expected_edge.feature.latency_penalty_bps.v1",
+        "expression": "latency penalty carried through economic provenance in basis points",
+    },
+    "micro_edge_exit_governor_observed": {
+        "family": "build14_observed",
+        "equation_id": "strategy_ladder.expected_edge.feature.micro_edge_exit_governor_observed.v1",
+        "expression": "Build-14 observed exit governor scalar",
+    },
+    "micro_edge_entry_timing_observed": {
+        "family": "build14_observed",
+        "equation_id": "strategy_ladder.expected_edge.feature.micro_edge_entry_timing_observed.v1",
+        "expression": "Build-14 observed entry timing scalar",
+    },
+    "history_score": {
+        "family": "engine_d_governance",
+        "equation_id": "strategy_ladder.expected_edge.feature.history_score.v1",
+        "expression": "engine_d historical legitimacy score",
+    },
+    "marginal_value_score": {
+        "family": "engine_d_governance",
+        "equation_id": "strategy_ladder.expected_edge.feature.marginal_value_score.v1",
+        "expression": "engine_d marginal value score for re-entry governance",
+    },
+    "reentry_lateness": {
+        "family": "engine_d_governance",
+        "equation_id": "strategy_ladder.expected_edge.feature.reentry_lateness.v1",
+        "expression": "engine_d re-entry lateness scalar",
+    },
+    "concentration_headroom": {
+        "family": "engine_d_governance",
+        "equation_id": "strategy_ladder.expected_edge.feature.concentration_headroom.v1",
+        "expression": "remaining concentration headroom before engine_d blocks",
+    },
+    "anti_revenge_state__active": {
+        "family": "categorical_governance",
+        "equation_id": "strategy_ladder.expected_edge.feature.anti_revenge_state__active.v1",
+        "expression": "one-hot active flag for anti_revenge_state",
+    },
+    "anti_revenge_state__cooling": {
+        "family": "categorical_governance",
+        "equation_id": "strategy_ladder.expected_edge.feature.anti_revenge_state__cooling.v1",
+        "expression": "one-hot cooling flag for anti_revenge_state",
+    },
+    "anti_revenge_state__idle": {
+        "family": "categorical_governance",
+        "equation_id": "strategy_ladder.expected_edge.feature.anti_revenge_state__idle.v1",
+        "expression": "one-hot idle flag for anti_revenge_state",
     },
 }
 
@@ -166,6 +281,16 @@ class StrategyLadderMlHandoffDashboardSummary(BaseModel, frozen=True):
     backtest_input_ref: str = ""
     anti_leakage_proof_ref: str = ""
     live_drift_snapshot_ref: str = ""
+    feature_grounding_contract_report_ref: str = ""
+    training_source_contract_report_ref: str = ""
+    ml_overlay_authority_contract_report_ref: str = ""
+    ml_train_eval_overlap_report_ref: str = ""
+    ml_feature_input_label_leakage_report_ref: str = ""
+    feature_grounding_status: str = ""
+    training_source_contract_status: str = ""
+    train_eval_overlap_status: str = ""
+    ml_overlay_authority_level: str = ""
+    ml_feature_input_label_leakage_status: str = ""
     backtest_cli_args: tuple[str, ...] = ()
     blocking_reasons: tuple[str, ...] = ()
     sample_stride_minutes: int = 0
@@ -338,6 +463,173 @@ def _metric_int(metrics: dict[str, object], key: str) -> int:
 
 def _csv_tuple(raw_value: str) -> tuple[str, ...]:
     return tuple(part.strip() for part in (raw_value or "").split(",") if part.strip())
+
+
+def resolve_lab_selected_feature_names(
+    form_state: LabMlHandoffFormState | None,
+) -> tuple[str, ...]:
+    if form_state is None:
+        return ()
+    if form_state.selected_features:
+        return tuple(form_state.selected_features)
+    return _csv_tuple(form_state.feature_names)
+
+
+def resolve_lab_feature_picker_defaults(
+    *,
+    form_state: LabMlHandoffFormState | None,
+    governance_entries: tuple[FeaturePromotionEntry, ...] = (),
+    supported_feature_names: tuple[str, ...] = (),
+) -> tuple[str, ...]:
+    selected = resolve_lab_selected_feature_names(form_state)
+    if form_state is None or form_state.selected_features:
+        return selected
+    if not governance_entries:
+        return selected
+    csv_selected = set(selected)
+    verdict_by_name = {
+        entry.feature_name: entry.verdict
+        for entry in governance_entries
+        if entry.feature_name
+    }
+    ordered: list[str] = []
+    for feature_name in supported_feature_names:
+        verdict = verdict_by_name.get(feature_name)
+        if verdict == ExpectedEdgeFeatureVerdict.DEMOTED:
+            continue
+        if verdict is not None or feature_name in csv_selected:
+            ordered.append(feature_name)
+    return tuple(ordered)
+
+
+def selected_demoted_lab_features(
+    *,
+    selected_feature_names: tuple[str, ...],
+    governance_entries: tuple[FeaturePromotionEntry, ...] = (),
+) -> tuple[str, ...]:
+    demoted = {
+        entry.feature_name
+        for entry in governance_entries
+        if entry.verdict == ExpectedEdgeFeatureVerdict.DEMOTED and entry.feature_name
+    }
+    return tuple(name for name in selected_feature_names if name in demoted)
+
+
+def resolve_backtest_selected_feature_names(
+    form_state: BacktestFormState | None,
+    *,
+    lab_form_state: LabMlHandoffFormState | None = None,
+    artifact_feature_names: tuple[str, ...] = (),
+) -> tuple[str, ...]:
+    if artifact_feature_names:
+        return tuple(item for item in artifact_feature_names if str(item).strip())
+    if form_state is not None:
+        if form_state.selected_features:
+            return tuple(form_state.selected_features)
+        feature_picker_active = str(form_state.feature_picker_enabled or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if feature_picker_active:
+            # Backtest differs from IA Lab: an explicitly empty selection keeps the
+            # native backtest path available and must not be silently refilled.
+            return ()
+    feature_names_csv = "" if form_state is None else form_state.feature_names
+    csv_selected = _csv_tuple(feature_names_csv)
+    if csv_selected:
+        return csv_selected
+    return resolve_lab_selected_feature_names(lab_form_state)
+
+
+def resolve_backtest_feature_picker_defaults(
+    *,
+    form_state: BacktestFormState | None,
+    lab_form_state: LabMlHandoffFormState | None = None,
+    governance_entries: tuple[FeaturePromotionEntry, ...] = (),
+    supported_feature_names: tuple[str, ...] = (),
+    artifact_feature_names: tuple[str, ...] = (),
+) -> tuple[str, ...]:
+    selected = resolve_backtest_selected_feature_names(
+        form_state,
+        lab_form_state=lab_form_state,
+        artifact_feature_names=artifact_feature_names,
+    )
+    if artifact_feature_names:
+        return selected
+    if form_state is not None:
+        feature_picker_active = str(form_state.feature_picker_enabled or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if form_state.selected_features or feature_picker_active:
+            return selected
+    if not governance_entries:
+        return selected
+    csv_selected = set(selected)
+    verdict_by_name = {
+        entry.feature_name: entry.verdict
+        for entry in governance_entries
+        if entry.feature_name
+    }
+    ordered: list[str] = []
+    for feature_name in supported_feature_names:
+        verdict = verdict_by_name.get(feature_name)
+        if verdict == ExpectedEdgeFeatureVerdict.DEMOTED:
+            continue
+        if verdict is not None or feature_name in csv_selected:
+            ordered.append(feature_name)
+    return tuple(ordered)
+
+
+def selected_demoted_backtest_features(
+    *,
+    selected_feature_names: tuple[str, ...],
+    governance_entries: tuple[FeaturePromotionEntry, ...] = (),
+) -> tuple[str, ...]:
+    return selected_demoted_lab_features(
+        selected_feature_names=selected_feature_names,
+        governance_entries=governance_entries,
+    )
+
+
+def discover_lab_feature_governance(
+    form_state: LabMlHandoffFormState,
+    *,
+    registry_path: Path | None = None,
+) -> tuple[FeaturePromotionEntry, ...]:
+    """Load the latest feature-promotion verdicts for the current Lab pair/tf."""
+
+    if registry_path is None:
+        return ()
+    registry = load_feature_promotion_registry(registry_path)
+    selected_pair = (
+        form_state.selected_pairs[0]
+        if form_state.selected_pairs
+        else ((form_state.pair or "").strip().upper() or "BTCUSDT")
+    )
+    timeframe = (form_state.timeframe or "1m").strip() or "1m"
+    return registry.entries_for_pair_tf(selected_pair, timeframe)
+
+
+def discover_backtest_feature_governance(
+    form_state: BacktestFormState | None,
+    *,
+    registry_path: Path | None = None,
+) -> tuple[FeaturePromotionEntry, ...]:
+    if registry_path is None or form_state is None:
+        return ()
+    registry = load_feature_promotion_registry(registry_path)
+    selected_pair = (
+        form_state.pairs[0].strip().upper()
+        if form_state.pairs
+        else "BTCUSDT"
+    )
+    timeframe = (form_state.training_timeframe or "1m").strip() or "1m"
+    return registry.entries_for_pair_tf(selected_pair, timeframe)
 
 
 def _parse_date(raw_value: str) -> date:
@@ -704,11 +996,7 @@ def read_strategy_ladder_ml_handoff_dashboard_summary(
     candidates = _candidate_report_paths(ml_jobs)
     if not candidates:
         preview_plan = _preview_rolling_plan(form_state)
-        feature_names = (
-            _csv_tuple(form_state.feature_names)
-            if form_state is not None
-            else ()
-        )
+        feature_names = resolve_lab_selected_feature_names(form_state)
         return StrategyLadderMlHandoffDashboardSummary(
             source_status=(
                 "job_only"
@@ -770,11 +1058,7 @@ def read_strategy_ladder_ml_handoff_dashboard_summary(
     else:
         if latest_ml_job is not None and latest_job_report_path is not None:
             preview_plan = _preview_rolling_plan(form_state)
-            feature_names = (
-                _csv_tuple(form_state.feature_names)
-                if form_state is not None
-                else ()
-            )
+            feature_names = resolve_lab_selected_feature_names(form_state)
             return StrategyLadderMlHandoffDashboardSummary(
                 source_status="job_only",
                 job_id=latest_ml_job.job_id,
@@ -852,6 +1136,19 @@ def read_strategy_ladder_ml_handoff_dashboard_summary(
     rolling_plan = _load_rolling_plan(
         _string(payload, "rolling_ml_window_plan_ref")
     )
+    feature_grounding_payload = _load_json(
+        Path(_string(payload, "feature_grounding_contract_report_ref"))
+    )
+    training_source_payload = _load_json(
+        Path(_string(payload, "training_source_contract_report_ref"))
+    )
+    overlap_payload = _load_json(Path(_string(payload, "ml_train_eval_overlap_report_ref")))
+    authority_payload = _load_json(
+        Path(_string(payload, "ml_overlay_authority_contract_report_ref"))
+    )
+    leakage_payload = _load_json(
+        Path(_string(payload, "ml_feature_input_label_leakage_report_ref"))
+    )
     artifact_metrics = (
         dict(artifact.training_metrics)
         if isinstance(artifact, MlModelArtifact) and isinstance(artifact.training_metrics, dict)
@@ -913,6 +1210,31 @@ def read_strategy_ladder_ml_handoff_dashboard_summary(
         backtest_input_ref=_string(payload, "backtest_input_ref"),
         anti_leakage_proof_ref=_string(payload, "anti_leakage_proof_ref"),
         live_drift_snapshot_ref=_string(payload, "live_drift_snapshot_ref"),
+        feature_grounding_contract_report_ref=_string(
+            payload,
+            "feature_grounding_contract_report_ref",
+        ),
+        training_source_contract_report_ref=_string(
+            payload,
+            "training_source_contract_report_ref",
+        ),
+        ml_overlay_authority_contract_report_ref=_string(
+            payload,
+            "ml_overlay_authority_contract_report_ref",
+        ),
+        ml_train_eval_overlap_report_ref=_string(
+            payload,
+            "ml_train_eval_overlap_report_ref",
+        ),
+        ml_feature_input_label_leakage_report_ref=_string(
+            payload,
+            "ml_feature_input_label_leakage_report_ref",
+        ),
+        feature_grounding_status=_string(feature_grounding_payload, "status"),
+        training_source_contract_status=_string(training_source_payload, "status"),
+        train_eval_overlap_status=_string(overlap_payload, "overlap_status"),
+        ml_overlay_authority_level=_string(authority_payload, "ml_authority_level"),
+        ml_feature_input_label_leakage_status=_string(leakage_payload, "status"),
         backtest_cli_args=_string_tuple(payload, "backtest_cli_args"),
         blocking_reasons=_string_tuple(payload, "blocking_reasons"),
         sample_stride_minutes=_int(training_report_payload, "sample_stride_minutes"),
@@ -1107,9 +1429,17 @@ def read_strategy_ladder_ml_handoff_dashboard_summary(
 
 
 __all__ = [
+    "discover_backtest_feature_governance",
     "StrategyLadderMlHandoffDashboardSummary",
     "StrategyLadderMlHandoffEquationRow",
     "StrategyLadderMlHandoffFeatureRow",
     "StrategyLadderMlHandoffModuleRow",
+    "discover_lab_feature_governance",
     "read_strategy_ladder_ml_handoff_dashboard_summary",
+    "resolve_backtest_feature_picker_defaults",
+    "resolve_backtest_selected_feature_names",
+    "resolve_lab_feature_picker_defaults",
+    "resolve_lab_selected_feature_names",
+    "selected_demoted_backtest_features",
+    "selected_demoted_lab_features",
 ]

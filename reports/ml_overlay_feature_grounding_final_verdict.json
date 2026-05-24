@@ -1,0 +1,53 @@
+{
+  "schema_version": "ml_overlay_feature_grounding_final_verdict.v1",
+  "generated_at": "2026-05-24",
+  "status": "ML_OVERLAY_DOCTRINE_GOVERNED",
+  "verdicts": {
+    "ml_overlay_doctrine": "ML_OVERLAY_DOCTRINE_GOVERNED",
+    "feature_grounding_registry": "FEATURE_GROUNDING_REGISTRY_READY",
+    "training_source_contract": "TRAINING_SOURCE_CONTRACT_READY",
+    "anti_leakage_date_guard": "ANTI_LEAKAGE_DATE_GUARD_READY",
+    "ml_authority_contract": "ML_AUTHORITY_CONTRACT_READY",
+    "label_input_leakage_guard": "LABEL_INPUT_LEAKAGE_GUARD_READY",
+    "backtest_profitability_ready": false
+  },
+  "preserved_invariants": {
+    "engines_abcd_modified": false,
+    "signal_candidate_modified": false,
+    "thresholds_modified": false,
+    "expected_edge_proxy_blocked_removed": false,
+    "proxy_promoted_to_truth": false,
+    "fake_executed_trades_created": false,
+    "second_runtime_created": false,
+    "ml_can_create_candidate": false,
+    "ml_can_change_side": false,
+    "ml_can_bypass_hard_blocks": false
+  },
+  "verification": {
+    "compileall": {
+      "command": "PYTHONPYCACHEPREFIX=.test_tmp\\pycache_compile_ml_grounding python -m compileall -q src tests",
+      "status": "passed"
+    },
+    "tests": [
+      {
+        "command": "pytest tests/test_local_replay_runtime/test_feature_grounding_registry.py tests/test_local_replay_runtime/test_training_source_contract.py tests/test_local_replay_runtime/test_ml_overlay_authority_contract.py tests/test_local_replay_runtime/test_ml_label_leakage_guards.py -q --tb=short",
+        "status": "passed",
+        "result": "18 passed"
+      },
+      {
+        "command": "pytest tests/test_local_replay_runtime/test_strategy_ladder_ml_lab_handoff.py -q --tb=short",
+        "status": "passed",
+        "result": "6 passed"
+      },
+      {
+        "command": "pytest tests/cockpit/test_lab_feature_picker.py tests/cockpit/test_backtest_feature_picker_chain.py -q --tb=short",
+        "status": "passed",
+        "result": "20 passed"
+      }
+    ]
+  },
+  "residual_limits": [
+    "This is a governance/reporting patch, not a profitability proof.",
+    "Backtest profitability remains false until cost realism, fill realism, expected-edge promotion, and transition gates are satisfied."
+  ]
+}

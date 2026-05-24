@@ -287,6 +287,9 @@ def run_strategy_ladder_first_controlled_run(
             engine_native_sample_size=getattr(
                 request, "engine_native_sample_size", 10
             ),
+            candidate_sample_cap=getattr(
+                request, "engine_native_sample_size", 10
+            ),
         )
         run_dir = output_root / "backtest_strategy_ladder" / request.run_id
 

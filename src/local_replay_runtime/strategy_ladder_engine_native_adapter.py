@@ -76,6 +76,20 @@ _DEFAULT_VPIN_BUCKETS_PER_DAY = 50  # TO_CALIBRATE: pair-specific buckets/day
 # moins 2 points consecutifs a OFI (sinon OFI_INSUFFICIENT_BOOK).
 _OFI_PREWINDOW_LOOKBACK_MS = 60_000
 
+_MICROSTRUCTURE_RECORD_CACHE: dict[tuple[object, ...], tuple[object, ...]] = {}
+
+
+def _path_cache_signature(path_like: Path | str | None) -> tuple[str, int | None, int | None]:
+    if path_like is None:
+        return ("", None, None)
+    path = Path(path_like)
+    try:
+        resolved = path.resolve()
+        stat = resolved.stat()
+    except OSError:
+        return (str(path), None, None)
+    return (str(resolved), stat.st_mtime_ns, stat.st_size)
+
 
 @dataclass(frozen=True)
 class EngineNativeBridgeResult:
@@ -356,18 +370,32 @@ def _load_book_deltas_in_window_with_lookback(
     window_end_ms: int,
 ) -> list[dict[str, object]]:
     """Charge les deltas dont update_id > base_update_id et timestamp_ms <= window_end_ms."""
-    rows = _iter_jsonl(raw_book_delta_path)
     out: list[dict[str, object]] = []
-    for row in rows:
-        try:
-            uid = int(row.get("update_id") or 0)
-            ts = row.get("timestamp_ms")
-            if not isinstance(ts, (int, float)):
+    if not raw_book_delta_path.exists():
+        return out
+    opener = (
+        lambda: gzip.open(raw_book_delta_path, "rt", encoding="utf-8-sig")
+        if str(raw_book_delta_path).endswith(".gz")
+        else raw_book_delta_path.open("r", encoding="utf-8-sig")
+    )
+    with opener() as handle:
+        for line in handle:
+            stripped = line.strip()
+            if not stripped:
                 continue
-        except (TypeError, ValueError):
-            continue
-        if uid > base_update_id and int(ts) <= window_end_ms:
-            out.append(row)
+            try:
+                row = json.loads(stripped)
+                uid = int(row.get("update_id") or 0)
+                ts = row.get("timestamp_ms")
+                if not isinstance(ts, (int, float)):
+                    continue
+                ts_ms = int(ts)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                continue
+            if ts_ms > window_end_ms:
+                break
+            if uid > base_update_id:
+                out.append(row)
     return out
 
 
@@ -751,6 +779,29 @@ def _compute_microstructure_records_from_window(
     list[str],  # warnings
 ]:
     """Calcule les 5 records canoniques. Helper partage entre tous les engines."""
+    cache_key = (
+        pair.strip().upper(),
+        int(window_start_ms),
+        int(window_end_ms),
+        _path_cache_signature(raw_trade_path),
+        _path_cache_signature(raw_book_path),
+        _path_cache_signature(raw_book_delta_path),
+        int(vpin_buckets_per_day),
+    )
+    cached = _MICROSTRUCTURE_RECORD_CACHE.get(cache_key)
+    if cached is not None:
+        return (
+            cached[0],
+            cached[1],
+            cached[2],
+            cached[3],
+            cached[4],
+            int(cached[5]),
+            int(cached[6]),
+            int(cached[7]),
+            int(cached[8]),
+            list(cached[9]),
+        )
     warnings: list[str] = []
     trades_raw: list[dict[str, object]] = []
     book_states: list[_BookState] = []
@@ -880,7 +931,7 @@ def _compute_microstructure_records_from_window(
     else:
         warnings.append(f"REALIZED_KERNEL_VOL_INSUFFICIENT_PRICES:{len(rk_points)}")
 
-    return (
+    result = (
         kyle_record,
         vpin_record,
         ofi_record,
@@ -892,6 +943,19 @@ def _compute_microstructure_records_from_window(
         len(book_states),
         warnings,
     )
+    _MICROSTRUCTURE_RECORD_CACHE[cache_key] = (
+        kyle_record,
+        vpin_record,
+        ofi_record,
+        queue_pressure_record,
+        realized_kernel_record,
+        len(trades_raw),
+        book_snapshots_count,
+        book_deltas_count,
+        len(book_states),
+        tuple(warnings),
+    )
+    return result
 
 
 # ----------------------------------------------------------------------------
@@ -916,6 +980,13 @@ class EngineDBridgeResult:
     window_end_ms: int
     bridge_status: str
     n_trades_loaded: int = 0
+    n_book_snapshots_loaded: int = 0
+    n_book_deltas_loaded: int = 0
+    n_book_states_reconstructed: int = 0
+    kyle_lambda_record: KyleLambdaRecord | None = None
+    vpin_record: VpinRecord | None = None
+    ofi_record: OrderFlowImbalanceRecord | None = None
+    queue_pressure_record: QueuePressureRecord | None = None
     realized_vol_current_record: RealizedKernelVolRecord | None = None
     realized_vol_post_close_record: RealizedKernelVolRecord | None = None
     engine_d_partial_input_payload: dict[str, object] = field(default_factory=dict)
@@ -926,6 +997,10 @@ class EngineDBridgeResult:
         return sum(
             1
             for r in (
+                self.kyle_lambda_record,
+                self.vpin_record,
+                self.ofi_record,
+                self.queue_pressure_record,
                 self.realized_vol_current_record,
                 self.realized_vol_post_close_record,
             )
@@ -940,6 +1015,8 @@ def build_engine_d_microstructure_inputs_from_window(
     window_start_ms: int,
     window_end_ms: int,
     raw_trade_path: Path | str | None,
+    raw_book_path: Path | str | None = None,
+    raw_book_delta_path: Path | str | None = None,
     post_close_window_end_ms: int | None = None,
     base_payload: dict[str, object] | None = None,
 ) -> EngineDBridgeResult:
@@ -974,6 +1051,13 @@ def build_engine_d_microstructure_inputs_from_window(
 
     realized_vol_current_record: RealizedKernelVolRecord | None = None
     realized_vol_post_close_record: RealizedKernelVolRecord | None = None
+    kyle_record: KyleLambdaRecord | None = None
+    vpin_record: VpinRecord | None = None
+    ofi_record: OrderFlowImbalanceRecord | None = None
+    queue_pressure_record: QueuePressureRecord | None = None
+    n_book_snapshots = 0
+    n_book_deltas = 0
+    n_book_states = 0
 
     rk_current_points = _build_realized_kernel_price_points(trades_in_window)
     if len(rk_current_points) >= 2:
@@ -1007,6 +1091,30 @@ def build_engine_d_microstructure_inputs_from_window(
     else:
         warnings.append("REALIZED_VOL_POST_CLOSE_WINDOW_NOT_PROVIDED")
 
+    if raw_book_path is not None or raw_book_delta_path is not None:
+        (
+            kyle_record,
+            vpin_record,
+            ofi_record,
+            queue_pressure_record,
+            common_realized_record,
+            _n_trades,
+            n_book_snapshots,
+            n_book_deltas,
+            n_book_states,
+            common_warnings,
+        ) = _compute_microstructure_records_from_window(
+            pair=pair,
+            window_start_ms=window_start_ms,
+            window_end_ms=window_end_ms,
+            raw_trade_path=raw_trade_path,
+            raw_book_path=raw_book_path,
+            raw_book_delta_path=raw_book_delta_path,
+        )
+        if realized_vol_current_record is None:
+            realized_vol_current_record = common_realized_record
+        warnings.extend(common_warnings)
+
     base = dict(base_payload or {})
     base.setdefault("pair", pair)
     partial_payload: dict[str, object] = {}
@@ -1022,12 +1130,24 @@ def build_engine_d_microstructure_inputs_from_window(
 
     n_built = sum(
         1
+        for r in (
+            kyle_record,
+            vpin_record,
+            ofi_record,
+            queue_pressure_record,
+            realized_vol_current_record,
+            realized_vol_post_close_record,
+        )
+        if r is not None
+    )
+    vol_built = sum(
+        1
         for r in (realized_vol_current_record, realized_vol_post_close_record)
         if r is not None
     )
-    if n_built == 2:
+    if vol_built == 2:
         bridge_status = "ENGINE_NATIVE_BRIDGE_READY_STRUCTURE_RESOLVER_PENDING"
-    elif n_built == 1:
+    elif n_built > 0:
         bridge_status = "ENGINE_NATIVE_BRIDGE_PARTIAL"
     else:
         bridge_status = "ENGINE_NATIVE_BRIDGE_FAILED_NO_RECORDS"
@@ -1039,6 +1159,13 @@ def build_engine_d_microstructure_inputs_from_window(
         window_end_ms=window_end_ms,
         bridge_status=bridge_status,
         n_trades_loaded=len(trades_in_window),
+        n_book_snapshots_loaded=n_book_snapshots,
+        n_book_deltas_loaded=n_book_deltas,
+        n_book_states_reconstructed=n_book_states,
+        kyle_lambda_record=kyle_record,
+        vpin_record=vpin_record,
+        ofi_record=ofi_record,
+        queue_pressure_record=queue_pressure_record,
         realized_vol_current_record=realized_vol_current_record,
         realized_vol_post_close_record=realized_vol_post_close_record,
         engine_d_partial_input_payload=partial_payload,
@@ -1072,6 +1199,8 @@ class EngineABridgeResult:
     n_book_deltas_loaded: int = 0
     n_book_states_reconstructed: int = 0
     ofi_record: OrderFlowImbalanceRecord | None = None
+    vpin_record: VpinRecord | None = None
+    queue_pressure_record: QueuePressureRecord | None = None
     realized_kernel_vol_record: RealizedKernelVolRecord | None = None
     kyle_lambda_record: KyleLambdaRecord | None = None
     engine_a_microstructure_updates: dict[str, float | None] = field(default_factory=dict)
@@ -1083,6 +1212,8 @@ class EngineABridgeResult:
             1
             for r in (
                 self.ofi_record,
+                self.vpin_record,
+                self.queue_pressure_record,
                 self.realized_kernel_vol_record,
                 self.kyle_lambda_record,
             )
@@ -1115,9 +1246,9 @@ def build_engine_a_microstructure_inputs_from_window(
     """
     (
         kyle_record,
-        _vpin_record,
+        vpin_record,
         ofi_record,
-        _queue_pressure_record,
+        queue_pressure_record,
         realized_kernel_record,
         n_trades,
         n_snaps,
@@ -1175,10 +1306,16 @@ def build_engine_a_microstructure_inputs_from_window(
 
     n_built = sum(
         1
-        for r in (ofi_record, realized_kernel_record, kyle_record)
+        for r in (
+            kyle_record,
+            vpin_record,
+            ofi_record,
+            queue_pressure_record,
+            realized_kernel_record,
+        )
         if r is not None
     )
-    if n_built == 3:
+    if n_built == 5:
         bridge_status = "ENGINE_NATIVE_BRIDGE_READY_STRUCTURE_RESOLVER_PENDING"
     elif n_built > 0:
         bridge_status = "ENGINE_NATIVE_BRIDGE_PARTIAL"
@@ -1196,6 +1333,8 @@ def build_engine_a_microstructure_inputs_from_window(
         n_book_deltas_loaded=n_deltas,
         n_book_states_reconstructed=n_states,
         ofi_record=ofi_record,
+        vpin_record=vpin_record,
+        queue_pressure_record=queue_pressure_record,
         realized_kernel_vol_record=realized_kernel_record,
         kyle_lambda_record=kyle_record,
         engine_a_microstructure_updates=updates,
@@ -1230,10 +1369,17 @@ class EngineBBridgeResult:
     window_end_ms: int
     bridge_status: str
     n_trades_loaded: int = 0
+    n_book_snapshots_loaded: int = 0
+    n_book_deltas_loaded: int = 0
+    n_book_states_reconstructed: int = 0
     current_price: float | None = None
     local_mean: float | None = None
     local_std: float | None = None
+    kyle_lambda_record: KyleLambdaRecord | None = None
     vpin_record: VpinRecord | None = None
+    ofi_record: OrderFlowImbalanceRecord | None = None
+    queue_pressure_record: QueuePressureRecord | None = None
+    realized_kernel_vol_record: RealizedKernelVolRecord | None = None
     engine_b_partial_input_payload: dict[str, object] = field(default_factory=dict)
     bridge_warnings: tuple[str, ...] = ()
 
@@ -1246,7 +1392,11 @@ class EngineBBridgeResult:
                 self.current_price,
                 self.local_mean,
                 self.local_std,
+                self.kyle_lambda_record,
                 self.vpin_record,
+                self.ofi_record,
+                self.queue_pressure_record,
+                self.realized_kernel_vol_record,
             )
             if v is not None
         )
@@ -1329,20 +1479,51 @@ def build_engine_b_microstructure_inputs_from_window(
 
     # VPIN via le pipeline commun (re-utilise sans book — book est optionnel
     # pour engine_b car local_mean/std sont les inputs critiques)
+    kyle_record: KyleLambdaRecord | None = None
     vpin_record: VpinRecord | None = None
-    vpin_points = _build_vpin_trade_points(trades_in_window)
-    if len(vpin_points) >= 1:
-        try:
-            vpin_record = compute_vpin(
-                vpin_points,
-                pair=pair,
-                buckets_per_day=vpin_buckets_per_day,
-                allow_derived_daily_volume=True,
-            )
-        except Exception as exc:  # noqa: BLE001
-            warnings.append(f"VPIN_FAILED:{type(exc).__name__}:{exc}")
+    ofi_record: OrderFlowImbalanceRecord | None = None
+    queue_pressure_record: QueuePressureRecord | None = None
+    realized_kernel_record: RealizedKernelVolRecord | None = None
+    n_book_snapshots = 0
+    n_book_deltas = 0
+    n_book_states = 0
+
+    if raw_book_path is not None or raw_book_delta_path is not None:
+        (
+            kyle_record,
+            vpin_record,
+            ofi_record,
+            queue_pressure_record,
+            realized_kernel_record,
+            _n_trades,
+            n_book_snapshots,
+            n_book_deltas,
+            n_book_states,
+            common_warnings,
+        ) = _compute_microstructure_records_from_window(
+            pair=pair,
+            window_start_ms=window_start_ms,
+            window_end_ms=window_end_ms,
+            raw_trade_path=raw_trade_path,
+            raw_book_path=raw_book_path,
+            raw_book_delta_path=raw_book_delta_path,
+            vpin_buckets_per_day=vpin_buckets_per_day,
+        )
+        warnings.extend(common_warnings)
     else:
-        warnings.append("VPIN_NO_TRADES")
+        vpin_points = _build_vpin_trade_points(trades_in_window)
+        if len(vpin_points) >= 1:
+            try:
+                vpin_record = compute_vpin(
+                    vpin_points,
+                    pair=pair,
+                    buckets_per_day=vpin_buckets_per_day,
+                    allow_derived_daily_volume=True,
+                )
+            except Exception as exc:  # noqa: BLE001
+                warnings.append(f"VPIN_FAILED:{type(exc).__name__}:{exc}")
+        else:
+            warnings.append("VPIN_NO_TRADES")
 
     # Compose payload partiel engine_b (pas de compose_engine_b dans le seam,
     # on construit manuellement en respectant les contraintes Pydantic
@@ -1378,10 +1559,17 @@ def build_engine_b_microstructure_inputs_from_window(
         window_end_ms=window_end_ms,
         bridge_status=bridge_status,
         n_trades_loaded=len(trades_in_window),
+        n_book_snapshots_loaded=n_book_snapshots,
+        n_book_deltas_loaded=n_book_deltas,
+        n_book_states_reconstructed=n_book_states,
         current_price=current_price,
         local_mean=local_mean,
         local_std=local_std,
+        kyle_lambda_record=kyle_record,
         vpin_record=vpin_record,
+        ofi_record=ofi_record,
+        queue_pressure_record=queue_pressure_record,
+        realized_kernel_vol_record=realized_kernel_record,
         engine_b_partial_input_payload=base,
         bridge_warnings=tuple(warnings),
     )

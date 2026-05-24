@@ -197,6 +197,64 @@ def test_engine_native_adapter_builds_records_with_snapshot_plus_deltas(tmp_path
     )
 
 
+def test_engine_a_b_d_bridges_propagate_f16_book_records(tmp_path: Path) -> None:
+    base_ts = 1_700_000_100_000
+    window_start = base_ts
+    window_end = base_ts + 60_000
+    snap_path = tmp_path / "book_snapshots.jsonl"
+    delta_path = tmp_path / "book_deltas.jsonl"
+    trade_path = tmp_path / "trades.jsonl"
+    _write_jsonl(
+        snap_path,
+        [_synthetic_initial_snapshot(ts_ms=window_start - 1000, update_id=1000)],
+    )
+    _write_jsonl(
+        delta_path,
+        _synthetic_book_deltas(
+            base_ts_ms=window_start,
+            base_update_id=1000,
+            n=30,
+            spacing_ms=2000,
+        ),
+    )
+    _write_jsonl(trade_path, _synthetic_trades(base_ts_ms=window_start, n=200))
+
+    engine_a = build_engine_a_microstructure_inputs_from_window(
+        candidate_id="synth-a1",
+        pair="TESTPAIR",
+        window_start_ms=window_start,
+        window_end_ms=window_end,
+        raw_trade_path=trade_path,
+        raw_book_path=snap_path,
+        raw_book_delta_path=delta_path,
+    )
+    engine_b = build_engine_b_microstructure_inputs_from_window(
+        candidate_id="synth-b1",
+        pair="TESTPAIR",
+        window_start_ms=window_start,
+        window_end_ms=window_end,
+        raw_trade_path=trade_path,
+        raw_book_path=snap_path,
+        raw_book_delta_path=delta_path,
+    )
+    engine_d = build_engine_d_microstructure_inputs_from_window(
+        candidate_id="synth-d1",
+        pair="TESTPAIR",
+        window_start_ms=window_start,
+        window_end_ms=window_end,
+        raw_trade_path=trade_path,
+        raw_book_path=snap_path,
+        raw_book_delta_path=delta_path,
+        post_close_window_end_ms=window_end + 60_000,
+    )
+
+    for result in (engine_a, engine_b, engine_d):
+        assert result.queue_pressure_record is not None
+        assert result.vpin_record is not None
+        assert result.ofi_record is not None
+        assert result.n_book_states_reconstructed == 30
+
+
 def test_engine_native_adapter_handles_empty_window(tmp_path: Path) -> None:
     """Une fenetre vide (pas de trade, pas de book) ne doit pas crasher.
     Le bridge_status doit indiquer FAILED_NO_RECORDS et chaque record None."""

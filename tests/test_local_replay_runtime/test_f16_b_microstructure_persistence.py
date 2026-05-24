@@ -29,7 +29,7 @@ from local_replay_runtime.strategy_ladder_runner import (
 )
 
 
-def test_label_store_row_v2_exposes_vpin_ofi_queue_pressure_2026_05_21() -> None:
+def test_label_store_row_v3_preserves_vpin_ofi_queue_pressure_2026_05_21() -> None:
     """Patch F16-B Phase 3a — schema v2 ajoute 3 champs microstructure nullables."""
     row = StrategyLadderB2LabelStoreRow(
         candidate_id="c1",
@@ -51,7 +51,7 @@ def test_label_store_row_v2_exposes_vpin_ofi_queue_pressure_2026_05_21() -> None
         cumulative_ofi=0.11,
         queue_pressure=-0.15,
     )
-    assert row.schema_version == "strategy_ladder.b2_label_store_row.v2"
+    assert row.schema_version == "strategy_ladder.b2_label_store_row.v3"
     assert row.vpin == 0.42
     assert row.cumulative_ofi == 0.11
     assert row.queue_pressure == -0.15
@@ -88,11 +88,12 @@ def test_label_store_row_backward_compat_v1_without_vpin_2026_05_21() -> None:
 def test_extract_bridge_microstructure_scalars_handles_none_2026_05_21() -> None:
     """Patch F16-B Phase 3b — None bridge → all None scalars."""
     scalars = _extract_bridge_microstructure_scalars(None)
-    assert scalars == {
-        "vpin": None,
-        "cumulative_ofi": None,
-        "queue_pressure": None,
-    }
+    assert scalars["vpin"] is None
+    assert scalars["cumulative_ofi"] is None
+    assert scalars["queue_pressure"] is None
+    assert scalars["kyle_lambda"] is None
+    assert scalars["realized_vol_current"] is None
+    assert scalars["realized_vol_at_break"] is None
 
 
 def test_extract_bridge_microstructure_scalars_extracts_values_2026_05_21() -> None:
@@ -103,11 +104,12 @@ def test_extract_bridge_microstructure_scalars_extracts_values_2026_05_21() -> N
         queue_pressure_record=SimpleNamespace(value=-0.15),
     )
     scalars = _extract_bridge_microstructure_scalars(bridge)
-    assert scalars == {
-        "vpin": 0.42,
-        "cumulative_ofi": 0.11,
-        "queue_pressure": -0.15,
-    }
+    assert scalars["vpin"] == 0.42
+    assert scalars["cumulative_ofi"] == 0.11
+    assert scalars["queue_pressure"] == -0.15
+    assert scalars["kyle_lambda"] is None
+    assert scalars["realized_vol_current"] is None
+    assert scalars["realized_vol_at_break"] is None
 
 
 def test_extract_bridge_microstructure_scalars_partial_records_2026_05_21() -> None:

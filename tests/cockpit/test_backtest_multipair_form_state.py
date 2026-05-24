@@ -140,3 +140,30 @@ def test_build_backtest_command_propagates_multi_pair_c1_mode(tmp_path: Path) ->
     assert "--pairs" in command
     pairs_idx = command.index("--pairs")
     assert command[pairs_idx + 1] == "BTCUSDT,ETHUSDT,SOLUSDT"
+
+
+def test_build_backtest_command_propagates_replay_timeframes(tmp_path: Path) -> None:
+    """Backtest multiframe scope is passed to B1/B2 runner only."""
+    command = action_support_module._build_backtest_command(
+        job_id="job-tf",
+        job_kind=CockpitBacktestJobKind.STRATEGY_LADDER_RUNNER,
+        export_dir=tmp_path / "export",
+        output_root=tmp_path / "out",
+        baseline_export_dir=None,
+        signed_by="tester",
+        python_executable="python",
+        action_name="PHASE_B1_CANDIDATE_DISCOVERY",
+        raw_source_manifest_path=None,
+        raw_roots=(),
+        pairs=("BTCUSDT",),
+        start="2025-04-29",
+        end="2025-05-01",
+        allow_broad_run=False,
+        ml_mode_status="ML_MODE_OFF",
+        engine_native_mode=True,
+        engine_native_sample_size=10,
+        backtest_timeframes=("5m", "15m"),
+    )
+    assert "--timeframes" in command
+    idx = command.index("--timeframes")
+    assert command[idx + 1] == "5m,15m"

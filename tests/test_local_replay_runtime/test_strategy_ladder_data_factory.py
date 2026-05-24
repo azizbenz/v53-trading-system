@@ -190,8 +190,16 @@ def test_data_factory_normalizes_inputs_builds_gold_and_keeps_dynamic_pair_unive
             raw_root / "klines" / "ADAUSDT_1_2023-01-01.csv",
             "startTime,open,high,low,close,volume,turnover",
             [
-                "1672531200000,0.245,0.247,0.244,0.246,1000,246",
-                "1672531260000,0.246,0.248,0.245,0.247,1200,296.4",
+                f"{1672531200000 + index * 60_000},0.245,0.247,0.244,0.246,1000,246"
+                for index in range(1000)
+            ],
+        )
+        _write_csv(
+            raw_root / "klines" / "ADAUSDT_10_2023-01-01.csv",
+            "startTime,open,high,low,close,volume,turnover",
+            [
+                f"{1672531200000 + index * 600_000},0.245,0.247,0.244,0.246,1000,246"
+                for index in range(100)
             ],
         )
         _write_jsonl(
@@ -235,6 +243,7 @@ def test_data_factory_normalizes_inputs_builds_gold_and_keeps_dynamic_pair_unive
                 silver_root=silver_root,
                 gold_root=gold_root,
                 pairs=("ADAUSDT",),
+                timeframes=("1m",),
                 # Patch 6 batch 1 — non-dry-run requires explicit date range
                 # or allow_broad_run; this fixture is fixed at 2023-01-01.
                 start="2023-01-01",
@@ -262,6 +271,17 @@ def test_data_factory_normalizes_inputs_builds_gold_and_keeps_dynamic_pair_unive
         assert gold_rows[0]["trade_feature_status"] == "TRADE_FEATURE_STATUS_READY"
         assert gold_rows[0]["orderbook_feature_status"] == "ORDERBOOK_FEATURE_STATUS_READY"
         assert [row["timestamp_ms"] for row in gold_rows] == sorted(row["timestamp_ms"] for row in gold_rows)
+        prod_safety = json.loads(
+            (report_root / "data_factory_prod_safety_report.json").read_text(encoding="utf-8")
+        )
+        assert prod_safety["prod_safety_status"] == "RESEARCH_ONLY_NOT_PROD_SAFE"
+        assert prod_safety["truth_candidate_status"] in {
+            "DATA_FACTORY_TRUTH_CANDIDATE",
+            "DATA_FACTORY_TRUTH_CANDIDATE_BLOCKED",
+        }
+        assert prod_safety["coverage"]["orderbook"]["status"] == "ORDERBOOK_WINDOW_COVERED"
+        assert "SINGLE_PAIR_RESEARCH_ONLY" in prod_safety["blocker_codes"]
+        assert "GOLD_FEATURE_STORE_NOT_READY" not in prod_safety["blocker_codes"]
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
@@ -742,6 +762,187 @@ def test_gold_features_do_not_leak_orderbook_depth_across_dates() -> None:
         assert gold_rows[0]["orderbook_feature_status"] == "ORDERBOOK_FEATURE_STATUS_NOT_PROVEN"
         assert gold_rows[0]["candidate_data_source_label"] == "TRADE_KLINE_DISCOVERY"
         assert gold_rows[0]["feature_sources_used"] == ["trades", "klines", "metadata"]
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_small_scope_gold_limit_prioritizes_requested_window_before_lookback() -> None:
+    scratch = _scratch_dir("gold_limit_prioritizes_requested_window")
+    shutil.rmtree(scratch, ignore_errors=True)
+    try:
+        silver_root = scratch / "silver"
+        gold_root = scratch / "gold"
+        kline_lookback_path = silver_root / "bybit" / "spot" / "ohlcv" / "10m" / "BTCUSDT" / "2025" / "04" / "28.jsonl"
+        kline_requested_path = silver_root / "bybit" / "spot" / "ohlcv" / "10m" / "BTCUSDT" / "2025" / "04" / "29.jsonl"
+        trade_path = silver_root / "bybit" / "spot" / "trades" / "BTCUSDT" / "2025" / "04" / "29.jsonl"
+        book_snapshot_path = silver_root / "bybit" / "spot" / "orderbook_snapshot" / "BTCUSDT" / "2025" / "04" / "29.jsonl"
+        metadata_path = silver_root / "metadata" / "symbol_metadata.jsonl"
+        _write_jsonl(
+            kline_lookback_path,
+            [
+                {
+                    "timestamp_ms": 1745798400000 + index * 600_000,
+                    "open": 94000.0,
+                    "high": 94100.0,
+                    "low": 93900.0,
+                    "close": 94010.0,
+                    "volume": 10.0,
+                }
+                for index in range(3)
+            ],
+        )
+        _write_jsonl(
+            kline_requested_path,
+            [
+                {
+                    "timestamp_ms": 1745884800000 + index * 600_000,
+                    "open": 95000.0,
+                    "high": 95100.0,
+                    "low": 94900.0,
+                    "close": 95010.0,
+                    "volume": 12.0,
+                }
+                for index in range(3)
+            ],
+        )
+        _write_jsonl(trade_path, [{"timestamp_ms": 1745884801000, "price": 95000.0, "quantity": 0.1}])
+        _write_jsonl(book_snapshot_path, [{"timestamp_ms": 1745884801000, "depth_levels": 20}])
+        _write_jsonl(metadata_path, [{"pair": "BTCUSDT", "tick_size": 0.1, "min_notional": 5.0}])
+
+        request = StrategyLadderDataFactoryRequest(
+            run_id="df-window-priority",
+            input_root=scratch,
+            raw_roots=(scratch,),
+            silver_root=silver_root,
+            gold_root=gold_root,
+            pairs=("BTCUSDT",),
+            timeframes=("10m",),
+            start="2025-04-29",
+            end="2025-04-29",
+            small_scope=True,
+            max_gold_feature_rows=2,
+        )
+        index_entries = (
+            StrategyLadderSilverIndexEntry(
+                source_id="kline_lookback",
+                source_root=str(scratch.resolve()),
+                source_priority=10,
+                exchange="bybit",
+                market_type="spot",
+                data_type="ohlcv",
+                pair="BTCUSDT",
+                timeframe="10m",
+                date="2025-04-28",
+                path=str(kline_lookback_path.resolve()),
+                storage_format="jsonl",
+                min_timestamp_ms=1745798400000,
+                max_timestamp_ms=1745799600000,
+                row_count=3,
+                file_hash="hash-kline-lookback",
+                depth_source_status="BOOK_DEPTH_NOT_PROVEN",
+                schema_status="KLINE_SCHEMA_READY",
+            ),
+            StrategyLadderSilverIndexEntry(
+                source_id="kline_requested",
+                source_root=str(scratch.resolve()),
+                source_priority=10,
+                exchange="bybit",
+                market_type="spot",
+                data_type="ohlcv",
+                pair="BTCUSDT",
+                timeframe="10m",
+                date="2025-04-29",
+                path=str(kline_requested_path.resolve()),
+                storage_format="jsonl",
+                min_timestamp_ms=1745884800000,
+                max_timestamp_ms=1745886000000,
+                row_count=3,
+                file_hash="hash-kline-requested",
+                depth_source_status="BOOK_DEPTH_NOT_PROVEN",
+                schema_status="KLINE_SCHEMA_READY",
+            ),
+            StrategyLadderSilverIndexEntry(
+                source_id="trades_29",
+                source_root=str(scratch.resolve()),
+                source_priority=10,
+                exchange="bybit",
+                market_type="spot",
+                data_type="trades",
+                pair="BTCUSDT",
+                timeframe="",
+                date="2025-04-29",
+                path=str(trade_path.resolve()),
+                storage_format="jsonl",
+                min_timestamp_ms=1745884801000,
+                max_timestamp_ms=1745884801000,
+                row_count=1,
+                file_hash="hash-trades",
+                depth_source_status="BOOK_DEPTH_NOT_PROVEN",
+                schema_status="TRADE_SCHEMA_READY",
+            ),
+            StrategyLadderSilverIndexEntry(
+                source_id="book_29",
+                source_root=str(scratch.resolve()),
+                source_priority=10,
+                exchange="bybit",
+                market_type="spot",
+                data_type="orderbook_snapshot",
+                pair="BTCUSDT",
+                timeframe="",
+                date="2025-04-29",
+                path=str(book_snapshot_path.resolve()),
+                storage_format="jsonl",
+                min_timestamp_ms=1745884800000,
+                max_timestamp_ms=1745886000000,
+                row_count=1,
+                file_hash="hash-book",
+                depth_source_status="BOOK_DEPTH20_AVAILABLE",
+                schema_status="ORDERBOOK_SCHEMA_READY",
+            ),
+            StrategyLadderSilverIndexEntry(
+                source_id="metadata",
+                source_root=str(scratch.resolve()),
+                source_priority=1,
+                exchange="bybit",
+                market_type="spot",
+                data_type="metadata",
+                pair="BTCUSDT",
+                timeframe="",
+                date="",
+                path=str(metadata_path.resolve()),
+                storage_format="jsonl",
+                min_timestamp_ms=None,
+                max_timestamp_ms=None,
+                row_count=1,
+                file_hash="hash-metadata",
+                depth_source_status="BOOK_DEPTH_NOT_PROVEN",
+                schema_status="METADATA_SCHEMA_READY",
+            ),
+        )
+
+        manifest = data_factory_module._write_gold_features(
+            request=request,
+            index_entries=index_entries,
+            available_pairs=("BTCUSDT",),
+        )
+        gold_rows = [
+            row
+            for path in manifest.feature_paths
+            for row in _read_jsonl_any(Path(path))
+        ]
+
+        assert manifest.feature_row_count == 2
+        assert manifest.timeframe_feature_row_count["10m"] == 2
+        assert [row["timestamp_ms"] for row in gold_rows] == sorted(
+            row["timestamp_ms"] for row in gold_rows
+        )
+        assert all(row["timestamp_ms"] >= 1745884800000 for row in gold_rows)
+        assert {row["candidate_data_source_label"] for row in gold_rows} == {
+            "ORDERBOOK_AWARE_DISCOVERY"
+        }
+        assert {row["book_depth_source_status"] for row in gold_rows} == {
+            "BOOK_DEPTH20_AVAILABLE"
+        }
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 

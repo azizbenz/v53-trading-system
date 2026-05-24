@@ -44,9 +44,13 @@ from cockpit.strategy_ladder_workflow_support import (
     PHASE_B2,
     read_workflow_manifest,
     workflow_phase_dirname,
+    workflow_manifest_path,
 )
 from interface_contracts.pair_catalog import V53_PAIR_CATALOG
 from interface_contracts.storage_budget_support import estimate_silver_size_for_paths
+from local_replay_runtime.strategy_ladder_edge_model_provider_multi_pair import (
+    MULTI_PAIR_C1_ARTIFACT_KIND,
+)
 
 
 _KNOWN_PAIR_SYMBOLS = {
@@ -223,9 +227,11 @@ def _reuse_existing_phase_a1_workflow(
     output_root_text: str,
     jobs_root: Path | None,
 ) -> Patch6NormalizedRequest:
-    if normalized_request.phase_id == PHASE_A1:
+    if normalized_request.phase_id != PHASE_A1:
         return normalized_request
     requested_workflow_run_id = (requested_workflow_run_id or "").strip()
+    if not requested_workflow_run_id:
+        return normalized_request
     matching_candidates: list[tuple[float, str]] = []
     for workflow_root in _iter_workflow_roots(
         output_root_text=output_root_text,
@@ -245,15 +251,12 @@ def _reuse_existing_phase_a1_workflow(
     if not matching_candidates:
         return normalized_request
     matching_candidates.sort(reverse=True)
-    if requested_workflow_run_id:
-        for _, workflow_run_id in matching_candidates:
-            if workflow_run_id == requested_workflow_run_id:
-                return normalized_request.model_copy(
-                    update={"workflow_run_id": requested_workflow_run_id}
-                )
-    return normalized_request.model_copy(
-        update={"workflow_run_id": matching_candidates[0][1]}
-    )
+    for _, workflow_run_id in matching_candidates:
+        if workflow_run_id == requested_workflow_run_id:
+            return normalized_request.model_copy(
+                update={"workflow_run_id": requested_workflow_run_id}
+            )
+    return normalized_request
 
 
 def _reuse_matching_workflow_parent(
@@ -286,7 +289,42 @@ def _reuse_matching_workflow_parent(
 
     requested_workflow_run_id = (requested_workflow_run_id or "").strip()
     if not requested_workflow_run_id:
-        return normalized_request
+        if normalized_request.phase_id == PHASE_A1:
+            return normalized_request
+        matching_candidates: list[tuple[float, str]] = []
+        for workflow_root in _iter_workflow_roots(
+            output_root_text=output_root_text,
+            jobs_root=jobs_root,
+        ):
+            if not _workflow_matches_parent(workflow_root):
+                continue
+            phase_a1_preview = _load_phase_a1_workflow_preview(workflow_root)
+            if phase_a1_preview is not None:
+                workflow_run_id = phase_a1_preview.workflow_run_id
+                marker_path = (
+                    workflow_root
+                    / workflow_phase_dirname(PHASE_A1)
+                    / "source_date_preview_manifest.json"
+                )
+            else:
+                workflow_manifest = read_workflow_manifest(workflow_root)
+                if workflow_manifest is None:
+                    continue
+                workflow_run_id = workflow_manifest.workflow_run_id
+                marker_path = workflow_manifest_path(workflow_root)
+            if not workflow_run_id:
+                continue
+            try:
+                mtime = marker_path.stat().st_mtime
+            except OSError:
+                mtime = 0.0
+            matching_candidates.append((mtime, workflow_run_id))
+        if not matching_candidates:
+            return normalized_request
+        matching_candidates.sort(reverse=True)
+        return normalized_request.model_copy(
+            update={"workflow_run_id": matching_candidates[0][1]}
+        )
     candidate_workflow_roots = [
         _workflow_root_for_run_id(
             workflow_run_id=requested_workflow_run_id,
@@ -350,8 +388,20 @@ class MlOverlayIntakePreview(BaseModel, frozen=True):
     handoff_report_ref: str = ""
     backtest_input_ref: str = ""
     artifact_summary_ref: str = ""
+    source_artifact_ref: str = ""
+    transport_artifact_ref: str = ""
+    training_report_ref: str = ""
+    anti_leakage_proof_ref: str = ""
+    feature_grounding_contract_report_ref: str = ""
+    training_source_contract_report_ref: str = ""
+    ml_overlay_authority_contract_report_ref: str = ""
+    ml_train_eval_overlap_report_ref: str = ""
+    ml_feature_input_label_leakage_report_ref: str = ""
     frozen_ml_artifact_path: str = ""
     frozen_ml_artifact_hash: str = ""
+    expected_edge_artifact_mode: str = ""
+    artifact_kind: str = ""
+    pair_universe: tuple[str, ...] = ()
     rolling_ml_window_plan_path: str = ""
     rolling_ml_window_plan_markdown_ref: str = ""
     rolling_ml_window_plan_status: str = ""
@@ -360,6 +410,7 @@ class MlOverlayIntakePreview(BaseModel, frozen=True):
     timeframe: str = ""
     timeframe_scope: tuple[str, ...] = ()
     feature_names: tuple[str, ...] = ()
+    feature_count: int = 0
     train_start: str = ""
     train_end: str = ""
     requested_backtest_start: str = ""
@@ -457,6 +508,16 @@ def _json_payload(path: Path) -> dict[str, object] | None:
     return payload
 
 
+def _artifact_json_payload(path_text: str) -> dict[str, object] | None:
+    candidate = (path_text or "").strip()
+    if not candidate:
+        return None
+    path = Path(candidate).expanduser()
+    if not path.is_file() or path.suffix.lower() != ".json":
+        return None
+    return _json_payload(path)
+
+
 def _text_value(value: object) -> str:
     if value is None:
         return ""
@@ -480,6 +541,55 @@ def _string_tuple(value: object) -> tuple[str, ...]:
         )
     item_text = _text_value(value)
     return ((item_text,) if item_text else ())
+
+
+def _unique_upper_tuple(values: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            item.strip().upper()
+            for item in values
+            if item and item.strip()
+        )
+    )
+
+
+def _infer_ml_artifact_contract(
+    *,
+    artifact_path_text: str,
+    handoff_payload: dict[str, object] | None,
+    artifact_summary_payload: dict[str, object] | None,
+) -> tuple[str, str, tuple[str, ...], tuple[str, ...]]:
+    artifact_payload = _artifact_json_payload(artifact_path_text)
+    artifact_kind = _text_value(
+        None if artifact_payload is None else artifact_payload.get("artifact_kind")
+    )
+    feature_names = (
+        _string_tuple(None if artifact_payload is None else artifact_payload.get("feature_names"))
+        or _string_tuple(
+            None if artifact_summary_payload is None else artifact_summary_payload.get("feature_names")
+        )
+        or _string_tuple(None if handoff_payload is None else handoff_payload.get("feature_names"))
+    )
+    if artifact_kind == MULTI_PAIR_C1_ARTIFACT_KIND or (
+        artifact_payload is not None and isinstance(artifact_payload.get("pair_id_encoding"), dict)
+    ):
+        pair_id_encoding = (
+            artifact_payload.get("pair_id_encoding")
+            if artifact_payload is not None
+            else {}
+        )
+        pair_universe = _unique_upper_tuple(
+            tuple(str(key) for key in pair_id_encoding.keys())
+            if isinstance(pair_id_encoding, dict)
+            else ()
+        )
+        return "MULTI_PAIR_C1", artifact_kind, pair_universe, feature_names
+    pair = _text_value(
+        None if artifact_summary_payload is None else artifact_summary_payload.get("pair")
+    ) or _text_value(None if handoff_payload is None else handoff_payload.get("pair"))
+    pair_universe = _unique_upper_tuple((pair,)) if pair else ()
+    mode = "MONO_PAIR_LEGACY" if (artifact_path_text or feature_names) else ""
+    return mode, artifact_kind, pair_universe, feature_names
 
 
 def _resolve_ml_handoff_run_root(selected_form: BacktestFormState) -> Path | None:
@@ -555,6 +665,15 @@ def _build_ml_overlay_intake_preview(
     rolling_ml_window_plan_markdown_ref = ""
     rolling_ml_window_plan_status = ""
     rolling_ml_required_artifact_count = 0
+    source_artifact_ref = ""
+    transport_artifact_ref = ""
+    training_report_ref = ""
+    anti_leakage_proof_ref = ""
+    feature_grounding_contract_report_ref = ""
+    training_source_contract_report_ref = ""
+    ml_overlay_authority_contract_report_ref = ""
+    ml_train_eval_overlap_report_ref = ""
+    ml_feature_input_label_leakage_report_ref = ""
     train_days = 0
     validation_days = 0
     freshness_days = 0
@@ -579,6 +698,25 @@ def _build_ml_overlay_intake_preview(
         artifact_stale_after = _text_value(handoff_payload.get("artifact_stale_after"))
         max_valid_backtest_end = _normalize_boundary_text(
             _text_value(handoff_payload.get("max_valid_backtest_end"))
+        )
+        source_artifact_ref = _text_value(handoff_payload.get("source_artifact_ref"))
+        transport_artifact_ref = _text_value(handoff_payload.get("transport_artifact_ref"))
+        training_report_ref = _text_value(handoff_payload.get("training_report_ref"))
+        anti_leakage_proof_ref = _text_value(handoff_payload.get("anti_leakage_proof_ref"))
+        feature_grounding_contract_report_ref = _text_value(
+            handoff_payload.get("feature_grounding_contract_report_ref")
+        )
+        training_source_contract_report_ref = _text_value(
+            handoff_payload.get("training_source_contract_report_ref")
+        )
+        ml_overlay_authority_contract_report_ref = _text_value(
+            handoff_payload.get("ml_overlay_authority_contract_report_ref")
+        )
+        ml_train_eval_overlap_report_ref = _text_value(
+            handoff_payload.get("ml_train_eval_overlap_report_ref")
+        )
+        ml_feature_input_label_leakage_report_ref = _text_value(
+            handoff_payload.get("ml_feature_input_label_leakage_report_ref")
         )
         rolling_ml_window_plan_markdown_ref = _text_value(
             handoff_payload.get("rolling_ml_window_plan_markdown_ref")
@@ -633,6 +771,26 @@ def _build_ml_overlay_intake_preview(
         rolling_ml_window_plan_path = _text_value(
             backtest_input_payload.get("rolling_ml_window_plan_ref")
         )
+        feature_grounding_contract_report_ref = (
+            _text_value(backtest_input_payload.get("feature_grounding_contract_report_ref"))
+            or feature_grounding_contract_report_ref
+        )
+        training_source_contract_report_ref = (
+            _text_value(backtest_input_payload.get("training_source_contract_report_ref"))
+            or training_source_contract_report_ref
+        )
+        ml_overlay_authority_contract_report_ref = (
+            _text_value(backtest_input_payload.get("ml_overlay_authority_contract_report_ref"))
+            or ml_overlay_authority_contract_report_ref
+        )
+        ml_train_eval_overlap_report_ref = (
+            _text_value(backtest_input_payload.get("ml_train_eval_overlap_report_ref"))
+            or ml_train_eval_overlap_report_ref
+        )
+        ml_feature_input_label_leakage_report_ref = (
+            _text_value(backtest_input_payload.get("ml_feature_input_label_leakage_report_ref"))
+            or ml_feature_input_label_leakage_report_ref
+        )
         train_days = _int_value(backtest_input_payload.get("train_days")) or train_days
         validation_days = (
             _int_value(backtest_input_payload.get("validation_days")) or validation_days
@@ -667,6 +825,40 @@ def _build_ml_overlay_intake_preview(
         rolling_ml_window_plan_path = _text_value(
             handoff_payload.get("rolling_ml_window_plan_ref")
         )
+    (
+        expected_edge_artifact_mode,
+        artifact_kind,
+        pair_universe,
+        artifact_feature_names,
+    ) = _infer_ml_artifact_contract(
+        artifact_path_text=frozen_ml_artifact_path,
+        handoff_payload=handoff_payload,
+        artifact_summary_payload=artifact_summary_payload,
+    )
+    if not feature_names and artifact_feature_names:
+        feature_names = artifact_feature_names
+    requested_mode = (
+        (selected_form.expected_edge_artifact_mode or "MONO_PAIR_LEGACY").strip()
+        or "MONO_PAIR_LEGACY"
+    )
+    if (
+        selected_form.ml_mode == "ML_MODE_OVERLAY_FROZEN"
+        and requested_mode == "MULTI_PAIR_C1"
+        and expected_edge_artifact_mode == "MONO_PAIR_LEGACY"
+    ):
+        blockers.append(
+            "EXPECTED_EDGE_ARTIFACT_MODE_MISMATCH:REQUESTED_MULTI_PAIR_C1_DETECTED_MONO_PAIR_LEGACY"
+        )
+    selected_pairs = _unique_upper_tuple(tuple(selected_form.pairs or ()))
+    if selected_pairs and pair_universe:
+        pair_universe_mismatch = tuple(
+            pair_name for pair_name in selected_pairs if pair_name not in pair_universe
+        )
+        if pair_universe_mismatch:
+            blockers.append(
+                "EXPECTED_EDGE_ARTIFACT_PAIR_UNIVERSE_MISMATCH:"
+                + ",".join(pair_universe_mismatch)
+            )
 
     if not frozen_ml_artifact_path:
         blockers.append("FROZEN_ML_ARTIFACT_PATH_NOT_PROVEN")
@@ -717,8 +909,20 @@ def _build_ml_overlay_intake_preview(
             if artifact_summary_path.is_file()
             else ""
         ),
+        source_artifact_ref=source_artifact_ref,
+        transport_artifact_ref=transport_artifact_ref,
+        training_report_ref=training_report_ref,
+        anti_leakage_proof_ref=anti_leakage_proof_ref,
+        feature_grounding_contract_report_ref=feature_grounding_contract_report_ref,
+        training_source_contract_report_ref=training_source_contract_report_ref,
+        ml_overlay_authority_contract_report_ref=ml_overlay_authority_contract_report_ref,
+        ml_train_eval_overlap_report_ref=ml_train_eval_overlap_report_ref,
+        ml_feature_input_label_leakage_report_ref=ml_feature_input_label_leakage_report_ref,
         frozen_ml_artifact_path=frozen_ml_artifact_path,
         frozen_ml_artifact_hash=frozen_ml_artifact_hash,
+        expected_edge_artifact_mode=expected_edge_artifact_mode,
+        artifact_kind=artifact_kind,
+        pair_universe=pair_universe,
         rolling_ml_window_plan_path=rolling_ml_window_plan_path,
         rolling_ml_window_plan_markdown_ref=rolling_ml_window_plan_markdown_ref,
         rolling_ml_window_plan_status=rolling_ml_window_plan_status,
@@ -727,6 +931,7 @@ def _build_ml_overlay_intake_preview(
         timeframe=timeframe,
         timeframe_scope=timeframe_scope,
         feature_names=feature_names,
+        feature_count=len(feature_names),
         train_start=train_start,
         train_end=train_end,
         requested_backtest_start=requested_backtest_start,
@@ -751,7 +956,9 @@ def _apply_ml_overlay_intake_to_form(
     if not intake.run_root:
         return selected_form
     update: dict[str, object] = {}
-    if intake.pair and not selected_form.pairs:
+    if intake.pair_universe and not selected_form.pairs:
+        update["pairs"] = intake.pair_universe
+    elif intake.pair and not selected_form.pairs:
         update["pairs"] = (intake.pair,)
     selected_start = _normalize_boundary_text(selected_form.start)
     selected_end = _normalize_boundary_text(selected_form.end)
@@ -771,6 +978,15 @@ def _apply_ml_overlay_intake_to_form(
         update["rolling_ml_window_plan_path"] = intake.rolling_ml_window_plan_path
     if intake.freshness_days > 0:
         update["ml_artifact_freshness_days"] = intake.freshness_days
+    current_mode = (
+        (selected_form.expected_edge_artifact_mode or "MONO_PAIR_LEGACY").strip()
+        or "MONO_PAIR_LEGACY"
+    )
+    if (
+        intake.expected_edge_artifact_mode == "MULTI_PAIR_C1"
+        and current_mode != "MULTI_PAIR_C1"
+    ):
+        update["expected_edge_artifact_mode"] = "MULTI_PAIR_C1"
     if not update:
         return selected_form
     return selected_form.model_copy(update=update)
@@ -1195,9 +1411,11 @@ def _build_preview_command(
     klines_path: str,
     metadata_path: str,
     pairs: tuple[str, ...],
+    backtest_timeframes: tuple[str, ...],
     start: str,
     end: str,
     ml_mode: str,
+    expected_edge_artifact_mode: str,
     frozen_ml_artifact_path: str,
     frozen_ml_artifact_hash: str,
     rolling_ml_window_plan_path: str,
@@ -1248,6 +1466,12 @@ def _build_preview_command(
             if frozen_ml_artifact_hash:
                 parts.extend(["--frozen-ml-artifact-hash", frozen_ml_artifact_hash])
             if job_kind == CockpitBacktestJobKind.STRATEGY_LADDER_RUNNER:
+                parts.extend(
+                    [
+                        "--expected-edge-artifact-mode",
+                        expected_edge_artifact_mode or "MONO_PAIR_LEGACY",
+                    ]
+                )
                 if rolling_ml_window_plan_path:
                     parts.extend(
                         [
@@ -1273,6 +1497,8 @@ def _build_preview_command(
         parts.extend(["--raw-source-manifest", raw_source_manifest_path])
     if pairs:
         parts.extend(["--pairs", ",".join(pairs)])
+    if job_kind == CockpitBacktestJobKind.STRATEGY_LADDER_RUNNER and backtest_timeframes:
+        parts.extend(["--timeframes", ",".join(backtest_timeframes)])
     if start:
         parts.extend(["--start", start])
     if end:
@@ -1783,9 +2009,11 @@ def build_patch6_preflight_preview(
             klines_path=selected_form.klines_path,
             metadata_path=selected_form.metadata_path,
             pairs=normalized_request.pair_subset,
+            backtest_timeframes=normalized_request.backtest_timeframes,
             start=normalized_request.start,
             end=normalized_request.end,
             ml_mode=normalized_request.ml_mode,
+            expected_edge_artifact_mode=normalized_request.expected_edge_artifact_mode,
             frozen_ml_artifact_path=normalized_request.frozen_ml_artifact_path,
             frozen_ml_artifact_hash=normalized_request.frozen_ml_artifact_hash,
             rolling_ml_window_plan_path=normalized_request.rolling_ml_window_plan_path,
@@ -1944,13 +2172,20 @@ def load_patch6_preflight_preview(
         intake=ml_overlay_intake,
     )
     normalized_request = build_patch6_normalized_request(selected_form)
-    force_new_workflow = normalized_request.phase_id == PHASE_A1
-    requested_workflow_run_id = (
-        "" if force_new_workflow else normalized_request.workflow_run_id
+    requested_workflow_run_id = (normalized_request.workflow_run_id or "").strip()
+    force_new_workflow = (
+        normalized_request.phase_id == PHASE_A1 and not requested_workflow_run_id
     )
     normalized_request, workflow_request_hash = canonicalize_workflow_identity(
         normalized_request,
         force_new_workflow=force_new_workflow,
+    )
+    normalized_request = _reuse_existing_phase_a1_workflow(
+        normalized_request=normalized_request,
+        workflow_request_hash=workflow_request_hash,
+        requested_workflow_run_id=requested_workflow_run_id,
+        output_root_text=selected_form.export_dir,
+        jobs_root=None,
     )
     normalized_request = _reuse_matching_workflow_parent(
         normalized_request=normalized_request,
@@ -1961,15 +2196,23 @@ def load_patch6_preflight_preview(
     )
     request_hash = request_hash_for_normalized_request(normalized_request)
     if preview_manifest is not None:
+        preview_matches_current_workflow = (
+            normalized_request.phase_id == PHASE_A1
+            and bool(requested_workflow_run_id)
+            and preview_manifest.workflow_run_id == requested_workflow_run_id
+        )
         payload = preview_manifest.preview_payload
         if isinstance(payload, dict) and payload:
             try:
                 loaded = BacktestPreflightPreview.model_validate(payload)
             except ValueError:
                 loaded = None
-            if loaded is not None and loaded.request_hash == request_hash:
+            if loaded is not None and (
+                loaded.request_hash == request_hash
+                or preview_matches_current_workflow
+            ):
                 return loaded
-        if preview_manifest.request_hash == request_hash:
+        if preview_manifest.request_hash == request_hash or preview_matches_current_workflow:
             matched_files_by_type = preview_manifest.matched_files_by_type or {}
             common_range = preview_manifest.common_date_range or {}
             return BacktestPreflightPreview(

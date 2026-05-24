@@ -24,6 +24,9 @@ from interface_contracts import (
     RuntimeMode,
 )
 from interface_contracts.atomic_io import atomic_write_json
+from local_replay_runtime.strategy_ladder_expected_edge_training import (
+    DEFAULT_EXPECTED_EDGE_FEATURE_NAMES,
+)
 from cockpit.strategy_ladder_workflow_support import (
     PHASE_A1,
     PHASE_A2,
@@ -50,6 +53,9 @@ from cockpit.queue_support import (
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 _logger = logging.getLogger(__name__)
+_LEGACY_EXPECTED_EDGE_FEATURE_NAME_SET = frozenset(
+    DEFAULT_EXPECTED_EDGE_FEATURE_NAMES
+)
 
 
 class CockpitBacktestJobStatus(StrEnum):
@@ -394,6 +400,7 @@ class CockpitBacktestJobRecord(BaseModel, frozen=True):
     ml_artifact_freshness_days: int = 30
     candidate_discovery_mode: str = "SAMPLE_CAPPED_DEBUG"
     engine_native_sample_size: int = _DEFAULT_ENGINE_NATIVE_SAMPLE_SIZE
+    backtest_timeframes: tuple[str, ...] = ("1m",)
     b1_5_policy_mode: str = "conservative_hard_only"
     preselected_only: bool = True
     diagnostic_full_replay: bool = False
@@ -629,6 +636,7 @@ def launch_backtest_job(
     consumed_artifact_refs: dict[str, str] | None = None,
     calibration_version: str = "strategy_ladder_expected_edge.v1",
     timeframe: str = "1m",
+    backtest_timeframes: tuple[str, ...] = (),
     requested_backtest_start: str = "",
     requested_backtest_days: int = 130,
     train_days: int = 180,
@@ -773,6 +781,7 @@ def launch_backtest_job(
             candidate_events_path=candidate_events_path,
             calibration_version=calibration_version,
             timeframe=timeframe,
+            backtest_timeframes=backtest_timeframes,
             requested_backtest_start=requested_backtest_start,
             requested_backtest_days=requested_backtest_days,
             train_days=train_days,
@@ -884,6 +893,7 @@ def launch_backtest_job(
         ml_artifact_freshness_days=max(int(ml_artifact_freshness_days), 1),
         candidate_discovery_mode=candidate_discovery_mode,
         engine_native_sample_size=engine_native_sample_size,
+        backtest_timeframes=backtest_timeframes or ("1m",),
         b1_5_policy_mode=b1_5_policy_mode,
         preselected_only=preselected_only,
         diagnostic_full_replay=diagnostic_full_replay,
@@ -944,6 +954,23 @@ def launch_backtest_job(
         pairs=pairs,
         start=start,
         end=end,
+        b2_run_root=b2_run_root,
+        calibration_version=calibration_version,
+        timeframe=timeframe,
+        backtest_timeframes=backtest_timeframes,
+        requested_backtest_start=requested_backtest_start,
+        requested_backtest_days=requested_backtest_days,
+        train_days=train_days,
+        validation_days=validation_days,
+        freshness_days=freshness_days,
+        chunk_days=chunk_days,
+        feature_names_csv=feature_names_csv,
+        sample_stride_minutes=sample_stride_minutes,
+        target_horizon_minutes=target_horizon_minutes,
+        training_seed=training_seed,
+        max_optuna_trials=max_optuna_trials,
+        min_training_rows=min_training_rows,
+        shap_summary_ref=shap_summary_ref,
         engine_native_mode=engine_native_mode,
         engine_native_sample_size=engine_native_sample_size,
         frozen_ml_artifact_path=frozen_ml_artifact_path,
@@ -1068,6 +1095,14 @@ def _build_governed_request(
     )
 
 
+def _csv_feature_names(raw_value: str) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            part.strip() for part in (raw_value or "").split(",") if part.strip()
+        )
+    )
+
+
 def _build_backtest_command(
     *,
     job_id: str,
@@ -1087,11 +1122,11 @@ def _build_backtest_command(
     end: str,
     allow_broad_run: bool,
     ml_mode_status: str,
-    frozen_ml_artifact_path: Path | None,
-    frozen_ml_artifact_hash: str,
+    frozen_ml_artifact_path: Path | None = None,
+    frozen_ml_artifact_hash: str = "",
     expected_edge_artifact_mode: str = "MONO_PAIR_LEGACY",
-    rolling_ml_window_plan_path: Path | None,
-    ml_artifact_freshness_days: int,
+    rolling_ml_window_plan_path: Path | None = None,
+    ml_artifact_freshness_days: int = 30,
     engine_native_mode: bool,
     engine_native_sample_size: int,
     candidate_discovery_mode: str = "SAMPLE_CAPPED_DEBUG",
@@ -1111,6 +1146,7 @@ def _build_backtest_command(
     candidate_events_path: Path | None = None,
     calibration_version: str = "strategy_ladder_expected_edge.v1",
     timeframe: str = "1m",
+    backtest_timeframes: tuple[str, ...] = (),
     requested_backtest_start: str = "",
     requested_backtest_days: int = 130,
     train_days: int = 180,
@@ -1226,6 +1262,10 @@ def _build_backtest_command(
             command.extend(["--requested-backtest-start", requested_backtest_start])
         if (shap_summary_ref or "").strip():
             command.extend(["--shap-summary-ref", shap_summary_ref.strip()])
+        # Patch P2b (2026-05-22) — when admin selected ≥ 2 pairs in Lab UI,
+        # propagate them so the handoff emits a MULTI_PAIR_C1 manifest.
+        if len(pairs) >= 2:
+            command.extend(["--selected-pairs", ",".join(pairs)])
         return tuple(command)
     if job_kind == CockpitBacktestJobKind.STRATEGY_LADDER_RUNNER:
         command = [
@@ -1302,6 +1342,8 @@ def _build_backtest_command(
             command.extend(["--raw-source-manifest", str(raw_source_manifest_path.resolve())])
         if pairs:
             command.extend(["--pairs", ",".join(pairs)])
+        if backtest_timeframes:
+            command.extend(["--timeframes", ",".join(backtest_timeframes)])
         if start:
             command.extend(["--start", start])
         if end:
@@ -1906,7 +1948,30 @@ def _write_patch6_job_request(
     feature_store_root: Path | None = None,
     silver_index_path: Path | None = None,
     candidate_events_path: Path | None = None,
+    b2_run_root: Path | None = None,
+    calibration_version: str = "strategy_ladder_expected_edge.v1",
+    timeframe: str = "1m",
+    backtest_timeframes: tuple[str, ...] = (),
+    requested_backtest_start: str = "",
+    requested_backtest_days: int = 130,
+    train_days: int = 180,
+    validation_days: int = 30,
+    freshness_days: int = 30,
+    chunk_days: int = 30,
+    feature_names_csv: str = "close_return,high_low_range,volume",
+    sample_stride_minutes: int = 60,
+    target_horizon_minutes: int = 1,
+    training_seed: int = 5307,
+    max_optuna_trials: int = 0,
+    min_training_rows: int = 210,
+    shap_summary_ref: str = "",
 ) -> None:
+    requested_feature_names = _csv_feature_names(feature_names_csv)
+    requested_non_legacy_feature_names = tuple(
+        name
+        for name in requested_feature_names
+        if name not in _LEGACY_EXPECTED_EDGE_FEATURE_NAME_SET
+    )
     atomic_write_json(
         path,
         {
@@ -1944,6 +2009,35 @@ def _write_patch6_job_request(
             "pairs": list(pairs),
             "start": start,
             "end": end,
+            "b2_run_root": (
+                str(b2_run_root.resolve()) if b2_run_root is not None else ""
+            ),
+            "calibration_version": calibration_version,
+            "timeframe": timeframe,
+            "backtest_timeframes": list(backtest_timeframes or ()),
+            "requested_backtest_start": requested_backtest_start,
+            "requested_backtest_days": max(int(requested_backtest_days), 1),
+            "train_days": max(int(train_days), 1),
+            "validation_days": max(int(validation_days), 1),
+            "freshness_days": max(int(freshness_days), 1),
+            "chunk_days": max(int(chunk_days), 1),
+            "feature_names_csv": feature_names_csv,
+            "requested_feature_names": list(requested_feature_names),
+            "requested_feature_count": len(requested_feature_names),
+            "requested_non_legacy_feature_names": list(
+                requested_non_legacy_feature_names
+            ),
+            "requested_non_legacy_feature_count": len(
+                requested_non_legacy_feature_names
+            ),
+            "requires_replay_grounding": bool(requested_non_legacy_feature_names),
+            "b2_run_root_present": b2_run_root is not None,
+            "sample_stride_minutes": max(int(sample_stride_minutes), 1),
+            "target_horizon_minutes": max(int(target_horizon_minutes), 1),
+            "training_seed": int(training_seed),
+            "max_optuna_trials": max(int(max_optuna_trials), 0),
+            "min_training_rows": max(int(min_training_rows), 10),
+            "shap_summary_ref": shap_summary_ref,
             "engine_native_mode": engine_native_mode,
             "engine_native_sample_size": engine_native_sample_size,
             "frozen_ml_artifact_path": (

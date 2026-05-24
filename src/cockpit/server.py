@@ -6,7 +6,7 @@ import hashlib
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import asdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import AsyncIterator
 from urllib.parse import urlencode
@@ -43,13 +43,17 @@ from cockpit.backtest_preflight import (
     resolve_phase_b1_replay_input_candidates_path,
 )
 from cockpit.backtest_state_support import (
+    BacktestMlChainState,
     BacktestPreviewManifest,
     action_name_for_phase,
     build_patch6_state,
     canonical_patch6_raw_roots,
+    normalize_backtest_timeframes,
     phase_id_for_action,
     read_launch_request_state,
+    read_backtest_ml_chain_state,
     read_preview_manifest,
+    write_backtest_ml_chain_state,
     write_current_form_state,
     write_launch_request_state,
     write_preview_manifest,
@@ -75,13 +79,27 @@ from cockpit.strategy_ladder_workflow_support import (
 )
 from cockpit.runtime_support import read_runtime_surfaces
 from cockpit.strategy_ladder_ml_handoff_support import (
+    DEFAULT_ROLLING_CHUNK_DAYS,
+    DEFAULT_ROLLING_FRESHNESS_DAYS,
+    DEFAULT_ROLLING_TRAIN_DAYS,
+    DEFAULT_ROLLING_VALIDATION_DAYS,
+    discover_backtest_feature_governance,
+    discover_lab_feature_governance,
     read_strategy_ladder_ml_handoff_dashboard_summary,
+    resolve_backtest_feature_picker_defaults,
+    resolve_backtest_selected_feature_names,
+    selected_demoted_lab_features,
 )
 from cockpit.state import (
     CockpitPaths,
     build_dashboard_view_model,
     read_pair_selector,
     read_service_status,
+)
+from local_replay_runtime.strategy_ladder_expected_edge_training import (
+    DEFAULT_EXPECTED_EDGE_FEATURE_NAMES,
+    SUPPORTED_EXPECTED_EDGE_FEATURE_NAMES,
+    normalize_supported_expected_edge_feature_names,
 )
 from interface_contracts import (
     DashboardArtifactKind,
@@ -92,6 +110,9 @@ from monitoring.contracts import ShadowVpsServiceLogQuery
 
 
 _logger = logging.getLogger(__name__)
+_LEGACY_EXPECTED_EDGE_FEATURE_NAME_SET = frozenset(
+    DEFAULT_EXPECTED_EDGE_FEATURE_NAMES
+)
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
 TEMPLATE_DIR = PACKAGE_ROOT / "templates"
@@ -177,6 +198,7 @@ def _adopt_launch_state_into_form(
             "start": launch_state.start,
             "end": launch_state.end,
             "ml_mode": launch_state.ml_mode,
+            "backtest_timeframes": launch_state.backtest_timeframes,
             "ml_handoff_run_root": "",
             "allow_broad_run": _checkbox_text(bool(launch_state.allow_broad_run)),
             "candidate_discovery_mode": launch_state.candidate_discovery_mode,
@@ -202,6 +224,62 @@ def _adopt_launch_state_into_form(
             "output_root": launch_state.output_root_selected,
         }
     )
+
+
+def _normalize_feature_picker_selection(
+    *,
+    selected_features: list[str] | tuple[str, ...] | None = None,
+    selected_features_csv: str = "",
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    """Return authoritative, checkbox, and mirror feature tuples for cockpit pickers."""
+
+    normalized_checkbox_features: tuple[str, ...] = ()
+    if selected_features:
+        ordered_features: list[str] = []
+        seen_features: set[str] = set()
+        for raw_name in selected_features:
+            cleaned = (raw_name or "").strip()
+            if not cleaned or cleaned in seen_features:
+                continue
+            seen_features.add(cleaned)
+            ordered_features.append(cleaned)
+        if ordered_features:
+            normalized_checkbox_features = normalize_supported_expected_edge_feature_names(
+                ordered_features
+            )
+
+    csv_candidates = tuple(
+        part.strip() for part in (selected_features_csv or "").split(",") if part.strip()
+    )
+    normalized_csv_features = (
+        normalize_supported_expected_edge_feature_names(csv_candidates)
+        if csv_candidates
+        else ()
+    )
+    authoritative_features = normalized_csv_features or normalized_checkbox_features
+    return (
+        authoritative_features,
+        normalized_checkbox_features,
+        normalized_csv_features,
+    )
+
+
+def _non_legacy_expected_edge_features(
+    feature_names: tuple[str, ...],
+) -> tuple[str, ...]:
+    return tuple(
+        name for name in feature_names if name not in _LEGACY_EXPECTED_EDGE_FEATURE_NAME_SET
+    )
+
+
+def _lab_feature_selection_source(
+    form_state: LabMlHandoffFormState,
+) -> str:
+    if form_state.selected_features:
+        return "FORM_SELECTED"
+    if (form_state.feature_names or "").strip():
+        return "FORM_CSV"
+    return "NONE"
 
 
 def _build_lab_ml_handoff_form_state(
@@ -233,6 +311,9 @@ def _build_lab_ml_handoff_form_state(
     signed_by: str,
     intent: str,
     selected_pairs: list[str] | tuple[str, ...] | None = None,
+    selected_features: list[str] | tuple[str, ...] | None = None,
+    feature_picker_enabled: bool | str = False,
+    selected_features_csv: str = "",
 ) -> LabMlHandoffFormState:
     # Patch P2 — normalize multi-select : strip, upper, dedup (preserve order).
     normalized_selected: tuple[str, ...] = ()
@@ -246,6 +327,37 @@ def _build_lab_ml_handoff_form_state(
             seen.add(cleaned)
             ordered.append(cleaned)
         normalized_selected = tuple(ordered)
+    (
+        normalized_selected_features,
+        normalized_checkbox_features,
+        normalized_csv_features,
+    ) = _normalize_feature_picker_selection(
+        selected_features=selected_features,
+        selected_features_csv=selected_features_csv,
+    )
+    feature_picker_active = str(feature_picker_enabled).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if feature_picker_active and not normalized_selected_features:
+        raise ValueError(">=1 feature requise ; default reset au minimal 3")
+    if (
+        normalized_checkbox_features
+        and normalized_csv_features
+        and normalized_checkbox_features != normalized_csv_features
+    ):
+        _logger.warning(
+            "LAB_FEATURE_PICKER_MIRROR_MISMATCH checkbox=%s csv=%s",
+            ",".join(normalized_checkbox_features),
+            ",".join(normalized_csv_features),
+        )
+    resolved_feature_names = (
+        ",".join(normalized_selected_features)
+        if normalized_selected_features
+        else ((feature_names or "").strip() or "close_return,high_low_range,volume")
+    )
     return LabMlHandoffFormState(
         kline_root=(kline_root or "").strip(),
         b2_run_root=(b2_run_root or "").strip(),
@@ -267,9 +379,8 @@ def _build_lab_ml_handoff_form_state(
         calibration_version=(
             (calibration_version or "").strip() or "strategy_ladder_expected_edge.v1"
         ),
-        feature_names=(
-            (feature_names or "").strip() or "close_return,high_low_range,volume"
-        ),
+        feature_names=resolved_feature_names,
+        selected_features=normalized_selected_features,
         sample_stride_minutes=max(int(sample_stride_minutes or 0), 1),
         target_horizon_minutes=max(int(target_horizon_minutes or 0), 1),
         training_seed=int(training_seed),
@@ -327,6 +438,133 @@ def _sync_lab_handoff_into_backtest_form(
             "metadata_path": lab_form.metadata_root,
             # Keep IA Lab export roots isolated from backtest workflow roots.
             "output_root": preserved_output_root,
+        }
+    )
+
+
+def _build_backtest_form_state(
+    *,
+    current_form: BacktestFormState | None = None,
+    job_kind: str,
+    selected_action_name: str,
+    resolved_phase_id: str,
+    workflow_phase: str,
+    workflow_run_id: str,
+    export_dir: str,
+    baseline_export_dir: str,
+    raw_source_manifest_path: str,
+    raw_roots: tuple[str, ...],
+    pairs: tuple[str, ...],
+    start: str,
+    end: str,
+    ml_mode: str,
+    training_timeframe: str,
+    backtest_timeframes: str,
+    feature_names: str,
+    selected_features: list[str] | tuple[str, ...] | None,
+    feature_picker_enabled: str,
+    expected_edge_artifact_mode: str,
+    ml_handoff_run_root: str,
+    frozen_ml_artifact_path: str,
+    frozen_ml_artifact_hash: str,
+    rolling_ml_window_plan_path: str,
+    ml_artifact_freshness_days: int,
+    allow_broad_run: str,
+    confirm_broad_run: str,
+    candidate_discovery_mode: str,
+    engine_native_sample_size: int,
+    b1_5_policy_mode: str,
+    preselected_only: str,
+    diagnostic_full_replay: str,
+    small_scope_enabled: str,
+    full_scan_enabled: str,
+    silver_storage_mode: str,
+    debug_storage_override: str,
+    signed_by: str,
+    orderbook_path: str,
+    klines_path: str,
+    trades_path: str,
+    metadata_path: str,
+    output_root: str,
+    selected_features_csv: str = "",
+) -> BacktestFormState:
+    (
+        normalized_selected_features,
+        normalized_checkbox_features,
+        normalized_csv_features,
+    ) = _normalize_feature_picker_selection(
+        selected_features=selected_features,
+        selected_features_csv=selected_features_csv,
+    )
+    feature_picker_active = str(feature_picker_enabled).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if (
+        normalized_checkbox_features
+        and normalized_csv_features
+        and normalized_checkbox_features != normalized_csv_features
+    ):
+        _logger.warning(
+            "BACKTEST_FEATURE_PICKER_MIRROR_MISMATCH checkbox=%s csv=%s",
+            ",".join(normalized_checkbox_features),
+            ",".join(normalized_csv_features),
+        )
+    if normalized_selected_features:
+        resolved_feature_names = ",".join(normalized_selected_features)
+    elif feature_picker_active:
+        resolved_feature_names = ""
+    else:
+        resolved_feature_names = (
+            (feature_names or "").strip() or "close_return,high_low_range,volume"
+        )
+    return (current_form or BacktestFormState()).model_copy(
+        update={
+            "job_kind": job_kind,
+            "action_name": selected_action_name,
+            "phase_id": resolved_phase_id,
+            "workflow_phase": (workflow_phase or resolved_phase_id or PHASE_A1),
+            "workflow_run_id": (workflow_run_id or "").strip(),
+            "export_dir": export_dir,
+            "baseline_export_dir": baseline_export_dir,
+            "raw_source_manifest_path": raw_source_manifest_path,
+            "raw_roots": raw_roots,
+            "pairs": pairs,
+            "start": start,
+            "end": end,
+            "ml_mode": ml_mode,
+            "training_timeframe": (training_timeframe or "1m").strip() or "1m",
+            "backtest_timeframes": normalize_backtest_timeframes(backtest_timeframes),
+            "feature_names": resolved_feature_names,
+            "selected_features": normalized_selected_features,
+            "feature_picker_enabled": feature_picker_enabled,
+            "expected_edge_artifact_mode": (
+                expected_edge_artifact_mode or "MONO_PAIR_LEGACY"
+            ),
+            "ml_handoff_run_root": ml_handoff_run_root,
+            "frozen_ml_artifact_path": frozen_ml_artifact_path,
+            "frozen_ml_artifact_hash": frozen_ml_artifact_hash,
+            "rolling_ml_window_plan_path": rolling_ml_window_plan_path,
+            "ml_artifact_freshness_days": max(int(ml_artifact_freshness_days), 1),
+            "allow_broad_run": allow_broad_run,
+            "confirm_broad_run": confirm_broad_run,
+            "candidate_discovery_mode": candidate_discovery_mode,
+            "engine_native_sample_size": max(int(engine_native_sample_size), 0),
+            "b1_5_policy_mode": b1_5_policy_mode,
+            "preselected_only": preselected_only,
+            "diagnostic_full_replay": diagnostic_full_replay,
+            "small_scope_enabled": small_scope_enabled,
+            "full_scan_enabled": full_scan_enabled,
+            "silver_storage_mode": silver_storage_mode,
+            "debug_storage_override": debug_storage_override,
+            "signed_by": signed_by,
+            "orderbook_path": orderbook_path,
+            "klines_path": klines_path,
+            "trades_path": trades_path,
+            "metadata_path": metadata_path,
+            "output_root": output_root,
         }
     )
 
@@ -408,6 +646,8 @@ def create_app(
         selected_pair: str | None = None,
         log_query: ShadowVpsServiceLogQuery | None = None,
     ):
+        if current_page == "backtest":
+            _reconcile_backtest_ml_chain()
         notice_message = request.query_params.get("notice", "")
         notice_status = request.query_params.get("notice_status", "info")
         selected_candidate_id = request.query_params.get("candidate_id", "")
@@ -423,6 +663,43 @@ def create_app(
             notice_status=notice_status,
             log_query=log_query,
         )
+
+    def _resolve_backtest_runtime_feature_context() -> tuple[tuple[str, ...], tuple[str, ...]]:
+        jobs_root = app.state.paths.backtest_jobs_root
+        if jobs_root is None:
+            return (), ()
+        current_form = read_backtest_form_state(jobs_root)
+        lab_form = read_lab_ml_handoff_form_state(jobs_root)
+        preflight = build_patch6_preflight_preview(
+            selected_form=current_form,
+            jobs_root=jobs_root,
+        )
+        artifact_feature_names = tuple(preflight.ml_overlay_intake.feature_names)
+        governance_entries = discover_backtest_feature_governance(
+            current_form,
+            registry_path=jobs_root / "feature_promotion_registry.json",
+        )
+        authoritative_frozen_artifact = bool(
+            current_form.ml_mode == "ML_MODE_OVERLAY_FROZEN"
+            and preflight.ml_overlay_intake.ready
+            and artifact_feature_names
+        )
+        active_feature_names = (
+            resolve_backtest_selected_feature_names(
+                current_form,
+                lab_form_state=lab_form,
+                artifact_feature_names=artifact_feature_names,
+            )
+            if authoritative_frozen_artifact
+            else resolve_backtest_feature_picker_defaults(
+                form_state=current_form,
+                lab_form_state=lab_form,
+                governance_entries=governance_entries,
+                supported_feature_names=SUPPORTED_EXPECTED_EDGE_FEATURE_NAMES,
+                artifact_feature_names=artifact_feature_names,
+            )
+        )
+        return active_feature_names, artifact_feature_names
 
     def _redirect(
         path: str,
@@ -683,6 +960,58 @@ def create_app(
             phase_completed_at=preview_manifest.created_at,
         )
 
+    def _refresh_requested_phase_a1_workflow_manifest(
+        *,
+        jobs_root: Path,
+        requested_workflow_run_id: str,
+        preflight,
+        preview_manifest: BacktestPreviewManifest,
+    ) -> None:
+        requested_id = (requested_workflow_run_id or "").strip()
+        if not requested_id or requested_id == preflight.workflow_run_id:
+            return
+        workflow_root = _workflow_root_for_request(
+            jobs_root=jobs_root,
+            workflow_run_id=requested_id,
+            operator_output_root=preflight.output_root_selected,
+        )
+        if not workflow_root.exists():
+            return
+        ensure_workflow_manifest(
+            workflow_root=workflow_root,
+            workflow_run_id=requested_id,
+            request_hash=preflight.request_hash,
+            phase_id=PHASE_A1,
+            pairs=preflight.requested_pairs or preflight.detected_pairs,
+            start=preflight.normalized_request.start,
+            end=preflight.normalized_request.end,
+            ml_mode=preflight.normalized_request.ml_mode,
+            candidate_discovery_mode=preflight.candidate_discovery_mode,
+            engine_native_sample_size=preflight.effective_engine_native_sample_size,
+            b1_5_policy_mode=preflight.normalized_request.b1_5_policy_mode,
+            engine_count=preflight.engine_count,
+            allow_broad_run=preflight.normalized_request.allow_broad_run,
+            small_scope_enabled=preflight.small_scope_enabled,
+            full_scan_enabled=preflight.full_scan_enabled,
+            no_full_scan_enabled=preflight.no_full_scan_enabled,
+            silver_storage_mode_requested=preflight.silver_storage_mode_requested,
+            silver_storage_mode_effective=preflight.silver_storage_mode_effective,
+        )
+        upsert_workflow_phase(
+            workflow_root=workflow_root,
+            workflow_run_id=requested_id,
+            phase_id=PHASE_A1,
+            phase_run_id=preview_manifest.preview_id,
+            phase_output_root=workflow_root / workflow_phase_dirname(PHASE_A1),
+            parent_workflow_ref=str(workflow_manifest_path(workflow_root).resolve()),
+            job_id=preview_manifest.preview_id,
+            request_hash=preflight.request_hash,
+            phase_status=preflight.inspection_status,
+            blocker_codes=preflight.blockers,
+            error_code="",
+            stderr_ref="",
+        )
+
     def _preview_mismatch_fields(
         *,
         manifest: BacktestPreviewManifest | None,
@@ -772,6 +1101,409 @@ def create_app(
                     mismatches.append(field_name)
         return tuple(dict.fromkeys(mismatches))
 
+    def _truthy(raw_value: object) -> bool:
+        return str(raw_value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+    def _has_authoritative_frozen_artifact(preflight) -> bool:
+        return bool(
+            preflight.normalized_request.ml_mode == "ML_MODE_OVERLAY_FROZEN"
+            and preflight.ml_overlay_intake.ready
+            and preflight.ml_overlay_intake.frozen_ml_artifact_path
+            and preflight.ml_overlay_intake.frozen_ml_artifact_hash
+        )
+
+    def _parse_date_only(raw_value: str) -> datetime:
+        value = (raw_value or "").strip().replace("Z", "+00:00")
+        if "T" in value:
+            parsed = datetime.fromisoformat(value)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=UTC)
+            return parsed.astimezone(UTC)
+        return datetime.fromisoformat(f"{value}T00:00:00+00:00")
+
+    def _derive_backtest_ml_training_window(
+        *,
+        selected_form: BacktestFormState,
+    ) -> tuple[dict[str, object] | None, tuple[str, ...]]:
+        start_text = (selected_form.start or "").strip()
+        end_text = (selected_form.end or "").strip()
+        blockers: list[str] = []
+        if not start_text or not end_text:
+            blockers.append("BACKTEST_FEATURE_TRAINING_REQUIRES_EXPLICIT_START_END")
+            return None, tuple(blockers)
+        try:
+            requested_backtest_start = _parse_date_only(start_text)
+            requested_backtest_end = _parse_date_only(end_text)
+        except ValueError:
+            blockers.append("BACKTEST_FEATURE_TRAINING_INVALID_DATE_RANGE")
+            return None, tuple(blockers)
+        if requested_backtest_end < requested_backtest_start:
+            blockers.append("BACKTEST_FEATURE_TRAINING_INVALID_DATE_RANGE")
+            return None, tuple(blockers)
+        train_days = DEFAULT_ROLLING_TRAIN_DAYS
+        validation_days = DEFAULT_ROLLING_VALIDATION_DAYS
+        freshness_days = DEFAULT_ROLLING_FRESHNESS_DAYS
+        chunk_days = DEFAULT_ROLLING_CHUNK_DAYS
+        train_end = requested_backtest_start - timedelta(days=1)
+        train_start = train_end - timedelta(days=train_days - 1)
+        requested_backtest_days = (
+            requested_backtest_end.date() - requested_backtest_start.date()
+        ).days + 1
+        return (
+            {
+                "train_start": train_start.date().isoformat(),
+                "train_end": train_end.date().isoformat(),
+                "requested_backtest_start": requested_backtest_start.date().isoformat(),
+                "requested_backtest_days": max(int(requested_backtest_days), 1),
+                "train_days": train_days,
+                "validation_days": validation_days,
+                "freshness_days": freshness_days,
+                "chunk_days": chunk_days,
+            },
+            (),
+        )
+
+    def _existing_phase_b2_run_root(
+        *,
+        workflow_root: Path,
+        workflow_run_id: str,
+    ) -> Path | None:
+        candidate = (
+            workflow_root
+            / workflow_phase_dirname(PHASE_B2)
+            / "backtest_strategy_ladder"
+            / workflow_run_id
+        )
+        return candidate if candidate.is_dir() else None
+
+    def _launch_strategy_ladder_phase_job(
+        *,
+        jobs_root: Path,
+        preflight,
+        export_path: Path,
+        baseline_path: Path | None,
+        raw_manifest_path: Path | None,
+        manifest_blocker: str,
+        ambiguity_blocker: str,
+        allow_broad: bool,
+        operator_output_root: str,
+        signed_by: str,
+    ):
+        selected_action_name = str(preflight.action_name or "").strip()
+        parsed_action = StrategyLadderControlAction(selected_action_name)
+        parsed_job_kind = (
+            CockpitBacktestJobKind.STRATEGY_LADDER_DATA_FACTORY
+            if parsed_action
+            in {
+                StrategyLadderControlAction.PHASE_A1_PREVIEW,
+                StrategyLadderControlAction.PHASE_A2_DATA_FACTORY,
+                StrategyLadderControlAction.DATA_FACTORY_DRY_RUN,
+                StrategyLadderControlAction.DATA_FACTORY_SMALL_SCOPE_RUN,
+            }
+            else (
+                CockpitBacktestJobKind.STRATEGY_LADDER_RUNNER
+                if parsed_action
+                in {
+                    StrategyLadderControlAction.PHASE_B1_CANDIDATE_DISCOVERY,
+                    StrategyLadderControlAction.PHASE_B2_DETAILED_REPLAY,
+                }
+                else CockpitBacktestJobKind.STRATEGY_LADDER_FIRST_CONTROLLED_RUN
+            )
+        )
+        blocked_reason = ""
+        if (
+            parsed_job_kind == CockpitBacktestJobKind.STRATEGY_LADDER_DATA_FACTORY
+            and "ML_OVERLAY_UNSUPPORTED_FOR_DATA_FACTORY" in preflight.blockers
+        ):
+            blocked_reason = "ML_OVERLAY_UNSUPPORTED_FOR_DATA_FACTORY"
+        elif manifest_blocker:
+            blocked_reason = manifest_blocker
+        elif ambiguity_blocker:
+            blocked_reason = ambiguity_blocker
+        elif not preflight.preview_launchable and preflight.blockers:
+            blocked_reason = preflight.blockers[0]
+        elif not preflight.preview_launchable:
+            blocked_reason = preflight.inspection_status
+        canonical_raw_roots = tuple(
+            Path(path).expanduser()
+            for path in canonical_patch6_raw_roots(
+                BacktestFormState(
+                    orderbook_path=preflight.normalized_request.orderbook_root,
+                    trades_path=preflight.normalized_request.trades_root,
+                    klines_path=preflight.normalized_request.klines_root,
+                    raw_roots=(),
+                )
+            )
+            if path
+        )
+        workflow_root = _workflow_root_for_request(
+            jobs_root=jobs_root,
+            workflow_run_id=preflight.workflow_run_id,
+            operator_output_root=operator_output_root,
+        )
+        phase_a2_root = workflow_root / workflow_phase_dirname(PHASE_A2)
+        feature_store_root = (
+            phase_a2_root / "gold"
+            if parsed_job_kind == CockpitBacktestJobKind.STRATEGY_LADDER_RUNNER
+            else None
+        )
+        silver_index_path = (
+            phase_a2_root / "silver_index.json"
+            if parsed_job_kind == CockpitBacktestJobKind.STRATEGY_LADDER_RUNNER
+            else None
+        )
+        candidate_events_path = (
+            resolve_phase_b1_replay_input_candidates_path(
+                workflow_root=workflow_root,
+                workflow_run_id=preflight.workflow_run_id,
+            )
+            if parsed_action == StrategyLadderControlAction.PHASE_B2_DETAILED_REPLAY
+            else None
+        )
+        metadata_root_path = (
+            Path(preflight.normalized_request.historical_metadata_root).expanduser()
+            if preflight.normalized_request.historical_metadata_root
+            else None
+        )
+        frozen_ml_artifact_path_obj = (
+            Path(preflight.normalized_request.frozen_ml_artifact_path).expanduser()
+            if preflight.normalized_request.frozen_ml_artifact_path
+            else None
+        )
+        rolling_ml_window_plan_path_obj = (
+            Path(preflight.normalized_request.rolling_ml_window_plan_path).expanduser()
+            if preflight.normalized_request.rolling_ml_window_plan_path
+            else None
+        )
+        if (
+            metadata_root_path is not None
+            and not preflight.command_preview
+            and not blocked_reason
+        ):
+            blocked_reason = "METADATA_ROOT_NOT_PROPAGATED_TO_LAUNCH"
+        return launch_backtest_job(
+            jobs_root=jobs_root,
+            job_kind=parsed_job_kind,
+            export_dir=export_path,
+            baseline_export_dir=baseline_path,
+            signed_by=signed_by,
+            action_name=parsed_action.value,
+            phase_id=preflight.phase_id,
+            preview_id=preflight.preview_id,
+            request_hash=preflight.request_hash,
+            raw_source_manifest_path=raw_manifest_path,
+            historical_metadata_root=metadata_root_path,
+            raw_roots=canonical_raw_roots,
+            pairs=preflight.normalized_request.pair_subset,
+            start=preflight.normalized_request.start,
+            end=preflight.normalized_request.end,
+            allow_broad_run=allow_broad,
+            blocked_reason=blocked_reason,
+            ml_mode_status=preflight.normalized_request.ml_mode,
+            frozen_ml_artifact_path=frozen_ml_artifact_path_obj,
+            frozen_ml_artifact_hash=preflight.normalized_request.frozen_ml_artifact_hash,
+            expected_edge_artifact_mode=preflight.normalized_request.expected_edge_artifact_mode,
+            rolling_ml_window_plan_path=rolling_ml_window_plan_path_obj,
+            ml_artifact_freshness_days=preflight.normalized_request.ml_artifact_freshness_days,
+            operator_output_root=operator_output_root,
+            engine_native_mode=parsed_job_kind
+            in {
+                CockpitBacktestJobKind.STRATEGY_LADDER_FIRST_CONTROLLED_RUN,
+                CockpitBacktestJobKind.STRATEGY_LADDER_RUNNER,
+            },
+            engine_native_sample_size=preflight.effective_engine_native_sample_size,
+            candidate_discovery_mode=preflight.candidate_discovery_mode,
+            preselected_only=preflight.normalized_request.preselected_only,
+            diagnostic_full_replay=preflight.normalized_request.diagnostic_full_replay,
+            backtest_timeframes=preflight.normalized_request.backtest_timeframes,
+            b1_5_policy_mode=preflight.normalized_request.b1_5_policy_mode,
+            small_scope_enabled=preflight.small_scope_enabled,
+            full_scan_enabled=preflight.full_scan_enabled,
+            no_full_scan_enabled=preflight.no_full_scan_enabled,
+            silver_storage_mode=preflight.silver_storage_mode_effective,
+            debug_storage_override=preflight.normalized_request.debug_storage_override,
+            workflow_run_id=preflight.workflow_run_id,
+            feature_store_root=feature_store_root,
+            silver_index_path=silver_index_path,
+            candidate_events_path=candidate_events_path,
+            consumed_artifact_refs=_workflow_consumed_artifact_refs(
+                workflow_root=workflow_root,
+                phase_id=preflight.phase_id,
+                normalized_request=preflight.normalized_request,
+            ),
+        )
+
+    def _reconcile_backtest_ml_chain() -> None:
+        jobs_root = app.state.paths.backtest_jobs_root
+        if jobs_root is None:
+            return
+        chain_state = read_backtest_ml_chain_state(jobs_root)
+        if chain_state is None or chain_state.status in {
+            "CHAIN_NOT_REQUESTED",
+            "CHAIN_BLOCKED",
+            "CHAIN_REPLAY_COMPLETED",
+        }:
+            return
+        jobs = load_backtest_job_records(jobs_root, limit=64)
+        jobs_by_id = {job.job_id: job for job in jobs}
+        handoff_job = jobs_by_id.get(chain_state.handoff_job_id)
+        replay_job = jobs_by_id.get(chain_state.replay_job_id)
+        running_statuses = {"JOB_CREATED", "JOB_RUNNING", "JOB_CANCELLING", "REQUESTED"}
+        success_statuses = {"JOB_COMPLETED", "JOB_COMPLETED_WITH_BLOCKERS"}
+        terminal_failure_statuses = {"JOB_FAILED", "JOB_BLOCKED", "JOB_CANCELLED", "JOB_KILLED"}
+        if chain_state.status == "CHAIN_HANDOFF_PENDING":
+            if handoff_job is None:
+                return
+            handoff_status = handoff_job.status.value
+            if handoff_status in running_statuses:
+                return
+            if handoff_status in terminal_failure_statuses:
+                write_backtest_ml_chain_state(
+                    jobs_root,
+                    chain_state.model_copy(
+                        update={
+                            "status": "CHAIN_BLOCKED",
+                            "updated_at": datetime.now(UTC).isoformat(),
+                            "handoff_output_root": handoff_job.output_root,
+                            "blockers": tuple(handoff_job.blockers or (handoff_status,)),
+                        }
+                    ),
+                )
+                return
+            if handoff_status in success_statuses:
+                updated_form = chain_state.frozen_form.model_copy(
+                    update={
+                        "ml_mode": "ML_MODE_OVERLAY_FROZEN",
+                        "ml_handoff_run_root": handoff_job.output_root,
+                    }
+                )
+                preflight = build_patch6_preflight_preview(
+                    selected_form=updated_form,
+                    jobs_root=jobs_root,
+                )
+                updated_form = updated_form.model_copy(
+                    update={
+                        "workflow_run_id": preflight.workflow_run_id,
+                        "pairs": (
+                            preflight.normalized_request.pair_subset or updated_form.pairs
+                        ),
+                        "start": preflight.normalized_request.start or updated_form.start,
+                        "end": preflight.normalized_request.end or updated_form.end,
+                        "expected_edge_artifact_mode": (
+                            preflight.normalized_request.expected_edge_artifact_mode
+                            or updated_form.expected_edge_artifact_mode
+                        ),
+                        "frozen_ml_artifact_path": (
+                            preflight.normalized_request.frozen_ml_artifact_path
+                            or updated_form.frozen_ml_artifact_path
+                        ),
+                        "frozen_ml_artifact_hash": (
+                            preflight.normalized_request.frozen_ml_artifact_hash
+                            or updated_form.frozen_ml_artifact_hash
+                        ),
+                        "rolling_ml_window_plan_path": (
+                            preflight.normalized_request.rolling_ml_window_plan_path
+                            or updated_form.rolling_ml_window_plan_path
+                        ),
+                        "ml_artifact_freshness_days": (
+                            preflight.normalized_request.ml_artifact_freshness_days
+                            or updated_form.ml_artifact_freshness_days
+                        ),
+                    }
+                )
+                write_backtest_form_state(jobs_root, updated_form)
+                if not _has_authoritative_frozen_artifact(preflight):
+                    write_backtest_ml_chain_state(
+                        jobs_root,
+                        chain_state.model_copy(
+                            update={
+                                "status": "CHAIN_BLOCKED",
+                                "updated_at": datetime.now(UTC).isoformat(),
+                                "handoff_output_root": handoff_job.output_root,
+                                "blockers": tuple(preflight.ml_overlay_intake.blocker_codes),
+                            }
+                        ),
+                    )
+                    return
+                replay_record = _launch_strategy_ladder_phase_job(
+                    jobs_root=jobs_root,
+                    preflight=preflight,
+                    export_path=Path(updated_form.export_dir).expanduser(),
+                    baseline_path=(
+                        Path(updated_form.baseline_export_dir).expanduser()
+                        if updated_form.baseline_export_dir
+                        else None
+                    ),
+                    raw_manifest_path=(
+                        Path(updated_form.raw_source_manifest_path).expanduser()
+                        if updated_form.raw_source_manifest_path
+                        and is_valid_raw_source_manifest_path(
+                            updated_form.raw_source_manifest_path
+                        )
+                        else None
+                    ),
+                    manifest_blocker="",
+                    ambiguity_blocker="",
+                    allow_broad=_truthy(updated_form.allow_broad_run),
+                    operator_output_root=(updated_form.output_root or "").strip(),
+                    signed_by=updated_form.signed_by,
+                )
+                write_launch_request_state(
+                    jobs_root,
+                    build_patch6_state(
+                        state_name="launch_request_state",
+                        normalized_request=preflight.normalized_request,
+                        request_hash=preflight.request_hash,
+                        detected_pairs=preflight.detected_pairs,
+                        active_pairs_after_pruning=preflight.active_pairs_after_pruning,
+                        status=replay_record.status.value,
+                        preview_id=preflight.preview_id,
+                        job_id=replay_record.job_id,
+                        output_root_effective=replay_record.output_root,
+                        blockers=replay_record.blockers,
+                    ),
+                )
+                write_backtest_ml_chain_state(
+                    jobs_root,
+                    chain_state.model_copy(
+                        update={
+                            "status": (
+                                "CHAIN_BLOCKED"
+                                if replay_record.status.value in terminal_failure_statuses
+                                else "CHAIN_REPLAY_LAUNCHED"
+                            ),
+                            "updated_at": datetime.now(UTC).isoformat(),
+                            "handoff_output_root": handoff_job.output_root,
+                            "replay_job_id": replay_record.job_id,
+                            "replay_output_root": replay_record.output_root,
+                            "blockers": tuple(replay_record.blockers),
+                            "frozen_form": updated_form,
+                        }
+                    ),
+                )
+                return
+        if chain_state.status == "CHAIN_REPLAY_LAUNCHED":
+            if replay_job is None:
+                return
+            replay_status = replay_job.status.value
+            if replay_status in running_statuses:
+                return
+            write_backtest_ml_chain_state(
+                jobs_root,
+                chain_state.model_copy(
+                    update={
+                        "status": (
+                            "CHAIN_REPLAY_COMPLETED"
+                            if replay_status in success_statuses
+                            else "CHAIN_BLOCKED"
+                        ),
+                        "updated_at": datetime.now(UTC).isoformat(),
+                        "replay_output_root": replay_job.output_root,
+                        "blockers": tuple(replay_job.blockers),
+                    }
+                ),
+            )
+
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request, pair: str | None = None) -> HTMLResponse:
         view_model = _build_vm(request, current_page="overview", selected_pair=pair)
@@ -832,6 +1564,7 @@ def create_app(
 
     @app.get("/backtest/status.json")
     def backtest_status_snapshot() -> JSONResponse:
+        _reconcile_backtest_ml_chain()
         jobs_root = app.state.paths.backtest_jobs_root
         backtest_jobs = (
             load_backtest_job_records(jobs_root, limit=8)
@@ -839,6 +1572,11 @@ def create_app(
             else ()
         )
         latest_job = backtest_jobs[0] if backtest_jobs else None
+        chain_state = (
+            read_backtest_ml_chain_state(jobs_root)
+            if jobs_root is not None
+            else None
+        )
         service = read_service_status(app.state.paths)
         payload = {
             "generated_at": datetime.now(UTC),
@@ -858,6 +1596,7 @@ def create_app(
             "backtest_jobs": [
                 _serialize_backtest_job(record) for record in backtest_jobs
             ],
+            "ml_chain": None if chain_state is None else chain_state.model_dump(mode="json"),
         }
         return JSONResponse(content=_jsonable(payload))
 
@@ -896,12 +1635,17 @@ def create_app(
                 status_code=400,
                 content={"error": "candidate_id is required"},
             )
+        active_feature_names, artifact_feature_names = (
+            _resolve_backtest_runtime_feature_context()
+        )
         runtime = read_runtime_surfaces(
             service_dir=app.state.paths.service_dir,
             queue_root=app.state.paths.dashboard_command_queue_root,
             observability_output_dir=app.state.paths.observability_output_dir,
             backtest_jobs_root=app.state.paths.backtest_jobs_root,
             selected_candidate_id=selected_candidate_id,
+            active_feature_names=active_feature_names,
+            artifact_feature_names=artifact_feature_names,
         )
         summary = runtime.strategy_ladder_summary
         found = (
@@ -920,6 +1664,43 @@ def create_app(
             status_code=200 if found else 404,
             content=_jsonable(payload),
         )
+
+    @app.get("/backtest/candidate-feature-table.json")
+    def backtest_candidate_feature_table() -> JSONResponse:
+        active_feature_names, artifact_feature_names = (
+            _resolve_backtest_runtime_feature_context()
+        )
+        runtime = read_runtime_surfaces(
+            service_dir=app.state.paths.service_dir,
+            queue_root=app.state.paths.dashboard_command_queue_root,
+            observability_output_dir=app.state.paths.observability_output_dir,
+            backtest_jobs_root=app.state.paths.backtest_jobs_root,
+            active_feature_names=active_feature_names,
+            artifact_feature_names=artifact_feature_names,
+        )
+        summary = runtime.strategy_ladder_summary
+        payload = {
+            "generated_at": datetime.now(UTC),
+            "run_id": summary.run_id,
+            "workflow_run_id": summary.workflow_run_id,
+            "status": summary.candidate_feature_table_status,
+            "active_feature_names": summary.active_feature_names,
+            "columns": (
+                "candidate_id",
+                "pair",
+                "engine_id",
+                "timeframe",
+                "outcome_status",
+                "accepted_or_refused",
+                "reason_codes",
+                *summary.candidate_feature_columns,
+            ),
+            "rows": summary.candidate_feature_rows,
+            "wiring_status": summary.feature_engine_ml_wiring_status,
+            "wiring_report_path": summary.feature_engine_ml_wiring_report_path,
+            "wiring_rows": summary.feature_engine_ml_wiring_rows,
+        }
+        return JSONResponse(content=_jsonable(payload))
 
     @app.get("/observability", response_class=HTMLResponse)
     def observability(request: Request, pair: str | None = None) -> HTMLResponse:
@@ -1061,6 +1842,9 @@ def create_app(
         chunk_days: int = Form(30),
         calibration_version: str = Form("strategy_ladder_expected_edge.v1"),
         feature_names: str = Form("close_return,high_low_range,volume"),
+        selected_features_csv: str = Form(""),
+        selected_features: list[str] = Form(default=[]),
+        feature_picker_enabled: str = Form(""),
         sample_stride_minutes: int = Form(60),
         target_horizon_minutes: int = Form(1),
         training_seed: int = Form(5307),
@@ -1076,40 +1860,78 @@ def create_app(
                 notice="Backtest jobs root is not configured.",
                 notice_status="error",
             )
-        lab_form_state = _build_lab_ml_handoff_form_state(
-            kline_root=kline_root,
-            b2_run_root=b2_run_root,
-            orderbook_root=orderbook_root,
-            trades_root=trades_root,
-            metadata_root=metadata_root,
-            handoff_export_dir=handoff_export_dir,
-            pair=pair,
-            selected_pairs=selected_pairs,
-            timeframe=timeframe,
-            train_start=train_start,
-            train_end=train_end,
-            requested_backtest_start=requested_backtest_start,
-            requested_backtest_days=requested_backtest_days,
-            train_days=train_days,
-            validation_days=validation_days,
-            freshness_days=freshness_days,
-            chunk_days=chunk_days,
-            calibration_version=calibration_version,
-            feature_names=feature_names,
-            sample_stride_minutes=sample_stride_minutes,
-            target_horizon_minutes=target_horizon_minutes,
-            training_seed=training_seed,
-            max_optuna_trials=max_optuna_trials,
-            min_training_rows=min_training_rows,
-            shap_summary_ref=shap_summary_ref,
-            signed_by=signed_by,
-            intent=intent,
+        try:
+            lab_form_state = _build_lab_ml_handoff_form_state(
+                kline_root=kline_root,
+                b2_run_root=b2_run_root,
+                orderbook_root=orderbook_root,
+                trades_root=trades_root,
+                metadata_root=metadata_root,
+                handoff_export_dir=handoff_export_dir,
+                pair=pair,
+                selected_pairs=selected_pairs,
+                timeframe=timeframe,
+                train_start=train_start,
+                train_end=train_end,
+                requested_backtest_start=requested_backtest_start,
+                requested_backtest_days=requested_backtest_days,
+                train_days=train_days,
+                validation_days=validation_days,
+                freshness_days=freshness_days,
+                chunk_days=chunk_days,
+                calibration_version=calibration_version,
+                feature_names=feature_names,
+                selected_features_csv=selected_features_csv,
+                selected_features=selected_features,
+                feature_picker_enabled=feature_picker_enabled,
+                sample_stride_minutes=sample_stride_minutes,
+                target_horizon_minutes=target_horizon_minutes,
+                training_seed=training_seed,
+                max_optuna_trials=max_optuna_trials,
+                min_training_rows=min_training_rows,
+                shap_summary_ref=shap_summary_ref,
+                signed_by=signed_by,
+                intent=intent,
+            )
+        except ValueError as exc:
+            return JSONResponse(status_code=400, content={"error": str(exc)})
+        lab_governance_entries = discover_lab_feature_governance(
+            lab_form_state,
+            registry_path=jobs_root / "feature_promotion_registry.json",
         )
+        demoted_override_features = selected_demoted_lab_features(
+            selected_feature_names=tuple(lab_form_state.selected_features),
+            governance_entries=lab_governance_entries,
+        )
+        if demoted_override_features:
+            _logger.warning(
+                "EXPECTED_EDGE_FEATURE_USER_OVERRIDE_DEMOTED pair=%s timeframe=%s features=%s",
+                lab_form_state.pair,
+                lab_form_state.timeframe,
+                ",".join(demoted_override_features),
+            )
         write_lab_ml_handoff_form_state(jobs_root, lab_form_state)
         synced_backtest_form = _sync_lab_handoff_into_backtest_form(
             read_backtest_form_state(jobs_root),
             lab_form_state,
         )
+        requested_non_legacy_features = _non_legacy_expected_edge_features(
+            tuple(lab_form_state.selected_features)
+        )
+        if (
+            intent == "launch"
+            and requested_non_legacy_features
+            and not (lab_form_state.b2_run_root or "").strip()
+        ):
+            write_backtest_form_state(jobs_root, synced_backtest_form)
+            return _redirect(
+                "/lab",
+                notice=(
+                    "Non-legacy ML features require B2 run root before launch: "
+                    + ", ".join(requested_non_legacy_features)
+                ),
+                notice_status="error",
+            )
         if intent == "preview":
             preflight = build_patch6_preflight_preview(
                 selected_form=synced_backtest_form,
@@ -1177,7 +1999,11 @@ def create_app(
             signed_by=signed_by,
             operator_output_root=output_root,
             raw_roots=(kline_path,),
-            pairs=(pair.strip().upper() or "BTCUSDT",),
+            pairs=(
+                lab_form_state.selected_pairs
+                if lab_form_state.selected_pairs
+                else ((pair.strip().upper() or "BTCUSDT"),)
+            ),
             start=train_start.strip(),
             end=train_end.strip(),
             calibration_version=calibration_version.strip()
@@ -1189,8 +2015,9 @@ def create_app(
             validation_days=max(int(validation_days), 1),
             freshness_days=max(int(freshness_days), 1),
             chunk_days=max(int(chunk_days), 1),
-            feature_names_csv=(feature_names or "").strip()
-            or "close_return,high_low_range,volume",
+            feature_names_csv=(
+                lab_form_state.feature_names or "close_return,high_low_range,volume"
+            ),
             sample_stride_minutes=max(int(sample_stride_minutes), 1),
             target_horizon_minutes=max(int(target_horizon_minutes), 1),
             training_seed=int(training_seed),
@@ -1243,6 +2070,12 @@ def create_app(
         silver_storage_mode: str = Form("jsonl_debug"),
         debug_storage_override: str = Form(""),
         ml_mode: str = Form("ML_MODE_OFF"),
+        training_timeframe: str = Form("1m"),
+        backtest_timeframes: str = Form("1m"),
+        feature_names: str = Form("close_return,high_low_range,volume"),
+        selected_features_csv: str = Form(""),
+        selected_features: list[str] = Form(default=[]),
+        feature_picker_enabled: str = Form(""),
         # Patch P3 (2026-05-22) — explicit mono|multi mode selector.
         expected_edge_artifact_mode: str = Form("MONO_PAIR_LEGACY"),
         ml_handoff_run_root: str = Form(""),
@@ -1333,12 +2166,13 @@ def create_app(
         pair_values = tuple(rerouted_pair_tokens)
         allow_broad = str(allow_broad_run).strip().lower() in {"1", "true", "yes", "on"}
         operator_output_root = (output_root or "").strip()
-        form_state = BacktestFormState(
+        form_state = _build_backtest_form_state(
+            current_form=read_backtest_form_state(jobs_root),
             job_kind=job_kind,
-            action_name=selected_action_name,
-            phase_id=resolved_phase_id,
-            workflow_phase=(workflow_phase or resolved_phase_id or PHASE_A1),
-            workflow_run_id=(workflow_run_id or "").strip(),
+            selected_action_name=selected_action_name,
+            resolved_phase_id=resolved_phase_id,
+            workflow_phase=workflow_phase,
+            workflow_run_id=workflow_run_id,
             export_dir=export_dir,
             baseline_export_dir=baseline_export_dir,
             raw_source_manifest_path=raw_source_manifest_path,
@@ -1347,16 +2181,22 @@ def create_app(
             start=start,
             end=end,
             ml_mode=ml_mode,
-            expected_edge_artifact_mode=expected_edge_artifact_mode or "MONO_PAIR_LEGACY",
+            training_timeframe=training_timeframe,
+            backtest_timeframes=backtest_timeframes,
+            feature_names=feature_names,
+            selected_features_csv=selected_features_csv,
+            selected_features=selected_features,
+            feature_picker_enabled=feature_picker_enabled,
+            expected_edge_artifact_mode=expected_edge_artifact_mode,
             ml_handoff_run_root=ml_handoff_run_root,
             frozen_ml_artifact_path=frozen_ml_artifact_path,
             frozen_ml_artifact_hash=frozen_ml_artifact_hash,
             rolling_ml_window_plan_path=rolling_ml_window_plan_path,
-            ml_artifact_freshness_days=max(int(ml_artifact_freshness_days), 1),
+            ml_artifact_freshness_days=ml_artifact_freshness_days,
             allow_broad_run=allow_broad_run,
             confirm_broad_run=confirm_broad_run,
             candidate_discovery_mode=candidate_discovery_mode,
-            engine_native_sample_size=max(int(engine_native_sample_size), 0),
+            engine_native_sample_size=engine_native_sample_size,
             b1_5_policy_mode=b1_5_policy_mode,
             preselected_only=preselected_only,
             diagnostic_full_replay=diagnostic_full_replay,
@@ -1375,7 +2215,36 @@ def create_app(
             selected_form=form_state,
             jobs_root=jobs_root,
         )
-        form_state = form_state.model_copy(update={"workflow_run_id": preflight.workflow_run_id})
+        form_state = form_state.model_copy(
+            update={
+                "workflow_run_id": preflight.workflow_run_id,
+                "pairs": (
+                    preflight.normalized_request.pair_subset or form_state.pairs
+                ),
+                "start": preflight.normalized_request.start or form_state.start,
+                "end": preflight.normalized_request.end or form_state.end,
+                "expected_edge_artifact_mode": (
+                    preflight.normalized_request.expected_edge_artifact_mode
+                    or form_state.expected_edge_artifact_mode
+                ),
+                "frozen_ml_artifact_path": (
+                    preflight.normalized_request.frozen_ml_artifact_path
+                    or form_state.frozen_ml_artifact_path
+                ),
+                "frozen_ml_artifact_hash": (
+                    preflight.normalized_request.frozen_ml_artifact_hash
+                    or form_state.frozen_ml_artifact_hash
+                ),
+                "rolling_ml_window_plan_path": (
+                    preflight.normalized_request.rolling_ml_window_plan_path
+                    or form_state.rolling_ml_window_plan_path
+                ),
+                "ml_artifact_freshness_days": (
+                    preflight.normalized_request.ml_artifact_freshness_days
+                    or form_state.ml_artifact_freshness_days
+                ),
+            }
+        )
         write_backtest_form_state(jobs_root, form_state)
         current_form_state = build_patch6_state(
             state_name="current_form_state",
@@ -1396,6 +2265,12 @@ def create_app(
                 jobs_root=jobs_root,
                 preview_manifest=preview_manifest,
                 preflight=preflight,
+            )
+            _refresh_requested_phase_a1_workflow_manifest(
+                jobs_root=jobs_root,
+                requested_workflow_run_id=workflow_run_id,
+                preflight=preflight,
+                preview_manifest=preview_manifest,
             )
         write_source_preview_state(
             jobs_root,
@@ -1490,7 +2365,12 @@ def create_app(
                     notice_status="error",
                 )
             blocked_reason = ""
-            if manifest_blocker:
+            if (
+                parsed_job_kind == CockpitBacktestJobKind.STRATEGY_LADDER_DATA_FACTORY
+                and "ML_OVERLAY_UNSUPPORTED_FOR_DATA_FACTORY" in preflight.blockers
+            ):
+                blocked_reason = "ML_OVERLAY_UNSUPPORTED_FOR_DATA_FACTORY"
+            elif manifest_blocker:
                 blocked_reason = manifest_blocker
             elif ambiguity_blocker:
                 blocked_reason = ambiguity_blocker
@@ -1498,104 +2378,360 @@ def create_app(
                 blocked_reason = preflight.blockers[0]
             elif not preflight.preview_launchable:
                 blocked_reason = preflight.inspection_status
-            canonical_raw_roots = tuple(
-                Path(path).expanduser()
-                for path in canonical_patch6_raw_roots(form_state)
-                if path
-            )
             workflow_root = _workflow_root_for_request(
                 jobs_root=jobs_root,
                 workflow_run_id=preflight.workflow_run_id,
                 operator_output_root=operator_output_root,
             )
-            phase_a2_root = workflow_root / workflow_phase_dirname(PHASE_A2)
-            phase_b1_root = workflow_root / workflow_phase_dirname(PHASE_B1)
-            feature_store_root = (
-                phase_a2_root / "gold"
-                if parsed_job_kind == CockpitBacktestJobKind.STRATEGY_LADDER_RUNNER
-                else None
+            chain_requested = (
+                parsed_action
+                in {
+                    StrategyLadderControlAction.PHASE_B1_CANDIDATE_DISCOVERY,
+                    StrategyLadderControlAction.PHASE_B2_DETAILED_REPLAY,
+                }
+                and bool(form_state.selected_features)
+                and not _has_authoritative_frozen_artifact(preflight)
             )
-            silver_index_path = (
-                phase_a2_root / "silver_index.json"
-                if parsed_job_kind == CockpitBacktestJobKind.STRATEGY_LADDER_RUNNER
-                else None
-            )
-            candidate_events_path = (
-                resolve_phase_b1_replay_input_candidates_path(
-                    workflow_root=workflow_root,
-                    workflow_run_id=preflight.workflow_run_id,
+            if chain_requested:
+                if blocked_reason:
+                    write_launch_request_state(
+                        jobs_root,
+                        build_patch6_state(
+                            state_name="launch_request_state",
+                            normalized_request=preflight.normalized_request,
+                            request_hash=preflight.request_hash,
+                            detected_pairs=preflight.detected_pairs,
+                            active_pairs_after_pruning=preflight.active_pairs_after_pruning,
+                            status="CHAIN_BLOCKED",
+                            preview_id=preflight.preview_id,
+                            blockers=(blocked_reason,),
+                        ),
+                    )
+                    return _redirect(
+                        "/backtest",
+                        notice=(
+                            "ML feature chain blocked before handoff: "
+                            f"{blocked_reason}."
+                        ),
+                        notice_status="error",
+                    )
+                blocker_codes = ("BACKTEST_REQUIRES_IA_LAB_FROZEN_ARTIFACT",)
+                write_launch_request_state(
+                    jobs_root,
+                    build_patch6_state(
+                        state_name="launch_request_state",
+                        normalized_request=preflight.normalized_request,
+                        request_hash=preflight.request_hash,
+                        detected_pairs=preflight.detected_pairs,
+                        active_pairs_after_pruning=preflight.active_pairs_after_pruning,
+                        status="CHAIN_BLOCKED",
+                        preview_id=preflight.preview_id,
+                        blockers=blocker_codes,
+                    ),
                 )
-                if parsed_action == StrategyLadderControlAction.PHASE_B2_DETAILED_REPLAY
-                else None
-            )
-            metadata_root_path = (
-                Path(preflight.normalized_request.historical_metadata_root).expanduser()
-                if preflight.normalized_request.historical_metadata_root
-                else None
-            )
-            frozen_ml_artifact_path_obj = (
-                Path(preflight.normalized_request.frozen_ml_artifact_path).expanduser()
-                if preflight.normalized_request.frozen_ml_artifact_path
-                else None
-            )
-            rolling_ml_window_plan_path_obj = (
-                Path(preflight.normalized_request.rolling_ml_window_plan_path).expanduser()
-                if preflight.normalized_request.rolling_ml_window_plan_path
-                else None
-            )
-            if metadata_root_path is not None and not preflight.command_preview and not blocked_reason:
-                blocked_reason = "METADATA_ROOT_NOT_PROPAGATED_TO_LAUNCH"
-            launch_pairs = preflight.normalized_request.pair_subset
-            record = launch_backtest_job(
-                jobs_root=jobs_root,
-                job_kind=parsed_job_kind,
-                export_dir=export_path,
-                baseline_export_dir=baseline_path,
-                signed_by=signed_by,
-                action_name=parsed_action.value,
-                phase_id=preflight.phase_id,
-                preview_id=preflight.preview_id,
-                request_hash=preflight.request_hash,
-                raw_source_manifest_path=raw_manifest_path,
-                historical_metadata_root=metadata_root_path,
-                raw_roots=canonical_raw_roots,
-                pairs=launch_pairs,
-                start=preflight.normalized_request.start,
-                end=preflight.normalized_request.end,
-                allow_broad_run=allow_broad,
-                blocked_reason=blocked_reason,
-                ml_mode_status=preflight.normalized_request.ml_mode,
-                frozen_ml_artifact_path=frozen_ml_artifact_path_obj,
-                frozen_ml_artifact_hash=preflight.normalized_request.frozen_ml_artifact_hash,
-                expected_edge_artifact_mode=expected_edge_artifact_mode,
-                rolling_ml_window_plan_path=rolling_ml_window_plan_path_obj,
-                ml_artifact_freshness_days=preflight.normalized_request.ml_artifact_freshness_days,
-                operator_output_root=operator_output_root,
-                engine_native_mode=(
-                    parsed_job_kind
-                    in {
-                        CockpitBacktestJobKind.STRATEGY_LADDER_FIRST_CONTROLLED_RUN,
-                        CockpitBacktestJobKind.STRATEGY_LADDER_RUNNER,
+                write_backtest_ml_chain_state(
+                    jobs_root,
+                    BacktestMlChainState(
+                        status="CHAIN_BLOCKED",
+                        created_at=datetime.now(UTC).isoformat(),
+                        updated_at=datetime.now(UTC).isoformat(),
+                        action_name=preflight.action_name,
+                        phase_id=preflight.phase_id,
+                        workflow_run_id=preflight.workflow_run_id,
+                        preview_id=preflight.preview_id,
+                        request_hash=preflight.request_hash,
+                        selected_features=tuple(form_state.selected_features),
+                        training_timeframe=form_state.training_timeframe,
+                        backtest_timeframes=form_state.backtest_timeframes,
+                        feature_selection_source="FORM_SELECTED",
+                        blockers=blocker_codes,
+                        notes=(
+                            "IA_LAB_OWNS_ML_DATES_TIMEFRAMES_AND_TRAINING",
+                            "BACKTEST_CONSUMES_FROZEN_IA_LAB_ARTIFACT_ONLY",
+                        ),
+                        frozen_form=form_state,
+                    ),
+                )
+                return _redirect(
+                    "/backtest",
+                    notice=(
+                        "Backtest feature selection requires a frozen IA Lab artifact; "
+                        "Backtest will not train ML silently."
+                    ),
+                    notice_status="error",
+                )
+                training_window, training_blockers = _derive_backtest_ml_training_window(
+                    selected_form=form_state
+                )
+                resolved_training_blockers = list(training_blockers)
+                if not (form_state.klines_path or "").strip():
+                    resolved_training_blockers.append(
+                        "BACKTEST_FEATURE_TRAINING_REQUIRES_KLINES_ROOT"
+                    )
+                if training_window is None or resolved_training_blockers:
+                    blocker_codes = tuple(dict.fromkeys(resolved_training_blockers))
+                    write_launch_request_state(
+                        jobs_root,
+                        build_patch6_state(
+                            state_name="launch_request_state",
+                            normalized_request=preflight.normalized_request,
+                            request_hash=preflight.request_hash,
+                            detected_pairs=preflight.detected_pairs,
+                            active_pairs_after_pruning=preflight.active_pairs_after_pruning,
+                            status="CHAIN_BLOCKED",
+                            preview_id=preflight.preview_id,
+                            blockers=blocker_codes,
+                        ),
+                    )
+                    return _redirect(
+                        "/backtest",
+                        notice=(
+                            "ML feature chain blocked: "
+                            + ", ".join(blocker_codes)
+                        ),
+                        notice_status="error",
+                    )
+                handoff_output_root = (form_state.export_dir or operator_output_root).strip()
+                selected_pair = (
+                    preflight.normalized_request.pair_subset[0]
+                    if preflight.normalized_request.pair_subset
+                    else (form_state.pairs[0] if form_state.pairs else "BTCUSDT")
+                )
+                backtest_lab_form = _build_lab_ml_handoff_form_state(
+                    kline_root=form_state.klines_path,
+                    b2_run_root=str(
+                        _existing_phase_b2_run_root(
+                            workflow_root=workflow_root,
+                            workflow_run_id=preflight.workflow_run_id,
+                        )
+                        or ""
+                    ),
+                    orderbook_root=form_state.orderbook_path,
+                    trades_root=form_state.trades_path,
+                    metadata_root=form_state.metadata_path,
+                    handoff_export_dir=handoff_output_root,
+                    pair=selected_pair,
+                    selected_pairs=list(preflight.normalized_request.pair_subset),
+                    timeframe=form_state.training_timeframe,
+                    train_start=str(training_window["train_start"]),
+                    train_end=str(training_window["train_end"]),
+                    requested_backtest_start=str(
+                        training_window["requested_backtest_start"]
+                    ),
+                    requested_backtest_days=int(
+                        training_window["requested_backtest_days"]
+                    ),
+                    train_days=int(training_window["train_days"]),
+                    validation_days=int(training_window["validation_days"]),
+                    freshness_days=int(training_window["freshness_days"]),
+                    chunk_days=int(training_window["chunk_days"]),
+                    calibration_version="strategy_ladder_expected_edge.v1",
+                    feature_names=form_state.feature_names,
+                    selected_features_csv=form_state.feature_names,
+                    selected_features=list(form_state.selected_features),
+                    feature_picker_enabled="1",
+                    sample_stride_minutes=60,
+                    target_horizon_minutes=1,
+                    training_seed=5307,
+                    max_optuna_trials=0,
+                    min_training_rows=210,
+                    shap_summary_ref="",
+                    signed_by=signed_by,
+                    intent="launch",
+                )
+                governance_entries = discover_lab_feature_governance(
+                    backtest_lab_form,
+                    registry_path=jobs_root / "feature_promotion_registry.json",
+                )
+                demoted_override_features = selected_demoted_lab_features(
+                    selected_feature_names=tuple(backtest_lab_form.selected_features),
+                    governance_entries=governance_entries,
+                )
+                if demoted_override_features:
+                    _logger.warning(
+                        "EXPECTED_EDGE_FEATURE_USER_OVERRIDE_DEMOTED pair=%s timeframe=%s features=%s",
+                        backtest_lab_form.pair,
+                        backtest_lab_form.timeframe,
+                        ",".join(demoted_override_features),
+                    )
+                requested_non_legacy_features = _non_legacy_expected_edge_features(
+                    tuple(backtest_lab_form.selected_features)
+                )
+                if (
+                    requested_non_legacy_features
+                    and not (backtest_lab_form.b2_run_root or "").strip()
+                ):
+                    blocker_codes = (
+                        "BACKTEST_FEATURE_TRAINING_REQUIRES_B2_REPLAY_ROOT_FOR_NON_LEGACY_FEATURES",
+                    )
+                    write_lab_ml_handoff_form_state(jobs_root, backtest_lab_form)
+                    write_launch_request_state(
+                        jobs_root,
+                        build_patch6_state(
+                            state_name="launch_request_state",
+                            normalized_request=preflight.normalized_request,
+                            request_hash=preflight.request_hash,
+                            detected_pairs=preflight.detected_pairs,
+                            active_pairs_after_pruning=preflight.active_pairs_after_pruning,
+                            status="CHAIN_BLOCKED",
+                            preview_id=preflight.preview_id,
+                            blockers=blocker_codes,
+                        ),
+                    )
+                    write_backtest_ml_chain_state(
+                        jobs_root,
+                        BacktestMlChainState(
+                            status="CHAIN_BLOCKED",
+                            created_at=datetime.now(UTC).isoformat(),
+                            updated_at=datetime.now(UTC).isoformat(),
+                            action_name=preflight.action_name,
+                            phase_id=preflight.phase_id,
+                            workflow_run_id=preflight.workflow_run_id,
+                            preview_id=preflight.preview_id,
+                            request_hash=preflight.request_hash,
+                            selected_features=tuple(form_state.selected_features),
+                            training_timeframe=form_state.training_timeframe,
+                            feature_selection_source="FORM_SELECTED",
+                            blockers=blocker_codes,
+                            notes=(
+                                "NON_LEGACY_FEATURES_REQUIRE_REPLAY_GROUNDED_B2_ROOT",
+                            ),
+                            frozen_form=form_state,
+                        ),
+                    )
+                    return _redirect(
+                        "/backtest",
+                        notice=(
+                            "ML feature chain blocked: non-legacy features require a Phase B2 replay root."
+                        ),
+                        notice_status="error",
+                    )
+                write_lab_ml_handoff_form_state(jobs_root, backtest_lab_form)
+                chain_form_state = form_state.model_copy(
+                    update={
+                        "ml_mode": "ML_MODE_OFF",
+                        "ml_handoff_run_root": "",
+                        "frozen_ml_artifact_path": "",
+                        "frozen_ml_artifact_hash": "",
+                        "rolling_ml_window_plan_path": "",
                     }
-                ),
-                engine_native_sample_size=preflight.effective_engine_native_sample_size,
-                candidate_discovery_mode=preflight.candidate_discovery_mode,
-                preselected_only=preflight.normalized_request.preselected_only,
-                diagnostic_full_replay=preflight.normalized_request.diagnostic_full_replay,
-                b1_5_policy_mode=preflight.normalized_request.b1_5_policy_mode,
-                small_scope_enabled=preflight.small_scope_enabled,
-                full_scan_enabled=preflight.full_scan_enabled,
-                no_full_scan_enabled=preflight.no_full_scan_enabled,
-                silver_storage_mode=preflight.silver_storage_mode_effective,
-                debug_storage_override=preflight.normalized_request.debug_storage_override,
-                workflow_run_id=preflight.workflow_run_id,
-                feature_store_root=feature_store_root,
-                silver_index_path=silver_index_path,
-                candidate_events_path=candidate_events_path,
-                consumed_artifact_refs=_workflow_consumed_artifact_refs(
-                    workflow_root=workflow_root,
+                )
+                write_backtest_form_state(jobs_root, chain_form_state)
+                handoff_record = launch_backtest_job(
+                    jobs_root=jobs_root,
+                    job_kind=CockpitBacktestJobKind.STRATEGY_LADDER_ML_LAB_HANDOFF,
+                    export_dir=Path(backtest_lab_form.kline_root).expanduser(),
+                    b2_run_root=(
+                        Path(backtest_lab_form.b2_run_root).expanduser()
+                        if (backtest_lab_form.b2_run_root or "").strip()
+                        else None
+                    ),
+                    signed_by=signed_by,
+                    operator_output_root=handoff_output_root,
+                    raw_roots=(Path(backtest_lab_form.kline_root).expanduser(),),
+                    pairs=(
+                        backtest_lab_form.selected_pairs
+                        if backtest_lab_form.selected_pairs
+                        else (backtest_lab_form.pair,)
+                    ),
+                    start=backtest_lab_form.train_start,
+                    end=backtest_lab_form.train_end,
+                    calibration_version=backtest_lab_form.calibration_version,
+                    timeframe=backtest_lab_form.timeframe,
+                    requested_backtest_start=backtest_lab_form.requested_backtest_start,
+                    requested_backtest_days=backtest_lab_form.requested_backtest_days,
+                    train_days=backtest_lab_form.train_days,
+                    validation_days=backtest_lab_form.validation_days,
+                    freshness_days=backtest_lab_form.freshness_days,
+                    chunk_days=backtest_lab_form.chunk_days,
+                    feature_names_csv=backtest_lab_form.feature_names,
+                    sample_stride_minutes=backtest_lab_form.sample_stride_minutes,
+                    target_horizon_minutes=backtest_lab_form.target_horizon_minutes,
+                    training_seed=backtest_lab_form.training_seed,
+                    max_optuna_trials=backtest_lab_form.max_optuna_trials,
+                    min_training_rows=backtest_lab_form.min_training_rows,
+                    shap_summary_ref=backtest_lab_form.shap_summary_ref,
+                )
+                chain_status = (
+                    "CHAIN_BLOCKED"
+                    if handoff_record.status.value
+                    in {"JOB_FAILED", "JOB_BLOCKED", "JOB_CANCELLED", "JOB_KILLED"}
+                    else "CHAIN_HANDOFF_PENDING"
+                )
+                chain_state = BacktestMlChainState(
+                    status=chain_status,
+                    created_at=datetime.now(UTC).isoformat(),
+                    updated_at=datetime.now(UTC).isoformat(),
+                    action_name=preflight.action_name,
                     phase_id=preflight.phase_id,
-                    normalized_request=preflight.normalized_request,
+                    workflow_run_id=preflight.workflow_run_id,
+                    preview_id=preflight.preview_id,
+                    request_hash=preflight.request_hash,
+                    selected_features=tuple(chain_form_state.selected_features),
+                    training_timeframe=chain_form_state.training_timeframe,
+                    feature_selection_source="FORM_SELECTED",
+                    handoff_job_id=handoff_record.job_id,
+                    handoff_output_root=handoff_record.output_root,
+                    blockers=tuple(handoff_record.blockers),
+                    notes=(
+                        "BACKTEST_FEATURE_SELECTION_TRIGGERED_ML_HANDOFF",
+                        "REPLAY_LAUNCH_DEFERRED_UNTIL_FROZEN_ARTIFACT_READY",
+                    ),
+                    frozen_form=chain_form_state,
+                )
+                write_backtest_ml_chain_state(jobs_root, chain_state)
+                write_launch_request_state(
+                    jobs_root,
+                    build_patch6_state(
+                        state_name="launch_request_state",
+                        normalized_request=preflight.normalized_request,
+                        request_hash=preflight.request_hash,
+                        detected_pairs=preflight.detected_pairs,
+                        active_pairs_after_pruning=preflight.active_pairs_after_pruning,
+                        status=chain_state.status,
+                        preview_id=preflight.preview_id,
+                        job_id=handoff_record.job_id,
+                        output_root_effective=handoff_record.output_root,
+                        blockers=chain_state.blockers,
+                    ),
+                )
+                return _redirect(
+                    "/backtest",
+                    notice=(
+                        f"Blocked ML handoff job {handoff_record.job_id}: "
+                        f"{', '.join(handoff_record.blockers)}."
+                        if chain_status == "CHAIN_BLOCKED"
+                        else (
+                            "Launched ML handoff first for selected features; "
+                            f"replay will auto-start when handoff job {handoff_record.job_id} is ready."
+                        )
+                    ),
+                    notice_status=("error" if chain_status == "CHAIN_BLOCKED" else "success"),
+                )
+            record = _launch_strategy_ladder_phase_job(
+                jobs_root=jobs_root,
+                preflight=preflight,
+                export_path=export_path,
+                baseline_path=baseline_path,
+                raw_manifest_path=raw_manifest_path,
+                manifest_blocker=manifest_blocker,
+                ambiguity_blocker=ambiguity_blocker,
+                allow_broad=allow_broad,
+                operator_output_root=operator_output_root,
+                signed_by=signed_by,
+            )
+            write_backtest_ml_chain_state(
+                jobs_root,
+                BacktestMlChainState(
+                    status="CHAIN_NOT_REQUESTED",
+                    created_at=datetime.now(UTC).isoformat(),
+                    updated_at=datetime.now(UTC).isoformat(),
+                    action_name=preflight.action_name,
+                    phase_id=preflight.phase_id,
+                    workflow_run_id=preflight.workflow_run_id,
+                    preview_id=preflight.preview_id,
+                    request_hash=preflight.request_hash,
+                    frozen_form=form_state,
                 ),
             )
             write_launch_request_state(
@@ -1616,11 +2752,11 @@ def create_app(
             return _redirect(
                 "/backtest",
                 notice=(
-                    f"Blocked {preflight.phase_label} job {record.job_id}: {blocked_reason}."
-                    if blocked_reason
+                    f"Blocked {preflight.phase_label} job {record.job_id}: {', '.join(record.blockers)}."
+                    if record.blockers
                     else f"Launched {preflight.phase_label} job {record.job_id}."
                 ),
-                notice_status=("error" if blocked_reason else "success"),
+                notice_status=("error" if record.blockers else "success"),
             )
         try:
             parsed_job_kind = CockpitBacktestJobKind(job_kind)

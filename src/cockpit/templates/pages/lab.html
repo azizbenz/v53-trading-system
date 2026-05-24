@@ -209,9 +209,57 @@
                             <label>Calibration version
                                 <input type="text" name="calibration_version" value="{{ handoff_form.calibration_version or handoff.calibration_version or 'strategy_ladder_expected_edge.v1' }}">
                             </label>
-                            <label>Feature names (CSV)
-                                <input type="text" name="feature_names" value="{{ handoff_form.feature_names or (handoff.feature_names|join(',')) or 'close_return,high_low_range,volume' }}">
-                            </label>
+                            <div class="feature-picker-card">
+                                <div class="feature-picker-card__head">
+                                    <label>Governed feature picker</label>
+                                    <small class="muted">Backtest truth and lab UI now share the same canonical supported feature pool.</small>
+                                </div>
+                                <input type="hidden" name="feature_picker_enabled" value="1">
+                                <input type="hidden" name="feature_names" value="{{ handoff_form.feature_names or (handoff.feature_names|join(',')) or 'close_return,high_low_range,volume' }}">
+                                <input type="hidden" name="selected_features_csv" value="{{ vm.lab_effective_selected_features|join(',') }}">
+                                <div class="feature-picker">
+                                    {% for group_label, group_feature_names in vm.supported_expected_edge_feature_groups %}
+                                    <div class="feature-picker__group">
+                                        <div class="feature-picker__group-title">{{ group_label }}</div>
+                                        {% for feature_name in group_feature_names %}
+                                    {% set entry = (vm.lab_feature_governance | selectattr('feature_name', 'equalto', feature_name) | list | first) %}
+                                    {% set verdict = entry.verdict if entry else 'N-A' %}
+                                    <label class="feature-picker__item">
+                                        <input type="checkbox" name="selected_features" value="{{ feature_name }}"
+                                            {% if feature_name in vm.lab_effective_selected_features %}checked{% endif %}>
+                                        <span class="feature-picker__label">{{ feature_name }}</span>
+                                        <span class="feat-badge feat-badge--{{ verdict|lower|replace(' ', '-') }}" title="{% if entry %}ΔPSR={{ entry.ablation_delta_psr }}, ΔSharpe={{ entry.ablation_delta_sharpe }}, SHAP rank={{ entry.shap_rank }}, talab_pass={{ entry.talab_quadruple_pass }}{% else %}Pas d'évaluation gouvernée pour ce pair/timeframe{% endif %}">{{ verdict }}</span>
+                                    </label>
+                                        {% endfor %}
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                                <div class="feature-picker__hint">
+                                    <strong>Source:</strong> <code>{{ vm.lab_feature_selection_source }}</code> ·
+                                    <strong>Selected:</strong> <code id="lab-feature-selection-count">{{ vm.lab_effective_selected_features|length }}</code>.
+                                </div>
+                                <div class="feature-picker__hint">
+                                    <strong>Override doctrine:</strong> a <code>DEMOTED</code> feature can still be checked manually, but the governed verdict remains visible for audit.
+                                </div>
+                                <div class="feature-picker__hint{% if vm.lab_replay_grounding_required and not vm.lab_replay_grounding_ready %} feature-picker__hint--warning{% endif %}">
+                                    {% if vm.lab_replay_grounding_required %}
+                                    <strong>Replay grounding:</strong>
+                                    {% if vm.lab_replay_grounding_ready %}
+                                    current selection includes non-legacy features and the current <code>b2_run_root</code> is present.
+                                    {% else %}
+                                    current selection includes non-legacy features <code>{{ vm.lab_requested_non_legacy_features|join(', ') }}</code>; a <code>b2_run_root</code> is required before launch.
+                                    {% endif %}
+                                    {% else %}
+                                    <strong>Replay grounding:</strong> legacy kline-only training remains allowed for the current selection.
+                                    {% endif %}
+                                </div>
+                                {% if vm.lab_selected_demoted_features %}
+                                <div class="feature-picker__hint feature-picker__hint--warning">
+                                    <strong>Inline warning:</strong> the current selection overrides governed <code>DEMOTED</code> verdicts for
+                                    <code>{{ vm.lab_selected_demoted_features|join(', ') }}</code>.
+                                </div>
+                                {% endif %}
+                            </div>
                             <label>Sample stride (minutes)
                                 <input type="number" name="sample_stride_minutes" value="{{ handoff_form.sample_stride_minutes or handoff.sample_stride_minutes or 60 }}" min="1">
                             </label>
@@ -409,10 +457,18 @@
                             <tr><th>Rolling plan status</th><td>{{ handoff.rolling_ml_window_plan_status or 'not_generated' }}</td></tr>
                             <tr><th>Rolling plan artifact count</th><td>{{ handoff.rolling_ml_required_artifact_count or 'n/a' }}</td></tr>
                             <tr><th>Rolling plan params</th><td>train={{ handoff.rolling_train_days or 'n/a' }}, validation={{ handoff.rolling_validation_days or 'n/a' }}, freshness={{ handoff.rolling_freshness_days or 'n/a' }}, chunk={{ handoff.rolling_chunk_days or 'n/a' }}</td></tr>
+                            <tr><th>Feature grounding</th><td>{{ handoff.feature_grounding_status or 'not_generated' }}</td></tr>
+                            <tr><th>Training source contract</th><td>{{ handoff.training_source_contract_status or 'not_generated' }}</td></tr>
+                            <tr><th>Train/eval overlap</th><td>{{ handoff.train_eval_overlap_status or 'not_generated' }}</td></tr>
+                            <tr><th>ML authority</th><td>{{ handoff.ml_overlay_authority_level or 'not_generated' }}</td></tr>
+                            <tr><th>Label leakage guard</th><td>{{ handoff.ml_feature_input_label_leakage_status or 'not_generated' }}</td></tr>
                             <tr><th>Blocking reasons (live)</th><td id="lab-blocking-reasons">{{ handoff.blocking_reasons|join(', ') if handoff.blocking_reasons else 'none' }}</td></tr>
                             <tr><th>Backtest input (live)</th><td id="lab-backtest-input"><code>{{ handoff.backtest_input_ref or 'not_available' }}</code></td></tr>
                             <tr><th>Blocking reasons</th><td>{{ handoff.blocking_reasons|join(', ') if handoff.blocking_reasons else 'none' }}</td></tr>
                             <tr><th>Backtest input</th><td><code>{{ handoff.backtest_input_ref or 'not_available' }}</code></td></tr>
+                            <tr><th>Feature grounding report</th><td><code>{{ handoff.feature_grounding_contract_report_ref or 'not_available' }}</code></td></tr>
+                            <tr><th>Training source report</th><td><code>{{ handoff.training_source_contract_report_ref or 'not_available' }}</code></td></tr>
+                            <tr><th>ML authority report</th><td><code>{{ handoff.ml_overlay_authority_contract_report_ref or 'not_available' }}</code></td></tr>
                             <tr><th>Rolling plan JSON</th><td><code>{{ handoff.rolling_ml_window_plan_ref or 'not_available' }}</code></td></tr>
                             <tr><th>Artifact hash (live)</th><td id="lab-artifact-hash"><code>{{ handoff.artifact_hash or 'not_available' }}</code></td></tr>
                             <tr><th>Artifact hash</th><td><code>{{ handoff.artifact_hash or 'not_available' }}</code></td></tr>
@@ -1207,6 +1263,39 @@
         input.addEventListener("change", syncGovernedWindowPreview);
     });
     syncGovernedWindowPreview();
+
+    (function syncLabFeatureMirror() {
+        const form = document.querySelector('form[action="/lab/strategy-ladder-ml-handoff"]');
+        if (!form) {
+            return;
+        }
+        const csvMirror = form.querySelector('input[name="selected_features_csv"]');
+        const legacyMirror = form.querySelector('input[name="feature_names"]');
+        const countHost = document.getElementById("lab-feature-selection-count");
+        const featureInputs = Array.from(form.querySelectorAll('input[name="selected_features"]'));
+        if (!csvMirror || !legacyMirror || !featureInputs.length) {
+            return;
+        }
+
+        function syncSelectedFeatures() {
+            const selected = featureInputs
+                .filter((input) => input.checked)
+                .map((input) => String(input.value || "").trim())
+                .filter(Boolean);
+            const csv = selected.join(",");
+            csvMirror.value = csv;
+            legacyMirror.value = csv;
+            if (countHost) {
+                countHost.textContent = String(selected.length);
+            }
+        }
+
+        featureInputs.forEach((input) => {
+            input.addEventListener("change", syncSelectedFeatures);
+        });
+        form.addEventListener("submit", syncSelectedFeatures);
+        syncSelectedFeatures();
+    })();
 })();
 </script>
 

@@ -95,6 +95,30 @@ def _coalesce_numeric(payload: dict[str, object], key: str, default: float) -> f
         return default
 
 
+def _measured_fee_rate_from_payload(payload: dict[str, object]) -> float | None:
+    fee_bps = _coalesce_numeric(payload, "fee_bps", -1.0)
+    if fee_bps < 0.0:
+        return None
+    fee_source = str(payload.get("fee_source_status") or "").strip().upper()
+    if not fee_source.startswith("MEASURED_FROM_") and fee_source not in {
+        "FEE_SOURCE_PROVEN",
+        "FEE_SOURCE_CONFIGURED",
+        "FEE_SOURCE_EXCHANGE_METADATA",
+    }:
+        return None
+    return fee_bps / 10_000.0
+
+
+def _fee_source_status_from_payload(payload: dict[str, object]) -> str:
+    raw_status = str(payload.get("fee_source_status") or "FEE_SOURCE_NOT_PROVEN").strip()
+    normalized = raw_status.upper()
+    if normalized.startswith("MEASURED_FROM_VENUE_METADATA"):
+        return "FEE_SOURCE_EXCHANGE_METADATA"
+    if normalized == "MEASURED_FROM_VENUE_API_OVERRIDE":
+        return "FEE_SOURCE_PROVEN"
+    return raw_status or "FEE_SOURCE_NOT_PROVEN"
+
+
 def _impact_source_from_book_status(book_status: str) -> str:
     if book_status == "BOOK_DEPTH20_AVAILABLE":
         return "IMPACT_SOURCE_DEPTH20_MODEL"
@@ -181,6 +205,14 @@ def _row_from_candidate(
         if window_manifest is not None
         else payload.get("book_depth_levels")
     )
+    measured_fee_rate = _measured_fee_rate_from_payload(payload)
+    maker_fee_rate = payload.get("maker_fee_rate")
+    taker_fee_rate = payload.get("taker_fee_rate")
+    if measured_fee_rate is not None:
+        if maker_fee_rate is None:
+            maker_fee_rate = measured_fee_rate
+        if taker_fee_rate is None:
+            taker_fee_rate = measured_fee_rate
     record_payload = {
         "opportunity_id": payload.get("opportunity_id") or candidate.candidate_id,
         "timestamp_ms": candidate.resolved_timestamp_ms,
@@ -204,8 +236,8 @@ def _row_from_candidate(
         "side": str(payload.get("side") or "buy"),
         "tick_size": payload.get("tick_size"),
         "step_size": payload.get("step_size"),
-        "maker_fee_rate": payload.get("maker_fee_rate"),
-        "taker_fee_rate": payload.get("taker_fee_rate"),
+        "maker_fee_rate": maker_fee_rate,
+        "taker_fee_rate": taker_fee_rate,
         "min_notional": min_notional_assessment.min_notional,
         "mid_price": (
             _coalesce_numeric(payload, "mid_price", 0.0)
@@ -580,10 +612,7 @@ def run_strategy_ladder_detailed_replay(
                 measured_spread=shared_measured_spread,
                 measured_slippage=replay_evidence.measured_slippage,
                 fee_bps=_coalesce_numeric(candidate_payload, "fee_bps", 0.0),
-                fee_source_status=str(
-                    candidate_payload.get("fee_source_status")
-                    or "FEE_SOURCE_NOT_PROVEN"
-                ),
+                fee_source_status=_fee_source_status_from_payload(candidate_payload),
                 latency_penalty_bps=_coalesce_numeric(
                     candidate_payload,
                     "latency_penalty_bps",
@@ -667,9 +696,8 @@ def run_strategy_ladder_detailed_replay(
                 expected_ce_net=dtr_record.ce_expected,
                 executed_only_net_return=executed_only_net_return,
                 executed_only_net_return_status=executed_return_status,
-                fee_source_status=str(
-                    (candidate.compatibility_payload or {}).get("fee_source_status")
-                    or "FEE_SOURCE_NOT_PROVEN"
+                fee_source_status=_fee_source_status_from_payload(
+                    candidate.compatibility_payload or {}
                 ),
                 impact_source_status=str(
                     parity_payload.get("impact_source_status")

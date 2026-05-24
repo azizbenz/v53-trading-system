@@ -289,6 +289,9 @@
                 {% set _selected_ml_handoff_run_root = vm.selected_form.ml_handoff_run_root if vm.selected_form.ml_handoff_run_root is defined else '' %}
                 {% set _resolved_start = vm.selected_form.start or _ml_intake.requested_backtest_start %}
                 {% set _resolved_end = vm.selected_form.end or _ml_intake.requested_backtest_end %}
+                {% set _backtest_chain = vm.backtest_ml_chain_state %}
+                {% set _backtest_features = vm.backtest_effective_selected_features %}
+                {% set _backtest_picker_read_only = vm.backtest_feature_picker_read_only %}
                 {% if _selected_ml_handoff_run_root and not _ml_intake_defined %}
                 {% set _resolved_artifact_path = '' %}
                 {% set _resolved_artifact_hash = '' %}
@@ -302,6 +305,21 @@
                 {% endif %}
                 {% set _resolved_timeframe_scope = _ml_intake.timeframe_scope or ((_ml_intake.timeframe,) if _ml_intake.timeframe else ()) %}
                 <div class="stage3-shell">
+                    {% if _backtest_chain and _backtest_chain.status not in ['CHAIN_NOT_REQUESTED', ''] %}
+                    <div class="operator-note-surface {% if 'BLOCKED' in _backtest_chain.status %}operator-note-surface--danger{% elif 'COMPLETED' in _backtest_chain.status %}operator-note-surface--ok{% else %}operator-note-surface--info{% endif %}" style="margin-bottom: 12px;">
+                        <h5>Backtest ML chain</h5>
+                        <ul class="small-list">
+                            <li>Status: <code>{{ _backtest_chain.status }}</code></li>
+                            <li>Backtest timeframes: <code>{{ _backtest_chain.backtest_timeframes|join(', ') if _backtest_chain.backtest_timeframes else '1m' }}</code></li>
+                            <li>Selected features: <code>{{ _backtest_chain.selected_features|join(', ') if _backtest_chain.selected_features else 'none' }}</code></li>
+                            <li>Handoff job: <code>{{ _backtest_chain.handoff_job_id or 'n/a' }}</code></li>
+                            <li>Replay job: <code>{{ _backtest_chain.replay_job_id or 'n/a' }}</code></li>
+                            {% if _backtest_chain.blockers %}
+                            <li>Blockers: {{ _backtest_chain.blockers|join(', ') }}</li>
+                            {% endif %}
+                        </ul>
+                    </div>
+                    {% endif %}
                     <div class="stage3-shell__hero">
                         <div class="stage3-shell__hero-main">
                             <div class="stage3-shell__hero-icon" aria-hidden="true">🗓</div>
@@ -378,8 +396,51 @@
                             <input type="number" min="1" name="ml_artifact_freshness_days" value="{{ _resolved_freshness_days }}">
                         </label>
 
+                        {% set _backtest_timeframe_scope = vm.selected_form.backtest_timeframes or ('1m',) %}
+                        <div class="stage3-control-card">
+                            <span class="stage3-control-card__icon" aria-hidden="true">TF</span>
+                            <span class="stage3-control-card__title">Backtest timeframe scope</span>
+                            <code class="stage3-control-card__cli">--timeframes for B1/B2 replay only</code>
+                            <input id="backtest_timeframes_value" type="hidden" name="backtest_timeframes" value="{{ _backtest_timeframe_scope|join(',') }}">
+                            <input id="backtest_training_timeframe" type="hidden" name="training_timeframe" value="{{ _backtest_timeframe_scope[0] if _backtest_timeframe_scope else (vm.selected_form.training_timeframe or '1m') }}">
+                            <div class="lab-timeframe-picker">
+                                <div class="lab-timeframe-picker__mode">
+                                    <label class="lab-timeframe-picker__mode-option">
+                                        <input type="radio" name="backtest_timeframe_mode_ui" value="single">
+                                        <span>Mono-timeframe</span>
+                                    </label>
+                                    <label class="lab-timeframe-picker__mode-option">
+                                        <input type="radio" name="backtest_timeframe_mode_ui" value="multi">
+                                        <span>Multi-timeframe</span>
+                                    </label>
+                                </div>
+                                <div id="backtest_timeframe_single_wrap" class="lab-timeframe-picker__panel">
+                                    <label class="lab-timeframe-picker__subfield">Primary timeframe
+                                        <select id="backtest_timeframe_single">
+                                            {% for tf in ['1m', '5m', '10m', '15m'] %}
+                                            <option value="{{ tf }}"{% if (_backtest_timeframe_scope[0] if _backtest_timeframe_scope else '1m') == tf %} selected{% endif %}>{{ tf }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </label>
+                                </div>
+                                <div id="backtest_timeframe_multi_wrap" class="lab-timeframe-picker__panel lab-timeframe-picker__panel--checks" hidden>
+                                    <span class="lab-timeframe-picker__subfield">Select one or more timeframes</span>
+                                    <div class="lab-timeframe-picker__checks">
+                                        {% for tf in ['1m', '5m', '10m', '15m'] %}
+                                        <label class="lab-timeframe-picker__chip">
+                                            <input class="js-backtest-timeframe-multi" type="checkbox" value="{{ tf }}">
+                                            <span>{{ tf }}</span>
+                                        </label>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                                <small id="backtest_timeframe_scope_preview" class="muted">submitted value: <code>{{ _backtest_timeframe_scope|join(',') }}</code></small>
+                            </div>
+                            <span class="field-note">IA Lab controls ML training dates/timeframes; Backtest consumes the frozen artifact and filters replay scope.</span>
+                        </div>
+
                         {# Patch P3 (2026-05-22) — explicit mono|multi C1 mode selector #}
-                        {% set _selected_mode = vm.selected_form.expected_edge_artifact_mode or 'MONO_PAIR_LEGACY' %}
+                        {% set _selected_mode = vm.backtest_preflight.normalized_request.expected_edge_artifact_mode or vm.selected_form.expected_edge_artifact_mode or 'MONO_PAIR_LEGACY' %}
                         <label class="stage3-control-card">
                             <span class="stage3-control-card__icon" aria-hidden="true">⌥</span>
                             <span class="stage3-control-card__title">Expected-edge artifact mode</span>
@@ -390,6 +451,56 @@
                             </select>
                             <span class="field-note">MULTI_PAIR_C1 requires a manifest JSON with <code>artifact_kind=MULTI_PAIR_C1_EXPECTED_EDGE</code> and <code>pair_id_encoding</code> covering the selected pairs.</span>
                         </label>
+
+                        <div class="feature-picker-card stage3-control-card stage3-control-card--wide" style="grid-column: 1 / -1;">
+                            <div class="feature-picker-card__head">
+                                <label>Governed backtest feature picker</label>
+                                <small class="muted">Backtest feature selection is validated against the frozen IA Lab artifact. Native engine A/B/C/D logic stays unchanged.</small>
+                            </div>
+                            <input type="hidden" name="feature_picker_enabled" value="1">
+                            <input type="hidden" name="feature_names" value="{{ vm.selected_form.feature_names or (_backtest_features|join(',')) or 'close_return,high_low_range,volume' }}">
+                            <input type="hidden" name="selected_features_csv" value="{{ _backtest_features|join(',') }}">
+                            <div class="feature-picker">
+                                {% for group_label, group_feature_names in vm.supported_expected_edge_feature_groups %}
+                                <div class="feature-picker__group">
+                                    <div class="feature-picker__group-title">{{ group_label }}</div>
+                                    {% for feature_name in group_feature_names %}
+                                    {% set entry = (vm.backtest_feature_governance | selectattr('feature_name', 'equalto', feature_name) | list | first) %}
+                                    {% set verdict = entry.verdict if entry else 'N-A' %}
+                                    <label class="feature-picker__item">
+                                        <input type="checkbox" name="selected_features" value="{{ feature_name }}"
+                                            {% if feature_name in _backtest_features %}checked{% endif %}
+                                            {% if _backtest_picker_read_only %}disabled{% endif %}>
+                                        <span class="feature-picker__label">{{ feature_name }}</span>
+                                        <span class="feat-badge feat-badge--{{ verdict|lower|replace(' ', '-') }}" title="{% if entry %}Î”PSR={{ entry.ablation_delta_psr }}, Î”Sharpe={{ entry.ablation_delta_sharpe }}, SHAP rank={{ entry.shap_rank }}, talab_pass={{ entry.talab_quadruple_pass }}{% else %}Pas d'Ã©valuation gouvernÃ©e pour ce pair/timeframe{% endif %}">{{ verdict }}</span>
+                                    </label>
+                                    {% endfor %}
+                                </div>
+                                {% endfor %}
+                            </div>
+                            <div class="feature-picker__hint">
+                                <strong>Source:</strong> <code>{{ vm.backtest_feature_selection_source }}</code> ·
+                                <strong>Selected:</strong> <code id="backtest-feature-selection-count">{{ _backtest_features|length }}</code>.
+                                {% if _backtest_picker_read_only %}
+                                Frozen artifact feature list is authoritative for replay scoring.
+                                {% elif _backtest_features %}
+                                Launch requires a frozen IA Lab artifact; Backtest will not train ML silently.
+                                {% else %}
+                                Empty selection keeps the native backtest path unchanged.
+                                {% endif %}
+                            </div>
+                            {% if vm.backtest_selected_demoted_features %}
+                            <div class="feature-picker__hint feature-picker__hint--warning">
+                                <strong>Inline warning:</strong> the current backtest selection overrides governed <code>DEMOTED</code> verdicts for
+                                <code>{{ vm.backtest_selected_demoted_features|join(', ') }}</code>.
+                            </div>
+                            {% endif %}
+                            {% if _backtest_picker_read_only %}
+                            <div class="feature-picker__hint">
+                                <strong>Artifact authoritative:</strong> <code>{{ _ml_intake.feature_names|join(', ') if _ml_intake.feature_names else _backtest_features|join(', ') }}</code>.
+                            </div>
+                            {% endif %}
+                        </div>
 
                         <label class="stage3-control-card stage3-control-card--checkbox">
                             <span class="stage3-control-card__icon" aria-hidden="true">🛡</span>
@@ -499,6 +610,38 @@
                 </div>
             </div>
 
+            <div class="card backtest-monitor-card" id="backtest-decision-report-card">
+                <div class="card__head">
+                    <div class="card__head-main">
+                        <h3>Decision Report</h3>
+                        <span class="card__sub">Operator ranking and readiness artifacts</span>
+                    </div>
+                    <span id="backtest-decision-report-badge" class="monitor-badge monitor-badge--idle">{{ status_chip(vm.runtime.strategy_ladder_summary.backtest_decision_report_status) }}</span>
+                </div>
+                <div class="card__body">
+                    <table class="data-table data-table--compact">
+                        <tbody>
+                            <tr><th>Best timeframe</th><td>{{ vm.runtime.strategy_ladder_summary.backtest_decision_best_timeframe or 'insufficient_executions' }}</td></tr>
+                            <tr><th>Best pair</th><td>{{ vm.runtime.strategy_ladder_summary.backtest_decision_best_pair or 'insufficient_executions' }}</td></tr>
+                            <tr><th>Best bucket</th><td>{{ vm.runtime.strategy_ladder_summary.backtest_decision_best_capital_bucket or 'insufficient_executions' }}</td></tr>
+                            <tr><th>ML benefit</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.backtest_decision_ml_benefit_status) }}</td></tr>
+                            <tr><th>Profitability ready</th><td>{{ 'true' if vm.runtime.strategy_ladder_summary.backtest_decision_profitability_ready else 'false' }}</td></tr>
+                            <tr><th>Claim allowed</th><td>{{ 'true' if vm.runtime.strategy_ladder_summary.backtest_decision_profitability_claim_allowed else 'false' }}</td></tr>
+                            <tr><th>Next blocker</th><td>{{ vm.runtime.strategy_ladder_summary.backtest_decision_next_blocker or 'n/a' }}</td></tr>
+                        </tbody>
+                    </table>
+                    {% if vm.runtime.strategy_ladder_summary.backtest_decision_report_links %}
+                    <ul class="small-list" style="margin-top: 12px;">
+                        {% for link in vm.runtime.strategy_ladder_summary.backtest_decision_report_links %}
+                        <li>{{ link.label }}: <code>{{ link.path }}</code></li>
+                        {% endfor %}
+                    </ul>
+                    {% else %}
+                    <p class="field-note">Decision reports are produced after B2 completes.</p>
+                    {% endif %}
+                </div>
+            </div>
+
             <div class="card backtest-monitor-card{% if monitor_active %} backtest-monitor-card--active{% endif %}" id="backtest-runner-coverage-card">
                 <div class="card__head">
                     <div class="card__head-main">
@@ -532,13 +675,23 @@
                         <tbody>
                             <tr><th>Source</th><td>{{ status_chip(_ml_intake.source_status) }}</td></tr>
                             <tr><th>Pair</th><td>{{ _ml_intake.pair or 'n/a' }}</td></tr>
+                            <tr><th>Artifact mode</th><td>{{ status_chip(_ml_intake.expected_edge_artifact_mode or 'n/a') }}</td></tr>
+                            <tr><th>Artifact kind</th><td>{{ _ml_intake.artifact_kind or 'n/a' }}</td></tr>
+                            <tr><th>Pair universe</th><td>{{ (_ml_intake.pair_universe | join(', ')) if _ml_intake.pair_universe else 'n/a' }}</td></tr>
                             <tr><th>Timeframe scope</th><td>{{ (_resolved_timeframe_scope | join(', ')) if _resolved_timeframe_scope else (_ml_intake.timeframe or 'n/a') }}</td></tr>
                             <tr><th>Features</th><td>{{ (_ml_intake.feature_names | join(', ')) if _ml_intake.feature_names else 'n/a' }}</td></tr>
+                            <tr><th>Feature count</th><td>{{ _ml_intake.feature_count or 0 }}</td></tr>
                             <tr><th>Train window</th><td>{{ (_ml_intake.train_start ~ ' -> ' ~ _ml_intake.train_end) if _ml_intake.train_start or _ml_intake.train_end else 'n/a' }}</td></tr>
                             <tr><th>Requested backtest</th><td>{{ (_ml_intake.requested_backtest_start ~ ' -> ' ~ _ml_intake.requested_backtest_end) if _ml_intake.requested_backtest_start or _ml_intake.requested_backtest_end else 'n/a' }}</td></tr>
                             <tr><th>Max valid backtest end</th><td>{{ _ml_intake.max_valid_backtest_end or 'n/a' }}</td></tr>
                             <tr><th>Artifact stale after</th><td>{{ _ml_intake.artifact_stale_after or 'n/a' }}</td></tr>
                             <tr><th>Rolling plan</th><td>{{ status_chip(_ml_intake.rolling_ml_window_plan_status or 'not_proven') }}</td></tr>
+                            <tr><th>Anti-leakage proof</th><td><code>{{ _ml_intake.anti_leakage_proof_ref or 'n/a' }}</code></td></tr>
+                            <tr><th>Feature grounding report</th><td><code>{{ _ml_intake.feature_grounding_contract_report_ref or 'n/a' }}</code></td></tr>
+                            <tr><th>Training source report</th><td><code>{{ _ml_intake.training_source_contract_report_ref or 'n/a' }}</code></td></tr>
+                            <tr><th>ML authority report</th><td><code>{{ _ml_intake.ml_overlay_authority_contract_report_ref or 'n/a' }}</code></td></tr>
+                            <tr><th>Train/eval overlap report</th><td><code>{{ _ml_intake.ml_train_eval_overlap_report_ref or 'n/a' }}</code></td></tr>
+                            <tr><th>Label leakage report</th><td><code>{{ _ml_intake.ml_feature_input_label_leakage_report_ref or 'n/a' }}</code></td></tr>
                         </tbody>
                     </table>
                     {% if _selected_ml_handoff_run_root and not _ml_intake_defined %}
@@ -597,6 +750,7 @@
                 <tbody>
                     <tr><th>Phase</th><td>{{ vm.backtest_preflight.phase_label }}</td></tr>
                     <tr><th>Inspection</th><td>{{ vm.backtest_preflight.inspection_status }}</td></tr>
+                    <tr><th>Expected-edge mode</th><td>{{ vm.backtest_preflight.normalized_request.expected_edge_artifact_mode or 'MONO_PAIR_LEGACY' }}</td></tr>
                     <tr><th>Preview ID</th><td><code>{{ vm.backtest_preflight.preview_id or 'n/a' }}</code></td></tr>
                     <tr><th>Request hash</th><td><code>{{ vm.backtest_preflight.request_hash or 'n/a' }}</code></td></tr>
                     <tr><th>Launchable</th><td>{{ 'PREVIEW_LAUNCHABLE' if vm.backtest_preflight.preview_launchable else 'PREVIEW_NOT_LAUNCHABLE' }}</td></tr>
@@ -2210,12 +2364,60 @@
                     <span class="candidate-token">Rows <strong>{{ vm.runtime.strategy_ladder_summary.candidate_rows|length }}</strong></span>
                     <span class="candidate-token">Run <strong>{{ vm.runtime.strategy_ladder_summary.run_id or 'not_available' }}</strong></span>
                     <span class="candidate-token">Selection <strong id="candidate-selection-token">{{ selected_candidate_id or 'none' }}</strong></span>
+                    <span class="candidate-token">Feature table <strong>{{ vm.runtime.strategy_ladder_summary.candidate_feature_table_status }}</strong></span>
+                    <span class="candidate-token">Active features <strong>{{ vm.runtime.strategy_ladder_summary.candidate_feature_columns|length }}</strong></span>
                 </div>
                 <div class="candidate-chip-list">
-                    <span class="candidate-chip candidate-chip--status">No reload selection</span>
+                    <span class="candidate-chip candidate-chip--status">{{ vm.runtime.strategy_ladder_summary.feature_engine_ml_wiring_status }}</span>
                 </div>
             </div>
-            {% if vm.runtime.strategy_ladder_summary.candidate_rows %}
+            {% if vm.runtime.strategy_ladder_summary.candidate_feature_rows %}
+            <div class="candidate-explorer-table-wrap">
+                <table class="data-table data-table--compact">
+                    <thead>
+                        <tr>
+                            <th>Candidate</th>
+                            <th>Pair</th>
+                            <th>Engine</th>
+                            <th>TF</th>
+                            <th>Outcome</th>
+                            <th>Accepted / refused</th>
+                            <th>Reason codes</th>
+                            {% for feature_name in vm.runtime.strategy_ladder_summary.candidate_feature_columns %}
+                            <th>{{ feature_name }}</th>
+                            {% endfor %}
+                            <th>Select</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in vm.runtime.strategy_ladder_summary.candidate_feature_rows %}
+                        {% set row_candidate_id = row.get('candidate_id', '') %}
+                        {% set row_selected = row_candidate_id == selected_candidate_id %}
+                        <tr class="candidate-row{% if row_selected %} candidate-row--selected{% endif %}" data-candidate-row data-candidate-id="{{ row_candidate_id }}">
+                            <td><code>{{ row_candidate_id }}</code></td>
+                            <td>{{ row.get('pair', '') }}</td>
+                            <td>{{ row.get('engine_id', '') }}</td>
+                            <td>{{ row.get('timeframe', '') }}</td>
+                            <td>{{ row.get('outcome_status', '') }}</td>
+                            <td>{{ row.get('accepted_or_refused', '') }}</td>
+                            <td>{{ row.get('reason_codes', ())|join(', ') if row.get('reason_codes') else 'none' }}</td>
+                            {% for feature_name in vm.runtime.strategy_ladder_summary.candidate_feature_columns %}
+                            <td>{{ row.get(feature_name, 'n/a') }}</td>
+                            {% endfor %}
+                            <td class="candidate-row__action">
+                                <form action="/backtest#candidate-workspace" method="get" data-candidate-select-form>
+                                    <input type="hidden" name="candidate_id" value="{{ row_candidate_id }}">
+                                    <button class="button button--info candidate-select-button" type="submit" aria-pressed="{{ 'true' if row_selected else 'false' }}">
+                                        {{ 'Selected' if row_selected else 'Inspect' }}
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% elif vm.runtime.strategy_ladder_summary.candidate_rows %}
             <div class="candidate-explorer-table-wrap">
                 <table class="data-table data-table--compact">
                     <thead>
@@ -2304,6 +2506,14 @@
                         <span class="candidate-metric__value">{{ selected_candidate_detail.get('spread_bps', 'n/a') }} / {{ selected_candidate_detail.get('slippage_bps', 'n/a') }} / {{ selected_candidate_detail.get('expected_edge_bps', 'n/a') }}</span>
                     </div>
                     <div class="candidate-metric">
+                        <span class="candidate-metric__label">Expected edge truth</span>
+                        <span class="candidate-metric__value">{{ selected_candidate_detail.get('expected_edge_truth_status', 'EXPECTED_EDGE_TRUTH_NOT_PROVEN') }}</span>
+                    </div>
+                    <div class="candidate-metric">
+                        <span class="candidate-metric__label">Expected cost truth</span>
+                        <span class="candidate-metric__value">{{ selected_candidate_detail.get('expected_cost_truth_status', 'EXPECTED_COST_TRUTH_NOT_PROVEN') }}</span>
+                    </div>
+                    <div class="candidate-metric">
                         <span class="candidate-metric__label">Scoring trace</span>
                         <span class="candidate-metric__value">{{ selected_candidate_detail.get('scoring_trace_status', 'NOT_PROVEN') }}</span>
                     </div>
@@ -2339,6 +2549,7 @@
                         <li>Net return (bps): {{ selected_candidate_replay.get('net_return_bps', 'NOT_PROVEN') if selected_candidate_replay else 'NOT_PROVEN' }}</li>
                         <li>Reason codes: {{ selected_candidate_replay.get('reason_codes', ())|join(', ') if selected_candidate_replay and selected_candidate_replay.get('reason_codes') else 'none' }}</li>
                         <li>Fee / impact / fill / parity: {{ selected_candidate_replay.get('fee_source_status', 'n/a') if selected_candidate_replay else 'n/a' }} / {{ selected_candidate_replay.get('impact_source_status', 'n/a') if selected_candidate_replay else 'n/a' }} / {{ selected_candidate_replay.get('fill_realism_status', 'n/a') if selected_candidate_replay else 'n/a' }} / {{ selected_candidate_replay.get('cost_parity_status', 'n/a') if selected_candidate_replay else 'n/a' }}</li>
+                        <li>Cost source for break-even / CE net: {{ selected_candidate_detail.get('cost_source_used_for_break_even', 'n/a') }} / {{ selected_candidate_detail.get('cost_source_used_for_expected_ce_net', 'n/a') }}</li>
                     </ul>
                 </div>
                 <div class="candidate-detail-section">
@@ -2358,6 +2569,53 @@
             <p class="muted">CANDIDATE_DETAIL_NOT_AVAILABLE</p>
             {% endif %}
         </div>
+    </div>
+</section>
+
+<section class="card">
+    <div class="card__head">
+        <h3>Feature / Engine / ML Wiring Audit</h3>
+        <span class="card__sub">Explicit separation between native engine context and ML overlay runtime wiring</span>
+    </div>
+    <div class="card__body">
+        <p class="muted">
+            Native engines do not consume the cockpit feature picker directly. Backtest consumes the frozen IA Lab artifact feature list through <code>feature_values + route_features</code>.
+        </p>
+        <p class="muted">
+            Report path: <code>{{ vm.runtime.strategy_ladder_summary.feature_engine_ml_wiring_report_path or 'not_available' }}</code>
+        </p>
+        {% if vm.runtime.strategy_ladder_summary.feature_engine_ml_wiring_rows %}
+        <table class="data-table data-table--compact">
+            <thead>
+                <tr>
+                    <th>Feature</th>
+                    <th>Training selected</th>
+                    <th>Artifact selected</th>
+                    <th>Runtime payload</th>
+                    <th>Native origin</th>
+                    <th>Native consumption</th>
+                    <th>ML wired</th>
+                    <th>ML block reason</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in vm.runtime.strategy_ladder_summary.feature_engine_ml_wiring_rows %}
+                <tr>
+                    <td><code>{{ row.get('feature_name', '') }}</code></td>
+                    <td>{{ 'true' if row.get('training_selected') else 'false' }}</td>
+                    <td>{{ 'true' if row.get('artifact_selected') else 'false' }}</td>
+                    <td>{{ 'true' if row.get('runtime_payload_available') else 'false' }}</td>
+                    <td>{{ row.get('native_engine_origin', '') }}</td>
+                    <td>{{ row.get('native_engine_consumption_status', '') }}</td>
+                    <td>{{ 'true' if row.get('ml_runtime_wired') else 'false' }}</td>
+                    <td>{{ row.get('ml_block_reason', '') or 'none' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="muted">FEATURE_ENGINE_ML_WIRING_NOT_PROVEN</p>
+        {% endif %}
     </div>
 </section>
 
@@ -3308,6 +3566,122 @@
         }
     });
     refreshStatus();
+})();
+</script>
+
+<script>
+(() => {
+    const hiddenInput = document.getElementById("backtest_timeframes_value");
+    const trainingMirror = document.getElementById("backtest_training_timeframe");
+    const singleWrap = document.getElementById("backtest_timeframe_single_wrap");
+    const multiWrap = document.getElementById("backtest_timeframe_multi_wrap");
+    const singleSelect = document.getElementById("backtest_timeframe_single");
+    const previewNode = document.getElementById("backtest_timeframe_scope_preview");
+    const modeInputs = Array.from(document.querySelectorAll('input[name="backtest_timeframe_mode_ui"]'));
+    const multiInputs = Array.from(document.querySelectorAll(".js-backtest-timeframe-multi"));
+    const orderedTimeframes = ["1m", "5m", "10m", "15m"];
+    if (!hiddenInput || !trainingMirror || !singleWrap || !multiWrap || !singleSelect || !modeInputs.length || !multiInputs.length) {
+        return;
+    }
+
+    function normalizeTimeframes(rawValue) {
+        const seen = new Set();
+        return String(rawValue || "")
+            .split(",")
+            .map((value) => value.trim())
+            .filter((value) => value && orderedTimeframes.includes(value) && !seen.has(value) && seen.add(value));
+    }
+
+    function getMode() {
+        return modeInputs.find((input) => input.checked)?.value || "single";
+    }
+
+    function setMode(mode) {
+        modeInputs.forEach((input) => {
+            input.checked = input.value === mode;
+        });
+        const multiMode = mode === "multi";
+        singleWrap.hidden = multiMode;
+        multiWrap.hidden = !multiMode;
+    }
+
+    function updatePreview(scope) {
+        const effectiveScope = scope.length ? scope : ["1m"];
+        const value = effectiveScope.join(",");
+        hiddenInput.value = value;
+        trainingMirror.value = effectiveScope[0] || "1m";
+        if (previewNode) {
+            previewNode.innerHTML = `submitted value: <code>${value}</code>`;
+        }
+    }
+
+    function syncFromControls() {
+        if (getMode() === "multi") {
+            const scope = multiInputs.filter((input) => input.checked).map((input) => input.value);
+            if (!scope.length) {
+                multiInputs[0].checked = true;
+                updatePreview([multiInputs[0].value]);
+                return;
+            }
+            updatePreview(scope);
+            return;
+        }
+        updatePreview([singleSelect.value || "1m"]);
+    }
+
+    const initialScope = normalizeTimeframes(hiddenInput.value);
+    const effectiveInitialScope = initialScope.length ? initialScope : ["1m"];
+    setMode(effectiveInitialScope.length > 1 ? "multi" : "single");
+    singleSelect.value = effectiveInitialScope[0];
+    multiInputs.forEach((input) => {
+        input.checked = effectiveInitialScope.includes(input.value);
+    });
+    updatePreview(effectiveInitialScope);
+    modeInputs.forEach((input) => {
+        input.addEventListener("change", () => {
+            setMode(input.value);
+            syncFromControls();
+        });
+    });
+    singleSelect.addEventListener("change", syncFromControls);
+    multiInputs.forEach((input) => {
+        input.addEventListener("change", syncFromControls);
+    });
+})();
+</script>
+
+<script>
+(() => {
+    const form = document.querySelector('form[action="/backtest/run"]');
+    if (!form) {
+        return;
+    }
+    const csvMirror = form.querySelector('input[name="selected_features_csv"]');
+    const legacyMirror = form.querySelector('input[name="feature_names"]');
+    const countHost = document.getElementById("backtest-feature-selection-count");
+    const featureInputs = Array.from(form.querySelectorAll('input[name="selected_features"]'));
+    if (!csvMirror || !legacyMirror || !featureInputs.length) {
+        return;
+    }
+
+    function syncSelectedFeatures() {
+        const selected = featureInputs
+            .filter((input) => input.checked)
+            .map((input) => String(input.value || "").trim())
+            .filter(Boolean);
+        const csv = selected.join(",");
+        csvMirror.value = csv;
+        legacyMirror.value = csv;
+        if (countHost) {
+            countHost.textContent = String(selected.length);
+        }
+    }
+
+    featureInputs.forEach((input) => {
+        input.addEventListener("change", syncSelectedFeatures);
+    });
+    form.addEventListener("submit", syncSelectedFeatures);
+    syncSelectedFeatures();
 })();
 </script>
 

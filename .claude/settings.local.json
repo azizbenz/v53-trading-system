@@ -61,7 +61,17 @@
       "Bash(python -m pytest tests/test_smoke_bootstrap_recovery/test_smoke_reporter.py::TestFullBuild1Smoke::test_build1_smoke_passes tests/test_interface_contracts/test_pair_catalog.py tests/test_venue_adapters/test_binance_spot/test_multi_symbol_ws_client.py -q --tb=short)",
       "Bash(python -m pytest tests/test_smoke_bootstrap_recovery/test_smoke_reporter.py::TestFullBuild1Smoke::test_build1_smoke_passes -q --tb=line)",
       "mcp__plugin_3_0_14_mempalace__mempalace_diary_write",
-      "mcp__plugin_3_0_14_mempalace__mempalace_kg_add"
+      "mcp__plugin_3_0_14_mempalace__mempalace_kg_add",
+      "Bash(rtk grep *)",
+      "PowerShell(\\(Get-Content \"src/local_replay_runtime/strategy_ladder_edge_model_provider.py\" | Measure-Object -Line\\).Lines)",
+      "Bash(rtk ls *)",
+      "Bash(rtk python *)",
+      "Bash(git stash *)",
+      "Bash(git mv *)",
+      "Bash(mv tests/test_local_replay_runtime/test_strategy_ladder_edge_model_provider_c1_aware.py /tmp/test_p1_temp.py 2>&1; rtk pytest \"tests/test_local_replay_runtime/test_strategy_ladder_runner.py::test_strategy_ladder_runner_materializes_native_candidates_and_blocks_proxy_edge\" \"tests/test_local_replay_runtime/test_strategy_ladder_runner.py::test_fast_only_b1_with_engine_native_mode_runs_native_materialization_and_preselection\" 2>&1 | tail -10)",
+      "Bash(cat ~/AppData/Local/rtk/tee/1779472180_pytest.log 2>&1 | tail -30)",
+      "PowerShell($env:PYTHONPATH = \"src\"; rtk python -m dag_validator 2>&1 | Select-Object -Last 15)",
+      "PowerShell(Select-String -Path \"build/engineering_guardrails/engineering_guardrails.report.json\" -Pattern \"edge_model_provider|strategy_ladder_models|strategy_ladder_runner|c1_aware\" -CaseSensitive -SimpleMatch | Select-Object -First 30 | ForEach-Object { $_.Line.Trim\\(\\).Substring\\(0, [Math]::Min\\($_.Line.Trim\\(\\).Length, 200\\)\\) })"
     ]
   }
 }

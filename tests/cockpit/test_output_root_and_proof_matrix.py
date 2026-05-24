@@ -416,10 +416,13 @@ def test_preflight_derives_ml_overlay_inputs_from_handoff_run_folder() -> None:
         )
 
         assert preview.ml_overlay_intake.check_status == "ML_CHECK_OK"
+        assert preview.ml_overlay_intake.expected_edge_artifact_mode == "MONO_PAIR_LEGACY"
         assert preview.ml_overlay_intake.max_valid_backtest_end == "2025-08-16"
+        assert preview.ml_overlay_intake.feature_count == 3
         assert preview.normalized_request.frozen_ml_artifact_path == str(artifact_path)
         assert preview.normalized_request.frozen_ml_artifact_hash == artifact_hash
         assert preview.normalized_request.rolling_ml_window_plan_path == str(rolling_plan_path)
+        assert preview.normalized_request.expected_edge_artifact_mode == "MONO_PAIR_LEGACY"
         assert preview.normalized_request.start == "2025-07-18"
         assert preview.normalized_request.end == "2025-08-01"
     finally:
@@ -501,6 +504,172 @@ def test_preflight_infers_ml_handoff_run_root_from_stage3_artifact_directory() -
         assert preview.normalized_request.rolling_ml_window_plan_path == str(rolling_plan_path)
         assert preview.normalized_request.start == "2025-07-18"
         assert preview.normalized_request.end == "2025-08-01"
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_preflight_auto_detects_multi_pair_c1_mode_from_handoff_artifact() -> None:
+    scratch = _scratch_dir("preflight_ml_handoff_multipair_c1")
+    try:
+        run_root = scratch / "ml_handoff" / "runs" / "strategy_ladder_ml_lab_handoff-c1"
+        run_root.mkdir(parents=True, exist_ok=True)
+        artifact_path = run_root / "strategy_ladder_expected_edge_multi_pair_c1_manifest.json"
+        artifact_path.write_text(
+            json.dumps(
+                {
+                    "artifact_kind": "MULTI_PAIR_C1_EXPECTED_EDGE",
+                    "artifact_hash": "f" * 64,
+                    "feature_hash": "e" * 64,
+                    "feature_names": [
+                        "close_return",
+                        "high_low_range",
+                        "volume",
+                        "pair_id",
+                    ],
+                    "pair_id_encoding": {
+                        "BTCUSDT": 0,
+                        "ETHUSDT": 1,
+                        "SOLUSDT": 2,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        rolling_plan_path = run_root / "rolling_ml_window_plan.json"
+        rolling_plan_path.write_text("{}", encoding="utf-8")
+        (run_root / "strategy_ladder_ml_lab_handoff_report.json").write_text(
+            json.dumps(
+                {
+                    "status": "STRATEGY_LADDER_ML_LAB_HANDOFF_READY",
+                    "ready": True,
+                    "pair": "BTCUSDT",
+                    "timeframe": "1m",
+                    "feature_names": ["close_return", "high_low_range", "volume", "pair_id"],
+                    "train_start": "2025-05-02",
+                    "train_end": "2025-07-17",
+                    "requested_backtest_start": "2025-07-18",
+                    "requested_backtest_end": "2025-08-01",
+                    "artifact_stale_after": "2025-08-16T23:00:00+00:00",
+                    "max_valid_backtest_end": "2025-08-16",
+                    "artifact_hash": "f" * 64,
+                    "transport_artifact_ref": str(artifact_path),
+                    "rolling_ml_window_plan_ref": str(rolling_plan_path),
+                    "rolling_ml_window_plan_status": "ROLLING_PLAN_READY",
+                    "rolling_ml_required_artifact_count": 1,
+                    "train_days": 180,
+                    "validation_days": 30,
+                    "freshness_days": 30,
+                    "chunk_days": 15,
+                    "blocking_reasons": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_root / "strategy_ladder_backtest_ml_input.json").write_text(
+            json.dumps(
+                {
+                    "status": "STRATEGY_LADDER_BACKTEST_ML_INPUT_READY",
+                    "ml_mode": "ML_MODE_OVERLAY_FROZEN",
+                    "pair": "BTCUSDT",
+                    "timeframe_scope": ["1m"],
+                    "frozen_ml_artifact_path": str(artifact_path),
+                    "frozen_ml_artifact_hash": "f" * 64,
+                    "rolling_ml_window_plan_ref": str(rolling_plan_path),
+                    "requested_backtest_start": "2025-07-18",
+                    "requested_backtest_end": "2025-08-01",
+                    "max_valid_backtest_end": "2025-08-16",
+                    "freshness_days": 30,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        preview = build_patch6_preflight_preview(
+            selected_form=BacktestFormState(
+                action_name="PHASE_B2_DETAILED_REPLAY",
+                phase_id=PHASE_B2,
+                workflow_phase=PHASE_B2,
+                ml_mode="ML_MODE_OVERLAY_FROZEN",
+                ml_handoff_run_root=str(run_root),
+            ),
+            jobs_root=scratch / "jobs",
+        )
+
+        assert preview.ml_overlay_intake.check_status == "ML_CHECK_OK"
+        assert preview.ml_overlay_intake.expected_edge_artifact_mode == "MULTI_PAIR_C1"
+        assert preview.ml_overlay_intake.pair_universe == ("BTCUSDT", "ETHUSDT", "SOLUSDT")
+        assert preview.ml_overlay_intake.feature_count == 4
+        assert preview.normalized_request.expected_edge_artifact_mode == "MULTI_PAIR_C1"
+        assert preview.normalized_request.pair_subset == ("BTCUSDT", "ETHUSDT", "SOLUSDT")
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_preflight_blocks_requested_multi_pair_mode_on_mono_artifact() -> None:
+    scratch = _scratch_dir("preflight_ml_handoff_mode_mismatch")
+    try:
+        run_root = scratch / "ml_handoff" / "runs" / "strategy_ladder_ml_lab_handoff-mismatch"
+        run_root.mkdir(parents=True, exist_ok=True)
+        artifact_path = run_root / "strategy_ladder_expected_edge_ml_model_bundle.json"
+        artifact_path.write_text("{}", encoding="utf-8")
+        rolling_plan_path = run_root / "rolling_ml_window_plan.json"
+        rolling_plan_path.write_text("{}", encoding="utf-8")
+        (run_root / "strategy_ladder_ml_lab_handoff_report.json").write_text(
+            json.dumps(
+                {
+                    "status": "STRATEGY_LADDER_ML_LAB_HANDOFF_READY",
+                    "ready": True,
+                    "pair": "BTCUSDT",
+                    "timeframe": "1m",
+                    "feature_names": ["close_return", "high_low_range", "volume"],
+                    "train_start": "2025-05-02",
+                    "train_end": "2025-07-17",
+                    "requested_backtest_start": "2025-07-18",
+                    "requested_backtest_end": "2025-08-01",
+                    "artifact_hash": "abc123",
+                    "rolling_ml_window_plan_ref": str(rolling_plan_path),
+                    "rolling_ml_window_plan_status": "ROLLING_PLAN_READY",
+                    "blocking_reasons": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_root / "strategy_ladder_backtest_ml_input.json").write_text(
+            json.dumps(
+                {
+                    "status": "STRATEGY_LADDER_BACKTEST_ML_INPUT_READY",
+                    "ml_mode": "ML_MODE_OVERLAY_FROZEN",
+                    "pair": "BTCUSDT",
+                    "timeframe_scope": ["1m"],
+                    "frozen_ml_artifact_path": str(artifact_path),
+                    "frozen_ml_artifact_hash": "abc123",
+                    "rolling_ml_window_plan_ref": str(rolling_plan_path),
+                    "requested_backtest_start": "2025-07-18",
+                    "requested_backtest_end": "2025-08-01",
+                    "max_valid_backtest_end": "2025-08-16",
+                    "freshness_days": 30,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        preview = build_patch6_preflight_preview(
+            selected_form=BacktestFormState(
+                action_name="PHASE_B2_DETAILED_REPLAY",
+                phase_id=PHASE_B2,
+                workflow_phase=PHASE_B2,
+                ml_mode="ML_MODE_OVERLAY_FROZEN",
+                expected_edge_artifact_mode="MULTI_PAIR_C1",
+                ml_handoff_run_root=str(run_root),
+            ),
+            jobs_root=scratch / "jobs",
+        )
+
+        assert (
+            "EXPECTED_EDGE_ARTIFACT_MODE_MISMATCH:REQUESTED_MULTI_PAIR_C1_DETECTED_MONO_PAIR_LEGACY"
+            in preview.ml_overlay_intake.blocker_codes
+        )
+        assert preview.ml_overlay_intake.check_status == "ML_CHECK_BLOCKED"
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 

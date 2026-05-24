@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from local_replay_runtime.strategy_ladder_b2_label_store_builder import (
+    F16_FEATURE_COVERAGE_REPORT_FILENAME,
     LABEL_STORE_DATASET_FILENAME,
     LABEL_STORE_QUALITY_REPORT_FILENAME,
     LABEL_STORE_SUMMARY_FILENAME,
@@ -12,6 +13,9 @@ from local_replay_runtime.strategy_ladder_b2_label_store_builder import (
     StrategyLadderB2LabelStoreRow,
     StrategyLadderB2LabelStoreSummary,
     build_strategy_ladder_b2_label_store,
+)
+from local_replay_runtime.strategy_ladder_expected_edge_feature_contracts import (
+    SUPPORTED_EXPECTED_EDGE_FEATURE_NAMES,
 )
 from local_replay_runtime.strategy_ladder_models import (
     StrategyLadderBucketReplayResult,
@@ -80,6 +84,35 @@ def _write_candidate_events(run_root: Path) -> None:
             },
         },
     ]
+    candidate_events_path.write_text(
+        "\n".join(json.dumps(row, separators=(",", ":")) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_full_f16_candidate_events(run_root: Path) -> None:
+    _write_candidate_events(run_root)
+    candidate_events_path = run_root / "fast_candidates" / "candidate_events.jsonl"
+    rows = [
+        json.loads(line)
+        for line in candidate_events_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    for index, row in enumerate(rows):
+        compatibility = dict(row["compatibility_payload"])
+        feature_values = {
+            feature_name: float(index + 1)
+            for feature_name in SUPPORTED_EXPECTED_EDGE_FEATURE_NAMES
+        }
+        feature_values.update(
+            {
+                "anti_revenge_state__active": 1.0,
+                "anti_revenge_state__cooling": 0.0,
+                "anti_revenge_state__idle": 0.0,
+            }
+        )
+        compatibility["feature_values"] = feature_values
+        row["compatibility_payload"] = compatibility
     candidate_events_path.write_text(
         "\n".join(json.dumps(row, separators=(",", ":")) for row in rows) + "\n",
         encoding="utf-8",
@@ -394,6 +427,38 @@ def test_b2_label_store_builder_propagates_grounded_and_proxy_rows() -> None:
     assert quality.label_quality_status_counts["LABEL_QUALITY_RESEARCH_ONLY"] == 2
     assert quality.entry_reference_status_counts["ENTRY_REFERENCE_DECISION_PRICE_PROXY"] == 1
     assert quality.evidence_class_counts["REPLAY_EXPECTED_CE_NET_PROXY"] == 1
+
+    f16_report = json.loads(
+        (output_dir / F16_FEATURE_COVERAGE_REPORT_FILENAME).read_text(encoding="utf-8")
+    )
+    assert f16_report["status"] == "F16_FEATURE_COVERAGE_BLOCKED"
+    assert "F16_ANTI_REVENGE_STATE_MISSING" in f16_report["blocker_codes"]
+    assert "book_depth_levels" not in f16_report["zero_available_features"]
+    assert "anti_revenge_state__active" in f16_report["zero_available_features"]
+
+
+def test_b2_label_store_f16_report_counts_full_feature_rows() -> None:
+    scratch = _scratch_dir("f16_full_rows")
+    run_root = scratch / "b2-run"
+    output_dir = scratch / "label-store"
+    _write_full_f16_candidate_events(run_root)
+    _write_raw_windows(run_root)
+    _write_replay_artifacts(run_root)
+
+    result = build_strategy_ladder_b2_label_store(
+        StrategyLadderB2LabelStoreBuilderRequest(
+            run_root=run_root,
+            output_dir=output_dir,
+        )
+    )
+
+    assert result.f16_feature_coverage_report_path.endswith(F16_FEATURE_COVERAGE_REPORT_FILENAME)
+    f16_report = json.loads(Path(result.f16_feature_coverage_report_path).read_text(encoding="utf-8"))
+    assert f16_report["status"] == "F16_FEATURE_COVERAGE_READY"
+    assert f16_report["full_feature_row_count"] == 2
+    assert f16_report["zero_available_features"] == []
+    assert f16_report["prod_eligibility_status"] == "F16_RESEARCH_ONLY_NOT_PROD_ELIGIBLE"
+    assert "F16_REPLAY_LABEL_STORE_PROXY_LABELS_PRESENT" in f16_report["blocker_codes"]
 
 
 def test_b2_label_store_builder_blocks_when_replay_is_missing() -> None:

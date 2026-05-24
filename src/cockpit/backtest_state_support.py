@@ -24,6 +24,7 @@ _LAUNCH_REQUEST_STATE_FILENAME = "_launch_request_state.json"
 _LATEST_JOB_STATE_FILENAME = "_latest_job_state.json"
 _LATEST_CANONICAL_SUMMARY_STATE_FILENAME = "_latest_canonical_summary_state.json"
 _PREVIEW_MANIFEST_FILENAME = "source_date_preview_manifest.json"
+_BACKTEST_ML_CHAIN_STATE_FILENAME = "_backtest_ml_chain_state.json"
 
 
 CANONICAL_ACTION_BY_PHASE_ID: dict[str, str] = {
@@ -63,6 +64,18 @@ PHASE_LABEL_BY_ID: dict[str, str] = {
     "PHASE_2A": "Legacy Combined Preview",
     "PHASE_2B": "Legacy Combined Diagnostic",
 }
+SUPPORTED_BACKTEST_TIMEFRAMES: tuple[str, ...] = ("1m", "5m", "10m", "15m")
+
+
+def normalize_backtest_timeframes(raw_value: str | tuple[str, ...] | list[str]) -> tuple[str, ...]:
+    if isinstance(raw_value, str):
+        tokens = tuple(part.strip() for part in raw_value.split(",") if part.strip())
+    else:
+        tokens = tuple(str(part).strip() for part in raw_value if str(part).strip())
+    normalized = tuple(
+        dict.fromkeys(token for token in tokens if token in SUPPORTED_BACKTEST_TIMEFRAMES)
+    )
+    return normalized or ("1m",)
 
 
 class Patch6NormalizedRequest(BaseModel, frozen=True):
@@ -72,6 +85,12 @@ class Patch6NormalizedRequest(BaseModel, frozen=True):
     workflow_run_id: str = ""
     dry_run: bool = True
     ml_mode: str = "ML_MODE_OFF"
+    training_timeframe: str = "1m"
+    backtest_timeframes: tuple[str, ...] = ("1m",)
+    feature_names: str = "close_return,high_low_range,volume"
+    selected_features: tuple[str, ...] = ()
+    feature_picker_enabled: bool = False
+    expected_edge_artifact_mode: str = "MONO_PAIR_LEGACY"
     frozen_ml_artifact_path: str = ""
     frozen_ml_artifact_hash: str = ""
     rolling_ml_window_plan_path: str = ""
@@ -123,6 +142,12 @@ class CockpitPatch6State(BaseModel, frozen=True):
     output_root_effective: str = ""
     dry_run: bool = True
     ml_mode: str = "ML_MODE_OFF"
+    training_timeframe: str = "1m"
+    backtest_timeframes: tuple[str, ...] = ("1m",)
+    feature_names: str = "close_return,high_low_range,volume"
+    selected_features: tuple[str, ...] = ()
+    feature_picker_enabled: bool = False
+    expected_edge_artifact_mode: str = "MONO_PAIR_LEGACY"
     frozen_ml_artifact_path: str = ""
     frozen_ml_artifact_hash: str = ""
     rolling_ml_window_plan_path: str = ""
@@ -169,6 +194,30 @@ class BacktestPreviewManifest(BaseModel, frozen=True):
     warnings: tuple[str, ...] = ()
     command_preview: str = ""
     preview_payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class BacktestMlChainState(BaseModel, frozen=True):
+    """Persisted auto handoff->replay chain state for /backtest ML feature launches."""
+
+    status: str = "CHAIN_NOT_REQUESTED"
+    created_at: str = ""
+    updated_at: str = ""
+    action_name: str = ""
+    phase_id: str = PHASE_B1
+    workflow_run_id: str = ""
+    preview_id: str = ""
+    request_hash: str = ""
+    selected_features: tuple[str, ...] = ()
+    training_timeframe: str = "1m"
+    backtest_timeframes: tuple[str, ...] = ("1m",)
+    feature_selection_source: str = "NONE"
+    handoff_job_id: str = ""
+    handoff_output_root: str = ""
+    replay_job_id: str = ""
+    replay_output_root: str = ""
+    blockers: tuple[str, ...] = ()
+    notes: tuple[str, ...] = ()
+    frozen_form: BacktestFormState = Field(default_factory=BacktestFormState)
 
 
 class CockpitStateConsistency(BaseModel, frozen=True):
@@ -275,6 +324,12 @@ def build_patch6_normalized_request(
     explicit_small_scope = str(state.small_scope_enabled or "").strip().lower() in {"1", "true", "yes", "on"}
     explicit_full_scan = str(state.full_scan_enabled or "").strip().lower() in {"1", "true", "yes", "on"}
     debug_storage_override = str(state.debug_storage_override or "").strip().lower() in {"1", "true", "yes", "on"}
+    feature_picker_enabled = str(state.feature_picker_enabled or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     requested_policy_mode = str(state.b1_5_policy_mode or "").strip().lower()
     diagnostic_full_replay = str(state.diagnostic_full_replay or "").strip().lower() in {"1", "true", "yes", "on"}
     preselected_only = (
@@ -320,6 +375,18 @@ def build_patch6_normalized_request(
         workflow_run_id=(state.workflow_run_id or "").strip(),
         dry_run=phase_id == PHASE_A1,
         ml_mode=(state.ml_mode or "ML_MODE_OFF").strip() or "ML_MODE_OFF",
+        training_timeframe=(state.training_timeframe or "1m").strip() or "1m",
+        backtest_timeframes=normalize_backtest_timeframes(state.backtest_timeframes),
+        feature_names=(state.feature_names or "close_return,high_low_range,volume").strip()
+        or "close_return,high_low_range,volume",
+        selected_features=tuple(
+            item.strip() for item in state.selected_features if item and item.strip()
+        ),
+        feature_picker_enabled=feature_picker_enabled,
+        expected_edge_artifact_mode=(
+            (state.expected_edge_artifact_mode or "MONO_PAIR_LEGACY").strip()
+            or "MONO_PAIR_LEGACY"
+        ),
         frozen_ml_artifact_path=(state.frozen_ml_artifact_path or "").strip(),
         frozen_ml_artifact_hash=(state.frozen_ml_artifact_hash or "").strip(),
         rolling_ml_window_plan_path=(state.rolling_ml_window_plan_path or "").strip(),
@@ -373,6 +440,8 @@ def workflow_request_hash_for_normalized_request(request: Patch6NormalizedReques
         "raw_source_manifest_path": _canonical_hash_path(request.raw_source_manifest_path),
         "output_root_selected": _canonical_hash_path(request.output_root_selected),
         "ml_mode": request.ml_mode,
+        "backtest_timeframes": request.backtest_timeframes,
+        "expected_edge_artifact_mode": request.expected_edge_artifact_mode,
         "frozen_ml_artifact_path": _canonical_hash_path(request.frozen_ml_artifact_path),
         "frozen_ml_artifact_hash": request.frozen_ml_artifact_hash,
         "rolling_ml_window_plan_path": _canonical_hash_path(
@@ -468,6 +537,12 @@ def build_patch6_state(
         output_root_effective=output_root_effective,
         dry_run=normalized_request.dry_run,
         ml_mode=normalized_request.ml_mode,
+        training_timeframe=normalized_request.training_timeframe,
+        backtest_timeframes=normalized_request.backtest_timeframes,
+        feature_names=normalized_request.feature_names,
+        selected_features=normalized_request.selected_features,
+        feature_picker_enabled=normalized_request.feature_picker_enabled,
+        expected_edge_artifact_mode=normalized_request.expected_edge_artifact_mode,
         frozen_ml_artifact_path=normalized_request.frozen_ml_artifact_path,
         frozen_ml_artifact_hash=normalized_request.frozen_ml_artifact_hash,
         rolling_ml_window_plan_path=normalized_request.rolling_ml_window_plan_path,
@@ -619,6 +694,33 @@ def read_latest_canonical_summary_state(
     )
 
 
+def write_backtest_ml_chain_state(
+    jobs_root: Path | None,
+    state: BacktestMlChainState,
+) -> None:
+    path = _state_path(jobs_root, _BACKTEST_ML_CHAIN_STATE_FILENAME)
+    if path is None:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_json(path, state.model_dump(mode="json"), indent=2)
+
+
+def read_backtest_ml_chain_state(
+    jobs_root: Path | None,
+) -> BacktestMlChainState | None:
+    path = _state_path(jobs_root, _BACKTEST_ML_CHAIN_STATE_FILENAME)
+    if path is None or not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError):
+        return None
+    try:
+        return BacktestMlChainState.model_validate(payload)
+    except ValueError:
+        return None
+
+
 def build_state_consistency(
     *,
     current_form_state: CockpitPatch6State | None,
@@ -752,12 +854,14 @@ def build_state_consistency(
 
 __all__ = [
     "ACTION_BY_PHASE_ID",
+    "BacktestMlChainState",
     "BacktestPreviewManifest",
     "CockpitPatch6State",
     "CockpitStateConsistency",
     "PHASE_ID_BY_ACTION",
     "PHASE_LABEL_BY_ID",
     "Patch6NormalizedRequest",
+    "SUPPORTED_BACKTEST_TIMEFRAMES",
     "action_name_for_phase",
     "build_patch6_normalized_request",
     "build_patch6_state",
@@ -766,8 +870,10 @@ __all__ = [
     "canonical_patch6_raw_roots",
     "phase_id_for_action",
     "phase_label_for_action",
+    "normalize_backtest_timeframes",
     "preview_manifest_path",
     "read_current_form_state",
+    "read_backtest_ml_chain_state",
     "read_launch_request_state",
     "read_latest_canonical_summary_state",
     "read_latest_job_state",
@@ -777,6 +883,7 @@ __all__ = [
     "workflow_parent_hash_for_normalized_request",
     "workflow_request_hash_for_normalized_request",
     "write_current_form_state",
+    "write_backtest_ml_chain_state",
     "write_launch_request_state",
     "write_latest_canonical_summary_state",
     "write_latest_job_state",

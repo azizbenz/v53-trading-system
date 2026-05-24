@@ -2697,9 +2697,109 @@ def test_backtest_page_surfaces_ml_handoff_run_folder_check() -> None:
         assert page.status_code == 200
         assert "IA Lab handoff run folder (preferred)" in page.text
         assert "ML_CHECK_OK" in page.text
+        assert "Artifact mode" in page.text
+        assert "MONO_PAIR_LEGACY" in page.text
+        assert "Feature count" in page.text
         assert "2025-08-16" in page.text
         assert "1m, 5m, 10m, 15m" in page.text
         assert "strategy_ladder_expected_edge_ml_model_bundle.json" in page.text
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_backtest_page_surfaces_multi_pair_c1_ml_handoff_contract() -> None:
+    scratch = _scratch_dir("backtest_ml_handoff_stage3_c1")
+    try:
+        client = _build_client(scratch)
+        jobs_root = client.app.state.paths.backtest_jobs_root
+        assert jobs_root is not None
+        run_root = scratch / "ml_handoffstrategy" / "runs" / "strategy_ladder_ml_lab_handoff-stage3-c1"
+        run_root.mkdir(parents=True, exist_ok=True)
+        artifact_path = run_root / "strategy_ladder_expected_edge_multi_pair_c1_manifest.json"
+        _write_json(
+            artifact_path,
+            {
+                "artifact_kind": "MULTI_PAIR_C1_EXPECTED_EDGE",
+                "artifact_hash": "f" * 64,
+                "feature_hash": "e" * 64,
+                "feature_names": [
+                    "close_return",
+                    "high_low_range",
+                    "volume",
+                    "pair_id",
+                ],
+                "pair_id_encoding": {
+                    "BTCUSDT": 0,
+                    "ETHUSDT": 1,
+                    "SOLUSDT": 2,
+                },
+            },
+        )
+        rolling_plan_path = run_root / "rolling_ml_window_plan.json"
+        rolling_plan_path.write_text("{}", encoding="utf-8")
+        _write_json(
+            run_root / "strategy_ladder_backtest_ml_input.json",
+            {
+                "status": "STRATEGY_LADDER_BACKTEST_ML_INPUT_READY",
+                "ml_mode": "ML_MODE_OVERLAY_FROZEN",
+                "pair": "BTCUSDT",
+                "timeframe": "1m",
+                "timeframe_scope": ["1m"],
+                "frozen_ml_artifact_path": str(artifact_path),
+                "frozen_ml_artifact_hash": "f" * 64,
+                "rolling_ml_window_plan_ref": str(rolling_plan_path),
+                "requested_backtest_start": "2025-07-18",
+                "requested_backtest_end": "2025-08-01",
+                "artifact_stale_after": "2025-08-16T23:00:00+00:00",
+                "max_valid_backtest_end": "2025-08-16",
+                "freshness_days": 30,
+            },
+        )
+        _write_json(
+            run_root / "strategy_ladder_ml_lab_handoff_report.json",
+            {
+                "status": "STRATEGY_LADDER_ML_LAB_HANDOFF_READY",
+                "ready": True,
+                "pair": "BTCUSDT",
+                "timeframe": "1m",
+                "feature_names": ["close_return", "high_low_range", "volume", "pair_id"],
+                "train_start": "2025-05-02",
+                "train_end": "2025-07-17",
+                "requested_backtest_start": "2025-07-18",
+                "requested_backtest_end": "2025-08-01",
+                "artifact_stale_after": "2025-08-16T23:00:00+00:00",
+                "max_valid_backtest_end": "2025-08-16",
+                "artifact_hash": "f" * 64,
+                "transport_artifact_ref": str(artifact_path),
+                "rolling_ml_window_plan_ref": str(rolling_plan_path),
+                "rolling_ml_window_plan_status": "ROLLING_PLAN_READY",
+                "rolling_ml_required_artifact_count": 1,
+                "train_days": 180,
+                "validation_days": 30,
+                "freshness_days": 30,
+                "chunk_days": 15,
+                "blocking_reasons": [],
+            },
+        )
+
+        write_backtest_form_state(
+            jobs_root,
+            BacktestFormState(
+                action_name="PHASE_B2_DETAILED_REPLAY",
+                phase_id=PHASE_B2,
+                workflow_phase=PHASE_B2,
+                ml_mode="ML_MODE_OVERLAY_FROZEN",
+                ml_handoff_run_root=str(run_root),
+            ),
+        )
+
+        page = client.get("/backtest")
+
+        assert page.status_code == 200
+        assert "MULTI_PAIR_C1" in page.text
+        assert "BTCUSDT, ETHUSDT, SOLUSDT" in page.text
+        assert "Feature count" in page.text
+        assert "pair_id" in page.text
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 

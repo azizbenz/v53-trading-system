@@ -13,6 +13,7 @@ from local_replay_runtime.strategy_ladder_expected_edge_training import (
     build_fixture_expected_edge_artifact,
 )
 from local_replay_runtime.strategy_ladder_ml_lab_handoff import (
+    REPORTS_DIRNAME,
     STRATEGY_LADDER_ML_BACKTEST_INPUT_FILENAME,
     STRATEGY_LADDER_ML_MULTIFRAME_ARTIFACT_FILENAME,
     StrategyLadderMlLabHandoffRequest,
@@ -96,9 +97,22 @@ def test_ml_lab_handoff_packages_artifact_and_emits_backtest_input(
     assert Path(report.anti_leakage_proof_ref).is_file()
     assert report.live_drift_snapshot_ref is not None
     assert Path(report.live_drift_snapshot_ref).is_file()
+    assert report.feature_grounding_contract_report_ref is not None
+    assert Path(report.feature_grounding_contract_report_ref).is_file()
+    assert report.training_source_contract_report_ref is not None
+    assert Path(report.training_source_contract_report_ref).is_file()
+    assert report.ml_overlay_authority_contract_report_ref is not None
+    assert Path(report.ml_overlay_authority_contract_report_ref).is_file()
+    assert report.ml_train_eval_overlap_report_ref is not None
+    assert Path(report.ml_train_eval_overlap_report_ref).is_file()
+    assert report.ml_feature_input_label_leakage_report_ref is not None
+    assert Path(report.ml_feature_input_label_leakage_report_ref).is_file()
     payload = json.loads(Path(report.backtest_input_ref).read_text(encoding="utf-8"))
     assert payload["ml_mode"] == "ML_MODE_OVERLAY_FROZEN"
     assert payload["frozen_ml_artifact_hash"] == report.artifact_hash
+    assert Path(payload["feature_grounding_contract_report_ref"]).is_file()
+    assert Path(payload["training_source_contract_report_ref"]).is_file()
+    assert Path(payload["ml_overlay_authority_contract_report_ref"]).is_file()
     assert payload["requested_backtest_end"] == "2025-05-30"
     assert payload["max_valid_backtest_end"] == "2025-05-30"
     assert payload["rolling_ml_window_plan_status"] == "ROLLING_PLAN_READY"
@@ -108,6 +122,8 @@ def test_ml_lab_handoff_packages_artifact_and_emits_backtest_input(
     assert Path(scratch / "export" / STRATEGY_LADDER_ML_BACKTEST_INPUT_FILENAME).is_file()
     assert Path(scratch / "export" / ML_ANTI_LEAKAGE_PROOF_FILENAME).is_file()
     assert Path(scratch / "export" / ML_LIVE_DRIFT_SNAPSHOT_FILENAME).is_file()
+    assert Path(scratch / "export" / REPORTS_DIRNAME / "feature_grounding_contract_report.json").is_file()
+    assert Path(scratch / "export" / REPORTS_DIRNAME / "training_source_contract_report.json").is_file()
     assert Path(scratch / "export" / ROLLING_ML_WINDOW_PLAN_JSON_FILENAME).is_file()
     assert Path(scratch / "export" / ROLLING_ML_WINDOW_PLAN_MARKDOWN_FILENAME).is_file()
 

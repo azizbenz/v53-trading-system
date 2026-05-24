@@ -8,6 +8,9 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from interface_contracts.atomic_io import atomic_write_json
+from local_replay_runtime.expected_edge_feature_promotion_registry import (
+    FeaturePromotionEntry,
+)
 
 
 _FORM_STATE_FILENAME = "_last_form_state.json"
@@ -30,6 +33,11 @@ class BacktestFormState(BaseModel, frozen=True):
     start: str = ""
     end: str = ""
     ml_mode: str = "ML_MODE_OFF"
+    training_timeframe: str = "1m"
+    backtest_timeframes: tuple[str, ...] = ("1m",)
+    feature_names: str = "close_return,high_low_range,volume"
+    selected_features: tuple[str, ...] = ()
+    feature_picker_enabled: str = ""
     # Patch P3 (2026-05-22) — explicit mono|multi mode selector for the C1-aware
     # provider. Default keeps backward-compat with the frozen mono bundle path.
     expected_edge_artifact_mode: str = "MONO_PAIR_LEGACY"
@@ -68,6 +76,10 @@ class BacktestFormState(BaseModel, frozen=True):
     def pairs_csv(self) -> str:
         return ",".join(self.pairs)
 
+    @property
+    def backtest_timeframes_csv(self) -> str:
+        return ",".join(self.backtest_timeframes or ("1m",))
+
 
 class LabMlHandoffFormState(BaseModel, frozen=True):
     """Last-submitted IA Lab ML handoff form values for repopulation."""
@@ -93,6 +105,8 @@ class LabMlHandoffFormState(BaseModel, frozen=True):
     chunk_days: int = 30
     calibration_version: str = "strategy_ladder_expected_edge.v1"
     feature_names: str = "close_return,high_low_range,volume"
+    selected_features: tuple[str, ...] = ()
+    discovered_feature_governance: tuple[FeaturePromotionEntry, ...] = ()
     sample_stride_minutes: int = 60
     target_horizon_minutes: int = 1
     training_seed: int = 5307

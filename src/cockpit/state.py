@@ -19,6 +19,7 @@ from cockpit.backtest_preflight import (
 )
 from cockpit.backtest_state_support import (
     action_name_for_phase,
+    BacktestMlChainState,
     BacktestPreviewManifest,
     canonicalize_workflow_identity,
     CockpitPatch6State,
@@ -30,6 +31,7 @@ from cockpit.backtest_state_support import (
     phase_id_for_action,
     phase_label_for_action,
     read_current_form_state,
+    read_backtest_ml_chain_state,
     read_launch_request_state,
     read_preview_manifest,
     read_source_preview_state,
@@ -525,6 +527,23 @@ class DashboardViewModel:
     # Patch P3 (2026-05-22) — same surface for the Backtest page (paths come from
     # BacktestFormState.{klines_path,trades_path,orderbook_path}).
     backtest_discovered_pair_capabilities: tuple[object, ...] = field(default_factory=tuple)
+    supported_expected_edge_feature_names: tuple[str, ...] = field(default_factory=tuple)
+    supported_expected_edge_feature_groups: tuple[tuple[str, tuple[str, ...]], ...] = field(
+        default_factory=tuple
+    )
+    lab_feature_governance: tuple[object, ...] = field(default_factory=tuple)
+    lab_effective_selected_features: tuple[str, ...] = field(default_factory=tuple)
+    lab_selected_demoted_features: tuple[str, ...] = field(default_factory=tuple)
+    lab_feature_selection_source: str = "NONE"
+    lab_requested_non_legacy_features: tuple[str, ...] = field(default_factory=tuple)
+    lab_replay_grounding_required: bool = False
+    lab_replay_grounding_ready: bool = False
+    backtest_feature_governance: tuple[object, ...] = field(default_factory=tuple)
+    backtest_effective_selected_features: tuple[str, ...] = field(default_factory=tuple)
+    backtest_selected_demoted_features: tuple[str, ...] = field(default_factory=tuple)
+    backtest_feature_selection_source: str = "NONE"
+    backtest_feature_picker_read_only: bool = False
+    backtest_ml_chain_state: BacktestMlChainState | None = None
 
 
 class OperationalProofSnapshot(BaseModel, frozen=True):
@@ -832,23 +851,147 @@ def build_dashboard_view_model(
     pairs = read_pair_selector(paths)
     metrics = read_pair_metrics(paths)
     artefacts = list_artefact_exports(paths)
+    selected_form = read_backtest_form_state(paths.backtest_jobs_root)
+    lab_ml_handoff_form = read_lab_ml_handoff_form_state(paths.backtest_jobs_root)
+    # Patch P2/P3 (2026-05-22) — discover pairs from filesystem for both Lab + Backtest UI.
+    from cockpit.strategy_ladder_ml_handoff_support import (
+        discover_backtest_feature_governance,
+        discover_lab_feature_governance,
+        discover_backtest_pair_capabilities,
+        discover_lab_pair_capabilities,
+        resolve_backtest_feature_picker_defaults,
+        resolve_backtest_selected_feature_names,
+        resolve_lab_feature_picker_defaults,
+        selected_demoted_lab_features,
+        selected_demoted_backtest_features,
+    )
+    from local_replay_runtime.strategy_ladder_expected_edge_training import (
+        ANTI_REVENGE_STATE_ONE_HOT_FEATURE_NAMES,
+        BUILD14_OBSERVED_EXPECTED_EDGE_FEATURE_NAMES,
+        DEFAULT_EXPECTED_EDGE_FEATURE_NAMES,
+        ENGINE_D_GOVERNANCE_EXPECTED_EDGE_FEATURE_NAMES,
+        EXTENDED_MICROSTRUCTURE_EXPECTED_EDGE_FEATURE_NAMES,
+        REPLAY_MICROSTRUCTURE_EXPECTED_EDGE_FEATURE_NAMES,
+        SUPPORTED_EXPECTED_EDGE_FEATURE_NAMES,
+    )
+    lab_discovered_pair_capabilities = discover_lab_pair_capabilities(lab_ml_handoff_form)
+    backtest_discovered_pair_capabilities = discover_backtest_pair_capabilities(selected_form)
+    lab_feature_governance = discover_lab_feature_governance(
+        lab_ml_handoff_form,
+        registry_path=(
+            paths.backtest_jobs_root / "feature_promotion_registry.json"
+            if paths.backtest_jobs_root is not None
+            else None
+        ),
+    )
+    if lab_feature_governance:
+        lab_ml_handoff_form = lab_ml_handoff_form.model_copy(
+            update={"discovered_feature_governance": lab_feature_governance}
+        )
+    supported_expected_edge_feature_groups = (
+        ("LEGACY", DEFAULT_EXPECTED_EDGE_FEATURE_NAMES),
+        ("REPLAY_MICROSTRUCTURE", REPLAY_MICROSTRUCTURE_EXPECTED_EDGE_FEATURE_NAMES),
+        ("EXTENDED_MICROSTRUCTURE", EXTENDED_MICROSTRUCTURE_EXPECTED_EDGE_FEATURE_NAMES),
+        ("BUILD14_OBSERVED", BUILD14_OBSERVED_EXPECTED_EDGE_FEATURE_NAMES),
+        ("ENGINE_D_GOVERNANCE", ENGINE_D_GOVERNANCE_EXPECTED_EDGE_FEATURE_NAMES),
+        ("ANTI_REVENGE", ANTI_REVENGE_STATE_ONE_HOT_FEATURE_NAMES),
+    )
+    lab_effective_selected_features = resolve_lab_feature_picker_defaults(
+        form_state=lab_ml_handoff_form,
+        governance_entries=lab_feature_governance,
+        supported_feature_names=SUPPORTED_EXPECTED_EDGE_FEATURE_NAMES,
+    )
+    lab_selected_demoted_features = selected_demoted_lab_features(
+        selected_feature_names=lab_effective_selected_features,
+        governance_entries=lab_feature_governance,
+    )
+    lab_feature_selection_source = (
+        "FORM_SELECTED"
+        if lab_ml_handoff_form.selected_features
+        else (
+            "FORM_CSV"
+            if (lab_ml_handoff_form.feature_names or "").strip()
+            else "NONE"
+        )
+    )
+    lab_requested_non_legacy_features = tuple(
+        name
+        for name in lab_effective_selected_features
+        if name not in DEFAULT_EXPECTED_EDGE_FEATURE_NAMES
+    )
+    lab_replay_grounding_required = bool(lab_requested_non_legacy_features)
+    lab_replay_grounding_ready = bool((lab_ml_handoff_form.b2_run_root or "").strip())
+    backtest_preflight = load_patch6_preflight_preview(
+        selected_form=selected_form,
+        preview_manifest=None,
+    )
+    artifact_feature_names = tuple(backtest_preflight.ml_overlay_intake.feature_names)
+    backtest_feature_governance = discover_backtest_feature_governance(
+        selected_form,
+        registry_path=(
+            paths.backtest_jobs_root / "feature_promotion_registry.json"
+            if paths.backtest_jobs_root is not None
+            else None
+        ),
+    )
+    authoritative_frozen_artifact = bool(
+        selected_form.ml_mode == "ML_MODE_OVERLAY_FROZEN"
+        and backtest_preflight.ml_overlay_intake.ready
+        and artifact_feature_names
+    )
+    backtest_effective_selected_features = (
+        resolve_backtest_selected_feature_names(
+            selected_form,
+            lab_form_state=lab_ml_handoff_form,
+            artifact_feature_names=artifact_feature_names,
+        )
+        if authoritative_frozen_artifact
+        else resolve_backtest_feature_picker_defaults(
+            form_state=selected_form,
+            lab_form_state=lab_ml_handoff_form,
+            governance_entries=backtest_feature_governance,
+            supported_feature_names=SUPPORTED_EXPECTED_EDGE_FEATURE_NAMES,
+            artifact_feature_names=artifact_feature_names,
+        )
+    )
+    backtest_selected_demoted_features = selected_demoted_backtest_features(
+        selected_feature_names=backtest_effective_selected_features,
+        governance_entries=backtest_feature_governance,
+    )
+    backtest_feature_selection_source = (
+        "FROZEN_ARTIFACT"
+        if authoritative_frozen_artifact
+        else (
+            "FORM_SELECTED"
+            if selected_form.selected_features
+            else (
+                "FORM_EMPTY_SELECTION"
+                if str(selected_form.feature_picker_enabled or "").strip().lower()
+                in {"1", "true", "yes", "on"}
+                else (
+                    "FORM_CSV"
+                    if (selected_form.feature_names or "").strip()
+                    and not selected_form.selected_features
+                    else (
+                        "LAB_SELECTED"
+                        if lab_ml_handoff_form.selected_features
+                        else "GOVERNED_DEFAULTS"
+                    )
+                )
+            )
+        )
+    )
+    backtest_feature_picker_read_only = authoritative_frozen_artifact
     runtime = read_runtime_surfaces(
         service_dir=paths.service_dir,
         queue_root=paths.dashboard_command_queue_root,
         observability_output_dir=paths.observability_output_dir,
         backtest_jobs_root=paths.backtest_jobs_root,
         selected_candidate_id=selected_candidate_id,
+        active_feature_names=backtest_effective_selected_features,
+        artifact_feature_names=artifact_feature_names,
         log_query=log_query,
     )
-    selected_form = read_backtest_form_state(paths.backtest_jobs_root)
-    lab_ml_handoff_form = read_lab_ml_handoff_form_state(paths.backtest_jobs_root)
-    # Patch P2/P3 (2026-05-22) — discover pairs from filesystem for both Lab + Backtest UI.
-    from cockpit.strategy_ladder_ml_handoff_support import (
-        discover_backtest_pair_capabilities,
-        discover_lab_pair_capabilities,
-    )
-    lab_discovered_pair_capabilities = discover_lab_pair_capabilities(lab_ml_handoff_form)
-    backtest_discovered_pair_capabilities = discover_backtest_pair_capabilities(selected_form)
     current_form_state = read_current_form_state(paths.backtest_jobs_root)
     source_preview_state = read_source_preview_state(paths.backtest_jobs_root)
     preview_manifest = (
@@ -893,6 +1036,7 @@ def build_dashboard_view_model(
         backtest_preflight.action_name,
     )
     launch_request_state = read_launch_request_state(paths.backtest_jobs_root)
+    backtest_ml_chain_state = read_backtest_ml_chain_state(paths.backtest_jobs_root)
     cockpit_state_consistency = build_state_consistency(
         current_form_state=current_form_state,
         source_preview_state=source_preview_state,
@@ -1031,6 +1175,21 @@ def build_dashboard_view_model(
         lab_ml_handoff_form=lab_ml_handoff_form,
         lab_discovered_pair_capabilities=lab_discovered_pair_capabilities,
         backtest_discovered_pair_capabilities=backtest_discovered_pair_capabilities,
+        supported_expected_edge_feature_names=SUPPORTED_EXPECTED_EDGE_FEATURE_NAMES,
+        supported_expected_edge_feature_groups=supported_expected_edge_feature_groups,
+        lab_feature_governance=lab_feature_governance,
+        lab_effective_selected_features=lab_effective_selected_features,
+        lab_selected_demoted_features=lab_selected_demoted_features,
+        lab_feature_selection_source=lab_feature_selection_source,
+        lab_requested_non_legacy_features=lab_requested_non_legacy_features,
+        lab_replay_grounding_required=lab_replay_grounding_required,
+        lab_replay_grounding_ready=lab_replay_grounding_ready,
+        backtest_feature_governance=backtest_feature_governance,
+        backtest_effective_selected_features=backtest_effective_selected_features,
+        backtest_selected_demoted_features=backtest_selected_demoted_features,
+        backtest_feature_selection_source=backtest_feature_selection_source,
+        backtest_feature_picker_read_only=backtest_feature_picker_read_only,
+        backtest_ml_chain_state=backtest_ml_chain_state,
         backtest_preflight=backtest_preflight,
         current_form_state=current_form_state,
         source_preview_state=source_preview_state,

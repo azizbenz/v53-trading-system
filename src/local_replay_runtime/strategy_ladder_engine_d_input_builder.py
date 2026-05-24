@@ -350,6 +350,8 @@ def build_engine_d_input_from_window(
     window_end_ms: int,
     raw_trade_path: Path | str | None,
     raw_ohlcv_path: Path | str | None,
+    raw_book_path: Path | str | None = None,
+    raw_book_delta_path: Path | str | None = None,
     first_episode_context: dict[str, object] | None = None,
     expected_gain: float = 0.0,
     expected_cost: float = 0.0,
@@ -384,6 +386,8 @@ def build_engine_d_input_from_window(
                 window_start_ms=window_start_ms,
                 window_end_ms=window_end_ms,
                 raw_trade_path=raw_trade_path,
+                raw_book_path=raw_book_path,
+                raw_book_delta_path=raw_book_delta_path,
                 post_close_window_end_ms=window_end_ms + post_close_window_ms,
             )
         except Exception as exc:  # noqa: BLE001

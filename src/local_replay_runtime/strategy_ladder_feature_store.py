@@ -31,7 +31,15 @@ def _normalize_loose_iso_date(raw_value: str) -> str:
     return f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
 
 
-def parse_time_boundary_to_ms(raw_value: str) -> int | None:
+def _is_date_only_boundary(value: str) -> bool:
+    stripped = (value or "").strip()
+    if not stripped or "T" in stripped or " " in stripped:
+        return False
+    parts = stripped.split("-")
+    return len(parts) == 3 and all(part.strip().isdigit() for part in parts)
+
+
+def parse_time_boundary_to_ms(raw_value: str, *, end_of_day: bool = False) -> int | None:
     """Parse a numeric or ISO-like boundary string into epoch milliseconds."""
 
     value = (raw_value or "").strip()
@@ -49,7 +57,10 @@ def parse_time_boundary_to_ms(raw_value: str) -> int | None:
         return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
-    return int(parsed.timestamp() * 1000)
+    timestamp_ms = int(parsed.timestamp() * 1000)
+    if end_of_day and _is_date_only_boundary(value):
+        return timestamp_ms + 86_399_999
+    return timestamp_ms
 
 
 def _iter_supported_paths(root: Path) -> tuple[Path, ...]:

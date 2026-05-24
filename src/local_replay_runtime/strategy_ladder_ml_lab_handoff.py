@@ -16,6 +16,23 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from interface_contracts import MlModelArtifact
 from interface_contracts.atomic_io import atomic_write_json
+from local_replay_runtime.feature_grounding_registry import (
+    FEATURE_GROUNDING_CONTRACT_REPORT_FILENAME,
+    FEATURE_GROUNDING_REGISTRY_FILENAME,
+    build_feature_grounding_contract_report,
+    write_feature_grounding_contract_report,
+    write_feature_grounding_registry,
+)
+from local_replay_runtime.ml_label_leakage_guards import (
+    ML_FEATURE_INPUT_LABEL_LEAKAGE_REPORT_FILENAME,
+    build_ml_feature_input_label_leakage_report,
+    write_ml_feature_input_label_leakage_report,
+)
+from local_replay_runtime.ml_overlay_authority_contract import (
+    ML_OVERLAY_AUTHORITY_CONTRACT_REPORT_FILENAME,
+    build_ml_overlay_authority_contract_report,
+    write_ml_overlay_authority_contract_report,
+)
 from local_replay_runtime.ml_governance_sidecars import (
     build_ml_anti_leakage_proof_artifact,
     build_ml_live_drift_snapshot,
@@ -29,11 +46,25 @@ from local_replay_runtime.strategy_ladder_multiframe_ml_bundle import (
 )
 from local_replay_runtime.strategy_ladder_expected_edge_training import (
     DEFAULT_EXPECTED_EDGE_FEATURE_NAMES,
-    SUPPORTED_EXPECTED_EDGE_FEATURE_NAMES,
     STRATEGY_LADDER_EXPECTED_EDGE_TARGET_POLICY,
     StrategyLadderExpectedEdgeTrainingReport,
     StrategyLadderExpectedEdgeTrainingRequest,
+    normalize_supported_expected_edge_feature_names,
     train_strategy_ladder_expected_edge_artifact,
+)
+# Patch P2b (2026-05-22) — multi-pair C1 manifest emitter (lazy import in writer
+# helper to avoid runtime cycles).
+from local_replay_runtime.strategy_ladder_multi_pair_handoff_writer import (
+    maybe_emit_multi_pair_c1_handoff_manifest,
+)
+from local_replay_runtime.training_source_contract import (
+    ML_TRAIN_EVAL_OVERLAP_REPORT_FILENAME,
+    TRAINING_SOURCE_CONTRACT_REPORT_FILENAME,
+    ML_TRAIN_EVAL_WINDOW_OVERLAP_BLOCKED,
+    BACKTEST_START_TOO_EARLY,
+    DATE_PARSE_FAILED,
+    build_training_source_contract_report,
+    write_training_source_contract_report,
 )
 from local_replay_runtime.strategy_ladder_rolling_ml_window_planner import (
     DEFAULT_ROLLING_CHUNK_DAYS,
@@ -60,6 +91,7 @@ STRATEGY_LADDER_ML_MULTIFRAME_ARTIFACT_FILENAME = (
 STRATEGY_LADDER_ML_MULTIFRAME_SUMMARY_FILENAME = (
     "strategy_ladder_expected_edge_ml_model_bundle.summary.json"
 )
+REPORTS_DIRNAME = "reports"
 
 
 class StrategyLadderMlLabHandoffRequest(BaseModel, frozen=True):
@@ -71,6 +103,11 @@ class StrategyLadderMlLabHandoffRequest(BaseModel, frozen=True):
     b2_run_root: Path | None = None
     export_dir: Path
     pair: str = Field(default="BTCUSDT", min_length=1)
+    # Patch P2b (2026-05-22) — optional multi-pair tuple. When len >= 2, the
+    # handoff orchestrator emits an additional MULTI_PAIR_C1_EXPECTED_EDGE
+    # manifest alongside the standard mono-pair artifacts. Empty preserves
+    # the mono-pair behaviour 100%.
+    selected_pairs: tuple[str, ...] = ()
     timeframe: str = Field(default="1m", min_length=1)
     timeframe_scope: tuple[str, ...] = ()
     train_start: str = Field(..., min_length=1)
@@ -108,15 +145,7 @@ class StrategyLadderMlLabHandoffRequest(BaseModel, frozen=True):
     @field_validator("feature_names")
     @classmethod
     def _validate_feature_names(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        normalized = tuple(item.strip() for item in value if item.strip())
-        unsupported = tuple(
-            item for item in normalized if item not in SUPPORTED_EXPECTED_EDGE_FEATURE_NAMES
-        )
-        if unsupported:
-            raise ValueError(f"unsupported Strategy Ladder expected-edge features: {unsupported}")
-        if not normalized:
-            raise ValueError("feature_names must not be empty")
-        return normalized
+        return normalize_supported_expected_edge_feature_names(value)
 
     @model_validator(mode="after")
     def _validate_microstructure_source(self) -> "StrategyLadderMlLabHandoffRequest":
@@ -157,6 +186,11 @@ class StrategyLadderMlBacktestInput(BaseModel, frozen=True):
     validation_days: int = DEFAULT_ROLLING_VALIDATION_DAYS
     freshness_days: int = DEFAULT_ROLLING_FRESHNESS_DAYS
     chunk_days: int = DEFAULT_ROLLING_CHUNK_DAYS
+    feature_grounding_contract_report_ref: str = ""
+    training_source_contract_report_ref: str = ""
+    ml_overlay_authority_contract_report_ref: str = ""
+    ml_train_eval_overlap_report_ref: str = ""
+    ml_feature_input_label_leakage_report_ref: str = ""
     backtest_cli_args: tuple[str, ...]
 
 
@@ -179,6 +213,12 @@ class StrategyLadderMlLabHandoffReport(BaseModel, frozen=True):
     backtest_input_ref: str | None = None
     anti_leakage_proof_ref: str | None = None
     live_drift_snapshot_ref: str | None = None
+    feature_grounding_contract_report_ref: str | None = None
+    training_source_contract_report_ref: str | None = None
+    ml_overlay_authority_contract_report_ref: str | None = None
+    ml_train_eval_overlap_report_ref: str | None = None
+    ml_feature_input_label_leakage_report_ref: str | None = None
+    feature_grounding_registry_ref: str | None = None
     artifact_hash: str | None = None
     feature_hash: str | None = None
     dataset_hash: str | None = None
@@ -226,6 +266,107 @@ def _write_report(report: StrategyLadderMlLabHandoffReport, path: Path) -> Strat
     final_report = report.model_copy(update={"handoff_report_ref": str(path)})
     atomic_write_json(path, final_report.model_dump(mode="json"), indent=2)
     return final_report
+
+
+def _source_type(request: StrategyLadderMlLabHandoffRequest) -> str:
+    return (
+        "B2_REPLAY_GROUNDED_LABEL_STORE"
+        if request.b2_run_root is not None
+        else "A2_KLINE_GROUNDED"
+    )
+
+
+def _training_manifest_root(request: StrategyLadderMlLabHandoffRequest) -> Path:
+    return request.b2_run_root if request.b2_run_root is not None else request.kline_root
+
+
+def _write_static_contract_reports(
+    *,
+    request: StrategyLadderMlLabHandoffRequest,
+    reports_dir: Path,
+) -> dict[str, str]:
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    feature_grounding_report_path = reports_dir / FEATURE_GROUNDING_CONTRACT_REPORT_FILENAME
+    training_source_report_path = reports_dir / TRAINING_SOURCE_CONTRACT_REPORT_FILENAME
+    overlap_report_path = reports_dir / ML_TRAIN_EVAL_OVERLAP_REPORT_FILENAME
+    authority_report_path = reports_dir / ML_OVERLAY_AUTHORITY_CONTRACT_REPORT_FILENAME
+    leakage_report_path = reports_dir / ML_FEATURE_INPUT_LABEL_LEAKAGE_REPORT_FILENAME
+    registry_path = reports_dir / FEATURE_GROUNDING_REGISTRY_FILENAME
+
+    feature_grounding_report = build_feature_grounding_contract_report(
+        request.feature_names,
+        b2_run_root_present=request.b2_run_root is not None,
+        execution_replay_available=request.b2_run_root is not None,
+    )
+    leakage_report = build_ml_feature_input_label_leakage_report(request.feature_names)
+    authority_report = build_ml_overlay_authority_contract_report()
+    training_source_report = build_training_source_contract_report(
+        manifest_root_or_path=_training_manifest_root(request),
+        source_type=_source_type(request),
+        train_start=request.train_start,
+        train_end=request.train_end,
+        backtest_start=request.requested_backtest_start or "",
+    )
+
+    write_feature_grounding_contract_report(
+        feature_grounding_report_path,
+        feature_grounding_report,
+    )
+    write_training_source_contract_report(training_source_report_path, training_source_report)
+    write_training_source_contract_report(overlap_report_path, training_source_report)
+    write_ml_overlay_authority_contract_report(authority_report_path, authority_report)
+    write_ml_feature_input_label_leakage_report(leakage_report_path, leakage_report)
+    write_feature_grounding_registry(registry_path)
+    return {
+        "feature_grounding_contract_report_ref": str(feature_grounding_report_path),
+        "training_source_contract_report_ref": str(training_source_report_path),
+        "ml_overlay_authority_contract_report_ref": str(authority_report_path),
+        "ml_train_eval_overlap_report_ref": str(overlap_report_path),
+        "ml_feature_input_label_leakage_report_ref": str(leakage_report_path),
+        "feature_grounding_registry_ref": str(registry_path),
+    }
+
+
+def _write_training_source_window_contract(
+    *,
+    request: StrategyLadderMlLabHandoffRequest,
+    reports_dir: Path,
+    artifacts_by_timeframe: tuple[tuple[str, MlModelArtifact], ...],
+    requested_start: date,
+    requested_end: date,
+) -> tuple[dict[str, str], tuple[str, ...]]:
+    primary_artifact = artifacts_by_timeframe[0][1]
+    report = build_training_source_contract_report(
+        manifest_root_or_path=_training_manifest_root(request),
+        source_type=_source_type(request),
+        train_start=primary_artifact.train_window.start_at.date().isoformat(),
+        train_end=primary_artifact.train_window.end_at.date().isoformat(),
+        validation_start=primary_artifact.validation_window.start_at.date().isoformat(),
+        validation_end=primary_artifact.validation_window.end_at.date().isoformat(),
+        backtest_start=requested_start.isoformat(),
+        backtest_end=requested_end.isoformat(),
+    )
+    training_source_report_path = reports_dir / TRAINING_SOURCE_CONTRACT_REPORT_FILENAME
+    overlap_report_path = reports_dir / ML_TRAIN_EVAL_OVERLAP_REPORT_FILENAME
+    write_training_source_contract_report(training_source_report_path, report)
+    write_training_source_contract_report(overlap_report_path, report)
+    blocking_reasons = tuple(
+        reason
+        for reason in report.blocker_reasons
+        if reason
+        in {
+            ML_TRAIN_EVAL_WINDOW_OVERLAP_BLOCKED,
+            BACKTEST_START_TOO_EARLY,
+            DATE_PARSE_FAILED,
+        }
+    )
+    return (
+        {
+            "training_source_contract_report_ref": str(training_source_report_path),
+            "ml_train_eval_overlap_report_ref": str(overlap_report_path),
+        },
+        blocking_reasons,
+    )
 
 
 def _blocked_report(
@@ -466,6 +607,11 @@ def run_strategy_ladder_ml_lab_handoff(
 
     export_dir = request.export_dir.resolve()
     report_path = export_dir / STRATEGY_LADDER_ML_HANDOFF_REPORT_FILENAME
+    reports_dir = export_dir / REPORTS_DIRNAME
+    contract_report_refs = _write_static_contract_reports(
+        request=request,
+        reports_dir=reports_dir,
+    )
     training_reports: list[StrategyLadderExpectedEdgeTrainingReport] = []
     artifacts_by_timeframe: list[tuple[str, MlModelArtifact]] = []
     bundle_summary_path = export_dir / STRATEGY_LADDER_ML_MULTIFRAME_SUMMARY_FILENAME
@@ -515,14 +661,70 @@ def run_strategy_ladder_ml_lab_handoff(
             status="STRATEGY_LADDER_ML_LAB_HANDOFF_BLOCKED",
             training_reports=tuple(training_reports),
             blocking_reasons=tuple(dict.fromkeys(training_blockers)),
+        ).model_copy(
+            update=contract_report_refs
         )
         return _write_report(report, report_path)
+
+    # Patch P2b (2026-05-22) — when admin selected ≥ 2 pairs, write a multi-pair
+    # C1 manifest per timeframe alongside the mono artifacts. The manifest
+    # references the mono training_report artifact_path as model_path_ref ; a
+    # subsequent real C1.3.C orchestrator pass (P2c) is required to produce a
+    # true multi-pair LightGBM booster. The manifest is loadable by P1 provider
+    # but predictions remain mono-equivalent until P2c lands.
+    if len(request.selected_pairs) >= 2:
+        for timeframe, _artifact in artifacts_by_timeframe:
+            timeframe_training_report = next(
+                (r for r in training_reports if r.timeframe == timeframe),
+                training_reports[0],
+            )
+            mono_artifact_ref = (
+                str(Path(timeframe_training_report.artifact_path).resolve())
+                if timeframe_training_report.artifact_path
+                else ""
+            )
+            if not mono_artifact_ref:
+                continue
+            try:
+                maybe_emit_multi_pair_c1_handoff_manifest(
+                    selected_pairs=request.selected_pairs,
+                    artifact_id=(
+                        request.artifact_id
+                        if not multiframe_requested
+                        else _timeframe_artifact_id(request.artifact_id, timeframe)
+                    ),
+                    calibration_version=request.calibration_version,
+                    timeframe=timeframe,
+                    feature_names=request.feature_names,
+                    model_path_ref=mono_artifact_ref,
+                    train_start=request.train_start,
+                    train_end=request.train_end,
+                    export_dir=(
+                        export_dir
+                        if not multiframe_requested
+                        else _timeframe_output_dir(
+                            export_dir / "strategy_ladder_expected_edge_training",
+                            timeframe,
+                        )
+                    ),
+                )
+            except (OSError, ValueError):
+                # Fail-soft : manifest emission is additive, never block mono path.
+                continue
 
     primary_training_report = training_reports[0]
     requested_start, requested_end, max_valid_end, window_blockers = _requested_backtest_window(
         request,
         tuple(artifacts_by_timeframe),
     )
+    training_source_refs, training_source_blockers = _write_training_source_window_contract(
+        request=request,
+        reports_dir=reports_dir,
+        artifacts_by_timeframe=tuple(artifacts_by_timeframe),
+        requested_start=requested_start,
+        requested_end=requested_end,
+    )
+    contract_report_refs.update(training_source_refs)
     effective_artifact_stale_after = min(
         (
             artifact.stale_after
@@ -536,12 +738,12 @@ def run_strategy_ladder_ml_lab_handoff(
         export_dir=export_dir,
         requested_start=requested_start,
     )
-    rolling_plan_blockers: list[str] = list(window_blockers)
+    rolling_plan_blockers: list[str] = [*window_blockers, *training_source_blockers]
     if rolling_plan.required_artifact_count > 1:
         rolling_plan_blockers.append(rolling_plan.status)
     if rolling_plan.status == ROLLING_PLAN_BLOCKED_BY_INSUFFICIENT_HISTORY:
         rolling_plan_blockers.append(rolling_plan.status)
-    if window_blockers:
+    if window_blockers or training_source_blockers:
         report = _blocked_report(
             request,
             status="STRATEGY_LADDER_ML_LAB_HANDOFF_BLOCKED",
@@ -562,6 +764,7 @@ def run_strategy_ladder_ml_lab_handoff(
                 "rolling_ml_window_plan_status": rolling_plan.status,
                 "rolling_ml_required_artifact_count": rolling_plan.required_artifact_count,
             }
+            | contract_report_refs
         )
         return _write_report(report, report_path)
     if (
@@ -588,6 +791,7 @@ def run_strategy_ladder_ml_lab_handoff(
                 "rolling_ml_window_plan_status": rolling_plan.status,
                 "rolling_ml_required_artifact_count": rolling_plan.required_artifact_count,
             }
+            | contract_report_refs
         )
         return _write_report(report, report_path)
 
@@ -699,6 +903,21 @@ def run_strategy_ladder_ml_lab_handoff(
         validation_days=request.validation_days,
         freshness_days=request.freshness_days,
         chunk_days=request.chunk_days,
+        feature_grounding_contract_report_ref=contract_report_refs[
+            "feature_grounding_contract_report_ref"
+        ],
+        training_source_contract_report_ref=contract_report_refs[
+            "training_source_contract_report_ref"
+        ],
+        ml_overlay_authority_contract_report_ref=contract_report_refs[
+            "ml_overlay_authority_contract_report_ref"
+        ],
+        ml_train_eval_overlap_report_ref=contract_report_refs[
+            "ml_train_eval_overlap_report_ref"
+        ],
+        ml_feature_input_label_leakage_report_ref=contract_report_refs[
+            "ml_feature_input_label_leakage_report_ref"
+        ],
         backtest_cli_args=cli_args,
     )
     backtest_input_path = export_dir / STRATEGY_LADDER_ML_BACKTEST_INPUT_FILENAME
@@ -719,6 +938,24 @@ def run_strategy_ladder_ml_lab_handoff(
         backtest_input_ref=str(backtest_input_path),
         anti_leakage_proof_ref=anti_leakage_ref,
         live_drift_snapshot_ref=live_drift_ref,
+        feature_grounding_contract_report_ref=contract_report_refs[
+            "feature_grounding_contract_report_ref"
+        ],
+        training_source_contract_report_ref=contract_report_refs[
+            "training_source_contract_report_ref"
+        ],
+        ml_overlay_authority_contract_report_ref=contract_report_refs[
+            "ml_overlay_authority_contract_report_ref"
+        ],
+        ml_train_eval_overlap_report_ref=contract_report_refs[
+            "ml_train_eval_overlap_report_ref"
+        ],
+        ml_feature_input_label_leakage_report_ref=contract_report_refs[
+            "ml_feature_input_label_leakage_report_ref"
+        ],
+        feature_grounding_registry_ref=contract_report_refs[
+            "feature_grounding_registry_ref"
+        ],
         artifact_hash=frozen_artifact_hash,
         feature_hash=report_feature_hash,
         dataset_hash=dataset_hash,

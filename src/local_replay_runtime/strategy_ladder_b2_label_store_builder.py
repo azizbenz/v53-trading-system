@@ -15,6 +15,11 @@ from interface_contracts.atomic_io import atomic_write_json, atomic_write_text
 from local_replay_runtime.strategy_ladder_detailed_replay import (
     load_strategy_ladder_detailed_replay_artifact,
 )
+from local_replay_runtime.strategy_ladder_expected_edge_feature_contracts import (
+    ANTI_REVENGE_STATE_ONE_HOT_FEATURE_NAMES,
+    EXPECTED_EDGE_AUGMENTED_FEATURE_KEYS,
+    SUPPORTED_EXPECTED_EDGE_FEATURE_NAMES,
+)
 from local_replay_runtime.strategy_ladder_models import (
     StrategyLadderCandidateEvent,
     StrategyLadderDetailedReplayArtifact,
@@ -27,6 +32,7 @@ LABEL_STORE_DATASET_FILENAME = "strategy_ladder_replay_label_store.jsonl"
 LEGACY_LABEL_STORE_DATASET_FILENAMES = ("strategy_ladder_b2_label_store.jsonl",)
 LABEL_STORE_SUMMARY_FILENAME = "label_store_summary.json"
 LABEL_STORE_QUALITY_REPORT_FILENAME = "label_store_quality_report.json"
+F16_FEATURE_COVERAGE_REPORT_FILENAME = "f16_feature_coverage_report.json"
 DEFAULT_WALK_FORWARD_TRAIN_DAYS = 180
 DEFAULT_WALK_FORWARD_VALIDATION_DAYS = 30
 DEFAULT_PURGE_WINDOW_MINUTES = 1
@@ -99,7 +105,20 @@ _EXPECTED_EDGE_AUGMENTED_FEATURE_KEYS = (
     "vpin",
     "cumulative_ofi",
     "queue_pressure",
+    "kyle_lambda",
+    "realized_vol_current",
+    "realized_vol_at_break",
+    "micro_edge_exit_governor_observed",
+    "micro_edge_entry_timing_observed",
+    "history_score",
+    "marginal_value_score",
+    "reentry_lateness",
+    "concentration_headroom",
+    "anti_revenge_state__active",
+    "anti_revenge_state__cooling",
+    "anti_revenge_state__idle",
 )
+_EXPECTED_EDGE_AUGMENTED_FEATURE_KEYS = EXPECTED_EDGE_AUGMENTED_FEATURE_KEYS
 
 
 def _numeric_feature_values(payload: dict[str, object]) -> dict[str, float]:
@@ -159,6 +178,28 @@ def _pick_int(
                 value = _coerce_int(source.get(key))
                 if value is not None:
                     return value
+    return None
+
+
+def _pick_bool(
+    *sources: dict[str, object],
+    keys: tuple[str, ...],
+) -> bool | None:
+    for source in sources:
+        for key in keys:
+            if key not in source:
+                continue
+            raw_value = source.get(key)
+            if isinstance(raw_value, bool):
+                return raw_value
+            if raw_value in (0, 1):
+                return bool(raw_value)
+            if isinstance(raw_value, str):
+                normalized = raw_value.strip().lower()
+                if normalized in {"true", "1", "yes", "on"}:
+                    return True
+                if normalized in {"false", "0", "no", "off"}:
+                    return False
     return None
 
 
@@ -342,13 +383,11 @@ class StrategyLadderB2LabelStoreBuilderRequest(BaseModel, frozen=True):
 class StrategyLadderB2LabelStoreRow(BaseModel, frozen=True):
     """Canonical supervised label row derived from one B2 replay candidate."""
 
-    # Patch F16-B (2026-05-21) — schema_version bumped v1 → v2 pour ajout des
-    # 3 features microstructure canoniques V5.3 : vpin / cumulative_ofi /
-    # queue_pressure. Backward-compat : champs optionnels nullables, anciens
-    # label stores v1 chargent avec None défauts. Source de ces valeurs :
-    # `engine_native_adapter.py:586-630` qui produit `bridge.vpin_record.value`,
-    # `bridge.ofi_record.value`, `bridge.queue_pressure_record.value`.
-    schema_version: str = Field(default="strategy_ladder.b2_label_store_row.v2", min_length=1)
+    # Patch F16-C (2026-05-23) — schema_version bumped v2 → v3 pour ajout des
+    # 13 champs de governance features (microstructure étendue, Build-14
+    # observed, Engine D governance, anti_revenge_state one-hot). Tous restent
+    # nullables pour charger sans friction les anciens stores v2.
+    schema_version: str = Field(default="strategy_ladder.b2_label_store_row.v3", min_length=1)
     candidate_id: str = Field(..., min_length=1)
     engine_id: str = Field(..., min_length=1)
     pair: str = Field(..., min_length=1)
@@ -371,6 +410,23 @@ class StrategyLadderB2LabelStoreRow(BaseModel, frozen=True):
     vpin: float | None = None
     cumulative_ofi: float | None = None
     queue_pressure: float | None = None
+    # F16-C microstructure étendue (ajout 2026-05-23)
+    kyle_lambda: float | None = None
+    realized_vol_current: float | None = None
+    realized_vol_at_break: float | None = None
+    latency_penalty_bps: float | None = None
+    # F16-C Build-14 observed values
+    micro_edge_exit_governor_observed: float | None = None
+    micro_edge_entry_timing_observed: float | None = None
+    # F16-C Engine D governance scalars
+    history_score: float | None = None
+    marginal_value_score: float | None = None
+    reentry_lateness: float | None = None
+    concentration_headroom: float | None = None
+    # F16-C categorical governance as explicit one-hot triplet
+    anti_revenge_state__active: bool | None = None
+    anti_revenge_state__cooling: bool | None = None
+    anti_revenge_state__idle: bool | None = None
     mfe_bps: float | None = None
     mae_bps: float | None = None
     holding_time_ms: int | None = Field(default=None, ge=0)
@@ -396,6 +452,21 @@ class StrategyLadderB2LabelStoreRow(BaseModel, frozen=True):
     def _validate_temporal_invariant(self) -> "StrategyLadderB2LabelStoreRow":
         if self.feature_timestamp_ms > self.decision_timestamp_ms:
             raise ValueError("feature_timestamp_ms must be <= decision_timestamp_ms")
+        for field_name in (
+            "kyle_lambda",
+            "realized_vol_current",
+            "realized_vol_at_break",
+            "latency_penalty_bps",
+            "micro_edge_exit_governor_observed",
+            "micro_edge_entry_timing_observed",
+            "history_score",
+            "marginal_value_score",
+            "reentry_lateness",
+            "concentration_headroom",
+        ):
+            value = getattr(self, field_name)
+            if value is not None and not math.isfinite(float(value)):
+                raise ValueError(f"{field_name} must be finite when provided")
         return self
 
 
@@ -482,6 +553,7 @@ class StrategyLadderB2LabelStoreBuildResult(BaseModel, frozen=True):
     dataset_path: str = Field(..., min_length=1)
     summary_path: str = Field(..., min_length=1)
     quality_report_path: str = Field(..., min_length=1)
+    f16_feature_coverage_report_path: str = ""
     dataset_hash: str = Field(..., min_length=64, max_length=64)
     feature_hash: str = Field(..., min_length=64, max_length=64)
     label_hash: str = Field(..., min_length=64, max_length=64)
@@ -728,6 +800,50 @@ def _build_rows(
                 vpin=_coerce_float(compatibility.get("vpin")),
                 cumulative_ofi=_coerce_float(compatibility.get("cumulative_ofi")),
                 queue_pressure=_coerce_float(compatibility.get("queue_pressure")),
+                kyle_lambda=_coerce_float(compatibility.get("kyle_lambda")),
+                realized_vol_current=_coerce_float(
+                    compatibility.get("realized_vol_current")
+                ),
+                realized_vol_at_break=_coerce_float(
+                    compatibility.get("realized_vol_at_break")
+                ),
+                latency_penalty_bps=_coerce_float(
+                    compatibility.get("latency_penalty_bps")
+                ),
+                micro_edge_exit_governor_observed=_pick_float(
+                    compatibility,
+                    keys=(
+                        "micro_edge_exit_governor_observed",
+                        "micro_edge_exit_governor",
+                    ),
+                ),
+                micro_edge_entry_timing_observed=_pick_float(
+                    compatibility,
+                    keys=(
+                        "micro_edge_entry_timing_observed",
+                        "micro_edge_entry_timing",
+                    ),
+                ),
+                history_score=_coerce_float(compatibility.get("history_score")),
+                marginal_value_score=_coerce_float(
+                    compatibility.get("marginal_value_score")
+                ),
+                reentry_lateness=_coerce_float(compatibility.get("reentry_lateness")),
+                concentration_headroom=_coerce_float(
+                    compatibility.get("concentration_headroom")
+                ),
+                anti_revenge_state__active=_pick_bool(
+                    compatibility,
+                    keys=("anti_revenge_state__active",),
+                ),
+                anti_revenge_state__cooling=_pick_bool(
+                    compatibility,
+                    keys=("anti_revenge_state__cooling",),
+                ),
+                anti_revenge_state__idle=_pick_bool(
+                    compatibility,
+                    keys=("anti_revenge_state__idle",),
+                ),
                 fee_bps=_pick_float(parity, compatibility, keys=("replay_fee_bps", "fee_bps")),
                 slippage_bps=_pick_float(
                     parity,
@@ -909,6 +1025,170 @@ def _rate(
     return round(float(numerator) / float(denominator), 6)
 
 
+def _row_feature_value(
+    row: StrategyLadderB2LabelStoreRow,
+    feature_name: str,
+) -> float | None:
+    if feature_name in row.feature_values:
+        return _coerce_float(row.feature_values.get(feature_name))
+    if hasattr(row, feature_name):
+        raw_value = getattr(row, feature_name)
+        if isinstance(raw_value, bool):
+            return 1.0 if raw_value else 0.0
+        return _coerce_float(raw_value)
+    return None
+
+
+def _anti_revenge_one_hot_status(row: StrategyLadderB2LabelStoreRow) -> str:
+    values = tuple(_row_feature_value(row, name) for name in ANTI_REVENGE_STATE_ONE_HOT_FEATURE_NAMES)
+    if any(value is None for value in values):
+        return "ANTI_REVENGE_STATE_MISSING"
+    active_count = sum(1 for value in values if value is not None and value > 0.5)
+    return (
+        "ANTI_REVENGE_STATE_ONE_HOT_READY"
+        if active_count == 1
+        else "ANTI_REVENGE_STATE_ONE_HOT_INVALID"
+    )
+
+
+def _feature_source_status(
+    available_count: int,
+    row_count: int,
+) -> str:
+    if row_count <= 0:
+        return "FEATURE_SOURCE_NO_ROWS"
+    if available_count == row_count:
+        return "FEATURE_SOURCE_FULL"
+    if available_count <= 0:
+        return "FEATURE_SOURCE_MISSING"
+    return "FEATURE_SOURCE_PARTIAL"
+
+
+def _build_f16_feature_coverage_report(
+    *,
+    rows: tuple[StrategyLadderB2LabelStoreRow, ...],
+    summary: StrategyLadderB2LabelStoreSummary,
+    quality_report: StrategyLadderB2LabelStoreQualityReport,
+) -> dict[str, object]:
+    feature_names = SUPPORTED_EXPECTED_EDGE_FEATURE_NAMES
+    row_count = len(rows)
+
+    def _coverage_for_scope(scope_rows: tuple[StrategyLadderB2LabelStoreRow, ...]) -> dict[str, object]:
+        scope_row_count = len(scope_rows)
+        feature_presence_count = {
+            feature_name: sum(
+                1
+                for row in scope_rows
+                if _row_feature_value(row, feature_name) is not None
+            )
+            for feature_name in feature_names
+        }
+        source_status_by_feature = {
+            feature_name: _feature_source_status(count, scope_row_count)
+            for feature_name, count in feature_presence_count.items()
+        }
+        zero_available_features = tuple(
+            feature_name
+            for feature_name, count in feature_presence_count.items()
+            if count <= 0
+        )
+        partial_features = tuple(
+            feature_name
+            for feature_name, count in feature_presence_count.items()
+            if 0 < count < scope_row_count
+        )
+        anti_status_counts = {
+            status: sum(1 for row in scope_rows if _anti_revenge_one_hot_status(row) == status)
+            for status in sorted({_anti_revenge_one_hot_status(row) for row in scope_rows})
+        }
+        full_feature_row_count = sum(
+            1
+            for row in scope_rows
+            if all(_row_feature_value(row, feature_name) is not None for feature_name in feature_names)
+            and _anti_revenge_one_hot_status(row) == "ANTI_REVENGE_STATE_ONE_HOT_READY"
+        )
+        return {
+            "row_count": scope_row_count,
+            "full_feature_row_count": full_feature_row_count,
+            "full_feature_coverage_rate": _rate(full_feature_row_count, scope_row_count),
+            "feature_presence_count": feature_presence_count,
+            "source_status_by_feature": source_status_by_feature,
+            "missing_feature_names": tuple(
+                feature_name
+                for feature_name, count in feature_presence_count.items()
+                if count < scope_row_count
+            ),
+            "zero_available_features": zero_available_features,
+            "partial_features": partial_features,
+            "anti_revenge_status_counts": anti_status_counts,
+            "prod_eligible": (
+                scope_row_count > 0
+                and full_feature_row_count == scope_row_count
+                and anti_status_counts.get("ANTI_REVENGE_STATE_ONE_HOT_INVALID", 0) == 0
+                and anti_status_counts.get("ANTI_REVENGE_STATE_MISSING", 0) == 0
+            ),
+        }
+
+    overall = _coverage_for_scope(rows)
+    timeframe_rows: list[dict[str, object]] = []
+    for timeframe in sorted({row.timeframe for row in rows}):
+        scope_rows = tuple(row for row in rows if row.timeframe == timeframe)
+        row_payload = _coverage_for_scope(scope_rows)
+        row_payload["timeframe"] = timeframe
+        timeframe_rows.append(row_payload)
+
+    blocker_codes: list[str] = []
+    if row_count <= 0:
+        blocker_codes.append("F16_LABEL_STORE_EMPTY")
+    if overall["missing_feature_names"]:
+        blocker_codes.append("F16_FEATURES_MISSING")
+    anti_status_counts = overall["anti_revenge_status_counts"]
+    if isinstance(anti_status_counts, dict) and anti_status_counts.get("ANTI_REVENGE_STATE_MISSING", 0):
+        blocker_codes.append("F16_ANTI_REVENGE_STATE_MISSING")
+    if isinstance(anti_status_counts, dict) and anti_status_counts.get("ANTI_REVENGE_STATE_ONE_HOT_INVALID", 0):
+        blocker_codes.append("F16_ANTI_REVENGE_STATE_ONE_HOT_INVALID")
+    if summary.proxy_execution_label_count > 0:
+        blocker_codes.append("F16_REPLAY_LABEL_STORE_PROXY_LABELS_PRESENT")
+    if summary.replay_grounded_label_count <= 0:
+        blocker_codes.append("F16_REPLAY_LABEL_STORE_NO_EXECUTED_LABELS")
+    prod_eligible = (
+        bool(overall["prod_eligible"])
+        and summary.proxy_execution_label_count == 0
+        and summary.replay_grounded_label_count == row_count
+        and quality_report.no_fabricated_trades
+        and quality_report.no_fabricated_costs
+        and not blocker_codes
+    )
+    return {
+        "schema_version": "strategy_ladder.f16_feature_coverage_report.v1",
+        "status": (
+            "F16_FEATURE_COVERAGE_READY"
+            if row_count > 0 and overall["full_feature_row_count"] > 0
+            else "F16_FEATURE_COVERAGE_BLOCKED"
+        ),
+        "prod_eligibility_status": (
+            "F16_PROD_ELIGIBLE"
+            if prod_eligible
+            else "F16_RESEARCH_ONLY_NOT_PROD_ELIGIBLE"
+        ),
+        "label_store_status": summary.status,
+        "label_store_promotion_state": summary.promotion_state,
+        "label_source_type": summary.label_source_type,
+        "row_count": row_count,
+        "full_feature_row_count": overall["full_feature_row_count"],
+        "full_feature_coverage_rate": overall["full_feature_coverage_rate"],
+        "requested_feature_names": feature_names,
+        "missing_feature_names": overall["missing_feature_names"],
+        "zero_available_features": overall["zero_available_features"],
+        "partial_features": overall["partial_features"],
+        "source_status_by_feature": overall["source_status_by_feature"],
+        "anti_revenge_status_counts": overall["anti_revenge_status_counts"],
+        "timeframe_rows": timeframe_rows,
+        "blocker_codes": tuple(dict.fromkeys(blocker_codes)),
+        "created_at": datetime.now(tz=UTC).isoformat(),
+    }
+
+
 def build_strategy_ladder_b2_label_store(
     request: StrategyLadderB2LabelStoreBuilderRequest,
 ) -> StrategyLadderB2LabelStoreBuildResult:
@@ -967,6 +1247,9 @@ def build_strategy_ladder_b2_label_store(
     )
     summary_path = (request.output_dir / LABEL_STORE_SUMMARY_FILENAME).resolve()
     quality_report_path = (request.output_dir / LABEL_STORE_QUALITY_REPORT_FILENAME).resolve()
+    f16_feature_coverage_report_path = (
+        request.output_dir / F16_FEATURE_COVERAGE_REPORT_FILENAME
+    ).resolve()
     summary = StrategyLadderB2LabelStoreSummary(
         status=status,
         promotion_state=promotion_state,
@@ -1067,12 +1350,22 @@ def build_strategy_ladder_b2_label_store(
     )
     atomic_write_json(summary_path, summary.model_dump(mode="json"), indent=2)
     atomic_write_json(quality_report_path, quality_report.model_dump(mode="json"), indent=2)
+    atomic_write_json(
+        f16_feature_coverage_report_path,
+        _build_f16_feature_coverage_report(
+            rows=rows,
+            summary=summary,
+            quality_report=quality_report,
+        ),
+        indent=2,
+    )
     return StrategyLadderB2LabelStoreBuildResult(
         status=status,
         promotion_state=promotion_state,
         dataset_path=str(dataset_path.resolve()),
         summary_path=str(summary_path),
         quality_report_path=str(quality_report_path),
+        f16_feature_coverage_report_path=str(f16_feature_coverage_report_path),
         dataset_hash=dataset_hash,
         feature_hash=feature_hash,
         label_hash=label_hash,
@@ -1088,6 +1381,7 @@ __all__ = [
     "DEFAULT_PURGE_WINDOW_MINUTES",
     "DEFAULT_WALK_FORWARD_TRAIN_DAYS",
     "DEFAULT_WALK_FORWARD_VALIDATION_DAYS",
+    "F16_FEATURE_COVERAGE_REPORT_FILENAME",
     "LABEL_STORE_DATASET_FILENAME",
     "LABEL_STORE_QUALITY_REPORT_FILENAME",
     "LABEL_STORE_SUMMARY_FILENAME",

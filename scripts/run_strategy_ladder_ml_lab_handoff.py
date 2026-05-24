@@ -47,6 +47,13 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--export-dir", required=True, help="Handoff export directory.")
     parser.add_argument("--pair", default="BTCUSDT", help="Pair to train.")
+    # Patch P2b (2026-05-22) — optional multi-pair tuple. When provided with ≥ 2
+    # pairs, the handoff emits an additional MULTI_PAIR_C1_EXPECTED_EDGE manifest.
+    parser.add_argument(
+        "--selected-pairs",
+        default="",
+        help="Optional CSV of pair names. When ≥ 2, triggers MULTI_PAIR_C1 manifest emission.",
+    )
     parser.add_argument(
         "--timeframe",
         default="1m",
@@ -91,7 +98,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--feature-names",
         default="close_return,high_low_range,volume",
-        help="Comma-separated gold-store features to use.",
+        help=(
+            "Comma-separated expected-edge feature names to use. "
+            "Supported names are governed by "
+            "local_replay_runtime.strategy_ladder_expected_edge_training."
+        ),
     )
     parser.add_argument("--shap-summary-ref", default="", help="Optional SHAP summary reference.")
     return parser
@@ -107,6 +118,7 @@ def main(argv: list[str] | None = None) -> int:
             b2_run_root=Path(args.b2_run_root) if args.b2_run_root else None,
             export_dir=Path(args.export_dir),
             pair=args.pair,
+            selected_pairs=_csv_tuple(args.selected_pairs),
             timeframe=args.timeframe,
             train_start=args.train_start,
             train_end=args.train_end,

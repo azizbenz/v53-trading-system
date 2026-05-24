@@ -42,15 +42,7 @@ QUANT_EQUATION_REFS = (
 
 
 def _boundary_ms(raw_value: str, *, end_of_day: bool) -> int | None:
-    value = str(raw_value or "").strip()
-    if not value:
-        return None
-    parsed = parse_time_boundary_to_ms(value)
-    if parsed is None:
-        return None
-    if end_of_day and len(value) == 10 and "T" not in value and " " not in value:
-        return parsed + 86_399_999
-    return parsed
+    return parse_time_boundary_to_ms(str(raw_value or "").strip(), end_of_day=end_of_day)
 
 
 def _feature_groups_for_row(row) -> set[str]:  # noqa: ANN001

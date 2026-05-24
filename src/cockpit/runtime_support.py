@@ -42,6 +42,7 @@ from interface_contracts import (
     build_governed_audit_evidence_projection,
     load_governed_audit_evidence_index,
 )
+from interface_contracts.atomic_io import atomic_write_json
 from interface_contracts.shadow_vps_service_contracts import ShadowVpsServiceState
 from monitoring import query_shadow_vps_service_events
 from monitoring.artifact_visibility import (
@@ -443,6 +444,13 @@ class StrategyLadderBacktestSummary(BaseModel, frozen=True):
     live_trading_eligibility_status: str = "BLOCKED"
     proof_ready_metrics: tuple[dict[str, object], ...] = ()
     proof_gap_metrics: tuple[dict[str, object], ...] = ()
+    active_feature_names: tuple[str, ...] = ()
+    candidate_feature_columns: tuple[str, ...] = ()
+    candidate_feature_rows: tuple[dict[str, object], ...] = ()
+    candidate_feature_table_status: str = "CANDIDATE_FEATURE_TABLE_NOT_PROVEN"
+    feature_engine_ml_wiring_status: str = "FEATURE_ENGINE_ML_WIRING_NOT_PROVEN"
+    feature_engine_ml_wiring_rows: tuple[dict[str, object], ...] = ()
+    feature_engine_ml_wiring_report_path: str = ""
     candidate_rows: tuple[dict[str, object], ...] = ()
     selected_candidate_id: str = ""
     selected_candidate_detail: dict[str, object] = Field(default_factory=dict)
@@ -486,6 +494,21 @@ class StrategyLadderBacktestSummary(BaseModel, frozen=True):
     expected_edge_readiness_verdict: str = ""
     expected_edge_readiness_path: str = ""
     expected_edge_readiness_key_findings: tuple[str, ...] = ()
+    backtest_decision_report_status: str = "BACKTEST_DECISION_REPORT_MISSING"
+    backtest_decision_report_path: str = ""
+    backtest_decision_capability_audit_path: str = ""
+    backtest_decision_final_verdict_path: str = ""
+    backtest_decision_profitability_ready: bool = False
+    backtest_decision_profitability_claim_allowed: bool = False
+    backtest_decision_live_ready: bool = False
+    backtest_decision_shadow_ready: bool = False
+    backtest_decision_research_only: bool = True
+    backtest_decision_best_timeframe: str = ""
+    backtest_decision_best_pair: str = ""
+    backtest_decision_best_capital_bucket: str = ""
+    backtest_decision_ml_benefit_status: str = "ML_VS_NO_ML_REPORT_UNAVAILABLE"
+    backtest_decision_next_blocker: str = ""
+    backtest_decision_report_links: tuple[dict[str, str], ...] = ()
     cancellable_running_jobs: tuple[str, ...] = ()
 
 
@@ -549,6 +572,8 @@ def read_runtime_surfaces(
     observability_output_dir: Path | None,
     backtest_jobs_root: Path | None,
     selected_candidate_id: str = "",
+    active_feature_names: tuple[str, ...] = (),
+    artifact_feature_names: tuple[str, ...] = (),
     log_query: ShadowVpsServiceLogQuery | None = None,
 ) -> CockpitRuntimeSurfaces:
     """Load compact cockpit surfaces from the existing monitoring and queue rails."""
@@ -590,6 +615,8 @@ def read_runtime_surfaces(
     strategy_ladder_summary = _read_strategy_ladder_summary(
         backtest_jobs,
         selected_candidate_id=selected_candidate_id,
+        active_feature_names=active_feature_names,
+        artifact_feature_names=artifact_feature_names,
     )
     strategy_ladder_ml_handoff = read_strategy_ladder_ml_handoff_dashboard_summary(
         backtest_jobs,
@@ -936,6 +963,8 @@ def _read_strategy_ladder_summary(
     jobs: tuple[CockpitBacktestJobRecord, ...],
     *,
     selected_candidate_id: str = "",
+    active_feature_names: tuple[str, ...] = (),
+    artifact_feature_names: tuple[str, ...] = (),
 ) -> StrategyLadderBacktestSummary:
     grouped_jobs: dict[str, list[CockpitBacktestJobRecord]] = {}
     ordered_keys: list[str] = []
@@ -1982,6 +2011,8 @@ def _read_strategy_ladder_summary(
                 output_root=output_root,
                 jobs=scoped_jobs,
                 selected_candidate_id=selected_candidate_id,
+                active_feature_names=active_feature_names,
+                artifact_feature_names=artifact_feature_names,
             )
             surfaced_summary = _apply_strategy_ladder_proxy_fidelity_surface(
                 enriched_summary,
@@ -2070,6 +2101,8 @@ def _enrich_strategy_ladder_summary_from_artifacts(
     output_root: Path,
     jobs: tuple[CockpitBacktestJobRecord, ...],
     selected_candidate_id: str,
+    active_feature_names: tuple[str, ...] = (),
+    artifact_feature_names: tuple[str, ...] = (),
 ) -> StrategyLadderBacktestSummary:
     run_dir = _resolve_strategy_ladder_run_dir(
         output_root,
@@ -2334,6 +2367,113 @@ def _enrich_strategy_ladder_summary_from_artifacts(
         if timeframe_rows:
             updates["timeframe_matrix_rows"] = tuple(timeframe_rows[:8])
 
+        decision_report_path = run_dir / "reports" / "backtest_decision_report.json"
+        decision_verdict_path = (
+            run_dir / "reports" / "backtest_decision_report_final_verdict.json"
+        )
+        capability_audit_path = (
+            run_dir / "reports" / "backtest_decision_capability_audit.json"
+        )
+        decision_report_payload = _load_json(decision_report_path, default={})
+        decision_verdict_payload = _load_json(decision_verdict_path, default={})
+        capability_audit_payload = _load_json(capability_audit_path, default={})
+        if isinstance(decision_report_payload, dict) and decision_report_payload:
+            updates["backtest_decision_report_path"] = str(
+                decision_report_path.resolve()
+            )
+            updates["backtest_decision_report_status"] = str(
+                decision_report_payload.get("report_status")
+                or decision_report_payload.get("status")
+                or "BACKTEST_DECISION_REPORT_PARTIAL"
+            )
+            updates["backtest_decision_profitability_ready"] = bool(
+                decision_report_payload.get("profitability_backtest_ready")
+            )
+            decision_summary = decision_report_payload.get("summary")
+            if isinstance(decision_summary, dict):
+                updates["backtest_decision_profitability_claim_allowed"] = bool(
+                    decision_summary.get("profitability_claim_allowed")
+                )
+            recommendation = decision_report_payload.get("recommendation")
+            if isinstance(recommendation, dict):
+                updates["backtest_decision_live_ready"] = bool(
+                    recommendation.get("live_ready")
+                )
+                updates["backtest_decision_shadow_ready"] = bool(
+                    recommendation.get("shadow_ready")
+                )
+                updates["backtest_decision_research_only"] = bool(
+                    recommendation.get("research_only", True)
+                )
+                updates["backtest_decision_next_blocker"] = str(
+                    recommendation.get("next_required_patch") or ""
+                )
+            for payload_key, update_key, row_key in (
+                (
+                    "timeframe_ranking",
+                    "backtest_decision_best_timeframe",
+                    "timeframe",
+                ),
+                ("pair_ranking", "backtest_decision_best_pair", "pair"),
+                (
+                    "capital_bucket_ranking",
+                    "backtest_decision_best_capital_bucket",
+                    "capital_bucket",
+                ),
+            ):
+                rows = decision_report_payload.get(payload_key)
+                if isinstance(rows, list):
+                    top_row = next(
+                        (
+                            row
+                            for row in rows
+                            if isinstance(row, dict)
+                            and int(row.get("rank") or 0) == 1
+                            and int(row.get("executed_count") or 0) > 0
+                        ),
+                        None,
+                    )
+                    if top_row is not None:
+                        updates[update_key] = str(top_row.get(row_key) or "")
+            ml_delta = decision_report_payload.get("ml_vs_no_ml_delta")
+            if isinstance(ml_delta, dict):
+                updates["backtest_decision_ml_benefit_status"] = str(
+                    ml_delta.get("status") or "ML_VS_NO_ML_REPORT_UNAVAILABLE"
+                )
+        if isinstance(decision_verdict_payload, dict) and decision_verdict_payload:
+            updates["backtest_decision_final_verdict_path"] = str(
+                decision_verdict_path.resolve()
+            )
+            updates["backtest_decision_report_status"] = str(
+                decision_verdict_payload.get("verdict")
+                or updates.get("backtest_decision_report_status")
+                or "BACKTEST_DECISION_REPORT_PARTIAL"
+            )
+            updates["backtest_decision_profitability_ready"] = bool(
+                decision_verdict_payload.get("profitability_backtest_ready")
+            )
+        if isinstance(capability_audit_payload, dict) and capability_audit_payload:
+            updates["backtest_decision_capability_audit_path"] = str(
+                capability_audit_path.resolve()
+            )
+        decision_links = []
+        for label, path in (
+            ("decision_report", decision_report_path),
+            ("capability_audit", capability_audit_path),
+            ("final_verdict", decision_verdict_path),
+            ("timeframe_ranking", run_dir / "reports" / "timeframe_ranking_report.json"),
+            ("pair_ranking", run_dir / "reports" / "pair_ranking_report.json"),
+            (
+                "capital_bucket_ranking",
+                run_dir / "reports" / "capital_bucket_ranking_report.json",
+            ),
+            ("cost_fill_realism", run_dir / "reports" / "cost_fill_realism_report.json"),
+        ):
+            if path.is_file():
+                decision_links.append({"label": label, "path": str(path.resolve())})
+        if decision_links:
+            updates["backtest_decision_report_links"] = tuple(decision_links)
+
         candidate_events_path = run_dir / "fast_candidates" / "candidate_events.jsonl"
         all_candidate_rows = _load_all_jsonl_rows(candidate_events_path)
         count_semantics_rows = all_candidate_rows
@@ -2404,6 +2544,54 @@ def _enrich_strategy_ladder_summary_from_artifacts(
         all_trade_rows = _load_all_jsonl_rows(run_dir / "trade_detail_ledger.jsonl")
         all_refusal_rows = _load_all_jsonl_rows(run_dir / "refusal_ledger.jsonl")
         all_loss_rows = _load_all_jsonl_rows(run_dir / "loss_analysis_ledger.jsonl")
+        resolved_active_feature_names = tuple(
+            item.strip() for item in active_feature_names if item and item.strip()
+        )
+        if not resolved_active_feature_names and artifact_feature_names:
+            resolved_active_feature_names = tuple(
+                item.strip() for item in artifact_feature_names if item and item.strip()
+            )
+        if resolved_active_feature_names:
+            refusal_lookup = _candidate_refusal_lookup(all_refusal_rows)
+            candidate_feature_rows = _build_candidate_feature_rows(
+                candidate_payloads=candidate_rows,
+                replay_cache=replay_cache,
+                refusal_lookup=refusal_lookup,
+                active_feature_names=resolved_active_feature_names,
+            )
+            updates["active_feature_names"] = resolved_active_feature_names
+            updates["candidate_feature_columns"] = resolved_active_feature_names
+            updates["candidate_feature_rows"] = candidate_feature_rows
+            updates["candidate_feature_table_status"] = (
+                "CANDIDATE_FEATURE_TABLE_READY"
+                if candidate_feature_rows
+                else "CANDIDATE_FEATURE_TABLE_EMPTY"
+            )
+            wiring_rows = _build_feature_engine_ml_wiring_rows(
+                active_feature_names=resolved_active_feature_names,
+                artifact_feature_names=artifact_feature_names,
+                candidate_payloads=count_semantics_rows,
+            )
+            updates["feature_engine_ml_wiring_rows"] = wiring_rows
+            updates["feature_engine_ml_wiring_status"] = (
+                "FEATURE_ENGINE_ML_WIRING_READY"
+                if wiring_rows
+                else "FEATURE_ENGINE_ML_WIRING_EMPTY"
+            )
+            report_payload = {
+                "generated_at": datetime.now(UTC).isoformat(),
+                "run_id": summary.run_id,
+                "workflow_run_id": summary.workflow_run_id,
+                "active_feature_names": list(resolved_active_feature_names),
+                "artifact_feature_names": list(artifact_feature_names),
+                "rows": [dict(row) for row in wiring_rows],
+            }
+            report_path = run_dir / "reports" / "backtest_feature_engine_ml_wiring_audit.json"
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_json(report_path, report_payload, indent=2)
+            updates["feature_engine_ml_wiring_report_path"] = str(
+                report_path.resolve(strict=False)
+            )
         trade_rows = all_trade_rows[:25]
         refusal_rows = all_refusal_rows[:25]
         loss_rows = all_loss_rows[:25]
@@ -3295,6 +3483,14 @@ def _build_candidate_detail_payload(
 ) -> dict[str, object]:
     compatibility = candidate_payload.get("compatibility_payload")
     compat = compatibility if isinstance(compatibility, dict) else {}
+    feature_values = dict(compat.get("feature_values") or {})
+    for feature_name in _feature_family_sets()["EXTENDED_MICROSTRUCTURE"] | _feature_family_sets()["BUILD14_OBSERVED"] | _feature_family_sets()["ENGINE_D_GOVERNANCE"] | _feature_family_sets()["ANTI_REVENGE"] | frozenset({"fragility_score", "false_breakout_context"}):
+        if feature_name in feature_values:
+            continue
+        raw_value = compat.get(feature_name)
+        if raw_value in (None, ""):
+            continue
+        feature_values[feature_name] = raw_value
     reason_codes = tuple(
         str(item) for item in (candidate_payload.get("preliminary_reason_codes") or ())
     )
@@ -3319,7 +3515,7 @@ def _build_candidate_detail_payload(
         "candidate_source": str(candidate_payload.get("candidate_source") or ""),
         "feature_refs": tuple(str(item) for item in (candidate_payload.get("feature_refs") or ())),
         "reason_codes": reason_codes,
-        "feature_values": dict(compat.get("feature_values") or {}),
+        "feature_values": feature_values,
         "scoring_trace_status": "READY" if score_decomposition else "NOT_PROVEN",
         "score_decomposition": score_decomposition,
         "warning_codes": (
@@ -3339,6 +3535,18 @@ def _build_candidate_detail_payload(
         "spread_bps": compat.get("spread_bps"),
         "slippage_bps": compat.get("slippage_bps"),
         "expected_edge_bps": compat.get("expected_edge_bps"),
+        "expected_edge_truth_status": str(
+            compat.get("expected_edge_truth_status") or "EXPECTED_EDGE_TRUTH_NOT_PROVEN"
+        ),
+        "expected_cost_truth_status": str(
+            compat.get("expected_cost_truth_status") or "EXPECTED_COST_TRUTH_NOT_PROVEN"
+        ),
+        "cost_source_used_for_break_even": str(
+            compat.get("cost_source_used_for_break_even") or ""
+        ),
+        "cost_source_used_for_expected_ce_net": str(
+            compat.get("cost_source_used_for_expected_ce_net") or ""
+        ),
         "gross_return_bps": compat.get("gross_return_bps"),
         "replay_status": str(
             replay_payload.get("detailed_replay_status") or "DETAILED_REPLAY_NOT_PROVEN"
@@ -3377,6 +3585,132 @@ def _build_candidate_replay_payload(
         "reason_codes": tuple(str(item) for item in (primary.get("reason_codes") or ())),
         "book_depth_source_status": str(primary.get("book_depth_source_status") or ""),
     }
+
+
+def _candidate_feature_value(
+    candidate_payload: dict[str, object],
+    feature_name: str,
+) -> object:
+    compatibility = candidate_payload.get("compatibility_payload")
+    compat = compatibility if isinstance(compatibility, dict) else {}
+    feature_values = compat.get("feature_values")
+    feature_map = feature_values if isinstance(feature_values, dict) else {}
+    if feature_name in feature_map:
+        return feature_map.get(feature_name)
+    return compat.get(feature_name)
+
+
+def _candidate_refusal_lookup(
+    refusal_rows: list[dict[str, object]],
+) -> dict[str, dict[str, object]]:
+    lookup: dict[str, dict[str, object]] = {}
+    for row in refusal_rows:
+        candidate_id = str(row.get("candidate_id") or "").strip()
+        if candidate_id and candidate_id not in lookup:
+            lookup[candidate_id] = row
+    return lookup
+
+
+def _feature_family_sets() -> dict[str, frozenset[str]]:
+    from local_replay_runtime.strategy_ladder_expected_edge_training import (
+        ANTI_REVENGE_STATE_ONE_HOT_FEATURE_NAMES,
+        BUILD14_OBSERVED_EXPECTED_EDGE_FEATURE_NAMES,
+        DEFAULT_EXPECTED_EDGE_FEATURE_NAMES,
+        ENGINE_D_GOVERNANCE_EXPECTED_EDGE_FEATURE_NAMES,
+        EXTENDED_MICROSTRUCTURE_EXPECTED_EDGE_FEATURE_NAMES,
+        REPLAY_MICROSTRUCTURE_EXPECTED_EDGE_FEATURE_NAMES,
+    )
+
+    return {
+        "LEGACY": frozenset(DEFAULT_EXPECTED_EDGE_FEATURE_NAMES),
+        "REPLAY_MICROSTRUCTURE": frozenset(REPLAY_MICROSTRUCTURE_EXPECTED_EDGE_FEATURE_NAMES),
+        "EXTENDED_MICROSTRUCTURE": frozenset(EXTENDED_MICROSTRUCTURE_EXPECTED_EDGE_FEATURE_NAMES),
+        "BUILD14_OBSERVED": frozenset(BUILD14_OBSERVED_EXPECTED_EDGE_FEATURE_NAMES),
+        "ENGINE_D_GOVERNANCE": frozenset(ENGINE_D_GOVERNANCE_EXPECTED_EDGE_FEATURE_NAMES),
+        "ANTI_REVENGE": frozenset(ANTI_REVENGE_STATE_ONE_HOT_FEATURE_NAMES),
+    }
+
+
+def _feature_wiring_metadata(feature_name: str) -> tuple[str, str]:
+    families = _feature_family_sets()
+    if feature_name in families["LEGACY"]:
+        return "shared_feature_store", "UPSTREAM_ONLY_NOT_DIRECT_ENGINE_GATE"
+    if feature_name in {"spread_bps", "slippage_bps", "book_depth_levels", "break_even_bps"}:
+        return "shared_b2_economic", "USED_BY_B2_ECONOMIC_GATES"
+    if feature_name in {"fragility_score", "false_breakout_context"}:
+        return "engine_c_native_context", "ENGINE_C_NATIVE_CONTEXT"
+    if feature_name in {"vpin", "cumulative_ofi", "queue_pressure", "kyle_lambda", "realized_vol_current", "realized_vol_at_break"}:
+        return "bridge_microstructure_capture", "CAPTURED_NATIVE_CONTEXT_NOT_DIRECT_ENGINE_GATE"
+    if feature_name in families["BUILD14_OBSERVED"]:
+        return "build14_observed", "BUILD14_ENABLER_CONTEXT"
+    if feature_name in families["ENGINE_D_GOVERNANCE"]:
+        return "engine_d_governance", "ENGINE_D_NATIVE_GOVERNANCE"
+    if feature_name in families["ANTI_REVENGE"]:
+        return "engine_d_anti_revenge", "ENGINE_D_NATIVE_GOVERNANCE"
+    return "unclassified_feature_origin", "NATIVE_WIRING_NOT_CLASSIFIED"
+
+
+def _build_candidate_feature_rows(
+    *,
+    candidate_payloads: list[dict[str, object]],
+    replay_cache: dict[str, dict[str, object]],
+    refusal_lookup: dict[str, dict[str, object]],
+    active_feature_names: tuple[str, ...],
+) -> tuple[dict[str, object], ...]:
+    rows: list[dict[str, object]] = []
+    for candidate_payload in candidate_payloads:
+        candidate_id = str(candidate_payload.get("candidate_id") or "")
+        replay_payload = replay_cache.get(candidate_id) or {}
+        explorer_row = _build_candidate_explorer_row(candidate_payload, replay_payload)
+        refusal_row = refusal_lookup.get(candidate_id, {})
+        row = {
+            "candidate_id": candidate_id,
+            "pair": explorer_row.get("pair", ""),
+            "engine_id": explorer_row.get("engine_id", ""),
+            "timeframe": explorer_row.get("timeframe", ""),
+            "outcome_status": explorer_row.get("outcome_status", ""),
+            "accepted_or_refused": explorer_row.get("accepted_or_refused", ""),
+            "reason_codes": (
+                tuple(str(item) for item in (refusal_row.get("reason_codes") or ()))
+                or tuple(str(item) for item in (candidate_payload.get("preliminary_reason_codes") or ()))
+            ),
+        }
+        for feature_name in active_feature_names:
+            row[feature_name] = _candidate_feature_value(candidate_payload, feature_name)
+        rows.append(row)
+    return tuple(rows)
+
+
+def _build_feature_engine_ml_wiring_rows(
+    *,
+    active_feature_names: tuple[str, ...],
+    artifact_feature_names: tuple[str, ...],
+    candidate_payloads: list[dict[str, object]],
+) -> tuple[dict[str, object], ...]:
+    rows: list[dict[str, object]] = []
+    for feature_name in active_feature_names:
+        origin, native_status = _feature_wiring_metadata(feature_name)
+        runtime_available = any(
+            _candidate_feature_value(candidate_payload, feature_name) not in (None, "")
+            for candidate_payload in candidate_payloads
+        )
+        rows.append(
+            {
+                "feature_name": feature_name,
+                "training_selected": True,
+                "artifact_selected": feature_name in artifact_feature_names,
+                "runtime_payload_available": runtime_available,
+                "native_engine_origin": origin,
+                "native_engine_consumption_status": native_status,
+                "ml_runtime_wired": runtime_available,
+                "ml_block_reason": (
+                    ""
+                    if runtime_available
+                    else "MISSING_EDGE_MODEL_FEATURES"
+                ),
+            }
+        )
+    return tuple(rows)
 
 
 def _derive_trade_summary(

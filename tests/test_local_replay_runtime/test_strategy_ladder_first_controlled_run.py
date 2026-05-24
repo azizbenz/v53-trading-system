@@ -196,5 +196,6 @@ def test_first_controlled_run_wires_engine_native_bridge_into_runner(
         assert data_factory_request.max_gold_feature_rows == 7
         assert ladder_request.engine_native_mode is True
         assert ladder_request.engine_native_sample_size == 7
+        assert ladder_request.candidate_sample_cap == 7
     finally:
         shutil.rmtree(scratch, ignore_errors=True)

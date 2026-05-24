@@ -73,6 +73,8 @@ def build_engine_b_input_from_window(
     window_start_ms: int,
     window_end_ms: int,
     raw_trade_path: Path | str | None,
+    raw_book_path: Path | str | None = None,
+    raw_book_delta_path: Path | str | None = None,
     expected_gain: float = 0.0,
     expected_cost: float = 0.0,
     candidate_size: float = 0.0,
@@ -103,6 +105,8 @@ def build_engine_b_input_from_window(
         window_start_ms=window_start_ms,
         window_end_ms=window_end_ms,
         raw_trade_path=raw_trade_path,
+        raw_book_path=raw_book_path,
+        raw_book_delta_path=raw_book_delta_path,
     )
 
     # Si le pont n'a pas reussi a fournir les 4 critiques, le builder ne peut

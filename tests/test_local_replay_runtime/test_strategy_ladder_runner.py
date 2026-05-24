@@ -34,6 +34,7 @@ from local_replay_runtime.strategy_ladder_engine_native_preselection import (
 )
 from local_replay_runtime.strategy_ladder_feature_store import (
     load_strategy_ladder_feature_store,
+    parse_time_boundary_to_ms,
 )
 from local_replay_runtime.strategy_ladder_models import (
     StrategyLadderBucketReplayResult,
@@ -66,6 +67,7 @@ from local_replay_runtime.strategy_ladder_runner import (
     _build_engine_c_diagnosis,
     _build_engine_d_diagnosis,
     _build_engine_no_trade_diagnosis_payload,
+    _build_profitability_truth_verdict,
     _expected_edge_model_feature_maps,
     _expected_edge_model_reference_at,
     _blocker_assessment,
@@ -546,6 +548,48 @@ def test_expected_edge_model_feature_maps_promote_microstructure_payload_fields(
     assert route_features["route_slippage_bps"] == 3.0
 
 
+def test_expected_edge_model_feature_maps_promote_f16_augmented_payload_fields() -> None:
+    candidate = StrategyLadderCandidateEvent(
+        run_id="fixture-run-f16",
+        candidate_id="cand-f16",
+        timestamp_ms=1_714_000_000_000,
+        pair="BTCUSDT",
+        timeframe="5m",
+        engine_id="engine_d",
+        strategy_id="engine_d",
+        compatibility_payload={
+            "feature_values": {"edge_score": 2.0},
+            "kyle_lambda": 0.0023,
+            "realized_vol_current": 0.013,
+            "realized_vol_at_break": 0.021,
+            "micro_edge_exit_governor_observed": 0.44,
+            "micro_edge_entry_timing_observed": 0.57,
+            "history_score": 0.61,
+            "marginal_value_score": 0.64,
+            "reentry_lateness": 0.15,
+            "concentration_headroom": 0.22,
+            "anti_revenge_state__active": False,
+            "anti_revenge_state__cooling": True,
+            "anti_revenge_state__idle": False,
+        },
+    )
+
+    feature_values, _route_features = _expected_edge_model_feature_maps(candidate)
+
+    assert feature_values["kyle_lambda"] == 0.0023
+    assert feature_values["realized_vol_current"] == 0.013
+    assert feature_values["realized_vol_at_break"] == 0.021
+    assert feature_values["micro_edge_exit_governor_observed"] == 0.44
+    assert feature_values["micro_edge_entry_timing_observed"] == 0.57
+    assert feature_values["history_score"] == 0.61
+    assert feature_values["marginal_value_score"] == 0.64
+    assert feature_values["reentry_lateness"] == 0.15
+    assert feature_values["concentration_headroom"] == 0.22
+    assert feature_values["anti_revenge_state__active"] is False
+    assert feature_values["anti_revenge_state__cooling"] is True
+    assert feature_values["anti_revenge_state__idle"] is False
+
+
 def test_feature_store_loader_supports_jsonl_and_rejects_future_leak() -> None:
     scratch = _scratch_dir("feature_store_loader")
     shutil.rmtree(scratch, ignore_errors=True)
@@ -568,6 +612,26 @@ def test_feature_store_loader_supports_jsonl_and_rejects_future_leak() -> None:
         assert result.row_count == 1
         assert result.rejected_future_leak_count == 1
         assert result.rows[0].pair == "BTCUSDT"
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_feature_store_date_only_end_boundary_includes_full_day() -> None:
+    scratch = _scratch_dir("feature_store_date_end_boundary")
+    shutil.rmtree(scratch, ignore_errors=True)
+    try:
+        feature_root = scratch / "feature_store"
+        noon_utc = 1746100800000
+        _write_jsonl(feature_root / "features.jsonl", [_feature_row(timestamp_ms=noon_utc)])
+
+        result = load_strategy_ladder_feature_store(
+            feature_root,
+            start_ms=parse_time_boundary_to_ms("2025-05-01"),
+            end_ms=parse_time_boundary_to_ms("2025-05-01", end_of_day=True),
+        )
+
+        assert result.row_count == 1
+        assert result.rows[0].resolved_timestamp_ms == noon_utc
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
@@ -3590,6 +3654,71 @@ def test_engine_no_trade_diagnosis_payload_blocks_profitability_claim() -> None:
         assert payload["profitability_claim_blocker"] == "SELECTED_COUNT_ZERO_NO_PROFITABILITY_CLAIM"
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_profitability_truth_verdict_requires_executions_and_proxy_free_path() -> None:
+    blocked = _build_profitability_truth_verdict(
+        summary=StrategyLadderReportSummary(
+            run_id="run-profit-blocked",
+            expected_edge_truth_status="EXPECTED_EDGE_PROXY_BLOCKED",
+            expected_edge_proxy_count=1,
+            executed_trade_count=0,
+            execution_label_source="REPLAY_PROXY_EXECUTION",
+            slippage_model_source="REPLAY_PROXY",
+            blocker_codes=("NO_EXECUTED_TRADES",),
+        ),
+        run_manifest=StrategyLadderRunManifest(
+            run_id="run-profit-blocked",
+            blocker_codes=("NO_EXECUTED_TRADES",),
+            executed_trade_count=0,
+        ),
+    )
+    assert blocked["status"] == "PROFITABILITY_VERDICT_BLOCKED_NO_EXECUTED_TRADES"
+    assert blocked["profitability_claim_allowed"] is False
+
+    diagnostic = _build_profitability_truth_verdict(
+        summary=StrategyLadderReportSummary(
+            run_id="run-profit-diagnostic",
+            expected_edge_truth_status="EXPECTED_EDGE_GOVERNED_BACKTEST_TRUTH",
+            expected_edge_proxy_count=0,
+            expected_edge_governed_count=80,
+            executed_trade_count=80,
+            execution_label_source="FULL_CANONICAL_EXECUTION",
+            fee_model_source="CANONICAL",
+            spread_model_source="CANONICAL",
+            slippage_model_source="CANONICAL",
+            partial_fill_model_source="CANONICAL",
+            adverse_selection_source="CANONICAL",
+        ),
+        run_manifest=StrategyLadderRunManifest(
+            run_id="run-profit-diagnostic",
+            executed_trade_count=80,
+        ),
+    )
+    assert diagnostic["status"] == "PROFITABILITY_VERDICT_DIAGNOSTIC_FRAGILE"
+    assert diagnostic["proxy_blockers_present"] is False
+
+    prod_candidate = _build_profitability_truth_verdict(
+        summary=StrategyLadderReportSummary(
+            run_id="run-profit-prod",
+            expected_edge_truth_status="EXPECTED_EDGE_GOVERNED_BACKTEST_TRUTH",
+            expected_edge_proxy_count=0,
+            expected_edge_governed_count=120,
+            executed_trade_count=120,
+            execution_label_source="FULL_CANONICAL_EXECUTION",
+            fee_model_source="CANONICAL",
+            spread_model_source="CANONICAL",
+            slippage_model_source="CANONICAL",
+            partial_fill_model_source="CANONICAL",
+            adverse_selection_source="CANONICAL",
+        ),
+        run_manifest=StrategyLadderRunManifest(
+            run_id="run-profit-prod",
+            executed_trade_count=120,
+        ),
+    )
+    assert prod_candidate["status"] == "PROFITABILITY_VERDICT_PROD_CANDIDATE"
+    assert prod_candidate["profitability_claim_allowed"] is True
 
 
 def test_engine_no_trade_diagnosis_payload_uses_engine_specific_next_actions() -> None:

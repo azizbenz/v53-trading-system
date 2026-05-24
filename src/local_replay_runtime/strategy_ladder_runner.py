@@ -25,6 +25,9 @@ from local_replay_runtime.capital_profile_builder import (
     CapitalProfileBuildInput,
     build_capital_bucket_profile,
 )
+from local_replay_runtime.backtest_decision_report_builder import (
+    write_backtest_decision_reports,
+)
 from interface_contracts import (
     ProfileId,
     StrategyClassification,
@@ -75,6 +78,7 @@ from local_replay_runtime.replay_metrics_collector import (
 )
 from local_replay_runtime.replay_run_manifest import ReplayRunManifest
 from local_replay_runtime.strategy_ladder_b2_label_store_builder import (
+    _EXPECTED_EDGE_AUGMENTED_FEATURE_KEYS,
     StrategyLadderB2LabelStoreBuilderRequest,
     build_strategy_ladder_b2_label_store,
 )
@@ -480,11 +484,24 @@ def _workflow_produced_artifact_refs(
         run_dir / "run_manifest.json",
         reports_dir / "strategy_ladder_summary.json",
         reports_dir / "strategy_ladder_report.md",
+        reports_dir / "profitability_truth_verdict.json",
+        reports_dir / "profitability_truth_verdict.md",
         reports_dir / "governed_audit_evidence_index.json",
         reports_dir / "engine_matrix.json",
         reports_dir / "pair_matrix.json",
         reports_dir / "strategy_matrix.json",
         reports_dir / "capital_bucket_matrix.json",
+        reports_dir / "backtest_decision_capability_audit.json",
+        reports_dir / "backtest_decision_report.json",
+        reports_dir / "timeframe_ranking_report.json",
+        reports_dir / "feature_ranking_report.json",
+        reports_dir / "ml_vs_no_ml_delta_report.json",
+        reports_dir / "engine_by_regime_report.json",
+        reports_dir / "pair_ranking_report.json",
+        reports_dir / "capital_bucket_ranking_report.json",
+        reports_dir / "cost_fill_realism_report.json",
+        reports_dir / "threshold_near_miss_report.json",
+        reports_dir / "backtest_decision_report_final_verdict.json",
         fast_candidates_dir / "candidate_events.jsonl",
         fast_candidates_dir / "candidate_summary.json",
     ):
@@ -505,6 +522,105 @@ def _workflow_artifact_hashes(artifact_refs: dict[str, str]) -> dict[str, str]:
         except OSError:
             continue
     return hashes
+
+
+def _build_profitability_truth_verdict(
+    *,
+    summary: StrategyLadderReportSummary,
+    run_manifest: StrategyLadderRunManifest,
+) -> dict[str, object]:
+    blocker_codes = tuple(
+        dict.fromkeys(
+            (
+                *run_manifest.blocker_codes,
+                *summary.blocker_codes,
+                *summary.promotion_blockers,
+                *summary.execution_fidelity_gap_codes,
+                *summary.expected_edge_blocker_codes,
+            )
+        )
+    )
+    proxy_blockers: list[str] = []
+    proxy_blocker_code_set = {
+        "EXPECTED_EDGE_PROXY_BLOCKED",
+        "EXPECTED_EDGE_PROXY_NOT_BACKTEST_TRUTH",
+        "SLIPPAGE_MODEL_PROXY",
+        "SPREAD_MODEL_PROXY",
+        "FEE_MODEL_PROXY",
+        "ADVERSE_SELECTION_PROXY",
+        "PARTIAL_FILL_PROXY",
+        "REPLAY_PROXY_EXECUTION",
+        "LABEL_STORE_RESEARCH_ONLY",
+        "LABEL_STORE_PARTIAL_PROXY_EXECUTION",
+        "B2_REPLAY_EXPECTED_CE_NET_PROXY",
+    }
+    proxy_blockers.extend(code for code in blocker_codes if code in proxy_blocker_code_set)
+    if summary.expected_edge_proxy_count > 0:
+        proxy_blockers.append("EXPECTED_EDGE_PROXY_COUNT_NONZERO")
+    if summary.expected_edge_truth_status != "EXPECTED_EDGE_GOVERNED_BACKTEST_TRUTH":
+        proxy_blockers.append(summary.expected_edge_truth_status)
+    for field_name, blocker_code in (
+        ("execution_label_source", "EXECUTION_LABEL_SOURCE_PROXY"),
+        ("fee_model_source", "FEE_MODEL_PROXY"),
+        ("spread_model_source", "SPREAD_MODEL_PROXY"),
+        ("slippage_model_source", "SLIPPAGE_MODEL_PROXY"),
+        ("partial_fill_model_source", "PARTIAL_FILL_PROXY"),
+        ("adverse_selection_source", "ADVERSE_SELECTION_PROXY"),
+    ):
+        value = str(getattr(summary, field_name) or "")
+        if value == "REPLAY_PROXY" or value == "REPLAY_PROXY_EXECUTION" or value.endswith("_PROXY"):
+            proxy_blockers.append(blocker_code)
+    proxy_blockers = list(dict.fromkeys(code for code in proxy_blockers if code))
+    executed_trade_count = int(summary.executed_trade_count or run_manifest.executed_trade_count or 0)
+    if executed_trade_count <= 0 or "NO_EXECUTED_TRADES" in blocker_codes:
+        status = "PROFITABILITY_VERDICT_BLOCKED_NO_EXECUTED_TRADES"
+    elif proxy_blockers:
+        status = "PROFITABILITY_VERDICT_BLOCKED_PROXY"
+    elif executed_trade_count < 50:
+        status = "PROFITABILITY_VERDICT_INCONCLUSIVE_LOW_EXECUTIONS"
+    elif executed_trade_count < 100:
+        status = "PROFITABILITY_VERDICT_DIAGNOSTIC_FRAGILE"
+    else:
+        status = "PROFITABILITY_VERDICT_PROD_CANDIDATE"
+    return {
+        "schema_version": "strategy_ladder.profitability_truth_verdict.v1",
+        "run_id": summary.run_id,
+        "workflow_run_id": summary.workflow_run_id,
+        "status": status,
+        "profitability_claim_allowed": status == "PROFITABILITY_VERDICT_PROD_CANDIDATE",
+        "executed_trade_count": executed_trade_count,
+        "minimum_diagnostic_trade_count": 50,
+        "minimum_prod_trade_count": 100,
+        "proxy_blockers_present": bool(proxy_blockers),
+        "proxy_blocker_codes": tuple(proxy_blockers),
+        "blocker_codes": blocker_codes,
+        "expected_edge_truth_status": summary.expected_edge_truth_status,
+        "execution_label_source": summary.execution_label_source,
+        "fee_model_source": summary.fee_model_source,
+        "spread_model_source": summary.spread_model_source,
+        "slippage_model_source": summary.slippage_model_source,
+        "label_store_proxy_free_required": True,
+        "train_eval_overlap_allowed": False,
+        "created_at": datetime.now(tz=UTC).isoformat(),
+    }
+
+
+def _format_profitability_truth_verdict_markdown(payload: dict[str, object]) -> str:
+    proxy_blockers = payload.get("proxy_blocker_codes") or ()
+    blocker_codes = payload.get("blocker_codes") or ()
+    return "\n".join(
+        [
+            "# Profitability Truth Verdict",
+            "",
+            f"- run_id: {payload.get('run_id', '')}",
+            f"- status: {payload.get('status', '')}",
+            f"- profitability_claim_allowed: {payload.get('profitability_claim_allowed', False)}",
+            f"- executed_trade_count: {payload.get('executed_trade_count', 0)}",
+            f"- proxy_blocker_codes: {', '.join(str(code) for code in proxy_blockers) if proxy_blockers else 'none'}",
+            f"- blocker_codes: {', '.join(str(code) for code in blocker_codes) if blocker_codes else 'none'}",
+            "",
+        ]
+    )
 
 
 def _sync_parent_workflow_phase_record(
@@ -1579,13 +1695,11 @@ def _expected_edge_model_feature_maps(
         if isinstance(raw_feature_values, dict)
         else {}
     )
-    for key in (
-        "spread_bps",
-        "slippage_bps",
-        "latency_penalty_bps",
-        "book_depth_levels",
-        "break_even_bps",
-    ):
+    # Keep runtime inference on the same governed feature contract as the
+    # B2 label-store builder. Without this hoist, F16-C fields can be present
+    # in the compatibility payload yet remain invisible to frozen-artifact
+    # inference, causing false missing-feature blocks in backtest.
+    for key in _EXPECTED_EDGE_AUGMENTED_FEATURE_KEYS:
         if key in feature_values:
             continue
         raw_value = payload.get(key)
@@ -1841,28 +1955,139 @@ def _extract_bridge_microstructure_scalars(
         "vpin": None,
         "cumulative_ofi": None,
         "queue_pressure": None,
+        "kyle_lambda": None,
+        "realized_vol_current": None,
+        "realized_vol_at_break": None,
     }
     if bridge_or_result is None:
         return scalars
+    def _record_value(record: object | None) -> float | None:
+        if record is None:
+            return None
+        try:
+            return float(getattr(record, "value"))
+        except (TypeError, ValueError, AttributeError):
+            return None
+
+    def _payload_value(key: str) -> float | None:
+        for attr_name in (
+            "engine_c_partial_input_payload",
+            "engine_b_partial_input_payload",
+            "engine_d_partial_input_payload",
+        ):
+            raw_payload = getattr(bridge_or_result, attr_name, None)
+            if not isinstance(raw_payload, dict):
+                continue
+            value = _coerce_float(raw_payload.get(key), default=float("nan"))
+            if value == value:
+                return value
+        return None
+
     vpin_record = getattr(bridge_or_result, "vpin_record", None)
-    if vpin_record is not None:
-        try:
-            scalars["vpin"] = float(vpin_record.value)
-        except (TypeError, ValueError, AttributeError):
-            pass
+    scalars["vpin"] = _record_value(vpin_record)
     ofi_record = getattr(bridge_or_result, "ofi_record", None)
-    if ofi_record is not None:
-        try:
-            scalars["cumulative_ofi"] = float(ofi_record.value)
-        except (TypeError, ValueError, AttributeError):
-            pass
+    scalars["cumulative_ofi"] = _record_value(ofi_record)
     queue_record = getattr(bridge_or_result, "queue_pressure_record", None)
-    if queue_record is not None:
-        try:
-            scalars["queue_pressure"] = float(queue_record.value)
-        except (TypeError, ValueError, AttributeError):
-            pass
+    scalars["queue_pressure"] = _record_value(queue_record)
+    kyle_record = getattr(bridge_or_result, "kyle_lambda_record", None)
+    scalars["kyle_lambda"] = _record_value(kyle_record)
+    realized_current_record = getattr(bridge_or_result, "realized_vol_current_record", None)
+    if realized_current_record is None:
+        realized_current_record = getattr(bridge_or_result, "realized_kernel_vol_record", None)
+    scalars["realized_vol_current"] = _record_value(realized_current_record)
+    realized_break_record = getattr(bridge_or_result, "realized_vol_at_break_record", None)
+    scalars["realized_vol_at_break"] = _record_value(realized_break_record)
+    for key in tuple(scalars):
+        if scalars[key] is None:
+            scalars[key] = _payload_value(key)
+    if scalars["realized_vol_at_break"] is None:
+        # For non-breakout engines the canonical bridge only owns a current
+        # realized-vol record. It is measured at the decision window and is the
+        # closest governed replay equivalent to the F16 at-break volatility.
+        scalars["realized_vol_at_break"] = scalars["realized_vol_current"]
     return scalars
+
+
+def _extract_engine_d_governance_scalars(
+    *sources: dict[str, object],
+) -> dict[str, float | None]:
+    scalars: dict[str, float | None] = {
+        "history_score": None,
+        "marginal_value_score": None,
+        "reentry_lateness": None,
+        "concentration_headroom": None,
+    }
+    for key in tuple(scalars):
+        for source in sources:
+            if key not in source:
+                continue
+            value = _coerce_float(source.get(key))
+            if value is not None:
+                scalars[key] = value
+                break
+    return scalars
+
+
+def _extract_build14_observed_values(
+    build14_application: StrategyLadderBuild14Application | None,
+) -> dict[str, float | None]:
+    return {
+        "micro_edge_exit_governor_observed": _build14_reader_observed_value(
+            build14_application,
+            reader_name="micro_edge_exit_governor",
+        ),
+        "micro_edge_entry_timing_observed": _build14_reader_observed_value(
+            build14_application,
+            reader_name="micro_edge_entry_timing_layer",
+        ),
+    }
+
+
+def _extract_anti_revenge_one_hot(
+    *sources: dict[str, object],
+) -> dict[str, bool | None]:
+    state = ""
+    for source in sources:
+        raw_value = str(source.get("anti_revenge_state") or "").strip().lower()
+        if raw_value:
+            state = raw_value
+            break
+    mapping = {
+        "active": {
+            "anti_revenge_state__active": True,
+            "anti_revenge_state__cooling": False,
+            "anti_revenge_state__idle": False,
+        },
+        "cooling": {
+            "anti_revenge_state__active": False,
+            "anti_revenge_state__cooling": True,
+            "anti_revenge_state__idle": False,
+        },
+        "idle": {
+            "anti_revenge_state__active": False,
+            "anti_revenge_state__cooling": False,
+            "anti_revenge_state__idle": True,
+        },
+    }
+    return mapping.get(
+        state,
+        {
+            "anti_revenge_state__active": None,
+            "anti_revenge_state__cooling": None,
+            "anti_revenge_state__idle": None,
+        },
+    )
+
+
+def _extract_latency_penalty_bps(
+    native_output: dict[str, object],
+    compatibility_payload: dict[str, object],
+) -> float | None:
+    return _coerce_float(
+        native_output.get("latency_penalty_bps")
+        if native_output.get("latency_penalty_bps") is not None
+        else compatibility_payload.get("latency_penalty_bps")
+    )
 
 
 def _materialize_native_candidate_event(
@@ -1994,11 +2219,37 @@ def _materialize_native_candidate_event(
         for key, value in bridge_microstructure_scalars.items():
             if value is not None:
                 microstructure_bridge_payload[key] = value
+    engine_d_governance_payload: dict[str, object] = {}
+    for key, value in _extract_engine_d_governance_scalars(
+        selected_engine_fields,
+        native_output,
+        engine_input_payload,
+    ).items():
+        if value is not None:
+            engine_d_governance_payload[key] = value
+    build14_observed_payload: dict[str, object] = {}
+    for key, value in _extract_build14_observed_values(build14_application).items():
+        if value is not None:
+            build14_observed_payload[key] = value
+    anti_revenge_one_hot_payload: dict[str, object] = {}
+    for key, value in _extract_anti_revenge_one_hot(
+        selected_engine_fields,
+        native_output,
+        engine_input_payload,
+    ).items():
+        if value is not None:
+            anti_revenge_one_hot_payload[key] = value
+    latency_penalty_bps = economic_provenance.latency_penalty_bps
+    if latency_penalty_bps is None:
+        latency_penalty_bps = _extract_latency_penalty_bps(native_output, payload)
     updated_payload = {
         **payload,
         **build14_payload,
         **selected_engine_fields,
         **microstructure_bridge_payload,
+        **engine_d_governance_payload,
+        **build14_observed_payload,
+        **anti_revenge_one_hot_payload,
         "candidate_source": "ENGINE_NATIVE" if runner_invoked else "ENGINE_NATIVE_UNAVAILABLE",
         "candidate_data_source_label": "ENGINE_NATIVE_A_B_C_D_RUNNER",
         "raw_score": raw_score,
@@ -2020,7 +2271,7 @@ def _materialize_native_candidate_event(
         "spread_provenance": economic_provenance.spread_provenance,
         "slippage_bps": economic_provenance.slippage_bps,
         "slippage_provenance": economic_provenance.slippage_provenance,
-        "latency_penalty_bps": economic_provenance.latency_penalty_bps,
+        "latency_penalty_bps": latency_penalty_bps,
         "latency_source_status": economic_provenance.latency_provenance,
         "fee_bps": economic_provenance.fee_bps,
         "fee_source_status": economic_provenance.fee_provenance,
@@ -2231,6 +2482,8 @@ def _run_native_engine_candidate(
                 window_start_ms=window.window_start_ms,
                 window_end_ms=window.window_end_ms,
                 raw_trade_path=window.raw_trade_path,
+                raw_book_path=window.raw_book_path,
+                raw_book_delta_path=window.raw_book_delta_path,
                 expected_gain=expected_gain,
                 expected_cost=expected_cost,
                 candidate_size=candidate_size,
@@ -2318,6 +2571,8 @@ def _run_native_engine_candidate(
                 window_end_ms=window.window_end_ms,
                 raw_trade_path=window.raw_trade_path,
                 raw_ohlcv_path=window.raw_ohlcv_path,
+                raw_book_path=window.raw_book_path,
+                raw_book_delta_path=window.raw_book_delta_path,
                 first_episode_context=_extract_engine_d_first_episode_context(payload),
                 expected_gain=expected_gain,
                 expected_cost=expected_cost,
@@ -2868,6 +3123,18 @@ def _write_reports(
     atomic_write_json(
         reports_dir / "strategy_ladder_summary.json",
         summary.model_dump(mode="json"),
+    )
+    profitability_truth_verdict = _build_profitability_truth_verdict(
+        summary=summary,
+        run_manifest=run_manifest,
+    )
+    atomic_write_json(
+        reports_dir / "profitability_truth_verdict.json",
+        profitability_truth_verdict,
+    )
+    atomic_write_text(
+        reports_dir / "profitability_truth_verdict.md",
+        _format_profitability_truth_verdict_markdown(profitability_truth_verdict),
     )
     atomic_write_json(
         reports_dir / "capital_bucket_matrix.json",
@@ -4981,7 +5248,7 @@ def run_backtest_strategy_ladder(
 
     created_at = datetime.now(tz=UTC)
     start_ms = parse_time_boundary_to_ms(request.start)
-    end_ms = parse_time_boundary_to_ms(request.end)
+    end_ms = parse_time_boundary_to_ms(request.end, end_of_day=True)
     with performance_profiler.phase("feature_loading", status="OK"):
         data_factory_payloads = _resolve_data_factory_payloads(request)
     data_factory_root = Path(str(data_factory_payloads["base_root"]))
@@ -6855,6 +7122,13 @@ def run_backtest_strategy_ladder(
             source_candidate_events=candidate_source_truth_events or candidate_events,
             materialized_candidate_events=materialized_candidate_events or candidate_events,
         )
+    with performance_profiler.phase(
+        "backtest_decision_report_generation",
+        status="OK",
+        candidate_count=len(candidate_events),
+        replay_record_count=len(all_bucket_results),
+    ):
+        write_backtest_decision_reports(run_dir)
     performance_profiler.finalize_counts(
         candidate_count=len(candidate_events),
         replay_record_count=len(all_bucket_results),
