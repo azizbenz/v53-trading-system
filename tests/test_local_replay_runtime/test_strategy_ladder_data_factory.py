@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlparse
 import gzip
 import json
@@ -12,6 +13,7 @@ import zipfile
 from local_replay_runtime.bybit_historical_metadata import (
     fetch_bybit_spot_metadata_cache,
 )
+from local_replay_runtime import strategy_ladder_engine_native_adapter as engine_adapter
 from local_replay_runtime import strategy_ladder_data_factory as data_factory_module
 from local_replay_runtime.strategy_ladder_data_factory import (
     classify_raw_file,
@@ -87,6 +89,22 @@ def _scratch_dir(label: str) -> Path:
     return make_repo_scratch_dir("strategy_ladder_data_factory_tests", label)
 
 
+def _epoch_ms(iso_value: str) -> int:
+    parsed = datetime.fromisoformat(iso_value).replace(tzinfo=UTC)
+    return int(parsed.timestamp() * 1000)
+
+
+def _kline_rows_for_day(date_value: str, *, timeframe_minutes: int = 1) -> list[str]:
+    start = datetime.fromisoformat(date_value).replace(tzinfo=UTC)
+    interval = timedelta(minutes=timeframe_minutes)
+    count = int(24 * 60 / timeframe_minutes)
+    rows: list[str] = []
+    for index in range(count):
+        timestamp_ms = int((start + index * interval).timestamp() * 1000)
+        rows.append(f"{timestamp_ms},94000,94100,93900,94010,10,940100")
+    return rows
+
+
 _ORDERBOOK_FIXTURE_ROOT = (
     Path(__file__).resolve().parents[1] / "fixtures" / "orderbook" / "BTCUSDT"
 )
@@ -109,6 +127,64 @@ def _write_btcusdt_kline_fixture(raw_root: Path) -> None:
             "1745884860000,63050,63120,63020,63080,9,567720",
         ],
     )
+
+
+def test_microstructure_delta_loader_uses_progressive_boundary_for_gold_build() -> None:
+    scratch = _scratch_dir("microstructure_delta_loader_progressive_boundary")
+    snapshot_path = scratch / "orderbook_snapshot.jsonl"
+    delta_path = scratch / "orderbook_delta.jsonl"
+    base_snapshot = {
+        "timestamp_ms": 0,
+        "update_id": 100,
+        "bids": [["100.0", "1.0"]],
+        "asks": [["101.0", "1.0"]],
+    }
+    _write_jsonl(snapshot_path, [base_snapshot])
+    _write_jsonl(
+        delta_path,
+        [
+            {
+                "timestamp_ms": index * 1000,
+                "update_id": 100 + index,
+                "bids": [[f"{100.0 + index * 0.01:.2f}", "1.0"]],
+                "asks": [[f"{101.0 + index * 0.01:.2f}", "1.0"]],
+            }
+            for index in range(1, 8)
+        ],
+    )
+
+    engine_adapter.reset_microstructure_file_cache_stats(clear_cache=True)
+    first_deltas = engine_adapter._load_book_deltas_in_window_with_lookback(
+        delta_path,
+        base_update_id=100,
+        window_end_ms=3000,
+    )
+    assert [int(row["update_id"]) for row in first_deltas] == [101, 102, 103]
+    states = engine_adapter._reconstruct_book_states_with_progressive_cache(
+        snapshot_path=snapshot_path,
+        delta_path=delta_path,
+        base_snapshot=base_snapshot,
+        deltas=first_deltas,
+        window_start_ms=1000,
+        window_end_ms=3000,
+    )
+    assert states
+
+    boundary = engine_adapter._latest_progressive_book_state_boundary(
+        snapshot_path=snapshot_path,
+        delta_path=delta_path,
+        base_update_id=100,
+        window_start_ms=4000,
+    )
+    assert boundary == (103, 3000)
+    second_deltas = engine_adapter._load_book_deltas_in_window_with_lookback(
+        delta_path,
+        base_update_id=100,
+        window_end_ms=4000,
+        window_start_ms=boundary[1],
+        after_update_id=boundary[0],
+    )
+    assert [int(row["update_id"]) for row in second_deltas] == [104]
 
 
 def test_multi_source_manifest_and_root_dedup_are_supported() -> None:
@@ -282,6 +358,324 @@ def test_data_factory_normalizes_inputs_builds_gold_and_keeps_dynamic_pair_unive
         assert prod_safety["coverage"]["orderbook"]["status"] == "ORDERBOOK_WINDOW_COVERED"
         assert "SINGLE_PAIR_RESEARCH_ONLY" in prod_safety["blocker_codes"]
         assert "GOLD_FEATURE_STORE_NOT_READY" not in prod_safety["blocker_codes"]
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_data_factory_writes_only_one_hour_context_and_selected_silver_timeframes() -> None:
+    scratch = _scratch_dir("data_factory_context_window_row_filter")
+    shutil.rmtree(scratch, ignore_errors=True)
+    try:
+        raw_root = scratch / "raw"
+        _write_csv(
+            raw_root / "trades" / "BTCUSDT_2025-07-06.csv",
+            "id,timestamp,price,volume,side",
+            [
+                f"1,{_epoch_ms('2025-07-06T22:59:00')},94000,0.01,buy",
+                f"2,{_epoch_ms('2025-07-06T23:00:00')},94010,0.01,buy",
+                f"3,{_epoch_ms('2025-07-06T23:59:00')},94020,0.01,sell",
+            ],
+        )
+        _write_csv(
+            raw_root / "trades" / "BTCUSDT_2025-07-07.csv",
+            "id,timestamp,price,volume,side",
+            [
+                f"4,{_epoch_ms('2025-07-07T00:00:00')},94030,0.01,buy",
+                f"5,{_epoch_ms('2025-07-07T23:59:00')},94040,0.01,sell",
+            ],
+        )
+        _write_csv(
+            raw_root / "trades" / "BTCUSDT_2025-07-08.csv",
+            "id,timestamp,price,volume,side",
+            [f"6,{_epoch_ms('2025-07-08T00:00:00')},94050,0.01,buy"],
+        )
+        _write_csv(
+            raw_root / "klines" / "BTCUSDT_1_2025-07-06.csv",
+            "startTime,open,high,low,close,volume,turnover",
+            [
+                f"{_epoch_ms('2025-07-06T22:59:00')},94000,94100,93900,94010,10,940100",
+                f"{_epoch_ms('2025-07-06T23:00:00')},94000,94100,93900,94010,10,940100",
+                f"{_epoch_ms('2025-07-06T23:59:00')},94000,94100,93900,94010,10,940100",
+            ],
+        )
+        _write_csv(
+            raw_root / "klines" / "BTCUSDT_1_2025-07-07.csv",
+            "startTime,open,high,low,close,volume,turnover",
+            _kline_rows_for_day("2025-07-07", timeframe_minutes=1),
+        )
+        _write_csv(
+            raw_root / "klines" / "BTCUSDT_1_2025-07-08.csv",
+            "startTime,open,high,low,close,volume,turnover",
+            [f"{_epoch_ms('2025-07-08T00:00:00')},94000,94100,93900,94010,10,940100"],
+        )
+        _write_csv(
+            raw_root / "klines" / "BTCUSDT_5_2025-07-07.csv",
+            "startTime,open,high,low,close,volume,turnover",
+            _kline_rows_for_day("2025-07-07", timeframe_minutes=5),
+        )
+
+        report_root = scratch / "factory"
+        result = run_strategy_ladder_data_factory(
+            StrategyLadderDataFactoryRequest(
+                run_id="df-context-window",
+                input_root=report_root,
+                raw_roots=(raw_root,),
+                silver_root=report_root / "silver",
+                gold_root=report_root / "gold",
+                pairs=("BTCUSDT",),
+                data_types=("trades", "klines"),
+                timeframes=("1m",),
+                start="2025-07-07",
+                end="2025-07-07",
+                storage_format="jsonl-gz",
+            )
+        )
+
+        assert result.manifest.effective_start == "2025-07-06T23:00:00+00:00"
+        previous_kline_entry = next(
+            entry
+            for entry in result.silver_index
+            if entry.data_type == "ohlcv"
+            and entry.timeframe == "1m"
+            and entry.date == "2025-07-06"
+        )
+        previous_trade_entry = next(
+            entry
+            for entry in result.silver_index
+            if entry.data_type == "trades" and entry.date == "2025-07-06"
+        )
+
+        previous_kline_rows = _read_jsonl_any(Path(previous_kline_entry.path))
+        previous_trade_rows = _read_jsonl_any(Path(previous_trade_entry.path))
+        assert [row["timestamp_ms"] for row in previous_kline_rows] == [
+            _epoch_ms("2025-07-06T23:00:00"),
+            _epoch_ms("2025-07-06T23:59:00"),
+        ]
+        assert [row["timestamp_ms"] for row in previous_trade_rows] == [
+            _epoch_ms("2025-07-06T23:00:00"),
+            _epoch_ms("2025-07-06T23:59:00"),
+        ]
+        assert not any(entry.date == "2025-07-08" for entry in result.silver_index)
+        assert not any(
+            entry.data_type == "ohlcv" and entry.timeframe == "5m"
+            for entry in result.silver_index
+        )
+        gold_rows = [
+            row
+            for path in result.gold_feature_manifest.feature_paths
+            for row in _read_jsonl_any(Path(path))
+        ]
+        assert gold_rows
+        assert min(row["timestamp_ms"] for row in gold_rows) >= _epoch_ms(
+            "2025-07-07T00:00:00"
+        )
+        assert max(row["timestamp_ms"] for row in gold_rows) <= _epoch_ms(
+            "2025-07-07T23:59:00"
+        )
+        assert result.gold_feature_manifest.gold_decision_window_status == (
+            "GOLD_DECISION_WINDOW_FILTER_READY"
+        )
+        assert result.gold_feature_manifest.gold_context_rows_suppressed_count == 2
+        assert "OHLCV_1M_TEMPORAL_COMPLETENESS_BLOCKED" not in result.manifest.blocker_codes
+        progress_report = json.loads(
+            (report_root / "a2_gold_progress_report.json").read_text(encoding="utf-8")
+        )
+        performance_report = json.loads(
+            (report_root / "a2_microstructure_performance_report.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert progress_report["status"] == "A2_COMPLETE"
+        assert progress_report["window"]["effective_context_start"] == (
+            "2025-07-06T23:00:00+00:00"
+        )
+        assert "silver_normalization" in progress_report["stage_timings_s"]
+        assert performance_report["window"]["context_policy"] == (
+            "REQUESTED_START_MINUS_1H_ROW_FILTERED"
+        )
+        assert performance_report["silver"]["timeframe_pruning_status"] == (
+            "SILVER_TIMEFRAME_PRUNING_READY"
+        )
+        assert performance_report["silver"]["timeframes_detected"] == ["1m"]
+        assert performance_report["gold"]["decision_window_status"] == (
+            "GOLD_DECISION_WINDOW_FILTER_READY"
+        )
+        assert performance_report["gold"]["context_rows_suppressed_count"] == 2
+        assert performance_report["microstructure"]["row_level_context_filter_status"] == (
+            "ROW_LEVEL_CONTEXT_FILTER_READY"
+        )
+        assert performance_report["microstructure"]["cache_status"] == (
+            "A2_MICROSTRUCTURE_FILE_CACHE_NOT_REQUIRED"
+        )
+        assert (
+            report_root / "a2_microstructure_cache_manifest.json"
+        ).exists()
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_data_factory_microstructure_bridge_reuses_file_cache_and_writes_manifest() -> None:
+    scratch = _scratch_dir("data_factory_microstructure_file_cache")
+    shutil.rmtree(scratch, ignore_errors=True)
+    try:
+        raw_root = scratch / "raw"
+        _write_csv(
+            raw_root / "trades" / "BTCUSDT_2025-07-07.csv",
+            "id,timestamp,price,volume,side",
+            [
+                f"1,{_epoch_ms('2025-07-07T00:00:10')},94000,0.01,buy",
+                f"2,{_epoch_ms('2025-07-07T00:00:20')},94010,0.02,sell",
+                f"3,{_epoch_ms('2025-07-07T00:00:30')},94020,0.01,buy",
+                f"4,{_epoch_ms('2025-07-07T00:01:10')},94030,0.02,sell",
+                f"5,{_epoch_ms('2025-07-07T00:01:20')},94040,0.01,buy",
+                f"6,{_epoch_ms('2025-07-07T00:01:30')},94050,0.02,sell",
+                f"7,{_epoch_ms('2025-07-07T00:02:10')},94060,0.01,buy",
+                f"8,{_epoch_ms('2025-07-07T00:02:20')},94070,0.02,sell",
+                f"9,{_epoch_ms('2025-07-07T00:02:30')},94080,0.01,buy",
+            ],
+        )
+        _write_csv(
+            raw_root / "klines" / "BTCUSDT_1_2025-07-07.csv",
+            "startTime,open,high,low,close,volume,turnover",
+            [
+                f"{_epoch_ms('2025-07-07T00:01:00')},94000,94100,93900,94010,10,940100",
+                f"{_epoch_ms('2025-07-07T00:02:00')},94010,94110,94000,94030,12,1128360",
+                f"{_epoch_ms('2025-07-07T00:03:00')},94030,94130,94020,94050,14,1316700",
+            ],
+        )
+
+        report_root = scratch / "factory"
+        run_strategy_ladder_data_factory(
+            StrategyLadderDataFactoryRequest(
+                run_id="df-microstructure-file-cache",
+                input_root=report_root,
+                raw_roots=(raw_root,),
+                silver_root=report_root / "silver",
+                gold_root=report_root / "gold",
+                pairs=("BTCUSDT",),
+                data_types=("trades", "klines"),
+                timeframes=("1m",),
+                start="2025-07-07",
+                end="2025-07-07",
+                storage_format="jsonl-gz",
+                feature_names=("realized_vol_current",),
+            )
+        )
+
+        cache_manifest = json.loads(
+            (report_root / "a2_microstructure_cache_manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        performance_report = json.loads(
+            (report_root / "a2_microstructure_performance_report.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        feature_equivalence_report = json.loads(
+            (report_root / "a2_feature_equivalence_report.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        stats = cache_manifest["stats"]
+
+        assert cache_manifest["cache_status"] == "A2_MICROSTRUCTURE_FILE_CACHE_READY"
+        assert cache_manifest["requested_microstructure_features"] == [
+            "realized_vol_current"
+        ]
+        assert stats["file_cache_miss_count"] == 1
+        assert stats["time_index_miss_count"] == 1
+        assert stats["time_index_hit_count"] >= 2
+        assert stats["cached_path_count"] == 1
+        assert stats["time_indexed_path_count"] == 1
+        assert stats["rows_loaded"] == 9
+        assert performance_report["microstructure"]["cache_status"] == (
+            "A2_MICROSTRUCTURE_FILE_CACHE_READY"
+        )
+        assert performance_report["microstructure"]["streaming_status"] == (
+            "A2_MICROSTRUCTURE_STREAMING_READY"
+        )
+        assert performance_report["microstructure"]["streaming_overlay_row_count"] >= 1
+        assert performance_report["microstructure"]["time_index_hit_count"] >= 2
+        assert performance_report["microstructure"]["repeated_raw_scan_status"] == (
+            "FILE_CACHE_ACTIVE"
+        )
+        assert feature_equivalence_report["status"] == "A2_FEATURE_EQUIVALENCE_READY"
+        assert feature_equivalence_report["trading_decisions_modified"] is False
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_microstructure_file_cache_eviction_preserves_cumulative_counters() -> None:
+    engine_adapter.reset_microstructure_file_cache_stats(clear_cache=True)
+    try:
+        engine_adapter._MICROSTRUCTURE_JSONL_FILE_CACHE[("raw.jsonl", 1, 2)] = (
+            {"timestamp_ms": 1},
+            {"timestamp_ms": 2},
+        )
+        engine_adapter._MICROSTRUCTURE_JSONL_TIME_INDEX_CACHE[("raw.jsonl", 1, 2)] = (
+            (1, 2),
+            ({"timestamp_ms": 1}, {"timestamp_ms": 2}),
+        )
+        engine_adapter._MICROSTRUCTURE_JSONL_FILE_CACHE_STATS["rows_loaded"] = 2
+        engine_adapter._MICROSTRUCTURE_JSONL_FILE_CACHE_STATS["bytes_loaded"] = 128
+
+        evicted = engine_adapter.evict_microstructure_file_cache()
+        stats = engine_adapter.get_microstructure_file_cache_stats()
+
+        assert evicted == {
+            "evicted_cached_path_count": 1,
+            "evicted_cached_row_count": 2,
+        }
+        assert stats["cached_path_count"] == 0
+        assert stats["cached_row_count"] == 0
+        assert stats["rows_loaded"] == 2
+        assert stats["bytes_loaded"] == 128
+        assert stats["eviction_count"] == 1
+        assert stats["evicted_cached_row_count"] == 2
+    finally:
+        engine_adapter.reset_microstructure_file_cache_stats(clear_cache=True)
+
+
+def test_gold_feature_build_heartbeat_exposes_stage_detail_and_cache_stats() -> None:
+    scratch = _scratch_dir("gold_feature_heartbeat_stage_detail")
+    shutil.rmtree(scratch, ignore_errors=True)
+    try:
+        request = StrategyLadderDataFactoryRequest(
+            run_id="df-gold-heartbeat",
+            input_root=scratch,
+            raw_roots=(scratch / "raw",),
+            silver_root=scratch / "silver",
+            gold_root=scratch / "gold",
+            pairs=("BTCUSDT",),
+        )
+
+        data_factory_module._write_gold_feature_build_heartbeat(
+            request=request,
+            pair="BTCUSDT",
+            timeframe="15m",
+            date="2025-07-12",
+            rows_seen_in_entry=25,
+            feature_row_count=100,
+            bytes_written=2048,
+            microstructure_requested_row_count=125,
+            microstructure_overlay_row_count=120,
+            microstructure_missing_row_count=5,
+            stage_detail="microstructure_overlay_running",
+            entry_index=12,
+            entry_count=55,
+            cache_stats={"cache_status": "A2_MICROSTRUCTURE_FILE_CACHE_READY", "cached_row_count": 123},
+            extra={"batch_status": "A2_MICROSTRUCTURE_STREAMING_READY"},
+        )
+        payload = json.loads(
+            (scratch / "a2_gold_progress_report.json").read_text(encoding="utf-8")
+        )
+
+        assert payload["stage_detail"] == "microstructure_overlay_running"
+        assert payload["active_gold_partition"]["rows_seen_in_entry"] == 25
+        assert payload["entry_progress"] == {"entry_index": 12, "entry_count": 55}
+        assert payload["microstructure_cache"]["cached_row_count"] == 123
+        assert payload["detail"]["batch_status"] == "A2_MICROSTRUCTURE_STREAMING_READY"
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
@@ -589,20 +983,14 @@ def test_data_factory_filters_timeframes_limits_gold_and_defers_trade_slippage(
         assert len(gold_rows) == 3
         assert {row["timeframe"] for row in gold_rows} == {"5m"}
         # Patch 2026-05-15 (timeframe propagation audit) — the silent 10m
-        # prune must now be surfaced as an explicit reason code on the
-        # manifest. The pre-existing assertions above are kept verbatim so
-        # the legacy behaviour stays validated; the new assertions below
-        # only ADD coverage on the visibility fields.
+        # Patch 2026-05-25: selected replay timeframes prune silver too.
         gold_manifest = result.gold_feature_manifest
         assert "5m" in gold_manifest.silver_timeframes_detected
-        assert "10m" in gold_manifest.silver_timeframes_detected
+        assert "10m" not in gold_manifest.silver_timeframes_detected
         assert gold_manifest.gold_timeframes_generated == ("5m",)
-        assert "10m" in gold_manifest.timeframes_pruned
-        assert (
-            gold_manifest.pruning_reason_by_timeframe.get("10m")
-            == "TIMEFRAME_PRUNED_NOT_REQUESTED"
-        )
-        assert "TIMEFRAME_PRUNED_NOT_REQUESTED" in gold_manifest.blocker_codes
+        assert "10m" not in gold_manifest.timeframes_pruned
+        assert "10m" not in gold_manifest.pruning_reason_by_timeframe
+        assert "TIMEFRAME_PRUNED_NOT_REQUESTED" not in gold_manifest.blocker_codes
         assert gold_manifest.timeframe_feature_row_count.get("5m") == 3
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
@@ -762,6 +1150,245 @@ def test_gold_features_do_not_leak_orderbook_depth_across_dates() -> None:
         assert gold_rows[0]["orderbook_feature_status"] == "ORDERBOOK_FEATURE_STATUS_NOT_PROVEN"
         assert gold_rows[0]["candidate_data_source_label"] == "TRADE_KLINE_DISCOVERY"
         assert gold_rows[0]["feature_sources_used"] == ["trades", "klines", "metadata"]
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_gold_features_materialize_selected_microstructure_features(monkeypatch) -> None:
+    scratch = _scratch_dir("gold_feature_selected_microstructure")
+    shutil.rmtree(scratch, ignore_errors=True)
+    try:
+        silver_root = scratch / "silver"
+        gold_root = scratch / "gold"
+        timestamp_ms = 1745884800000
+        trade_path = silver_root / "bybit" / "spot" / "trades" / "BTCUSDT" / "2025" / "04" / "29.jsonl"
+        kline_path = silver_root / "bybit" / "spot" / "ohlcv" / "1m" / "BTCUSDT" / "2025" / "04" / "29.jsonl"
+        book_snapshot_path = silver_root / "bybit" / "spot" / "orderbook_snapshot" / "BTCUSDT" / "2025" / "04" / "29.jsonl"
+        book_delta_path = silver_root / "bybit" / "spot" / "orderbook_delta" / "BTCUSDT" / "2025" / "04" / "29.jsonl"
+        metadata_path = silver_root / "metadata" / "symbol_metadata.jsonl"
+        _write_jsonl(trade_path, [{"timestamp_ms": timestamp_ms - 1000, "price": 95000.0, "quantity": 0.1}])
+        _write_jsonl(
+            kline_path,
+            [
+                {
+                    "timestamp_ms": timestamp_ms,
+                    "open": 95000.0,
+                    "high": 95100.0,
+                    "low": 94900.0,
+                    "close": 95050.0,
+                    "volume": 12.0,
+                }
+            ],
+        )
+        _write_jsonl(book_snapshot_path, [{"timestamp_ms": timestamp_ms - 1000, "depth_levels": 20}])
+        _write_jsonl(book_delta_path, [{"timestamp_ms": timestamp_ms, "update_id": 2}])
+        _write_jsonl(metadata_path, [{"pair": "BTCUSDT", "tick_size": 0.1, "min_notional": 5.0}])
+        bridge_calls: list[dict[str, object]] = []
+
+        def _fake_bridge(**kwargs):
+            bridge_calls.append(kwargs)
+            return SimpleNamespace(
+                kyle_lambda_record=SimpleNamespace(value=0.17),
+                vpin_record=SimpleNamespace(value=0.42),
+                ofi_record=SimpleNamespace(value=-0.3),
+                queue_pressure_record=SimpleNamespace(value=0.25),
+                realized_kernel_vol_record=SimpleNamespace(value=0.011),
+            )
+
+        def _fake_requested_microstructure_features(**kwargs):
+            bridge_calls.append(kwargs)
+            return {
+                "kyle_lambda": 0.17,
+                "vpin": 0.42,
+                "cumulative_ofi": -0.3,
+                "queue_pressure": 0.25,
+                "realized_vol_current": 0.011,
+                "realized_vol_at_break": 0.011,
+            }
+
+        def _fake_economic_provenance(**kwargs):
+            return SimpleNamespace(
+                expected_edge_bps=5.0,
+                expected_edge_provenance="DEFAULT_TO_CALIBRATE",
+                aggregated_provenance="PARTIALLY_MEASURED",
+                measurement_warnings=(),
+                spread_bps=1.5,
+                spread_provenance="MEASURED_FROM_BOOK_SNAPSHOT",
+                slippage_bps=0.8,
+                slippage_provenance="MEASURED_FROM_KYLE_LAMBDA",
+                latency_penalty_bps=0.2,
+            )
+
+        monkeypatch.setattr(
+            data_factory_module,
+            "build_engine_c_microstructure_inputs_from_window",
+            _fake_bridge,
+        )
+        monkeypatch.setattr(
+            data_factory_module,
+            "build_engine_c_requested_microstructure_features_from_window",
+            _fake_requested_microstructure_features,
+        )
+        monkeypatch.setattr(
+            data_factory_module,
+            "compute_economic_provenance",
+            _fake_economic_provenance,
+        )
+        request = StrategyLadderDataFactoryRequest(
+            run_id="df-selected-microstructure",
+            input_root=scratch,
+            raw_roots=(scratch,),
+            silver_root=silver_root,
+            gold_root=gold_root,
+            pairs=("BTCUSDT",),
+            timeframes=("1m",),
+            feature_names=(
+                "vpin",
+                "cumulative_ofi",
+                "queue_pressure",
+                "kyle_lambda",
+                "realized_vol_current",
+                "realized_vol_at_break",
+                "spread_bps",
+                "slippage_bps",
+                "latency_penalty_bps",
+                "book_depth_levels",
+            ),
+            use_measured_economic_provenance=True,
+        )
+        index_entries = (
+            StrategyLadderSilverIndexEntry(
+                source_id="trades_29",
+                source_root=str(scratch.resolve()),
+                source_priority=10,
+                exchange="bybit",
+                market_type="spot",
+                data_type="trades",
+                pair="BTCUSDT",
+                timeframe="",
+                date="2025-04-29",
+                path=str(trade_path.resolve()),
+                storage_format="jsonl",
+                min_timestamp_ms=timestamp_ms - 1000,
+                max_timestamp_ms=timestamp_ms - 1000,
+                row_count=1,
+                file_hash="hash-trades",
+                depth_source_status="BOOK_DEPTH_NOT_PROVEN",
+                schema_status="TRADE_SCHEMA_READY",
+            ),
+            StrategyLadderSilverIndexEntry(
+                source_id="kline_29",
+                source_root=str(scratch.resolve()),
+                source_priority=10,
+                exchange="bybit",
+                market_type="spot",
+                data_type="ohlcv",
+                pair="BTCUSDT",
+                timeframe="1m",
+                date="2025-04-29",
+                path=str(kline_path.resolve()),
+                storage_format="jsonl",
+                min_timestamp_ms=timestamp_ms,
+                max_timestamp_ms=timestamp_ms,
+                row_count=1,
+                file_hash="hash-kline",
+                depth_source_status="BOOK_DEPTH_NOT_PROVEN",
+                schema_status="KLINE_SCHEMA_READY",
+            ),
+            StrategyLadderSilverIndexEntry(
+                source_id="book_snapshot_29",
+                source_root=str(scratch.resolve()),
+                source_priority=10,
+                exchange="bybit",
+                market_type="spot",
+                data_type="orderbook_snapshot",
+                pair="BTCUSDT",
+                timeframe="",
+                date="2025-04-29",
+                path=str(book_snapshot_path.resolve()),
+                storage_format="jsonl",
+                min_timestamp_ms=timestamp_ms - 1000,
+                max_timestamp_ms=timestamp_ms,
+                row_count=1,
+                file_hash="hash-book-snapshot",
+                depth_source_status="BOOK_DEPTH20_AVAILABLE",
+                schema_status="ORDERBOOK_SCHEMA_READY",
+            ),
+            StrategyLadderSilverIndexEntry(
+                source_id="book_delta_29",
+                source_root=str(scratch.resolve()),
+                source_priority=10,
+                exchange="bybit",
+                market_type="spot",
+                data_type="orderbook_delta",
+                pair="BTCUSDT",
+                timeframe="",
+                date="2025-04-29",
+                path=str(book_delta_path.resolve()),
+                storage_format="jsonl",
+                min_timestamp_ms=timestamp_ms,
+                max_timestamp_ms=timestamp_ms,
+                row_count=1,
+                file_hash="hash-book-delta",
+                depth_source_status="BOOK_DEPTH20_AVAILABLE",
+                schema_status="ORDERBOOK_SCHEMA_READY",
+            ),
+            StrategyLadderSilverIndexEntry(
+                source_id="metadata",
+                source_root=str(scratch.resolve()),
+                source_priority=1,
+                exchange="bybit",
+                market_type="spot",
+                data_type="metadata",
+                pair="BTCUSDT",
+                timeframe="",
+                date="",
+                path=str(metadata_path.resolve()),
+                storage_format="jsonl",
+                min_timestamp_ms=None,
+                max_timestamp_ms=None,
+                row_count=1,
+                file_hash="hash-metadata",
+                depth_source_status="BOOK_DEPTH_NOT_PROVEN",
+                schema_status="METADATA_SCHEMA_READY",
+            ),
+        )
+
+        manifest = data_factory_module._write_gold_features(
+            request=request,
+            index_entries=index_entries,
+            available_pairs=("BTCUSDT",),
+        )
+        gold_rows = [
+            row
+            for path in manifest.feature_paths
+            for row in _read_jsonl_any(Path(path))
+        ]
+        feature_values = gold_rows[0]["feature_values"]
+
+        assert bridge_calls
+        assert bridge_calls[0]["window_start_ms"] == timestamp_ms - 60_000
+        assert bridge_calls[0]["window_end_ms"] == timestamp_ms
+        assert feature_values["vpin"] == 0.42
+        assert feature_values["cumulative_ofi"] == -0.3
+        assert feature_values["queue_pressure"] == 0.25
+        assert feature_values["kyle_lambda"] == 0.17
+        assert feature_values["realized_vol_current"] == 0.011
+        assert feature_values["realized_vol_at_break"] == 0.011
+        assert feature_values["spread_bps"] == 1.5
+        assert feature_values["slippage_bps"] == 0.8
+        assert feature_values["latency_penalty_bps"] == 0.2
+        assert feature_values["book_depth_levels"] == 20
+        assert gold_rows[0]["feature_truth_boundary_status"] == (
+            "FEATURE_EX_ANTE_AVAILABLE_AT_DECISION"
+        )
+        assert gold_rows[0]["feature_usage_policy"] == (
+            "A2_GOLD_EX_ANTE_FEATURES_ONLY_NOT_EXECUTION_TRUTH"
+        )
+        assert gold_rows[0]["cost_feature_truth_status"] == (
+            "A2_COST_FEATURES_MEASURED_EX_ANTE_NOT_EXECUTION_LABEL_TRUTH"
+        )
+        assert "anti_revenge_state__idle" not in feature_values
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
@@ -1162,7 +1789,12 @@ def test_data_factory_discovers_data_files_and_writes_orderbook_snapshot_and_del
         assert pair_row.has_orderbook is True
         assert pair_row.orderbook_date_count > 0
         assert snapshot_entry.depth_source_status == "BOOK_DEPTH20_AVAILABLE"
-        assert delta_entry.depth_source_status == "BOOK_DEPTH_NOT_PROVEN"
+        # Patch A2-OPT-2 (2026-05-26) — Delta entry now carries the same
+        # canonical reconstructor `book_depth_source_status` as the snapshot.
+        # Previously the delta was hardcoded to BOOK_DEPTH_NOT_PROVEN, which
+        # caused gold rows to be marked NOT_PROVEN via `next()` iteration
+        # order in data_factory._build_gold_features (book_entries delta-first).
+        assert delta_entry.depth_source_status == "BOOK_DEPTH20_AVAILABLE"
         assert snapshot_rows[0]["pair"] == "BTCUSDT"
         assert snapshot_rows[0]["event_type"] == "snapshot"
         assert delta_rows[0]["event_type"] == "delta"

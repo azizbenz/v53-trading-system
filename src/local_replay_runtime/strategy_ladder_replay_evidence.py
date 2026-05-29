@@ -644,7 +644,25 @@ def build_measured_cost_governance_payload(
         usage = "partially_measured_audit_only"
 
     if usage == "blocked_missing_measurement":
-        block_reason = "B2_COST_MEASUREMENT_BLOCKED"
+        # Patch P0-SPLIT-1 (2026-05-27) — the legacy `B2_COST_MEASUREMENT_BLOCKED`
+        # was emitted whenever spread OR slippage was missing/blocked. The
+        # operator could not tell, from the reason code alone, which side
+        # was the blocker. The split here surfaces which signal is missing
+        # so the diagnostic table in the cockpit can route the fix
+        # (e.g. spread → tier-aware book reconstructor ; slippage → depth20
+        # measurement pipeline). The legacy name is retained as an alias
+        # so downstream audits / dashboards remain compatible until they
+        # explicitly migrate to the granular variants.
+        spread_blocked = spread_bucket == "blocked"
+        slippage_blocked = slippage_bucket == "blocked"
+        if spread_blocked and slippage_blocked:
+            block_reason = "B2_COST_MEASUREMENT_BLOCKED_SPREAD_AND_SLIPPAGE"
+        elif spread_blocked:
+            block_reason = "B2_COST_MEASUREMENT_BLOCKED_SPREAD_ONLY"
+        elif slippage_blocked:
+            block_reason = "B2_COST_MEASUREMENT_BLOCKED_SLIPPAGE_ONLY"
+        else:
+            block_reason = "B2_COST_MEASUREMENT_BLOCKED"
         fill_realism_status = "FILL_REALISM_BLOCKED_BY_MISSING_MEASUREMENT"
         impact_source_status = "IMPACT_SOURCE_MISSING"
     elif usage == "stale_audit_only":

@@ -77,6 +77,7 @@ from local_replay_runtime.replay_metrics_collector import (
     build_replay_metrics_summary,
 )
 from local_replay_runtime.replay_run_manifest import ReplayRunManifest
+from local_replay_runtime.replay_execution_contracts import ShadowExecutionSimulatorConfig
 from local_replay_runtime.strategy_ladder_b2_label_store_builder import (
     _EXPECTED_EDGE_AUGMENTED_FEATURE_KEYS,
     StrategyLadderB2LabelStoreBuilderRequest,
@@ -503,6 +504,9 @@ def _workflow_produced_artifact_refs(
         reports_dir / "threshold_near_miss_report.json",
         reports_dir / "backtest_decision_report_final_verdict.json",
         fast_candidates_dir / "candidate_events.jsonl",
+        fast_candidates_dir / "candidate_events.parquet",
+        fast_candidates_dir / "candidate_events.columns.json",
+        fast_candidates_dir / "candidate_events.tabular_manifest.json",
         fast_candidates_dir / "candidate_summary.json",
     ):
         if path.is_file():
@@ -1380,6 +1384,91 @@ def _stage_final_status(
     return "STRATEGY_LADDER_MEASURED_ARTIFACTS_PRODUCED"
 
 
+def _is_temporal_candidate_budget_mode(candidate_discovery_mode: str) -> bool:
+    return str(candidate_discovery_mode or "").strip().upper() in {
+        "TEMPORAL_STRATIFIED",
+        "TEMPORAL_STRATIFIED_SAMPLE_BUDGET",
+    }
+
+
+def _is_full_discovery_uncapped(request: StrategyLadderRequest) -> bool:
+    return (
+        str(request.candidate_discovery_mode or "").strip().upper() == "FULL_DISCOVERY"
+        and bool(request.full_scan_enabled)
+        and int(request.candidate_sample_cap or 0) == 0
+    )
+
+
+def _effective_candidate_sample_cap(request: StrategyLadderRequest) -> int:
+    if _is_full_discovery_uncapped(request):
+        return 0
+    requested_cap = max(int(request.candidate_sample_cap or 0), 0)
+    if requested_cap > 0:
+        return requested_cap
+    return max(int(request.engine_native_sample_size or 0), 0)
+
+
+def _candidate_pair_count_for_cap(
+    *,
+    request: StrategyLadderRequest,
+    candidate_events: tuple[StrategyLadderCandidateEvent, ...] = (),
+) -> int:
+    pairs = {
+        str(pair).strip().upper()
+        for pair in request.pairs
+        if str(pair).strip()
+    }
+    pairs.update(
+        str(event.pair).strip().upper()
+        for event in candidate_events
+        if str(event.pair).strip()
+    )
+    return max(len(pairs), 1)
+
+
+def _candidate_sample_cap_total(
+    *,
+    effective_sample_cap: int,
+    engine_count: int,
+    pair_count: int,
+    candidate_discovery_mode: str,
+) -> int:
+    if effective_sample_cap <= 0:
+        return 0
+    if _is_temporal_candidate_budget_mode(candidate_discovery_mode):
+        return effective_sample_cap * engine_count * pair_count
+    return effective_sample_cap * engine_count
+
+
+def _candidate_cap_formula(
+    *,
+    effective_sample_cap: int,
+    engine_count: int,
+    pair_count: int,
+    candidate_discovery_mode: str,
+) -> str:
+    if effective_sample_cap <= 0:
+        return "uncapped"
+    if _is_temporal_candidate_budget_mode(candidate_discovery_mode):
+        return (
+            f"{pair_count} pairs x {engine_count} engines x "
+            f"{effective_sample_cap} (temporal_stratified/day)"
+        )
+    return f"{engine_count} engines x {effective_sample_cap}"
+
+
+def _feature_pairs_from_rows(rows: tuple[object, ...]) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            {
+                str(getattr(row, "pair", "") or "").strip().upper()
+                for row in rows
+                if str(getattr(row, "pair", "") or "").strip()
+            }
+        )
+    )
+
+
 def _count_executed_trades(
     bucket_results: tuple[StrategyLadderBucketReplayResult, ...],
 ) -> int:
@@ -1610,6 +1699,42 @@ def _expected_cost_from_provenance(provenance: EconomicProvenance) -> float:
         + provenance.slippage_bps * 1.15
         + provenance.latency_penalty_bps
     ) / 10_000.0
+
+
+def _is_causal_engine_edge_proxy(provenance: str | None) -> bool:
+    value = str(provenance or "").strip().upper()
+    return value.startswith("PROXY_FORWARD_RETURN_MEDIAN_TO_CALIBRATE")
+
+
+def _engine_input_expected_gain_source_status(
+    provenance: EconomicProvenance,
+    *,
+    ml_mode: str,
+) -> str:
+    if is_expected_edge_backtest_truth(provenance.expected_edge_provenance):
+        return "ENGINE_INPUT_EDGE_GOVERNED_BACKTEST_TRUTH"
+    if (
+        str(ml_mode or "").strip().upper() == "ML_MODE_OFF"
+        and _is_causal_engine_edge_proxy(provenance.expected_edge_provenance)
+    ):
+        return "ENGINE_INPUT_EDGE_CAUSAL_PROXY_DIAGNOSTIC_ML_OFF"
+    if str(ml_mode or "").strip().upper() == "ML_MODE_OFF":
+        return "ENGINE_INPUT_EDGE_ZEROED_NOT_CAUSAL"
+    return "ENGINE_INPUT_EDGE_ZEROED_EXPECTED_EDGE_NOT_GOVERNED"
+
+
+def _engine_input_expected_gain_from_provenance(
+    provenance: EconomicProvenance,
+    *,
+    ml_mode: str,
+) -> float:
+    status = _engine_input_expected_gain_source_status(provenance, ml_mode=ml_mode)
+    if status in {
+        "ENGINE_INPUT_EDGE_GOVERNED_BACKTEST_TRUTH",
+        "ENGINE_INPUT_EDGE_CAUSAL_PROXY_DIAGNOSTIC_ML_OFF",
+    }:
+        return max(0.0, float(provenance.expected_edge_bps or 0.0) / 10_000.0)
+    return 0.0
 
 
 def _apply_b2_measured_cost_governance(
@@ -2104,6 +2229,7 @@ def _materialize_native_candidate_event(
     records_built: int,
     runner_invoked: bool,
     bridge_microstructure_scalars: dict[str, float | None] | None = None,
+    ml_mode: str = "ML_MODE_OFF",
 ) -> StrategyLadderCandidateEvent:
     payload = dict(candidate.compatibility_payload or {})
     decision = _enum_value(getattr(engine_output, "decision", "not_invoked"))
@@ -2130,10 +2256,37 @@ def _materialize_native_candidate_event(
     }
     native_blockers: tuple[str, ...] = ()
     if not runner_invoked:
-        native_blockers = ("ENGINE_NATIVE_RUNNER_NOT_INVOKED",)
+        # Patch P0-RENAME-1 (2026-05-27) — `ENGINE_NATIVE_RUNNER_NOT_INVOKED`
+        # was emitted on 100% of B2 records and misleadingly suggested an
+        # engine pipeline failure. In B2 we deliberately do NOT re-invoke
+        # the engine: B1's decision is the authoritative one, reused as-is.
+        # The new name conveys the actual semantic (decision reused from
+        # B1, no re-evaluation requested) so the operator no longer reads
+        # the dashboard top-hard-block-reason as a broken pipeline.
+        # The `_engine_native_runner_invocation_audit` in
+        # `backtest_backbone_parity_audit.py` was the diagnostic module
+        # that flagged this as `_MISNAMED_DIAGNOSTIC` and proposed exactly
+        # this reclassification (see lines 663-674 of that file). The
+        # logical-status fields (`engine_native_status`, compatibility
+        # notes, preliminary reasons) continue to use the
+        # `ENGINE_NATIVE_RUNNER_(NOT_)INVOKED` strings because they are
+        # report-only descriptors, not blocker reasons.
+        native_blockers = ("B2_ENGINE_NATIVE_DECISION_REUSED_FROM_B1",)
     elif not is_emit:
         native_blockers = ("ENGINE_NATIVE_NO_TRADE",)
+    edge_truth_is_selection_gate = str(ml_mode or "").strip().upper() != "ML_MODE_OFF"
+    profitability_blockers: tuple[str, ...] = ()
     if not edge_is_truth:
+        profitability_blockers = _merge_codes(
+            list(profitability_blockers),
+            [
+                "EXPECTED_EDGE_NOT_GOVERNED_FOR_BACKTEST_TRUTH",
+                "EXPECTED_EDGE_PROXY_BLOCKED",
+                "FEE_AWARE_EDGE_PROXY_BLOCKED",
+                "BREAK_EVEN_PROXY_BLOCKED",
+            ],
+        )
+    if not edge_is_truth and edge_truth_is_selection_gate:
         native_blockers = _merge_codes(
             list(native_blockers),
             [
@@ -2151,12 +2304,14 @@ def _materialize_native_candidate_event(
     ):
         native_blockers = _merge_codes(
             list(native_blockers),
-            ["ENGINE_D_HISTORY_BLOCKED_BY_MISSING_CLOSED_EPISODE_JOURNAL"],
+            ["ENGINE_D_COLD_START_NO_CLOSED_EPISODE_SOURCE"],
         )
 
     target_state = (
         "selected"
-        if is_emit and edge_is_truth and cost_usage_break_even == "measured"
+        if is_emit
+        and (edge_is_truth or not edge_truth_is_selection_gate)
+        and cost_usage_break_even == "measured"
         else "hard_blocked"
     )
     native_output = _engine_output_payload(engine_output)
@@ -2242,6 +2397,23 @@ def _materialize_native_candidate_event(
     latency_penalty_bps = economic_provenance.latency_penalty_bps
     if latency_penalty_bps is None:
         latency_penalty_bps = _extract_latency_penalty_bps(native_output, payload)
+    measured_slippage_report = cost_governance.get("measured_slippage_report")
+    measured_slippage_status = (
+        str(measured_slippage_report.get("status") or "").strip()
+        if isinstance(measured_slippage_report, dict)
+        else ""
+    )
+    measured_depth20_level = None
+    if (
+        measured_slippage_status == "SLIPPAGE_ESTIMATED_FROM_DEPTH20"
+        and window is not None
+        and window.book_depth_levels_available is not None
+        and int(window.book_depth_levels_available or 0) > 0
+    ):
+        measured_depth20_level = int(window.book_depth_levels_available)
+    feature_values_payload = dict(payload.get("feature_values") or {})
+    if measured_depth20_level is not None:
+        feature_values_payload["book_depth_levels"] = measured_depth20_level
     updated_payload = {
         **payload,
         **build14_payload,
@@ -2258,6 +2430,23 @@ def _materialize_native_candidate_event(
         "expected_edge_bps": economic_provenance.expected_edge_bps,
         "expected_edge_provenance": economic_provenance.expected_edge_provenance,
         "expected_edge_truth_status": edge_truth_status,
+        "expected_edge_selection_gate_status": (
+            "EXPECTED_EDGE_SELECTION_GATE_DISABLED_IN_ML_OFF"
+            if not edge_truth_is_selection_gate
+            else "EXPECTED_EDGE_SELECTION_GATE_ENABLED"
+        ),
+        "engine_input_expected_gain": (
+            _coerce_float(engine_input_payload.get("expected_gain"), 0.0)
+            if engine_input_payload
+            else 0.0
+        ),
+        "engine_input_expected_gain_source_status": (
+            _engine_input_expected_gain_source_status(
+                economic_provenance,
+                ml_mode=ml_mode,
+            )
+        ),
+        "profitability_blocker_reasons": profitability_blockers,
         "expected_edge_model_status": economic_provenance.expected_edge_model_status,
         "expected_edge_model_artifact_hash": (
             economic_provenance.expected_edge_model_artifact_hash
@@ -2271,6 +2460,12 @@ def _materialize_native_candidate_event(
         "spread_provenance": economic_provenance.spread_provenance,
         "slippage_bps": economic_provenance.slippage_bps,
         "slippage_provenance": economic_provenance.slippage_provenance,
+        "book_depth_levels": (
+            measured_depth20_level
+            if measured_depth20_level is not None
+            else payload.get("book_depth_levels")
+        ),
+        "feature_values": feature_values_payload,
         "latency_penalty_bps": latency_penalty_bps,
         "latency_source_status": economic_provenance.latency_provenance,
         "fee_bps": economic_provenance.fee_bps,
@@ -2385,15 +2580,12 @@ def _run_native_engine_candidate(
     candidate: StrategyLadderCandidateEvent,
     window: StrategyLadderRawWindowManifest | None,
     economic_provenance: EconomicProvenance,
+    ml_mode: str = "ML_MODE_OFF",
 ) -> tuple[StrategyLadderCandidateEvent, int, bool]:
     payload = dict(candidate.compatibility_payload or {})
-    edge_is_truth = is_expected_edge_backtest_truth(
-        economic_provenance.expected_edge_provenance
-    )
-    expected_gain = (
-        economic_provenance.expected_edge_bps / 10_000.0
-        if edge_is_truth
-        else 0.0
+    expected_gain = _engine_input_expected_gain_from_provenance(
+        economic_provenance,
+        ml_mode=ml_mode,
     )
     expected_cost = _expected_cost_from_provenance(economic_provenance)
     candidate_size = _planned_notional_from_payload(payload)
@@ -2420,8 +2612,10 @@ def _run_native_engine_candidate(
                 builder_provenance=builder_provenance,
                 engine_output=None,
                 engine_input_payload={},
+                build14_application=None,
                 records_built=0,
                 runner_invoked=False,
+                ml_mode=ml_mode,
             ),
             0,
             False,
@@ -2630,6 +2824,7 @@ def _run_native_engine_candidate(
             records_built=records_built,
             runner_invoked=runner_invoked,
             bridge_microstructure_scalars=bridge_microstructure_scalars,
+            ml_mode=ml_mode,
         ),
         records_built,
         runner_invoked,
@@ -2646,6 +2841,7 @@ def _materialize_engine_native_candidates(
     progress_callback: Callable[[int, int, int, int, int, int], None] | None = None,
     silver_exchange: str | None = None,
     silver_market_type: str = "spot",
+    ml_mode: str = "ML_MODE_OFF",
 ) -> _EngineNativeCandidateMaterialization:
     if not candidate_events:
         return _EngineNativeCandidateMaterialization(
@@ -2695,6 +2891,7 @@ def _materialize_engine_native_candidates(
             candidate=candidate,
             window=window,
             economic_provenance=economic_provenance,
+            ml_mode=ml_mode,
         )
         native_events.append(native_event)
         records_built += built_count
@@ -2898,6 +3095,7 @@ def _build_report_summary(
         candidate_discovery_status=run_manifest.candidate_discovery_status,
         candidate_export_status=run_manifest.candidate_export_status,
         raw_window_extraction_status=run_manifest.raw_window_extraction_status,
+        raw_window_materialization_mode=run_manifest.raw_window_materialization_mode,
         detailed_replay_status=run_manifest.detailed_replay_status,
         capital_profile_generation_status=run_manifest.capital_profile_generation_status,
         promotion_artifact_status=run_manifest.promotion_artifact_status,
@@ -2923,6 +3121,7 @@ def _build_report_summary(
         temporal_bucket_count_available=run_manifest.temporal_bucket_count_available,
         temporal_bucket_count_selected=run_manifest.temporal_bucket_count_selected,
         temporal_bucket_coverage_ratio=run_manifest.temporal_bucket_coverage_ratio,
+        feature_names=run_manifest.feature_names,
         preselection_status=run_manifest.preselection_status,
         replay_input_mode_status=run_manifest.replay_input_mode_status,
         preselected_only=run_manifest.preselected_only,
@@ -3539,7 +3738,7 @@ def _reason_domain(reason_code: str) -> str:
         return "cost"
     if "microstructure" in lower or "structured_breakout" in lower or "breakout" in lower:
         return "microstructure"
-    if "history" in lower or "closed_episode_journal" in lower:
+    if "history" in lower or "closed_episode" in lower or "cold_start" in lower:
         return "history"
     if "not_applied" in lower or "missing" in lower or "wiring" in lower:
         return "wiring"
@@ -3553,7 +3752,12 @@ def _first_blocking_layer(reason_codes: tuple[str, ...]) -> str:
         return "fee_aware_edge_gate"
     if "BREAK_EVEN_PROXY_BLOCKED" in reason_codes:
         return "break_even_filter"
-    if any("history" in code.lower() for code in reason_codes):
+    if any(
+        "history" in code.lower()
+        or "closed_episode" in code.lower()
+        or "cold_start" in code.lower()
+        for code in reason_codes
+    ):
         return "history_gate"
     if any("microstructure" in code.lower() for code in reason_codes):
         return "microstructure_gate"
@@ -3564,6 +3768,12 @@ def _first_blocking_layer(reason_codes: tuple[str, ...]) -> str:
 
 def _blocker_assessment(reason_codes: tuple[str, ...]) -> dict[str, object]:
     joined = " ".join(reason_codes)
+    if "ENGINE_D_COLD_START_NO_CLOSED_EPISODE_SOURCE" in reason_codes:
+        return {
+            "assessment": "HEALTHY_ENGINE_D_COLD_START_BLOCKER",
+            "classification": "history",
+            "note": "Engine D is correctly blocked because no real closed-episode source exists for re-entry context.",
+        }
     if "ENGINE_D_HISTORY_BLOCKED_BY_MISSING_CLOSED_EPISODE_JOURNAL" in reason_codes:
         return {
             "assessment": "SUSPECTED_WIRING_ISSUE",
@@ -3805,9 +4015,9 @@ def _build_post_b2_refusal_audit_payload(
                 "note": "Execution realism remains promotion-blocked until measured fidelity exists.",
             },
             {
-                "issue": "ENGINE_D_HISTORY_BLOCKED_BY_MISSING_CLOSED_EPISODE_JOURNAL",
-                "status": "SUSPECTED_WIRING_ISSUE",
-                "note": "Engine D lacks the required history artifact for its decision path.",
+                "issue": "ENGINE_D_COLD_START_NO_CLOSED_EPISODE_SOURCE",
+                "status": "HEALTHY_ENGINE_D_COLD_START_BLOCKER",
+                "note": "Engine D is not executable until a real closed-episode source exists.",
             },
             {
                 "issue": "engine_c.microstructure.not_applied",
@@ -4107,12 +4317,12 @@ def _build_engine_d_diagnosis(
     if history_input_status == "REQUIRED_FOR_ENGINE_D_BUT_NOT_AVAILABLE_IN_B2":
         suspected_wiring_gaps.extend(
             [
-                "ENGINE_D_HISTORY_BLOCKED_BY_MISSING_CLOSED_EPISODE_JOURNAL",
+                "ENGINE_D_COLD_START_NO_CLOSED_EPISODE_SOURCE",
                 journal_status,
                 history_input_status,
             ]
         )
-        recommended_next_action = "BUILD_CLOSED_EPISODE_JOURNAL_FOR_ENGINE_D"
+        recommended_next_action = "PROVIDE_REAL_CLOSED_EPISODE_SOURCE_FOR_ENGINE_D"
     elif history_input_status == "REQUIRED_FOR_ENGINE_D_BUT_NO_VALID_EPISODE_SOURCE":
         suspected_wiring_gaps.extend(
             [
@@ -4985,6 +5195,43 @@ def _summarize_raw_window_linkage(
     return summary
 
 
+def _normalize_raw_window_materialization_mode(request: StrategyLadderRequest) -> str:
+    raw = str(request.raw_window_materialization_mode or "MATERIALIZE").strip().upper()
+    normalized = raw.replace("-", "_")
+    if normalized in {"REFS_ONLY", "REFERENCE_ONLY"}:
+        return "REFS_ONLY"
+    return "MATERIALIZE"
+
+
+def _should_materialize_raw_windows(
+    *,
+    request: StrategyLadderRequest,
+    candidate_events: tuple[StrategyLadderCandidateEvent, ...],
+) -> bool:
+    if not candidate_events or request.dry_run:
+        return False
+    if _normalize_raw_window_materialization_mode(request) == "REFS_ONLY":
+        return False
+    native_preselection_enabled = request.engine_native_mode and not request.dry_run
+    return bool(not request.fast_only or native_preselection_enabled)
+
+
+def _raw_window_refs_only_linkage_counts(
+    candidate_events: tuple[StrategyLadderCandidateEvent, ...],
+) -> dict[str, int]:
+    return {
+        "raw_windows_total": len(candidate_events),
+        "trade_windows_found": 0,
+        "trade_windows_missing": 0,
+        "book_windows_found": 0,
+        "book_windows_missing": 0,
+        "ohlcv_windows_found": 0,
+        "ohlcv_windows_missing": 0,
+        "depth20_found": 0,
+        "depth20_missing": 0,
+    }
+
+
 def _build_progress_manifest(
     *,
     request: StrategyLadderRequest,
@@ -5087,16 +5334,18 @@ def _build_progress_manifest(
             expected_edge_truth_status = "EXPECTED_EDGE_GOVERNED_BACKTEST_TRUTH"
         else:
             expected_edge_truth_status = "EXPECTED_EDGE_NOT_PROVEN"
-    effective_sample_cap = max(
-        int(request.candidate_sample_cap or request.engine_native_sample_size),
-        0,
-    )
+    effective_sample_cap = _effective_candidate_sample_cap(request)
     engine_count = max(len(request.engines) or 4, 4)
-    candidate_sample_cap = effective_sample_cap * engine_count
-    temporal_stratified_mode = request.candidate_discovery_mode.strip().upper() in {
-        "TEMPORAL_STRATIFIED",
-        "TEMPORAL_STRATIFIED_SAMPLE_BUDGET",
-    }
+    pair_count_for_cap = _candidate_pair_count_for_cap(request=request)
+    candidate_sample_cap = _candidate_sample_cap_total(
+        effective_sample_cap=effective_sample_cap,
+        engine_count=engine_count,
+        pair_count=pair_count_for_cap,
+        candidate_discovery_mode=request.candidate_discovery_mode,
+    )
+    temporal_stratified_mode = _is_temporal_candidate_budget_mode(
+        request.candidate_discovery_mode
+    )
     temporal_bucket_granularity = ""
     temporal_bucket_count_available = 0
     temporal_bucket_count_selected = 0
@@ -5148,6 +5397,7 @@ def _build_progress_manifest(
         engines=request.engines,
         capital_buckets=request.capital_buckets,
         timeframes=request.timeframes,
+        feature_names=request.feature_names,
         start=request.start,
         end=request.end,
         fast_only=request.fast_only,
@@ -5165,6 +5415,7 @@ def _build_progress_manifest(
         candidate_discovery_status=candidate_discovery_status,
         candidate_export_status=candidate_export_status,
         raw_window_extraction_status=raw_window_status,
+        raw_window_materialization_mode=_normalize_raw_window_materialization_mode(request),
         detailed_replay_status=detailed_replay_status,
         capital_profile_generation_status=capital_profile_generation_status,
         promotion_artifact_status=promotion_artifact_status,
@@ -5175,12 +5426,11 @@ def _build_progress_manifest(
         candidate_sample_cap=candidate_sample_cap,
         effective_engine_native_sample_size=effective_sample_cap,
         engine_count=engine_count,
-        candidate_cap_formula=(
-            (
-                f"{engine_count} engines x {effective_sample_cap} (temporal_stratified/day)"
-                if temporal_stratified_mode
-                else f"{engine_count} engines x {effective_sample_cap}"
-            )
+        candidate_cap_formula=_candidate_cap_formula(
+            effective_sample_cap=effective_sample_cap,
+            engine_count=engine_count,
+            pair_count=pair_count_for_cap,
+            candidate_discovery_mode=request.candidate_discovery_mode,
         ),
         small_scope_enabled=request.small_scope_enabled,
         full_scan_enabled=request.full_scan_enabled,
@@ -5344,11 +5594,10 @@ def run_backtest_strategy_ladder(
     candidate_path = fast_candidates_dir / "candidate_events.jsonl"
     candidate_events_source_path: Path | None = None
     external_candidate_path = request.candidate_events_path
-    effective_sample_cap = max(
-        int(request.candidate_sample_cap or request.engine_native_sample_size),
-        0,
-    )
+    effective_sample_cap = _effective_candidate_sample_cap(request)
     engine_count = max(len(request.engines) or 4, 4)
+    feature_pairs = _feature_pairs_from_rows(feature_result.rows)
+    full_discovery_uncapped = _is_full_discovery_uncapped(request)
     if request.detailed_only:
         source_candidate_path = (
             external_candidate_path
@@ -5438,35 +5687,66 @@ def run_backtest_strategy_ladder(
                     candidates=candidate_events,
                     feature_store_status=feature_result.feature_store_status,
                     candidate_discovery_status=candidate_discovery_status,
-                    candidate_sample_cap=effective_sample_cap * engine_count,
+                    requested_pairs=request.pairs,
+                    pairs_with_feature_rows=feature_pairs,
+                    candidate_sample_cap=_candidate_sample_cap_total(
+                        effective_sample_cap=effective_sample_cap,
+                        engine_count=engine_count,
+                        pair_count=_candidate_pair_count_for_cap(
+                            request=request,
+                            candidate_events=discovered_candidate_events,
+                        ),
+                        candidate_discovery_mode=request.candidate_discovery_mode,
+                    ),
                     effective_engine_native_sample_size=effective_sample_cap,
                     engine_count=engine_count,
-                    candidate_cap_formula=(
-                        f"{engine_count} engines x {effective_sample_cap} (temporal_stratified/day)"
-                        if request.candidate_discovery_mode.strip().upper() in {
-                            "TEMPORAL_STRATIFIED",
-                            "TEMPORAL_STRATIFIED_SAMPLE_BUDGET",
-                        }
-                        else f"{engine_count} engines x {effective_sample_cap}"
+                    candidate_cap_formula=_candidate_cap_formula(
+                        effective_sample_cap=effective_sample_cap,
+                        engine_count=engine_count,
+                        pair_count=_candidate_pair_count_for_cap(
+                            request=request,
+                            candidate_events=discovered_candidate_events,
+                        ),
+                        candidate_discovery_mode=request.candidate_discovery_mode,
                     ),
                     small_scope_enabled=request.small_scope_enabled,
                     full_scan_enabled=request.full_scan_enabled,
                     no_full_scan_enabled=request.no_full_scan_enabled,
                     candidate_discovery_limited=discovery_capped
-                    or request.candidate_discovery_mode == "SAMPLE_CAPPED_DEBUG"
-                    or request.small_scope_enabled,
+                    or (
+                        not full_discovery_uncapped
+                        and (
+                            request.candidate_discovery_mode == "SAMPLE_CAPPED_DEBUG"
+                            or request.small_scope_enabled
+                        )
+                    ),
                     candidate_discovery_limit_reason=(
                         budget_result.limit_reason
                         if discovery_capped
-                        or request.candidate_discovery_mode == "SAMPLE_CAPPED_DEBUG"
-                        or request.small_scope_enabled
+                        or (
+                            not full_discovery_uncapped
+                            and (
+                                request.candidate_discovery_mode == "SAMPLE_CAPPED_DEBUG"
+                                or request.small_scope_enabled
+                            )
+                        )
                         else "DISCOVERY_EXHAUSTED_BEFORE_CAP"
                     ),
                     candidate_discovery_mode=request.candidate_discovery_mode,
                     candidate_discovery_cap_status=(
                         budget_result.cap_status
                         if discovery_capped or (
-                            candidate_events and len(candidate_events) == effective_sample_cap * engine_count
+                            candidate_events and effective_sample_cap > 0
+                            and len(candidate_events)
+                            == _candidate_sample_cap_total(
+                                effective_sample_cap=effective_sample_cap,
+                                engine_count=engine_count,
+                                pair_count=_candidate_pair_count_for_cap(
+                                    request=request,
+                                    candidate_events=discovered_candidate_events,
+                                ),
+                                candidate_discovery_mode=request.candidate_discovery_mode,
+                            )
                         )
                         else (
                             "CANDIDATE_DISCOVERY_EXHAUSTED"
@@ -5673,9 +5953,18 @@ def run_backtest_strategy_ladder(
             progress_callback=progress_callback,
         )
 
-    native_preselection_enabled = request.engine_native_mode and not request.dry_run
+    raw_window_materialization_mode = _normalize_raw_window_materialization_mode(request)
+    if (
+        raw_window_materialization_mode == "REFS_ONLY"
+        and not request.fast_only
+        and not request.dry_run
+    ):
+        raise ValueError(
+            "RAW_WINDOW_REFS_ONLY is allowed only for fast-only B1 discovery; "
+            "B2/detailed replay must materialize raw windows."
+        )
 
-    if (not request.fast_only or native_preselection_enabled) and not request.dry_run and candidate_events:
+    if _should_materialize_raw_windows(request=request, candidate_events=candidate_events):
         try:
             with performance_profiler.phase(
                 "raw_window_extraction",
@@ -5738,6 +6027,18 @@ def run_backtest_strategy_ladder(
                 blocker_codes=_raw_window_stage_blockers(),
                 linkage_counts=raw_window_linkage_counts,
             )
+    elif raw_window_materialization_mode == "REFS_ONLY" and candidate_events:
+        raw_window_status = "RAW_WINDOW_REFS_ONLY"
+        raw_window_manifests = ()
+        raw_window_linkage_counts = _raw_window_refs_only_linkage_counts(candidate_events)
+        performance_profiler.record_phase(
+            "raw_window_extraction",
+            status="REFS_ONLY_NOT_RUN",
+            wall_time_s=0.0,
+            cpu_time_s=0.0,
+            candidate_count=len(candidate_events),
+            counters={"raw_window_materialization_mode": "REFS_ONLY"},
+        )
     elif request.resume and raw_windows_dir.exists():
         raw_window_manifests = load_strategy_ladder_raw_window_manifests(raw_windows_dir)
         raw_window_linkage_counts = _summarize_raw_window_linkage(
@@ -5810,6 +6111,7 @@ def run_backtest_strategy_ladder(
             progress_callback=_engine_native_progress_callback,
             silver_exchange=silver_exchange_resolved,
             silver_market_type=silver_market_type_resolved,
+            ml_mode=request.ml_mode,
         )
         materialized_candidate_events = native_materialization.candidate_events
         candidate_discovery_status = native_materialization.candidate_discovery_status
@@ -5865,10 +6167,20 @@ def run_backtest_strategy_ladder(
                 if candidate_summary is not None
                 else candidate_discovery_status
             ),
+            requested_pairs=request.pairs,
+            pairs_with_feature_rows=feature_pairs,
             candidate_sample_cap=(
                 candidate_summary.candidate_sample_cap
                 if candidate_summary is not None
-                else effective_sample_cap * engine_count
+                else _candidate_sample_cap_total(
+                    effective_sample_cap=effective_sample_cap,
+                    engine_count=engine_count,
+                    pair_count=_candidate_pair_count_for_cap(
+                        request=request,
+                        candidate_events=materialized_candidate_events,
+                    ),
+                    candidate_discovery_mode=request.candidate_discovery_mode,
+                )
             ),
             effective_engine_native_sample_size=(
                 candidate_summary.effective_engine_native_sample_size
@@ -5884,13 +6196,14 @@ def run_backtest_strategy_ladder(
             candidate_cap_formula=(
                 candidate_summary.candidate_cap_formula
                 if candidate_summary is not None and candidate_summary.candidate_cap_formula
-                else (
-                    f"{engine_count} engines x {effective_sample_cap} (temporal_stratified/day)"
-                    if request.candidate_discovery_mode.strip().upper() in {
-                        "TEMPORAL_STRATIFIED",
-                        "TEMPORAL_STRATIFIED_SAMPLE_BUDGET",
-                    }
-                    else f"{engine_count} engines x {effective_sample_cap}"
+                else _candidate_cap_formula(
+                    effective_sample_cap=effective_sample_cap,
+                    engine_count=engine_count,
+                    pair_count=_candidate_pair_count_for_cap(
+                        request=request,
+                        candidate_events=materialized_candidate_events,
+                    ),
+                    candidate_discovery_mode=request.candidate_discovery_mode,
                 )
             ),
             small_scope_enabled=(
@@ -6043,6 +6356,75 @@ def run_backtest_strategy_ladder(
         and candidate_events
         and not raw_window_extraction_failed
     ):
+        build14_activation_statuses = tuple(
+            str((event.compatibility_payload or {}).get("build14_shadow_activation_status") or "")
+            for event in candidate_events
+        )
+        build14_applied_fields = tuple(
+            sorted(
+                {
+                    str(field)
+                    for event in candidate_events
+                    for field in (
+                        (event.compatibility_payload or {}).get("build14_shadow_applied_fields")
+                        or ()
+                    )
+                    if str(field)
+                }
+            )
+        )
+        build14_feature_groups = tuple(
+            sorted(
+                {
+                    str(group)
+                    for group in (gold_manifest_payload.get("feature_groups_ready") or ())
+                    if str(group)
+                    and str(group)
+                    in {
+                        "flow_microstructure_features",
+                        "ofi_features",
+                        "vpin_features",
+                        "queue_pressure",
+                        "book_liquidity_features",
+                        "spread_features",
+                        "depth_features",
+                        "fragility_false_breakout_features",
+                    }
+                }
+            )
+        )
+        if any(status == "BUILD14_SHADOW_ENABLED_ACTIVE" for status in build14_activation_statuses):
+            build14_context_status = "BUILD14_CONTEXT_READY"
+        elif build14_activation_statuses and any(build14_activation_statuses):
+            build14_context_status = "BUILD14_CONTEXT_NOT_READY"
+        else:
+            build14_context_status = "BUILD14_CONTEXT_NOT_DECLARED"
+        if build14_applied_fields:
+            build14_upstream_filter_status = "BUILD14_CONTEXT_APPLIED_TO_CANDIDATES"
+        elif build14_feature_groups:
+            build14_upstream_filter_status = "BUILD14_FEATURES_READY_NOT_APPLIED_OR_FILTERED"
+        else:
+            build14_upstream_filter_status = "BUILD14_UPSTREAM_FILTER_NOT_DECLARED"
+        detailed_simulator_config = ShadowExecutionSimulatorConfig(
+            ml_mode=request.ml_mode,
+            expected_edge_model_status=expected_edge_model_load_status,
+            expected_edge_model_artifact_hash=expected_edge_model_load_result.artifact_hash,
+            expected_edge_model_feature_hash=expected_edge_model_load_result.feature_hash,
+            expected_edge_training_artifact_ref=(
+                expected_edge_model_load_result.training_artifact_ref
+                or (
+                    str(request.frozen_ml_artifact_path.resolve())
+                    if request.frozen_ml_artifact_path is not None
+                    else None
+                )
+            ),
+            protocol_contract_refs=("strategy_ladder_refusal_ledger.v1",),
+            refusal_contract_status="REFUSAL_LEDGER_CONTRACT_DECLARED",
+            live_transport_enabled=False,
+            build14_context_status=build14_context_status,
+            build14_feature_groups=build14_feature_groups,
+            build14_upstream_filter_status=build14_upstream_filter_status,
+        )
         with performance_profiler.phase(
             "replay_orchestration",
             status="OK",
@@ -6054,6 +6436,7 @@ def run_backtest_strategy_ladder(
                 raw_window_manifests=raw_window_manifests,
                 capital_buckets=request.capital_buckets,
                 execution_runtime_projection_path=request.execution_runtime_projection_path,
+                simulator_config=detailed_simulator_config,
             )
         performance_profiler.observe_replay_subtimers(
             shared_payload_build_seconds=(
@@ -6634,13 +7017,18 @@ def run_backtest_strategy_ladder(
     resolved_effective_sample_size = (
         candidate_summary.effective_engine_native_sample_size
         if candidate_summary is not None
-        and candidate_summary.effective_engine_native_sample_size > 0
-        else max(int(request.candidate_sample_cap or request.engine_native_sample_size), 0)
+        else _effective_candidate_sample_cap(request)
     )
+    resolved_pair_count_for_cap = max(len(resolved_pairs), 1)
     resolved_candidate_sample_cap = (
         candidate_summary.candidate_sample_cap
-        if candidate_summary is not None and candidate_summary.candidate_sample_cap > 0
-        else resolved_effective_sample_size * resolved_engine_count
+        if candidate_summary is not None
+        else _candidate_sample_cap_total(
+            effective_sample_cap=resolved_effective_sample_size,
+            engine_count=resolved_engine_count,
+            pair_count=resolved_pair_count_for_cap,
+            candidate_discovery_mode=request.candidate_discovery_mode,
+        )
     )
     resolved_candidate_discovery_mode = (
         candidate_summary.candidate_discovery_mode
@@ -6650,13 +7038,11 @@ def run_backtest_strategy_ladder(
     resolved_candidate_cap_formula = (
         candidate_summary.candidate_cap_formula
         if candidate_summary is not None and candidate_summary.candidate_cap_formula
-        else (
-            f"{resolved_engine_count} engines x {resolved_effective_sample_size} (temporal_stratified/day)"
-            if resolved_candidate_discovery_mode in {
-                "TEMPORAL_STRATIFIED",
-                "TEMPORAL_STRATIFIED_SAMPLE_BUDGET",
-            }
-            else f"{resolved_engine_count} engines x {resolved_effective_sample_size}"
+        else _candidate_cap_formula(
+            effective_sample_cap=resolved_effective_sample_size,
+            engine_count=resolved_engine_count,
+            pair_count=resolved_pair_count_for_cap,
+            candidate_discovery_mode=resolved_candidate_discovery_mode,
         )
     )
     resolved_small_scope_enabled = (
@@ -6798,6 +7184,7 @@ def run_backtest_strategy_ladder(
         engines=resolved_engines,
         capital_buckets=request.capital_buckets,
         timeframes=resolved_timeframes,
+        feature_names=request.feature_names,
         start=request.start,
         end=request.end,
         fast_only=request.fast_only,
@@ -6815,6 +7202,7 @@ def run_backtest_strategy_ladder(
         candidate_discovery_status=candidate_discovery_status,
         candidate_export_status=candidate_export_status,
         raw_window_extraction_status=raw_window_status,
+        raw_window_materialization_mode=_normalize_raw_window_materialization_mode(request),
         detailed_replay_status=detailed_result.detailed_replay_status,
         capital_profile_generation_status=capital_profile_generation_status,
         promotion_artifact_status=promotion_artifact_status,
@@ -7097,6 +7485,44 @@ def run_backtest_strategy_ladder(
             )
         )
     with performance_profiler.phase(
+        "b2_label_store_ml_training_audit_generation",
+        status="OK",
+        candidate_count=len(candidate_events),
+        replay_record_count=len(all_bucket_results),
+    ):
+        b2_label_store_ml_training_audit_filename = "b2_label_store_ml_training_audit.json"
+        try:
+            from local_replay_runtime.b2_label_store_ml_training_audit import (
+                B2_LABEL_STORE_ML_TRAINING_AUDIT_FILENAME,
+                write_b2_label_store_ml_training_audit_reports,
+            )
+
+            b2_label_store_ml_training_audit_filename = (
+                B2_LABEL_STORE_ML_TRAINING_AUDIT_FILENAME
+            )
+            write_b2_label_store_ml_training_audit_reports(
+                run_dir,
+                label_store_path=Path(label_store_result.dataset_path),
+            )
+        except Exception as exc:  # pragma: no cover - defensive audit fallback
+            atomic_write_json(
+                reports_dir / b2_label_store_ml_training_audit_filename,
+                {
+                    "schema_version": "v53.b2_label_store_ml_training_audit.v1",
+                    "generated_at": datetime.now(tz=UTC).isoformat(),
+                    "run_id": request.run_id,
+                    "workflow_root": str(run_dir.resolve()),
+                    "label_store_path": getattr(label_store_result, "dataset_path", ""),
+                    "row_count": 0,
+                    "scientifically_valid_for_training": False,
+                    "scientifically_valid_for_promotion": False,
+                    "final_verdict": "B2_LABEL_STORE_INSUFFICIENT_ROWS",
+                    "status": "INSUFFICIENT_DATA",
+                    "error_type": type(exc).__name__,
+                },
+                indent=2,
+            )
+    with performance_profiler.phase(
         "gate_counterfactual_analysis_generation",
         status="OK",
         candidate_count=len(candidate_events),
@@ -7129,6 +7555,76 @@ def run_backtest_strategy_ladder(
         replay_record_count=len(all_bucket_results),
     ):
         write_backtest_decision_reports(run_dir)
+    # Patch BACKBONE-PARITY-WIRING-1 (2026-05-27) — Wire the read-only
+    # backbone parity audit module to the runner so the 12 aggregate reports
+    # documented in `docs/audit/2026-05-27_BACKTEST_BACKBONE_PARITY_DIAGNOSTIC_PATCH_PLAN.md`
+    # are produced at runtime. Without this, the module
+    # `backtest_backbone_parity_audit.py` is self-contained and the
+    # backbone_parity_final_report / backbone_module_usage_matrix /
+    # backtest_decision_source_matrix / count_semantics_deep_audit /
+    # reason_code_taxonomy_audit / engine_a_executed_candidate_autopsy / etc.
+    # never reach the run directory. Per-bucket `backbone_surface_report`
+    # remains the row-level evidence; this module aggregates the surface
+    # status across all bucket records into operator-readable artifacts.
+    with performance_profiler.phase(
+        "backtest_backbone_parity_audit_generation",
+        status="OK",
+        candidate_count=len(candidate_events),
+        replay_record_count=len(all_bucket_results),
+    ):
+        try:
+            from local_replay_runtime.backtest_backbone_parity_audit import (
+                BACKTEST_BACKBONE_PARITY_AUDIT_FILENAME,
+                write_backtest_backbone_parity_audit_reports,
+            )
+
+            write_backtest_backbone_parity_audit_reports(run_dir)
+        except Exception as exc:  # pragma: no cover - defensive audit fallback
+            atomic_write_json(
+                reports_dir / "backtest_backbone_parity_audit.json",
+                {
+                    "schema_version": "v53.backtest_backbone_parity_audit.v1",
+                    "generated_at": datetime.now(tz=UTC).isoformat(),
+                    "run_id": request.run_id,
+                    "audit_mode": "READ_ONLY",
+                    "status": "INSUFFICIENT_DATA",
+                    "error_type": type(exc).__name__,
+                    "trading_logic_modified": False,
+                    "thresholds_modified": False,
+                },
+                indent=2,
+            )
+    with performance_profiler.phase(
+        "no_shadow_threshold_challenge_generation",
+        status="OK",
+        candidate_count=len(candidate_events),
+        replay_record_count=len(all_bucket_results),
+    ):
+        no_shadow_threshold_challenge_filename = "no_shadow_threshold_challenge_report.json"
+        try:
+            from local_replay_runtime.no_shadow_threshold_challenge import (
+                NO_SHADOW_THRESHOLD_CHALLENGE_FILENAME,
+                write_no_shadow_threshold_challenge_reports,
+            )
+
+            no_shadow_threshold_challenge_filename = NO_SHADOW_THRESHOLD_CHALLENGE_FILENAME
+            write_no_shadow_threshold_challenge_reports(run_dir)
+        except Exception as exc:  # pragma: no cover - defensive audit fallback
+            atomic_write_json(
+                reports_dir / no_shadow_threshold_challenge_filename,
+                {
+                    "schema_version": "v53.no_shadow_threshold_challenge.v1",
+                    "generated_at": datetime.now(tz=UTC).isoformat(),
+                    "run_id": request.run_id,
+                    "mode": "OFFLINE_COUNTERFACTUAL_ONLY",
+                    "shadow_used": False,
+                    "trading_decisions_modified": False,
+                    "status": "INSUFFICIENT_DATA",
+                    "error_type": type(exc).__name__,
+                    "profitability_claim_allowed": False,
+                },
+                indent=2,
+            )
     performance_profiler.finalize_counts(
         candidate_count=len(candidate_events),
         replay_record_count=len(all_bucket_results),

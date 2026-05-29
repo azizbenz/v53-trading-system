@@ -71,6 +71,7 @@ from cockpit.strategy_ladder_workflow_support import (
     PHASE_A1,
     PHASE_A2,
     PHASE_B1,
+    PHASE_B_ML,
     PHASE_B2,
     ensure_workflow_manifest,
     upsert_workflow_phase,
@@ -111,6 +112,9 @@ from monitoring.contracts import ShadowVpsServiceLogQuery
 
 _logger = logging.getLogger(__name__)
 _LEGACY_EXPECTED_EDGE_FEATURE_NAME_SET = frozenset(
+    DEFAULT_EXPECTED_EDGE_FEATURE_NAMES
+)
+_DEFAULT_EXPECTED_EDGE_FEATURE_NAMES_CSV = ",".join(
     DEFAULT_EXPECTED_EDGE_FEATURE_NAMES
 )
 
@@ -202,6 +206,7 @@ def _adopt_launch_state_into_form(
             "ml_handoff_run_root": "",
             "allow_broad_run": _checkbox_text(bool(launch_state.allow_broad_run)),
             "candidate_discovery_mode": launch_state.candidate_discovery_mode,
+            "bml_candidate_sampler_mode": launch_state.bml_candidate_sampler_mode,
             "engine_native_sample_size": max(
                 int(launch_state.engine_native_sample_size or 0),
                 0,
@@ -264,6 +269,18 @@ def _normalize_feature_picker_selection(
     )
 
 
+def _normalize_feature_names_csv_selection(raw_feature_names: str) -> tuple[str, ...]:
+    feature_tokens = tuple(
+        part.strip() for part in (raw_feature_names or "").split(",") if part.strip()
+    )
+    if not feature_tokens:
+        return ()
+    try:
+        return normalize_supported_expected_edge_feature_names(feature_tokens)
+    except ValueError:
+        return ()
+
+
 def _non_legacy_expected_edge_features(
     feature_names: tuple[str, ...],
 ) -> tuple[str, ...]:
@@ -286,6 +303,7 @@ def _build_lab_ml_handoff_form_state(
     *,
     kline_root: str,
     b2_run_root: str,
+    label_store_dataset_path: str = "",
     orderbook_root: str,
     trades_root: str,
     metadata_root: str,
@@ -361,6 +379,7 @@ def _build_lab_ml_handoff_form_state(
     return LabMlHandoffFormState(
         kline_root=(kline_root or "").strip(),
         b2_run_root=(b2_run_root or "").strip(),
+        label_store_dataset_path=(label_store_dataset_path or "").strip(),
         orderbook_root=(orderbook_root or "").strip(),
         trades_root=(trades_root or "").strip(),
         metadata_root=(metadata_root or "").strip(),
@@ -472,6 +491,7 @@ def _build_backtest_form_state(
     allow_broad_run: str,
     confirm_broad_run: str,
     candidate_discovery_mode: str,
+    bml_candidate_sampler_mode: str = "TEMPORAL_STRATIFIED_BACKGROUND_GRID",
     engine_native_sample_size: int,
     b1_5_policy_mode: str,
     preselected_only: str,
@@ -515,7 +535,18 @@ def _build_backtest_form_state(
     if normalized_selected_features:
         resolved_feature_names = ",".join(normalized_selected_features)
     elif feature_picker_active:
-        resolved_feature_names = ""
+        fallback_features = _normalize_feature_names_csv_selection(feature_names)
+        if (
+            fallback_features
+            and ",".join(fallback_features) != _DEFAULT_EXPECTED_EDGE_FEATURE_NAMES_CSV
+        ):
+            normalized_selected_features = fallback_features
+            resolved_feature_names = ",".join(fallback_features)
+        elif current_form is not None and current_form.selected_features:
+            normalized_selected_features = current_form.selected_features
+            resolved_feature_names = ",".join(current_form.selected_features)
+        else:
+            resolved_feature_names = ""
     else:
         resolved_feature_names = (
             (feature_names or "").strip() or "close_return,high_low_range,volume"
@@ -551,6 +582,9 @@ def _build_backtest_form_state(
             "allow_broad_run": allow_broad_run,
             "confirm_broad_run": confirm_broad_run,
             "candidate_discovery_mode": candidate_discovery_mode,
+            "bml_candidate_sampler_mode": (
+                bml_candidate_sampler_mode or "TEMPORAL_STRATIFIED_BACKGROUND_GRID"
+            ),
             "engine_native_sample_size": max(int(engine_native_sample_size), 0),
             "b1_5_policy_mode": b1_5_policy_mode,
             "preselected_only": preselected_only,
@@ -645,6 +679,7 @@ def create_app(
         current_page: str,
         selected_pair: str | None = None,
         log_query: ShadowVpsServiceLogQuery | None = None,
+        pinned_run_id: str = "",
     ):
         if current_page == "backtest":
             _reconcile_backtest_ml_chain()
@@ -662,6 +697,7 @@ def create_app(
             notice_message=notice_message,
             notice_status=notice_status,
             log_query=log_query,
+            pinned_run_id=pinned_run_id,
         )
 
     def _resolve_backtest_runtime_feature_context() -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -696,7 +732,7 @@ def create_app(
                 lab_form_state=lab_form,
                 governance_entries=governance_entries,
                 supported_feature_names=SUPPORTED_EXPECTED_EDGE_FEATURE_NAMES,
-                artifact_feature_names=artifact_feature_names,
+                artifact_feature_names=(),
             )
         )
         return active_feature_names, artifact_feature_names
@@ -864,6 +900,26 @@ def create_app(
                 "phase_a2_gold_root": str((phase_a2_root / "gold").resolve()),
             }
         if phase_id == PHASE_B2:
+            workflow_run_id = workflow_root.name
+            return {
+                "phase_a2_data_factory_manifest": str(
+                    (phase_a2_root / "data_factory_manifest.json").resolve()
+                ),
+                "phase_a2_silver_index": str(
+                    (phase_a2_root / "silver_index.json").resolve()
+                ),
+                "phase_a2_gold_root": str((phase_a2_root / "gold").resolve()),
+                "phase_b1_candidate_events": str(
+                    (
+                        phase_b1_root
+                        / "backtest_strategy_ladder"
+                        / workflow_run_id
+                        / "fast_candidates"
+                        / "candidate_events.jsonl"
+                    ).resolve()
+                ),
+            }
+        if phase_id == PHASE_B_ML:
             workflow_run_id = workflow_root.name
             return {
                 "phase_a2_data_factory_manifest": str(
@@ -1067,6 +1123,10 @@ def create_app(
                     old.candidate_discovery_mode,
                     new.candidate_discovery_mode,
                 ),
+                "bml_candidate_sampler_mode": (
+                    old.bml_candidate_sampler_mode,
+                    new.bml_candidate_sampler_mode,
+                ),
                 "engine_native_sample_size": (
                     old.engine_native_sample_size,
                     new.engine_native_sample_size,
@@ -1201,6 +1261,10 @@ def create_app(
                 StrategyLadderControlAction.DATA_FACTORY_SMALL_SCOPE_RUN,
             }
             else (
+                CockpitBacktestJobKind.STRATEGY_LADDER_B_ML_LABEL_FACTORY
+                if parsed_action
+                == StrategyLadderControlAction.PHASE_B_ML_LABEL_FACTORY
+                else
                 CockpitBacktestJobKind.STRATEGY_LADDER_RUNNER
                 if parsed_action
                 in {
@@ -1231,7 +1295,7 @@ def create_app(
                     orderbook_path=preflight.normalized_request.orderbook_root,
                     trades_path=preflight.normalized_request.trades_root,
                     klines_path=preflight.normalized_request.klines_root,
-                    raw_roots=(),
+                    raw_roots=preflight.normalized_request.raw_roots,
                 )
             )
             if path
@@ -1244,20 +1308,36 @@ def create_app(
         phase_a2_root = workflow_root / workflow_phase_dirname(PHASE_A2)
         feature_store_root = (
             phase_a2_root / "gold"
-            if parsed_job_kind == CockpitBacktestJobKind.STRATEGY_LADDER_RUNNER
+            if parsed_job_kind
+            in {
+                CockpitBacktestJobKind.STRATEGY_LADDER_RUNNER,
+                CockpitBacktestJobKind.STRATEGY_LADDER_B_ML_LABEL_FACTORY,
+            }
             else None
         )
         silver_index_path = (
             phase_a2_root / "silver_index.json"
-            if parsed_job_kind == CockpitBacktestJobKind.STRATEGY_LADDER_RUNNER
+            if parsed_job_kind
+            in {
+                CockpitBacktestJobKind.STRATEGY_LADDER_RUNNER,
+                CockpitBacktestJobKind.STRATEGY_LADDER_B_ML_LABEL_FACTORY,
+            }
             else None
         )
         candidate_events_path = (
             resolve_phase_b1_replay_input_candidates_path(
                 workflow_root=workflow_root,
                 workflow_run_id=preflight.workflow_run_id,
+                allow_discovery_fallback=(
+                    parsed_action
+                    == StrategyLadderControlAction.PHASE_B2_DETAILED_REPLAY
+                ),
             )
-            if parsed_action == StrategyLadderControlAction.PHASE_B2_DETAILED_REPLAY
+            if parsed_action
+            in {
+                StrategyLadderControlAction.PHASE_B_ML_LABEL_FACTORY,
+                StrategyLadderControlAction.PHASE_B2_DETAILED_REPLAY,
+            }
             else None
         )
         metadata_root_path = (
@@ -1330,6 +1410,10 @@ def create_app(
                 workflow_root=workflow_root,
                 phase_id=preflight.phase_id,
                 normalized_request=preflight.normalized_request,
+            ),
+            feature_names_csv=preflight.normalized_request.feature_names,
+            bml_candidate_sampler_mode=(
+                preflight.normalized_request.bml_candidate_sampler_mode
             ),
         )
 
@@ -1542,8 +1626,23 @@ def create_app(
         return templates.TemplateResponse(request, "pages/vps.html", {"vm": view_model})
 
     @app.get("/backtest", response_class=HTMLResponse)
-    def backtest(request: Request, pair: str | None = None) -> HTMLResponse:
-        view_model = _build_vm(request, current_page="backtest", selected_pair=pair)
+    def backtest(
+        request: Request,
+        pair: str | None = None,
+        pinned_run_id: str | None = None,
+    ) -> HTMLResponse:
+        # Patch BACKTEST-RUN-PIN (2026-05-27) — allow operator to pin a
+        # historical run for inspection from the Recent Backtest Jobs table.
+        # When `pinned_run_id` matches a job in the cockpit registry, the
+        # whole strategy_ladder_summary is recomputed for THAT run instead
+        # of the latest job. The cockpit then displays its decision report,
+        # backbone parity card, backbone metrics card, etc. for diagnostic.
+        view_model = _build_vm(
+            request,
+            current_page="backtest",
+            selected_pair=pair,
+            pinned_run_id=(pinned_run_id or "").strip(),
+        )
         return templates.TemplateResponse(
             request,
             "pages/backtest.html",
@@ -1824,6 +1923,7 @@ def create_app(
         intent: str = Form("launch"),
         kline_root: str = Form(...),
         b2_run_root: str = Form(""),
+        label_store_dataset_path: str = Form(""),
         orderbook_root: str = Form(""),
         trades_root: str = Form(""),
         metadata_root: str = Form(""),
@@ -1864,6 +1964,7 @@ def create_app(
             lab_form_state = _build_lab_ml_handoff_form_state(
                 kline_root=kline_root,
                 b2_run_root=b2_run_root,
+                label_store_dataset_path=label_store_dataset_path,
                 orderbook_root=orderbook_root,
                 trades_root=trades_root,
                 metadata_root=metadata_root,
@@ -1921,13 +2022,16 @@ def create_app(
         if (
             intent == "launch"
             and requested_non_legacy_features
-            and not (lab_form_state.b2_run_root or "").strip()
+            and not (
+                (lab_form_state.b2_run_root or "").strip()
+                or (lab_form_state.label_store_dataset_path or "").strip()
+            )
         ):
             write_backtest_form_state(jobs_root, synced_backtest_form)
             return _redirect(
                 "/lab",
                 notice=(
-                    "Non-legacy ML features require B2 run root before launch: "
+                    "Non-legacy ML features require B2 run root or label-store dataset path before launch: "
                     + ", ".join(requested_non_legacy_features)
                 ),
                 notice_status="error",
@@ -1996,6 +2100,11 @@ def create_app(
             job_kind=CockpitBacktestJobKind.STRATEGY_LADDER_ML_LAB_HANDOFF,
             export_dir=kline_path,
             b2_run_root=Path(b2_run_root).expanduser() if (b2_run_root or "").strip() else None,
+            label_store_dataset_path=(
+                Path(label_store_dataset_path).expanduser()
+                if (label_store_dataset_path or "").strip()
+                else None
+            ),
             signed_by=signed_by,
             operator_output_root=output_root,
             raw_roots=(kline_path,),
@@ -2061,6 +2170,7 @@ def create_app(
         allow_broad_run: str = Form(""),
         confirm_broad_run: str = Form(""),
         candidate_discovery_mode: str = Form("SAMPLE_CAPPED_DEBUG"),
+        bml_candidate_sampler_mode: str = Form("TEMPORAL_STRATIFIED_BACKGROUND_GRID"),
         engine_native_sample_size: int = Form(10),
         b1_5_policy_mode: str = Form("conservative_hard_only"),
         preselected_only: str = Form("true"),
@@ -2196,6 +2306,7 @@ def create_app(
             allow_broad_run=allow_broad_run,
             confirm_broad_run=confirm_broad_run,
             candidate_discovery_mode=candidate_discovery_mode,
+            bml_candidate_sampler_mode=bml_candidate_sampler_mode,
             engine_native_sample_size=engine_native_sample_size,
             b1_5_policy_mode=b1_5_policy_mode,
             preselected_only=preselected_only,
@@ -2242,6 +2353,10 @@ def create_app(
                 "ml_artifact_freshness_days": (
                     preflight.normalized_request.ml_artifact_freshness_days
                     or form_state.ml_artifact_freshness_days
+                ),
+                "bml_candidate_sampler_mode": (
+                    preflight.normalized_request.bml_candidate_sampler_mode
+                    or form_state.bml_candidate_sampler_mode
                 ),
             }
         )
@@ -2319,6 +2434,10 @@ def create_app(
                     StrategyLadderControlAction.DATA_FACTORY_SMALL_SCOPE_RUN,
                 }
                 else (
+                    CockpitBacktestJobKind.STRATEGY_LADDER_B_ML_LABEL_FACTORY
+                    if parsed_action
+                    == StrategyLadderControlAction.PHASE_B_ML_LABEL_FACTORY
+                    else
                     CockpitBacktestJobKind.STRATEGY_LADDER_RUNNER
                     if parsed_action
                     in {
@@ -2389,6 +2508,7 @@ def create_app(
                     StrategyLadderControlAction.PHASE_B1_CANDIDATE_DISCOVERY,
                     StrategyLadderControlAction.PHASE_B2_DETAILED_REPLAY,
                 }
+                and form_state.ml_mode == "ML_MODE_OVERLAY_FROZEN"
                 and bool(form_state.selected_features)
                 and not _has_authoritative_frozen_artifact(preflight)
             )
@@ -3030,6 +3150,8 @@ def _serialize_backtest_job(record: object | None) -> dict[str, object] | None:
         "duration_seconds": getattr(record, "duration_seconds", None),
         "progress_pct": getattr(record, "progress_pct", 0),
         "eta_minutes": getattr(record, "eta_minutes", 0.0),
+        "progress_health_status": getattr(record, "progress_health_status", ""),
+        "progress_health_message": getattr(record, "progress_health_message", ""),
         "produced_file_count": getattr(record, "produced_file_count", 0),
         "output_ref_count": getattr(record, "output_ref_count", 0),
         "stdout_log_size_kb": getattr(record, "stdout_log_size_kb", 0.0),

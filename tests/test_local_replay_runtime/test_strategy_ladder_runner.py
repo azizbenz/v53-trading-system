@@ -29,6 +29,7 @@ from local_replay_runtime.strategy_ladder_edge_model_provider import (
     EdgeEstimate,
     GovernedExpectedEdgeModelLoadResult,
 )
+from local_replay_runtime.strategy_ladder_economic_provenance import EconomicProvenance
 from local_replay_runtime.strategy_ladder_engine_native_preselection import (
     StrategyLadderEngineNativePreselectionBuildResult,
 )
@@ -68,13 +69,21 @@ from local_replay_runtime.strategy_ladder_runner import (
     _build_engine_d_diagnosis,
     _build_engine_no_trade_diagnosis_payload,
     _build_profitability_truth_verdict,
+    _materialize_native_candidate_event,
     _expected_edge_model_feature_maps,
     _expected_edge_model_reference_at,
+    _effective_candidate_sample_cap,
+    _candidate_sample_cap_total,
+    _candidate_cap_formula,
+    _engine_input_expected_gain_from_provenance,
+    _engine_input_expected_gain_source_status,
     _blocker_assessment,
     _select_engine_specific_reason_counts,
     _summarize_raw_window_linkage,
     _resolve_run_raw_source_manifest_path,
     _persist_progress_run_manifest,
+    _raw_window_refs_only_linkage_counts,
+    _should_materialize_raw_windows,
     run_backtest_strategy_ladder,
 )
 from interface_contracts.strategy_ladder_workflow_support import (
@@ -270,6 +279,356 @@ def test_temporal_stratified_candidate_budget_covers_multiple_days() -> None:
         for event in result.candidates
     }
     assert len(selected_days) == 2
+
+
+def test_temporal_stratified_candidate_budget_is_pair_engine_aware() -> None:
+    rows = tuple(
+        StrategyLadderFeatureRow.model_validate(
+            _feature_row(
+                pair=pair,
+                engine_id="engine_a",
+                timestamp_ms=1_714_000_000_000 + index * 60_000,
+            )
+        )
+        for pair in ("BNBUSDT", "BTCUSDT")
+        for index in range(3)
+    )
+    _, discovered = discover_strategy_ladder_candidates(
+        run_id="run-temporal-pair-aware",
+        rows=rows,
+    )
+
+    result = apply_strategy_ladder_candidate_budget(
+        discovered,
+        sample_cap_per_engine=1,
+        candidate_discovery_mode="TEMPORAL_STRATIFIED",
+    )
+
+    assert result.limited is True
+    assert len(result.candidates) == 2
+    assert {event.pair for event in result.candidates} == {"BNBUSDT", "BTCUSDT"}
+
+
+def test_full_discovery_explicit_zero_cap_is_uncapped() -> None:
+    request = StrategyLadderRequest(
+        run_id="full-discovery-uncapped",
+        input_root=Path("input"),
+        feature_store_root=Path("feature"),
+        raw_root=Path("raw"),
+        output_root=Path("output"),
+        pairs=("BNBUSDT", "BTCUSDT"),
+        engines=("engine_a", "engine_b", "engine_c", "engine_d"),
+        candidate_discovery_mode="FULL_DISCOVERY",
+        candidate_sample_cap=0,
+        engine_native_sample_size=10,
+        full_scan_enabled=True,
+        small_scope_enabled=False,
+    )
+
+    effective_cap = _effective_candidate_sample_cap(request)
+
+    assert effective_cap == 0
+    assert (
+        _candidate_sample_cap_total(
+            effective_sample_cap=effective_cap,
+            engine_count=4,
+            pair_count=2,
+            candidate_discovery_mode=request.candidate_discovery_mode,
+        )
+        == 0
+    )
+    assert (
+        _candidate_cap_formula(
+            effective_sample_cap=effective_cap,
+            engine_count=4,
+            pair_count=2,
+            candidate_discovery_mode=request.candidate_discovery_mode,
+        )
+        == "uncapped"
+    )
+
+
+def test_refs_only_raw_window_mode_skips_b1_materialization() -> None:
+    scratch = _scratch_dir("refs_only_raw_window_mode")
+    try:
+        request = StrategyLadderRequest(
+            run_id="run-refs-only",
+            input_root=scratch,
+            feature_store_root=scratch,
+            raw_root=scratch,
+            output_root=scratch / "output",
+            pairs=("BTCUSDT",),
+            engines=("engine_a",),
+            timeframes=("5m",),
+            start="2025-07-21",
+            end="2025-07-22",
+            fast_only=True,
+            engine_native_mode=True,
+            raw_window_materialization_mode="refs-only",
+        )
+        candidate = StrategyLadderCandidateEvent(
+            run_id="run-refs-only",
+            candidate_id="cand-refs-only",
+            timestamp_ms=1_714_000_000_000,
+            pair="BTCUSDT",
+            timeframe="5m",
+            engine_id="engine_a",
+            strategy_id="engine_a",
+            candidate_source="COMPAT_FEATURE_DISCOVERY",
+            input_data_hash="hash-cand",
+            method_version_hash="method.v1",
+        )
+
+        assert request.raw_window_materialization_mode == "REFS_ONLY"
+        assert not _should_materialize_raw_windows(
+            request=request,
+            candidate_events=(candidate,),
+        )
+        assert _raw_window_refs_only_linkage_counts((candidate,)) == {
+            "raw_windows_total": 1,
+            "trade_windows_found": 0,
+            "trade_windows_missing": 0,
+            "book_windows_found": 0,
+            "book_windows_missing": 0,
+            "ohlcv_windows_found": 0,
+            "ohlcv_windows_missing": 0,
+            "depth20_found": 0,
+            "depth20_missing": 0,
+        }
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_refs_only_raw_window_mode_persists_final_manifest() -> None:
+    scratch = _scratch_dir("refs_only_raw_window_manifest")
+    shutil.rmtree(scratch, ignore_errors=True)
+    try:
+        input_root = scratch / "input"
+        feature_root = input_root / "feature_store"
+        raw_root = input_root / "raw"
+        (raw_root / "BTCUSDT").mkdir(parents=True, exist_ok=True)
+        _write_json(
+            input_root / "data_factory_manifest.json",
+            {
+                "data_factory_status": "DATA_FACTORY_READY",
+                "raw_source_status": "RAW_SOURCE_READY",
+                "pair_universe_status": "PAIR_UNIVERSE_READY",
+                "silver_index_status": "SILVER_INDEX_READY",
+                "gold_feature_store_status": "FEATURE_STORE_READY",
+            },
+        )
+        _write_json(input_root / "raw_source_report.json", {"raw_source_status": "RAW_SOURCE_READY"})
+        _write_json(
+            input_root / "pair_universe_report.json",
+            {
+                "pair_universe_status": "PAIR_UNIVERSE_READY",
+                "requested_pairs": ["BTCUSDT"],
+                "available_pairs": ["BTCUSDT"],
+                "missing_pairs": [],
+            },
+        )
+        _write_json(
+            input_root / "gold_feature_manifest.json",
+            {
+                "gold_feature_store_status": "FEATURE_STORE_READY",
+                "feature_row_count": 1,
+            },
+        )
+        _write_json(input_root / "silver_index.json", {"status": "SILVER_INDEX_READY"})
+        _write_jsonl(feature_root / "features.jsonl", [_feature_row(pair="BTCUSDT")])
+
+        result = run_backtest_strategy_ladder(
+            StrategyLadderRequest(
+                run_id="run-refs-only-final-manifest",
+                input_root=input_root,
+                feature_store_root=feature_root,
+                raw_root=raw_root,
+                output_root=scratch / "output",
+                pairs=("BTCUSDT",),
+                engines=("engine_a",),
+                capital_buckets=(400,),
+                timeframes=("5m",),
+                fast_only=True,
+                raw_window_materialization_mode="refs-only",
+            )
+        )
+
+        run_dir = (
+            scratch
+            / "output"
+            / "backtest_strategy_ladder"
+            / "run-refs-only-final-manifest"
+        )
+        disk_manifest = json.loads(
+            (run_dir / "run_manifest.json").read_text(encoding="utf-8")
+        )
+        disk_summary = json.loads(
+            (run_dir / "reports" / "strategy_ladder_summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+        assert result.run_manifest.raw_window_extraction_status == "RAW_WINDOW_REFS_ONLY"
+        assert result.run_manifest.raw_window_materialization_mode == "REFS_ONLY"
+        assert result.report_summary.raw_window_materialization_mode == "REFS_ONLY"
+        assert disk_manifest["raw_window_materialization_mode"] == "REFS_ONLY"
+        assert disk_summary["raw_window_materialization_mode"] == "REFS_ONLY"
+        tabular_manifest = json.loads(
+            (
+                run_dir
+                / "fast_candidates"
+                / "candidate_events.tabular_manifest.json"
+            ).read_text(encoding="utf-8")
+        )
+        assert tabular_manifest["artifact_name"] == "candidate_events"
+        assert tabular_manifest["audit_jsonl_preserved"] is True
+        assert tabular_manifest["status"] in {
+            "TABULAR_MIRROR_PARQUET_READY",
+            "TABULAR_MIRROR_COLUMNAR_JSON_READY",
+        }
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_b2_detailed_replay_keeps_raw_window_materialization_by_default() -> None:
+    scratch = _scratch_dir("b2_materialize_default")
+    try:
+        request = StrategyLadderRequest(
+            run_id="run-b2-materialize",
+            input_root=scratch,
+            feature_store_root=scratch,
+            raw_root=scratch,
+            output_root=scratch / "output",
+            pairs=("BTCUSDT",),
+            engines=("engine_a",),
+            timeframes=("5m",),
+            start="2025-07-21",
+            end="2025-07-22",
+            engine_native_mode=True,
+        )
+        candidate = StrategyLadderCandidateEvent(
+            run_id="run-b2-materialize",
+            candidate_id="cand-b2-materialize",
+            timestamp_ms=1_714_000_000_000,
+            pair="BTCUSDT",
+            timeframe="5m",
+            engine_id="engine_a",
+            strategy_id="engine_a",
+            candidate_source="COMPAT_FEATURE_DISCOVERY",
+            input_data_hash="hash-cand",
+            method_version_hash="method.v1",
+        )
+
+        assert request.raw_window_materialization_mode == "MATERIALIZE"
+        assert _should_materialize_raw_windows(
+            request=request,
+            candidate_events=(candidate,),
+        )
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_ml_off_expected_edge_proxy_is_readiness_blocker_not_hard_selection_blocker() -> None:
+    candidate = StrategyLadderCandidateEvent(
+        run_id="run-ml-off",
+        candidate_id="cand-ml-off",
+        timestamp_ms=1_714_000_000_000,
+        pair="BTCUSDT",
+        timeframe="5m",
+        engine_id="engine_a",
+        strategy_id="engine_a",
+        candidate_source="COMPAT_FEATURE_DISCOVERY",
+        input_data_hash="hash-cand",
+        method_version_hash="method.v1",
+    )
+    provenance = EconomicProvenance(
+        expected_edge_bps=0.0,
+        expected_edge_provenance="PROXY_FORWARD_RETURN_MEDIAN_TO_CALIBRATE",
+        spread_bps=1.0,
+        spread_provenance="MEASURED_FROM_BOOK_RECONSTRUCTION",
+        slippage_bps=1.0,
+        slippage_provenance="MEASURED_FROM_DEPTH20_BOOK_WALK",
+        latency_penalty_bps=0.0,
+        latency_provenance="MEASURED_FROM_VENUE_MODEL",
+        fee_bps=1.0,
+        fee_provenance="MEASURED_FROM_VENUE_METADATA",
+        measured_cost_governance={
+            "cost_source_used_for_break_even": "measured",
+            "expected_cost_truth_status": "FULLY_MEASURED_COST",
+            "expected_cost_block_reason": "",
+        },
+    )
+
+    materialized = _materialize_native_candidate_event(
+        candidate=candidate,
+        window=None,
+        economic_provenance=provenance,
+        builder_status="ENGINE_NATIVE_INPUT_BUILDER_FAILED_NO_RAW_WINDOW",
+        builder_warnings=("RAW_WINDOW_NOT_AVAILABLE",),
+        builder_provenance="ENGINE_NATIVE_INPUT_PROVENANCE_NOT_PROVEN",
+        engine_output=None,
+        engine_input_payload={},
+        build14_application=None,
+        records_built=0,
+        runner_invoked=False,
+        ml_mode="ML_MODE_OFF",
+    )
+
+    payload = dict(materialized.compatibility_payload or {})
+    assert "EXPECTED_EDGE_PROXY_BLOCKED" not in payload["hard_block_reasons"]
+    assert "EXPECTED_EDGE_PROXY_BLOCKED" in payload["profitability_blocker_reasons"]
+    assert (
+        payload["expected_edge_selection_gate_status"]
+        == "EXPECTED_EDGE_SELECTION_GATE_DISABLED_IN_ML_OFF"
+    )
+
+
+def test_ml_off_uses_causal_edge_proxy_for_engine_input_only() -> None:
+    provenance = EconomicProvenance(
+        expected_edge_bps=12.5,
+        expected_edge_provenance="PROXY_FORWARD_RETURN_MEDIAN_TO_CALIBRATE",
+        spread_bps=1.0,
+        spread_provenance="MEASURED_FROM_BOOK_RECONSTRUCTION",
+        slippage_bps=1.0,
+        slippage_provenance="MEASURED_FROM_DEPTH20_BOOK_WALK",
+        latency_penalty_bps=0.0,
+        latency_provenance="MEASURED_FROM_VENUE_MODEL",
+        fee_bps=1.0,
+        fee_provenance="MEASURED_FROM_VENUE_METADATA",
+    )
+
+    assert _engine_input_expected_gain_from_provenance(
+        provenance,
+        ml_mode="ML_MODE_OFF",
+    ) == pytest.approx(0.00125)
+    assert _engine_input_expected_gain_source_status(
+        provenance,
+        ml_mode="ML_MODE_OFF",
+    ) == "ENGINE_INPUT_EDGE_CAUSAL_PROXY_DIAGNOSTIC_ML_OFF"
+
+
+def test_overlay_zeroes_non_governed_engine_input_edge() -> None:
+    provenance = EconomicProvenance(
+        expected_edge_bps=12.5,
+        expected_edge_provenance="PROXY_FORWARD_RETURN_MEDIAN_TO_CALIBRATE",
+        spread_bps=1.0,
+        spread_provenance="MEASURED_FROM_BOOK_RECONSTRUCTION",
+        slippage_bps=1.0,
+        slippage_provenance="MEASURED_FROM_DEPTH20_BOOK_WALK",
+        latency_penalty_bps=0.0,
+        latency_provenance="MEASURED_FROM_VENUE_MODEL",
+        fee_bps=1.0,
+        fee_provenance="MEASURED_FROM_VENUE_METADATA",
+    )
+
+    assert _engine_input_expected_gain_from_provenance(
+        provenance,
+        ml_mode="ML_MODE_OVERLAY_FROZEN",
+    ) == 0.0
+    assert _engine_input_expected_gain_source_status(
+        provenance,
+        ml_mode="ML_MODE_OVERLAY_FROZEN",
+    ) == "ENGINE_INPUT_EDGE_ZEROED_EXPECTED_EDGE_NOT_GOVERNED"
 
 
 def test_count_executed_trades_accepts_lowercase_replay_states() -> None:
@@ -1350,19 +1709,22 @@ def test_strategy_ladder_runner_materializes_native_candidates_and_blocks_proxy_
         assert payload["engine_native_decision"] == "no_trade"
         assert payload["production_decision_state"] == "hard_blocked"
         assert payload["target_decision_state"] == "hard_blocked"
-        assert "EXPECTED_EDGE_NOT_GOVERNED_FOR_BACKTEST_TRUTH" in payload["hard_block_reasons"]
-        assert "FEE_AWARE_EDGE_PROXY_BLOCKED" in payload["hard_block_reasons"]
-        assert "BREAK_EVEN_PROXY_BLOCKED" in payload["hard_block_reasons"]
+        assert "EXPECTED_EDGE_NOT_GOVERNED_FOR_BACKTEST_TRUTH" not in payload["hard_block_reasons"]
+        assert "FEE_AWARE_EDGE_PROXY_BLOCKED" not in payload["hard_block_reasons"]
+        assert "BREAK_EVEN_PROXY_BLOCKED" not in payload["hard_block_reasons"]
+        assert "EXPECTED_EDGE_NOT_GOVERNED_FOR_BACKTEST_TRUTH" in payload["profitability_blocker_reasons"]
+        assert "FEE_AWARE_EDGE_PROXY_BLOCKED" in payload["profitability_blocker_reasons"]
+        assert "BREAK_EVEN_PROXY_BLOCKED" in payload["profitability_blocker_reasons"]
         candidate_id = event["candidate_id"]
         replay_payload = json.loads(
             (run_dir / "detailed_replay" / "by_bucket" / "400" / f"{candidate_id}.json")
             .read_text(encoding="utf-8")
         )
         assert replay_payload["execution_state"] == "hard_blocked"
-        assert "EXPECTED_EDGE_NOT_GOVERNED_FOR_BACKTEST_TRUTH" in replay_payload["reason_codes"]
+        assert "EXPECTED_EDGE_NOT_GOVERNED_FOR_BACKTEST_TRUTH" not in replay_payload["reason_codes"]
         assert (
             "EXPECTED_EDGE_NOT_GOVERNED_FOR_BACKTEST_TRUTH"
-            in replay_payload["dtr_record"]["cause_chain"]
+            not in replay_payload["dtr_record"]["cause_chain"]
         )
         refusal_rows = [
             json.loads(line)
@@ -1371,7 +1733,7 @@ def test_strategy_ladder_runner_materializes_native_candidates_and_blocks_proxy_
         ]
         assert refusal_rows
         assert refusal_rows[0]["execution_state"] == "hard_blocked"
-        assert "EXPECTED_EDGE_NOT_GOVERNED_FOR_BACKTEST_TRUTH" in refusal_rows[0]["reason_codes"]
+        assert "EXPECTED_EDGE_NOT_GOVERNED_FOR_BACKTEST_TRUTH" not in refusal_rows[0]["reason_codes"]
         summary_payload = json.loads(
             (run_dir / "reports" / "strategy_ladder_summary.json").read_text(encoding="utf-8")
         )
@@ -3281,6 +3643,11 @@ def test_post_b2_refusal_audit_prefers_engine_specific_non_build14_reasons() -> 
     engine_d_assessment = _blocker_assessment(engine_d_codes)
     assert engine_d_assessment["assessment"] == "SUSPECTED_WIRING_ISSUE"
     assert engine_d_assessment["classification"] == "history"
+    cold_start_assessment = _blocker_assessment(
+        ("ENGINE_D_COLD_START_NO_CLOSED_EPISODE_SOURCE",)
+    )
+    assert cold_start_assessment["assessment"] == "HEALTHY_ENGINE_D_COLD_START_BLOCKER"
+    assert cold_start_assessment["classification"] == "history"
 
 
 def test_engine_d_missing_closed_episode_journal_is_classified_explicitly() -> None:
@@ -3318,8 +3685,8 @@ def test_engine_d_missing_closed_episode_journal_is_classified_explicitly() -> N
         assert diagnosis["first_episode_ref_status"] == "FIRST_EPISODE_REF_MISSING"
         assert diagnosis["closed_episode_source_status"] == "REQUIRED_FOR_ENGINE_D_BUT_NO_VALID_EPISODE_SOURCE"
         assert diagnosis["reentry_age_status"] == "REENTRY_AGE_BLOCKED_BY_MISSING_FIRST_EPISODE"
-        assert "ENGINE_D_HISTORY_BLOCKED_BY_MISSING_CLOSED_EPISODE_JOURNAL" in diagnosis["suspected_wiring_gaps"]
-        assert diagnosis["recommended_next_action"] == "BUILD_CLOSED_EPISODE_JOURNAL_FOR_ENGINE_D"
+        assert "ENGINE_D_COLD_START_NO_CLOSED_EPISODE_SOURCE" in diagnosis["suspected_wiring_gaps"]
+        assert diagnosis["recommended_next_action"] == "PROVIDE_REAL_CLOSED_EPISODE_SOURCE_FOR_ENGINE_D"
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 

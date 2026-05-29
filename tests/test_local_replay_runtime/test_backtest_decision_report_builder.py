@@ -104,6 +104,118 @@ def test_backtest_decision_report_builder_marks_ml_delta_unavailable(
     assert ml_delta["reason"] == "aligned_baseline_and_overlay_run_dirs_not_provided"
 
 
+def test_backtest_decision_report_builder_separates_distinct_candidates_from_bucket_records(
+    repo_tmp_path: Path,
+) -> None:
+    """Patch P0-COUNT-1 (2026-05-27) — bucket expansion regression test.
+
+    When a single candidate is replicated across N capital buckets, the legacy
+    ``selected_count`` / ``executed_count`` are bucket-record counters and
+    inflate by N. The audit on run strategy_ladder_workflow-2df91d9d5c48dfbf
+    showed 1 distinct candidate appearing as ``selected_count=4`` (1 × 4
+    buckets). The new ``selected_distinct_candidate_count`` /
+    ``executed_distinct_candidate_count`` collapse the replication.
+    """
+    import json as _json
+
+    run_dir = repo_tmp_path / "backtest_strategy_ladder" / "run-bucket-replication"
+    _seed_partial_run(run_dir)
+
+    # Replace the partial-run hard-blocked sample with one executed candidate
+    # replicated across 4 capital buckets to simulate the audited scenario.
+    reports = run_dir / "reports"
+    detailed = run_dir / "detailed_replay" / "by_bucket"
+    # Clear the 400-bucket sample and rebuild with executed state.
+    for bucket in (400, 500, 1500, 4000):
+        bucket_dir = detailed / str(bucket)
+        bucket_dir.mkdir(parents=True, exist_ok=True)
+        (bucket_dir / "c1.json").write_text(
+            _json.dumps(
+                {
+                    "candidate_id": "c1",
+                    "pair": "BTCUSDT",
+                    "engine_id": "engine_a",
+                    "strategy_id": "strategy_a",
+                    "capital_bucket": bucket,
+                    "execution_state": "executed",
+                    "reason_codes": [
+                        "engine_a.emit.valid",
+                        "B2_COST_MEASUREMENT_BLOCKED",
+                    ],
+                    "fill_realism_status": "FILL_REALISM_SHADOW_MEASURED",
+                    "executed_only_net_return": -0.0067,
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+
+    # Update matrix files so ranking sees the executions.
+    (reports / "timeframe_matrix.json").write_text(
+        _json.dumps(
+            [
+                {
+                    "timeframe": "1m",
+                    "candidate_count": 1,
+                    "executed_count": 4,
+                    "net_pnl_bps": -46.04,
+                }
+            ],
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    (reports / "pair_matrix.json").write_text(
+        _json.dumps(
+            [
+                {
+                    "pair": "BTCUSDT",
+                    "candidate_count": 1,
+                    "selected_count": 4,
+                    "executed_count": 4,
+                    "executed_only_net_return": -0.0067,
+                }
+            ],
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
+    write_backtest_decision_reports(run_dir)
+
+    # Timeframe ranking : the 4 bucket-records correspond to 1 distinct
+    # candidate. P1-RANKING-WORDING-1 also blocks `ranked` for N=1.
+    tf_report = _read_json(reports / "timeframe_ranking_report.json")
+    assert tf_report["timeframes_tested_count"] == 1
+    assert tf_report["ranking_status"] == "ONLY_AVAILABLE_PARTIAL_NO_RANK"
+    assert tf_report["top_timeframe"] is None
+    assert tf_report["only_timeframe_tested"] == "1m"
+    tf_row = tf_report["rows"][0]
+    assert tf_row["selected_count"] == 4, "legacy bucket-record count preserved"
+    assert tf_row["executed_count"] == 4
+    assert tf_row["selected_bucket_record_count"] == 4
+    assert tf_row["selected_distinct_candidate_count"] == 1, (
+        "P0-COUNT-1: 1 candidate × 4 buckets should collapse to 1 distinct"
+    )
+    assert tf_row["executed_distinct_candidate_count"] == 1
+
+    # Pair ranking : same collapse + wording downgrade for N=1.
+    pair_report = _read_json(reports / "pair_ranking_report.json")
+    assert pair_report["pairs_tested_count"] == 1
+    assert pair_report["ranking_status"] == "ONLY_AVAILABLE_PARTIAL_NO_RANK"
+    assert pair_report["top_pair"] is None
+    assert pair_report["only_pair_tested"] == "BTCUSDT"
+    pair_row = pair_report["rows"][0]
+    assert pair_row["selected_count"] == 4
+    assert pair_row["executed_count"] == 4
+    assert pair_row["selected_bucket_record_count"] == 4
+    assert pair_row["selected_distinct_candidate_count"] == 1
+    assert pair_row["executed_distinct_candidate_count"] == 1
+
+
 def test_backtest_decision_report_builder_does_not_hallucinate_feature_importance(
     repo_tmp_path: Path,
 ) -> None:

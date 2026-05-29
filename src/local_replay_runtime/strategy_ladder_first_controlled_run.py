@@ -216,7 +216,19 @@ def run_strategy_ladder_first_controlled_run(
             ladder_result=None,
         )
 
-    data_factory_result = run_strategy_ladder_data_factory(
+    # Patch T13-CLI (2026-05-28) — opt-in A2 cache via env. When
+    # `V53_A2_CACHE_BASE` is set the inner data_factory call is routed
+    # through the content-addressable wrapper; absent → legacy behaviour
+    # (byte-identical to before this patch).
+    import os as _os
+    _cache_base_env = (_os.environ.get("V53_A2_CACHE_BASE") or "").strip()
+    if _cache_base_env and _os.environ.get("V53_A2_CACHE", "1") != "0":
+        from local_replay_runtime.a2_cache_runner import (
+            run_strategy_ladder_data_factory_cached as _df_call,
+        )
+    else:
+        _df_call = run_strategy_ladder_data_factory
+    data_factory_result = _df_call(
         StrategyLadderDataFactoryRequest(
             run_id=request.run_id,
             input_root=output_root,
@@ -228,6 +240,7 @@ def run_strategy_ladder_first_controlled_run(
             pairs=request.pairs,
             engines=request.engines,
             timeframes=request.timeframes,
+            feature_names=request.feature_names,
             start=request.start,
             end=request.end,
             resume=False,

@@ -29,6 +29,7 @@ from cockpit.backtest_state_support import (
     BacktestPreviewManifest,
     Patch6NormalizedRequest,
     build_patch6_normalized_request,
+    canonical_patch6_raw_roots,
     canonicalize_workflow_identity,
     phase_id_for_action,
     phase_label_for_action,
@@ -41,6 +42,7 @@ from cockpit.strategy_ladder_workflow_support import (
     PHASE_A1,
     PHASE_A2,
     PHASE_B1,
+    PHASE_B_ML,
     PHASE_B2,
     read_workflow_manifest,
     workflow_phase_dirname,
@@ -202,11 +204,13 @@ def resolve_phase_b1_replay_input_candidates_path(
     *,
     workflow_root: Path,
     workflow_run_id: str,
+    allow_discovery_fallback: bool = False,
 ) -> Path | None:
     run_root = _phase_b1_runner_root(
         workflow_root=workflow_root,
         workflow_run_id=workflow_run_id,
     )
+    candidate_events_path = run_root / "fast_candidates" / "candidate_events.jsonl"
     preselection_summary_path = run_root / "reports" / "preselection_summary.json"
     preselection_candidates_path = run_root / "preselection_candidates.jsonl"
     preselection_summary = _load_json_dict(preselection_summary_path)
@@ -216,6 +220,8 @@ def resolve_phase_b1_replay_input_candidates_path(
         and preselection_candidates_path.is_file()
     ):
         return preselection_candidates_path
+    if allow_discovery_fallback and candidate_events_path.is_file():
+        return candidate_events_path
     return None
 
 
@@ -287,10 +293,7 @@ def _reuse_matching_workflow_parent(
             and workflow_manifest.end == normalized_request.end
         )
 
-    requested_workflow_run_id = (requested_workflow_run_id or "").strip()
-    if not requested_workflow_run_id:
-        if normalized_request.phase_id == PHASE_A1:
-            return normalized_request
+    def _matching_workflow_candidates() -> list[tuple[float, str]]:
         matching_candidates: list[tuple[float, str]] = []
         for workflow_root in _iter_workflow_roots(
             output_root_text=output_root_text,
@@ -319,9 +322,16 @@ def _reuse_matching_workflow_parent(
             except OSError:
                 mtime = 0.0
             matching_candidates.append((mtime, workflow_run_id))
+        matching_candidates.sort(reverse=True)
+        return matching_candidates
+
+    requested_workflow_run_id = (requested_workflow_run_id or "").strip()
+    if not requested_workflow_run_id:
+        if normalized_request.phase_id == PHASE_A1:
+            return normalized_request
+        matching_candidates = _matching_workflow_candidates()
         if not matching_candidates:
             return normalized_request
-        matching_candidates.sort(reverse=True)
         return normalized_request.model_copy(
             update={"workflow_run_id": matching_candidates[0][1]}
         )
@@ -341,7 +351,14 @@ def _reuse_matching_workflow_parent(
             return normalized_request.model_copy(
                 update={"workflow_run_id": requested_workflow_run_id}
             )
-    return normalized_request
+    if normalized_request.phase_id == PHASE_A1:
+        return normalized_request
+    matching_candidates = _matching_workflow_candidates()
+    if not matching_candidates:
+        return normalized_request
+    return normalized_request.model_copy(
+        update={"workflow_run_id": matching_candidates[0][1]}
+    )
 _PAIR_DATE_PATTERN = re.compile(r"^(?P<pair>[A-Z0-9/_-]+)_(?P<date>\d{4}-\d{2}-\d{2})$")
 _PAIR_TF_DATE_PATTERN = re.compile(
     r"^(?P<pair>[A-Z0-9/_-]+)_(?P<timeframe>[A-Za-z0-9]+)_(?P<date>\d{4}-\d{2}-\d{2})$"
@@ -1397,6 +1414,8 @@ def _selected_action_job_kind(action_name: str) -> CockpitBacktestJobKind:
         StrategyLadderControlAction.PHASE_B2_DETAILED_REPLAY.value,
     }:
         return CockpitBacktestJobKind.STRATEGY_LADDER_RUNNER
+    if action_name == StrategyLadderControlAction.PHASE_B_ML_LABEL_FACTORY.value:
+        return CockpitBacktestJobKind.STRATEGY_LADDER_B_ML_LABEL_FACTORY
     return CockpitBacktestJobKind.STRATEGY_LADDER_FIRST_CONTROLLED_RUN
 
 
@@ -1409,9 +1428,11 @@ def _build_preview_command(
     orderbook_path: str,
     trades_path: str,
     klines_path: str,
+    raw_roots: tuple[str, ...],
     metadata_path: str,
     pairs: tuple[str, ...],
     backtest_timeframes: tuple[str, ...],
+    feature_names: str,
     start: str,
     end: str,
     ml_mode: str,
@@ -1423,7 +1444,10 @@ def _build_preview_command(
     output_root: str,
     workflow_run_id: str,
     engine_native_sample_size: int,
+    candidate_sample_cap: int,
     candidate_discovery_mode: str,
+    candidate_events_path: str = "",
+    bml_candidate_sampler_mode: str = "TEMPORAL_STRATIFIED_BACKGROUND_GRID",
     small_scope_enabled: bool,
     full_scan_enabled: bool,
     no_full_scan_enabled: bool,
@@ -1431,6 +1455,55 @@ def _build_preview_command(
     silver_storage_mode: str,
 ) -> str:
     job_kind = _selected_action_job_kind(action_name)
+    if job_kind == CockpitBacktestJobKind.STRATEGY_LADDER_B_ML_LABEL_FACTORY:
+        a2_run_root = str((Path(output_root).parent / workflow_phase_dirname(PHASE_A2)))
+        parts = [
+            "python",
+            "scripts/run_strategy_ladder_b_ml_label_factory.py",
+            "--workflow-run-id",
+            workflow_run_id or "preview-job",
+            "--a2-run-root",
+            a2_run_root,
+            "--output-root",
+            output_root,
+        ]
+        parts.extend(["--pairs", ",".join(pairs) if pairs else "BTCUSDT"])
+        parts.extend(
+            [
+                "--timeframes",
+                ",".join(backtest_timeframes) if backtest_timeframes else "1m",
+            ]
+        )
+        if start:
+            parts.extend(["--start", start])
+        if end:
+            parts.extend(["--end", end])
+        if (feature_names or "").strip():
+            parts.extend(["--feature-names", feature_names.strip()])
+        parts.extend(["--label-horizons", "5m,15m,1h"])
+        parts.extend(["--capital-buckets", "400,500,1500,4000"])
+        parts.extend(
+            [
+                "--candidate-sampler-mode",
+                bml_candidate_sampler_mode
+                or "TEMPORAL_STRATIFIED_BACKGROUND_GRID",
+            ]
+        )
+        candidate_events_path = (
+            Path(output_root).parent
+            / workflow_phase_dirname(PHASE_B1)
+            / "backtest_strategy_ladder"
+            / (workflow_run_id or "preview-job")
+            / "fast_candidates"
+            / "candidate_events.jsonl"
+        )
+        if bml_candidate_sampler_mode in {
+            "REUSE_B1_FAST_CANDIDATES",
+            "ENGINE_NATIVE_DRY_EVAL",
+            "ENGINE_NATIVE_DRY_EVAL_AND_BACKGROUND_GRID",
+        }:
+            parts.extend(["--b1-candidate-events-path", str(candidate_events_path)])
+        return " ".join(parts)
     script = (
         "run_strategy_ladder_data_factory.py"
         if job_kind == CockpitBacktestJobKind.STRATEGY_LADDER_DATA_FACTORY
@@ -1487,7 +1560,7 @@ def _build_preview_command(
                 )
     if baseline_export_dir:
         parts.extend(["--baseline-export-dir", baseline_export_dir])
-    for selected in (orderbook_path, trades_path, klines_path):
+    for selected in tuple(dict.fromkeys(raw_roots or (orderbook_path, trades_path, klines_path))):
         cleaned = (selected or "").strip()
         if cleaned:
             parts.extend(["--raw-root", cleaned])
@@ -1497,7 +1570,12 @@ def _build_preview_command(
         parts.extend(["--raw-source-manifest", raw_source_manifest_path])
     if pairs:
         parts.extend(["--pairs", ",".join(pairs)])
-    if job_kind == CockpitBacktestJobKind.STRATEGY_LADDER_RUNNER and backtest_timeframes:
+    if (feature_names or "").strip():
+        parts.extend(["--feature-names", feature_names.strip()])
+    if job_kind in {
+        CockpitBacktestJobKind.STRATEGY_LADDER_DATA_FACTORY,
+        CockpitBacktestJobKind.STRATEGY_LADDER_RUNNER,
+    } and backtest_timeframes:
         parts.extend(["--timeframes", ",".join(backtest_timeframes)])
     if start:
         parts.extend(["--start", start])
@@ -1518,13 +1596,16 @@ def _build_preview_command(
                 "--candidate-discovery-mode",
                 candidate_discovery_mode,
                 "--candidate-sample-cap",
-                str(engine_native_sample_size),
+                str(candidate_sample_cap),
             ]
         )
         if action_name == StrategyLadderControlAction.PHASE_B1_CANDIDATE_DISCOVERY.value:
             parts.append("--fast-only")
+            parts.extend(["--raw-window-mode", "REFS_ONLY"])
         elif action_name == StrategyLadderControlAction.PHASE_B2_DETAILED_REPLAY.value:
             parts.extend(["--detailed-only", "--resume"])
+            if (candidate_events_path or "").strip():
+                parts.extend(["--candidate-events-path", candidate_events_path.strip()])
     elif job_kind == CockpitBacktestJobKind.STRATEGY_LADDER_FIRST_CONTROLLED_RUN:
         parts.extend(
             [
@@ -1743,14 +1824,10 @@ def build_patch6_preflight_preview(
         if jobs_root is not None
         else Path.cwd() / "__preview__" / "output"
     )
+    canonical_raw_root_strings = canonical_patch6_raw_roots(selected_form)
     raw_root_paths = tuple(
         Path(path).expanduser()
-        for path in (
-            selected_form.orderbook_path,
-            selected_form.trades_path,
-            selected_form.klines_path,
-            selected_form.metadata_path,
-        )
+        for path in (*canonical_raw_root_strings, selected_form.metadata_path)
         if (path or "").strip()
     )
     # Patch P4b (2026-05-22) — compute parent-path expansion for audit visibility.
@@ -1874,12 +1951,24 @@ def build_patch6_preflight_preview(
     effective_output_root = str(
         (workflow_root / workflow_phase_dirname(normalized_request.phase_id)).resolve()
     )
-    candidate_sample_cap = max(int(normalized_request.engine_native_sample_size), 0) * 4
+    full_discovery_uncapped = (
+        normalized_request.candidate_discovery_mode == "FULL_DISCOVERY"
+        and normalized_request.full_scan_enabled
+    )
+    candidate_sample_cap = (
+        0
+        if full_discovery_uncapped
+        else max(int(normalized_request.engine_native_sample_size), 0) * 4
+    )
     candidate_cap_formula = (
-        f"4 engines x {max(int(normalized_request.engine_native_sample_size), 0)}"
+        "uncapped"
+        if full_discovery_uncapped
+        else f"4 engines x {max(int(normalized_request.engine_native_sample_size), 0)}"
     )
     candidate_discovery_limited = (
-        normalized_request.candidate_discovery_mode == "SAMPLE_CAPPED_DEBUG"
+        False
+        if full_discovery_uncapped
+        else normalized_request.candidate_discovery_mode == "SAMPLE_CAPPED_DEBUG"
         or normalized_request.small_scope_enabled
         or max(int(normalized_request.engine_native_sample_size), 0) > 0
     )
@@ -1897,7 +1986,8 @@ def build_patch6_preflight_preview(
     )
     candidate_discovery_cap_status = (
         "CANDIDATE_DISCOVERY_SAMPLE_CAPPED"
-        if normalized_request.candidate_discovery_mode in {
+        if not full_discovery_uncapped
+        and normalized_request.candidate_discovery_mode in {
             "SAMPLE_CAPPED_DEBUG",
             "TEMPORAL_STRATIFIED",
             "TEMPORAL_STRATIFIED_SAMPLE_BUDGET",
@@ -1966,6 +2056,7 @@ def build_patch6_preflight_preview(
     phase_b1_preselected_candidates_path = resolve_phase_b1_replay_input_candidates_path(
         workflow_root=workflow_root,
         workflow_run_id=workflow_run_id,
+        allow_discovery_fallback=(normalized_request.phase_id == PHASE_B2),
     )
     if normalized_request.phase_id == PHASE_B1:
         if not phase_a2_manifest_path.is_file():
@@ -1993,10 +2084,29 @@ def build_patch6_preflight_preview(
             pair_blockers.append("SILVER_INDEX_NOT_MATERIALIZED_FOR_B2")
         if not phase_b1_candidate_events_path.is_file():
             pair_blockers.append("PHASE_B2_REQUIRES_B1_CANDIDATE_EVENTS")
-        if not phase_b1_preselection_summary_path.is_file():
-            pair_blockers.append("PHASE_B2_REQUIRES_B1_NATIVE_PRESELECTION")
         elif phase_b1_preselected_candidates_path is None:
-            pair_blockers.append("PHASE_B2_REQUIRES_B1_PRESELECTED_CANDIDATES")
+            pair_blockers.append("PHASE_B2_REQUIRES_B1_REPLAY_INPUT_CANDIDATES")
+        elif not phase_b1_preselection_summary_path.is_file():
+            warnings.append("PHASE_B2_TARGETED_TRUTH_FROM_B1_DISCOVERY_CANDIDATES")
+    elif normalized_request.phase_id == PHASE_B_ML:
+        if not phase_a2_manifest_path.is_file():
+            pair_blockers.append("PHASE_B_ML_REQUIRES_A2_DATA_FACTORY_ARTIFACTS")
+        else:
+            a2_launch_ready, a2_reason = _check_a2_upstream_launch_ready(
+                phase_a2_manifest_path
+            )
+            if not a2_launch_ready:
+                pair_blockers.append(a2_reason)
+        if not phase_a2_gold_root.is_dir():
+            pair_blockers.append("PHASE_B_ML_REQUIRES_A2_GOLD_FEATURES")
+        if not phase_a2_silver_index_path.is_file():
+            pair_blockers.append("PHASE_B_ML_REQUIRES_A2_SILVER_INDEX")
+        if normalized_request.bml_candidate_sampler_mode in {
+            "REUSE_B1_FAST_CANDIDATES",
+            "ENGINE_NATIVE_DRY_EVAL",
+            "ENGINE_NATIVE_DRY_EVAL_AND_BACKGROUND_GRID",
+        } and not phase_b1_candidate_events_path.is_file():
+            pair_blockers.append("PHASE_B_ML_REQUIRES_B1_CANDIDATE_EVENTS")
     command_preview = ""
     if launch_ready:
         command_preview = _build_preview_command(
@@ -2007,9 +2117,11 @@ def build_patch6_preflight_preview(
             orderbook_path=selected_form.orderbook_path,
             trades_path=selected_form.trades_path,
             klines_path=selected_form.klines_path,
+            raw_roots=normalized_request.raw_roots,
             metadata_path=selected_form.metadata_path,
             pairs=normalized_request.pair_subset,
             backtest_timeframes=normalized_request.backtest_timeframes,
+            feature_names=normalized_request.feature_names,
             start=normalized_request.start,
             end=normalized_request.end,
             ml_mode=normalized_request.ml_mode,
@@ -2021,7 +2133,17 @@ def build_patch6_preflight_preview(
             output_root=effective_output_root,
             workflow_run_id=workflow_run_id,
             engine_native_sample_size=normalized_request.engine_native_sample_size,
+            candidate_sample_cap=candidate_sample_cap,
             candidate_discovery_mode=normalized_request.candidate_discovery_mode,
+            candidate_events_path=(
+                str(phase_b1_preselected_candidates_path)
+                if phase_b1_preselected_candidates_path is not None
+                and normalized_request.phase_id == PHASE_B2
+                else ""
+            ),
+            bml_candidate_sampler_mode=(
+                normalized_request.bml_candidate_sampler_mode
+            ),
             small_scope_enabled=normalized_request.small_scope_enabled,
             full_scan_enabled=normalized_request.full_scan_enabled,
             no_full_scan_enabled=normalized_request.no_full_scan_enabled,
@@ -2074,6 +2196,12 @@ def build_patch6_preflight_preview(
             "PHASE_B1_CANDIDATE_DISCOVERY_READY"
             if launch_ready and not pair_blockers
             else "PHASE_B1_CANDIDATE_DISCOVERY_BLOCKED"
+        )
+    elif normalized_request.phase_id == PHASE_B_ML:
+        inspection_status = (
+            "PHASE_B_ML_LABEL_FACTORY_READY"
+            if launch_ready and not pair_blockers
+            else "PHASE_B_ML_LABEL_FACTORY_BLOCKED"
         )
     else:
         inspection_status = (
@@ -2165,6 +2293,7 @@ def load_patch6_preflight_preview(
     *,
     selected_form: BacktestFormState,
     preview_manifest: BacktestPreviewManifest | None,
+    jobs_root: Path | None,
 ) -> BacktestPreflightPreview:
     ml_overlay_intake = _build_ml_overlay_intake_preview(selected_form=selected_form)
     selected_form = _apply_ml_overlay_intake_to_form(
@@ -2180,21 +2309,30 @@ def load_patch6_preflight_preview(
         normalized_request,
         force_new_workflow=force_new_workflow,
     )
+    output_root_text = normalized_request.output_root_selected
     normalized_request = _reuse_existing_phase_a1_workflow(
         normalized_request=normalized_request,
         workflow_request_hash=workflow_request_hash,
         requested_workflow_run_id=requested_workflow_run_id,
-        output_root_text=selected_form.export_dir,
-        jobs_root=None,
+        output_root_text=output_root_text,
+        jobs_root=jobs_root,
     )
     normalized_request = _reuse_matching_workflow_parent(
         normalized_request=normalized_request,
         requested_workflow_run_id=requested_workflow_run_id,
         workflow_request_hash=workflow_request_hash,
-        output_root_text=selected_form.export_dir,
-        jobs_root=None,
+        output_root_text=output_root_text,
+        jobs_root=jobs_root,
     )
     request_hash = request_hash_for_normalized_request(normalized_request)
+    allow_phase_a1_preview_for_phase_a2 = (
+        preview_manifest is not None
+        and normalized_request.phase_id == PHASE_A2
+        and preview_manifest.phase_id == PHASE_A1
+        and bool(preview_manifest.workflow_request_hash)
+        and preview_manifest.workflow_request_hash == workflow_request_hash
+        and preview_manifest.workflow_run_id == normalized_request.workflow_run_id
+    )
     if preview_manifest is not None:
         preview_matches_current_workflow = (
             normalized_request.phase_id == PHASE_A1
@@ -2212,6 +2350,27 @@ def load_patch6_preflight_preview(
                 or preview_matches_current_workflow
             ):
                 return loaded
+        if allow_phase_a1_preview_for_phase_a2:
+            reusable = build_patch6_preflight_preview(
+                selected_form=selected_form,
+                jobs_root=None,
+            )
+            reusable_warnings = tuple(
+                dict.fromkeys(
+                    (
+                        *reusable.warnings,
+                        "PHASE_A2_REUSING_MATCHING_PHASE_A1_PREVIEW_CONTEXT",
+                    )
+                )
+            )
+            return reusable.model_copy(
+                update={
+                    "preview_id": preview_manifest.preview_id,
+                    "workflow_request_hash": workflow_request_hash,
+                    "workflow_run_id": preview_manifest.workflow_run_id,
+                    "warnings": reusable_warnings,
+                }
+            )
         if preview_manifest.request_hash == request_hash or preview_matches_current_workflow:
             matched_files_by_type = preview_manifest.matched_files_by_type or {}
             common_range = preview_manifest.common_date_range or {}

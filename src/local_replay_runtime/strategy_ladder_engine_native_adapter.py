@@ -35,7 +35,9 @@ from __future__ import annotations
 
 import gzip
 import json
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
+from math import isfinite
 from pathlib import Path
 
 from data_backbone.microstructure.engine_input_provenance import (
@@ -75,8 +77,181 @@ _DEFAULT_VPIN_BUCKETS_PER_DAY = 50  # TO_CALIBRATE: pair-specific buckets/day
 # Si window etroit, on charge aussi les snapshots juste avant pour fournir au
 # moins 2 points consecutifs a OFI (sinon OFI_INSUFFICIENT_BOOK).
 _OFI_PREWINDOW_LOOKBACK_MS = 60_000
+_ENGINE_C_TRADE_MICROSTRUCTURE_FEATURES = frozenset(
+    {"kyle_lambda", "vpin", "realized_vol_current", "realized_vol_at_break"}
+)
+_ENGINE_C_BOOK_MICROSTRUCTURE_FEATURES = frozenset(
+    {"cumulative_ofi", "queue_pressure"}
+)
 
 _MICROSTRUCTURE_RECORD_CACHE: dict[tuple[object, ...], tuple[object, ...]] = {}
+_MICROSTRUCTURE_JSONL_FILE_CACHE: dict[
+    tuple[str, int | None, int | None],
+    tuple[dict[str, object], ...],
+] = {}
+_MICROSTRUCTURE_JSONL_TIME_INDEX_CACHE: dict[
+    tuple[str, int | None, int | None],
+    tuple[tuple[int, ...], tuple[dict[str, object], ...]],
+] = {}
+# Patch A2-OPT-1 (2026-05-25) — Pre-filtered delta cache by (file, base_update_id).
+# Avoids O(N²) re-filtering of orderbook deltas across 1440 decisions per day.
+# Each entry stores the time-indexed deltas where update_id > base_update_id,
+# ready for O(log N) bisect by window_end_ms.
+_MICROSTRUCTURE_DELTAS_AFTER_BASE_CACHE: dict[
+    tuple[str, int | None, int | None, int],
+    tuple[tuple[int, ...], tuple[dict[str, object], ...]],
+] = {}
+# Patch A2-OPT-4 (2026-05-26 — F16-D Pilier 0) — Progressive book state cache.
+# Eliminates the O(N²) cost of `_reconstruct_book_states` rebuilding the book
+# from-scratch for each decision. After processing decision k, we cache the
+# (bid_book, ask_book, last_applied_uid) state at window_end_k. Decision k+1
+# (with contiguous window) reuses this state and applies only the new deltas.
+# Cache key: (snapshot_path_signature, delta_path_signature, base_update_id)
+# Cache value: list of (last_applied_uid, last_applied_ts_ms, bid_book_dict, ask_book_dict)
+# Bounded list keeps a few recent boundary states for non-monotonic access patterns.
+_PROGRESSIVE_BOOK_STATE_CACHE: dict[
+    tuple[tuple[str, int | None, int | None], tuple[str, int | None, int | None], int],
+    list[tuple[int, int, dict[float, float], dict[float, float]]],
+] = {}
+_PROGRESSIVE_BOOK_STATE_CACHE_MAX_BOUNDARIES = 4
+_MICROSTRUCTURE_JSONL_FILE_CACHE_STATS: dict[str, object] = {
+    "hit_count": 0,
+    "miss_count": 0,
+    "time_index_hit_count": 0,
+    "time_index_miss_count": 0,
+    "time_indexed_row_count": 0,
+    "rows_loaded": 0,
+    "bytes_loaded": 0,
+    "paths_loaded": {},
+    # Patch A2-OPT-1 (2026-05-25) — counters for the delta-by-base cache.
+    "deltas_after_base_hit_count": 0,
+    "deltas_after_base_miss_count": 0,
+}
+
+
+def reset_microstructure_file_cache_stats(*, clear_cache: bool = True) -> None:
+    """Reset the audit counters for the microstructure JSONL file cache."""
+
+    if clear_cache:
+        evict_microstructure_file_cache()
+    _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.clear()
+    _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.update(
+        {
+            "hit_count": 0,
+            "miss_count": 0,
+            "time_index_hit_count": 0,
+            "time_index_miss_count": 0,
+            "time_indexed_row_count": 0,
+            "rows_loaded": 0,
+            "bytes_loaded": 0,
+            "paths_loaded": {},
+            "deltas_after_base_hit_count": 0,
+            "deltas_after_base_miss_count": 0,
+            # Patch A2-OPT-4 (2026-05-26) — progressive book state cache counters.
+            "progressive_book_state_hit_count": 0,
+            "progressive_book_state_miss_count": 0,
+            "progressive_book_state_advance_deltas": 0,
+            "progressive_book_state_full_reconstruct_count": 0,
+            # Patch 2026-05-28 (A2 long-run guard): eviction counters let A2
+            # bound memory between date partitions without hiding cumulative
+            # file-cache audit stats.
+            "eviction_count": 0,
+            "evicted_cached_path_count": 0,
+            "evicted_cached_row_count": 0,
+        }
+    )
+
+
+def evict_microstructure_file_cache() -> dict[str, int]:
+    """Clear cached microstructure rows while preserving cumulative counters."""
+
+    cached_path_count = len(_MICROSTRUCTURE_JSONL_FILE_CACHE)
+    cached_row_count = sum(len(rows) for rows in _MICROSTRUCTURE_JSONL_FILE_CACHE.values())
+    _MICROSTRUCTURE_JSONL_FILE_CACHE.clear()
+    _MICROSTRUCTURE_JSONL_TIME_INDEX_CACHE.clear()
+    _MICROSTRUCTURE_DELTAS_AFTER_BASE_CACHE.clear()
+    _PROGRESSIVE_BOOK_STATE_CACHE.clear()
+    _MICROSTRUCTURE_RECORD_CACHE.clear()
+    _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS["eviction_count"] = (
+        int(_MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("eviction_count") or 0) + 1
+    )
+    _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS["evicted_cached_path_count"] = (
+        int(_MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("evicted_cached_path_count") or 0)
+        + cached_path_count
+    )
+    _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS["evicted_cached_row_count"] = (
+        int(_MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("evicted_cached_row_count") or 0)
+        + cached_row_count
+    )
+    return {
+        "evicted_cached_path_count": cached_path_count,
+        "evicted_cached_row_count": cached_row_count,
+    }
+
+
+def get_microstructure_file_cache_stats() -> dict[str, object]:
+    """Return a JSON-serializable snapshot of the microstructure file cache."""
+
+    paths_loaded = _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("paths_loaded")
+    path_payload: dict[str, object] = {}
+    if isinstance(paths_loaded, dict):
+        path_payload = {str(key): value for key, value in paths_loaded.items()}
+    return {
+        "cache_status": "A2_MICROSTRUCTURE_FILE_CACHE_READY",
+        "hit_count": int(_MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("hit_count") or 0),
+        "miss_count": int(_MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("miss_count") or 0),
+        "file_cache_hit_count": int(
+            _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("hit_count") or 0
+        ),
+        "file_cache_miss_count": int(
+            _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("miss_count") or 0
+        ),
+        "rows_loaded": int(_MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("rows_loaded") or 0),
+        "bytes_loaded": int(_MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("bytes_loaded") or 0),
+        "cached_file_count": len(_MICROSTRUCTURE_JSONL_FILE_CACHE),
+        "cached_path_count": len(_MICROSTRUCTURE_JSONL_FILE_CACHE),
+        "cached_row_count": sum(len(rows) for rows in _MICROSTRUCTURE_JSONL_FILE_CACHE.values()),
+        "time_index_hit_count": int(
+            _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("time_index_hit_count") or 0
+        ),
+        "time_index_miss_count": int(
+            _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("time_index_miss_count") or 0
+        ),
+        "time_indexed_path_count": len(_MICROSTRUCTURE_JSONL_TIME_INDEX_CACHE),
+        "time_indexed_row_count": int(
+            _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("time_indexed_row_count") or 0
+        ),
+        # Patch A2-OPT-1 (2026-05-25) — deltas-by-base cache counters.
+        "deltas_after_base_hit_count": int(
+            _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("deltas_after_base_hit_count") or 0
+        ),
+        "deltas_after_base_miss_count": int(
+            _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("deltas_after_base_miss_count") or 0
+        ),
+        "deltas_after_base_cache_size": len(_MICROSTRUCTURE_DELTAS_AFTER_BASE_CACHE),
+        # Patch A2-OPT-4 (2026-05-26) — progressive book state cache counters.
+        "progressive_book_state_hit_count": int(
+            _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("progressive_book_state_hit_count") or 0
+        ),
+        "progressive_book_state_miss_count": int(
+            _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("progressive_book_state_miss_count") or 0
+        ),
+        "progressive_book_state_advance_deltas": int(
+            _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("progressive_book_state_advance_deltas") or 0
+        ),
+        "progressive_book_state_full_reconstruct_count": int(
+            _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("progressive_book_state_full_reconstruct_count") or 0
+        ),
+        "progressive_book_state_cache_size": len(_PROGRESSIVE_BOOK_STATE_CACHE),
+        "eviction_count": int(_MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("eviction_count") or 0),
+        "evicted_cached_path_count": int(
+            _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("evicted_cached_path_count") or 0
+        ),
+        "evicted_cached_row_count": int(
+            _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("evicted_cached_row_count") or 0
+        ),
+        "paths_loaded": path_payload,
+    }
 
 
 def _path_cache_signature(path_like: Path | str | None) -> tuple[str, int | None, int | None]:
@@ -89,6 +264,49 @@ def _path_cache_signature(path_like: Path | str | None) -> tuple[str, int | None
     except OSError:
         return (str(path), None, None)
     return (str(resolved), stat.st_mtime_ns, stat.st_size)
+
+
+def _progressive_book_state_cache_key(
+    *,
+    snapshot_path: Path,
+    delta_path: Path,
+    base_update_id: int,
+) -> tuple[tuple[str, int | None, int | None], tuple[str, int | None, int | None], int]:
+    return (
+        _path_cache_signature(snapshot_path),
+        _path_cache_signature(delta_path),
+        int(base_update_id),
+    )
+
+
+def _latest_progressive_book_state_boundary(
+    *,
+    snapshot_path: Path,
+    delta_path: Path,
+    base_update_id: int,
+    window_start_ms: int,
+) -> tuple[int, int] | None:
+    """Return the latest cached boundary usable before ``window_start_ms``.
+
+    The A2 gold builder evaluates contiguous 1m decisions. Once the progressive
+    cache has a cumulative book state before the next decision window, callers
+    can load only deltas after that boundary instead of re-slicing and
+    re-sorting every historical delta since the daily snapshot.
+    """
+
+    cache_key = _progressive_book_state_cache_key(
+        snapshot_path=snapshot_path,
+        delta_path=delta_path,
+        base_update_id=base_update_id,
+    )
+    cached_entries = _PROGRESSIVE_BOOK_STATE_CACHE.get(cache_key, [])
+    best: tuple[int, int] | None = None
+    for last_uid, last_ts_ms, _bid_book, _ask_book in cached_entries:
+        if last_ts_ms >= window_start_ms:
+            continue
+        if best is None or last_uid > best[0]:
+            best = (last_uid, last_ts_ms)
+    return best
 
 
 @dataclass(frozen=True)
@@ -133,6 +351,24 @@ def _iter_jsonl(path: Path) -> list[dict[str, object]]:
     """Charge un JSONL ligne par ligne en ignorant les lignes vides."""
     if not path.exists():
         return []
+    cache_key = _path_cache_signature(path)
+    cached = _MICROSTRUCTURE_JSONL_FILE_CACHE.get(cache_key)
+    if cached is not None:
+        _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS["hit_count"] = (
+            int(_MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("hit_count") or 0) + 1
+        )
+        # Patch A2-OPT-5 (2026-05-26 — F16-D Pilier 1) — Drop the defensive
+        # `[dict(row) for row in cached]` deep copy on cache hit. The cached
+        # value is already an immutable tuple of dicts produced at miss time;
+        # the previous per-hit copy was the dominant source of the 24 GB
+        # memory leak observed in B1 engine_native_materialization across
+        # 200 candidates (Python GC unable to free 888K-row dict copies fast
+        # enough). All downstream consumers (`_jsonl_time_index`,
+        # `_load_book_deltas_in_window_with_lookback`, `_load_trades_in_window`)
+        # either build their own copies or read row fields without mutation,
+        # so returning a shallow `list(cached)` is safe. This converts a
+        # 200 × O(N) copy storm into 200 × O(1) shared references.
+        return list(cached)
     out: list[dict[str, object]] = []
     opener = (
         lambda: gzip.open(path, "rt", encoding="utf-8-sig")
@@ -148,7 +384,89 @@ def _iter_jsonl(path: Path) -> list[dict[str, object]]:
                 out.append(json.loads(stripped))
             except json.JSONDecodeError:
                 continue
-    return out
+    cached_rows = tuple(dict(row) for row in out)
+    _MICROSTRUCTURE_JSONL_FILE_CACHE[cache_key] = cached_rows
+    _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS["miss_count"] = (
+        int(_MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("miss_count") or 0) + 1
+    )
+    _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS["rows_loaded"] = (
+        int(_MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("rows_loaded") or 0)
+        + len(cached_rows)
+    )
+    if cache_key[2] is not None:
+        _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS["bytes_loaded"] = (
+            int(_MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("bytes_loaded") or 0)
+            + int(cache_key[2])
+        )
+    paths_loaded = _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.setdefault("paths_loaded", {})
+    if isinstance(paths_loaded, dict):
+        paths_loaded[str(cache_key[0])] = {
+            "mtime_ns": cache_key[1],
+            "bytes": cache_key[2],
+            "rows": len(cached_rows),
+        }
+    return [dict(row) for row in cached_rows]
+
+
+def _row_timestamp_ms(row: dict[str, object]) -> int | None:
+    ts = row.get("timestamp_ms")
+    if not isinstance(ts, (int, float)):
+        return None
+    return int(ts)
+
+
+def _jsonl_time_index(
+    path: Path,
+) -> tuple[tuple[int, ...], tuple[dict[str, object], ...]]:
+    cache_key = _path_cache_signature(path)
+    cached = _MICROSTRUCTURE_JSONL_TIME_INDEX_CACHE.get(cache_key)
+    if cached is not None:
+        _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS["time_index_hit_count"] = (
+            int(
+                _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("time_index_hit_count")
+                or 0
+            )
+            + 1
+        )
+        return cached
+    rows = _iter_jsonl(path)
+    indexed_pairs = sorted(
+        ((ts, dict(row)) for row in rows if (ts := _row_timestamp_ms(row)) is not None),
+        key=lambda item: item[0],
+    )
+    timestamps = tuple(ts for ts, _row in indexed_pairs)
+    indexed_rows = tuple(row for _ts, row in indexed_pairs)
+    cached_index = (timestamps, indexed_rows)
+    _MICROSTRUCTURE_JSONL_TIME_INDEX_CACHE[cache_key] = cached_index
+    _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS["time_index_miss_count"] = (
+        int(
+            _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("time_index_miss_count")
+            or 0
+        )
+        + 1
+    )
+    _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS["time_indexed_row_count"] = (
+        int(
+            _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("time_indexed_row_count")
+            or 0
+        )
+        + len(indexed_rows)
+    )
+    return cached_index
+
+
+def _iter_jsonl_timestamp_window(
+    path: Path,
+    *,
+    window_start_ms: int | None = None,
+    window_end_ms: int | None = None,
+) -> list[dict[str, object]]:
+    if not path.exists():
+        return []
+    timestamps, rows = _jsonl_time_index(path)
+    left = 0 if window_start_ms is None else bisect_left(timestamps, int(window_start_ms))
+    right = len(rows) if window_end_ms is None else bisect_right(timestamps, int(window_end_ms))
+    return [dict(row) for row in rows[left:right]]
 
 
 def _load_trades_in_window(
@@ -158,15 +476,11 @@ def _load_trades_in_window(
     window_end_ms: int,
 ) -> list[dict[str, object]]:
     """Charge les trades dont le timestamp_ms tombe dans [window_start_ms, window_end_ms]."""
-    rows = _iter_jsonl(raw_trade_path)
-    in_window: list[dict[str, object]] = []
-    for row in rows:
-        ts = row.get("timestamp_ms")
-        if not isinstance(ts, (int, float)):
-            continue
-        if window_start_ms <= int(ts) <= window_end_ms:
-            in_window.append(row)
-    return in_window
+    return _iter_jsonl_timestamp_window(
+        raw_trade_path,
+        window_start_ms=window_start_ms,
+        window_end_ms=window_end_ms,
+    )
 
 
 def _trade_flow_score_from_window(trades: list[dict[str, object]]) -> float | None:
@@ -249,6 +563,173 @@ class _BookState:
     update_id: int
     bid_levels: tuple[tuple[float, float], ...]  # (price, size) tries desc par price
     ask_levels: tuple[tuple[float, float], ...]  # (price, size) tries asc par price
+
+
+def _reconstruct_book_states_with_progressive_cache(
+    *,
+    snapshot_path: Path,
+    delta_path: Path,
+    base_snapshot: dict[str, object],
+    deltas: list[dict[str, object]],
+    window_start_ms: int,
+    window_end_ms: int,
+    top_k: int = 20,
+) -> list[_BookState]:
+    """Patch A2-OPT-4 (2026-05-26 — F16-D Pilier 0) — Incremental book reconstruction.
+
+    Wraps :func:`_reconstruct_book_states` with a progressive cache that
+    preserves the prior cumulative book state across decisions. When decisions
+    arrive in monotonic order (typical strategy_ladder usage), only the new
+    deltas between two consecutive window_end_ms boundaries are applied,
+    converting the per-day cost from O(N²) to O(N).
+
+    The function signature mirrors :func:`_reconstruct_book_states` except
+    for the additional path signatures used as cache keys. When the cache
+    miss path is taken (first call, non-monotonic access, evicted entry),
+    behaviour is identical to the original full-reconstruction logic.
+    """
+    base_update_id = int(base_snapshot.get("update_id") or 0)
+    cache_key = _progressive_book_state_cache_key(
+        snapshot_path=snapshot_path,
+        delta_path=delta_path,
+        base_update_id=base_update_id,
+    )
+    cached_entries = _PROGRESSIVE_BOOK_STATE_CACHE.get(cache_key, [])
+
+    # Pick the most recent cached boundary whose last_applied_ts_ms < window_start_ms.
+    # That state is the correct starting point because all deltas it has applied
+    # are strictly before our window, so we won't double-apply anything.
+    starting_state: tuple[int, int, dict[float, float], dict[float, float]] | None = None
+    for entry in cached_entries:
+        last_uid_entry, last_ts_entry, _bid, _ask = entry
+        if last_ts_entry < window_start_ms:
+            if starting_state is None or last_uid_entry > starting_state[0]:
+                starting_state = entry
+
+    if starting_state is not None:
+        # Cache hit — clone the cached books (so we don't mutate the cache entry)
+        bid_book: dict[float, float] = dict(starting_state[2])
+        ask_book: dict[float, float] = dict(starting_state[3])
+        last_applied_uid = starting_state[0]
+        last_applied_ts = starting_state[1]
+        _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS["progressive_book_state_hit_count"] = (
+            int(_MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("progressive_book_state_hit_count") or 0) + 1
+        )
+    else:
+        # Cache miss — initialise from base snapshot
+        bid_book = {}
+        ask_book = {}
+        for level in base_snapshot.get("bids") or []:
+            try:
+                price = float(level[0])
+                size = float(level[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if size > 0.0:
+                bid_book[price] = size
+        for level in base_snapshot.get("asks") or []:
+            try:
+                price = float(level[0])
+                size = float(level[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if size > 0.0:
+                ask_book[price] = size
+        last_applied_uid = base_update_id
+        last_applied_ts = -1
+        _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS["progressive_book_state_miss_count"] = (
+            int(_MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("progressive_book_state_miss_count") or 0) + 1
+        )
+
+    def _delta_update_id(d: dict[str, object]) -> int:
+        try:
+            return int(d.get("update_id") or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    sorted_deltas = sorted(deltas, key=_delta_update_id)
+    states: list[_BookState] = []
+    advance_count = 0
+
+    for delta in sorted_deltas:
+        delta_uid = _delta_update_id(delta)
+        if delta_uid <= last_applied_uid:
+            continue
+        ts = delta.get("timestamp_ms")
+        if not isinstance(ts, (int, float)):
+            continue
+        delta_ts_ms = int(ts)
+        if delta_ts_ms > window_end_ms:
+            break
+
+        for level in delta.get("bids") or []:
+            try:
+                price = float(level[0])
+                size = float(level[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if size <= 0.0:
+                bid_book.pop(price, None)
+            else:
+                bid_book[price] = size
+        for level in delta.get("asks") or []:
+            try:
+                price = float(level[0])
+                size = float(level[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if size <= 0.0:
+                ask_book.pop(price, None)
+            else:
+                ask_book[price] = size
+
+        last_applied_uid = delta_uid
+        last_applied_ts = delta_ts_ms
+        advance_count += 1
+
+        if delta_ts_ms < window_start_ms:
+            continue
+
+        sorted_bids = sorted(bid_book.items(), key=lambda x: -x[0])[:top_k]
+        sorted_asks = sorted(ask_book.items(), key=lambda x: x[0])[:top_k]
+        if not sorted_bids or not sorted_asks:
+            continue
+        states.append(
+            _BookState(
+                timestamp_ms=delta_ts_ms,
+                update_id=delta_uid,
+                bid_levels=tuple(sorted_bids),
+                ask_levels=tuple(sorted_asks),
+            )
+        )
+
+    _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS["progressive_book_state_advance_deltas"] = (
+        int(_MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("progressive_book_state_advance_deltas") or 0)
+        + advance_count
+    )
+
+    # Persist the final cumulative state at window_end_ms boundary. Keep a
+    # bounded ring of recent boundaries so non-monotonic access still gets
+    # a closer-than-snapshot starting state.
+    if last_applied_ts >= 0:
+        boundary_entry = (
+            last_applied_uid,
+            last_applied_ts,
+            dict(bid_book),
+            dict(ask_book),
+        )
+        # Deduplicate by last_applied_uid (idempotent re-runs).
+        cached_entries = [
+            entry for entry in cached_entries if entry[0] != last_applied_uid
+        ]
+        cached_entries.append(boundary_entry)
+        # Bound: keep newest by last_applied_uid (advancing monotonically).
+        cached_entries.sort(key=lambda e: e[0])
+        if len(cached_entries) > _PROGRESSIVE_BOOK_STATE_CACHE_MAX_BOUNDARIES:
+            cached_entries = cached_entries[-_PROGRESSIVE_BOOK_STATE_CACHE_MAX_BOUNDARIES:]
+        _PROGRESSIVE_BOOK_STATE_CACHE[cache_key] = cached_entries
+
+    return states
 
 
 def _reconstruct_book_states(
@@ -363,40 +844,108 @@ def _load_book_snapshots(raw_book_path: Path) -> list[dict[str, object]]:
     return _iter_jsonl(raw_book_path)
 
 
+def _deltas_after_base_index(
+    raw_book_delta_path: Path,
+    *,
+    base_update_id: int,
+) -> tuple[tuple[int, ...], tuple[dict[str, object], ...]]:
+    """Patch A2-OPT-1 (2026-05-25) — Cached time-index of deltas where update_id > base_update_id.
+
+    The previous implementation re-iterated all deltas-up-to-window_end for every
+    decision row, producing an O(N²) blowup (1440 decisions × up to 888K deltas).
+    Since `base_update_id` is constant across all decisions of a day (one snapshot
+    baseline), we pre-filter the deltas by ``update_id > base_update_id`` once,
+    then bisect by ``window_end_ms`` per decision in O(log N).
+
+    Returns a (timestamps, rows) tuple suitable for ``bisect_right``.
+    """
+    cache_signature = _path_cache_signature(raw_book_delta_path)
+    cache_key = (cache_signature[0], cache_signature[1], cache_signature[2], int(base_update_id))
+    cached = _MICROSTRUCTURE_DELTAS_AFTER_BASE_CACHE.get(cache_key)
+    if cached is not None:
+        _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS["deltas_after_base_hit_count"] = (
+            int(
+                _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get(
+                    "deltas_after_base_hit_count"
+                )
+                or 0
+            )
+            + 1
+        )
+        return cached
+    timestamps_all, rows_all = _jsonl_time_index(raw_book_delta_path)
+    filtered_pairs: list[tuple[int, dict[str, object]]] = []
+    for ts, row in zip(timestamps_all, rows_all):
+        try:
+            uid = int(row.get("update_id") or 0)
+        except (TypeError, ValueError):
+            continue
+        if uid > base_update_id:
+            filtered_pairs.append((ts, row))
+    filtered_timestamps = tuple(ts for ts, _row in filtered_pairs)
+    filtered_rows = tuple(row for _ts, row in filtered_pairs)
+    cached_index = (filtered_timestamps, filtered_rows)
+    _MICROSTRUCTURE_DELTAS_AFTER_BASE_CACHE[cache_key] = cached_index
+    _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS["deltas_after_base_miss_count"] = (
+        int(
+            _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get(
+                "deltas_after_base_miss_count"
+            )
+            or 0
+        )
+        + 1
+    )
+    return cached_index
+
+
 def _load_book_deltas_in_window_with_lookback(
     raw_book_delta_path: Path,
     *,
     base_update_id: int,
     window_end_ms: int,
+    window_start_ms: int | None = None,
+    after_update_id: int | None = None,
 ) -> list[dict[str, object]]:
-    """Charge les deltas dont update_id > base_update_id et timestamp_ms <= window_end_ms."""
-    out: list[dict[str, object]] = []
+    """Charge les deltas dont update_id > base_update_id et timestamp_ms <= window_end_ms.
+
+    Patch A2-OPT-1 (2026-05-25) — Refactored to use the cached
+    ``_deltas_after_base_index`` so the (path, base_update_id) filter is paid
+    once per day instead of once per decision. Slicing by ``window_end_ms`` uses
+    ``bisect_right`` for O(log N) per call.
+
+    Patch A2-OPT-6 (2026-05-26) — when a progressive book-state boundary is
+    already available, callers pass ``window_start_ms`` and ``after_update_id``
+    so this function returns only the new deltas after that boundary. This
+    removes the remaining O(N²) prefix-copy/sort loop on full A2 gold builds.
+    """
     if not raw_book_delta_path.exists():
-        return out
-    opener = (
-        lambda: gzip.open(raw_book_delta_path, "rt", encoding="utf-8-sig")
-        if str(raw_book_delta_path).endswith(".gz")
-        else raw_book_delta_path.open("r", encoding="utf-8-sig")
+        return []
+    timestamps, rows = _deltas_after_base_index(
+        raw_book_delta_path,
+        base_update_id=base_update_id,
     )
-    with opener() as handle:
-        for line in handle:
-            stripped = line.strip()
-            if not stripped:
-                continue
-            try:
-                row = json.loads(stripped)
-                uid = int(row.get("update_id") or 0)
-                ts = row.get("timestamp_ms")
-                if not isinstance(ts, (int, float)):
-                    continue
-                ts_ms = int(ts)
-            except (json.JSONDecodeError, TypeError, ValueError):
-                continue
-            if ts_ms > window_end_ms:
-                break
-            if uid > base_update_id:
-                out.append(row)
-    return out
+    if not rows:
+        return []
+    left = 0
+    if window_start_ms is not None:
+        left = bisect_right(timestamps, int(window_start_ms))
+    right = bisect_right(timestamps, int(window_end_ms))
+    if right <= left:
+        return []
+    update_id_floor = max(int(base_update_id), int(after_update_id or base_update_id))
+    sliced_rows = rows[left:right]
+    if update_id_floor <= int(base_update_id):
+        # Return list copy so downstream consumers may mutate without affecting cache.
+        return list(sliced_rows)
+    filtered_rows: list[dict[str, object]] = []
+    for row in sliced_rows:
+        try:
+            uid = int(row.get("update_id") or 0)
+        except (TypeError, ValueError):
+            continue
+        if uid > update_id_floor:
+            filtered_rows.append(row)
+    return filtered_rows
 
 
 def _build_kyle_trade_points(
@@ -509,6 +1058,180 @@ def _build_realized_kernel_price_points(
     return points
 
 
+def _finite_record_value(record: object | None) -> float | None:
+    if record is None:
+        return None
+    value = getattr(record, "value", None)
+    if isinstance(value, bool):
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    return numeric if isfinite(numeric) else None
+
+
+def build_engine_c_requested_microstructure_features_from_window(
+    *,
+    pair: str,
+    window_start_ms: int,
+    window_end_ms: int,
+    requested_feature_names: tuple[str, ...] | set[str] | frozenset[str],
+    raw_trade_path: Path | str | None,
+    raw_book_path: Path | str | None,
+    raw_book_delta_path: Path | str | None = None,
+    vpin_buckets_per_day: int = _DEFAULT_VPIN_BUCKETS_PER_DAY,
+) -> dict[str, object]:
+    """Build only requested Engine C microstructure scalar features.
+
+    This is an A2 performance seam. It reuses the canonical calculators but
+    avoids computing unrelated microstructure records for each gold row.
+    """
+
+    requested = {
+        str(feature_name)
+        for feature_name in requested_feature_names
+        if str(feature_name)
+        in (
+            _ENGINE_C_TRADE_MICROSTRUCTURE_FEATURES
+            | _ENGINE_C_BOOK_MICROSTRUCTURE_FEATURES
+        )
+    }
+    if not requested:
+        return {}
+
+    values: dict[str, object] = {}
+    needs_trade_features = bool(requested & _ENGINE_C_TRADE_MICROSTRUCTURE_FEATURES)
+    needs_book_features = bool(requested & _ENGINE_C_BOOK_MICROSTRUCTURE_FEATURES)
+
+    trades_raw: list[dict[str, object]] = []
+    if needs_trade_features and raw_trade_path:
+        trades_raw = _load_trades_in_window(
+            Path(raw_trade_path),
+            window_start_ms=window_start_ms,
+            window_end_ms=window_end_ms,
+        )
+
+    if "kyle_lambda" in requested:
+        kyle_points = _build_kyle_trade_points(trades_raw)
+        if len(kyle_points) >= 2:
+            try:
+                window_seconds = max(1.0, (window_end_ms - window_start_ms) / 1000.0)
+                record = compute_kyle_lambda(
+                    kyle_points,
+                    pair=pair,
+                    window_seconds=window_seconds,
+                    bucket_seconds=min(60.0, window_seconds),
+                )
+                value = _finite_record_value(record)
+                if value is not None:
+                    values["kyle_lambda"] = value
+            except Exception:  # noqa: BLE001 - missing feature stays explicit.
+                pass
+
+    if "vpin" in requested:
+        vpin_points = _build_vpin_trade_points(trades_raw)
+        if vpin_points:
+            try:
+                record = compute_vpin(
+                    vpin_points,
+                    pair=pair,
+                    buckets_per_day=vpin_buckets_per_day,
+                    allow_derived_daily_volume=True,
+                )
+                value = _finite_record_value(record)
+                if value is not None:
+                    values["vpin"] = value
+            except Exception:  # noqa: BLE001
+                pass
+
+    if {"realized_vol_current", "realized_vol_at_break"} & requested:
+        rk_points = _build_realized_kernel_price_points(trades_raw)
+        if len(rk_points) >= 3:
+            try:
+                record = compute_realized_kernel_vol(rk_points, pair=pair)
+                value = _finite_record_value(record)
+                if value is not None:
+                    if "realized_vol_current" in requested:
+                        values["realized_vol_current"] = value
+                    if "realized_vol_at_break" in requested:
+                        values["realized_vol_at_break"] = value
+            except Exception:  # noqa: BLE001
+                pass
+
+    if not needs_book_features or not raw_book_path:
+        return values
+
+    try:
+        snapshots = _load_book_snapshots(Path(raw_book_path))
+        base_snap = _select_base_snapshot(snapshots, window_start_ms=window_start_ms)
+        if base_snap is None:
+            return values
+        delta_path = _resolve_book_delta_path(raw_book_path, raw_book_delta_path)
+        if delta_path is None or not delta_path.exists():
+            return values
+        base_update_id = int(base_snap.get("update_id") or 0)
+        progressive_boundary = _latest_progressive_book_state_boundary(
+            snapshot_path=Path(raw_book_path),
+            delta_path=delta_path,
+            base_update_id=base_update_id,
+            window_start_ms=window_start_ms,
+        )
+        deltas = _load_book_deltas_in_window_with_lookback(
+            delta_path,
+            base_update_id=base_update_id,
+            window_end_ms=window_end_ms,
+            window_start_ms=(
+                progressive_boundary[1] if progressive_boundary is not None else None
+            ),
+            after_update_id=(
+                progressive_boundary[0] if progressive_boundary is not None else None
+            ),
+        )
+        # Patch A2-OPT-4 (2026-05-26) — Use the progressive cache wrapper so
+        # consecutive decisions in the same day reuse the cumulative book state
+        # instead of re-applying all deltas-since-snapshot from scratch.
+        book_states = _reconstruct_book_states_with_progressive_cache(
+            snapshot_path=Path(raw_book_path),
+            delta_path=delta_path,
+            base_snapshot=base_snap,
+            deltas=deltas,
+            window_start_ms=window_start_ms,
+            window_end_ms=window_end_ms,
+            top_k=20,
+        )
+    except OSError:
+        return values
+
+    if "cumulative_ofi" in requested:
+        ofi_points = [
+            point
+            for state in book_states
+            if (point := _book_state_to_ofi_point(state)) is not None
+        ]
+        if len(ofi_points) >= 2:
+            try:
+                record = compute_order_flow_imbalance(ofi_points, pair=pair)
+                value = _finite_record_value(record)
+                if value is not None:
+                    values["cumulative_ofi"] = value
+            except Exception:  # noqa: BLE001
+                pass
+
+    if "queue_pressure" in requested and book_states:
+        queue_point = _book_state_to_queue_pressure_point(book_states[-1], top_k=5)
+        if queue_point is not None:
+            try:
+                record = compute_queue_pressure(queue_point, pair=pair, top_k=5)
+                value = _finite_record_value(record)
+                if value is not None:
+                    values["queue_pressure"] = value
+            except Exception:  # noqa: BLE001
+                pass
+
+    return values
+
+
 def build_engine_c_microstructure_inputs_from_window(
     *,
     candidate_id: str,
@@ -577,13 +1300,32 @@ def build_engine_c_microstructure_inputs_from_window(
                         f"BOOK_DELTA_PATH_MISSING:{delta_path}"
                     )
                 else:
+                    progressive_boundary = _latest_progressive_book_state_boundary(
+                        snapshot_path=Path(raw_book_path),
+                        delta_path=delta_path,
+                        base_update_id=base_uid,
+                        window_start_ms=window_start_ms,
+                    )
                     deltas = _load_book_deltas_in_window_with_lookback(
                         delta_path,
                         base_update_id=base_uid,
                         window_end_ms=window_end_ms,
+                        window_start_ms=(
+                            progressive_boundary[1]
+                            if progressive_boundary is not None
+                            else None
+                        ),
+                        after_update_id=(
+                            progressive_boundary[0]
+                            if progressive_boundary is not None
+                            else None
+                        ),
                     )
                     book_deltas_count = len(deltas)
-                    book_states = _reconstruct_book_states(
+                    # Patch A2-OPT-4 (2026-05-26) — progressive cache wrapper.
+                    book_states = _reconstruct_book_states_with_progressive_cache(
+                        snapshot_path=Path(raw_book_path),
+                        delta_path=delta_path,
                         base_snapshot=base_snap,
                         deltas=deltas,
                         window_start_ms=window_start_ms,
@@ -837,13 +1579,32 @@ def _compute_microstructure_records_from_window(
                 if delta_path is None or not delta_path.exists():
                     warnings.append(f"BOOK_DELTA_PATH_MISSING:{delta_path}")
                 else:
+                    progressive_boundary = _latest_progressive_book_state_boundary(
+                        snapshot_path=Path(raw_book_path),
+                        delta_path=delta_path,
+                        base_update_id=base_uid,
+                        window_start_ms=window_start_ms,
+                    )
                     deltas = _load_book_deltas_in_window_with_lookback(
                         delta_path,
                         base_update_id=base_uid,
                         window_end_ms=window_end_ms,
+                        window_start_ms=(
+                            progressive_boundary[1]
+                            if progressive_boundary is not None
+                            else None
+                        ),
+                        after_update_id=(
+                            progressive_boundary[0]
+                            if progressive_boundary is not None
+                            else None
+                        ),
                     )
                     book_deltas_count = len(deltas)
-                    book_states = _reconstruct_book_states(
+                    # Patch A2-OPT-4 (2026-05-26) — progressive cache wrapper.
+                    book_states = _reconstruct_book_states_with_progressive_cache(
+                        snapshot_path=Path(raw_book_path),
+                        delta_path=delta_path,
                         base_snapshot=base_snap,
                         deltas=deltas,
                         window_start_ms=window_start_ms,
@@ -1581,7 +2342,11 @@ __all__ = [
     "EngineABridgeResult",
     "EngineBBridgeResult",
     "build_engine_c_microstructure_inputs_from_window",
+    "build_engine_c_requested_microstructure_features_from_window",
     "build_engine_d_microstructure_inputs_from_window",
     "build_engine_a_microstructure_inputs_from_window",
     "build_engine_b_microstructure_inputs_from_window",
+    "evict_microstructure_file_cache",
+    "get_microstructure_file_cache_stats",
+    "reset_microstructure_file_cache_stats",
 ]

@@ -226,6 +226,69 @@ def test_ml_lab_handoff_request_accepts_supported_microstructure_features_with_b
     assert request.feature_names == ("close_return", "spread_bps", "book_depth_levels")
 
 
+def test_ml_lab_handoff_request_accepts_supported_microstructure_features_with_label_store_dataset_path() -> None:
+    scratch = _scratch_dir("micro_features_label_store")
+    dataset_path = scratch / "phase_b_ml_training_label_factory" / "labels" / "b_ml_label_store.jsonl"
+    dataset_path.parent.mkdir(parents=True, exist_ok=True)
+    dataset_path.write_text("", encoding="utf-8")
+
+    request = StrategyLadderMlLabHandoffRequest(
+        artifact_id="edge-handoff",
+        calibration_version="test.v1",
+        kline_root=scratch / "klines",
+        label_store_dataset_path=dataset_path,
+        export_dir=scratch / "export",
+        train_start="2025-01-01",
+        train_end="2025-04-30",
+        feature_names=("close_return", "spread_bps", "book_depth_levels"),
+    )
+
+    assert request.label_store_dataset_path == dataset_path
+    assert request.feature_names == ("close_return", "spread_bps", "book_depth_levels")
+
+
+def test_ml_lab_handoff_prefers_explicit_label_store_dataset_path_over_b2_run_root(
+    monkeypatch,
+) -> None:
+    scratch = _scratch_dir("prefer_label_store")
+    dataset_path = scratch / "phase_b_ml_training_label_factory" / "labels" / "b_ml_label_store.jsonl"
+    dataset_path.parent.mkdir(parents=True, exist_ok=True)
+    dataset_path.write_text("", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    def _capturing_training_report(
+        request: StrategyLadderExpectedEdgeTrainingRequest,
+    ) -> StrategyLadderExpectedEdgeTrainingReport:
+        captured["b2_run_root"] = request.b2_run_root
+        captured["label_store_dataset_path"] = request.label_store_dataset_path
+        return _fake_training_report(request)
+
+    monkeypatch.setattr(
+        "local_replay_runtime.strategy_ladder_ml_lab_handoff.train_strategy_ladder_expected_edge_artifact",
+        _capturing_training_report,
+    )
+
+    report = run_strategy_ladder_ml_lab_handoff(
+        StrategyLadderMlLabHandoffRequest(
+            artifact_id="edge-handoff",
+            calibration_version="test.v1",
+            kline_root=scratch / "klines",
+            b2_run_root=scratch / "b2-run",
+            label_store_dataset_path=dataset_path,
+            export_dir=scratch / "export",
+            train_start="2025-01-01",
+            train_end="2025-04-30",
+            requested_backtest_start="2025-05-01",
+            requested_backtest_days=15,
+            feature_names=("close_return", "high_low_range", "volume"),
+        )
+    )
+
+    assert report.ready is True
+    assert captured["b2_run_root"] is None
+    assert captured["label_store_dataset_path"] == dataset_path
+
+
 def test_ml_lab_handoff_packages_multiframe_bundle_and_emits_bundle_input(
     monkeypatch,
 ) -> None:

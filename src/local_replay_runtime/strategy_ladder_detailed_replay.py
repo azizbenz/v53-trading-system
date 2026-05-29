@@ -13,6 +13,7 @@ from local_replay_runtime.historical_data_gateway import (
 )
 from local_replay_runtime.replay_execution_contracts import (
     ReplayExecutionEvaluationRequest,
+    ShadowExecutionSimulatorConfig,
 )
 from local_replay_runtime.replay_execution_runtime import (
     evaluate_replay_execution,
@@ -412,6 +413,7 @@ def run_strategy_ladder_detailed_replay(
     raw_window_manifests: tuple[StrategyLadderRawWindowManifest, ...],
     capital_buckets: tuple[int, ...],
     execution_runtime_projection_path: Path | None = None,
+    simulator_config: ShadowExecutionSimulatorConfig | None = None,
 ) -> StrategyLadderDetailedReplayStageResult:
     """Run candidate-window replay and persist deterministic detailed artifacts."""
 
@@ -584,6 +586,8 @@ def run_strategy_ladder_detailed_replay(
                         if execution_runtime_projection_path is not None
                         else None
                     ),
+                    simulator_config=simulator_config
+                    or ShadowExecutionSimulatorConfig(),
                 )
             )
             evaluate_replay_execution_seconds += perf_counter() - evaluate_started

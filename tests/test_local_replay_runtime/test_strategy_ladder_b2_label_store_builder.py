@@ -48,6 +48,11 @@ def _write_candidate_events(run_root: Path) -> None:
             "compatibility_payload": {
                 "timestamp_ms": 1_735_689_600_000,
                 "available_at_timestamp_ms": 1_735_689_540_000,
+                "feature_truth_boundary_status": "FEATURE_EX_ANTE_AVAILABLE_AT_DECISION",
+                "feature_usage_policy": "A2_GOLD_EX_ANTE_FEATURES_ONLY_NOT_EXECUTION_TRUTH",
+                "cost_feature_truth_status": (
+                    "A2_COST_FEATURES_MEASURED_EX_ANTE_NOT_EXECUTION_LABEL_TRUTH"
+                ),
                 "spread_bps": 4.0,
                 "slippage_bps": 2.0,
                 "book_depth_levels": 20,
@@ -72,6 +77,11 @@ def _write_candidate_events(run_root: Path) -> None:
             "compatibility_payload": {
                 "timestamp_ms": 1_735_775_000_000,
                 "available_at_timestamp_ms": 1_735_774_940_000,
+                "feature_truth_boundary_status": "FEATURE_EX_ANTE_AVAILABLE_AT_DECISION",
+                "feature_usage_policy": "A2_GOLD_EX_ANTE_FEATURES_ONLY_NOT_EXECUTION_TRUTH",
+                "cost_feature_truth_status": (
+                    "A2_COST_FEATURES_RESEARCH_ONLY_NOT_REPLAY_TRUTH"
+                ),
                 "spread_bps": 3.0,
                 "slippage_bps": 1.5,
                 "book_depth_levels": 20,
@@ -377,6 +387,12 @@ def test_b2_label_store_builder_propagates_grounded_and_proxy_rows() -> None:
 
     exec_row = next(row for row in rows if row.candidate_id == "cand-exec")
     assert exec_row.feature_timestamp_ms <= exec_row.decision_timestamp_ms
+    assert exec_row.feature_truth_boundary_status == "FEATURE_EX_ANTE_AVAILABLE_AT_DECISION"
+    assert exec_row.feature_usage_policy == "A2_GOLD_EX_ANTE_FEATURES_ONLY_NOT_EXECUTION_TRUTH"
+    assert (
+        exec_row.cost_feature_truth_status
+        == "A2_COST_FEATURES_MEASURED_EX_ANTE_NOT_EXECUTION_LABEL_TRUTH"
+    )
     assert exec_row.mfe_bps == 18.0
     assert exec_row.mae_bps == -6.0
     assert exec_row.holding_time_ms == 60_000
@@ -401,6 +417,11 @@ def test_b2_label_store_builder_propagates_grounded_and_proxy_rows() -> None:
 
     proxy_row = next(row for row in rows if row.candidate_id == "cand-proxy")
     assert proxy_row.feature_timestamp_ms <= proxy_row.decision_timestamp_ms
+    assert proxy_row.feature_truth_boundary_status == "FEATURE_EX_ANTE_AVAILABLE_AT_DECISION"
+    assert (
+        proxy_row.cost_feature_truth_status
+        == "A2_COST_FEATURES_RESEARCH_ONLY_NOT_REPLAY_TRUTH"
+    )
     assert proxy_row.evidence_class == "REPLAY_EXPECTED_CE_NET_PROXY"
     assert proxy_row.execution_fidelity_status == "EXECUTION_FIDELITY_PROXY_EXECUTION"
     assert proxy_row.proxy_execution_label_flag is True
@@ -427,6 +448,13 @@ def test_b2_label_store_builder_propagates_grounded_and_proxy_rows() -> None:
     assert quality.label_quality_status_counts["LABEL_QUALITY_RESEARCH_ONLY"] == 2
     assert quality.entry_reference_status_counts["ENTRY_REFERENCE_DECISION_PRICE_PROXY"] == 1
     assert quality.evidence_class_counts["REPLAY_EXPECTED_CE_NET_PROXY"] == 1
+    assert quality.feature_truth_boundary_status_counts[
+        "FEATURE_EX_ANTE_AVAILABLE_AT_DECISION"
+    ] == 2
+    assert quality.cost_feature_truth_status_counts[
+        "A2_COST_FEATURES_RESEARCH_ONLY_NOT_REPLAY_TRUTH"
+    ] == 1
+    assert quality.feature_to_label_truth_promotion_blocked_count == 2
 
     f16_report = json.loads(
         (output_dir / F16_FEATURE_COVERAGE_REPORT_FILENAME).read_text(encoding="utf-8")
@@ -435,6 +463,15 @@ def test_b2_label_store_builder_propagates_grounded_and_proxy_rows() -> None:
     assert "F16_ANTI_REVENGE_STATE_MISSING" in f16_report["blocker_codes"]
     assert "book_depth_levels" not in f16_report["zero_available_features"]
     assert "anti_revenge_state__active" in f16_report["zero_available_features"]
+    engine_rows = {row["engine_id"]: row for row in f16_report["engine_applicable_rows"]}
+    assert engine_rows["engine_a"]["d_only_features_excluded"] is True
+    assert "anti_revenge_state__active" not in engine_rows["engine_a"][
+        "missing_engine_applicable_feature_names"
+    ]
+    assert engine_rows["engine_b"]["d_only_features_excluded"] is True
+    assert "anti_revenge_state__active" not in engine_rows["engine_b"][
+        "missing_engine_applicable_feature_names"
+    ]
 
 
 def test_b2_label_store_f16_report_counts_full_feature_rows() -> None:

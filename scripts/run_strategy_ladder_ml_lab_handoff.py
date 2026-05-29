@@ -45,6 +45,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default="",
         help="Optional B2 workflow run root used to build replay-grounded labels.",
     )
+    parser.add_argument(
+        "--label-store-dataset-path",
+        default="",
+        help="Optional direct replay-grounded label-store dataset path, for example B_ML labels\\b_ml_label_store.jsonl.",
+    )
     parser.add_argument("--export-dir", required=True, help="Handoff export directory.")
     parser.add_argument("--pair", default="BTCUSDT", help="Pair to train.")
     # Patch P2b (2026-05-22) — optional multi-pair tuple. When provided with ≥ 2
@@ -116,6 +121,11 @@ def main(argv: list[str] | None = None) -> int:
             calibration_version=args.calibration_version,
             kline_root=Path(args.kline_root),
             b2_run_root=Path(args.b2_run_root) if args.b2_run_root else None,
+            label_store_dataset_path=(
+                Path(args.label_store_dataset_path)
+                if args.label_store_dataset_path
+                else None
+            ),
             export_dir=Path(args.export_dir),
             pair=args.pair,
             selected_pairs=_csv_tuple(args.selected_pairs),

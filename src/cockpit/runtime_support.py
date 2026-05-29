@@ -153,6 +153,8 @@ class StrategyLadderBacktestSummary(BaseModel, frozen=True):
     available_pair_count: int = 0
     requested_pair_count: int = 0
     missing_requested_pairs: tuple[str, ...] = ()
+    pair_candidate_coverage_status: str = "PAIR_CANDIDATE_COVERAGE_NOT_PROVEN"
+    pair_candidate_blocker_codes: tuple[str, ...] = ()
     silver_index_status: str = "SILVER_INDEX_NOT_READY"
     gold_feature_store_status: str = "GOLD_FEATURE_STORE_NOT_READY"
     compression_status: str = "COMPRESSION_NOT_PROVEN"
@@ -374,6 +376,19 @@ class StrategyLadderBacktestSummary(BaseModel, frozen=True):
     run_state_banner_details: tuple[str, ...] = ()
     files_processed: int = 0
     rows_processed: int = 0
+    a2_microstructure_performance_status: str = "A2_PERFORMANCE_REPORT_NOT_PROVEN"
+    a2_microstructure_performance_report_path: str = ""
+    a2_microstructure_cache_status: str = "A2_MICROSTRUCTURE_FILE_CACHE_NOT_PROVEN"
+    a2_microstructure_cache_manifest_path: str = ""
+    a2_feature_equivalence_status: str = "A2_FEATURE_EQUIVALENCE_NOT_PROVEN"
+    a2_feature_equivalence_report_path: str = ""
+    a2_gold_decision_window_status: str = "GOLD_DECISION_WINDOW_NOT_PROVEN"
+    a2_gold_feature_build_wall_time_s: float | None = None
+    a2_microstructure_streaming_status: str = "A2_MICROSTRUCTURE_STREAMING_NOT_PROVEN"
+    a2_microstructure_repeated_raw_scan_status: str = "REPEATED_RAW_SCAN_NOT_PROVEN"
+    a2_microstructure_time_index_hit_count: int = 0
+    a2_microstructure_time_index_miss_count: int = 0
+    a2_microstructure_report_links: tuple[dict[str, str], ...] = ()
     replay_performance_profile_status: str = "REPLAY_PERFORMANCE_PROFILE_NOT_PROVEN"
     replay_performance_profile_path: str = ""
     replay_perf_total_wall_time_s: float | None = None
@@ -509,6 +524,60 @@ class StrategyLadderBacktestSummary(BaseModel, frozen=True):
     backtest_decision_ml_benefit_status: str = "ML_VS_NO_ML_REPORT_UNAVAILABLE"
     backtest_decision_next_blocker: str = ""
     backtest_decision_report_links: tuple[dict[str, str], ...] = ()
+    # Patch BACKBONE-PARITY-COCKPIT-1 (2026-05-27) — Surface the backbone
+    # parity audit (read-only) so the operator sees, on every backtest run,
+    # whether B2 actually uses the canonical backbone or still falls back to
+    # local_replay_runtime per surface. The audit aggregates the per-bucket
+    # `parity_payload.backbone_surface_report` across all records and emits
+    # a status breakdown (CANONICAL_BACKBONE_USED / LOCAL_REPLAY_FALLBACK_USED /
+    # NO_SURFACE_RESULT_AVAILABLE) plus a verdict on shadow/live parity.
+    backbone_parity_audit_path: str = ""
+    backbone_parity_final_report_path: str = ""
+    backbone_parity_overall: str = "BACKBONE_PARITY_NOT_AUDITED"
+    backbone_parity_shadow_live_verdict: str = ""
+    backbone_parity_canonical_surface_count: int = 0
+    backbone_parity_fallback_surface_count: int = 0
+    backbone_parity_missing_surface_count: int = 0
+    backbone_parity_total_surfaces: int = 0
+    backbone_parity_surfaces_still_local_or_proxy: tuple[str, ...] = ()
+    backbone_parity_links: tuple[dict[str, str], ...] = ()
+    # Patch BACKBONE-PARITY-COCKPIT-2 (2026-05-27) — Per-surface breakdown
+    # so the operator can see, surface-by-surface, which of the 21 backbone
+    # surfaces are canonical vs local-replay vs missing, with the dominant
+    # reason code per surface. This was added after the P1 S1..S5 wiring
+    # because the aggregate counters did not let the operator confirm that
+    # specific surfaces (e.g. `hard_block_gate`, `scoring_ranking`,
+    # `regime_classification`, `risk_filter`) actually flipped to canonical.
+    # Each entry: {"surface": str, "dominant_status": str, "records_total":
+    # int, "records_canonical": int, "records_fallback": int,
+    # "records_missing": int, "coverage_canonical_pct": float,
+    # "dominant_reason_code": str, "selected_source": str}.
+    backbone_parity_per_surface_breakdown: tuple[dict[str, object], ...] = ()
+    # Patch BACKBONE-METRICS-COCKPIT (2026-05-27) — Business metrics, the
+    # numbers an operator would monitor in shadow/live (not the parity
+    # plumbing status). Aggregated by group from the same bucket records
+    # walk used for the parity breakdown. Keyed dict so it stays
+    # template-friendly and easy to extend without polluting this class.
+    # Shape:
+    #   {
+    #     "records_total": int,
+    #     "execution": {execution_label_canonical_pct, fee_model_canonical_pct,
+    #         spread_model_canonical_pct, slippage_model_canonical_pct,
+    #         partial_fill_model_canonical_pct, no_fill_count,
+    #         partial_fill_count, fill_realism_blocked_pct},
+    #     "edge":       {expected_ce_net_mean, expected_cost_mean,
+    #         realized_cost_mean, gross_return_mean, raw_score_mean,
+    #         penalized_score_mean, final_score_mean, score_dampening_pct},
+    #     "risk":       {decision_state_breakdown: tuple, executed_count,
+    #         rejected_count, primary_reason_top5: tuple},
+    #     "portfolio":  {candidate_size_mean, final_size_mean,
+    #         size_reduction_rate_mean, min_notional_viable_count,
+    #         executed_notional_sum},
+    #     "regime":     {regime_breakdown: tuple},
+    #     "hard_block": {hard_blocked_count, hard_blocked_pct,
+    #         hard_block_reasons_top5: tuple, runtime_mode_breakdown: tuple},
+    #   }
+    backbone_metrics_summary: dict[str, object] = Field(default_factory=dict)
     cancellable_running_jobs: tuple[str, ...] = ()
 
 
@@ -574,7 +643,9 @@ def read_runtime_surfaces(
     selected_candidate_id: str = "",
     active_feature_names: tuple[str, ...] = (),
     artifact_feature_names: tuple[str, ...] = (),
+    include_candidate_feature_audits: bool = True,
     log_query: ShadowVpsServiceLogQuery | None = None,
+    pinned_run_id: str = "",
 ) -> CockpitRuntimeSurfaces:
     """Load compact cockpit surfaces from the existing monitoring and queue rails."""
 
@@ -617,6 +688,8 @@ def read_runtime_surfaces(
         selected_candidate_id=selected_candidate_id,
         active_feature_names=active_feature_names,
         artifact_feature_names=artifact_feature_names,
+        include_candidate_feature_audits=include_candidate_feature_audits,
+        pinned_run_id=pinned_run_id,
     )
     strategy_ladder_ml_handoff = read_strategy_ladder_ml_handoff_dashboard_summary(
         backtest_jobs,
@@ -965,7 +1038,17 @@ def _read_strategy_ladder_summary(
     selected_candidate_id: str = "",
     active_feature_names: tuple[str, ...] = (),
     artifact_feature_names: tuple[str, ...] = (),
+    include_candidate_feature_audits: bool = True,
+    pinned_run_id: str = "",
 ) -> StrategyLadderBacktestSummary:
+    # Patch BACKTEST-RUN-PIN (2026-05-27) — if an operator pinned a specific
+    # historical run from the Recent Backtest Jobs table (`?pinned_run_id=...`),
+    # reorder the jobs so that the matching workflow appears FIRST in the
+    # ordered_keys list below. The rest of the function picks "the first
+    # group" implicitly through `for group_key in ordered_keys` and exits on
+    # the first successful iteration — so promoting the pinned group makes
+    # the cockpit display its data without modifying the existing flow.
+    pinned_run_id = (pinned_run_id or "").strip()
     grouped_jobs: dict[str, list[CockpitBacktestJobRecord]] = {}
     ordered_keys: list[str] = []
     for job in jobs:
@@ -977,13 +1060,61 @@ def _read_strategy_ladder_summary(
             ordered_keys.append(key)
         grouped_jobs[key].append(job)
 
+    if pinned_run_id:
+        # Match either by workflow_run_id key OR by any job's job_id within
+        # a group (the table operator clicks shows job_id, which may equal
+        # workflow_run_id for newer schemes but may also be a child id).
+        pinned_key: str | None = None
+        if pinned_run_id in grouped_jobs:
+            pinned_key = pinned_run_id
+        else:
+            for key, group in grouped_jobs.items():
+                if any(record.job_id == pinned_run_id for record in group):
+                    pinned_key = key
+                    break
+                if any(
+                    record.workflow_run_id == pinned_run_id for record in group
+                ):
+                    pinned_key = key
+                    break
+        if pinned_key is not None and pinned_key in ordered_keys:
+            ordered_keys.remove(pinned_key)
+            ordered_keys.insert(0, pinned_key)
+
     for group_key in ordered_keys:
         scoped_jobs = tuple(grouped_jobs[group_key])
+        # Patch BACKTEST-RUN-PIN (2026-05-27) — when the operator pinned the
+        # currently-iterated group, prefer the most-recent B2 detailed-replay
+        # job within that group so the B2 phase root is selected even when a
+        # later A1/A2 sub-job ran after B2 completed (e.g. a re-run of A2
+        # only). Without this, `latest_job` may point to a phase that has
+        # no `detailed_replay/by_bucket/` directory and the function would
+        # `continue` past the pinned group with empty parity/metrics cards.
+        is_pinned_group = bool(pinned_run_id) and (
+            group_key == ordered_keys[0]
+            and any(
+                record.job_id == pinned_run_id
+                or record.workflow_run_id == pinned_run_id
+                for record in scoped_jobs
+            )
+        )
         latest_job = max(
             scoped_jobs,
             key=lambda record: _parse_iso(record.latest_activity_iso)
             or datetime.min.replace(tzinfo=UTC),
         )
+        if is_pinned_group:
+            b2_jobs = tuple(
+                record
+                for record in scoped_jobs
+                if _job_phase_id(record) == PHASE_B2
+            )
+            if b2_jobs:
+                latest_job = max(
+                    b2_jobs,
+                    key=lambda record: _parse_iso(record.latest_activity_iso)
+                    or datetime.min.replace(tzinfo=UTC),
+                )
         workflow_root = (
             Path(latest_job.parent_workflow_ref).parent
             if latest_job.parent_workflow_ref
@@ -999,6 +1130,11 @@ def _read_strategy_ladder_summary(
             if workflow_manifest is not None
             else ""
         )
+        # When pinned, force B2 as the target phase so the cockpit reads
+        # the detailed-replay artifacts of the historical run (not whatever
+        # phase happened to run last under the same workflow_run_id).
+        if is_pinned_group:
+            current_phase_id = PHASE_B2
         current_phase_record = (
             workflow_manifest.phases.get(current_phase_id)
             if workflow_manifest is not None and current_phase_id
@@ -1009,6 +1145,10 @@ def _read_strategy_ladder_summary(
             if current_phase_record is not None and current_phase_record.phase_output_root
             else Path(latest_job.output_root)
         )
+        if is_pinned_group and workflow_root is not None:
+            pinned_b2_root = workflow_phase_root(workflow_root, PHASE_B2)
+            if pinned_b2_root.is_dir():
+                output_root = pinned_b2_root
         if not output_root.is_dir():
             if workflow_manifest is not None and workflow_root is not None:
                 candidate_root = workflow_phase_root(
@@ -2013,6 +2153,7 @@ def _read_strategy_ladder_summary(
                 selected_candidate_id=selected_candidate_id,
                 active_feature_names=active_feature_names,
                 artifact_feature_names=artifact_feature_names,
+                include_candidate_feature_audits=include_candidate_feature_audits,
             )
             surfaced_summary = _apply_strategy_ladder_proxy_fidelity_surface(
                 enriched_summary,
@@ -2103,6 +2244,7 @@ def _enrich_strategy_ladder_summary_from_artifacts(
     selected_candidate_id: str,
     active_feature_names: tuple[str, ...] = (),
     artifact_feature_names: tuple[str, ...] = (),
+    include_candidate_feature_audits: bool = True,
 ) -> StrategyLadderBacktestSummary:
     run_dir = _resolve_strategy_ladder_run_dir(
         output_root,
@@ -2289,6 +2431,7 @@ def _enrich_strategy_ladder_summary_from_artifacts(
                 "candidate_discovery_limit_reason",
                 "candidate_discovery_mode",
                 "candidate_discovery_cap_status",
+                "pair_candidate_coverage_status",
                 "preselection_status",
                 "replay_input_mode_status",
                 "b1_5_policy_mode",
@@ -2296,6 +2439,31 @@ def _enrich_strategy_ladder_summary_from_artifacts(
                 value = source_candidate_summary_payload.get(string_key)
                 if isinstance(value, str) and value:
                     updates[string_key] = value
+            for tuple_key in (
+                "requested_pairs",
+                "pairs_with_feature_rows",
+                "pairs_seen",
+                "missing_requested_pairs",
+                "pair_candidate_blocker_codes",
+            ):
+                value = source_candidate_summary_payload.get(tuple_key)
+                if isinstance(value, (list, tuple)):
+                    normalized_values = tuple(
+                        str(item)
+                        for item in value
+                        if str(item).strip()
+                    )
+                    if tuple_key == "requested_pairs":
+                        updates["requested_pair_count"] = len(normalized_values)
+                    elif tuple_key in {"pairs_seen", "pairs_with_feature_rows"}:
+                        updates["available_pair_count"] = max(
+                            int(updates.get("available_pair_count", summary.available_pair_count) or 0),
+                            len(normalized_values),
+                        )
+                    elif tuple_key == "missing_requested_pairs":
+                        updates["missing_requested_pairs"] = normalized_values
+                    elif tuple_key == "pair_candidate_blocker_codes":
+                        updates["pair_candidate_blocker_codes"] = normalized_values
             for bool_key in (
                 "small_scope_enabled",
                 "full_scan_enabled",
@@ -2474,6 +2642,507 @@ def _enrich_strategy_ladder_summary_from_artifacts(
         if decision_links:
             updates["backtest_decision_report_links"] = tuple(decision_links)
 
+        # Patch BACKBONE-PARITY-COCKPIT-1 (2026-05-27) — Hydrate backbone
+        # parity audit fields. Read the two aggregate reports produced by
+        # `write_backtest_backbone_parity_audit_reports` at the end of B2:
+        # `backtest_backbone_parity_audit.json` (operator summary) and
+        # `backtest_backbone_parity_final_report.json` (verdict + surface
+        # detail). Compute the per-status surface counts from the per-bucket
+        # records' `parity_payload.backbone_surface_report` so the cockpit
+        # can show "X surfaces use canonical / Y use local_replay fallback".
+        backbone_audit_path = run_dir / "reports" / "backtest_backbone_parity_audit.json"
+        backbone_final_path = (
+            run_dir / "reports" / "backtest_backbone_parity_final_report.json"
+        )
+        backbone_audit_payload = _load_json(backbone_audit_path, default={})
+        backbone_final_payload = _load_json(backbone_final_path, default={})
+        if isinstance(backbone_audit_payload, dict) and backbone_audit_payload:
+            updates["backbone_parity_audit_path"] = str(backbone_audit_path.resolve())
+            updates["backbone_parity_overall"] = str(
+                backbone_audit_payload.get("overall")
+                or backbone_audit_payload.get("backbone_parity_overall")
+                or "BACKBONE_PARITY_NOT_AUDITED"
+            )
+        if isinstance(backbone_final_payload, dict) and backbone_final_payload:
+            updates["backbone_parity_final_report_path"] = str(
+                backbone_final_path.resolve()
+            )
+            if not updates.get("backbone_parity_overall") or updates.get(
+                "backbone_parity_overall"
+            ) == "BACKBONE_PARITY_NOT_AUDITED":
+                updates["backbone_parity_overall"] = str(
+                    backbone_final_payload.get("backbone_parity_overall")
+                    or "BACKBONE_PARITY_NOT_AUDITED"
+                )
+            updates["backbone_parity_shadow_live_verdict"] = str(
+                backbone_final_payload.get("shadow_live_logical_parity_verdict") or ""
+            )
+            still_fallback = backbone_final_payload.get(
+                "surfaces_still_local_or_proxy"
+            )
+            if isinstance(still_fallback, list):
+                updates["backbone_parity_surfaces_still_local_or_proxy"] = tuple(
+                    str(item) for item in still_fallback if item
+                )
+        # Aggregate per-record surface status counts. This is cheap because
+        # we already walked `bucket_rows` above; here we reuse the loaded
+        # bucket records' parity_payload.backbone_surface_report when present.
+        try:
+            bucket_dir = run_dir / "detailed_replay" / "by_bucket"
+            canonical_count = 0
+            fallback_count = 0
+            missing_count = 0
+            total_count = 0
+            per_surface_status_counts: dict[str, dict[str, int]] = {}
+            per_surface_reason_counts: dict[str, dict[str, int]] = {}
+            per_surface_selected_source: dict[str, str] = {}
+            # Patch BACKBONE-METRICS-COCKPIT (2026-05-27) — accumulators for
+            # the 6 metrics groups. These are populated from the same bucket
+            # records walk used for the parity per-surface breakdown so we
+            # only read each bucket JSON once.
+            metrics_records_total = 0
+            metrics_execution_source_counts: dict[str, dict[str, int]] = {
+                "execution_label_source": {},
+                "fee_model_source": {},
+                "spread_model_source": {},
+                "slippage_model_source": {},
+                "partial_fill_model_source": {},
+            }
+            metrics_no_fill_count = 0
+            metrics_partial_fill_count = 0
+            metrics_fill_realism_blocked_count = 0
+            metrics_edge_sums: dict[str, float] = {
+                "expected_ce_net": 0.0,
+                "expected_cost": 0.0,
+                "realized_cost": 0.0,
+                "gross_return": 0.0,
+                "raw_score": 0.0,
+                "penalized_score": 0.0,
+                "final_score": 0.0,
+            }
+            metrics_edge_counts: dict[str, int] = {
+                "expected_ce_net": 0,
+                "expected_cost": 0,
+                "realized_cost": 0,
+                "gross_return": 0,
+                "raw_score": 0,
+                "penalized_score": 0,
+                "final_score": 0,
+            }
+            metrics_decision_state_counts: dict[str, int] = {}
+            metrics_primary_reason_counts: dict[str, int] = {}
+            metrics_regime_counts: dict[str, int] = {}
+            metrics_runtime_mode_counts: dict[str, int] = {}
+            metrics_hard_blocked_count = 0
+            metrics_hard_block_reason_counts: dict[str, int] = {}
+            metrics_candidate_size_sum = 0.0
+            metrics_candidate_size_count = 0
+            metrics_final_size_sum = 0.0
+            metrics_final_size_count = 0
+            metrics_size_reduction_rate_sum = 0.0
+            metrics_size_reduction_rate_count = 0
+            metrics_min_notional_viable_count = 0
+            metrics_executed_notional_sum = 0.0
+            for bucket_path in bucket_dir.glob("*/*.json") if bucket_dir.is_dir() else []:
+                try:
+                    payload = _load_json(bucket_path, default={})
+                except Exception:  # noqa: BLE001 - defensive read
+                    continue
+                if not isinstance(payload, dict):
+                    continue
+                parity_payload = payload.get("parity_payload")
+                if not isinstance(parity_payload, dict):
+                    continue
+                # Patch BACKBONE-METRICS-COCKPIT — collect business metrics
+                # from the top-level bucket payload + dtr_record + parity
+                # payload sources before iterating surfaces.
+                metrics_records_total += 1
+                for source_key, source_counts in (
+                    metrics_execution_source_counts.items()
+                ):
+                    source_value = str(parity_payload.get(source_key) or "")
+                    if source_value:
+                        source_counts[source_value] = (
+                            source_counts.get(source_value, 0) + 1
+                        )
+                if bool(payload.get("no_fill_flag")):
+                    metrics_no_fill_count += 1
+                if bool(payload.get("partial_fill_flag")):
+                    metrics_partial_fill_count += 1
+                fill_realism_status = str(payload.get("fill_realism_status") or "")
+                if (
+                    fill_realism_status
+                    and fill_realism_status.startswith("FILL_REALISM_BLOCKED")
+                ):
+                    metrics_fill_realism_blocked_count += 1
+                expected_ce_net_value = payload.get("expected_ce_net")
+                if isinstance(expected_ce_net_value, (int, float)):
+                    metrics_edge_sums["expected_ce_net"] += float(
+                        expected_ce_net_value
+                    )
+                    metrics_edge_counts["expected_ce_net"] += 1
+                executed_notional_value = payload.get("executed_notional")
+                if isinstance(executed_notional_value, (int, float)):
+                    metrics_executed_notional_sum += float(executed_notional_value)
+                if bool(payload.get("min_notional_viable")):
+                    metrics_min_notional_viable_count += 1
+                size_reduction_value = payload.get("size_reduction_rate")
+                if isinstance(size_reduction_value, (int, float)):
+                    metrics_size_reduction_rate_sum += float(size_reduction_value)
+                    metrics_size_reduction_rate_count += 1
+                dtr_record = payload.get("dtr_record")
+                if isinstance(dtr_record, dict):
+                    for field_name in (
+                        "expected_cost",
+                        "realized_cost",
+                        "gross_return",
+                        "raw_score",
+                        "penalized_score",
+                        "final_score",
+                    ):
+                        v = dtr_record.get(field_name)
+                        if isinstance(v, (int, float)):
+                            metrics_edge_sums[field_name] += float(v)
+                            metrics_edge_counts[field_name] += 1
+                    decision_state = str(dtr_record.get("decision_state") or "")
+                    if decision_state:
+                        metrics_decision_state_counts[decision_state] = (
+                            metrics_decision_state_counts.get(decision_state, 0) + 1
+                        )
+                    primary_reason = str(dtr_record.get("primary_reason") or "")
+                    if primary_reason:
+                        metrics_primary_reason_counts[primary_reason] = (
+                            metrics_primary_reason_counts.get(primary_reason, 0) + 1
+                        )
+                    regime_value = str(dtr_record.get("regime") or "")
+                    if regime_value:
+                        metrics_regime_counts[regime_value] = (
+                            metrics_regime_counts.get(regime_value, 0) + 1
+                        )
+                    runtime_mode = str(dtr_record.get("runtime_mode") or "")
+                    if runtime_mode:
+                        metrics_runtime_mode_counts[runtime_mode] = (
+                            metrics_runtime_mode_counts.get(runtime_mode, 0) + 1
+                        )
+                    if bool(dtr_record.get("hard_blocked")):
+                        metrics_hard_blocked_count += 1
+                        for reason in dtr_record.get("hard_block_reasons") or ():
+                            reason_str = str(reason or "")
+                            if reason_str:
+                                metrics_hard_block_reason_counts[reason_str] = (
+                                    metrics_hard_block_reason_counts.get(
+                                        reason_str, 0
+                                    )
+                                    + 1
+                                )
+                    cand_size = dtr_record.get("candidate_size")
+                    if isinstance(cand_size, (int, float)):
+                        metrics_candidate_size_sum += float(cand_size)
+                        metrics_candidate_size_count += 1
+                    fin_size = dtr_record.get("final_size")
+                    if isinstance(fin_size, (int, float)):
+                        metrics_final_size_sum += float(fin_size)
+                        metrics_final_size_count += 1
+                surface_report = parity_payload.get("backbone_surface_report")
+                if not isinstance(surface_report, dict):
+                    continue
+                rows = surface_report.get("rows")
+                if not isinstance(rows, list):
+                    continue
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    status = str(row.get("status") or "")
+                    total_count += 1
+                    if status == "CANONICAL_BACKBONE_USED":
+                        canonical_count += 1
+                    elif status == "LOCAL_REPLAY_FALLBACK_USED":
+                        fallback_count += 1
+                    elif status == "NO_SURFACE_RESULT_AVAILABLE":
+                        missing_count += 1
+                    # Patch BACKBONE-PARITY-COCKPIT-2 (2026-05-27) —
+                    # collect per-surface breakdown so the operator can
+                    # see surface-by-surface what fraction of records
+                    # used the canonical backbone vs the local-replay
+                    # fallback. The dominant reason code surfaces why a
+                    # surface stayed on local_replay (e.g. inputs missing,
+                    # cluster capacity missing, threshold not configured).
+                    surface_name = str(row.get("surface") or "")
+                    if surface_name:
+                        status_counts = per_surface_status_counts.setdefault(
+                            surface_name, {}
+                        )
+                        status_counts[status] = status_counts.get(status, 0) + 1
+                        reason_counts = per_surface_reason_counts.setdefault(
+                            surface_name, {}
+                        )
+                        for reason in row.get("reason_codes") or ():
+                            reason_str = str(reason or "")
+                            if reason_str:
+                                reason_counts[reason_str] = (
+                                    reason_counts.get(reason_str, 0) + 1
+                                )
+                        selected_source = str(row.get("selected_source") or "")
+                        if (
+                            selected_source
+                            and surface_name not in per_surface_selected_source
+                        ):
+                            per_surface_selected_source[surface_name] = selected_source
+            if total_count > 0:
+                updates["backbone_parity_canonical_surface_count"] = canonical_count
+                updates["backbone_parity_fallback_surface_count"] = fallback_count
+                updates["backbone_parity_missing_surface_count"] = missing_count
+                updates["backbone_parity_total_surfaces"] = total_count
+            if per_surface_status_counts:
+                breakdown: list[dict[str, object]] = []
+                for surface_name in sorted(per_surface_status_counts.keys()):
+                    status_counts = per_surface_status_counts[surface_name]
+                    surface_total = sum(status_counts.values())
+                    canonical_for_surface = status_counts.get(
+                        "CANONICAL_BACKBONE_USED", 0
+                    )
+                    fallback_for_surface = status_counts.get(
+                        "LOCAL_REPLAY_FALLBACK_USED", 0
+                    )
+                    missing_for_surface = status_counts.get(
+                        "NO_SURFACE_RESULT_AVAILABLE", 0
+                    )
+                    dominant_status = max(
+                        status_counts.items(), key=lambda item: item[1]
+                    )[0]
+                    reason_counts = per_surface_reason_counts.get(surface_name, {})
+                    dominant_reason_code = ""
+                    if reason_counts:
+                        dominant_reason_code = max(
+                            reason_counts.items(), key=lambda item: item[1]
+                        )[0]
+                    coverage_pct = (
+                        (canonical_for_surface / surface_total * 100.0)
+                        if surface_total
+                        else 0.0
+                    )
+                    breakdown.append(
+                        {
+                            "surface": surface_name,
+                            "dominant_status": dominant_status,
+                            "records_total": surface_total,
+                            "records_canonical": canonical_for_surface,
+                            "records_fallback": fallback_for_surface,
+                            "records_missing": missing_for_surface,
+                            "coverage_canonical_pct": round(coverage_pct, 1),
+                            "dominant_reason_code": dominant_reason_code,
+                            "selected_source": per_surface_selected_source.get(
+                                surface_name, ""
+                            ),
+                        }
+                    )
+                updates["backbone_parity_per_surface_breakdown"] = tuple(breakdown)
+            # Patch BACKBONE-METRICS-COCKPIT (2026-05-27) — build the
+            # business-metrics dict so the operator sees the same KPIs they
+            # would surveil during shadow/live. All accumulators populated
+            # in the same walk above.
+            if metrics_records_total > 0:
+                def _mean(field_name: str) -> float:
+                    count = metrics_edge_counts.get(field_name, 0)
+                    if count <= 0:
+                        return 0.0
+                    return round(
+                        metrics_edge_sums.get(field_name, 0.0) / count, 6
+                    )
+
+                def _pct_canonical(source_counts: dict[str, int]) -> float:
+                    if not source_counts:
+                        return 0.0
+                    total = sum(source_counts.values())
+                    if total <= 0:
+                        return 0.0
+                    canonical = sum(
+                        v
+                        for k, v in source_counts.items()
+                        if k.startswith("CANONICAL_")
+                        or k == "PARTIAL_CANONICAL_EXECUTION"
+                    )
+                    return round(canonical * 100.0 / total, 1)
+
+                def _top_n(
+                    counts: dict[str, int],
+                    n: int = 5,
+                ) -> tuple[dict[str, object], ...]:
+                    if not counts:
+                        return ()
+                    ordered = sorted(
+                        counts.items(), key=lambda item: item[1], reverse=True
+                    )[:n]
+                    return tuple(
+                        {"code": code, "count": count} for code, count in ordered
+                    )
+
+                def _breakdown(
+                    counts: dict[str, int],
+                ) -> tuple[dict[str, object], ...]:
+                    if not counts:
+                        return ()
+                    ordered = sorted(
+                        counts.items(), key=lambda item: item[1], reverse=True
+                    )
+                    return tuple(
+                        {"label": label, "count": count}
+                        for label, count in ordered
+                    )
+
+                raw_mean = _mean("raw_score")
+                final_mean = _mean("final_score")
+                dampening_pct = 0.0
+                if raw_mean and abs(raw_mean) > 1e-9:
+                    dampening_pct = round(
+                        max(0.0, (raw_mean - final_mean) / raw_mean) * 100.0, 1
+                    )
+
+                hard_blocked_pct = round(
+                    metrics_hard_blocked_count * 100.0 / metrics_records_total, 1
+                )
+                fill_realism_blocked_pct = round(
+                    metrics_fill_realism_blocked_count
+                    * 100.0
+                    / metrics_records_total,
+                    1,
+                )
+
+                updates["backbone_metrics_summary"] = {
+                    "records_total": metrics_records_total,
+                    "execution": {
+                        "execution_label_canonical_pct": _pct_canonical(
+                            metrics_execution_source_counts["execution_label_source"]
+                        ),
+                        "fee_model_canonical_pct": _pct_canonical(
+                            metrics_execution_source_counts["fee_model_source"]
+                        ),
+                        "spread_model_canonical_pct": _pct_canonical(
+                            metrics_execution_source_counts["spread_model_source"]
+                        ),
+                        "slippage_model_canonical_pct": _pct_canonical(
+                            metrics_execution_source_counts["slippage_model_source"]
+                        ),
+                        "partial_fill_model_canonical_pct": _pct_canonical(
+                            metrics_execution_source_counts[
+                                "partial_fill_model_source"
+                            ]
+                        ),
+                        "no_fill_count": metrics_no_fill_count,
+                        "partial_fill_count": metrics_partial_fill_count,
+                        "fill_realism_blocked_pct": fill_realism_blocked_pct,
+                    },
+                    "edge": {
+                        "expected_ce_net_mean": _mean("expected_ce_net"),
+                        "expected_cost_mean": _mean("expected_cost"),
+                        "realized_cost_mean": _mean("realized_cost"),
+                        "gross_return_mean": _mean("gross_return"),
+                        "raw_score_mean": raw_mean,
+                        "penalized_score_mean": _mean("penalized_score"),
+                        "final_score_mean": final_mean,
+                        "score_dampening_pct": dampening_pct,
+                    },
+                    "risk": {
+                        "decision_state_breakdown": _breakdown(
+                            metrics_decision_state_counts
+                        ),
+                        "executed_count": metrics_decision_state_counts.get(
+                            "executed", 0
+                        ),
+                        "rejected_count": sum(
+                            v
+                            for k, v in metrics_decision_state_counts.items()
+                            if "reject" in k.lower() or "blocked" in k.lower()
+                        ),
+                        "primary_reason_top5": _top_n(
+                            metrics_primary_reason_counts, n=5
+                        ),
+                    },
+                    "portfolio": {
+                        "candidate_size_mean": round(
+                            metrics_candidate_size_sum
+                            / max(metrics_candidate_size_count, 1),
+                            4,
+                        )
+                        if metrics_candidate_size_count
+                        else 0.0,
+                        "final_size_mean": round(
+                            metrics_final_size_sum
+                            / max(metrics_final_size_count, 1),
+                            4,
+                        )
+                        if metrics_final_size_count
+                        else 0.0,
+                        "size_reduction_rate_mean": round(
+                            metrics_size_reduction_rate_sum
+                            / max(metrics_size_reduction_rate_count, 1),
+                            4,
+                        )
+                        if metrics_size_reduction_rate_count
+                        else 0.0,
+                        "min_notional_viable_count": metrics_min_notional_viable_count,
+                        "executed_notional_sum": round(
+                            metrics_executed_notional_sum, 2
+                        ),
+                    },
+                    "regime": {
+                        "regime_breakdown": _breakdown(metrics_regime_counts),
+                    },
+                    "hard_block": {
+                        "hard_blocked_count": metrics_hard_blocked_count,
+                        "hard_blocked_pct": hard_blocked_pct,
+                        "hard_block_reasons_top5": _top_n(
+                            metrics_hard_block_reason_counts, n=5
+                        ),
+                        "runtime_mode_breakdown": _breakdown(
+                            metrics_runtime_mode_counts
+                        ),
+                    },
+                }
+        except Exception:  # noqa: BLE001 - defensive, never block runtime VM
+            pass
+        backbone_links: list[dict[str, str]] = []
+        for label, path in (
+            ("backbone_parity_audit", backbone_audit_path),
+            ("backbone_parity_final_report", backbone_final_path),
+            (
+                "backbone_module_usage_matrix",
+                run_dir / "reports" / "backbone_module_usage_matrix.json",
+            ),
+            (
+                "backtest_decision_source_matrix",
+                run_dir / "reports" / "backtest_decision_source_matrix.json",
+            ),
+            (
+                "count_semantics_deep_audit",
+                run_dir / "reports" / "count_semantics_deep_audit.json",
+            ),
+            (
+                "engine_native_runner_invocation_audit",
+                run_dir / "reports" / "engine_native_runner_invocation_audit.json",
+            ),
+            (
+                "b2_cost_blocker_component_audit",
+                run_dir / "reports" / "b2_cost_blocker_component_audit.json",
+            ),
+            (
+                "engine_a_executed_candidate_autopsy",
+                run_dir / "reports" / "engine_a_executed_candidate_autopsy.json",
+            ),
+            (
+                "executed_record_invariant_report",
+                run_dir / "reports" / "executed_record_invariant_report.json",
+            ),
+            (
+                "backtest_backbone_parity_patch_final_verdict",
+                run_dir / "reports" / "backtest_backbone_parity_patch_final_verdict.json",
+            ),
+        ):
+            if path.is_file():
+                backbone_links.append({"label": label, "path": str(path.resolve())})
+        if backbone_links:
+            updates["backbone_parity_links"] = tuple(backbone_links)
+
         candidate_events_path = run_dir / "fast_candidates" / "candidate_events.jsonl"
         all_candidate_rows = _load_all_jsonl_rows(candidate_events_path)
         count_semantics_rows = all_candidate_rows
@@ -2552,46 +3221,56 @@ def _enrich_strategy_ladder_summary_from_artifacts(
                 item.strip() for item in artifact_feature_names if item and item.strip()
             )
         if resolved_active_feature_names:
-            refusal_lookup = _candidate_refusal_lookup(all_refusal_rows)
-            candidate_feature_rows = _build_candidate_feature_rows(
-                candidate_payloads=candidate_rows,
-                replay_cache=replay_cache,
-                refusal_lookup=refusal_lookup,
-                active_feature_names=resolved_active_feature_names,
-            )
             updates["active_feature_names"] = resolved_active_feature_names
             updates["candidate_feature_columns"] = resolved_active_feature_names
-            updates["candidate_feature_rows"] = candidate_feature_rows
-            updates["candidate_feature_table_status"] = (
-                "CANDIDATE_FEATURE_TABLE_READY"
-                if candidate_feature_rows
-                else "CANDIDATE_FEATURE_TABLE_EMPTY"
-            )
-            wiring_rows = _build_feature_engine_ml_wiring_rows(
-                active_feature_names=resolved_active_feature_names,
-                artifact_feature_names=artifact_feature_names,
-                candidate_payloads=count_semantics_rows,
-            )
-            updates["feature_engine_ml_wiring_rows"] = wiring_rows
-            updates["feature_engine_ml_wiring_status"] = (
-                "FEATURE_ENGINE_ML_WIRING_READY"
-                if wiring_rows
-                else "FEATURE_ENGINE_ML_WIRING_EMPTY"
-            )
-            report_payload = {
-                "generated_at": datetime.now(UTC).isoformat(),
-                "run_id": summary.run_id,
-                "workflow_run_id": summary.workflow_run_id,
-                "active_feature_names": list(resolved_active_feature_names),
-                "artifact_feature_names": list(artifact_feature_names),
-                "rows": [dict(row) for row in wiring_rows],
-            }
-            report_path = run_dir / "reports" / "backtest_feature_engine_ml_wiring_audit.json"
-            report_path.parent.mkdir(parents=True, exist_ok=True)
-            atomic_write_json(report_path, report_payload, indent=2)
-            updates["feature_engine_ml_wiring_report_path"] = str(
-                report_path.resolve(strict=False)
-            )
+            if include_candidate_feature_audits:
+                refusal_lookup = _candidate_refusal_lookup(all_refusal_rows)
+                candidate_feature_rows = _build_candidate_feature_rows(
+                    candidate_payloads=candidate_rows,
+                    replay_cache=replay_cache,
+                    refusal_lookup=refusal_lookup,
+                    active_feature_names=resolved_active_feature_names,
+                )
+                updates["candidate_feature_rows"] = candidate_feature_rows
+                updates["candidate_feature_table_status"] = (
+                    "CANDIDATE_FEATURE_TABLE_READY"
+                    if candidate_feature_rows
+                    else "CANDIDATE_FEATURE_TABLE_EMPTY"
+                )
+                wiring_rows = _build_feature_engine_ml_wiring_rows(
+                    active_feature_names=resolved_active_feature_names,
+                    artifact_feature_names=artifact_feature_names,
+                    candidate_payloads=count_semantics_rows,
+                )
+                updates["feature_engine_ml_wiring_rows"] = wiring_rows
+                updates["feature_engine_ml_wiring_status"] = (
+                    "FEATURE_ENGINE_ML_WIRING_READY"
+                    if wiring_rows
+                    else "FEATURE_ENGINE_ML_WIRING_EMPTY"
+                )
+                report_payload = {
+                    "generated_at": datetime.now(UTC).isoformat(),
+                    "run_id": summary.run_id,
+                    "workflow_run_id": summary.workflow_run_id,
+                    "active_feature_names": list(resolved_active_feature_names),
+                    "artifact_feature_names": list(artifact_feature_names),
+                    "rows": [dict(row) for row in wiring_rows],
+                }
+                report_path = (
+                    run_dir / "reports" / "backtest_feature_engine_ml_wiring_audit.json"
+                )
+                report_path.parent.mkdir(parents=True, exist_ok=True)
+                atomic_write_json(report_path, report_payload, indent=2)
+                updates["feature_engine_ml_wiring_report_path"] = str(
+                    report_path.resolve(strict=False)
+                )
+            else:
+                updates["candidate_feature_table_status"] = (
+                    "CANDIDATE_FEATURE_TABLE_DEFERRED"
+                )
+                updates["feature_engine_ml_wiring_status"] = (
+                    "FEATURE_ENGINE_ML_WIRING_DEFERRED"
+                )
         trade_rows = all_trade_rows[:25]
         refusal_rows = all_refusal_rows[:25]
         loss_rows = all_loss_rows[:25]
@@ -2694,6 +3373,14 @@ def _enrich_strategy_ladder_summary_from_artifacts(
         ):
             updates["candidate_truth_status"] = "CANDIDATE_TRUTH_PROXY_PRESENT"
         updates.update(_load_replay_performance_profile_updates(run_dir))
+        a2_roots: list[Path] = [output_root]
+        try:
+            a2_roots.append(run_dir.parents[2] / "phase_a2_data_factory")
+        except IndexError:
+            pass
+        updates.update(_load_a2_microstructure_dashboard_updates(tuple(a2_roots)))
+    else:
+        updates.update(_load_a2_microstructure_dashboard_updates((output_root,)))
     gold_manifest_payload = _load_json(output_root / "gold_feature_manifest.json", default={})
     if isinstance(gold_manifest_payload, dict):
         feature_row_count = gold_manifest_payload.get("feature_row_count")
@@ -2905,6 +3592,133 @@ def _load_replay_performance_profile_updates(run_dir: Path) -> dict[str, object]
         if wall_time_s is not None:
             updates[target_key] = wall_time_s
 
+    return updates
+
+
+def _first_existing_a2_report(root: Path, filename: str) -> Path | None:
+    for candidate in (root / filename, root / "reports" / filename):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _load_a2_microstructure_dashboard_updates(
+    roots: tuple[Path, ...],
+) -> dict[str, object]:
+    updates: dict[str, object] = {}
+    links: list[dict[str, str]] = []
+    seen_paths: set[str] = set()
+    for root in roots:
+        if not root.is_dir():
+            continue
+        performance_path = _first_existing_a2_report(
+            root,
+            "a2_microstructure_performance_report.json",
+        )
+        cache_path = _first_existing_a2_report(
+            root,
+            "a2_microstructure_cache_manifest.json",
+        )
+        equivalence_path = _first_existing_a2_report(
+            root,
+            "a2_feature_equivalence_report.json",
+        )
+        performance_payload = (
+            _load_json(performance_path, default={})
+            if performance_path is not None
+            else {}
+        )
+        cache_payload = _load_json(cache_path, default={}) if cache_path is not None else {}
+        equivalence_payload = (
+            _load_json(equivalence_path, default={})
+            if equivalence_path is not None
+            else {}
+        )
+        if isinstance(performance_payload, dict) and performance_payload:
+            updates["a2_microstructure_performance_status"] = str(
+                performance_payload.get("status") or "A2_PERFORMANCE_REPORT_READY"
+            )
+            if performance_path is not None:
+                updates["a2_microstructure_performance_report_path"] = str(
+                    performance_path.resolve()
+                )
+            stage_timings = performance_payload.get("stage_timings_s")
+            if isinstance(stage_timings, dict):
+                gold_build = stage_timings.get("gold_feature_build")
+                if isinstance(gold_build, (int, float)):
+                    updates["a2_gold_feature_build_wall_time_s"] = float(gold_build)
+            gold_payload = performance_payload.get("gold")
+            if isinstance(gold_payload, dict):
+                updates["a2_gold_decision_window_status"] = str(
+                    gold_payload.get("decision_window_status")
+                    or "GOLD_DECISION_WINDOW_NOT_PROVEN"
+                )
+                updates["a2_feature_equivalence_status"] = str(
+                    gold_payload.get("feature_equivalence_status")
+                    or updates.get(
+                        "a2_feature_equivalence_status",
+                        "A2_FEATURE_EQUIVALENCE_NOT_PROVEN",
+                    )
+                )
+            micro_payload = performance_payload.get("microstructure")
+            if isinstance(micro_payload, dict):
+                updates["a2_microstructure_cache_status"] = str(
+                    micro_payload.get("cache_status")
+                    or "A2_MICROSTRUCTURE_FILE_CACHE_NOT_PROVEN"
+                )
+                updates["a2_microstructure_streaming_status"] = str(
+                    micro_payload.get("streaming_status")
+                    or "A2_MICROSTRUCTURE_STREAMING_NOT_PROVEN"
+                )
+                updates["a2_microstructure_repeated_raw_scan_status"] = str(
+                    micro_payload.get("repeated_raw_scan_status")
+                    or "REPEATED_RAW_SCAN_NOT_PROVEN"
+                )
+                for source_key, target_key in (
+                    ("time_index_hit_count", "a2_microstructure_time_index_hit_count"),
+                    ("time_index_miss_count", "a2_microstructure_time_index_miss_count"),
+                ):
+                    value = micro_payload.get(source_key)
+                    if isinstance(value, int):
+                        updates[target_key] = value
+        if isinstance(cache_payload, dict) and cache_payload:
+            updates["a2_microstructure_cache_status"] = str(
+                cache_payload.get("cache_status")
+                or updates.get(
+                    "a2_microstructure_cache_status",
+                    "A2_MICROSTRUCTURE_FILE_CACHE_NOT_PROVEN",
+                )
+            )
+            if cache_path is not None:
+                updates["a2_microstructure_cache_manifest_path"] = str(
+                    cache_path.resolve()
+                )
+        if isinstance(equivalence_payload, dict) and equivalence_payload:
+            updates["a2_feature_equivalence_status"] = str(
+                equivalence_payload.get("status")
+                or updates.get(
+                    "a2_feature_equivalence_status",
+                    "A2_FEATURE_EQUIVALENCE_NOT_PROVEN",
+                )
+            )
+            if equivalence_path is not None:
+                updates["a2_feature_equivalence_report_path"] = str(
+                    equivalence_path.resolve()
+                )
+        for label, path in (
+            ("a2_performance", performance_path),
+            ("a2_cache_manifest", cache_path),
+            ("a2_feature_equivalence", equivalence_path),
+        ):
+            if path is None:
+                continue
+            resolved = str(path.resolve())
+            if resolved in seen_paths:
+                continue
+            seen_paths.add(resolved)
+            links.append({"label": label, "path": resolved})
+    if links:
+        updates["a2_microstructure_report_links"] = tuple(links)
     return updates
 
 

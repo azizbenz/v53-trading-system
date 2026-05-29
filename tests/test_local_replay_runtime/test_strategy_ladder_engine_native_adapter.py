@@ -114,6 +114,182 @@ def _synthetic_book_deltas(
     return rows
 
 
+def test_a2_opt4_progressive_book_state_cache_advances_incrementally(tmp_path: Path) -> None:
+    """Patch A2-OPT-4 (2026-05-26 — F16-D Pilier 0) — progressive book state cache.
+
+    Validates that the progressive cache:
+      1. Misses on first decision, builds book from snapshot, caches final state.
+      2. Hits on second contiguous decision, reuses prior cached state, applies
+         only the new deltas between cached_ts and new window_end_ms.
+      3. Falls back to full reconstruct if requested window precedes cached state.
+      4. Returns identical book_states (deterministic across cache hit/miss).
+    """
+    import gzip
+
+    from local_replay_runtime.strategy_ladder_engine_native_adapter import (
+        _PROGRESSIVE_BOOK_STATE_CACHE,
+        _reconstruct_book_states,
+        _reconstruct_book_states_with_progressive_cache,
+        get_microstructure_file_cache_stats,
+        reset_microstructure_file_cache_stats,
+    )
+
+    snapshot_path = tmp_path / "snapshot.jsonl.gz"
+    delta_path = tmp_path / "delta.jsonl.gz"
+    snapshot = {
+        "timestamp_ms": 500,
+        "update_id": 100,
+        "bids": [["100.0", "1.0"], ["99.5", "2.0"]],
+        "asks": [["100.5", "1.5"], ["101.0", "2.5"]],
+    }
+    deltas = [
+        {"timestamp_ms": 1000, "update_id": 101, "bids": [["100.0", "1.2"]], "asks": []},
+        {"timestamp_ms": 2000, "update_id": 102, "bids": [], "asks": [["100.5", "1.8"]]},
+        {"timestamp_ms": 3000, "update_id": 103, "bids": [["99.0", "0.5"]], "asks": []},
+        {"timestamp_ms": 4000, "update_id": 104, "bids": [], "asks": [["101.5", "1.0"]]},
+        {"timestamp_ms": 5000, "update_id": 105, "bids": [["100.5", "0.0"]], "asks": []},
+    ]
+    with gzip.open(snapshot_path, "wt", encoding="utf-8") as handle:
+        handle.write(json.dumps(snapshot) + "\n")
+    with gzip.open(delta_path, "wt", encoding="utf-8") as handle:
+        for delta in deltas:
+            handle.write(json.dumps(delta) + "\n")
+
+    reset_microstructure_file_cache_stats(clear_cache=True)
+
+    # First call: cache miss, reconstruct from snapshot, apply deltas in [1000, 3000].
+    states_1 = _reconstruct_book_states_with_progressive_cache(
+        snapshot_path=snapshot_path,
+        delta_path=delta_path,
+        base_snapshot=snapshot,
+        deltas=deltas,
+        window_start_ms=1000,
+        window_end_ms=3000,
+        top_k=20,
+    )
+    stats_after_first = get_microstructure_file_cache_stats()
+    assert stats_after_first["progressive_book_state_miss_count"] == 1
+    assert stats_after_first["progressive_book_state_hit_count"] == 0
+    assert stats_after_first["progressive_book_state_cache_size"] == 1
+    # 3 deltas had ts in [1000, 3000] (ts=1000, 2000, 3000)
+    assert len(states_1) == 3
+    assert [state.update_id for state in states_1] == [101, 102, 103]
+
+    # Second call: cache hit — window [3001, 5000] is AFTER first window.
+    states_2 = _reconstruct_book_states_with_progressive_cache(
+        snapshot_path=snapshot_path,
+        delta_path=delta_path,
+        base_snapshot=snapshot,
+        deltas=deltas,
+        window_start_ms=3001,
+        window_end_ms=5000,
+        top_k=20,
+    )
+    stats_after_second = get_microstructure_file_cache_stats()
+    assert stats_after_second["progressive_book_state_hit_count"] == 1
+    assert stats_after_second["progressive_book_state_miss_count"] == 1
+    # 2 deltas in [3001, 5000] (ts=4000, 5000)
+    assert len(states_2) == 2
+    assert [state.update_id for state in states_2] == [104, 105]
+    # Advance count should equal exactly the new deltas applied (104, 105) = 2
+    assert stats_after_second["progressive_book_state_advance_deltas"] >= 5  # 3 + 2
+
+    # Determinism : without the cache, full reconstruct over [3001, 5000] gives same states.
+    states_full = _reconstruct_book_states(
+        base_snapshot=snapshot,
+        deltas=deltas,
+        window_start_ms=3001,
+        window_end_ms=5000,
+        top_k=20,
+    )
+    assert [state.update_id for state in states_full] == [104, 105]
+    # Bid/ask levels at last state must match between cached and uncached paths.
+    assert states_2[-1].bid_levels == states_full[-1].bid_levels
+    assert states_2[-1].ask_levels == states_full[-1].ask_levels
+
+    _PROGRESSIVE_BOOK_STATE_CACHE.clear()
+
+
+def test_a2_opt1_deltas_after_base_cache_filters_and_bisects(tmp_path: Path) -> None:
+    """Patch A2-OPT-1 (2026-05-25) — verify _deltas_after_base_index cache.
+
+    Ensures the new cache:
+      1. Filters by update_id > base_update_id correctly (drops base + earlier).
+      2. Is reused across calls with same (path, base_update_id) (no re-iteration).
+      3. _load_book_deltas_in_window_with_lookback bisects by window_end_ms.
+    """
+    import gzip
+
+    from local_replay_runtime.strategy_ladder_engine_native_adapter import (
+        _MICROSTRUCTURE_DELTAS_AFTER_BASE_CACHE,
+        _deltas_after_base_index,
+        _load_book_deltas_in_window_with_lookback,
+        get_microstructure_file_cache_stats,
+        reset_microstructure_file_cache_stats,
+    )
+
+    delta_path = tmp_path / "delta.jsonl.gz"
+    deltas = [
+        {"timestamp_ms": 1000, "update_id": 1, "side": "bid", "price": 100.0, "size": 1.0},
+        {"timestamp_ms": 2000, "update_id": 2, "side": "bid", "price": 100.0, "size": 2.0},
+        {"timestamp_ms": 3000, "update_id": 3, "side": "ask", "price": 101.0, "size": 1.0},
+        {"timestamp_ms": 4000, "update_id": 4, "side": "ask", "price": 101.0, "size": 0.5},
+        {"timestamp_ms": 5000, "update_id": 5, "side": "bid", "price": 100.5, "size": 3.0},
+    ]
+    with gzip.open(delta_path, "wt", encoding="utf-8") as handle:
+        for delta in deltas:
+            handle.write(json.dumps(delta) + "\n")
+
+    reset_microstructure_file_cache_stats(clear_cache=True)
+    timestamps_1, rows_1 = _deltas_after_base_index(delta_path, base_update_id=2)
+    assert timestamps_1 == (3000, 4000, 5000), "Should drop deltas with update_id <= 2"
+    assert len(rows_1) == 3
+    stats_after_first = get_microstructure_file_cache_stats()
+    assert stats_after_first["deltas_after_base_miss_count"] == 1
+    assert stats_after_first["deltas_after_base_hit_count"] == 0
+
+    timestamps_2, rows_2 = _deltas_after_base_index(delta_path, base_update_id=2)
+    assert timestamps_2 is timestamps_1, "Cache should return same tuple identity on hit"
+    stats_after_second = get_microstructure_file_cache_stats()
+    assert stats_after_second["deltas_after_base_miss_count"] == 1
+    assert stats_after_second["deltas_after_base_hit_count"] == 1
+
+    timestamps_3, rows_3 = _deltas_after_base_index(delta_path, base_update_id=3)
+    assert timestamps_3 == (4000, 5000)
+    stats_after_third = get_microstructure_file_cache_stats()
+    assert stats_after_third["deltas_after_base_miss_count"] == 2
+
+    window_subset = _load_book_deltas_in_window_with_lookback(
+        delta_path,
+        base_update_id=2,
+        window_end_ms=4000,
+    )
+    assert [row["update_id"] for row in window_subset] == [3, 4]
+
+    _load_book_deltas_in_window_with_lookback(
+        delta_path,
+        base_update_id=2,
+        window_end_ms=5000,
+    )
+    stats_after_window = get_microstructure_file_cache_stats()
+    assert stats_after_window["deltas_after_base_miss_count"] == 2, (
+        "Cache should be reused; no new miss expected"
+    )
+
+    empty = _load_book_deltas_in_window_with_lookback(
+        delta_path,
+        base_update_id=2,
+        window_end_ms=500,
+    )
+    assert empty == []
+
+    timestamps_empty, rows_empty = _deltas_after_base_index(delta_path, base_update_id=999)
+    assert timestamps_empty == ()
+    assert rows_empty == ()
+
+    _MICROSTRUCTURE_DELTAS_AFTER_BASE_CACHE.clear()
+
+
 def test_engine_native_adapter_builds_records_with_snapshot_plus_deltas(tmp_path: Path) -> None:
     """Sur une fenetre synthetique avec 200 trades + 1 snapshot initial + 30 deltas,
     le pont doit reconstruire 30 etats book consecutifs et calculer OFI +

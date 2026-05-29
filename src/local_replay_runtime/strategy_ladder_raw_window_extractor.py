@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 import csv
 from dataclasses import dataclass
+import os
 from time import perf_counter, process_time
 import gzip
 import json
@@ -33,6 +34,31 @@ _RAW_WINDOW_PROGRESS_EVERY = 50
 _ENGINE_C_STRUCTURAL_LOOKBACK_MS = 60 * 60 * 1000
 _ECONOMIC_EDGE_OHLCV_LOOKBACK_MS = 60 * 60 * 1000
 _REPLAY_OUTCOME_OHLCV_POST_BARS = 10
+
+
+def _silver_passthrough_enabled() -> bool:
+    """Patch A2-OPT-6 (2026-05-26 — F16-D Pilier 1) — opt-in silver passthrough.
+
+    When the env var ``V53_RAW_WINDOW_SILVER_PASSTHROUGH`` is truthy (``1``,
+    ``true``, ``yes``), raw-window manifests for single-source content-hashed
+    silver entries point at the silver file directly instead of materialising
+    a per-window slice under ``_shared_windows``. This eliminates the 3.4 GB
+    duplication observed on the cockpit 2-day run (200 candidates) and lets
+    bridges amortise the silver read via the existing
+    ``_PROGRESSIVE_BOOK_STATE_CACHE`` (A2-OPT-4) — same path across candidates
+    → cache hits instead of misses.
+
+    Default is off so existing tests (which assert slice extraction behaviour)
+    continue to pass. Cockpit launches set the env var before subprocess spawn.
+    Read on every call to support runtime toggling without module reload.
+    """
+
+    return os.environ.get("V53_RAW_WINDOW_SILVER_PASSTHROUGH", "0").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
 
 
 @dataclass(frozen=True)
@@ -761,7 +787,18 @@ def _resolve_from_silver_index(
             )
         )
         raw_trade_path = trade_entry.path if trade_entry is not None else None
-        if trade_entry is not None and trade_entry.path:
+        # Patch A2-OPT-6 (2026-05-26 — F16-D Pilier 1) — silver passthrough.
+        # When enabled, single-source content-hashed silver entries skip slice
+        # materialisation entirely and the manifest points at the silver file.
+        if (
+            _silver_passthrough_enabled()
+            and trade_entry is not None
+            and trade_entry.path
+            and len(trade_entries) == 1
+            and trade_entry.file_hash
+        ):
+            raw_trade_path = str(Path(trade_entry.path).resolve())
+        elif trade_entry is not None and trade_entry.path:
             trade_slice_path = manifest_dir / "trades.jsonl"
             if len(trade_entries) == 1 and trade_entry.file_hash:
                 trade_slice_path = _shared_materialized_window_path(
@@ -812,7 +849,15 @@ def _resolve_from_silver_index(
             raw_trade_path = str(trade_slice_path.resolve())
 
         raw_book_path = None
-        if snapshot_entry is not None and snapshot_entry.path:
+        # Patch A2-OPT-6 (2026-05-26) — silver passthrough for snapshot.
+        if (
+            _silver_passthrough_enabled()
+            and snapshot_entry is not None
+            and snapshot_entry.path
+            and snapshot_entry.file_hash
+        ):
+            raw_book_path = str(Path(snapshot_entry.path).resolve())
+        elif snapshot_entry is not None and snapshot_entry.path:
             snapshot_slice_path = manifest_dir / "orderbook_snapshot.jsonl"
             if snapshot_entry.file_hash:
                 snapshot_slice_path = _shared_materialized_window_path(
@@ -941,7 +986,16 @@ def _resolve_from_silver_index(
                 raw_book_delta_path = str(delta_slice_path.resolve())
 
         raw_ohlcv_path = ohlcv_entry.path if ohlcv_entry is not None else None
-        if ohlcv_entry is not None and ohlcv_entry.path:
+        # Patch A2-OPT-6 (2026-05-26) — silver passthrough for OHLCV.
+        if (
+            _silver_passthrough_enabled()
+            and ohlcv_entry is not None
+            and ohlcv_entry.path
+            and len(ohlcv_entries) == 1
+            and ohlcv_entry.file_hash
+        ):
+            raw_ohlcv_path = str(Path(ohlcv_entry.path).resolve())
+        elif ohlcv_entry is not None and ohlcv_entry.path:
             ohlcv_slice_path = manifest_dir / "ohlcv.jsonl"
             if len(ohlcv_entries) == 1 and ohlcv_entry.file_hash:
                 ohlcv_slice_path = _shared_materialized_window_path(

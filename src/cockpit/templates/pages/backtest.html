@@ -99,7 +99,7 @@
     <div class="card__head">
         <div class="card__head-main">
             <h3>Run Backtest</h3>
-            <span class="card__sub">Patch 6 Controls for phases A1/A2/B1/B2</span>
+            <span class="card__sub">Patch 6 Controls for phases A1/A2/B1/B_ML/B2</span>
         </div>
         <span id="run-backtest-badge" class="monitor-badge {% if monitor_active or vm.backtest_preflight.preview_launchable %}monitor-badge--active{% else %}monitor-badge--idle{% endif %}">
             {{ 'backtest running' if monitor_active else vm.backtest_preflight.inspection_status }}
@@ -109,7 +109,7 @@
     <div class="card__body">
         <div class="patch6-layout">
         <div class="patch6-form-column">
-        <form method="post" action="/backtest/run">
+        <form id="backtest-run-form" method="post" action="/backtest/run">
             <div class="operator-token-row">
                 <span class="operator-token operator-token--info">{{ vm.backtest_preflight.phase_label or 'phase not selected' }}</span>
                 <span class="operator-token {% if vm.backtest_preflight.preview_launchable %}operator-token--ok{% else %}operator-token--warn{% endif %}">{{ 'launch-ready' if vm.backtest_preflight.preview_launchable else 'preview required' }}</span>
@@ -128,20 +128,34 @@
                 <select name="action_name">
                     {% set _selected_phase = vm.selected_form.workflow_phase or vm.selected_form.phase_id %}
                     {% set _selected_action = vm.selected_form.action_name or 'PHASE_A1_PREVIEW' %}
-                    {% if _selected_action not in ['PHASE_A1_PREVIEW', 'PHASE_A2_DATA_FACTORY', 'PHASE_B1_CANDIDATE_DISCOVERY', 'PHASE_B2_DETAILED_REPLAY'] %}
+                    {% if _selected_action not in ['PHASE_A1_PREVIEW', 'PHASE_A2_DATA_FACTORY', 'PHASE_B1_CANDIDATE_DISCOVERY', 'PHASE_B_ML_LABEL_FACTORY', 'PHASE_B2_DETAILED_REPLAY'] %}
                         {% if _selected_phase in ['PHASE_A1', 'PHASE_1A', 'PHASE_2A'] %}
                             {% set _selected_action = 'PHASE_A1_PREVIEW' %}
                         {% elif _selected_phase in ['PHASE_A2', 'PHASE_1B'] %}
                             {% set _selected_action = 'PHASE_A2_DATA_FACTORY' %}
                         {% elif _selected_phase == 'PHASE_B1' %}
                             {% set _selected_action = 'PHASE_B1_CANDIDATE_DISCOVERY' %}
+                        {% elif _selected_phase == 'PHASE_B_ML' %}
+                            {% set _selected_action = 'PHASE_B_ML_LABEL_FACTORY' %}
                         {% elif _selected_phase in ['PHASE_B2', 'PHASE_2B'] %}
                             {% set _selected_action = 'PHASE_B2_DETAILED_REPLAY' %}
                         {% endif %}
                     {% endif %}
+                    {% set _launch_preview_id = vm.backtest_preflight.preview_id %}
+                    {% set _launch_preview_request_hash = vm.backtest_preflight.request_hash %}
+                    {% if _selected_action == 'PHASE_A2_DATA_FACTORY'
+                        and vm.source_preview_state
+                        and vm.source_preview_state.phase_id == 'PHASE_A1'
+                        and vm.source_preview_state.preview_id
+                        and vm.source_preview_state.request_hash
+                        and vm.source_preview_state.workflow_run_id == vm.backtest_preflight.workflow_run_id %}
+                        {% set _launch_preview_id = vm.source_preview_state.preview_id %}
+                        {% set _launch_preview_request_hash = vm.source_preview_state.request_hash %}
+                    {% endif %}
                     <option value="PHASE_A1_PREVIEW"{% if _selected_action == 'PHASE_A1_PREVIEW' %} selected{% endif %}>A1 Preview / Source Scope Validation</option>
                     <option value="PHASE_A2_DATA_FACTORY"{% if _selected_action == 'PHASE_A2_DATA_FACTORY' %} selected{% endif %}>A2 Data Factory Materialization</option>
                     <option value="PHASE_B1_CANDIDATE_DISCOVERY"{% if _selected_action == 'PHASE_B1_CANDIDATE_DISCOVERY' %} selected{% endif %}>B1 Candidate Discovery</option>
+                    <option value="PHASE_B_ML_LABEL_FACTORY"{% if _selected_action == 'PHASE_B_ML_LABEL_FACTORY' %} selected{% endif %}>B_ML Training Label Factory</option>
                     <option value="PHASE_B2_DETAILED_REPLAY"{% if _selected_action == 'PHASE_B2_DETAILED_REPLAY' %} selected{% endif %}>B2 Detailed Replay</option>
                 </select>
             </label>
@@ -187,6 +201,16 @@
                     <option value="BROAD_DIAGNOSTIC"{% if _candidate_mode == 'BROAD_DIAGNOSTIC' %} selected{% endif %}>BROAD_DIAGNOSTIC</option>
                     <option value="FULL_DISCOVERY"{% if _candidate_mode == 'FULL_DISCOVERY' %} selected{% endif %}>FULL_DISCOVERY</option>
                     <option value="TEMPORAL_STRATIFIED"{% if _candidate_mode == 'TEMPORAL_STRATIFIED' %} selected{% endif %}>TEMPORAL_STRATIFIED</option>
+                </select>
+            </label>
+            <label>
+                B_ML sampler mode
+                <select name="bml_candidate_sampler_mode">
+                    {% set _bml_mode = vm.selected_form.bml_candidate_sampler_mode or 'TEMPORAL_STRATIFIED_BACKGROUND_GRID' %}
+                    <option value="TEMPORAL_STRATIFIED_BACKGROUND_GRID"{% if _bml_mode == 'TEMPORAL_STRATIFIED_BACKGROUND_GRID' %} selected{% endif %}>TEMPORAL_STRATIFIED_BACKGROUND_GRID</option>
+                    <option value="REUSE_B1_FAST_CANDIDATES"{% if _bml_mode == 'REUSE_B1_FAST_CANDIDATES' %} selected{% endif %}>REUSE_B1_FAST_CANDIDATES</option>
+                    <option value="ENGINE_NATIVE_DRY_EVAL"{% if _bml_mode == 'ENGINE_NATIVE_DRY_EVAL' %} selected{% endif %}>ENGINE_NATIVE_DRY_EVAL</option>
+                    <option value="ENGINE_NATIVE_DRY_EVAL_AND_BACKGROUND_GRID"{% if _bml_mode == 'ENGINE_NATIVE_DRY_EVAL_AND_BACKGROUND_GRID' %} selected{% endif %}>ENGINE_NATIVE_DRY_EVAL_AND_BACKGROUND_GRID</option>
                 </select>
             </label>
             <label>
@@ -291,6 +315,8 @@
                 {% set _resolved_end = vm.selected_form.end or _ml_intake.requested_backtest_end %}
                 {% set _backtest_chain = vm.backtest_ml_chain_state %}
                 {% set _backtest_features = vm.backtest_effective_selected_features %}
+                {% set _backtest_features_csv = _backtest_features|join(',') %}
+                {% set _backtest_picker_active = vm.selected_form.feature_picker_enabled in ('1', 'true', 'yes', 'on', true) %}
                 {% set _backtest_picker_read_only = vm.backtest_feature_picker_read_only %}
                 {% if _selected_ml_handoff_run_root and not _ml_intake_defined %}
                 {% set _resolved_artifact_path = '' %}
@@ -452,14 +478,14 @@
                             <span class="field-note">MULTI_PAIR_C1 requires a manifest JSON with <code>artifact_kind=MULTI_PAIR_C1_EXPECTED_EDGE</code> and <code>pair_id_encoding</code> covering the selected pairs.</span>
                         </label>
 
-                        <div class="feature-picker-card stage3-control-card stage3-control-card--wide" style="grid-column: 1 / -1;">
+                        <div class="feature-picker-card feature-picker-card--backtest stage3-control-card stage3-control-card--wide" style="grid-column: 1 / -1;">
                             <div class="feature-picker-card__head">
                                 <label>Governed backtest feature picker</label>
-                                <small class="muted">Backtest feature selection is validated against the frozen IA Lab artifact. Native engine A/B/C/D logic stays unchanged.</small>
+                                <small class="muted">Backtest feature selection scopes feature/audit surfaces independently from ML. Native engine A/B/C/D logic stays unchanged.</small>
                             </div>
-                            <input type="hidden" name="feature_picker_enabled" value="1">
-                            <input type="hidden" name="feature_names" value="{{ vm.selected_form.feature_names or (_backtest_features|join(',')) or 'close_return,high_low_range,volume' }}">
-                            <input type="hidden" name="selected_features_csv" value="{{ _backtest_features|join(',') }}">
+                            <input form="backtest-run-form" type="hidden" name="feature_picker_enabled" value="1">
+                            <input form="backtest-run-form" type="hidden" name="feature_names" value="{{ _backtest_features_csv if (_backtest_features_csv or _backtest_picker_active) else (vm.selected_form.feature_names or 'close_return,high_low_range,volume') }}">
+                            <input form="backtest-run-form" type="hidden" name="selected_features_csv" value="{{ _backtest_features_csv }}">
                             <div class="feature-picker">
                                 {% for group_label, group_feature_names in vm.supported_expected_edge_feature_groups %}
                                 <div class="feature-picker__group">
@@ -468,7 +494,7 @@
                                     {% set entry = (vm.backtest_feature_governance | selectattr('feature_name', 'equalto', feature_name) | list | first) %}
                                     {% set verdict = entry.verdict if entry else 'N-A' %}
                                     <label class="feature-picker__item">
-                                        <input type="checkbox" name="selected_features" value="{{ feature_name }}"
+                                        <input form="backtest-run-form" type="checkbox" name="selected_features" value="{{ feature_name }}"
                                             {% if feature_name in _backtest_features %}checked{% endif %}
                                             {% if _backtest_picker_read_only %}disabled{% endif %}>
                                         <span class="feature-picker__label">{{ feature_name }}</span>
@@ -484,7 +510,7 @@
                                 {% if _backtest_picker_read_only %}
                                 Frozen artifact feature list is authoritative for replay scoring.
                                 {% elif _backtest_features %}
-                                Launch requires a frozen IA Lab artifact; Backtest will not train ML silently.
+                                Feature scope is applied with ML off; frozen IA Lab artifact is required only for ML overlay scoring.
                                 {% else %}
                                 Empty selection keeps the native backtest path unchanged.
                                 {% endif %}
@@ -550,13 +576,13 @@
                     <input type="text" name="raw_roots" placeholder="" value="{{ vm.selected_form.raw_roots_csv }}">
                 </label>
             </details>
-            <input type="hidden" name="preview_id" value="{{ vm.backtest_preflight.preview_id }}">
-            <input type="hidden" name="request_hash" value="{{ vm.backtest_preflight.request_hash }}">
+            <input type="hidden" name="preview_id" value="{{ _launch_preview_id }}">
+            <input type="hidden" name="request_hash" value="{{ _launch_preview_request_hash }}">
             <input type="hidden" name="workflow_run_id" value="{{ vm.backtest_preflight.workflow_run_id }}">
                 </div>
             <div class="form-actions form-actions--dual form-actions--row-fixed">
-                    <button class="button button--info" type="submit" name="intent" value="preview">Generate Preview</button>
-                <button id="backtest-launch-button" class="button button--primary" type="submit" name="intent" value="launch"{% if not vm.backtest_preflight.preview_id or vm.backtest_preflight.phase_id == 'PHASE_A1' %} disabled{% endif %}>Launch Selected Phase</button>
+                    <button form="backtest-run-form" class="button button--info" type="submit" name="intent" value="preview">Generate Preview</button>
+                <button form="backtest-run-form" id="backtest-launch-button" class="button button--primary" type="submit" name="intent" value="launch"{% if not _launch_preview_id or _selected_action == 'PHASE_A1_PREVIEW' %} disabled{% endif %}>Launch Selected Phase</button>
             </div>
             </div>
         </form>
@@ -591,6 +617,7 @@
                             </tr>
                             <tr><th>ETA</th><td id="backtest-latest-job-eta">{{ "%.1f"|format(latest_job.eta_minutes) if latest_job.eta_minutes > 0 else '-' }}</td></tr>
                             <tr><th>Latest activity</th><td id="backtest-latest-job-activity">{{ latest_job.latest_activity_iso or 'n/a' }}</td></tr>
+                            <tr><th>Progress detail</th><td id="backtest-latest-job-health">{{ status_chip(latest_job.progress_health_status) }} <span class="muted">{{ latest_job.progress_health_message }}</span></td></tr>
                             <tr><th>Duration</th><td id="backtest-latest-job-duration">{{ "%.1fs"|format(latest_job.duration_seconds) if latest_job.duration_seconds is not none else 'n/a' }}</td></tr>
                             <tr><th>Produced files</th><td id="backtest-latest-job-produced">{{ latest_job.produced_file_count }}</td></tr>
                             <tr><th>Output refs</th><td id="backtest-latest-job-output-refs">{{ latest_job.output_ref_count }}</td></tr>
@@ -606,6 +633,38 @@
                     {% endif %}
                     {% else %}
                     <p class="muted">No audited backtest runner activity recorded yet.</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="card backtest-monitor-card" id="backtest-a2-performance-card">
+                <div class="card__head">
+                    <div class="card__head-main">
+                        <h3>A2 Performance</h3>
+                        <span class="card__sub">Data Factory cache, streaming, and equivalence reports</span>
+                    </div>
+                    <span id="backtest-a2-performance-badge" class="monitor-badge monitor-badge--idle">{{ status_chip(vm.runtime.strategy_ladder_summary.a2_microstructure_performance_status) }}</span>
+                </div>
+                <div class="card__body">
+                    <table class="data-table data-table--compact">
+                        <tbody>
+                            <tr><th>Cache</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.a2_microstructure_cache_status) }}</td></tr>
+                            <tr><th>Streaming</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.a2_microstructure_streaming_status) }}</td></tr>
+                            <tr><th>Equivalence</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.a2_feature_equivalence_status) }}</td></tr>
+                            <tr><th>Gold window</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.a2_gold_decision_window_status) }}</td></tr>
+                            <tr><th>Gold build</th><td>{{ "%.2fs"|format(vm.runtime.strategy_ladder_summary.a2_gold_feature_build_wall_time_s) if vm.runtime.strategy_ladder_summary.a2_gold_feature_build_wall_time_s is not none else 'n/a' }}</td></tr>
+                            <tr><th>Time index</th><td>{{ vm.runtime.strategy_ladder_summary.a2_microstructure_time_index_hit_count }} hit / {{ vm.runtime.strategy_ladder_summary.a2_microstructure_time_index_miss_count }} miss</td></tr>
+                            <tr><th>Raw scan</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.a2_microstructure_repeated_raw_scan_status) }}</td></tr>
+                        </tbody>
+                    </table>
+                    {% if vm.runtime.strategy_ladder_summary.a2_microstructure_report_links %}
+                    <ul class="small-list" style="margin-top: 12px;">
+                        {% for link in vm.runtime.strategy_ladder_summary.a2_microstructure_report_links %}
+                        <li>{{ link.label }}: <code>{{ link.path }}</code></li>
+                        {% endfor %}
+                    </ul>
+                    {% else %}
+                    <p class="field-note">A2 performance links appear after Data Factory writes its reports.</p>
                     {% endif %}
                 </div>
             </div>
@@ -638,6 +697,339 @@
                     </ul>
                     {% else %}
                     <p class="field-note">Decision reports are produced after B2 completes.</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            {# Patch BACKBONE-PARITY-COCKPIT-1 (2026-05-27) — Backbone parity card.
+               Surfaces aggregate audit of the canonical backbone vs local_replay
+               fallback usage across all bucket records. Hydrated by
+               runtime_support.py from `backtest_backbone_parity_audit.json` +
+               `backtest_backbone_parity_final_report.json` + per-bucket
+               `parity_payload.backbone_surface_report`. Read-only; doesn't
+               affect trading. #}
+            <div class="card backtest-monitor-card" id="backtest-backbone-parity-card">
+                <div class="card__head">
+                    <div class="card__head-main">
+                        <h3>Backbone Parity</h3>
+                        <span class="card__sub">Canonical backbone vs local_replay fallback across B2 surfaces</span>
+                    </div>
+                    <span id="backtest-backbone-parity-badge" class="monitor-badge monitor-badge--idle">{{ status_chip(vm.runtime.strategy_ladder_summary.backbone_parity_overall) }}</span>
+                </div>
+                <div class="card__body">
+                    <table class="data-table data-table--compact">
+                        <tbody>
+                            <tr><th>Overall verdict</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.backbone_parity_overall) }}</td></tr>
+                            <tr><th>Shadow/live parity</th><td>{{ vm.runtime.strategy_ladder_summary.backbone_parity_shadow_live_verdict or 'not_audited' }}</td></tr>
+                            <tr><th>Total surface evaluations</th><td>{{ vm.runtime.strategy_ladder_summary.backbone_parity_total_surfaces }}</td></tr>
+                            <tr>
+                                <th>Canonical backbone used</th>
+                                <td>
+                                    {{ vm.runtime.strategy_ladder_summary.backbone_parity_canonical_surface_count }}
+                                    {% if vm.runtime.strategy_ladder_summary.backbone_parity_total_surfaces %}
+                                    ({{ ((vm.runtime.strategy_ladder_summary.backbone_parity_canonical_surface_count * 100) / vm.runtime.strategy_ladder_summary.backbone_parity_total_surfaces) | round(1) }}%)
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            <tr>
+                                <th>Local replay fallback</th>
+                                <td>
+                                    {{ vm.runtime.strategy_ladder_summary.backbone_parity_fallback_surface_count }}
+                                    {% if vm.runtime.strategy_ladder_summary.backbone_parity_total_surfaces %}
+                                    ({{ ((vm.runtime.strategy_ladder_summary.backbone_parity_fallback_surface_count * 100) / vm.runtime.strategy_ladder_summary.backbone_parity_total_surfaces) | round(1) }}%)
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            <tr>
+                                <th>No surface result</th>
+                                <td>
+                                    {{ vm.runtime.strategy_ladder_summary.backbone_parity_missing_surface_count }}
+                                    {% if vm.runtime.strategy_ladder_summary.backbone_parity_total_surfaces %}
+                                    ({{ ((vm.runtime.strategy_ladder_summary.backbone_parity_missing_surface_count * 100) / vm.runtime.strategy_ladder_summary.backbone_parity_total_surfaces) | round(1) }}%)
+                                    {% endif %}
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    {% if vm.runtime.strategy_ladder_summary.backbone_parity_surfaces_still_local_or_proxy %}
+                    <p class="field-note" style="margin-top: 8px;">Surfaces still using local_replay or proxy:</p>
+                    <ul class="small-list">
+                        {% for surface in vm.runtime.strategy_ladder_summary.backbone_parity_surfaces_still_local_or_proxy %}
+                        <li><code>{{ surface }}</code></li>
+                        {% endfor %}
+                    </ul>
+                    {% endif %}
+                    {#
+                       Patch BACKBONE-PARITY-COCKPIT-2 (2026-05-27) — per-surface
+                       breakdown table so the operator can see, surface by
+                       surface, what fraction of records used the canonical
+                       backbone vs the local-replay fallback. Each row also
+                       surfaces the dominant reason code so the operator
+                       understands why a surface stayed on local_replay
+                       (e.g. inputs missing, cluster capacity missing,
+                       threshold not configured).
+                    #}
+                    {% if vm.runtime.strategy_ladder_summary.backbone_parity_per_surface_breakdown %}
+                    <details style="margin-top: 12px;">
+                        <summary class="field-note" style="cursor: pointer;">
+                            Per-surface breakdown ({{ vm.runtime.strategy_ladder_summary.backbone_parity_per_surface_breakdown | length }} surfaces) — click to expand
+                        </summary>
+                        <table class="data-table data-table--compact" style="margin-top: 8px;">
+                            <thead>
+                                <tr>
+                                    <th>Surface</th>
+                                    <th>Dominant status</th>
+                                    <th>Canonical coverage</th>
+                                    <th>Records (C / F / M / Σ)</th>
+                                    <th>Dominant reason</th>
+                                    <th>Selected source</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for entry in vm.runtime.strategy_ladder_summary.backbone_parity_per_surface_breakdown %}
+                                <tr>
+                                    <td><code>{{ entry.surface }}</code></td>
+                                    <td>{{ status_chip(entry.dominant_status) }}</td>
+                                    <td class="numeric">{{ entry.coverage_canonical_pct }}%</td>
+                                    <td class="numeric">
+                                        {{ entry.records_canonical }} /
+                                        {{ entry.records_fallback }} /
+                                        {{ entry.records_missing }} /
+                                        {{ entry.records_total }}
+                                    </td>
+                                    <td><code>{{ entry.dominant_reason_code or '—' }}</code></td>
+                                    <td><code>{{ entry.selected_source or '—' }}</code></td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                        <p class="field-note" style="margin-top: 4px;">
+                            Legend: C = CANONICAL_BACKBONE_USED, F = LOCAL_REPLAY_FALLBACK_USED, M = NO_SURFACE_RESULT_AVAILABLE, Σ = total records.
+                        </p>
+                    </details>
+                    {% endif %}
+                    {% if vm.runtime.strategy_ladder_summary.backbone_parity_links %}
+                    <ul class="small-list" style="margin-top: 12px;">
+                        {% for link in vm.runtime.strategy_ladder_summary.backbone_parity_links %}
+                        <li>{{ link.label }}: <code>{{ link.path }}</code></li>
+                        {% endfor %}
+                    </ul>
+                    {% else %}
+                    <p class="field-note">Backbone parity reports are produced at the end of B2.</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            {#
+               Patch BACKBONE-METRICS-COCKPIT (2026-05-27) — Business
+               metrics card. Distinct from `#backtest-backbone-parity-card`
+               which surfaces *which rail* is used per surface. This card
+               surfaces *the numbers that rail produces* — i.e. the same
+               KPIs an operator monitors during shadow/live (spread, fee
+               source, slippage, decision-state breakdown, regime,
+               hard-block reasons, score dampening, etc.).
+               All metrics are aggregated by `runtime_support.py` from the
+               same bucket-records walk that feeds the parity card.
+            #}
+            <div class="card backtest-monitor-card" id="backtest-backbone-metrics-card">
+                <div class="card__head">
+                    <div class="card__head-main">
+                        <h3>Backbone Metrics — Shadow/Live monitoring view</h3>
+                        <span class="card__sub">Les nombres que tu surveillerais en shadow/live (pas la plomberie de parité)</span>
+                    </div>
+                </div>
+                <div class="card__body">
+                    {% if vm.runtime.strategy_ladder_summary.backbone_metrics_summary.get('records_total', 0) %}
+                    {% set metrics = vm.runtime.strategy_ladder_summary.backbone_metrics_summary %}
+                    <p class="field-note">Aggregated over <strong>{{ metrics.records_total }}</strong> bucket records. KPIs reflect what the backbones actually produced this run.</p>
+
+                    <details class="backbone-metrics-section" open>
+                        <summary class="field-note" style="cursor: pointer; font-weight: 600;">1. Execution — coûts &amp; qualité fill</summary>
+                        <div class="backbone-metrics-grid">
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Execution label canonical</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.execution.execution_label_canonical_pct }}%</div>
+                                <div class="backbone-metrics-tile__sub">PARTIAL_CANONICAL / total</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Fee model canonical</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.execution.fee_model_canonical_pct }}%</div>
+                                <div class="backbone-metrics-tile__sub">CANONICAL_EXECUTION_COST_METER</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Spread model canonical</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.execution.spread_model_canonical_pct }}%</div>
+                                <div class="backbone-metrics-tile__sub">CANONICAL_SPREAD_GUARD</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Slippage model canonical</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.execution.slippage_model_canonical_pct }}%</div>
+                                <div class="backbone-metrics-tile__sub">CANONICAL_EXECUTION_BACKBONE</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Partial-fill canonical</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.execution.partial_fill_model_canonical_pct }}%</div>
+                                <div class="backbone-metrics-tile__sub">CANONICAL_PARTIAL_FILL_COST_METER</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">No-fill count</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.execution.no_fill_count }}</div>
+                                <div class="backbone-metrics-tile__sub">records with no_fill_flag=true</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Partial-fill count</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.execution.partial_fill_count }}</div>
+                                <div class="backbone-metrics-tile__sub">records with partial_fill_flag=true</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Fill realism blocked</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.execution.fill_realism_blocked_pct }}%</div>
+                                <div class="backbone-metrics-tile__sub">FILL_REALISM_BLOCKED_BY_*</div>
+                            </div>
+                        </div>
+                    </details>
+
+                    <details class="backbone-metrics-section">
+                        <summary class="field-note" style="cursor: pointer; font-weight: 600;">2. Edge &amp; Scoring — la valeur que le système croit pouvoir capter</summary>
+                        <div class="backbone-metrics-grid">
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Expected CE net (mean)</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.edge.expected_ce_net_mean }}</div>
+                                <div class="backbone-metrics-tile__sub">expected cost-aware edge</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Expected cost (mean)</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.edge.expected_cost_mean }}</div>
+                                <div class="backbone-metrics-tile__sub">ex-ante fraction</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Realized cost (mean)</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.edge.realized_cost_mean }}</div>
+                                <div class="backbone-metrics-tile__sub">post-trade</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Gross return (mean)</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.edge.gross_return_mean }}</div>
+                                <div class="backbone-metrics-tile__sub">before cost</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Raw → Final score</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.edge.raw_score_mean }} → {{ metrics.edge.final_score_mean }}</div>
+                                <div class="backbone-metrics-tile__sub">dampening {{ metrics.edge.score_dampening_pct }}%</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Penalized score (mean)</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.edge.penalized_score_mean }}</div>
+                                <div class="backbone-metrics-tile__sub">intermediate</div>
+                            </div>
+                        </div>
+                    </details>
+
+                    <details class="backbone-metrics-section">
+                        <summary class="field-note" style="cursor: pointer; font-weight: 600;">3. Risk — gates &amp; rejets</summary>
+                        <div class="backbone-metrics-grid">
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Executed</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.risk.executed_count }}</div>
+                                <div class="backbone-metrics-tile__sub">decision_state = executed</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Rejected / Blocked</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.risk.rejected_count }}</div>
+                                <div class="backbone-metrics-tile__sub">decision_state contains reject/blocked</div>
+                            </div>
+                        </div>
+                        {% if metrics.risk.decision_state_breakdown %}
+                        <p class="field-note" style="margin-top: 8px;">Decision-state distribution:</p>
+                        <ul class="small-list">
+                            {% for entry in metrics.risk.decision_state_breakdown %}
+                            <li><code>{{ entry.label }}</code> — {{ entry.count }}</li>
+                            {% endfor %}
+                        </ul>
+                        {% endif %}
+                        {% if metrics.risk.primary_reason_top5 %}
+                        <p class="field-note" style="margin-top: 8px;">Top primary reasons:</p>
+                        <ul class="small-list">
+                            {% for entry in metrics.risk.primary_reason_top5 %}
+                            <li><code>{{ entry.code }}</code> — {{ entry.count }}</li>
+                            {% endfor %}
+                        </ul>
+                        {% endif %}
+                    </details>
+
+                    <details class="backbone-metrics-section">
+                        <summary class="field-note" style="cursor: pointer; font-weight: 600;">4. Portfolio — sizing &amp; capacities</summary>
+                        <div class="backbone-metrics-grid">
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Candidate size (mean)</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.portfolio.candidate_size_mean }}</div>
+                                <div class="backbone-metrics-tile__sub">pre-cap target</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Final size (mean)</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.portfolio.final_size_mean }}</div>
+                                <div class="backbone-metrics-tile__sub">post-cap</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Size reduction rate</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.portfolio.size_reduction_rate_mean }}</div>
+                                <div class="backbone-metrics-tile__sub">(candidate - final) / candidate</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Min notional viable</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.portfolio.min_notional_viable_count }}</div>
+                                <div class="backbone-metrics-tile__sub">records ≥ exchange floor</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Executed notional Σ</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.portfolio.executed_notional_sum }}</div>
+                                <div class="backbone-metrics-tile__sub">cumulative quote-unit</div>
+                            </div>
+                        </div>
+                    </details>
+
+                    <details class="backbone-metrics-section">
+                        <summary class="field-note" style="cursor: pointer; font-weight: 600;">5. Regime — état marché</summary>
+                        {% if metrics.regime.regime_breakdown %}
+                        <ul class="small-list" style="margin-top: 8px;">
+                            {% for entry in metrics.regime.regime_breakdown %}
+                            <li><code>{{ entry.label }}</code> — {{ entry.count }} records</li>
+                            {% endfor %}
+                        </ul>
+                        {% else %}
+                        <p class="field-note">No regime field populated on bucket records.</p>
+                        {% endif %}
+                    </details>
+
+                    <details class="backbone-metrics-section">
+                        <summary class="field-note" style="cursor: pointer; font-weight: 600;">6. Hard-block &amp; Meta — sécurités</summary>
+                        <div class="backbone-metrics-grid">
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Hard-blocked</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.hard_block.hard_blocked_count }}</div>
+                                <div class="backbone-metrics-tile__sub">{{ metrics.hard_block.hard_blocked_pct }}% of records</div>
+                            </div>
+                        </div>
+                        {% if metrics.hard_block.hard_block_reasons_top5 %}
+                        <p class="field-note" style="margin-top: 8px;">Top hard-block reasons:</p>
+                        <ul class="small-list">
+                            {% for entry in metrics.hard_block.hard_block_reasons_top5 %}
+                            <li><code>{{ entry.code }}</code> — {{ entry.count }}</li>
+                            {% endfor %}
+                        </ul>
+                        {% endif %}
+                        {% if metrics.hard_block.runtime_mode_breakdown %}
+                        <p class="field-note" style="margin-top: 8px;">Runtime mode distribution:</p>
+                        <ul class="small-list">
+                            {% for entry in metrics.hard_block.runtime_mode_breakdown %}
+                            <li><code>{{ entry.label }}</code> — {{ entry.count }}</li>
+                            {% endfor %}
+                        </ul>
+                        {% endif %}
+                    </details>
+
+                    {% else %}
+                    <p class="field-note">Run a B2 backtest to populate backbone metrics. Aggregation happens automatically from bucket records.</p>
                     {% endif %}
                 </div>
             </div>
@@ -965,10 +1357,17 @@
                 </thead>
                 <tbody>
                 {% for job in latest_jobs %}
+                    {# Patch BACKTEST-RUN-PIN (2026-05-27) — clickable "Load" #}
+                    {% set job_pin_key = job.workflow_run_id or job.job_id %}
                     <tr class="recent-jobs-row recent-jobs-row--latest"{% if loop.first %} id="backtest-latest-table-row"{% endif %}>
                         <td>
                             <div><code{% if loop.first %} id="backtest-latest-table-job-id"{% endif %}>{{ job.job_id }}</code></div>
                             <div class="muted">{{ job.job_kind.value }}</div>
+                            <div style="margin-top: 4px;">
+                                <a href="/backtest?pinned_run_id={{ job_pin_key }}"
+                                   class="pin-run-link"
+                                   title="Pin this run as the displayed snapshot — recompute decision report, backbone parity, metrics, etc. for THIS run">▶ Load this run on the dashboard</a>
+                            </div>
                         </td>
                         <td{% if loop.first %} id="backtest-latest-table-status"{% endif %}>{{ status_chip(job.status.value) }}</td>
                         <td>
@@ -1010,10 +1409,16 @@
                         <td colspan="7">More recent history</td>
                     </tr>
                     {% for job in history_jobs %}
+                    {% set hist_pin_key = job.workflow_run_id or job.job_id %}
                     <tr class="recent-jobs-row">
                         <td>
                             <div><code>{{ job.job_id }}</code></div>
                             <div class="muted">{{ job.job_kind.value }}</div>
+                            <div style="margin-top: 4px;">
+                                <a href="/backtest?pinned_run_id={{ hist_pin_key }}"
+                                   class="pin-run-link"
+                                   title="Pin this historical run as the displayed snapshot">▶ Load this run on the dashboard</a>
+                            </div>
                         </td>
                         <td>{{ status_chip(job.status.value) }}</td>
                         <td>
@@ -1248,6 +1653,7 @@
                     <tr><th>Pair universe</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.pair_universe_status) }}</td></tr>
                     <tr><th>Available pairs</th><td>{{ vm.runtime.strategy_ladder_summary.available_pair_count }}</td></tr>
                     <tr><th>Missing requested pairs</th><td>{{ vm.runtime.strategy_ladder_summary.missing_requested_pairs|join(', ') if vm.runtime.strategy_ladder_summary.missing_requested_pairs else 'none' }}</td></tr>
+                    <tr><th>Pair candidate coverage</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.pair_candidate_coverage_status) }}{% if vm.runtime.strategy_ladder_summary.pair_candidate_blocker_codes %} · {{ vm.runtime.strategy_ladder_summary.pair_candidate_blocker_codes|join(', ') }}{% endif %}</td></tr>
                     <tr><th>Silver index</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.silver_index_status) }}</td></tr>
                     <tr><th>Gold feature store</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.gold_feature_store_status) }}</td></tr>
                     <tr><th>Compression</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.compression_status) }}</td></tr>
@@ -2364,60 +2770,14 @@
                     <span class="candidate-token">Rows <strong>{{ vm.runtime.strategy_ladder_summary.candidate_rows|length }}</strong></span>
                     <span class="candidate-token">Run <strong>{{ vm.runtime.strategy_ladder_summary.run_id or 'not_available' }}</strong></span>
                     <span class="candidate-token">Selection <strong id="candidate-selection-token">{{ selected_candidate_id or 'none' }}</strong></span>
-                    <span class="candidate-token">Feature table <strong>{{ vm.runtime.strategy_ladder_summary.candidate_feature_table_status }}</strong></span>
-                    <span class="candidate-token">Active features <strong>{{ vm.runtime.strategy_ladder_summary.candidate_feature_columns|length }}</strong></span>
+                    <span class="candidate-token">Feature table <strong id="candidate-feature-status-token">{{ vm.runtime.strategy_ladder_summary.candidate_feature_table_status }}</strong></span>
+                    <span class="candidate-token">Active features <strong id="candidate-active-feature-count">{{ vm.runtime.strategy_ladder_summary.candidate_feature_columns|length }}</strong></span>
                 </div>
                 <div class="candidate-chip-list">
-                    <span class="candidate-chip candidate-chip--status">{{ vm.runtime.strategy_ladder_summary.feature_engine_ml_wiring_status }}</span>
+                    <span class="candidate-chip candidate-chip--status" id="candidate-wiring-status-token">{{ vm.runtime.strategy_ladder_summary.feature_engine_ml_wiring_status }}</span>
                 </div>
             </div>
-            {% if vm.runtime.strategy_ladder_summary.candidate_feature_rows %}
-            <div class="candidate-explorer-table-wrap">
-                <table class="data-table data-table--compact">
-                    <thead>
-                        <tr>
-                            <th>Candidate</th>
-                            <th>Pair</th>
-                            <th>Engine</th>
-                            <th>TF</th>
-                            <th>Outcome</th>
-                            <th>Accepted / refused</th>
-                            <th>Reason codes</th>
-                            {% for feature_name in vm.runtime.strategy_ladder_summary.candidate_feature_columns %}
-                            <th>{{ feature_name }}</th>
-                            {% endfor %}
-                            <th>Select</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for row in vm.runtime.strategy_ladder_summary.candidate_feature_rows %}
-                        {% set row_candidate_id = row.get('candidate_id', '') %}
-                        {% set row_selected = row_candidate_id == selected_candidate_id %}
-                        <tr class="candidate-row{% if row_selected %} candidate-row--selected{% endif %}" data-candidate-row data-candidate-id="{{ row_candidate_id }}">
-                            <td><code>{{ row_candidate_id }}</code></td>
-                            <td>{{ row.get('pair', '') }}</td>
-                            <td>{{ row.get('engine_id', '') }}</td>
-                            <td>{{ row.get('timeframe', '') }}</td>
-                            <td>{{ row.get('outcome_status', '') }}</td>
-                            <td>{{ row.get('accepted_or_refused', '') }}</td>
-                            <td>{{ row.get('reason_codes', ())|join(', ') if row.get('reason_codes') else 'none' }}</td>
-                            {% for feature_name in vm.runtime.strategy_ladder_summary.candidate_feature_columns %}
-                            <td>{{ row.get(feature_name, 'n/a') }}</td>
-                            {% endfor %}
-                            <td class="candidate-row__action">
-                                <form action="/backtest#candidate-workspace" method="get" data-candidate-select-form>
-                                    <input type="hidden" name="candidate_id" value="{{ row_candidate_id }}">
-                                    <button class="button button--info candidate-select-button" type="submit" aria-pressed="{{ 'true' if row_selected else 'false' }}">
-                                        {{ 'Selected' if row_selected else 'Inspect' }}
-                                    </button>
-                                </form>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-            {% elif vm.runtime.strategy_ladder_summary.candidate_rows %}
+            {% if vm.runtime.strategy_ladder_summary.candidate_rows %}
             <div class="candidate-explorer-table-wrap">
                 <table class="data-table data-table--compact">
                     <thead>
@@ -2458,6 +2818,16 @@
                         {% endfor %}
                     </tbody>
                 </table>
+            </div>
+            <div
+                class="candidate-detail-section"
+                id="candidate-feature-table-host"
+                data-feature-table-url="/backtest/candidate-feature-table.json"
+            >
+                <h5>Candidate Feature Metrics</h5>
+                <p class="muted">
+                    Loading feature metrics asynchronously to reduce first-paint cost.
+                </p>
             </div>
             {% else %}
             <p class="muted">CANDIDATE_LIST_NOT_AVAILABLE</p>
@@ -2584,38 +2954,12 @@
         <p class="muted">
             Report path: <code>{{ vm.runtime.strategy_ladder_summary.feature_engine_ml_wiring_report_path or 'not_available' }}</code>
         </p>
-        {% if vm.runtime.strategy_ladder_summary.feature_engine_ml_wiring_rows %}
-        <table class="data-table data-table--compact">
-            <thead>
-                <tr>
-                    <th>Feature</th>
-                    <th>Training selected</th>
-                    <th>Artifact selected</th>
-                    <th>Runtime payload</th>
-                    <th>Native origin</th>
-                    <th>Native consumption</th>
-                    <th>ML wired</th>
-                    <th>ML block reason</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for row in vm.runtime.strategy_ladder_summary.feature_engine_ml_wiring_rows %}
-                <tr>
-                    <td><code>{{ row.get('feature_name', '') }}</code></td>
-                    <td>{{ 'true' if row.get('training_selected') else 'false' }}</td>
-                    <td>{{ 'true' if row.get('artifact_selected') else 'false' }}</td>
-                    <td>{{ 'true' if row.get('runtime_payload_available') else 'false' }}</td>
-                    <td>{{ row.get('native_engine_origin', '') }}</td>
-                    <td>{{ row.get('native_engine_consumption_status', '') }}</td>
-                    <td>{{ 'true' if row.get('ml_runtime_wired') else 'false' }}</td>
-                    <td>{{ row.get('ml_block_reason', '') or 'none' }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        {% else %}
-        <p class="muted">FEATURE_ENGINE_ML_WIRING_NOT_PROVEN</p>
-        {% endif %}
+        <div
+            id="feature-engine-ml-wiring-host"
+            data-feature-table-url="/backtest/candidate-feature-table.json"
+        >
+            <p class="muted">Loading wiring audit asynchronously to reduce first-paint cost.</p>
+        </div>
     </div>
 </section>
 
@@ -3054,7 +3398,7 @@
 
 <script>
 (() => {
-    const form = document.querySelector('form[action="/backtest/run"]');
+    const form = document.getElementById("backtest-run-form");
     if (!form) {
         return;
     }
@@ -3083,6 +3427,185 @@
 
     phaseSelect.addEventListener("change", syncLaunchButton);
     syncLaunchButton();
+})();
+</script>
+
+<script>
+(() => {
+    const featureHost = document.getElementById("candidate-feature-table-host");
+    const wiringHost = document.getElementById("feature-engine-ml-wiring-host");
+    const featureStatusToken = document.getElementById("candidate-feature-status-token");
+    const activeFeatureCountToken = document.getElementById("candidate-active-feature-count");
+    const wiringStatusToken = document.getElementById("candidate-wiring-status-token");
+    const sourceUrl =
+        featureHost?.dataset.featureTableUrl
+        || wiringHost?.dataset.featureTableUrl
+        || "/backtest/candidate-feature-table.json";
+
+    if (!featureHost && !wiringHost) {
+        return;
+    }
+
+    function esc(value) {
+        return String(value ?? "")
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;")
+            .replaceAll('"', "&quot;")
+            .replaceAll("'", "&#39;");
+    }
+
+    function normalizeList(value) {
+        if (Array.isArray(value)) {
+            return value.filter(Boolean).map((item) => String(item));
+        }
+        if (value === null || value === undefined || value === "") {
+            return [];
+        }
+        return [String(value)];
+    }
+
+    function renderFeatureMetrics(payload) {
+        const featureNames = Array.isArray(payload?.active_feature_names)
+            ? payload.active_feature_names.filter(Boolean).map((item) => String(item))
+            : [];
+        const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+        const status = payload?.status || "CANDIDATE_FEATURE_TABLE_NOT_PROVEN";
+        if (featureNames.length === 0) {
+            return `<p class="muted">${esc(status)}</p>`;
+        }
+        if (rows.length === 0) {
+            return `<p class="muted">${esc(status)}</p>`;
+        }
+        const head = featureNames.map((name) => `<th>${esc(name)}</th>`).join("");
+        const body = rows.map((row) => {
+            const reasonCodes = normalizeList(row.reason_codes).join(", ") || "none";
+            const featureCells = featureNames
+                .map((name) => `<td>${esc(row[name] ?? "n/a")}</td>`)
+                .join("");
+            return `
+                <tr>
+                    <td><code>${esc(row.candidate_id || "")}</code></td>
+                    <td>${esc(row.pair || "")}</td>
+                    <td>${esc(row.engine_id || "")}</td>
+                    <td>${esc(row.timeframe || "")}</td>
+                    <td>${esc(row.outcome_status || "")}</td>
+                    <td>${esc(row.accepted_or_refused || "")}</td>
+                    <td>${esc(reasonCodes)}</td>
+                    ${featureCells}
+                </tr>
+            `;
+        }).join("");
+        return `
+            <table class="data-table data-table--compact">
+                <thead>
+                    <tr>
+                        <th>Candidate</th>
+                        <th>Pair</th>
+                        <th>Engine</th>
+                        <th>TF</th>
+                        <th>Outcome</th>
+                        <th>Accepted / refused</th>
+                        <th>Reason codes</th>
+                        ${head}
+                    </tr>
+                </thead>
+                <tbody>${body}</tbody>
+            </table>
+        `;
+    }
+
+    function renderWiringAudit(payload) {
+        const rows = Array.isArray(payload?.wiring_rows) ? payload.wiring_rows : [];
+        const status = payload?.wiring_status || "FEATURE_ENGINE_ML_WIRING_NOT_PROVEN";
+        if (rows.length === 0) {
+            return `<p class="muted">${esc(status)}</p>`;
+        }
+        const body = rows.map((row) => `
+            <tr>
+                <td><code>${esc(row.feature_name || "")}</code></td>
+                <td>${row.training_selected ? "true" : "false"}</td>
+                <td>${row.artifact_selected ? "true" : "false"}</td>
+                <td>${row.runtime_payload_available ? "true" : "false"}</td>
+                <td>${esc(row.native_engine_origin || "")}</td>
+                <td>${esc(row.native_engine_consumption_status || "")}</td>
+                <td>${row.ml_runtime_wired ? "true" : "false"}</td>
+                <td>${esc(row.ml_block_reason || "none")}</td>
+            </tr>
+        `).join("");
+        return `
+            <table class="data-table data-table--compact">
+                <thead>
+                    <tr>
+                        <th>Feature</th>
+                        <th>Training selected</th>
+                        <th>Artifact selected</th>
+                        <th>Runtime payload</th>
+                        <th>Native origin</th>
+                        <th>Native consumption</th>
+                        <th>ML wired</th>
+                        <th>ML block reason</th>
+                    </tr>
+                </thead>
+                <tbody>${body}</tbody>
+            </table>
+        `;
+    }
+
+    async function loadCandidateFeatureAudits() {
+        try {
+            const response = await fetch(sourceUrl, {
+                headers: {"Accept": "application/json"},
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(payload.error || `HTTP ${response.status}`);
+            }
+            if (featureStatusToken) {
+                featureStatusToken.textContent = String(
+                    payload.status || "CANDIDATE_FEATURE_TABLE_NOT_PROVEN"
+                );
+            }
+            if (activeFeatureCountToken) {
+                activeFeatureCountToken.textContent = String(
+                    Array.isArray(payload.active_feature_names)
+                        ? payload.active_feature_names.length
+                        : 0
+                );
+            }
+            if (wiringStatusToken) {
+                wiringStatusToken.textContent = String(
+                    payload.wiring_status || "FEATURE_ENGINE_ML_WIRING_NOT_PROVEN"
+                );
+            }
+            if (featureHost) {
+                featureHost.innerHTML = `
+                    <h5>Candidate Feature Metrics</h5>
+                    ${renderFeatureMetrics(payload)}
+                `;
+            }
+            if (wiringHost) {
+                wiringHost.innerHTML = renderWiringAudit(payload);
+            }
+        } catch (error) {
+            console.warn("candidate feature audit fetch failed", error);
+            if (featureHost) {
+                featureHost.innerHTML = `
+                    <h5>Candidate Feature Metrics</h5>
+                    <p class="muted">CANDIDATE_FEATURE_TABLE_NOT_AVAILABLE</p>
+                `;
+            }
+            if (wiringHost) {
+                wiringHost.innerHTML =
+                    '<p class="muted">FEATURE_ENGINE_ML_WIRING_NOT_AVAILABLE</p>';
+            }
+        }
+    }
+
+    const schedule = window.requestIdleCallback
+        ? () => window.requestIdleCallback(loadCandidateFeatureAudits, {timeout: 1500})
+        : () => window.setTimeout(loadCandidateFeatureAudits, 0);
+    schedule();
 })();
 </script>
 
@@ -3418,6 +3941,7 @@
                     </tr>
                     <tr><th>ETA</th><td id="backtest-latest-job-eta">${esc(formatEta(job.eta_minutes))}</td></tr>
                     <tr><th>Latest activity</th><td id="backtest-latest-job-activity">${esc(job.latest_activity_iso || "n/a")}</td></tr>
+                    <tr><th>Progress detail</th><td id="backtest-latest-job-health">${esc(job.progress_health_status || "n/a")} <span class="muted">${esc(job.progress_health_message || "")}</span></td></tr>
                     <tr><th>Duration</th><td id="backtest-latest-job-duration">${esc(formatDuration(job.duration_seconds))}</td></tr>
                     <tr><th>Produced files</th><td id="backtest-latest-job-produced">${esc(job.produced_file_count ?? 0)}</td></tr>
                     <tr><th>Output refs</th><td id="backtest-latest-job-output-refs">${esc(job.output_ref_count ?? 0)}</td></tr>
@@ -3652,7 +4176,7 @@
 
 <script>
 (() => {
-    const form = document.querySelector('form[action="/backtest/run"]');
+    const form = document.getElementById("backtest-run-form");
     if (!form) {
         return;
     }

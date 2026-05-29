@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 from cockpit.action_support import StrategyLadderControlAction
 from cockpit.form_state_support import BacktestFormState
-from cockpit.strategy_ladder_workflow_support import PHASE_A1, PHASE_A2, PHASE_B1, PHASE_B2
+from cockpit.strategy_ladder_workflow_support import PHASE_A1, PHASE_A2, PHASE_B1, PHASE_B2, PHASE_B_ML
 from interface_contracts.atomic_io import atomic_write_json
 
 
@@ -31,6 +31,7 @@ CANONICAL_ACTION_BY_PHASE_ID: dict[str, str] = {
     StrategyLadderControlAction.PHASE_A1_PREVIEW.value: PHASE_A1,
     StrategyLadderControlAction.PHASE_A2_DATA_FACTORY.value: PHASE_A2,
     StrategyLadderControlAction.PHASE_B1_CANDIDATE_DISCOVERY.value: PHASE_B1,
+    StrategyLadderControlAction.PHASE_B_ML_LABEL_FACTORY.value: PHASE_B_ML,
     StrategyLadderControlAction.PHASE_B2_DETAILED_REPLAY.value: PHASE_B2,
 }
 LEGACY_ACTION_PHASE_ALIASES: dict[str, str] = {
@@ -47,6 +48,7 @@ ACTION_BY_PHASE_ID: dict[str, str] = {
     PHASE_A1: StrategyLadderControlAction.PHASE_A1_PREVIEW.value,
     PHASE_A2: StrategyLadderControlAction.PHASE_A2_DATA_FACTORY.value,
     PHASE_B1: StrategyLadderControlAction.PHASE_B1_CANDIDATE_DISCOVERY.value,
+    PHASE_B_ML: StrategyLadderControlAction.PHASE_B_ML_LABEL_FACTORY.value,
     PHASE_B2: StrategyLadderControlAction.PHASE_B2_DETAILED_REPLAY.value,
     **{
         phase_id: action_name
@@ -58,6 +60,7 @@ PHASE_LABEL_BY_ID: dict[str, str] = {
     PHASE_A1: "Phase A1 Preview",
     PHASE_A2: "Phase A2 Data Factory",
     PHASE_B1: "Phase B1 Candidate Discovery",
+    PHASE_B_ML: "Phase B_ML Training Label Factory",
     PHASE_B2: "Phase B2 Detailed Replay",
     "PHASE_1A": "Phase A1 Preview",
     "PHASE_1B": "Phase A2 Data Factory",
@@ -96,6 +99,7 @@ class Patch6NormalizedRequest(BaseModel, frozen=True):
     rolling_ml_window_plan_path: str = ""
     ml_artifact_freshness_days: int = 30
     candidate_discovery_mode: str = "SAMPLE_CAPPED_DEBUG"
+    bml_candidate_sampler_mode: str = "TEMPORAL_STRATIFIED_BACKGROUND_GRID"
     engine_native_sample_size: int = 10
     b1_5_policy_mode: str = "conservative_hard_only"
     preselected_only: bool = True
@@ -109,6 +113,7 @@ class Patch6NormalizedRequest(BaseModel, frozen=True):
     orderbook_root: str = ""
     trades_root: str = ""
     klines_root: str = ""
+    raw_roots: tuple[str, ...] = ()
     historical_metadata_root: str = ""
     raw_source_manifest_path: str = ""
     pair_subset: tuple[str, ...] = ()
@@ -153,6 +158,7 @@ class CockpitPatch6State(BaseModel, frozen=True):
     rolling_ml_window_plan_path: str = ""
     ml_artifact_freshness_days: int = 30
     candidate_discovery_mode: str = "SAMPLE_CAPPED_DEBUG"
+    bml_candidate_sampler_mode: str = "TEMPORAL_STRATIFIED_BACKGROUND_GRID"
     engine_native_sample_size: int = 10
     b1_5_policy_mode: str = "conservative_hard_only"
     preselected_only: bool = True
@@ -317,7 +323,7 @@ def build_patch6_normalized_request(
     elif not pair_subset and len(detected_pairs) == 1:
         pair_subset = detected_pairs
     roots = canonical_patch6_raw_roots(state)
-    orderbook_root = roots[0] if roots and state.orderbook_path.strip() else state.orderbook_path.strip()
+    orderbook_root = state.orderbook_path.strip()
     trades_root = state.trades_path.strip()
     klines_root = state.klines_path.strip()
     allow_broad_run = str(state.allow_broad_run or "").strip().lower() in {"1", "true", "yes", "on"}
@@ -354,6 +360,9 @@ def build_patch6_normalized_request(
     candidate_discovery_mode = (state.candidate_discovery_mode or "").strip() or (
         "BROAD_DIAGNOSTIC" if allow_broad_run else "SAMPLE_CAPPED_DEBUG"
     )
+    bml_candidate_sampler_mode = (
+        state.bml_candidate_sampler_mode or "TEMPORAL_STRATIFIED_BACKGROUND_GRID"
+    ).strip() or "TEMPORAL_STRATIFIED_BACKGROUND_GRID"
     derived_small_scope = (
         explicit_small_scope
         or candidate_discovery_mode == "SAMPLE_CAPPED_DEBUG"
@@ -392,6 +401,7 @@ def build_patch6_normalized_request(
         rolling_ml_window_plan_path=(state.rolling_ml_window_plan_path or "").strip(),
         ml_artifact_freshness_days=max(int(state.ml_artifact_freshness_days or 30), 1),
         candidate_discovery_mode=candidate_discovery_mode,
+        bml_candidate_sampler_mode=bml_candidate_sampler_mode,
         engine_native_sample_size=max(int(state.engine_native_sample_size or 10), 0),
         b1_5_policy_mode=requested_policy_mode,
         preselected_only=preselected_only,
@@ -405,6 +415,7 @@ def build_patch6_normalized_request(
         orderbook_root=orderbook_root,
         trades_root=trades_root,
         klines_root=klines_root,
+        raw_roots=roots,
         historical_metadata_root=(state.metadata_path or "").strip(),
         raw_source_manifest_path=(state.raw_source_manifest_path or "").strip(),
         pair_subset=pair_subset,
@@ -548,6 +559,7 @@ def build_patch6_state(
         rolling_ml_window_plan_path=normalized_request.rolling_ml_window_plan_path,
         ml_artifact_freshness_days=normalized_request.ml_artifact_freshness_days,
         candidate_discovery_mode=normalized_request.candidate_discovery_mode,
+        bml_candidate_sampler_mode=normalized_request.bml_candidate_sampler_mode,
         engine_native_sample_size=normalized_request.engine_native_sample_size,
         b1_5_policy_mode=normalized_request.b1_5_policy_mode,
         preselected_only=normalized_request.preselected_only,

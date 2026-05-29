@@ -260,13 +260,27 @@ def _build_timeframe_ranking(
     state_counts: dict[str, Counter[str]] = defaultdict(Counter)
     hard_counts: Counter[str] = Counter()
     selected_counts: Counter[str] = Counter()
+    # Patch P0-COUNT-1 (2026-05-27 — backtest_circuit_coverage_deep_audit) :
+    # Track distinct candidate_ids separately from bucket-record counts. The
+    # legacy `selected_count`/`executed_count` are bucket-record counters, so a
+    # single candidate replicated across N capital buckets inflates them by N.
+    # The audit on run strategy_ladder_workflow-2df91d9d5c48dfbf showed 1
+    # distinct candidate appearing as `selected_count=4` (1 × 4 buckets) which
+    # misled the operator into believing 4 distinct trades.
+    selected_distinct: dict[str, set[str]] = defaultdict(set)
+    executed_distinct: dict[str, set[str]] = defaultdict(set)
     for row in bucket_rows:
         candidate = candidate_by_id.get(str(row.get("candidate_id") or ""), {})
         timeframe = str(candidate.get("timeframe") or "unknown")
         state = str(row.get("execution_state") or "").lower()
         state_counts[timeframe][state] += 1
+        candidate_id = str(row.get("candidate_id") or "")
         if state in _SELECTED_STATES:
             selected_counts[timeframe] += 1
+            if candidate_id:
+                selected_distinct[timeframe].add(candidate_id)
+        if state == "executed" and candidate_id:
+            executed_distinct[timeframe].add(candidate_id)
         if state == "hard_blocked":
             hard_counts[timeframe] += 1
     rows: list[dict[str, Any]] = []
@@ -279,8 +293,18 @@ def _build_timeframe_ranking(
             {
                 "timeframe": timeframe,
                 "candidate_count": _as_int(item.get("candidate_count")),
+                # Bucket-record counters (legacy, kept for backward compat).
                 "selected_count": selected_counts.get(timeframe, 0),
                 "executed_count": executed_count,
+                # Patch P0-COUNT-1 — distinct candidate counters that
+                # collapse bucket replication.
+                "selected_bucket_record_count": selected_counts.get(timeframe, 0),
+                "selected_distinct_candidate_count": len(
+                    selected_distinct.get(timeframe, set())
+                ),
+                "executed_distinct_candidate_count": len(
+                    executed_distinct.get(timeframe, set())
+                ),
                 "hard_blocked_count": hard_counts.get(timeframe, 0),
                 "net_edge_bps": _as_float(item.get("net_pnl_bps")),
                 "cost_bps": _as_float(item.get("avg_realized_cost_fraction")),
@@ -295,12 +319,31 @@ def _build_timeframe_ranking(
     ranked = _ranked_rows(rows, score_key="net_edge_bps")
     top = next((row for row in ranked if row.get("rank") == 1 and row["executed_count"] > 0), None)
     status = "TIMEFRAME_RANKING_MISSING" if not rows else "TIMEFRAME_RANKING_PARTIAL"
+    # Patch P1-RANKING-WORDING-1 (2026-05-27) — Block "ranked top" when only
+    # one timeframe was tested AND at least one execution exists. With N=1
+    # there is nothing to compare against, so "ranking" is meaningless even
+    # when executions succeed. When N=1 AND no executions, fall through to
+    # the legacy `insufficient_executions` status to preserve operator UX.
+    timeframes_tested_count = len(rows)
+    total_executed = sum(_as_int(row.get("executed_count")) for row in rows)
+    if timeframes_tested_count < 2 and rows and total_executed > 0:
+        ranking_status = "ONLY_AVAILABLE_PARTIAL_NO_RANK"
+        top_timeframe_value = None
+        only_timeframe_tested = rows[0].get("timeframe")
+    else:
+        ranking_status = "ranked" if top else _rank_status(total_executed, bool(rows))
+        top_timeframe_value = None if top is None else top.get("timeframe")
+        only_timeframe_tested = (
+            rows[0].get("timeframe") if timeframes_tested_count == 1 else None
+        )
     return {
         "schema_version": "v53.timeframe_ranking_report.v1",
         "status": status,
         "run_id": str(_read_json(run_dir / "run_manifest.json", {}).get("run_id") or ""),
-        "ranking_status": "ranked" if top else _rank_status(0, bool(rows)),
-        "top_timeframe": None if top is None else top.get("timeframe"),
+        "ranking_status": ranking_status,
+        "timeframes_tested_count": timeframes_tested_count,
+        "top_timeframe": top_timeframe_value,
+        "only_timeframe_tested": only_timeframe_tested,
         "rows": ranked,
         "missing_fields": ["psr", "dsr", "mfe_bps", "mae_bps"],
     }
@@ -317,6 +360,7 @@ def _feature_names_from_artifacts(run_dir: Path) -> tuple[str, ...]:
         if isinstance(feature_values, dict):
             names.extend(str(name) for name in feature_values if str(name))
     for path in (
+        run_dir / "run_manifest.json",
         run_dir / "reports" / "strategy_ladder_ml_lab_handoff_report.json",
         run_dir / "strategy_ladder_ml_lab_handoff_report.json",
         run_dir / "reports" / "training_report.json",
@@ -324,6 +368,7 @@ def _feature_names_from_artifacts(run_dir: Path) -> tuple[str, ...]:
         payload = _read_json(path, {})
         if isinstance(payload, dict):
             names.extend(_as_tuple(payload.get("feature_names")))
+            names.extend(_as_tuple(payload.get("selected_features")))
     return tuple(dict.fromkeys(names))
 
 
@@ -519,9 +564,18 @@ def _build_pair_ranking(
         scoped = [row for row in bucket_rows if str(row.get("pair") or "") == pair]
         spreads: list[float] = []
         slippages: list[float] = []
+        # Patch P0-COUNT-1 (2026-05-27) — track distinct candidate_ids
+        # separately from bucket-record counts for pair-level reporting.
+        selected_candidates: set[str] = set()
+        executed_candidates: set[str] = set()
         for row in scoped:
             candidate_id = str(row.get("candidate_id") or "")
             bucket = _as_int(row.get("capital_bucket"))
+            state = str(row.get("execution_state") or "").lower()
+            if candidate_id and state in _SELECTED_STATES:
+                selected_candidates.add(candidate_id)
+            if candidate_id and state == "executed":
+                executed_candidates.add(candidate_id)
             spread = _metric_from_report_rows(
                 spread_rows,
                 candidate_id=candidate_id,
@@ -545,8 +599,13 @@ def _build_pair_ranking(
                 "spread_mean_bps": round(mean(spreads), 6) if spreads else None,
                 "slippage_mean_bps": round(mean(slippages), 6) if slippages else None,
                 "candidate_count": _as_int(item.get("candidate_count")),
+                # Bucket-record counters (legacy).
                 "selected_count": _as_int(item.get("selected_count")),
                 "executed_count": executed_count,
+                # Patch P0-COUNT-1 — distinct candidate counters.
+                "selected_bucket_record_count": _as_int(item.get("selected_count")),
+                "selected_distinct_candidate_count": len(selected_candidates),
+                "executed_distinct_candidate_count": len(executed_candidates),
                 "net_edge": _as_float(item.get("executed_only_net_return")),
                 "cost_infeasible_count": sum(
                     1 for row in scoped if "COST" in " ".join(_as_tuple(row.get("reason_codes")))
@@ -557,10 +616,27 @@ def _build_pair_ranking(
         )
     ranked = _ranked_rows(rows, score_key="net_edge")
     top = next((row for row in ranked if row.get("rank") == 1 and row["executed_count"] > 0), None)
+    # Patch P1-RANKING-WORDING-1 (2026-05-27) — Block "top_pair" when only
+    # one pair was tested AND at least one execution exists. With N=1, no
+    # meaningful ranking is possible. Fall back to legacy semantics when
+    # N=1 and no executions.
+    pairs_tested_count = len(rows)
+    total_executed = sum(_as_int(row.get("executed_count")) for row in rows)
+    if pairs_tested_count < 2 and rows and total_executed > 0:
+        ranking_status = "ONLY_AVAILABLE_PARTIAL_NO_RANK"
+        top_pair_value = None
+        only_pair_tested = rows[0].get("pair")
+    else:
+        ranking_status = "ranked" if top else _rank_status(total_executed, bool(rows))
+        top_pair_value = None if top is None else top.get("pair")
+        only_pair_tested = rows[0].get("pair") if pairs_tested_count == 1 else None
     return {
         "schema_version": "v53.pair_ranking_report.v1",
         "status": "PAIR_RANKING_MISSING" if not rows else "PAIR_RANKING_PARTIAL",
-        "top_pair": None if top is None else top.get("pair"),
+        "ranking_status": ranking_status,
+        "pairs_tested_count": pairs_tested_count,
+        "top_pair": top_pair_value,
+        "only_pair_tested": only_pair_tested,
         "rows": ranked,
     }
 
@@ -865,8 +941,11 @@ def _recommendation(
     counts: dict[str, int],
 ) -> dict[str, Any]:
     blockers = list(_as_tuple(summary.get("blocker_codes")))
-    if counts["executed_count"] <= 0 and "NO_EXECUTED_TRADES" not in blockers:
-        blockers.insert(0, "NO_EXECUTED_TRADES")
+    if counts["executed_count"] <= 0:
+        blockers = [
+            "NO_EXECUTED_TRADES",
+            *(blocker for blocker in blockers if blocker != "NO_EXECUTED_TRADES"),
+        ]
     if cost_report.get("status") != "COST_FILL_REALISM_READY":
         blockers.append("COST_FILL_REALISM_NOT_READY")
     blockers = list(dict.fromkeys(blockers))

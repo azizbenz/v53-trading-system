@@ -49,6 +49,7 @@ from local_replay_runtime.strategy_ladder_expected_edge_training import (
     STRATEGY_LADDER_EXPECTED_EDGE_TARGET_POLICY,
     StrategyLadderExpectedEdgeTrainingReport,
     StrategyLadderExpectedEdgeTrainingRequest,
+    BML_LABEL_STORE_DATASET_FILENAME,
     normalize_supported_expected_edge_feature_names,
     train_strategy_ladder_expected_edge_artifact,
 )
@@ -101,6 +102,7 @@ class StrategyLadderMlLabHandoffRequest(BaseModel, frozen=True):
     calibration_version: str = Field(..., min_length=1)
     kline_root: Path
     b2_run_root: Path | None = None
+    label_store_dataset_path: Path | None = None
     export_dir: Path
     pair: str = Field(default="BTCUSDT", min_length=1)
     # Patch P2b (2026-05-22) — optional multi-pair tuple. When len >= 2, the
@@ -152,9 +154,14 @@ class StrategyLadderMlLabHandoffRequest(BaseModel, frozen=True):
         requested_microstructure_features = tuple(
             name for name in self.feature_names if name not in DEFAULT_EXPECTED_EDGE_FEATURE_NAMES
         )
-        if requested_microstructure_features and self.b2_run_root is None:
+        if (
+            requested_microstructure_features
+            and self.b2_run_root is None
+            and self.label_store_dataset_path is None
+        ):
             raise ValueError(
-                "Strategy Ladder microstructure expected-edge features require B2 run root"
+                "Strategy Ladder microstructure expected-edge features require "
+                "b2_run_root or label_store_dataset_path"
             )
         return self
 
@@ -269,6 +276,12 @@ def _write_report(report: StrategyLadderMlLabHandoffReport, path: Path) -> Strat
 
 
 def _source_type(request: StrategyLadderMlLabHandoffRequest) -> str:
+    if request.label_store_dataset_path is not None:
+        return (
+            "B_ML_LABEL_STORE_DATASET"
+            if request.label_store_dataset_path.name == BML_LABEL_STORE_DATASET_FILENAME
+            else "LABEL_STORE_DATASET"
+        )
     return (
         "B2_REPLAY_GROUNDED_LABEL_STORE"
         if request.b2_run_root is not None
@@ -276,7 +289,22 @@ def _source_type(request: StrategyLadderMlLabHandoffRequest) -> str:
     )
 
 
+def _label_store_manifest_root(dataset_path: Path) -> Path:
+    resolved = dataset_path.resolve()
+    parent = resolved.parent
+    candidate_roots: list[Path] = []
+    if parent.name.lower() == "labels":
+        candidate_roots.append(parent.parent)
+    candidate_roots.append(parent)
+    for candidate in candidate_roots:
+        if (candidate / "manifest.json").is_file():
+            return candidate
+    return candidate_roots[0]
+
+
 def _training_manifest_root(request: StrategyLadderMlLabHandoffRequest) -> Path:
+    if request.label_store_dataset_path is not None:
+        return _label_store_manifest_root(request.label_store_dataset_path)
     return request.b2_run_root if request.b2_run_root is not None else request.kline_root
 
 
@@ -295,8 +323,14 @@ def _write_static_contract_reports(
 
     feature_grounding_report = build_feature_grounding_contract_report(
         request.feature_names,
-        b2_run_root_present=request.b2_run_root is not None,
-        execution_replay_available=request.b2_run_root is not None,
+        b2_run_root_present=(
+            request.b2_run_root is not None
+            or request.label_store_dataset_path is not None
+        ),
+        execution_replay_available=(
+            request.b2_run_root is not None
+            or request.label_store_dataset_path is not None
+        ),
     )
     leakage_report = build_ml_feature_input_label_leakage_report(request.feature_names)
     authority_report = build_ml_overlay_authority_contract_report()
@@ -517,7 +551,10 @@ def _train_expected_edge_artifact(
             artifact_id=artifact_id,
             calibration_version=request.calibration_version,
             kline_root=request.kline_root,
-            b2_run_root=request.b2_run_root,
+            b2_run_root=(
+                None if request.label_store_dataset_path is not None else request.b2_run_root
+            ),
+            label_store_dataset_path=request.label_store_dataset_path,
             output_dir=training_output_dir,
             pair=request.pair,
             timeframe=timeframe,

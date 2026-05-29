@@ -63,6 +63,41 @@
             LAB_ONLY expected-edge training with explicit provenance. This surface keeps the artifact frozen for backtest,
             exposes the exact data roots and equations used, and stays fail-closed on stale or overlapping windows.
         </p>
+        <div class="operator-panel lab-handoff-hero">
+            <div class="lab-handoff-hero__head">
+                <div>
+                    <div class="lab-handoff-hero__eyebrow">Frozen artifact state</div>
+                    <h4 id="lab-handoff-hero-status" class="lab-handoff-hero__status">{{ handoff.status or 'STRATEGY_LADDER_ML_LAB_HANDOFF_NOT_RUN' }}</h4>
+                    <p class="muted">Keep the latest governed frozen artifact visible even when you refresh source scope. This is the artifact rail to reuse in backtest after preview.</p>
+                </div>
+                <span id="lab-handoff-hero-badge" class="preview-badge {% if handoff.ready %}preview-badge--ok{% elif handoff.blocking_reasons or handoff.latest_job_error_summary or handoff.latest_job_blockers %}preview-badge--danger{% else %}preview-badge--warn{% endif %}">
+                    {{ 'frozen-artifact-ready' if handoff.ready else 'awaiting-governed-artifact' }}
+                </span>
+            </div>
+            <div class="operator-token-row lab-handoff-hero__tokens">
+                <span id="lab-handoff-status-token" class="operator-token operator-token--info">{{ handoff.status or 'not_run' }}</span>
+                <span id="lab-handoff-ready-token" class="operator-token {% if handoff.ready %}operator-token--ok{% else %}operator-token--warn{% endif %}">{{ 'frozen-artifact-ready' if handoff.ready else 'fail-closed' }}</span>
+                <span id="lab-handoff-anti-leakage-token" class="operator-token {% if handoff.anti_leakage_status == 'NO_FUTURE_DATA_LEAK_PROVEN' %}operator-token--ok{% else %}operator-token--warn{% endif %}">{{ handoff.anti_leakage_status or 'anti_leakage_unproven' }}</span>
+            </div>
+            <div class="lab-handoff-hero__refs">
+                <div class="lab-handoff-ref-card">
+                    <span class="lab-handoff-ref-card__label">Backtest input</span>
+                    <code id="lab-handoff-hero-backtest-input">{{ handoff.backtest_input_ref or 'not_available' }}</code>
+                </div>
+                <div class="lab-handoff-ref-card">
+                    <span class="lab-handoff-ref-card__label">Training report</span>
+                    <code id="lab-handoff-hero-training-report">{{ handoff.training_report_ref or 'not_available' }}</code>
+                </div>
+                <div class="lab-handoff-ref-card">
+                    <span class="lab-handoff-ref-card__label">Handoff report</span>
+                    <code id="lab-handoff-hero-handoff-report">{{ handoff.handoff_report_ref or 'not_available' }}</code>
+                </div>
+                <div class="lab-handoff-ref-card">
+                    <span class="lab-handoff-ref-card__label">Transport artifact</span>
+                    <code id="lab-handoff-hero-transport-artifact">{{ handoff.transport_artifact_ref or 'not_available' }}</code>
+                </div>
+            </div>
+        </div>
         <div class="grid-2" style="margin:0 0 1rem 0;">
             <div class="card backtest-monitor-card{% if monitor_active %} backtest-monitor-card--active{% endif %}" id="lab-progress-card">
                 <div class="card__head">
@@ -132,12 +167,6 @@
         <div class="patch6-layout">
             <div class="patch6-form-column">
                 <form method="post" action="/lab/strategy-ladder-ml-handoff">
-                    <div class="operator-token-row">
-                        <span id="lab-handoff-status-token" class="operator-token operator-token--info">{{ handoff.status or 'not_run' }}</span>
-                        <span id="lab-handoff-ready-token" class="operator-token {% if handoff.ready %}operator-token--ok{% else %}operator-token--warn{% endif %}">{{ 'frozen-artifact-ready' if handoff.ready else 'fail-closed' }}</span>
-                        <span id="lab-handoff-anti-leakage-token" class="operator-token {% if handoff.anti_leakage_status == 'NO_FUTURE_DATA_LEAK_PROVEN' %}operator-token--ok{% else %}operator-token--warn{% endif %}">{{ handoff.anti_leakage_status or 'anti_leakage_unproven' }}</span>
-                    </div>
-
                     <div class="operator-panel">
                         <div class="operator-panel__head">
                             <div>
@@ -245,9 +274,9 @@
                                     {% if vm.lab_replay_grounding_required %}
                                     <strong>Replay grounding:</strong>
                                     {% if vm.lab_replay_grounding_ready %}
-                                    current selection includes non-legacy features and the current <code>b2_run_root</code> is present.
+                                    current selection includes non-legacy features and the current <code>b2_run_root</code> or <code>label_store_dataset_path</code> is present.
                                     {% else %}
-                                    current selection includes non-legacy features <code>{{ vm.lab_requested_non_legacy_features|join(', ') }}</code>; a <code>b2_run_root</code> is required before launch.
+                                    current selection includes non-legacy features <code>{{ vm.lab_requested_non_legacy_features|join(', ') }}</code>; a <code>b2_run_root</code> or <code>label_store_dataset_path</code> is required before launch.
                                     {% endif %}
                                     {% else %}
                                     <strong>Replay grounding:</strong> legacy kline-only training remains allowed for the current selection.
@@ -300,6 +329,9 @@
                                     <input id="lab_b2_run_root" type="text" name="b2_run_root" placeholder="path to one B2 backtest_strategy_ladder run root" value="{{ handoff_form.b2_run_root }}">
                                     <button class="button button--ghost js-browse-folder" type="button" data-target="lab_b2_run_root">Browse...</button>
                                 </div>
+                            </label>
+                            <label>Label-store dataset path (optional, direct B_ML replay-grounded intake; kline_root remains required)
+                                <input id="lab_label_store_dataset_path" type="text" name="label_store_dataset_path" placeholder="path to labels\\b_ml_label_store.jsonl or compatible label store dataset" value="{{ handoff_form.label_store_dataset_path }}">
                             </label>
                             <label>Orderbook root (optional, not yet consumed by this trainer)
                                 <div class="field-row">
@@ -1488,6 +1520,7 @@
         setText("lab-handoff-status-token", handoff.status || "not_run");
         setText("lab-handoff-ready-token", handoff.ready ? "frozen-artifact-ready" : "fail-closed");
         setText("lab-handoff-anti-leakage-token", handoff.anti_leakage_status || "anti_leakage_unproven");
+        setText("lab-handoff-hero-status", handoff.status || "not_run");
         if (handoff.source_status) {
             setText("lab-source-status", handoff.source_status);
         }
@@ -1507,9 +1540,35 @@
         setHtml("lab-artifact-hash", `<code>${esc(handoff.artifact_hash || "not_available")}</code>`);
         setHtml("lab-artifact-id", `<code>${esc(handoff.artifact_id || "not_run")}</code>`);
         setHtml("lab-snapshot-job-id", `<code>${esc(handoff.job_id || "not_run")}</code>`);
+        setHtml("lab-handoff-hero-artifact-id", `<code>${esc(handoff.artifact_id || "not_run")}</code>`);
+        setText("lab-handoff-hero-source-status", handoff.source_status || "missing");
+        setText("lab-handoff-hero-timeframe-scope", (handoff.timeframe_scope || []).join(", ") || handoff.timeframe || "n/a");
+        setText("lab-handoff-hero-feature-count", String((handoff.feature_names || []).length || 0));
+        setHtml("lab-handoff-hero-backtest-input", `<code>${esc(handoff.backtest_input_ref || "not_available")}</code>`);
+        setHtml("lab-handoff-hero-training-report", `<code>${esc(handoff.training_report_ref || "not_available")}</code>`);
+        setHtml("lab-handoff-hero-handoff-report", `<code>${esc(handoff.handoff_report_ref || "not_available")}</code>`);
+        setHtml("lab-handoff-hero-transport-artifact", `<code>${esc(handoff.transport_artifact_ref || "not_available")}</code>`);
         setText("lab-training-row-count", String(handoff.training_row_count ?? 0));
         setText("lab-timeframe-scope", (handoff.timeframe_scope || []).join(", ") || handoff.timeframe || "n/a");
         setText("lab-live-drift-status", handoff.live_drift_status || "not_proven");
+        const heroBadge = document.getElementById("lab-handoff-hero-badge");
+        if (heroBadge) {
+            const badgeText = handoff.ready
+                ? "frozen-artifact-ready"
+                : ((((handoff.blocking_reasons || []).length > 0) || ((handoff.latest_job_blockers || []).length > 0) || !!handoff.latest_job_error_summary)
+                    ? "fail-closed"
+                    : "awaiting-governed-artifact");
+            heroBadge.textContent = badgeText;
+            heroBadge.classList.toggle("preview-badge--ok", !!handoff.ready);
+            heroBadge.classList.toggle(
+                "preview-badge--danger",
+                !handoff.ready && ((((handoff.blocking_reasons || []).length > 0) || ((handoff.latest_job_blockers || []).length > 0) || !!handoff.latest_job_error_summary)),
+            );
+            heroBadge.classList.toggle(
+                "preview-badge--warn",
+                !handoff.ready && !((((handoff.blocking_reasons || []).length > 0) || ((handoff.latest_job_blockers || []).length > 0) || !!handoff.latest_job_error_summary)),
+            );
+        }
         const badge = document.getElementById("lab-training-snapshot-badge");
         if (badge) {
             badge.textContent = handoff.status || "not_run";

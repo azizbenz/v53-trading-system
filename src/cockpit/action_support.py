@@ -31,7 +31,10 @@ from cockpit.strategy_ladder_workflow_support import (
     PHASE_A1,
     PHASE_A2,
     PHASE_B1,
+    PHASE_B_ML,
     PHASE_B2,
+    PHASE_STATUS_BML_BLOCKED,
+    PHASE_STATUS_BML_READY,
     PHASE_STATUS_DATA_FACTORY_BLOCKED,
     PHASE_STATUS_DATA_FACTORY_READY,
     PHASE_STATUS_DISCOVERY_BLOCKED,
@@ -84,6 +87,8 @@ JOB_ID_NOT_FOUND = "JOB_ID_NOT_FOUND"
 CANCEL_REQUEST_FILENAME = "cancel_request.json"
 JOB_RECORD_STALE_PID_DEAD = "JOB_RECORD_STALE_PID_DEAD"
 JOB_PROCESS_EXITED_WITHOUT_MANIFESTS = "JOB_PROCESS_EXITED_WITHOUT_MANIFESTS"
+JOB_TERMINAL_ARTIFACT_STALL_RECOVERED = "JOB_TERMINAL_ARTIFACT_STALL_RECOVERED"
+COCKPIT_JOB_TERMINAL_SENTINEL_ENV = "COCKPIT_JOB_TERMINAL_SENTINEL_PATH"
 
 
 PAIR_ARG_INVALID_PATH = "PAIR_ARG_INVALID_PATH"
@@ -107,6 +112,7 @@ _PROTECTED_RAW_PREFIXES: tuple[str, ...] = (
 )
 
 _DEFAULT_ENGINE_NATIVE_SAMPLE_SIZE = 10
+_STRATEGY_LADDER_POSTRUN_STALL_SECONDS = 30.0
 _RUNNING_JOB_STATUSES: tuple[CockpitBacktestJobStatus, ...] = (
     CockpitBacktestJobStatus.REQUESTED,
     CockpitBacktestJobStatus.RUNNING,
@@ -217,6 +223,7 @@ _TYPICAL_JOB_DURATION_MINUTES: dict[str, float] = {
     "strategy_ladder_data_factory": 4.0,
     "strategy_ladder_first_controlled_run": 8.0,
     "strategy_ladder_ml_lab_handoff": 6.0,
+    "strategy_ladder_b_ml_label_factory": 5.0,
 }
 
 
@@ -347,12 +354,14 @@ class CockpitBacktestJobKind(StrEnum):
     STRATEGY_LADDER_DATA_FACTORY = "strategy_ladder_data_factory"
     STRATEGY_LADDER_FIRST_CONTROLLED_RUN = "strategy_ladder_first_controlled_run"
     STRATEGY_LADDER_ML_LAB_HANDOFF = "strategy_ladder_ml_lab_handoff"
+    STRATEGY_LADDER_B_ML_LABEL_FACTORY = "strategy_ladder_b_ml_label_factory"
 
 
 class StrategyLadderControlAction(StrEnum):
     PHASE_A1_PREVIEW = "PHASE_A1_PREVIEW"
     PHASE_A2_DATA_FACTORY = "PHASE_A2_DATA_FACTORY"
     PHASE_B1_CANDIDATE_DISCOVERY = "PHASE_B1_CANDIDATE_DISCOVERY"
+    PHASE_B_ML_LABEL_FACTORY = "PHASE_B_ML_LABEL_FACTORY"
     PHASE_B2_DETAILED_REPLAY = "PHASE_B2_DETAILED_REPLAY"
     DATA_FACTORY_DRY_RUN = "DATA_FACTORY_DRY_RUN"
     DATA_FACTORY_SMALL_SCOPE_RUN = "DATA_FACTORY_SMALL_SCOPE_RUN"
@@ -399,6 +408,7 @@ class CockpitBacktestJobRecord(BaseModel, frozen=True):
     rolling_ml_window_plan_path: str = ""
     ml_artifact_freshness_days: int = 30
     candidate_discovery_mode: str = "SAMPLE_CAPPED_DEBUG"
+    bml_candidate_sampler_mode: str = "TEMPORAL_STRATIFIED_BACKGROUND_GRID"
     engine_native_sample_size: int = _DEFAULT_ENGINE_NATIVE_SAMPLE_SIZE
     backtest_timeframes: tuple[str, ...] = ("1m",)
     b1_5_policy_mode: str = "conservative_hard_only"
@@ -447,6 +457,9 @@ class CockpitBacktestJobRecord(BaseModel, frozen=True):
                         if key and isinstance(value, str) and value
                     ]
                 )
+        output_root = Path(self.output_root) if self.output_root else None
+        if output_root is not None:
+            return _count_existing_output_files(output_root)
         return 0
 
     @property
@@ -463,7 +476,55 @@ class CockpitBacktestJobRecord(BaseModel, frozen=True):
 
     @property
     def latest_activity_iso(self) -> str:
-        return self.finished_at_iso or self.started_at_iso or self.requested_at_iso
+        timestamps: list[datetime] = []
+        for raw_value in (
+            self.finished_at_iso,
+            self.started_at_iso,
+            self.requested_at_iso,
+            self.latest_output_activity_iso,
+        ):
+            parsed = _parse_iso(raw_value)
+            if parsed is not None:
+                timestamps.append(parsed)
+        if not timestamps:
+            return ""
+        return max(timestamps).isoformat()
+
+    @property
+    def latest_output_activity_iso(self) -> str:
+        candidates: list[Path] = []
+        for raw_path in (
+            self.stdout_log_path,
+            self.artifact_inventory_path,
+            self.stage_summary_path,
+            self.job_status_path,
+            self.record_path,
+        ):
+            path = Path(raw_path) if raw_path else None
+            if path is not None and path.is_file():
+                candidates.append(path)
+        output_root = Path(self.output_root) if self.output_root else None
+        if output_root is not None and output_root.is_dir():
+            for filename in (
+                "a2_microstructure_performance_report.json",
+                "a2_microstructure_cache_manifest.json",
+                "a2_feature_equivalence_report.json",
+                "gold_feature_manifest.json",
+                "data_factory_manifest.json",
+                "data_quality_report.json",
+                "silver_index.json",
+                "job_status.json",
+            ):
+                path = output_root / filename
+                if path.is_file():
+                    candidates.append(path)
+        if not candidates:
+            return ""
+        try:
+            latest_mtime = max(path.stat().st_mtime for path in candidates)
+        except OSError:
+            return ""
+        return datetime.fromtimestamp(latest_mtime, tz=UTC).isoformat()
 
     @property
     def pid_alive(self) -> bool:
@@ -492,6 +553,36 @@ class CockpitBacktestJobRecord(BaseModel, frozen=True):
             finished_at_iso=self.finished_at_iso,
         )
         return eta
+
+    @property
+    def progress_health_status(self) -> str:
+        if self.status not in _RUNNING_JOB_STATUSES:
+            return "JOB_NOT_RUNNING"
+        duration = self.duration_seconds or 0.0
+        produced_count = self.produced_file_count
+        if self.progress_pct >= 95 and produced_count == 0 and duration >= 900.0:
+            return "RUNNING_AT_95_WITHOUT_ARTIFACTS"
+        latest_activity = _parse_iso(self.latest_activity_iso)
+        if latest_activity is not None:
+            age_s = (datetime.now(tz=UTC) - latest_activity).total_seconds()
+            if age_s >= 900.0:
+                return "RUNNING_NO_RECENT_ARTIFACT_ACTIVITY"
+        if produced_count > 0:
+            return "RUNNING_WITH_ARTIFACT_ACTIVITY"
+        return "RUNNING_WAITING_FOR_FIRST_ARTIFACT"
+
+    @property
+    def progress_health_message(self) -> str:
+        status = self.progress_health_status
+        if status == "RUNNING_AT_95_WITHOUT_ARTIFACTS":
+            return "Progress is clamped at 95%; no artifacts are visible yet. Inspect stdout and A2 reports before waiting longer."
+        if status == "RUNNING_NO_RECENT_ARTIFACT_ACTIVITY":
+            return "The process is still marked running, but no recent artifact activity is visible."
+        if status == "RUNNING_WITH_ARTIFACT_ACTIVITY":
+            return "Artifacts are being produced; use latest activity and report links for real progress."
+        if status == "RUNNING_WAITING_FOR_FIRST_ARTIFACT":
+            return "The job is running and waiting for the first visible artifact."
+        return "The job is not running."
 
 
 class CockpitQueuedCommandSummary(BaseModel, frozen=True):
@@ -596,6 +687,7 @@ def launch_backtest_job(
     job_kind: CockpitBacktestJobKind,
     export_dir: Path,
     b2_run_root: Path | None = None,
+    label_store_dataset_path: Path | None = None,
     baseline_export_dir: Path | None = None,
     signed_by: str = "cockpit_operator",
     python_executable: str | None = None,
@@ -650,6 +742,7 @@ def launch_backtest_job(
     max_optuna_trials: int = 0,
     min_training_rows: int = 210,
     shap_summary_ref: str = "",
+    bml_candidate_sampler_mode: str = "TEMPORAL_STRATIFIED_BACKGROUND_GRID",
 ) -> CockpitBacktestJobRecord:
     """Create one audited local job record and execute the real launcher asynchronously."""
 
@@ -663,14 +756,16 @@ def launch_backtest_job(
         CockpitBacktestJobKind.STRATEGY_LADDER_DATA_FACTORY,
         CockpitBacktestJobKind.STRATEGY_LADDER_FIRST_CONTROLLED_RUN,
         CockpitBacktestJobKind.STRATEGY_LADDER_RUNNER,
+        CockpitBacktestJobKind.STRATEGY_LADDER_B_ML_LABEL_FACTORY,
     }
     is_workflow_phase_job = (
-        phase_id in {PHASE_A1, PHASE_A2, PHASE_B1, PHASE_B2}
+        phase_id in {PHASE_A1, PHASE_A2, PHASE_B1, PHASE_B_ML, PHASE_B2}
         or action_name
         in {
             StrategyLadderControlAction.PHASE_A1_PREVIEW.value,
             StrategyLadderControlAction.PHASE_A2_DATA_FACTORY.value,
             StrategyLadderControlAction.PHASE_B1_CANDIDATE_DISCOVERY.value,
+            StrategyLadderControlAction.PHASE_B_ML_LABEL_FACTORY.value,
             StrategyLadderControlAction.PHASE_B2_DETAILED_REPLAY.value,
         }
         or bool(workflow_run_id.strip())
@@ -744,6 +839,7 @@ def launch_backtest_job(
             job_kind=job_kind,
             export_dir=export_dir,
             b2_run_root=b2_run_root,
+            label_store_dataset_path=label_store_dataset_path,
             output_root=output_root,
             baseline_export_dir=baseline_export_dir,
             signed_by=signed_by,
@@ -795,6 +891,7 @@ def launch_backtest_job(
             max_optuna_trials=max_optuna_trials,
             min_training_rows=min_training_rows,
             shap_summary_ref=shap_summary_ref,
+            bml_candidate_sampler_mode=bml_candidate_sampler_mode,
         )
     record = CockpitBacktestJobRecord(
         job_id=job_id,
@@ -851,6 +948,8 @@ def launch_backtest_job(
                 if job_kind == CockpitBacktestJobKind.STRATEGY_LADDER_RUNNER
                 else (output_root / "strategy_ladder_backtest_ml_input.json")
                 if job_kind == CockpitBacktestJobKind.STRATEGY_LADDER_ML_LAB_HANDOFF
+                else (output_root / "labels" / "b_ml_label_store.jsonl")
+                if job_kind == CockpitBacktestJobKind.STRATEGY_LADDER_B_ML_LABEL_FACTORY
                 else (output_root / "silver_index.json")
             ).resolve()
         ),
@@ -860,6 +959,8 @@ def launch_backtest_job(
                 if job_kind == CockpitBacktestJobKind.STRATEGY_LADDER_FIRST_CONTROLLED_RUN
                 else (output_root / "strategy_ladder_ml_lab_handoff_report.json")
                 if job_kind == CockpitBacktestJobKind.STRATEGY_LADDER_ML_LAB_HANDOFF
+                else (output_root / "reports" / "b_ml_training_dataset_audit.json")
+                if job_kind == CockpitBacktestJobKind.STRATEGY_LADDER_B_ML_LABEL_FACTORY
                 else (
                     output_root / "data_factory_manifest.json"
                     if job_kind == CockpitBacktestJobKind.STRATEGY_LADDER_DATA_FACTORY
@@ -892,6 +993,7 @@ def launch_backtest_job(
         ),
         ml_artifact_freshness_days=max(int(ml_artifact_freshness_days), 1),
         candidate_discovery_mode=candidate_discovery_mode,
+        bml_candidate_sampler_mode=bml_candidate_sampler_mode,
         engine_native_sample_size=engine_native_sample_size,
         backtest_timeframes=backtest_timeframes or ("1m",),
         b1_5_policy_mode=b1_5_policy_mode,
@@ -955,6 +1057,7 @@ def launch_backtest_job(
         start=start,
         end=end,
         b2_run_root=b2_run_root,
+        label_store_dataset_path=label_store_dataset_path,
         calibration_version=calibration_version,
         timeframe=timeframe,
         backtest_timeframes=backtest_timeframes,
@@ -1109,6 +1212,7 @@ def _build_backtest_command(
     job_kind: CockpitBacktestJobKind,
     export_dir: Path,
     b2_run_root: Path | None = None,
+    label_store_dataset_path: Path | None = None,
     output_root: Path,
     baseline_export_dir: Path | None,
     signed_by: str,
@@ -1130,6 +1234,7 @@ def _build_backtest_command(
     engine_native_mode: bool,
     engine_native_sample_size: int,
     candidate_discovery_mode: str = "SAMPLE_CAPPED_DEBUG",
+    bml_candidate_sampler_mode: str = "TEMPORAL_STRATIFIED_BACKGROUND_GRID",
     b1_5_policy_mode: str = "conservative_hard_only",
     preselected_only: bool = True,
     diagnostic_full_replay: bool = False,
@@ -1258,6 +1363,13 @@ def _build_backtest_command(
         ]
         if b2_run_root is not None:
             command.extend(["--b2-run-root", str(b2_run_root.resolve())])
+        if label_store_dataset_path is not None:
+            command.extend(
+                [
+                    "--label-store-dataset-path",
+                    str(label_store_dataset_path.resolve()),
+                ]
+            )
         if requested_backtest_start:
             command.extend(["--requested-backtest-start", requested_backtest_start])
         if (shap_summary_ref or "").strip():
@@ -1267,7 +1379,50 @@ def _build_backtest_command(
         if len(pairs) >= 2:
             command.extend(["--selected-pairs", ",".join(pairs)])
         return tuple(command)
+    if job_kind == CockpitBacktestJobKind.STRATEGY_LADDER_B_ML_LABEL_FACTORY:
+        a2_run_root = (
+            feature_store_root.parent.resolve()
+            if feature_store_root is not None and feature_store_root.name == "gold"
+            else feature_store_root.resolve()
+            if feature_store_root is not None
+            else output_root.resolve().parent / "phase_a2_data_factory"
+        )
+        command = [
+            python_executable,
+            str(REPO_ROOT / "scripts" / "run_strategy_ladder_b_ml_label_factory.py"),
+            "--workflow-run-id",
+            workflow_run_id or job_id,
+            "--a2-run-root",
+            str(a2_run_root),
+            "--output-root",
+            str(output_root.resolve()),
+            "--pairs",
+            ",".join(pairs) if pairs else "BTCUSDT",
+            "--timeframes",
+            ",".join(backtest_timeframes or (timeframe or "1m",)),
+            "--start",
+            start,
+            "--end",
+            end,
+            "--label-horizons",
+            "5m,15m,1h",
+            "--capital-buckets",
+            "400,500,1500,4000",
+            "--feature-names",
+            feature_names_csv or "close_return,high_low_range,volume",
+            "--candidate-sampler-mode",
+            bml_candidate_sampler_mode or "TEMPORAL_STRATIFIED_BACKGROUND_GRID",
+        ]
+        if candidate_events_path is not None:
+            command.extend(["--b1-candidate-events-path", str(candidate_events_path.resolve())])
+        return tuple(command)
     if job_kind == CockpitBacktestJobKind.STRATEGY_LADDER_RUNNER:
+        resolved_candidate_sample_cap = (
+            0
+            if str(candidate_discovery_mode or "").strip().upper() == "FULL_DISCOVERY"
+            and full_scan_enabled
+            else max(engine_native_sample_size, 0)
+        )
         command = [
             python_executable,
             str(REPO_ROOT / "scripts" / "run_backtest_strategy_ladder.py"),
@@ -1287,7 +1442,7 @@ def _build_backtest_command(
             "--candidate-discovery-mode",
             candidate_discovery_mode,
             "--candidate-sample-cap",
-            str(max(engine_native_sample_size, 0)),
+            str(resolved_candidate_sample_cap),
             "--b1-5-policy-mode",
             b1_5_policy_mode,
         ]
@@ -1344,12 +1499,15 @@ def _build_backtest_command(
             command.extend(["--pairs", ",".join(pairs)])
         if backtest_timeframes:
             command.extend(["--timeframes", ",".join(backtest_timeframes)])
+        if (feature_names_csv or "").strip():
+            command.extend(["--feature-names", feature_names_csv.strip()])
         if start:
             command.extend(["--start", start])
         if end:
             command.extend(["--end", end])
         if action_name == StrategyLadderControlAction.PHASE_B1_CANDIDATE_DISCOVERY.value:
             command.append("--fast-only")
+            command.extend(["--raw-window-mode", "REFS_ONLY"])
         if action_name == StrategyLadderControlAction.PHASE_B2_DETAILED_REPLAY.value:
             command.extend(["--detailed-only", "--resume"])
             if candidate_events_path is not None:
@@ -1384,6 +1542,10 @@ def _build_backtest_command(
             command.extend(["--historical-metadata-root", str(historical_metadata_root.resolve())])
         if pairs:
             command.extend(["--pairs", ",".join(pairs)])
+        if backtest_timeframes:
+            command.extend(["--timeframes", ",".join(backtest_timeframes)])
+        if (feature_names_csv or "").strip():
+            command.extend(["--feature-names", feature_names_csv.strip()])
         if start:
             command.extend(["--start", start])
         if end:
@@ -1446,6 +1608,8 @@ def _build_backtest_command(
             command.extend(["--historical-metadata-root", str(historical_metadata_root.resolve())])
         if pairs:
             command.extend(["--pairs", ",".join(pairs)])
+        if (feature_names_csv or "").strip():
+            command.extend(["--feature-names", feature_names_csv.strip()])
         if start:
             command.extend(["--start", start])
         if end:
@@ -1473,6 +1637,8 @@ def _initial_phase_status(
         return PHASE_STATUS_DATA_FACTORY_BLOCKED
     if phase_id == PHASE_B1:
         return PHASE_STATUS_DISCOVERY_BLOCKED
+    if phase_id == PHASE_B_ML:
+        return PHASE_STATUS_BML_BLOCKED
     if phase_id == PHASE_B2:
         if blocked_reason == "PROMOTION_ARTIFACTS_BLOCKED_BY_FIDELITY":
             return PHASE_STATUS_PROMOTION_BLOCKED
@@ -1485,6 +1651,11 @@ def _cancel_request_path_for(record: CockpitBacktestJobRecord) -> Path:
 
     job_dir = Path(record.record_path).parent if record.record_path else Path()
     return job_dir / CANCEL_REQUEST_FILENAME
+
+
+def _terminal_sentinel_path_for(record: CockpitBacktestJobRecord) -> Path:
+    job_dir = Path(record.record_path).parent if record.record_path else Path()
+    return job_dir / "terminal_sentinel.json"
 
 
 def _read_cancel_request(record: CockpitBacktestJobRecord) -> dict[str, object]:
@@ -1517,6 +1688,7 @@ def _run_backtest_job(
     cancel_reason = ""
     termination_method = ""
     cancelled_at = ""
+    postrun_stall_recovered = False
     handle = stdout_log_path.open("w", encoding="utf-8")
     try:
         popen_kwargs: dict[str, object] = {
@@ -1525,7 +1697,15 @@ def _run_backtest_job(
             "stdout": handle,
             "stderr": subprocess.STDOUT,
             "text": True,
+            "env": os.environ.copy(),
         }
+        if record.job_kind in {
+            CockpitBacktestJobKind.STRATEGY_LADDER_RUNNER,
+            CockpitBacktestJobKind.STRATEGY_LADDER_DATA_FACTORY,
+        }:
+            popen_kwargs["env"][COCKPIT_JOB_TERMINAL_SENTINEL_ENV] = str(
+                _terminal_sentinel_path_for(record).resolve()
+            )
         if os.name == "nt":
             popen_kwargs["creationflags"] = (
                 subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
@@ -1637,6 +1817,28 @@ def _run_backtest_job(
                     except subprocess.TimeoutExpired:
                         return_code = -1
                     break
+            if _should_recover_strategy_ladder_postrun_stall(running):
+                try:
+                    process.terminate()
+                    termination_method = "POSTRUN_TERMINATE"
+                except OSError:
+                    termination_method = "POSTRUN_TERMINATE_FAILED"
+                try:
+                    return_code = process.wait(timeout=10.0)
+                    postrun_stall_recovered = True
+                    break
+                except subprocess.TimeoutExpired:
+                    try:
+                        process.kill()
+                        termination_method = "POSTRUN_KILL"
+                    except OSError:
+                        termination_method = "POSTRUN_KILL_FAILED"
+                    try:
+                        return_code = process.wait(timeout=5.0)
+                        postrun_stall_recovered = True
+                    except subprocess.TimeoutExpired:
+                        return_code = -1
+                    break
         completed_returncode = return_code if return_code is not None else -1
     finally:
         handle.close()
@@ -1653,6 +1855,12 @@ def _run_backtest_job(
             final_status = CockpitBacktestJobStatus.JOB_KILLED
         else:
             final_status = CockpitBacktestJobStatus.JOB_CANCELLED
+    elif postrun_stall_recovered:
+        final_status = _terminal_status_from_record_artifacts(
+            record=running,
+            blockers=merged_blockers,
+            stage_statuses=merged_stage_statuses,
+        )
     else:
         final_status = (
             (
@@ -1678,12 +1886,18 @@ def _run_backtest_job(
     error_summary = ""
     if cancel_observed:
         error_summary = f"cancelled:{cancel_reason}"
+    elif postrun_stall_recovered:
+        error_summary = JOB_TERMINAL_ARTIFACT_STALL_RECOVERED
     elif completed_returncode != 0:
         error_summary = f"exit_code={completed_returncode}"
     finished = running.model_copy(
         update={
             "status": final_status,
-            "finished_at_iso": _utc_now_iso(),
+            "finished_at_iso": (
+                _finished_at_from_artifacts(running)
+                if postrun_stall_recovered
+                else _utc_now_iso()
+            ),
             "output_refs": output_refs,
             "error_summary": error_summary,
             "blockers": merged_blockers,
@@ -1739,6 +1953,8 @@ _MANIFEST_BLOCKER_SOURCES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("silver_index.json", ("blockers", "blocker_codes")),
     ("data_quality_report.json", ("blockers", "blocker_codes")),
     ("strategy_ladder_ml_lab_handoff_report.json", ("blocking_reasons", "blockers", "blocker_codes")),
+    ("reports/b_ml_training_dataset_audit.json", ("blockers", "blocker_codes")),
+    ("manifests/b_ml_label_factory_manifest.json", ("blockers", "blocker_codes")),
 )
 
 
@@ -1880,6 +2096,9 @@ def _collect_output_refs(output_root: Path) -> tuple[str, ...]:
         output_root / "job_status.json",
         output_root / "backtest_proof_matrix.json",
         output_root / "data_factory_manifest.json",
+        output_root / "a2_microstructure_performance_report.json",
+        output_root / "a2_microstructure_cache_manifest.json",
+        output_root / "a2_feature_equivalence_report.json",
         output_root / "first_run_manifest.json",
         output_root / "first_run_stage_summary.json",
         output_root / "raw_window_failure_report.json",
@@ -1919,6 +2138,21 @@ def _collect_output_refs(output_root: Path) -> tuple[str, ...]:
     return tuple(refs)
 
 
+def _count_existing_output_files(output_root: Path, *, limit: int = 10_000) -> int:
+    if not output_root.is_dir():
+        return 0
+    count = 0
+    try:
+        for path in output_root.rglob("*"):
+            if path.is_file():
+                count += 1
+                if count >= limit:
+                    return count
+    except OSError:
+        return count
+    return count
+
+
 def _write_backtest_job_record(
     record_path: Path,
     record: CockpitBacktestJobRecord,
@@ -1949,6 +2183,7 @@ def _write_patch6_job_request(
     silver_index_path: Path | None = None,
     candidate_events_path: Path | None = None,
     b2_run_root: Path | None = None,
+    label_store_dataset_path: Path | None = None,
     calibration_version: str = "strategy_ladder_expected_edge.v1",
     timeframe: str = "1m",
     backtest_timeframes: tuple[str, ...] = (),
@@ -2012,6 +2247,11 @@ def _write_patch6_job_request(
             "b2_run_root": (
                 str(b2_run_root.resolve()) if b2_run_root is not None else ""
             ),
+            "label_store_dataset_path": (
+                str(label_store_dataset_path.resolve())
+                if label_store_dataset_path is not None
+                else ""
+            ),
             "calibration_version": calibration_version,
             "timeframe": timeframe,
             "backtest_timeframes": list(backtest_timeframes or ()),
@@ -2032,6 +2272,19 @@ def _write_patch6_job_request(
             ),
             "requires_replay_grounding": bool(requested_non_legacy_feature_names),
             "b2_run_root_present": b2_run_root is not None,
+            "label_store_dataset_path_present": label_store_dataset_path is not None,
+            "replay_grounding_source_present": (
+                b2_run_root is not None or label_store_dataset_path is not None
+            ),
+            "replay_grounding_source_status": (
+                "B2_AND_LABEL_STORE"
+                if b2_run_root is not None and label_store_dataset_path is not None
+                else (
+                    "LABEL_STORE_DATASET"
+                    if label_store_dataset_path is not None
+                    else ("B2_RUN_ROOT" if b2_run_root is not None else "NONE")
+                )
+            ),
             "sample_stride_minutes": max(int(sample_stride_minutes), 1),
             "target_horizon_minutes": max(int(target_horizon_minutes), 1),
             "training_seed": int(training_seed),
@@ -2056,6 +2309,7 @@ def _write_patch6_job_request(
             "preselected_only": preselected_only,
             "diagnostic_full_replay": diagnostic_full_replay,
             "candidate_discovery_mode": record.candidate_discovery_mode,
+            "bml_candidate_sampler_mode": record.bml_candidate_sampler_mode,
             "small_scope_enabled": record.small_scope_enabled,
             "full_scan_enabled": record.full_scan_enabled,
             "no_full_scan_enabled": record.no_full_scan_enabled,
@@ -2082,6 +2336,7 @@ def _write_patch6_job_request(
             "ml_artifact_freshness_days": record.ml_artifact_freshness_days,
             "allow_broad_run": record.allow_broad_run,
             "candidate_discovery_mode": record.candidate_discovery_mode,
+            "bml_candidate_sampler_mode": record.bml_candidate_sampler_mode,
             "engine_native_sample_size": record.engine_native_sample_size,
             "b1_5_policy_mode": record.b1_5_policy_mode,
             "preselected_only": record.preselected_only,
@@ -2129,6 +2384,7 @@ def _write_patch6_job_status(path: Path, record: CockpitBacktestJobRecord) -> No
             "ml_artifact_freshness_days": record.ml_artifact_freshness_days,
             "allow_broad_run": record.allow_broad_run,
             "candidate_discovery_mode": record.candidate_discovery_mode,
+            "bml_candidate_sampler_mode": record.bml_candidate_sampler_mode,
             "engine_native_sample_size": record.engine_native_sample_size,
             "b1_5_policy_mode": record.b1_5_policy_mode,
             "preselected_only": record.preselected_only,
@@ -2211,6 +2467,10 @@ def _phase_status_from_finished_record(record: CockpitBacktestJobRecord) -> str:
         if record.status.value in {"JOB_COMPLETED", "JOB_COMPLETED_WITH_BLOCKERS"}:
             return PHASE_STATUS_DISCOVERY_READY
         return PHASE_STATUS_DISCOVERY_BLOCKED
+    if record.phase_id == PHASE_B_ML:
+        if record.status.value in {"JOB_COMPLETED", "JOB_COMPLETED_WITH_BLOCKERS"}:
+            return PHASE_STATUS_BML_READY
+        return PHASE_STATUS_BML_BLOCKED
     if record.phase_id == PHASE_B2:
         if "PROMOTION_ARTIFACTS_BLOCKED_BY_FIDELITY" in record.blockers:
             return PHASE_STATUS_PROMOTION_BLOCKED
@@ -2237,6 +2497,138 @@ def _phase_error_code_from_record(record: CockpitBacktestJobRecord) -> str:
     return record.status.value
 
 
+def _strategy_ladder_terminal_artifact_paths(
+    record: CockpitBacktestJobRecord,
+) -> tuple[Path, ...]:
+    if record.job_kind != CockpitBacktestJobKind.STRATEGY_LADDER_RUNNER:
+        return ()
+    if not record.stage_summary_path or not record.stdout_log_path:
+        return ()
+    stage_summary_path = Path(record.stage_summary_path)
+    stdout_log_path = Path(record.stdout_log_path)
+    terminal_sentinel_path = _terminal_sentinel_path_for(record)
+    if (
+        not stage_summary_path.is_file()
+        or not stdout_log_path.is_file()
+        or not terminal_sentinel_path.is_file()
+    ):
+        return ()
+    reports_dir = stage_summary_path.parent
+    profitability_truth_path = reports_dir / "profitability_truth_verdict.json"
+    decision_verdict_path = reports_dir / "backtest_decision_report_final_verdict.json"
+    if not profitability_truth_path.is_file() or not decision_verdict_path.is_file():
+        return ()
+    if not _stdout_has_strategy_ladder_terminal_payload(stdout_log_path):
+        return ()
+    return (
+        stage_summary_path,
+        profitability_truth_path,
+        decision_verdict_path,
+        stdout_log_path,
+        terminal_sentinel_path,
+    )
+
+
+def _data_factory_terminal_artifact_paths(
+    record: CockpitBacktestJobRecord,
+) -> tuple[Path, ...]:
+    if record.job_kind != CockpitBacktestJobKind.STRATEGY_LADDER_DATA_FACTORY:
+        return ()
+    if not record.stage_summary_path or not record.stdout_log_path:
+        return ()
+    data_factory_manifest_path = Path(record.stage_summary_path)
+    stdout_log_path = Path(record.stdout_log_path)
+    terminal_sentinel_path = _terminal_sentinel_path_for(record)
+    if (
+        not data_factory_manifest_path.is_file()
+        or not stdout_log_path.is_file()
+        or not terminal_sentinel_path.is_file()
+    ):
+        return ()
+    report_root = data_factory_manifest_path.parent
+    silver_index_path = report_root / "silver_index.json"
+    gold_feature_manifest_path = report_root / "gold_feature_manifest.json"
+    data_quality_path = report_root / "data_quality_report.json"
+    progress_path = report_root / "a2_gold_progress_report.json"
+    if not all(
+        path.is_file()
+        for path in (
+            silver_index_path,
+            gold_feature_manifest_path,
+            data_quality_path,
+            progress_path,
+        )
+    ):
+        return ()
+    progress_payload = _read_json_payload(progress_path)
+    if str(progress_payload.get("status") or "") != "A2_COMPLETE":
+        return ()
+    if not _stdout_has_data_factory_terminal_payload(stdout_log_path):
+        return ()
+    return (
+        data_factory_manifest_path,
+        silver_index_path,
+        gold_feature_manifest_path,
+        data_quality_path,
+        progress_path,
+        stdout_log_path,
+        terminal_sentinel_path,
+    )
+
+
+def _terminal_artifact_paths(record: CockpitBacktestJobRecord) -> tuple[Path, ...]:
+    return (
+        _strategy_ladder_terminal_artifact_paths(record)
+        or _data_factory_terminal_artifact_paths(record)
+    )
+
+
+def _stdout_has_strategy_ladder_terminal_payload(stdout_log_path: Path) -> bool:
+    if not stdout_log_path.is_file():
+        return False
+    try:
+        text = stdout_log_path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return all(
+        marker in text
+        for marker in (
+            '"run_manifest_path"',
+            '"summary_path"',
+            '"final_status"',
+            '"candidate_count"',
+        )
+    )
+
+
+def _stdout_has_data_factory_terminal_payload(stdout_log_path: Path) -> bool:
+    if not stdout_log_path.is_file():
+        return False
+    try:
+        text = stdout_log_path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return all(
+        marker in text
+        for marker in (
+            '"data_factory_status"',
+            '"silver_index_status"',
+            '"gold_feature_store_status"',
+            '"rows_processed"',
+        )
+    )
+
+
+def _should_recover_strategy_ladder_postrun_stall(
+    record: CockpitBacktestJobRecord,
+) -> bool:
+    terminal_paths = _terminal_artifact_paths(record)
+    if not terminal_paths:
+        return False
+    latest_mtime = max(path.stat().st_mtime for path in terminal_paths)
+    return (time.time() - latest_mtime) >= _STRATEGY_LADDER_POSTRUN_STALL_SECONDS
+
+
 def _finished_at_from_artifacts(record: CockpitBacktestJobRecord) -> str:
     candidates: list[Path] = []
     for raw_path in (
@@ -2248,6 +2640,7 @@ def _finished_at_from_artifacts(record: CockpitBacktestJobRecord) -> str:
         path = Path(raw_path) if raw_path else None
         if path is not None and path.is_file():
             candidates.append(path)
+    candidates.extend(_terminal_artifact_paths(record))
     output_root = Path(record.output_root) if record.output_root else None
     if output_root is not None and output_root.is_dir():
         for filename in (
@@ -2263,6 +2656,26 @@ def _finished_at_from_artifacts(record: CockpitBacktestJobRecord) -> str:
         return _utc_now_iso()
     latest_mtime = max(path.stat().st_mtime for path in candidates)
     return datetime.fromtimestamp(latest_mtime, tz=UTC).isoformat()
+
+
+def _terminal_status_from_record_artifacts(
+    *,
+    record: CockpitBacktestJobRecord,
+    blockers: tuple[str, ...],
+    stage_statuses: dict[str, str],
+) -> CockpitBacktestJobStatus:
+    if _terminal_artifact_paths(record):
+        return (
+            CockpitBacktestJobStatus.JOB_COMPLETED_WITH_BLOCKERS
+            if blockers
+            else CockpitBacktestJobStatus.JOB_COMPLETED
+        )
+    output_root = Path(record.output_root) if record.output_root else Path()
+    return _terminal_status_from_artifacts(
+        output_root=output_root,
+        blockers=blockers,
+        stage_statuses=stage_statuses,
+    )
 
 
 def _terminal_status_from_artifacts(
@@ -2307,8 +2720,8 @@ def _reconcile_stale_job_record(
     harvested_blockers, harvested_stage_statuses = harvest_manifest_blockers(output_root)
     merged_blockers = tuple(dict.fromkeys((*record.blockers, *harvested_blockers)))
     merged_stage_statuses = {**record.stage_statuses, **harvested_stage_statuses}
-    final_status = _terminal_status_from_artifacts(
-        output_root=output_root,
+    final_status = _terminal_status_from_record_artifacts(
+        record=record,
         blockers=merged_blockers,
         stage_statuses=merged_stage_statuses,
     )

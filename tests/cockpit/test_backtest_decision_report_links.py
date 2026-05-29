@@ -3,6 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from cockpit.action_support import (
+    CockpitBacktestJobKind,
+    CockpitBacktestJobRecord,
+    CockpitBacktestJobStatus,
+)
 from cockpit.runtime_support import (
     StrategyLadderBacktestSummary,
     _enrich_strategy_ladder_summary_from_artifacts,
@@ -89,6 +94,71 @@ def test_backtest_summary_surfaces_decision_report_links(repo_tmp_path: Path) ->
     }.issubset(labels)
 
 
+def test_backtest_summary_surfaces_a2_performance_links(repo_tmp_path: Path) -> None:
+    output_root = repo_tmp_path / "phase_a2_data_factory"
+    _write_json(
+        output_root / "a2_microstructure_performance_report.json",
+        {
+            "status": "A2_PERFORMANCE_REPORT_READY",
+            "stage_timings_s": {"gold_feature_build": 13.59},
+            "gold": {
+                "decision_window_status": "GOLD_DECISION_WINDOW_FILTER_READY",
+                "feature_equivalence_status": "A2_FEATURE_EQUIVALENCE_READY",
+            },
+            "microstructure": {
+                "cache_status": "A2_MICROSTRUCTURE_FILE_CACHE_READY",
+                "streaming_status": "A2_MICROSTRUCTURE_STREAMING_READY",
+                "repeated_raw_scan_status": "FILE_CACHE_ACTIVE",
+                "time_index_hit_count": 1498,
+                "time_index_miss_count": 2,
+            },
+        },
+    )
+    _write_json(
+        output_root / "a2_microstructure_cache_manifest.json",
+        {"cache_status": "A2_MICROSTRUCTURE_FILE_CACHE_READY"},
+    )
+    _write_json(
+        output_root / "a2_feature_equivalence_report.json",
+        {"status": "A2_FEATURE_EQUIVALENCE_READY"},
+    )
+
+    summary = _enrich_strategy_ladder_summary_from_artifacts(
+        StrategyLadderBacktestSummary(),
+        output_root=output_root,
+        jobs=(),
+        selected_candidate_id="",
+    )
+
+    labels = {item["label"] for item in summary.a2_microstructure_report_links}
+    assert summary.a2_microstructure_performance_status == "A2_PERFORMANCE_REPORT_READY"
+    assert summary.a2_microstructure_cache_status == "A2_MICROSTRUCTURE_FILE_CACHE_READY"
+    assert summary.a2_microstructure_streaming_status == "A2_MICROSTRUCTURE_STREAMING_READY"
+    assert summary.a2_feature_equivalence_status == "A2_FEATURE_EQUIVALENCE_READY"
+    assert summary.a2_gold_decision_window_status == "GOLD_DECISION_WINDOW_FILTER_READY"
+    assert summary.a2_gold_feature_build_wall_time_s == 13.59
+    assert summary.a2_microstructure_time_index_hit_count == 1498
+    assert summary.a2_microstructure_time_index_miss_count == 2
+    assert {"a2_performance", "a2_cache_manifest", "a2_feature_equivalence"}.issubset(labels)
+
+
+def test_running_job_explains_95_percent_without_artifacts(repo_tmp_path: Path) -> None:
+    record = CockpitBacktestJobRecord(
+        job_id="strategy_ladder_data_factory-stale",
+        correlation_id="corr",
+        job_kind=CockpitBacktestJobKind.STRATEGY_LADDER_DATA_FACTORY,
+        status=CockpitBacktestJobStatus.JOB_RUNNING,
+        requested_at_iso="2025-01-01T00:00:00+00:00",
+        started_at_iso="2025-01-01T00:00:00+00:00",
+        output_root=str((repo_tmp_path / "empty_output").resolve()),
+    )
+
+    assert record.progress_pct == 95
+    assert record.produced_file_count == 0
+    assert record.progress_health_status == "RUNNING_AT_95_WITHOUT_ARTIFACTS"
+    assert "no artifacts are visible" in record.progress_health_message
+
+
 def test_backtest_template_contains_decision_report_surface() -> None:
     template = Path("src/cockpit/templates/pages/backtest.html").read_text(
         encoding="utf-8"
@@ -98,3 +168,6 @@ def test_backtest_template_contains_decision_report_surface() -> None:
     assert "backtest_decision_report_status" in template
     assert "backtest_decision_report_links" in template
     assert "backtest_decision_next_blocker" in template
+    assert "backtest-a2-performance-card" in template
+    assert "a2_microstructure_report_links" in template
+    assert "backtest-latest-job-health" in template

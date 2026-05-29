@@ -49,6 +49,7 @@ class BacktestFormState(BaseModel, frozen=True):
     allow_broad_run: str = ""
     confirm_broad_run: str = ""
     candidate_discovery_mode: str = "SAMPLE_CAPPED_DEBUG"
+    bml_candidate_sampler_mode: str = "TEMPORAL_STRATIFIED_BACKGROUND_GRID"
     engine_native_sample_size: int = 10
     b1_5_policy_mode: str = "conservative_hard_only"
     preselected_only: str = "true"
@@ -86,6 +87,7 @@ class LabMlHandoffFormState(BaseModel, frozen=True):
 
     kline_root: str = ""
     b2_run_root: str = ""
+    label_store_dataset_path: str = ""
     orderbook_root: str = ""
     trades_root: str = ""
     metadata_root: str = ""

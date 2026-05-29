@@ -20,6 +20,9 @@ from local_replay_runtime.strategy_ladder_first_controlled_run import (
 from local_replay_runtime.strategy_ladder_data_factory_models import (
     StrategyLadderFirstControlledRunRequest,
 )
+from local_replay_runtime.strategy_ladder_expected_edge_feature_contracts import (
+    DEFAULT_EXPECTED_EDGE_FEATURE_NAMES,
+)
 
 
 def _csv_tuple(raw_value: str) -> tuple[str, ...]:
@@ -55,6 +58,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--engines", default="engine_a,engine_b,engine_c,engine_d", help="Comma-separated engine filter.")
     parser.add_argument("--capital-buckets", default="400,500,1500,4000", help="Comma-separated capital buckets.")
     parser.add_argument("--timeframes", default="1m,5m", help="Comma-separated timeframe filter.")
+    parser.add_argument(
+        "--feature-names",
+        default=",".join(DEFAULT_EXPECTED_EDGE_FEATURE_NAMES),
+        help="Comma-separated governed expected-edge feature names to materialize in gold rows.",
+    )
     parser.add_argument("--start", default="", help="Inclusive start boundary.")
     parser.add_argument("--end", default="", help="Inclusive end boundary.")
     parser.add_argument("--dry-run", action="store_true", help="Write status outputs only.")
@@ -67,8 +75,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--frozen-ml-artifact-hash", default="", help="Frozen ML artifact hash for ML_MODE_OVERLAY_FROZEN.")
     parser.add_argument(
         "--engine-native-mode",
-        action="store_true",
-        help="Enable the opt-in Strategy Ladder engine native bridge sample path.",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable the Strategy Ladder engine native bridge (default True; use --no-engine-native-mode for legacy proxy path).",
     )
     parser.add_argument(
         "--engine-native-sample-size",
@@ -80,6 +89,21 @@ def _build_parser() -> argparse.ArgumentParser:
         "--use-measured-economic-provenance",
         action="store_true",
         help="Measure spread provenance from orderbook snapshots instead of hardcoded proxy constants.",
+    )
+    # Patch T13-CLI (2026-05-28) — opt-in A2 cache via env propagation. The
+    # underlying `strategy_ladder_first_controlled_run` orchestrates A1+A2+B1
+    # internally; we activate the cache by exporting V53_A2_CACHE_BASE before
+    # invocation so the inner data_factory call uses the wrapper. Default
+    # empty = legacy (no cache).
+    parser.add_argument(
+        "--cache-base",
+        default="",
+        help=(
+            "Opt-in A2 content-addressable cache directory. When set, the "
+            "inner data_factory call routes through the cached wrapper "
+            "(hit → restore in seconds, miss → run + populate). Default "
+            "empty = no cache (legacy behaviour)."
+        ),
     )
     return parser
 
@@ -113,6 +137,7 @@ def main(argv: list[str] | None = None) -> int:
         engines=_csv_tuple(args.engines),
         capital_buckets=_bucket_tuple(args.capital_buckets),
         timeframes=_csv_tuple(args.timeframes),
+        feature_names=_csv_tuple(args.feature_names) or DEFAULT_EXPECTED_EDGE_FEATURE_NAMES,
         start=args.start,
         end=args.end,
         dry_run=args.dry_run,
@@ -131,6 +156,15 @@ def main(argv: list[str] | None = None) -> int:
         engine_native_sample_size=args.engine_native_sample_size,
         use_measured_economic_provenance=args.use_measured_economic_provenance,
     )
+    # Patch T13-CLI (2026-05-28) — propagate the opt-in cache base to the
+    # inner data_factory call via env. The wrapper module checks this env
+    # at lookup time; absent or empty → legacy uncached behaviour.
+    cache_base_arg = (args.cache_base or "").strip()
+    if cache_base_arg:
+        import os as _os
+
+        _os.environ["V53_A2_CACHE_BASE"] = str(Path(cache_base_arg).resolve())
+        _os.environ["V53_A2_CACHE"] = "1"
     result = run_strategy_ladder_first_controlled_run(request)
     print(
         json.dumps(

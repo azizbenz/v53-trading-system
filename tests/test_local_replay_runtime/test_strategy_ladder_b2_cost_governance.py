@@ -202,6 +202,11 @@ def test_b2_missing_depth20_fails_closed_without_proxy_truth() -> None:
     assert governed.measured_cost_governance["cost_source_used_for_break_even"] == (
         "blocked_missing_measurement"
     )
+    # Updated 2026-05-27 (Patch P0-SPLIT-1) — the legacy
+    # `B2_COST_MEASUREMENT_BLOCKED` was split into three granular variants
+    # so the operator can tell which side of the measurement is missing
+    # (spread, slippage, or both). This test fixture has both spread and
+    # slippage missing, so it lands on the `_SPREAD_AND_SLIPPAGE` variant.
     assert governed.measured_cost_governance["expected_cost_block_reason"] == (
-        "B2_COST_MEASUREMENT_BLOCKED"
+        "B2_COST_MEASUREMENT_BLOCKED_SPREAD_AND_SLIPPAGE"
     )

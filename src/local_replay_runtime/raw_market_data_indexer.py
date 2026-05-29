@@ -717,6 +717,12 @@ def _effective_end_timestamp_ms(manifest: RawMarketFileManifest) -> int:
     return base_end + interval
 
 
+def _supports_file_boundary_gap_detection(manifest: RawMarketFileManifest) -> bool:
+    """Return whether file boundary continuity is semantically meaningful."""
+
+    return manifest.source_type == "klines"
+
+
 def build_bronze_market_index(
     manifests: tuple[RawMarketFileManifest, ...],
     *,
@@ -773,7 +779,11 @@ def build_bronze_market_index(
                 and manifest.end_timestamp_ms == previous.end_timestamp_ms
             ):
                 duplicate_timestamp_count += 1
-            if current_start > previous_effective_end:
+            if (
+                _supports_file_boundary_gap_detection(previous)
+                and _supports_file_boundary_gap_detection(manifest)
+                and current_start > previous_effective_end
+            ):
                 gap = current_start - previous_effective_end
                 if gap > 0:
                     gap_count += 1

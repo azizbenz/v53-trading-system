@@ -23,6 +23,15 @@ from calibration_methods import (
     train_lightgbm_ml_artifact,
 )
 from interface_contracts import MlModelArtifact, MlModelWindow
+from local_replay_runtime.strategy_ladder_b_ml_label_factory import (
+    BML_LABEL_STORE_DATASET_FILENAME,
+    BML_LABEL_SUMMARY_FILENAME,
+    BML_READY_GOVERNED,
+    BML_READY_RESEARCH,
+    BML_TARGET_POLICY,
+    BML_TARGET_POLICY_REPORT_FILENAME,
+    project_bml_rows_to_ml_training_rows,
+)
 from local_replay_runtime.strategy_ladder_b2_label_store_builder import (
     LABEL_STORE_DATASET_FILENAME,
     LEGACY_LABEL_STORE_DATASET_FILENAMES,
@@ -462,6 +471,62 @@ def _label_store_paths_from_dataset(dataset_path: Path) -> tuple[Path, Path]:
     )
 
 
+def _is_bml_label_store(dataset_path: Path) -> bool:
+    return dataset_path.name == BML_LABEL_STORE_DATASET_FILENAME
+
+
+def _load_bml_summary(path: Path) -> dict[str, object]:
+    if not path.is_file():
+        raise ValueError("BML_LABEL_STORE_SUMMARY_NOT_FOUND")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, TypeError, ValueError) as exc:
+        raise ValueError("BML_LABEL_STORE_SUMMARY_NOT_READABLE") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("BML_LABEL_STORE_SUMMARY_INVALID")
+    return payload
+
+
+def _load_bml_target_policy_report(dataset_path: Path) -> dict[str, object]:
+    path = dataset_path.parent / BML_TARGET_POLICY_REPORT_FILENAME
+    if not path.is_file():
+        raise ValueError("BML_TARGET_POLICY_REPORT_NOT_FOUND")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, TypeError, ValueError) as exc:
+        raise ValueError("BML_TARGET_POLICY_REPORT_NOT_READABLE") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("BML_TARGET_POLICY_REPORT_INVALID")
+    return payload
+
+
+def _validate_bml_training_contract(dataset_path: Path, summary: dict[str, object]) -> None:
+    blockers: list[str] = []
+    final_verdict = str(summary.get("final_verdict") or "")
+    if final_verdict not in {BML_READY_GOVERNED, BML_READY_RESEARCH}:
+        blockers.append(f"BML_FINAL_VERDICT_NOT_TRAINING_READY:{final_verdict or 'MISSING'}")
+    if not bool(summary.get("training_allowed")):
+        blockers.append("BML_TRAINING_ALLOWED_FALSE")
+    if int(summary.get("training_row_eligible_count") or 0) <= 0:
+        blockers.append("BML_NO_ELIGIBLE_ROWS")
+    if int(summary.get("feature_leakage_count") or 0) > 0:
+        blockers.append("BML_FEATURE_LABEL_LEAKAGE_PRESENT")
+    if int(summary.get("target_policy_mismatch_count") or 0) > 0:
+        blockers.append("BML_TARGET_POLICY_MISMATCH_PRESENT")
+    if bool(summary.get("train_eval_overlap_blocked")):
+        blockers.append("BML_TRAIN_EVAL_OVERLAP_BLOCKED")
+    target_report = _load_bml_target_policy_report(dataset_path)
+    if target_report.get("target_policy_declared") != target_report.get("target_policy_actual"):
+        blockers.append("BML_TARGET_POLICY_REPORT_MISMATCH")
+    if target_report.get("target_policy_actual") != BML_TARGET_POLICY:
+        blockers.append("BML_TARGET_POLICY_NOT_BML_COUNTERFACTUAL")
+    if blockers:
+        raise ValueError(
+            "ML_TRAINING_BLOCKED_BY_BML_LABEL_STORE_NOT_READY:"
+            + ",".join(tuple(dict.fromkeys(blockers)))
+        )
+
+
 def _load_label_store_rows(path: Path) -> tuple[StrategyLadderB2LabelStoreRow, ...]:
     if not path.is_file():
         raise ValueError("LABEL_STORE_DATASET_NOT_FOUND")
@@ -593,7 +658,43 @@ def _build_replay_grounded_training_rows(
         if request.label_store_dataset_path is None:
             raise ValueError("LABEL_STORE_DATASET_PATH_MISSING")
         dataset_path = request.label_store_dataset_path.resolve()
-        summary_path, quality_report_path = _label_store_paths_from_dataset(dataset_path)
+    if _is_bml_label_store(dataset_path):
+        summary_path = dataset_path.parent / BML_LABEL_SUMMARY_FILENAME
+        summary = _load_bml_summary(summary_path)
+        _validate_bml_training_contract(dataset_path, summary)
+        training_rows = project_bml_rows_to_ml_training_rows(
+            dataset_path,
+            require_training_allowed=True,
+            pair=request.pair,
+            timeframe=request.timeframe,
+            start=request.train_start,
+            end=request.train_end,
+            feature_names=request.feature_names,
+        )
+        if not training_rows:
+            raise ValueError("BML_LABEL_STORE_FILTER_PRODUCED_NO_ELIGIBLE_TRAINING_ROWS")
+        return _TrainingBuildResult(
+            rows=training_rows,
+            target_policy=BML_TARGET_POLICY,
+            label_source=BML_TARGET_POLICY,
+            label_fidelity=str(summary.get("final_verdict") or ""),
+            feature_source="b_ml_counterfactual_label_store",
+            label_store_dataset_path=dataset_path,
+            label_store_summary_path=summary_path,
+            label_store_quality_report_path=None,
+            replay_grounded_label_count=int(summary.get("cost_aware_label_count") or 0),
+            proxy_execution_label_count=int(summary.get("proxy_label_count") or 0),
+            replay_backed_label_coverage=(
+                (float(summary.get("cost_aware_label_count") or 0) / len(training_rows))
+                if training_rows
+                else None
+            ),
+            net_positive_rate=None,
+            break_even_clearance_rate=None,
+            mfe_availability_rate=None,
+            mae_availability_rate=None,
+        )
+    summary_path, quality_report_path = _label_store_paths_from_dataset(dataset_path)
     rows = _load_label_store_rows(dataset_path)
     summary = _load_label_store_summary(summary_path)
     _load_label_store_quality_report(quality_report_path)

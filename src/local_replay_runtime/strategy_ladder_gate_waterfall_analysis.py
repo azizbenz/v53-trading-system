@@ -145,6 +145,7 @@ _BREAK_EVEN_PROXY_CODES = frozenset({"BREAK_EVEN_PROXY_BLOCKED"})
 _FEE_AWARE_PROXY_CODES = frozenset({"FEE_AWARE_EDGE_PROXY_BLOCKED"})
 _ENGINE_D_HISTORY_CODES = frozenset(
     {
+        "ENGINE_D_COLD_START_NO_CLOSED_EPISODE_SOURCE",
         "ENGINE_D_HISTORY_BLOCKED_BY_MISSING_CLOSED_EPISODE_JOURNAL",
         "engine_d.no_trade.history_weak",
         "history_weak",

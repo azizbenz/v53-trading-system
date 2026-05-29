@@ -83,6 +83,7 @@ class StrategyLadderRequest(BaseModel, frozen=True):
     engines: tuple[str, ...] = ()
     capital_buckets: tuple[int, ...] = (400, 500, 1500, 4000)
     timeframes: tuple[str, ...] = ()
+    feature_names: tuple[str, ...] = ()
     start: str = ""
     end: str = ""
     fast_only: bool = False
@@ -119,6 +120,7 @@ class StrategyLadderRequest(BaseModel, frozen=True):
     preselected_only: bool = True
     diagnostic_full_replay: bool = False
     b1_5_policy_mode: str = "conservative_hard_only"
+    raw_window_materialization_mode: str = "MATERIALIZE"
     candidate_events_path: Path | None = None
 
     @model_validator(mode="before")
@@ -179,6 +181,14 @@ class StrategyLadderRequest(BaseModel, frozen=True):
             data["diagnostic_full_replay"] = False
             data["preselected_only"] = True
         data["b1_5_policy_mode"] = resolved_mode
+        raw_window_mode = str(
+            data.get("raw_window_materialization_mode") or "MATERIALIZE"
+        ).strip().upper().replace("-", "_")
+        data["raw_window_materialization_mode"] = (
+            "REFS_ONLY"
+            if raw_window_mode in {"REFS_ONLY", "REFERENCE_ONLY"}
+            else "MATERIALIZE"
+        )
         return data
 
     @model_validator(mode="after")
@@ -213,6 +223,11 @@ class StrategyLadderRequest(BaseModel, frozen=True):
         }:
             raise ValueError(
                 f"StrategyLadderRequest unsupported b1_5_policy_mode: {self.b1_5_policy_mode}"
+            )
+        if self.raw_window_materialization_mode not in {"MATERIALIZE", "REFS_ONLY"}:
+            raise ValueError(
+                "StrategyLadderRequest unsupported raw_window_materialization_mode: "
+                f"{self.raw_window_materialization_mode}"
             )
         covered_days = _backtest_days_covered(self.start, self.end)
         if (
@@ -306,6 +321,9 @@ class StrategyLadderFeatureRow(BaseModel, frozen=True):
     kline_feature_status: str = "KLINE_FEATURE_STATUS_NOT_PROVEN"
     orderbook_feature_status: str = "ORDERBOOK_FEATURE_STATUS_NOT_PROVEN"
     candidate_data_source_label: str = "COMPAT_FEATURE_DISCOVERY"
+    feature_truth_boundary_status: str = "FEATURE_TRUTH_BOUNDARY_NOT_PROVEN"
+    feature_usage_policy: str = "A2_GOLD_FEATURE_USAGE_NOT_PROVEN"
+    cost_feature_truth_status: str = "COST_FEATURE_TRUTH_NOT_PROVEN"
     compatibility_notes: tuple[str, ...] = ()
 
     @model_validator(mode="before")
@@ -475,7 +493,15 @@ class StrategyLadderCandidateSummary(BaseModel, frozen=True):
     per_engine_candidate_count: int | None = Field(default=None, ge=0)
     engine_native_candidate_count: int = Field(default=0, ge=0)
     candidate_source_status: str = "CANDIDATE_SOURCE_NOT_PROVEN"
+    requested_pairs: tuple[str, ...] = ()
+    pairs_with_feature_rows: tuple[str, ...] = ()
     pairs_seen: tuple[str, ...] = ()
+    missing_requested_pairs: tuple[str, ...] = ()
+    pair_candidate_coverage_status: str = "PAIR_CANDIDATE_COVERAGE_NOT_PROVEN"
+    pair_candidate_blocker_codes: tuple[str, ...] = ()
+    candidate_count_by_pair: dict[str, int] = Field(default_factory=dict)
+    candidate_count_by_pair_engine: dict[str, int] = Field(default_factory=dict)
+    candidate_count_by_pair_timeframe: dict[str, int] = Field(default_factory=dict)
     engines_seen: tuple[str, ...] = ()
     strategies_seen: tuple[str, ...] = ()
     timeframes_seen: tuple[str, ...] = ()
@@ -687,6 +713,7 @@ class StrategyLadderRunManifest(BaseModel, frozen=True):
     engines: tuple[str, ...] = ()
     capital_buckets: tuple[int, ...] = ()
     timeframes: tuple[str, ...] = ()
+    feature_names: tuple[str, ...] = ()
     start: str = ""
     end: str = ""
     fast_only: bool = False
@@ -706,6 +733,7 @@ class StrategyLadderRunManifest(BaseModel, frozen=True):
     candidate_discovery_status: str = "CANDIDATE_DISCOVERY_NOT_PROVEN"
     candidate_export_status: str = "CANDIDATE_EXPORT_NOT_PROVEN"
     raw_window_extraction_status: str = "RAW_WINDOW_NOT_PROVEN"
+    raw_window_materialization_mode: str = "MATERIALIZE"
     detailed_replay_status: str = "DETAILED_REPLAY_NOT_PROVEN"
     capital_profile_generation_status: str = "CAPITAL_PROFILE_NOT_PROVEN"
     promotion_artifact_status: str = "PROMOTION_ARTIFACTS_NOT_PROVEN"
@@ -860,12 +888,14 @@ class StrategyLadderReportSummary(BaseModel, frozen=True):
     candidate_discovery_status: str = "CANDIDATE_DISCOVERY_NOT_PROVEN"
     candidate_export_status: str = "CANDIDATE_EXPORT_NOT_PROVEN"
     raw_window_extraction_status: str = "RAW_WINDOW_NOT_PROVEN"
+    raw_window_materialization_mode: str = "MATERIALIZE"
     detailed_replay_status: str = "DETAILED_REPLAY_NOT_PROVEN"
     capital_profile_generation_status: str = "CAPITAL_PROFILE_NOT_PROVEN"
     promotion_artifact_status: str = "PROMOTION_ARTIFACTS_NOT_PROVEN"
     sample_size_survival_status: str = "SAMPLE_SIZE_NOT_PROVEN"
     final_status: str = "STRATEGY_LADDER_BLOCKED_BY_BACKTEST_DATA"
     blocker_codes: tuple[str, ...] = ()
+    feature_names: tuple[str, ...] = ()
     silver_index_path: str = ""
     workflow_run_id: str = ""
     phase_run_id: str = ""

@@ -17,6 +17,7 @@ from local_replay_runtime.strategy_ladder_models import (
     StrategyLadderFeatureRow,
     deterministic_payload_hash,
 )
+from local_replay_runtime.tabular_artifacts import write_tabular_mirror
 
 
 _TEMPORAL_STRATIFIED_CANDIDATE_MODES = {
@@ -115,6 +116,10 @@ def _compatibility_payload(
         "input_data_hash": row.input_data_hash,
         "method_version_hash": row.method_version_hash,
         "source_ref": row.source_ref,
+        "available_at_timestamp_ms": row.available_at_timestamp_ms,
+        "feature_truth_boundary_status": row.feature_truth_boundary_status,
+        "feature_usage_policy": row.feature_usage_policy,
+        "cost_feature_truth_status": row.cost_feature_truth_status,
         "feature_sources_used": row.feature_sources_used,
         "trade_feature_status": row.trade_feature_status,
         "kline_feature_status": row.kline_feature_status,
@@ -170,6 +175,8 @@ def discover_strategy_ladder_candidates(
                     preliminary_reason_codes=(
                         "COMPAT_FEATURE_DISCOVERY",
                         "NOT_LIVE_ENGINE_PARITY",
+                        row.feature_truth_boundary_status,
+                        row.cost_feature_truth_status,
                         *(("HARD_BLOCK_REASONS_PRESENT",) if row.hard_block_reasons else ()),
                     ),
                     feature_version=row.feature_version,
@@ -244,17 +251,20 @@ def _cap_strategy_ladder_candidates_temporal_stratified(
             cap_status="CANDIDATE_DISCOVERY_LIMIT_NOT_PROVEN",
         )
 
-    candidate_ids_by_engine_bucket: dict[str, dict[str, list[str]]] = defaultdict(
+    candidate_ids_by_pair_engine_bucket: dict[str, dict[str, list[str]]] = defaultdict(
         lambda: defaultdict(list)
     )
     available_bucket_keys: set[str] = set()
     for event in candidates:
         bucket_key = _temporal_bucket_key(event)
         available_bucket_keys.add(bucket_key)
-        candidate_ids_by_engine_bucket[event.engine_id][bucket_key].append(event.candidate_id)
+        pair_engine_key = f"{event.pair}|{event.engine_id}"
+        candidate_ids_by_pair_engine_bucket[pair_engine_key][bucket_key].append(
+            event.candidate_id
+        )
 
     selected_ids: set[str] = set()
-    for buckets_by_key in candidate_ids_by_engine_bucket.values():
+    for buckets_by_key in candidate_ids_by_pair_engine_bucket.values():
         ordered_bucket_keys = sorted(buckets_by_key)
         if not ordered_bucket_keys:
             continue
@@ -340,6 +350,8 @@ def export_strategy_ladder_candidates(
     candidates: tuple[StrategyLadderCandidateEvent, ...],
     feature_store_status: str,
     candidate_discovery_status: str,
+    requested_pairs: tuple[str, ...] = (),
+    pairs_with_feature_rows: tuple[str, ...] = (),
     candidate_sample_cap: int = 0,
     effective_engine_native_sample_size: int = 10,
     engine_count: int = 4,
@@ -388,7 +400,65 @@ def export_strategy_ladder_candidates(
         for event in candidates
     ]
     atomic_write_text(events_path, "\n".join(lines) + ("\n" if lines else ""))
+    try:
+        write_tabular_mirror(
+            rows=candidates,
+            artifact_name="candidate_events",
+            output_dir=output_dir,
+            source_path=events_path,
+        )
+    except Exception as exc:  # pragma: no cover - optional performance mirror
+        atomic_write_json(
+            output_dir / "candidate_events.tabular_manifest.json",
+            {
+                "schema_version": "v53.tabular_artifact_mirror.v1",
+                "artifact_name": "candidate_events",
+                "source_path": str(events_path.resolve()),
+                "status": "TABULAR_MIRROR_FAILED_NON_BLOCKING",
+                "error_type": type(exc).__name__,
+                "audit_jsonl_preserved": events_path.is_file(),
+            },
+            indent=2,
+        )
     candidate_semantics = summarize_candidate_count_semantics(candidates)
+    pairs_seen = tuple(sorted({event.pair for event in candidates if event.pair}))
+    requested_pair_set = {
+        str(pair).strip().upper()
+        for pair in requested_pairs
+        if str(pair).strip()
+    }
+    feature_pair_set = {
+        str(pair).strip().upper()
+        for pair in pairs_with_feature_rows
+        if str(pair).strip()
+    }
+    pair_seen_set = {str(pair).strip().upper() for pair in pairs_seen if pair}
+    data_backed_requested_pair_set = (
+        requested_pair_set & feature_pair_set if feature_pair_set else requested_pair_set
+    )
+    missing_requested_pairs = tuple(
+        sorted(pair for pair in data_backed_requested_pair_set if pair not in pair_seen_set)
+    )
+    pair_candidate_blocker_codes = (
+        ("PAIR_NO_ENGINE_NATIVE_CANDIDATES",) if missing_requested_pairs else ()
+    )
+    candidate_count_by_pair: dict[str, int] = {}
+    candidate_count_by_pair_engine: dict[str, int] = {}
+    candidate_count_by_pair_timeframe: dict[str, int] = {}
+    for event in candidates:
+        if event.pair:
+            candidate_count_by_pair[event.pair] = (
+                candidate_count_by_pair.get(event.pair, 0) + 1
+            )
+        pair_engine_key = f"{event.pair}|{event.engine_id}"
+        candidate_count_by_pair_engine[pair_engine_key] = (
+            candidate_count_by_pair_engine.get(pair_engine_key, 0) + 1
+        )
+        if event.timeframe:
+            pair_timeframe_key = f"{event.pair}|{event.timeframe}"
+            candidate_count_by_pair_timeframe[pair_timeframe_key] = (
+                candidate_count_by_pair_timeframe.get(pair_timeframe_key, 0) + 1
+            )
     summary = StrategyLadderCandidateSummary(
         run_id=run_id,
         candidate_count=(
@@ -421,7 +491,23 @@ def export_strategy_ladder_candidates(
             if candidate_source_status is not None
             else candidate_semantics.candidate_source_status
         ),
-        pairs_seen=tuple(sorted({event.pair for event in candidates})),
+        requested_pairs=tuple(sorted(requested_pair_set)),
+        pairs_with_feature_rows=tuple(sorted(feature_pair_set)),
+        pairs_seen=pairs_seen,
+        missing_requested_pairs=missing_requested_pairs,
+        pair_candidate_coverage_status=(
+            "PAIR_CANDIDATE_COVERAGE_BLOCKED"
+            if missing_requested_pairs
+            else "PAIR_CANDIDATE_COVERAGE_READY"
+            if pairs_seen
+            else "PAIR_CANDIDATE_COVERAGE_EMPTY"
+        ),
+        pair_candidate_blocker_codes=pair_candidate_blocker_codes,
+        candidate_count_by_pair=dict(sorted(candidate_count_by_pair.items())),
+        candidate_count_by_pair_engine=dict(sorted(candidate_count_by_pair_engine.items())),
+        candidate_count_by_pair_timeframe=dict(
+            sorted(candidate_count_by_pair_timeframe.items())
+        ),
         engines_seen=tuple(sorted({event.engine_id for event in candidates})),
         strategies_seen=tuple(sorted({event.strategy_id for event in candidates})),
         timeframes_seen=tuple(

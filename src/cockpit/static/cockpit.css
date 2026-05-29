@@ -1251,6 +1251,63 @@ details[open] summary { color: var(--accent); }
     gap: 18px;
     align-items: start;
 }
+.lab-handoff-hero {
+    margin: 0 0 1rem 0;
+    padding: 18px;
+    border: 1px solid rgba(59, 130, 246, 0.22);
+    background:
+        radial-gradient(circle at top right, rgba(34, 197, 94, 0.10), transparent 32%),
+        linear-gradient(135deg, rgba(37, 99, 235, 0.16), rgba(15, 23, 42, 0.78));
+}
+.lab-handoff-hero__head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+}
+.lab-handoff-hero__eyebrow {
+    margin-bottom: 6px;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+.lab-handoff-hero__status {
+    margin: 0 0 8px;
+    font-size: 1.15rem;
+    line-height: 1.2;
+}
+.lab-handoff-hero__tokens {
+    margin-top: 12px;
+}
+.lab-handoff-hero__refs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 14px;
+}
+.lab-handoff-ref-card {
+    padding: 12px;
+    border-radius: var(--radius-md);
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    background: rgba(15, 23, 42, 0.48);
+}
+.lab-handoff-ref-card__label {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+.lab-provenance-panel {
+    margin-bottom: 16px;
+}
+.lab-provenance-panel .preview-stat-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
 .patch6-form-column,
 .patch6-preview-column,
 .status-proof-column {
@@ -1754,6 +1811,7 @@ details[open] summary { color: var(--accent); }
     }
     .candidate-explorer-toolbar,
     .candidate-detail-hero,
+    .lab-handoff-hero__head,
     .preview-hero,
     .operator-panel__head {
         flex-direction: column;
@@ -1763,6 +1821,13 @@ details[open] summary { color: var(--accent); }
     .status-kpi-grid,
     .form-actions--dual {
         grid-template-columns: 1fr;
+    }
+    .patch6-preview-column {
+        order: -1;
+    }
+    .lab-handoff-hero__refs,
+    .lab-provenance-panel .preview-stat-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
     body[data-page="backtest"] .stage3-shell__hero {
         flex-direction: column;
@@ -1776,6 +1841,13 @@ details[open] summary { color: var(--accent); }
     }
     body[data-page="backtest"] .stage3-control-card--wide {
         grid-column: span 1;
+    }
+}
+
+@media (max-width: 700px) {
+    .lab-handoff-hero__refs,
+    .lab-provenance-panel .preview-stat-grid {
+        grid-template-columns: 1fr;
     }
 }
 
@@ -2729,6 +2801,19 @@ body[data-page="backtest"] .status-chip {
     color: #92400e;
 }
 
+body[data-page="backtest"] .feature-picker-card--backtest,
+body[data-page="backtest"] .feature-picker-card--backtest .feature-picker-card__head,
+body[data-page="backtest"] .feature-picker-card--backtest .feature-picker-card__head label,
+body[data-page="backtest"] .feature-picker-card--backtest .muted,
+body[data-page="backtest"] .feature-picker-card--backtest .feature-picker__group-title,
+body[data-page="backtest"] .feature-picker-card--backtest .feature-picker__label,
+body[data-page="backtest"] .feature-picker-card--backtest .feature-picker__hint,
+body[data-page="backtest"] .feature-picker-card--backtest .feature-picker__hint strong,
+body[data-page="backtest"] .feature-picker-card--backtest .feature-picker__hint code,
+body[data-page="backtest"] .feature-picker-card--backtest .feature-picker__hint--warning {
+    color: #000;
+}
+
 .feat-badge {
     display: inline-flex;
     align-items: center;
@@ -2761,4 +2846,111 @@ body[data-page="backtest"] .status-chip {
 .feat-badge--n-a {
     background: #fef3c7;
     color: #92400e;
+}
+
+/* ============================================================
+   Backbone parity & metrics — scroll-glitch defensive CSS
+   (2026-05-27, patch BACKBONE-PARITY-COCKPIT-2)
+   ============================================================
+   The per-surface table can grow to 21 rows. We keep the width and
+   stacking guards, but do not use layout containment here: Chromium can
+   skip repainting contained descendants while scrolling this long page.
+   Patch marker: BACKTEST-SCROLL-STABILITY-1.
+*/
+body[data-page="backtest"] #backtest-backbone-parity-card,
+body[data-page="backtest"] #backtest-backbone-metrics-card {
+    contain: none;
+    content-visibility: visible;
+    isolation: isolate;
+    min-width: 0;
+    overflow-anchor: none;
+    will-change: auto;
+}
+
+body[data-page="backtest"] #backtest-backbone-parity-card details,
+body[data-page="backtest"] #backtest-backbone-metrics-card details {
+    contain: none;
+    content-visibility: visible;
+}
+
+body[data-page="backtest"] #backtest-backbone-parity-card .data-table,
+body[data-page="backtest"] #backtest-backbone-metrics-card .data-table {
+    table-layout: auto;
+    width: 100%;
+}
+
+body[data-page="backtest"] #backtest-backbone-parity-card .data-table th,
+body[data-page="backtest"] #backtest-backbone-metrics-card .data-table th {
+    position: static;
+    background: transparent;
+}
+
+/* KPI tile grid for the backbone metrics card */
+body[data-page="backtest"] .backbone-metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 8px;
+    margin: 8px 0 4px;
+}
+
+body[data-page="backtest"] .backbone-metrics-tile {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    border-radius: 6px;
+    padding: 8px 10px;
+    min-width: 0;
+}
+
+body[data-page="backtest"] .backbone-metrics-tile__label {
+    font-size: 10.5px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 4px;
+}
+
+body[data-page="backtest"] .backbone-metrics-tile__value {
+    font-size: 16px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-primary);
+}
+
+body[data-page="backtest"] .backbone-metrics-tile__sub {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+    font-variant-numeric: tabular-nums;
+}
+
+body[data-page="backtest"] .backbone-metrics-section {
+    border-top: 1px solid rgba(148, 163, 184, 0.12);
+    padding-top: 8px;
+    margin-top: 8px;
+}
+
+body[data-page="backtest"] .backbone-metrics-section:first-of-type {
+    border-top: none;
+    padding-top: 0;
+    margin-top: 0;
+}
+
+/* "Load this run" link in Recent Backtest Jobs rows (Patch BACKTEST-RUN-PIN). */
+body[data-page="backtest"] .pin-run-link {
+    display: inline-block;
+    padding: 2px 6px;
+    border: 1px solid rgba(59, 130, 246, 0.45);
+    border-radius: 4px;
+    background: rgba(59, 130, 246, 0.08);
+    color: #93c5fd;
+    text-decoration: none;
+    font-size: 11px;
+    font-weight: 500;
+    transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+body[data-page="backtest"] .pin-run-link:hover {
+    background: rgba(59, 130, 246, 0.18);
+    border-color: rgba(59, 130, 246, 0.75);
+    color: #dbeafe;
 }

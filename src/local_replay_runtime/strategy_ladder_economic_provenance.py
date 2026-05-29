@@ -308,7 +308,14 @@ def _measure_spread_via_reconstruction(
     # premier delta est plus ancien que `timestamp_ms - tolerance_ms`.
     causal_upper_ts = timestamp_ms
     try:
-        with delta_path.open("r", encoding="utf-8-sig") as handle:
+        # Patch 2026-05-29 — gz-aware open (silver writer emits .jsonl.gz when
+        # storage_format=jsonl-gz; the previous text-only open raised
+        # UnicodeDecodeError on 0x8b gzip magic byte).
+        if delta_path.name.lower().endswith(".gz"):
+            delta_handle_cm = gzip.open(delta_path, "rt", encoding="utf-8-sig")
+        else:
+            delta_handle_cm = delta_path.open("r", encoding="utf-8-sig")
+        with delta_handle_cm as handle:
             for line in handle:
                 stripped = line.strip()
                 if not stripped:
@@ -433,7 +440,14 @@ def measure_spread_bps_from_book_snapshot(
     closest_row: dict[str, object] | None = None
     closest_dt = float("inf")
     try:
-        with book_path.open("r", encoding="utf-8-sig") as handle:
+        # Patch 2026-05-29 — gz-aware open (silver writer emits .jsonl.gz when
+        # storage_format=jsonl-gz; the previous text-only open raised
+        # UnicodeDecodeError on 0x8b gzip magic byte).
+        if book_path.name.lower().endswith(".gz"):
+            book_handle_cm = gzip.open(book_path, "rt", encoding="utf-8-sig")
+        else:
+            book_handle_cm = book_path.open("r", encoding="utf-8-sig")
+        with book_handle_cm as handle:
             for line in handle:
                 stripped = line.strip()
                 if not stripped:

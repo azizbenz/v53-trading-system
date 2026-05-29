@@ -222,8 +222,14 @@ def test_kline_boundary_within_same_timeframe_no_gap_2026_05_21() -> None:
     assert bronze.largest_gap_ms == 0
 
 
-def test_trades_micro_gap_still_detected_2026_05_21() -> None:
-    """Patch F2-A — trades ne sont pas affectés (pas de timeframe), micro-gap exposé tel quel."""
+def test_trades_day_boundary_idle_time_not_counted_as_bronze_gap_2026_05_24() -> None:
+    """Trades are sparse event streams; file start/end timestamps do not prove continuity.
+
+    A few milliseconds or seconds of inactivity at a daily file boundary must not
+    be interpreted as a raw-data hole. Otherwise one quiet boundary per day can
+    accumulate into a false-positive bronze blocker even when the actual trade
+    archive is complete.
+    """
     trade_23 = _make_trade(
         date_str="2025-07-23",
         start_ms=1_753_228_800_333,
@@ -238,6 +244,6 @@ def test_trades_micro_gap_still_detected_2026_05_21() -> None:
         manifests=(trade_23, trade_24),
         symbol="BTCUSDT",
     )
-    # 3.1s gap entre les 2 fichiers trades
-    assert bronze.gap_count == 1
-    assert 3_000 <= bronze.largest_gap_ms <= 4_000  # ≈ 3.1s gap
+    # 3.1s idle time between two daily trade files is not a proven archive gap.
+    assert bronze.gap_count == 0
+    assert bronze.largest_gap_ms == 0

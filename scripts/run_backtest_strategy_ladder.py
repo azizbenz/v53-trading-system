@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import sys
 from uuid import uuid4
@@ -18,12 +19,35 @@ from local_replay_runtime.strategy_ladder_runner import run_backtest_strategy_la
 from local_replay_runtime.strategy_ladder_models import StrategyLadderRequest
 
 
+_COCKPIT_JOB_TERMINAL_SENTINEL_ENV = "COCKPIT_JOB_TERMINAL_SENTINEL_PATH"
+
+
 def _csv_tuple(raw_value: str) -> tuple[str, ...]:
     return tuple(part.strip() for part in (raw_value or "").split(",") if part.strip())
 
 
 def _bucket_tuple(raw_value: str) -> tuple[int, ...]:
     return tuple(int(part.strip()) for part in (raw_value or "").split(",") if part.strip())
+
+
+def _write_terminal_sentinel(payload: dict[str, object]) -> None:
+    raw_path = os.environ.get(_COCKPIT_JOB_TERMINAL_SENTINEL_ENV, "").strip()
+    if not raw_path:
+        return
+    path = Path(raw_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "written_at": payload.get("written_at"),
+                "run_id": payload.get("run_id"),
+                "summary_path": payload.get("summary_path"),
+                "final_status": payload.get("final_status"),
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -40,6 +64,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--engines", default="", help="Comma-separated engine filter.")
     parser.add_argument("--capital-buckets", default="400,500,1500,4000", help="Comma-separated capital buckets.")
     parser.add_argument("--timeframes", default="", help="Comma-separated timeframe filter.")
+    parser.add_argument(
+        "--feature-names",
+        default="",
+        help="Comma-separated backtest feature/audit scope; independent from ML overlay mode.",
+    )
     parser.add_argument("--start", default="", help="Inclusive start boundary (epoch seconds/ms or ISO date/time).")
     parser.add_argument("--end", default="", help="Inclusive end boundary (epoch seconds/ms or ISO date/time).")
     parser.add_argument("--fast-only", action="store_true", help="Stop after fast candidate export.")
@@ -72,8 +101,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--engine-native-mode",
-        action="store_true",
-        help="Materialize candidates through native engine A/B/C/D runners before replay.",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Materialize candidates through native engine A/B/C/D runners before replay (default True; use --no-engine-native-mode for legacy proxy path).",
     )
     parser.add_argument(
         "--engine-native-sample-size",
@@ -109,6 +139,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--diagnostic-full-replay",
         action="store_true",
         help="Replay all B1 discovery pre-candidates even if B1.5 would reject them.",
+    )
+    parser.add_argument(
+        "--raw-window-mode",
+        default="MATERIALIZE",
+        choices=("MATERIALIZE", "REFS_ONLY"),
+        help="Raw window materialization mode. REFS_ONLY is for fast B1 discovery only.",
     )
     parser.add_argument("--candidate-events-path", default="", help="External candidate_events.jsonl path for B2 detailed replay.")
     parser.add_argument("--small-scope-enabled", action="store_true", help="Persist small-scope lineage in the run manifest.")
@@ -160,6 +196,7 @@ def main(argv: list[str] | None = None) -> int:
         engines=_csv_tuple(args.engines),
         capital_buckets=_bucket_tuple(args.capital_buckets),
         timeframes=_csv_tuple(args.timeframes),
+        feature_names=_csv_tuple(args.feature_names),
         start=args.start,
         end=args.end,
         fast_only=args.fast_only,
@@ -185,6 +222,7 @@ def main(argv: list[str] | None = None) -> int:
         candidate_discovery_mode=args.candidate_discovery_mode,
         candidate_sample_cap=max(int(args.candidate_sample_cap), 0),
         b1_5_policy_mode=args.b1_5_policy_mode,
+        raw_window_materialization_mode=args.raw_window_mode,
         preselected_only=bool(args.preselected_only),
         diagnostic_full_replay=bool(args.diagnostic_full_replay),
         small_scope_enabled=args.small_scope_enabled,
@@ -208,8 +246,11 @@ def main(argv: list[str] | None = None) -> int:
         "engine_promotion_count": result.run_manifest.engine_promotion_count,
         "pair_promotion_count": result.run_manifest.pair_promotion_count,
         "strategy_promotion_count": result.run_manifest.strategy_promotion_count,
+        "written_at": result.run_manifest.updated_at.isoformat(),
     }
     print(json.dumps(payload, indent=2))
+    sys.stdout.flush()
+    _write_terminal_sentinel(payload)
     return 0
 
 

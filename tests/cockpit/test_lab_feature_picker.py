@@ -105,6 +105,21 @@ def test_lab_form_state_selected_features_priority() -> None:
     assert resolve_lab_selected_feature_names(state) == ("vpin", "kyle_lambda")
 
 
+def test_lab_form_state_round_trip_persists_label_store_dataset_path(
+    tmp_path: Path,
+) -> None:
+    jobs_root = tmp_path / "backtest_jobs"
+    jobs_root.mkdir(parents=True, exist_ok=True)
+    state = LabMlHandoffFormState(
+        label_store_dataset_path=str(
+            tmp_path / "phase_b_ml_training_label_factory" / "labels" / "b_ml_label_store.jsonl"
+        )
+    )
+    write_lab_ml_handoff_form_state(jobs_root, state)
+    restored = read_lab_ml_handoff_form_state(jobs_root)
+    assert restored.label_store_dataset_path == state.label_store_dataset_path
+
+
 def test_lab_feature_picker_defaults_drop_demoted_registry_entries() -> None:
     state = LabMlHandoffFormState(feature_names="close_return,vpin,high_low_range")
     defaults = resolve_lab_feature_picker_defaults(
@@ -186,6 +201,7 @@ def test_template_renders_supported_feature_count_25(tmp_path: Path) -> None:
     assert response.status_code == 200
     assert response.text.count('name="selected_features" value="') == 25
     assert 'name="selected_features_csv"' in response.text
+    assert 'name="label_store_dataset_path"' in response.text
 
 
 def test_template_feature_badge_class_matches_verdict(tmp_path: Path) -> None:
@@ -363,6 +379,74 @@ def test_lab_launch_blocks_non_legacy_features_without_b2_run_root(
         follow_redirects=False,
     )
     assert response.status_code == 303
-    assert "Non-legacy+ML+features+require+B2+run+root+before+launch" in response.headers["location"]
+    assert (
+        "Non-legacy+ML+features+require+B2+run+root+or+label-store+dataset+path+before+launch"
+        in response.headers["location"]
+    )
     state = read_lab_ml_handoff_form_state(jobs_root)
     assert state.selected_features == SUPPORTED_EXPECTED_EDGE_FEATURE_NAMES
+
+
+def test_lab_launch_allows_non_legacy_features_with_label_store_dataset_path(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client = _build_client(tmp_path)
+    captured: dict[str, object] = {}
+
+    def _fake_launch_backtest_job(**kwargs):
+        captured.update(kwargs)
+        return CockpitBacktestJobRecord(
+            job_id="strategy_ladder_ml_lab_handoff-002",
+            correlation_id="corr-002",
+            job_kind=CockpitBacktestJobKind.STRATEGY_LADDER_ML_LAB_HANDOFF,
+            status=CockpitBacktestJobStatus.JOB_CREATED,
+            requested_at_iso="2026-05-26T12:00:00+00:00",
+            output_root=str(tmp_path / "ml_handoff_output"),
+            record_path=str(tmp_path / "job.json"),
+            stdout_log_path=str(tmp_path / "stdout.log"),
+            command=("python", "stub.py"),
+        )
+
+    monkeypatch.setattr("cockpit.server.launch_backtest_job", _fake_launch_backtest_job)
+    dataset_path = (
+        tmp_path
+        / "phase_b_ml_training_label_factory"
+        / "labels"
+        / "b_ml_label_store.jsonl"
+    )
+    dataset_path.parent.mkdir(parents=True, exist_ok=True)
+    dataset_path.write_text("", encoding="utf-8")
+    response = client.post(
+        "/lab/strategy-ladder-ml-handoff",
+        data={
+            "intent": "launch",
+            "kline_root": str(tmp_path / "klines"),
+            "label_store_dataset_path": str(dataset_path),
+            "pair": "BTCUSDT",
+            "timeframe": "1m",
+            "train_start": "2025-05-02",
+            "train_end": "2025-07-17",
+            "requested_backtest_start": "2025-07-18",
+            "requested_backtest_days": "15",
+            "train_days": "180",
+            "validation_days": "30",
+            "freshness_days": "30",
+            "chunk_days": "15",
+            "feature_names": "close_return,high_low_range,volume",
+            "selected_features_csv": "vpin,kyle_lambda",
+            "feature_picker_enabled": "1",
+            "sample_stride_minutes": "60",
+            "target_horizon_minutes": "1",
+            "training_seed": "5307",
+            "max_optuna_trials": "9",
+            "min_training_rows": "210",
+            "signed_by": "cockpit_operator",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert "Launched+Strategy+Ladder+ML+handoff+job" in response.headers["location"]
+    state = read_lab_ml_handoff_form_state(tmp_path / "backtest_jobs")
+    assert state.label_store_dataset_path == str(dataset_path)
+    assert captured["label_store_dataset_path"] == dataset_path

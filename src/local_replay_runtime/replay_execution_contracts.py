@@ -6,6 +6,11 @@ from execution_backbone.fee_aware_edge_gate import FeeAwareEdgeGateConfig
 from execution_backbone.slippage_model import ExecutionSlippageModel
 from execution_backbone.spread_guard import ExecutionSpreadGuardModel
 from pydantic import BaseModel, Field, model_validator
+from portfolio_minimal.opportunity_selector.eligibility_filter import PortfolioSnapshot
+from regime_classifier.regime_lite import RegimeLiteThresholds
+from risk_backbone.risk_runtime_models import RiskLimits
+from scoring_backbone.hard_block_gate.blocker_evaluator import BlockerCondition
+from scoring_backbone.ranking_router.ranking_score_builder import RankingWeights
 
 from local_replay_runtime.enums import ReplayExecutionProviderKind
 from local_replay_runtime.historical_data_gateway import HistoricalReplayDataset
@@ -42,6 +47,107 @@ class ShadowExecutionSimulatorConfig(BaseModel, frozen=True):
     spread_guard_model: ExecutionSpreadGuardModel | None = None
     slippage_model: ExecutionSlippageModel | None = None
     fee_aware_edge_gate_config: FeeAwareEdgeGateConfig | None = None
+    # Restored 2026-05-27 — backbone parity surface config fields (Codex
+    # delivery, accidentally removed by an over-eager checkout earlier in
+    # the same session). All defaults intentionally `None` so existing
+    # test fixtures keep their pre-Codex shadow-simulator behaviour; B2
+    # operators wire real values via opt-in calibration or per-run config.
+    # Patch BACKBONE-PARITY-P1-S5 (2026-05-27) — Surface #5 branched to
+    # canonical backbone : `risk_filter`. Default `RiskLimits` use 1e6
+    # neutral caps (`gross/position/loss/beta/cluster`) so the canonical
+    # `RiskRuntime.evaluate_candidate` is invoked without spuriously
+    # rejecting backtest rows for size cap violations. The drawdown
+    # thresholds keep RiskLimits' documented defaults (warning=0.02,
+    # observe=0.04) which only impact `RiskExplainability` payload,
+    # not the trade decision. The canonical_payload is report-only —
+    # the simulator does NOT propagate `evaluation.action` to the
+    # trading decision, only to `backbone_surface_report.risk_filter`.
+    # Side-effect on `portfolio_state` surface : with both S4
+    # (portfolio_snapshot) and S5 (risk_limits) non-None, the fallback
+    # reason chain shifts to `PORTFOLIO_CLUSTER_CAPACITY_MISSING` (the
+    # default `remaining_cluster_capacity` stays empty until upstream
+    # runtime injects per-pair mappings).
+    risk_limits: RiskLimits | None = Field(
+        default_factory=lambda: RiskLimits(
+            gross_cap=1_000_000.0,
+            position_cap=1_000_000.0,
+            loss_cap=1_000_000.0,
+            beta_cap=1_000_000.0,
+            cluster_cap=1_000_000.0,
+        )
+    )
+    # Patch BACKBONE-PARITY-P1-S4 (2026-05-27) — Surface #4 branched to
+    # canonical backbone : `portfolio_state`. Default snapshot wraps
+    # `PortfolioSnapshot` with unbounded capacities (`inf`) so the canonical
+    # `apply_caps` evaluator can be invoked without spurious gross/loss/beta
+    # cap reductions in the surface report. `remaining_cluster_capacity`
+    # stays empty by default — when the upstream runtime does not inject
+    # per-pair cluster mappings the surface still falls back with reason
+    # `PORTFOLIO_CLUSTER_CAPACITY_MISSING` (once S5 risk_limits is also
+    # wired) instead of `PORTFOLIO_SNAPSHOT_NOT_CONFIGURED_FOR_BACKTEST`.
+    # `apply_caps` is safe under `inf` capacities (lines 71/83 of
+    # `portfolio_minimal/allocation_router/portfolio_cap_applier.py` short
+    # circuit on `< float("inf")`). The canonical_payload is report-only —
+    # the simulator does NOT propagate `capped.final_size` to the trading
+    # decision, only to `backbone_surface_report.portfolio_state`.
+    portfolio_snapshot: PortfolioSnapshot | None = Field(
+        default_factory=lambda: PortfolioSnapshot(
+            remaining_gross_capacity=float("inf"),
+            remaining_loss_capacity=float("inf"),
+            remaining_beta_capacity=float("inf"),
+        )
+    )
+    # Patch BACKBONE-PARITY-P1-S3 (2026-05-27) — Surface #3 branched to
+    # canonical backbone : `regime_classification`. Default thresholds
+    # come from `RegimeLiteThresholds.from_documented_defaults()` (THR-RG01..04
+    # documented doctrine seam ; vol_extreme=0.08, drop_extreme=0.05,
+    # drawdown_extreme=0.02, dispersion_extreme=0.05, hysteresis=2h,
+    # cooldown=24h). The canonical classifier is report-only at runtime
+    # (`entries_blocked` is NOT consumed by the simulator to gate trades —
+    # it only appears in `backbone_surface_report.regime_classification`).
+    # When the 4 required feature metrics (`btc_realized_vol_24h`,
+    # `btc_drop_1h`, `intraday_drawdown`, `engine_return_dispersion`) are
+    # present in `row.feature_values` the surface status flips from
+    # `NO_SURFACE_RESULT_AVAILABLE` / `LOCAL_REPLAY_FALLBACK_USED` to
+    # `CANONICAL_BACKBONE_USED`. When metrics are missing the surface
+    # falls back with `REGIME_CLASSIFIER_INPUTS_MISSING` instead of
+    # `REGIME_LITE_THRESHOLDS_NOT_CONFIGURED` (still local-replay payload
+    # when `row.regime` is set, NO_SURFACE_RESULT otherwise).
+    regime_lite_thresholds: RegimeLiteThresholds | None = Field(
+        default_factory=RegimeLiteThresholds.from_documented_defaults
+    )
+    # Patch BACKBONE-PARITY-P1-S2 (2026-05-27) — Surface #2 branched to
+    # canonical backbone : `scoring_ranking`. Default `RankingWeights()`
+    # uses operational weights (w_score=1.0, w_ce=0.5, w_cost=0.3,
+    # w_corr=0.2, w_risk=0.2). The ranker computes a composite score from
+    # these weights ; with these defaults the ranking is functional and
+    # non-blocking — it cannot refuse a trade by itself, it can only
+    # re-order candidates. Switch from `LOCAL_REPLAY_FALLBACK_USED` to
+    # `CANONICAL_BACKBONE_USED`.
+    scoring_ranking_weights: RankingWeights | None = Field(
+        default_factory=RankingWeights
+    )
+    # Patch BACKBONE-PARITY-P1-S1 (2026-05-27) — Surface #1 branched to
+    # canonical backbone : `hard_block_gate`. Default `BlockerCondition()`
+    # has all `is_X = False`, so the canonical evaluator returns
+    # `is_blocked = False` (no new hard block added). Trading behaviour is
+    # unchanged ; only the `backbone_surface_report.hard_block_gate.status`
+    # flips from `LOCAL_REPLAY_FALLBACK_USED` to `CANONICAL_BACKBONE_USED`.
+    hard_block_conditions: BlockerCondition | None = Field(
+        default_factory=BlockerCondition
+    )
+    ml_mode: str = "ML_MODE_OFF"
+    expected_edge_model_status: str = "EXPECTED_EDGE_ARTIFACT_NOT_DECLARED"
+    expected_edge_model_artifact_hash: str | None = None
+    expected_edge_model_feature_hash: str | None = None
+    expected_edge_training_artifact_ref: str | None = None
+    # Protocols / Build-14 surface metadata (Codex backbone-parity tranche)
+    protocol_contract_refs: tuple[str, ...] = ()
+    refusal_contract_status: str = "REFUSAL_CONTRACT_NOT_DECLARED"
+    live_transport_enabled: bool = False
+    build14_feature_groups: tuple[str, ...] = ()
+    build14_context_status: str = "BUILD14_CONTEXT_NOT_DECLARED"
+    build14_upstream_filter_status: str = "BUILD14_UPSTREAM_FILTER_NOT_DECLARED"
     execution_runtime_projection_ref: str | None = None
 
 
@@ -131,6 +237,11 @@ class ReplayParityDiagnosticsSummary(BaseModel, frozen=True):
     slippage_model_loaded: bool = False
     execution_runtime_projection_ref: str | None = None
     canonical_expected_cost_components: tuple[str, ...] = ()
+    # Restored 2026-05-27 — backbone parity surface report payload (Codex
+    # delivery, accidentally removed earlier this session by an over-eager
+    # checkout). Populated by `build_backbone_parity_surface_report` in
+    # `shadow_execution_simulator.py:2493`.
+    backbone_surface_report: dict[str, object] = Field(default_factory=dict)
 
 
 class ReplayExecutionProviderRef(BaseModel, frozen=True):

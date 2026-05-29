@@ -398,6 +398,22 @@ def test_evaluate_replay_execution_can_activate_remaining_canonical_cost_compone
 
     assert payload["execution_label_source"] == "PARTIAL_CANONICAL_EXECUTION"
     assert payload["fee_model_source"] == "CANONICAL_EXECUTION_COST_METER"
+    # Updated 2026-05-27 (Patches BACKBONE-PARITY-P1-S1 + S2) — hard_block_gate
+    # and scoring_ranking now default to canonical evaluators (BlockerCondition
+    # all False / RankingWeights operational). Both surfaces flip from
+    # LOCAL_REPLAY to CANONICAL. +2 CANONICAL, -2 LOCAL_REPLAY vs original.
+    assert payload["backbone_surface_report"]["status_counts"] == {
+        "CANONICAL_BACKBONE_USED": 11,
+        "LOCAL_REPLAY_FALLBACK_USED": 9,
+        "NO_SURFACE_RESULT_AVAILABLE": 1,
+    }
+    assert payload["backbone_surface_report"]["promotion_allowed"] is False
+    slippage_surface = next(
+        row
+        for row in payload["backbone_surface_report"]["rows"]
+        if row["surface"] == "slippage_measurement"
+    )
+    assert "SLIPPAGE_PROJECTION_NOT_MEASURED_TRUTH" in slippage_surface["reason_codes"]
     assert payload["spread_model_source"] == "CANONICAL_SPREAD_GUARD"
     assert payload["slippage_model_source"] == "CANONICAL_EXECUTION_BACKBONE"
     assert payload["partial_fill_model_source"] == "CANONICAL_PARTIAL_FILL_COST_METER"
@@ -472,3 +488,12 @@ def test_evaluate_replay_execution_can_apply_fee_aware_edge_gate(
 
     assert result.dtr_records[0].decision_state == "phantom"
     assert result.dtr_records[0].primary_reason == "EDGE_INSUFFICIENT_VS_FEES"
+    payload = result.parity_diagnostics_payload
+    edge_row = next(
+        row
+        for row in payload["backbone_surface_report"]["rows"]
+        if row["surface"] == "fee_aware_edge_gate"
+    )
+    assert edge_row["status"] == "CANONICAL_BACKBONE_USED"
+    assert edge_row["selected_source"] == "execution_backbone.fee_aware_edge_gate"
+    assert edge_row["canonical_payload"]["allowed"] is False

@@ -84,6 +84,25 @@ def test_detailed_replay_fee_rates_clear_fee_model_proxy() -> None:
     payload = result.parity_diagnostics_payload
     assert payload["fee_model_source"] == "CANONICAL_EXECUTION_COST_METER"
     assert "FEE_MODEL_PROXY" not in payload["execution_fidelity_gap_codes"]
+    # Updated 2026-05-27 (Patches BACKBONE-PARITY-P1-S1 + S2 + S5) —
+    # hard_block_gate + scoring_ranking + risk_filter now default to
+    # canonical evaluators (BlockerCondition all False / RankingWeights
+    # operational / RiskLimits 1e6 caps). The fee_rates test row has
+    # target_decision_state="selected" and planned_notional>0 so
+    # execution_intent is non-None and risk_filter evaluates canonically.
+    # +3 CANONICAL, -3 LOCAL_REPLAY vs Codex baseline.
+    assert payload["backbone_surface_report"]["status_counts"] == {
+        "CANONICAL_BACKBONE_USED": 8,
+        "LOCAL_REPLAY_FALLBACK_USED": 11,
+        "NO_SURFACE_RESULT_AVAILABLE": 2,
+    }
+    assert payload["backbone_surface_report"]["promotion_allowed"] is False
+    spread_row = next(
+        row
+        for row in payload["backbone_surface_report"]["rows"]
+        if row["surface"] == "spread_measurement"
+    )
+    assert spread_row["status"] == "LOCAL_REPLAY_FALLBACK_USED"
 
 
 def test_fee_source_status_normalizes_measured_metadata_for_replay_summary() -> None:

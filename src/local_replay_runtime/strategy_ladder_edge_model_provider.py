@@ -28,6 +28,7 @@ Architecture future :
 from __future__ import annotations
 
 import base64
+import gzip
 import hashlib
 import json
 import math
@@ -872,8 +873,17 @@ def estimate_forward_return_edge_bps(
 
     bars: list[tuple[int, float]] = []
     extended_start = timestamp_ms - lookback_ms
+    # Patch A2-OPT-3 (2026-05-26) — Detect gzip-compressed silver outputs
+    # (jsonl_gz format) and open via gzip instead of as plain text. Previously
+    # this loader UnicodeDecodeError'd on the first 0x8b byte of any .gz file.
+    is_gz = str(ohlcv_path).lower().endswith(".gz")
     try:
-        with ohlcv_path.open("r", encoding="utf-8-sig") as handle:
+        opener = (
+            (lambda: gzip.open(ohlcv_path, "rt", encoding="utf-8-sig"))
+            if is_gz
+            else (lambda: ohlcv_path.open("r", encoding="utf-8-sig"))
+        )
+        with opener() as handle:
             for line in handle:
                 stripped = line.strip()
                 if not stripped:

@@ -843,6 +843,7 @@ def build_dashboard_view_model(
     notice_message: str = "",
     notice_status: str = "info",
     log_query: ShadowVpsServiceLogQuery | None = None,
+    pinned_run_id: str = "",
 ) -> DashboardViewModel:
     """Compose all cockpit view-models in one call."""
 
@@ -920,10 +921,14 @@ def build_dashboard_view_model(
         if name not in DEFAULT_EXPECTED_EDGE_FEATURE_NAMES
     )
     lab_replay_grounding_required = bool(lab_requested_non_legacy_features)
-    lab_replay_grounding_ready = bool((lab_ml_handoff_form.b2_run_root or "").strip())
+    lab_replay_grounding_ready = bool(
+        (lab_ml_handoff_form.b2_run_root or "").strip()
+        or (lab_ml_handoff_form.label_store_dataset_path or "").strip()
+    )
     backtest_preflight = load_patch6_preflight_preview(
         selected_form=selected_form,
         preview_manifest=None,
+        jobs_root=paths.backtest_jobs_root,
     )
     artifact_feature_names = tuple(backtest_preflight.ml_overlay_intake.feature_names)
     backtest_feature_governance = discover_backtest_feature_governance(
@@ -951,7 +956,7 @@ def build_dashboard_view_model(
             lab_form_state=lab_ml_handoff_form,
             governance_entries=backtest_feature_governance,
             supported_feature_names=SUPPORTED_EXPECTED_EDGE_FEATURE_NAMES,
-            artifact_feature_names=artifact_feature_names,
+            artifact_feature_names=(),
         )
     )
     backtest_selected_demoted_features = selected_demoted_backtest_features(
@@ -990,7 +995,9 @@ def build_dashboard_view_model(
         selected_candidate_id=selected_candidate_id,
         active_feature_names=backtest_effective_selected_features,
         artifact_feature_names=artifact_feature_names,
+        include_candidate_feature_audits=False,
         log_query=log_query,
+        pinned_run_id=pinned_run_id,
     )
     current_form_state = read_current_form_state(paths.backtest_jobs_root)
     source_preview_state = read_source_preview_state(paths.backtest_jobs_root)
@@ -1021,6 +1028,7 @@ def build_dashboard_view_model(
     backtest_preflight = load_patch6_preflight_preview(
         selected_form=selected_form,
         preview_manifest=preview_manifest,
+        jobs_root=paths.backtest_jobs_root,
     )
     if current_form_state is None:
         current_form_state = _build_ephemeral_current_form_state(

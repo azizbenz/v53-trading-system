@@ -8,6 +8,10 @@ from pathlib import Path
 from pydantic import BaseModel, Field, model_validator
 
 from data_backbone.feature_timeframes import DEFAULT_GOLD_TIMEFRAMES
+from local_replay_runtime.strategy_ladder_expected_edge_feature_contracts import (
+    DEFAULT_EXPECTED_EDGE_FEATURE_NAMES,
+    normalize_supported_expected_edge_feature_names,
+)
 from local_replay_runtime.strategy_ladder_models import deterministic_payload_hash
 
 
@@ -253,6 +257,17 @@ class StrategyLadderGoldFeatureManifest(BaseModel, frozen=True):
     timeframes_pruned: tuple[str, ...] = ()
     pruning_reason_by_timeframe: dict[str, str] = Field(default_factory=dict)
     timeframe_feature_row_count: dict[str, int] = Field(default_factory=dict)
+    gold_decision_window_status: str = "GOLD_DECISION_WINDOW_NOT_PROVEN"
+    gold_context_row_count: int = Field(default=0, ge=0)
+    gold_context_rows_suppressed_count: int = Field(default=0, ge=0)
+    microstructure_cache_used: bool = False
+    feature_equivalence_status: str = "A2_FEATURE_EQUIVALENCE_NOT_REQUIRED"
+    microstructure_streaming_status: str = "A2_MICROSTRUCTURE_STREAMING_NOT_REQUIRED"
+    microstructure_streaming_batch_count: int = Field(default=0, ge=0)
+    microstructure_streaming_requested_row_count: int = Field(default=0, ge=0)
+    microstructure_streaming_overlay_row_count: int = Field(default=0, ge=0)
+    microstructure_streaming_missing_row_count: int = Field(default=0, ge=0)
+    microstructure_streaming_status_counts: dict[str, int] = Field(default_factory=dict)
     blocker_codes: tuple[str, ...] = ()
     artifact_hash: str | None = None
     created_at: datetime | None = None
@@ -332,6 +347,7 @@ class StrategyLadderDataFactoryRequest(BaseModel, frozen=True):
     # timeframes are no longer silently pruned when callers omit the field.
     # Callers that want a strict subset must pass it explicitly.
     timeframes: tuple[str, ...] = DEFAULT_GOLD_TIMEFRAMES
+    feature_names: tuple[str, ...] = DEFAULT_EXPECTED_EDGE_FEATURE_NAMES
     start: str = ""
     end: str = ""
     data_types: tuple[str, ...] = ("trades", "klines", "orderbook", "metadata")
@@ -354,6 +370,24 @@ class StrategyLadderDataFactoryRequest(BaseModel, frozen=True):
     # Quand True, le data_factory invoque compute_economic_provenance() pour
     # chaque feature_row au lieu de spread_bps = 4.0/6.0/0.0.
     use_measured_economic_provenance: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_feature_names(cls, value: object) -> object:
+        if isinstance(value, cls):
+            return value
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        raw_feature_names = data.get("feature_names") or DEFAULT_EXPECTED_EDGE_FEATURE_NAMES
+        if isinstance(raw_feature_names, str):
+            raw_feature_names = tuple(
+                part.strip() for part in raw_feature_names.split(",") if part.strip()
+            )
+        data["feature_names"] = normalize_supported_expected_edge_feature_names(
+            tuple(raw_feature_names)
+        )
+        return data
 
 
 class StrategyLadderDataFactoryResult(BaseModel, frozen=True):
@@ -384,6 +418,7 @@ class StrategyLadderFirstControlledRunRequest(BaseModel, frozen=True):
     capital_buckets: tuple[int, ...] = (400, 500, 1500, 4000)
     # Patch 2026-05-15 — aligned with the canonical timeframe registry.
     timeframes: tuple[str, ...] = DEFAULT_GOLD_TIMEFRAMES
+    feature_names: tuple[str, ...] = DEFAULT_EXPECTED_EDGE_FEATURE_NAMES
     start: str = ""
     end: str = ""
     dry_run: bool = False
@@ -406,6 +441,24 @@ class StrategyLadderFirstControlledRunRequest(BaseModel, frozen=True):
     # StrategyLadderDataFactoryRequest.use_measured_economic_provenance.
     # Default False : comportement legacy (constantes hardcoded).
     use_measured_economic_provenance: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_feature_names(cls, value: object) -> object:
+        if isinstance(value, cls):
+            return value
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        raw_feature_names = data.get("feature_names") or DEFAULT_EXPECTED_EDGE_FEATURE_NAMES
+        if isinstance(raw_feature_names, str):
+            raw_feature_names = tuple(
+                part.strip() for part in raw_feature_names.split(",") if part.strip()
+            )
+        data["feature_names"] = normalize_supported_expected_edge_feature_names(
+            tuple(raw_feature_names)
+        )
+        return data
 
 
 class StrategyLadderFirstControlledRunManifest(BaseModel, frozen=True):

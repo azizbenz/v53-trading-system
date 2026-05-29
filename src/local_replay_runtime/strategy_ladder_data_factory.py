@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import csv
+from bisect import bisect_right
+from collections.abc import Callable
 from datetime import UTC, datetime
 import gzip
 import hashlib
 import json
+from math import isfinite
 from json import JSONDecodeError
 from pathlib import Path
 import re
+from time import perf_counter
 import zipfile
 
 from data_backbone.feature_timeframes import (
@@ -83,6 +87,18 @@ from local_replay_runtime.strategy_ladder_data_factory_models import (
 from local_replay_runtime.strategy_ladder_economic_provenance import (
     compute_economic_provenance,
 )
+from local_replay_runtime.strategy_ladder_engine_native_adapter import (
+    build_engine_c_microstructure_inputs_from_window,
+    build_engine_c_requested_microstructure_features_from_window,
+    evict_microstructure_file_cache,
+    get_microstructure_file_cache_stats,
+    reset_microstructure_file_cache_stats,
+)
+from local_replay_runtime.strategy_ladder_expected_edge_feature_contracts import (
+    DEFAULT_EXPECTED_EDGE_FEATURE_NAMES,
+    EXTENDED_MICROSTRUCTURE_EXPECTED_EDGE_FEATURE_NAMES,
+    REPLAY_MICROSTRUCTURE_EXPECTED_EDGE_FEATURE_NAMES,
+)
 from local_replay_runtime.strategy_ladder_feature_store import parse_time_boundary_to_ms
 from local_replay_runtime.strategy_ladder_models import StrategyLadderFeatureRow
 from local_replay_runtime.strategy_ladder_orderbook_reconstructor import (
@@ -112,6 +128,45 @@ _CRITICAL_OHLCV_EXPECTED_ROWS_PER_DAY: dict[str, int] = {
 # tout en flaggant pour audit. La promotion-grade exige le seuil strict 99%.
 # missing_candle_count / duplicate_candle_count > 0 restent fail-close
 # (gaps internes ou dupli ≠ truncation propre du suffix).
+_OHLCV_DAILY_COMPLETENESS_MIN_ASSESSMENT_ROWS: dict[str, int] = {
+    "1m": 100,
+    "10m": 10,
+}
+_A2_ENGINE_NATIVE_BRIDGE_FEATURES = frozenset(
+    {
+        "kyle_lambda",
+        "vpin",
+        "cumulative_ofi",
+        "queue_pressure",
+        "realized_vol_current",
+        "realized_vol_at_break",
+    }
+)
+_A2_COST_FEATURES = frozenset(
+    {
+        "spread_bps",
+        "slippage_bps",
+        "latency_penalty_bps",
+        "book_depth_levels",
+    }
+)
+_A2_MATERIALIZABLE_FEATURES = frozenset(
+    (
+        *DEFAULT_EXPECTED_EDGE_FEATURE_NAMES,
+        *REPLAY_MICROSTRUCTURE_EXPECTED_EDGE_FEATURE_NAMES,
+        *EXTENDED_MICROSTRUCTURE_EXPECTED_EDGE_FEATURE_NAMES,
+    )
+)
+_A2_MEASURED_SPREAD_PROVENANCE = frozenset(
+    {"MEASURED_FROM_BOOK_SNAPSHOT", "MEASURED_FROM_BOOK_RECONSTRUCTION"}
+)
+_A2_MEASURED_SLIPPAGE_PROVENANCE = frozenset(
+    {
+        "MEASURED_FROM_KYLE_LAMBDA",
+        "MEASURED_FROM_KYLE_LAMBDA_OVERRIDE",
+        "MEASURED_FROM_DEPTH20_BOOK_WALK",
+    }
+)
 _OHLCV_PARTIAL_DAY_RESEARCH_TOLERANCE_RATIO = 0.65
 _OHLCV_PARTIAL_DAY_PROMOTION_TOLERANCE_RATIO = 0.99
 _METADATA_FIELDS = {
@@ -166,6 +221,7 @@ def _assess_ohlcv_temporal_completeness(
     *,
     index_entries: tuple[StrategyLadderSilverIndexEntry, ...],
     requested_timeframes: tuple[str, ...],
+    expected_dates: tuple[str, ...] = (),
 ) -> tuple[str, int, tuple[str, ...], tuple[str, ...]]:
     critical_timeframes = tuple(
         tf for tf in requested_timeframes if tf in _CRITICAL_OHLCV_EXPECTED_ROWS_PER_DAY
@@ -179,6 +235,8 @@ def _assess_ohlcv_temporal_completeness(
     has_promotion_partial_only = False
     for entry in index_entries:
         if entry.data_type != "ohlcv":
+            continue
+        if expected_dates and entry.date and entry.date not in expected_dates:
             continue
         timeframe = entry.timeframe or ""
         expected_rows = _CRITICAL_OHLCV_EXPECTED_ROWS_PER_DAY.get(timeframe)
@@ -206,6 +264,15 @@ def _assess_ohlcv_temporal_completeness(
         # Condition row_count != expected_rows : classifier par severity.
         if entry.row_count == expected_rows:
             continue  # READY pour ce row
+        min_assessment_rows = _OHLCV_DAILY_COMPLETENESS_MIN_ASSESSMENT_ROWS.get(
+            timeframe,
+            1,
+        )
+        if entry.row_count < min_assessment_rows:
+            blocker_codes.append(
+                f"OHLCV_{timeframe.upper()}_TEMPORAL_COMPLETENESS_NOT_PROVEN"
+            )
+            continue
         ratio = (
             entry.row_count / float(expected_rows) if expected_rows > 0 else 0.0
         )
@@ -232,9 +299,7 @@ def _assess_ohlcv_temporal_completeness(
             )
     deduped_blockers = tuple(dict.fromkeys(blocker_codes))
     has_hard_block = any(
-        b.endswith("_TEMPORAL_COMPLETENESS_BLOCKED")
-        or b.endswith("_TEMPORAL_COMPLETENESS_NOT_PROVEN")
-        for b in deduped_blockers
+        b.endswith("_TEMPORAL_COMPLETENESS_BLOCKED") for b in deduped_blockers
     )
     if not deduped_blockers:
         status = "OHLCV_TEMPORAL_COMPLETENESS_READY"
@@ -244,7 +309,7 @@ def _assess_ohlcv_temporal_completeness(
         # Seulement PARTIAL_DAY_ACCEPTED → research-grade OK, promotion-grade NON
         status = "OHLCV_TEMPORAL_COMPLETENESS_PARTIAL_DAY_ACCEPTED"
     else:
-        status = "OHLCV_TEMPORAL_COMPLETENESS_BLOCKED"
+        status = "OHLCV_TEMPORAL_COMPLETENESS_NOT_PROVEN"
     return status, blocked_entry_count, critical_timeframes, deduped_blockers
 _PAIR_DATE_PATTERN = re.compile(r"^(?P<pair>[A-Z0-9]+)_(?P<date>\d{4}-\d{2}-\d{2})$")
 _PAIR_TF_DATE_PATTERN = re.compile(
@@ -294,6 +359,223 @@ def _optional_float(value: object) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _finite_record_value(record: object | None) -> float | None:
+    if record is None:
+        return None
+    value = getattr(record, "value", None)
+    if isinstance(value, bool):
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    return numeric if isfinite(numeric) else None
+
+
+def _a2_cost_feature_truth_status(
+    *,
+    spread_provenance: str,
+    slippage_provenance: str,
+) -> str:
+    if (
+        spread_provenance in _A2_MEASURED_SPREAD_PROVENANCE
+        and slippage_provenance in _A2_MEASURED_SLIPPAGE_PROVENANCE
+    ):
+        return "A2_COST_FEATURES_MEASURED_EX_ANTE_NOT_EXECUTION_LABEL_TRUTH"
+    return "A2_COST_FEATURES_RESEARCH_ONLY_NOT_REPLAY_TRUTH"
+
+
+def _timeframe_interval_ms(value: str | None) -> int:
+    timeframe = normalize_timeframe(value) or "1m"
+    match = re.fullmatch(r"(?P<count>\d+)(?P<unit>[mhd])", timeframe)
+    if not match:
+        return 60_000
+    count = max(int(match.group("count")), 1)
+    unit = match.group("unit")
+    if unit == "h":
+        return count * 60 * 60_000
+    if unit == "d":
+        return count * 24 * 60 * 60_000
+    return count * 60_000
+
+
+def _requested_a2_feature_names(request: StrategyLadderDataFactoryRequest) -> frozenset[str]:
+    return frozenset(
+        feature_name
+        for feature_name in (request.feature_names or DEFAULT_EXPECTED_EDGE_FEATURE_NAMES)
+        if feature_name in _A2_MATERIALIZABLE_FEATURES
+    )
+
+
+_A2_GOLD_HEARTBEAT_ROW_INTERVAL = 25
+_A2_MICROSTRUCTURE_CACHE_EVICT_ROW_THRESHOLD = 100_000
+
+
+def _entry_path(entry: StrategyLadderSilverIndexEntry | None) -> Path | None:
+    if entry is None or not entry.path:
+        return None
+    return Path(entry.path)
+
+
+def _feature_overlay_from_engine_native_bridge(
+    *,
+    requested_feature_names: frozenset[str],
+    pair: str,
+    timeframe: str,
+    timestamp_ms: int,
+    raw_trade_path: Path | None,
+    snapshot_book_path: Path | None,
+    delta_book_path: Path | None,
+) -> dict[str, object]:
+    if not requested_feature_names.intersection(_A2_ENGINE_NATIVE_BRIDGE_FEATURES):
+        return {}
+    if raw_trade_path is None and snapshot_book_path is None:
+        return {}
+    window_end_ms = max(timestamp_ms, 0)
+    window_start_ms = max(0, window_end_ms - _timeframe_interval_ms(timeframe))
+    try:
+        values = build_engine_c_requested_microstructure_features_from_window(
+            pair=pair,
+            window_start_ms=window_start_ms,
+            window_end_ms=window_end_ms,
+            requested_feature_names=requested_feature_names,
+            raw_trade_path=raw_trade_path,
+            raw_book_path=snapshot_book_path,
+            raw_book_delta_path=delta_book_path,
+        )
+        if values:
+            return dict(values)
+    except Exception:  # noqa: BLE001 - fallback below preserves old behavior.
+        pass
+    try:
+        bridge = build_engine_c_microstructure_inputs_from_window(
+            candidate_id=f"a2-gold:{pair}:{timeframe}:{timestamp_ms}",
+            pair=pair,
+            window_start_ms=window_start_ms,
+            window_end_ms=window_end_ms,
+            raw_trade_path=raw_trade_path,
+            raw_book_path=snapshot_book_path,
+            raw_book_delta_path=delta_book_path,
+        )
+    except Exception:  # noqa: BLE001 - row stays explicit-missing on bridge failure.
+        return {}
+    values: dict[str, object] = {}
+    candidates = {
+        "kyle_lambda": _finite_record_value(bridge.kyle_lambda_record),
+        "vpin": _finite_record_value(bridge.vpin_record),
+        "cumulative_ofi": _finite_record_value(bridge.ofi_record),
+        "queue_pressure": _finite_record_value(bridge.queue_pressure_record),
+        "realized_vol_current": _finite_record_value(bridge.realized_kernel_vol_record),
+        "realized_vol_at_break": _finite_record_value(bridge.realized_kernel_vol_record),
+    }
+    for feature_name, value in candidates.items():
+        if feature_name in requested_feature_names and value is not None:
+            values[feature_name] = value
+    return values
+
+
+def _feature_overlay_batch_from_engine_native_bridge(
+    *,
+    requested_feature_names: frozenset[str],
+    pair: str,
+    timeframe: str,
+    rows: list[dict[str, object]],
+    entry_trade_entries: tuple[StrategyLadderSilverIndexEntry, ...],
+    entry_book_entries: tuple[StrategyLadderSilverIndexEntry, ...],
+    progress_callback: Callable[[int, int, int], None] | None = None,
+) -> tuple[dict[int, dict[str, object]], dict[str, object]]:
+    requested_microstructure_features = tuple(
+        sorted(requested_feature_names.intersection(_A2_ENGINE_NATIVE_BRIDGE_FEATURES))
+    )
+    if not requested_microstructure_features:
+        return {}, {
+            "batch_status": "A2_MICROSTRUCTURE_STREAMING_NOT_REQUIRED",
+            "requested_row_count": 0,
+            "overlay_row_count": 0,
+            "missing_row_count": 0,
+            "requested_features": (),
+        }
+    if not entry_trade_entries and not entry_book_entries:
+        return {}, {
+            "batch_status": "A2_MICROSTRUCTURE_STREAMING_NO_SOURCE",
+            "requested_row_count": len(rows),
+            "overlay_row_count": 0,
+            "missing_row_count": len(rows),
+            "requested_features": requested_microstructure_features,
+        }
+
+    overlays_by_timestamp: dict[int, dict[str, object]] = {}
+    missing_row_count = 0
+    raw_trade_path = _entry_path(entry_trade_entries[0]) if entry_trade_entries else None
+    total_rows = len(rows)
+    for row_index, row in enumerate(rows, start=1):
+        timestamp_raw = row.get("timestamp_ms")
+        if not isinstance(timestamp_raw, (int, float)):
+            missing_row_count += 1
+            if progress_callback and (
+                row_index == 1
+                or row_index % _A2_GOLD_HEARTBEAT_ROW_INTERVAL == 0
+                or row_index == total_rows
+            ):
+                progress_callback(row_index, len(overlays_by_timestamp), missing_row_count)
+            continue
+        timestamp_ms = int(timestamp_raw)
+        row_book_entries = _book_entries_covering_timestamp(
+            entry_book_entries,
+            timestamp_ms=timestamp_ms,
+        )
+        snapshot_book_entry = next(
+            (
+                item
+                for item in row_book_entries
+                if item.data_type in {"orderbook_snapshot", "orderbook"} and item.path
+            ),
+            None,
+        )
+        delta_book_entry = next(
+            (
+                item
+                for item in row_book_entries
+                if item.data_type == "orderbook_delta" and item.path
+            ),
+            None,
+        )
+        overlay = _feature_overlay_from_engine_native_bridge(
+            requested_feature_names=requested_feature_names,
+            pair=pair,
+            timeframe=timeframe,
+            timestamp_ms=timestamp_ms,
+            raw_trade_path=raw_trade_path,
+            snapshot_book_path=_entry_path(snapshot_book_entry),
+            delta_book_path=_entry_path(delta_book_entry),
+        )
+        if overlay:
+            overlays_by_timestamp[timestamp_ms] = overlay
+        else:
+            missing_row_count += 1
+        if progress_callback and (
+            row_index == 1
+            or row_index % _A2_GOLD_HEARTBEAT_ROW_INTERVAL == 0
+            or row_index == total_rows
+        ):
+            progress_callback(row_index, len(overlays_by_timestamp), missing_row_count)
+
+    status = (
+        "A2_MICROSTRUCTURE_STREAMING_READY"
+        if overlays_by_timestamp
+        else "A2_MICROSTRUCTURE_STREAMING_NO_VALUES"
+    )
+    return overlays_by_timestamp, {
+        "batch_status": status,
+        "requested_row_count": len(rows),
+        "overlay_row_count": len(overlays_by_timestamp),
+        "missing_row_count": missing_row_count,
+        "requested_features": requested_microstructure_features,
+        "builder_mode": "REQUESTED_ONLY_CANONICAL_CALCULATOR_BATCH",
+        "equivalence_status": "CANONICAL_CALCULATORS_REUSED_NO_TRADING_DECISION_CHANGE",
+    }
 
 
 def _book_resiliency_penalty(book_status: str) -> float:
@@ -392,6 +674,19 @@ def _date_in_range(
     return True
 
 
+def _timestamp_in_window(
+    timestamp_ms: int,
+    *,
+    start_ms: int | None,
+    end_ms: int | None,
+) -> bool:
+    if start_ms is not None and timestamp_ms < start_ms:
+        return False
+    if end_ms is not None and timestamp_ms > end_ms:
+        return False
+    return True
+
+
 def _gold_row_timestamp_ms(row: dict[str, object]) -> int:
     try:
         return int(row.get("timestamp_ms") or row.get("startTime") or row.get("starttime") or 0)
@@ -477,6 +772,24 @@ def _prioritize_requested_window_rows(
     ]
 
 
+def _split_gold_decision_and_context_rows(
+    rows: tuple[dict[str, object], ...] | list[dict[str, object]],
+    *,
+    start_ms: int | None,
+    end_ms: int | None,
+) -> tuple[list[dict[str, object]], int]:
+    if start_ms is None and end_ms is None:
+        return list(rows), 0
+    decision_rows: list[dict[str, object]] = []
+    context_row_count = 0
+    for row in rows:
+        if _gold_row_in_requested_window(row, start_ms=start_ms, end_ms=end_ms):
+            decision_rows.append(row)
+        else:
+            context_row_count += 1
+    return decision_rows, context_row_count
+
+
 def _gold_entry_requested_window_rank(
     entry: StrategyLadderSilverIndexEntry,
     *,
@@ -506,8 +819,6 @@ def _effective_context_start_text(normalized_start: str, effective_start_ms: int
     if effective_start_ms is None:
         return ""
     effective_dt = datetime.fromtimestamp(effective_start_ms / 1000.0, tz=UTC)
-    if _is_date_only_boundary(normalized_start):
-        return effective_dt.date().isoformat()
     return effective_dt.isoformat(timespec="seconds")
 
 
@@ -1556,14 +1867,77 @@ def _read_jsonl_lines(path: Path) -> list[str]:
     return path.read_text(encoding="utf-8-sig").splitlines()
 
 
+# Patch RESUME-SILVER (2026-05-29) — opt-in skip of already-written silver files.
+# Gated by request.resume. Each normalizer first computes its expected silver
+# output path(s); if all required files exist and are non-empty we build a
+# minimal SilverIndexEntry (stat-only) and short-circuit the raw read +
+# normalize + write. This lets a crashed A2 run resume from the END instead of
+# re-processing 12h of already-correct silver.
+#
+# DESIGN — stat-only, no file content read on the resume path.
+# A previous version called _read_jsonl_lines() to compute row_count and
+# first/last timestamps, but for ~3 GB of pre-existing orderbook_delta silver
+# that meant decompressing ~60 GB of text per resume = 30-60 min of pure I/O
+# burn before any new work started. We now skip metadata reconstruction
+# entirely: row_count=0, min/max_timestamp_ms=None, file_hash="" act as
+# placeholders ("not measured on resume"). Downstream consumers either ignore
+# these fields or treat empty/None as "deferred"; no crash, slightly degraded
+# fidelity in reports — accepted trade for instant resume.
+def _resume_silver_file_eligible(path: Path) -> bool:
+    """Return True if the silver file exists and is non-empty.
+
+    A non-empty existing file is treated as "previously normalized successfully".
+    This is a deliberate trust assumption: callers MUST delete partial/suspect
+    files before re-launching with --resume.
+    """
+
+    try:
+        return path.exists() and path.stat().st_size > 0
+    except OSError:
+        return False
+
+
 def _normalize_trade_file(
     *,
     classification: StrategyLadderRawFileClassification,
     silver_root: Path,
     dry_run: bool,
     storage_format: str = "jsonl",
+    window_start_ms: int | None = None,
+    window_end_ms: int | None = None,
+    resume: bool = False,
 ) -> tuple[StrategyLadderSilverIndexEntry | None, int, int, int]:
     path = Path(classification.path)
+    # Patch RESUME-SILVER (2026-05-29) — short-circuit if silver already exists.
+    if (
+        resume
+        and not dry_run
+        and classification.date
+        and len(classification.date) >= 10
+    ):
+        base_output_path = silver_root / classification.exchange / classification.market_type / "trades" / str(classification.pair or "UNKNOWN") / classification.date[:4] / classification.date[5:7] / f"{classification.date[8:10]}.jsonl"
+        resume_output_path = _resolve_silver_path(base_output_path, storage_format)
+        if _resume_silver_file_eligible(resume_output_path):
+            # Stat-only resume entry — no file read, no hash compute.
+            entry = StrategyLadderSilverIndexEntry(
+                source_id=classification.source_id,
+                source_root=classification.source_root,
+                exchange=classification.exchange,
+                market_type=classification.market_type,
+                data_type="trades",
+                pair=classification.pair or "UNKNOWN",
+                date=classification.date or "",
+                path=str(resume_output_path.resolve()),
+                storage_format=storage_format,
+                min_timestamp_ms=None,
+                max_timestamp_ms=None,
+                row_count=0,
+                file_hash="",
+                depth_source_status="BOOK_DEPTH_NOT_PROVEN",
+                schema_status="TRADE_SCHEMA_READY",
+                timestamp_unit=classification.timestamp_unit or "ms",
+            )
+            return entry, 0, 0, 0
     if dry_run:
         date = classification.date or ""
         year = date[:4] if len(date) >= 4 else "unknown"
@@ -1613,6 +1987,13 @@ def _normalize_trade_file(
         if not raw_trade_id or not raw_timestamp or not raw_price or not raw_qty:
             rows_rejected += 1
             continue
+        timestamp_ms = _normalize_timestamp_to_ms(raw_timestamp, unit)
+        if not _timestamp_in_window(
+            timestamp_ms,
+            start_ms=window_start_ms,
+            end_ms=window_end_ms,
+        ):
+            continue
         if raw_trade_id in seen_trade_ids:
             duplicate_count += 1
         seen_trade_ids.add(raw_trade_id)
@@ -1621,7 +2002,7 @@ def _normalize_trade_file(
             side_values_seen.add(side)
         normalized.append(
             {
-                "timestamp_ms": _normalize_timestamp_to_ms(raw_timestamp, unit),
+                "timestamp_ms": timestamp_ms,
                 "pair": classification.pair,
                 "trade_id": raw_trade_id,
                 "price": raw_price,
@@ -1674,7 +2055,47 @@ def _normalize_kline_file(
     silver_root: Path,
     dry_run: bool,
     storage_format: str = "jsonl",
+    window_start_ms: int | None = None,
+    window_end_ms: int | None = None,
+    resume: bool = False,
 ) -> tuple[StrategyLadderSilverIndexEntry | None, int, int, int]:
+    # Patch RESUME-SILVER (2026-05-29) — short-circuit if silver already exists.
+    if (
+        resume
+        and not dry_run
+        and classification.date
+        and len(classification.date) >= 10
+    ):
+        base_output_path = silver_root / classification.exchange / classification.market_type / "ohlcv" / str(classification.timeframe or "unknown") / str(classification.pair or "UNKNOWN") / classification.date[:4] / classification.date[5:7] / f"{classification.date[8:10]}.jsonl"
+        resume_output_path = _resolve_silver_path(base_output_path, storage_format)
+        if _resume_silver_file_eligible(resume_output_path):
+            # Stat-only resume entry — no file read, no hash compute.
+            expected_interval_ms = _CRITICAL_OHLCV_TIMEFRAME_INTERVALS_MS.get(
+                classification.timeframe or ""
+            )
+            entry = StrategyLadderSilverIndexEntry(
+                source_id=classification.source_id,
+                source_root=classification.source_root,
+                exchange=classification.exchange,
+                market_type=classification.market_type,
+                data_type="ohlcv",
+                pair=classification.pair or "UNKNOWN",
+                timeframe=classification.timeframe or "",
+                date=classification.date or "",
+                path=str(resume_output_path.resolve()),
+                storage_format=storage_format,
+                min_timestamp_ms=None,
+                max_timestamp_ms=None,
+                row_count=0,
+                file_hash="",
+                depth_source_status="BOOK_DEPTH_NOT_PROVEN",
+                schema_status="KLINE_SCHEMA_READY",
+                timestamp_unit=classification.timestamp_unit or "ms",
+                expected_interval_ms=expected_interval_ms,
+                missing_candle_count=0,
+                duplicate_candle_count=0,
+            )
+            return entry, 0, 0, 0
     path = Path(classification.path)
     if dry_run:
         date = classification.date or ""
@@ -1729,6 +2150,12 @@ def _normalize_kline_file(
             rows_rejected += 1
             continue
         timestamp_ms = _normalize_timestamp_to_ms(raw_timestamp, unit)
+        if not _timestamp_in_window(
+            timestamp_ms,
+            start_ms=window_start_ms,
+            end_ms=window_end_ms,
+        ):
+            continue
         try:
             open_price = float(str(row.get("open") or "").strip())
             high_price = float(str(row.get("high") or "").strip())
@@ -1814,6 +2241,9 @@ def _normalize_orderbook_file(
     silver_root: Path,
     dry_run: bool,
     storage_format: str = "jsonl",
+    window_start_ms: int | None = None,
+    window_end_ms: int | None = None,
+    resume: bool = False,
 ) -> tuple[
     tuple[StrategyLadderSilverIndexEntry, ...],
     int,
@@ -1825,6 +2255,70 @@ def _normalize_orderbook_file(
     path = Path(classification.path)
     pair = classification.pair or "UNKNOWN"
     date = _orderbook_path_date(path, classification.date or "")
+    # Patch RESUME-SILVER (2026-05-29) — short-circuit only if BOTH snapshot
+    # and delta silver files exist. Orderbook normalize writes both atomically
+    # but sequentially (snapshot then delta), so a crash between writes leaves
+    # snapshot without delta. The "both must exist" rule re-normalizes such
+    # half-done days, overwriting the suspect snapshot.
+    if (
+        resume
+        and not dry_run
+        and date
+        and len(date) >= 10
+        and pair
+        and pair != "UNKNOWN"
+    ):
+        year = date[:4]
+        month = date[5:7]
+        day = date[8:10]
+        resume_base_snapshot_path = silver_root / classification.exchange / classification.market_type / "orderbook_snapshot" / str(pair) / year / month / f"{day}.jsonl"
+        resume_base_delta_path = silver_root / classification.exchange / classification.market_type / "orderbook_delta" / str(pair) / year / month / f"{day}.jsonl"
+        resume_snapshot_path = _resolve_silver_path(resume_base_snapshot_path, storage_format)
+        resume_delta_path = _resolve_silver_path(resume_base_delta_path, storage_format)
+        if (
+            _resume_silver_file_eligible(resume_snapshot_path)
+            and _resume_silver_file_eligible(resume_delta_path)
+        ):
+            # Stat-only resume entries — no file read, no hash compute.
+            resume_entries = (
+                StrategyLadderSilverIndexEntry(
+                    source_id=classification.source_id,
+                    source_root=classification.source_root,
+                    exchange=classification.exchange,
+                    market_type=classification.market_type,
+                    data_type="orderbook_snapshot",
+                    pair=pair,
+                    date=date,
+                    path=str(resume_snapshot_path.resolve()),
+                    storage_format=storage_format,
+                    min_timestamp_ms=None,
+                    max_timestamp_ms=None,
+                    row_count=0,
+                    file_hash="",
+                    depth_source_status="BOOK_DEPTH20_AVAILABLE",
+                    schema_status="ORDERBOOK_SCHEMA_READY",
+                    timestamp_unit="ms",
+                ),
+                StrategyLadderSilverIndexEntry(
+                    source_id=classification.source_id,
+                    source_root=classification.source_root,
+                    exchange=classification.exchange,
+                    market_type=classification.market_type,
+                    data_type="orderbook_delta",
+                    pair=pair,
+                    date=date,
+                    path=str(resume_delta_path.resolve()),
+                    storage_format=storage_format,
+                    min_timestamp_ms=None,
+                    max_timestamp_ms=None,
+                    row_count=0,
+                    file_hash="",
+                    depth_source_status="BOOK_DEPTH20_AVAILABLE",
+                    schema_status="ORDERBOOK_SCHEMA_READY",
+                    timestamp_unit="ms",
+                ),
+            )
+            return resume_entries, 0, 0, 0, (), None
     records, parse_error = _iter_non_empty_jsonl_safe(path)
     if parse_error is not None:
         return (), 0, 0, 0, (parse_error,), None
@@ -1883,6 +2377,12 @@ def _normalize_orderbook_file(
             blocker_codes.append("ORDERBOOK_JSONL_SCHEMA_NOT_RECOGNIZED")
             continue
         timestamp_ms = _normalize_timestamp_to_ms(raw_timestamp, unit)
+        if not _timestamp_in_window(
+            timestamp_ms,
+            start_ms=window_start_ms,
+            end_ms=window_end_ms,
+        ):
+            continue
         cts_raw = row.get("cts") or payload.get("cts")
         cts_ms = (
             _normalize_timestamp_to_ms(cts_raw, unit)
@@ -2010,11 +2510,16 @@ def _normalize_orderbook_file(
                 max_seq=max(delta_seq_values, default=None),
                 row_count=len(delta_rows),
                 file_hash=_sha256_path(delta_path) if delta_rows and not dry_run else "",
-                depth_source_status=(
-                    reconstruction.book_depth_source_status
-                    if not snapshot_rows
-                    else "BOOK_DEPTH_NOT_PROVEN"
-                ),
+                # Patch A2-OPT-2 (2026-05-26) — Propagate the reconstructor's
+                # canonical `book_depth_source_status` to the delta entry as
+                # well. The previous logic forced "BOOK_DEPTH_NOT_PROVEN" on
+                # delta entries when snapshots existed, which downstream gold
+                # compute then picked up via `next()` (often delta-first in the
+                # silver_index iteration order) — causing every gold row to be
+                # marked NOT_PROVEN even though the reconstruction proved
+                # BOOK_DEPTH20_AVAILABLE. Both entries should reflect the same
+                # ground truth from the reconstructor.
+                depth_source_status=reconstruction.book_depth_source_status,
                 schema_status="ORDERBOOK_SCHEMA_READY",
                 timestamp_unit=unit,
             )
@@ -2328,6 +2833,121 @@ def _load_jsonl_rows(path: Path) -> tuple[dict[str, object], ...]:
     return tuple(rows)
 
 
+def _write_gold_feature_build_heartbeat(
+    *,
+    request: StrategyLadderDataFactoryRequest,
+    pair: str,
+    timeframe: str,
+    date: str,
+    rows_seen_in_entry: int,
+    feature_row_count: int,
+    bytes_written: int,
+    microstructure_requested_row_count: int,
+    microstructure_overlay_row_count: int,
+    microstructure_missing_row_count: int,
+    stage_detail: str = "gold_row_build_running",
+    entry_index: int | None = None,
+    entry_count: int | None = None,
+    cache_stats: dict[str, object] | None = None,
+    extra: dict[str, object] | None = None,
+) -> None:
+    report_root = request.input_root
+    payload: dict[str, object] = {
+        "schema_version": "v53.a2_gold_progress_report.v1",
+        "run_id": request.run_id,
+        "status": "A2_RUNNING",
+        "current_stage": "GOLD_FEATURE_BUILD_RUNNING",
+        "stage_detail": stage_detail,
+        "generated_at": datetime.now(tz=UTC).isoformat(),
+        "active_gold_partition": {
+            "pair": pair,
+            "timeframe": timeframe,
+            "date": date,
+            "rows_seen_in_entry": rows_seen_in_entry,
+        },
+        "counters": {
+            "gold_feature_row_count": feature_row_count,
+            "bytes_written": bytes_written,
+            "microstructure_requested_row_count": microstructure_requested_row_count,
+            "microstructure_overlay_row_count": microstructure_overlay_row_count,
+            "microstructure_missing_row_count": microstructure_missing_row_count,
+        },
+    }
+    if entry_index is not None or entry_count is not None:
+        payload["entry_progress"] = {
+            "entry_index": entry_index,
+            "entry_count": entry_count,
+        }
+    if cache_stats is not None:
+        payload["microstructure_cache"] = dict(cache_stats)
+    if extra:
+        payload["detail"] = dict(extra)
+    try:
+        atomic_write_json(
+            report_root / "a2_gold_progress_report.json",
+            payload,
+            indent=2,
+        )
+    except OSError:
+        return
+
+
+def _microstructure_cache_stats_for_heartbeat() -> dict[str, object]:
+    try:
+        return get_microstructure_file_cache_stats()
+    except Exception as exc:  # noqa: BLE001 - progress report must not fail A2.
+        return {
+            "cache_status": "A2_MICROSTRUCTURE_CACHE_STATS_UNAVAILABLE",
+            "error": exc.__class__.__name__,
+        }
+
+
+def _maybe_evict_microstructure_cache_after_gold_entry(
+    *,
+    request: StrategyLadderDataFactoryRequest,
+    pair: str,
+    timeframe: str,
+    date: str,
+    entry_index: int,
+    entry_count: int,
+    feature_row_count: int,
+    bytes_written: int,
+    microstructure_requested_row_count: int,
+    microstructure_overlay_row_count: int,
+    microstructure_missing_row_count: int,
+) -> None:
+    stats = _microstructure_cache_stats_for_heartbeat()
+    try:
+        cached_row_count = int(stats.get("cached_row_count") or 0)
+    except (TypeError, ValueError):
+        cached_row_count = 0
+    if cached_row_count < _A2_MICROSTRUCTURE_CACHE_EVICT_ROW_THRESHOLD:
+        return
+    evicted = evict_microstructure_file_cache()
+    after_stats = _microstructure_cache_stats_for_heartbeat()
+    _write_gold_feature_build_heartbeat(
+        request=request,
+        pair=pair,
+        timeframe=timeframe,
+        date=date,
+        rows_seen_in_entry=0,
+        feature_row_count=feature_row_count,
+        bytes_written=bytes_written,
+        microstructure_requested_row_count=microstructure_requested_row_count,
+        microstructure_overlay_row_count=microstructure_overlay_row_count,
+        microstructure_missing_row_count=microstructure_missing_row_count,
+        stage_detail="microstructure_cache_evicted_after_partition",
+        entry_index=entry_index,
+        entry_count=entry_count,
+        cache_stats=after_stats,
+        extra={
+            "eviction_reason": "A2_MICROSTRUCTURE_CACHE_ROW_THRESHOLD",
+            "eviction_threshold_rows": _A2_MICROSTRUCTURE_CACHE_EVICT_ROW_THRESHOLD,
+            **evicted,
+        },
+    )
+
+
 def _write_gold_features(
     *,
     request: StrategyLadderDataFactoryRequest,
@@ -2337,6 +2957,13 @@ def _write_gold_features(
     feature_paths: list[str] = []
     feature_row_count = 0
     bytes_written = 0
+    microstructure_streaming_batch_count = 0
+    microstructure_streaming_requested_row_count = 0
+    microstructure_streaming_overlay_row_count = 0
+    microstructure_streaming_missing_row_count = 0
+    microstructure_streaming_status_counts: dict[str, int] = {}
+    gold_context_row_count = 0
+    gold_context_rows_suppressed_count = 0
     feature_groups: set[str] = {
         "kline_return_features",
         "kline_trend_features",
@@ -2371,6 +2998,7 @@ def _write_gold_features(
         for timeframe in request.timeframes
         if normalize_timeframe(timeframe)
     }
+    requested_feature_names = _requested_a2_feature_names(request)
     # Patch 2026-05-15 (timeframe propagation audit) — track silver inputs and
     # per-timeframe build outcomes so prunes between silver and gold are never
     # silent. Reasons are emitted as `blocker_codes` and as the per-timeframe
@@ -2446,7 +3074,8 @@ def _write_gold_features(
         kline_feature_status = "KLINE_FEATURE_STATUS_NOT_PROVEN"
         if kline_entries:
             kline_feature_status = "KLINE_FEATURE_STATUS_READY"
-        for entry in kline_entries:
+        entry_count = len(kline_entries)
+        for entry_index, entry in enumerate(kline_entries, start=1):
             if gold_row_limit and feature_row_count >= gold_row_limit:
                 break
             rows = _load_jsonl_rows(Path(entry.path))
@@ -2480,12 +3109,127 @@ def _write_gold_features(
                     end_ms=requested_end_ms,
                     book_entries=entry_book_entries,
                 )
+            context_rows = sorted(rows, key=_gold_row_timestamp_ms)
+            decision_rows, context_row_count = _split_gold_decision_and_context_rows(
+                context_rows,
+                start_ms=requested_start_ms,
+                end_ms=requested_end_ms,
+            )
+            gold_context_row_count += context_row_count
+            gold_context_rows_suppressed_count += context_row_count
+            if not decision_rows:
+                continue
+            if gold_row_limit:
                 remaining_rows = gold_row_limit - feature_row_count
                 if remaining_rows <= 0:
                     break
-                rows = rows[:remaining_rows]
+                decision_rows = decision_rows[:remaining_rows]
+            context_timestamps = tuple(_gold_row_timestamp_ms(item) for item in context_rows)
+            requested_microstructure_feature_count = len(
+                requested_feature_names.intersection(_A2_ENGINE_NATIVE_BRIDGE_FEATURES)
+            )
+            overlay_requested_row_count = (
+                len(decision_rows) if requested_microstructure_feature_count > 0 else 0
+            )
+            _write_gold_feature_build_heartbeat(
+                request=request,
+                pair=pair,
+                timeframe=entry.timeframe or "1m",
+                date=date,
+                rows_seen_in_entry=0,
+                feature_row_count=feature_row_count,
+                bytes_written=bytes_written,
+                microstructure_requested_row_count=(
+                    microstructure_streaming_requested_row_count + overlay_requested_row_count
+                ),
+                microstructure_overlay_row_count=microstructure_streaming_overlay_row_count,
+                microstructure_missing_row_count=microstructure_streaming_missing_row_count,
+                stage_detail=(
+                    "microstructure_overlay_start"
+                    if requested_microstructure_feature_count > 0
+                    else "microstructure_overlay_not_required"
+                ),
+                entry_index=entry_index,
+                entry_count=entry_count,
+                cache_stats=_microstructure_cache_stats_for_heartbeat(),
+            )
+
+            def _gold_overlay_progress(
+                rows_seen: int,
+                overlay_row_count: int,
+                missing_row_count: int,
+            ) -> None:
+                _write_gold_feature_build_heartbeat(
+                    request=request,
+                    pair=pair,
+                    timeframe=entry.timeframe or "1m",
+                    date=date,
+                    rows_seen_in_entry=rows_seen,
+                    feature_row_count=feature_row_count,
+                    bytes_written=bytes_written,
+                    microstructure_requested_row_count=(
+                        microstructure_streaming_requested_row_count
+                        + overlay_requested_row_count
+                    ),
+                    microstructure_overlay_row_count=(
+                        microstructure_streaming_overlay_row_count + overlay_row_count
+                    ),
+                    microstructure_missing_row_count=(
+                        microstructure_streaming_missing_row_count + missing_row_count
+                    ),
+                    stage_detail="microstructure_overlay_running",
+                    entry_index=entry_index,
+                    entry_count=entry_count,
+                )
+
+            microstructure_overlay_by_timestamp, microstructure_batch_stats = (
+                _feature_overlay_batch_from_engine_native_bridge(
+                    requested_feature_names=requested_feature_names,
+                    pair=pair,
+                    timeframe=entry.timeframe or "1m",
+                    rows=list(decision_rows),
+                    entry_trade_entries=entry_trade_entries,
+                    entry_book_entries=entry_book_entries,
+                    progress_callback=_gold_overlay_progress,
+                )
+            )
+            batch_status = str(
+                microstructure_batch_stats.get("batch_status")
+                or "A2_MICROSTRUCTURE_STREAMING_NOT_PROVEN"
+            )
+            microstructure_streaming_status_counts[batch_status] = (
+                microstructure_streaming_status_counts.get(batch_status, 0) + 1
+            )
+            if batch_status != "A2_MICROSTRUCTURE_STREAMING_NOT_REQUIRED":
+                microstructure_streaming_batch_count += 1
+                microstructure_streaming_requested_row_count += int(
+                    microstructure_batch_stats.get("requested_row_count") or 0
+                )
+                microstructure_streaming_overlay_row_count += int(
+                    microstructure_batch_stats.get("overlay_row_count") or 0
+                )
+                microstructure_streaming_missing_row_count += int(
+                    microstructure_batch_stats.get("missing_row_count") or 0
+                )
+            _write_gold_feature_build_heartbeat(
+                request=request,
+                pair=pair,
+                timeframe=entry.timeframe or "1m",
+                date=date,
+                rows_seen_in_entry=len(decision_rows),
+                feature_row_count=feature_row_count,
+                bytes_written=bytes_written,
+                microstructure_requested_row_count=microstructure_streaming_requested_row_count,
+                microstructure_overlay_row_count=microstructure_streaming_overlay_row_count,
+                microstructure_missing_row_count=microstructure_streaming_missing_row_count,
+                stage_detail="microstructure_overlay_complete",
+                entry_index=entry_index,
+                entry_count=entry_count,
+                cache_stats=_microstructure_cache_stats_for_heartbeat(),
+                extra={"batch_status": batch_status},
+            )
             trade_count = sum(item.row_count for item in entry_trade_entries)
-            for index, row in enumerate(rows, start=1):
+            for index, row in enumerate(decision_rows, start=1):
                 timestamp_ms = int(row.get("timestamp_ms") or 0)
                 open_price = float(row.get("open") or 0.0)
                 close_price = float(row.get("close") or 0.0)
@@ -2521,7 +3265,8 @@ def _write_gold_features(
                     row_candidate_data_source_label = "TRADE_KLINE_DISCOVERY"
                 elif "klines" in row_feature_sources_used:
                     row_candidate_data_source_label = "KLINE_ONLY_DISCOVERY"
-                trailing_rows = rows[max(0, index - 20) : index]
+                trailing_end_index = bisect_right(context_timestamps, timestamp_ms)
+                trailing_rows = context_rows[max(0, trailing_end_index - 20) : trailing_end_index]
                 trailing_mean_volume = (
                     sum(float(item.get("volume") or 0.0) for item in trailing_rows)
                     / max(len(trailing_rows), 1)
@@ -2553,6 +3298,37 @@ def _write_gold_features(
                     )
                     spread_bps = 4.0 if book_status == "BOOK_DEPTH20_AVAILABLE" else 6.0 if book_status == "BOOK_LIMITED_DEPTH_AVAILABLE" else 0.0
 
+                snapshot_book_entry = next(
+                    (
+                        item
+                        for item in row_book_entries
+                        if item.data_type in {"orderbook_snapshot", "orderbook"}
+                        and item.path
+                    ),
+                    None,
+                )
+                delta_book_entry = next(
+                    (
+                        item
+                        for item in row_book_entries
+                        if item.data_type == "orderbook_delta" and item.path
+                    ),
+                    None,
+                )
+                snapshot_book_path = _entry_path(snapshot_book_entry)
+                delta_book_path = _entry_path(delta_book_entry)
+                raw_trade_path = _entry_path(entry_trade_entries[0]) if entry_trade_entries else None
+                silver_exchange_for_call = (
+                    getattr(snapshot_book_entry, "exchange", "") or ""
+                    if snapshot_book_entry is not None
+                    else ""
+                )
+                silver_market_type_for_call = (
+                    getattr(snapshot_book_entry, "market_type", "spot") or "spot"
+                    if snapshot_book_entry is not None
+                    else "spot"
+                )
+
                 # Audit 2026-05-07 (P0 CE/cost provenance) — quand le flag est
                 # actif, on remplace les constantes hardcodees par les valeurs
                 # mesurees via compute_economic_provenance. Le module mesure
@@ -2574,32 +3350,6 @@ def _write_gold_features(
                 # ecrase par prov.slippage_provenance (cf. bloc plus bas).
                 economic_slippage_provenance = "DEFAULT_TO_CALIBRATE"
                 if getattr(request, "use_measured_economic_provenance", False):
-                    snapshot_book_path: Path | None = None
-                    # Audit 2026-05-14 W1 fix : extraire venue/market_type depuis
-                    # silver_index canonique (StrategyLadderSilverIndexEntry.exchange
-                    # mandatory) et les passer a compute_economic_provenance pour
-                    # eviter DEGRADED_FALLBACK_UNKNOWN_VENUE sur les raw_windows
-                    # B2 ou l'auto-detect path echoue silencieusement (path
-                    # `...\raw_windows\{pair}\{candidate_id}\orderbook_snapshot.jsonl`
-                    # ne contient pas le segment `silver/{venue}/spot/...`).
-                    silver_exchange_for_call: str = ""
-                    silver_market_type_for_call: str = "spot"
-                    for be in row_book_entries:
-                        be_dt = getattr(be, "data_type", "")
-                        if be_dt in {"orderbook_snapshot", "orderbook"} and be.path:
-                            snapshot_book_path = Path(be.path)
-                            silver_exchange_for_call = (
-                                getattr(be, "exchange", "") or ""
-                            )
-                            silver_market_type_for_call = (
-                                getattr(be, "market_type", "spot") or "spot"
-                            )
-                            break
-                    raw_trade_path: Path | None = (
-                        Path(entry_trade_entries[0].path)
-                        if entry_trade_entries and entry_trade_entries[0].path
-                        else None
-                    )
                     prov = compute_economic_provenance(
                         timestamp_ms=timestamp_ms,
                         book_status=book_status,
@@ -2672,6 +3422,17 @@ def _write_gold_features(
                       "break_even_bps": break_even_bps,
                       "session_tags": _session_tag(timestamp_ms),
                   }
+                if "spread_bps" in requested_feature_names:
+                    feature_values["spread_bps"] = economic_spread_bps
+                if "slippage_bps" in requested_feature_names:
+                    feature_values["slippage_bps"] = economic_slippage_bps
+                if "latency_penalty_bps" in requested_feature_names:
+                    feature_values["latency_penalty_bps"] = economic_latency_penalty_bps
+                if "book_depth_levels" in requested_feature_names and depth_levels is not None:
+                    feature_values["book_depth_levels"] = depth_levels
+                feature_values.update(
+                    microstructure_overlay_by_timestamp.get(timestamp_ms, {})
+                )
 
                 feature_row = StrategyLadderFeatureRow.model_validate(
                       {
@@ -2685,10 +3446,20 @@ def _write_gold_features(
                           "method_version_hash": "strategy_ladder.gold.v1",
                         "source_ref": str(output_path.resolve()),
                         "available_at_timestamp_ms": timestamp_ms,
+                        "feature_truth_boundary_status": (
+                            "FEATURE_EX_ANTE_AVAILABLE_AT_DECISION"
+                        ),
+                        "feature_usage_policy": (
+                            "A2_GOLD_EX_ANTE_FEATURES_ONLY_NOT_EXECUTION_TRUTH"
+                        ),
+                        "cost_feature_truth_status": _a2_cost_feature_truth_status(
+                            spread_provenance=economic_spread_provenance,
+                            slippage_provenance=economic_slippage_provenance,
+                        ),
                         "close_price": close_price,
-                        "raw_score": 0.5 + (index / max(len(rows), 1)) * 0.1,
-                        "penalized_score": 0.5 + (index / max(len(rows), 1)) * 0.1,
-                        "final_score": 0.5 + (index / max(len(rows), 1)) * 0.1,
+                        "raw_score": 0.5 + (index / max(len(decision_rows), 1)) * 0.1,
+                        "penalized_score": 0.5 + (index / max(len(decision_rows), 1)) * 0.1,
+                        "final_score": 0.5 + (index / max(len(decision_rows), 1)) * 0.1,
                         "expected_edge_bps": economic_expected_edge_bps,
                         "expected_edge_provenance": economic_expected_edge_provenance,
                         "economic_provenance": economic_provenance,
@@ -2728,8 +3499,34 @@ def _write_gold_features(
                               "FRAGILITY_FALSE_BREAKOUT_DISCOVERY_GRADE",
                           ),
                       }
-                  )
+                )
                 feature_rows.append(feature_row.model_dump(mode="json"))
+                if (
+                    index == 1
+                    or index % _A2_GOLD_HEARTBEAT_ROW_INTERVAL == 0
+                    or index == len(decision_rows)
+                ):
+                    _write_gold_feature_build_heartbeat(
+                        request=request,
+                        pair=pair,
+                        timeframe=entry.timeframe or "1m",
+                        date=date,
+                        rows_seen_in_entry=index,
+                        feature_row_count=feature_row_count + len(feature_rows),
+                        bytes_written=bytes_written,
+                        microstructure_requested_row_count=(
+                            microstructure_streaming_requested_row_count
+                        ),
+                        microstructure_overlay_row_count=(
+                            microstructure_streaming_overlay_row_count
+                        ),
+                        microstructure_missing_row_count=(
+                            microstructure_streaming_missing_row_count
+                        ),
+                        stage_detail="gold_row_build_running",
+                        entry_index=entry_index,
+                        entry_count=entry_count,
+                    )
             if feature_rows:
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 existing_size = output_path.stat().st_size if output_path.exists() else 0
@@ -2749,6 +3546,47 @@ def _write_gold_features(
                 per_timeframe_row_count[tf_normalized_written] = (
                     per_timeframe_row_count.get(tf_normalized_written, 0)
                     + len(feature_rows)
+                )
+                _write_gold_feature_build_heartbeat(
+                    request=request,
+                    pair=pair,
+                    timeframe=entry.timeframe or "1m",
+                    date=date,
+                    rows_seen_in_entry=len(decision_rows),
+                    feature_row_count=feature_row_count,
+                    bytes_written=bytes_written,
+                    microstructure_requested_row_count=(
+                        microstructure_streaming_requested_row_count
+                    ),
+                    microstructure_overlay_row_count=(
+                        microstructure_streaming_overlay_row_count
+                    ),
+                    microstructure_missing_row_count=(
+                        microstructure_streaming_missing_row_count
+                    ),
+                    stage_detail="gold_partition_written",
+                    entry_index=entry_index,
+                    entry_count=entry_count,
+                    cache_stats=_microstructure_cache_stats_for_heartbeat(),
+                )
+                _maybe_evict_microstructure_cache_after_gold_entry(
+                    request=request,
+                    pair=pair,
+                    timeframe=entry.timeframe or "1m",
+                    date=date,
+                    entry_index=entry_index,
+                    entry_count=entry_count,
+                    feature_row_count=feature_row_count,
+                    bytes_written=bytes_written,
+                    microstructure_requested_row_count=(
+                        microstructure_streaming_requested_row_count
+                    ),
+                    microstructure_overlay_row_count=(
+                        microstructure_streaming_overlay_row_count
+                    ),
+                    microstructure_missing_row_count=(
+                        microstructure_streaming_missing_row_count
+                    ),
                 )
     # Patch 2026-05-15 (timeframe propagation audit) — classify every silver
     # and requested timeframe and emit an explicit reason code for any that
@@ -2784,6 +3622,28 @@ def _write_gold_features(
         blocker_set.add("GOLD_FEATURE_STORE_NOT_READY")
     blocker_codes = tuple(sorted(blocker_set))
     status = "FEATURE_STORE_READY" if feature_row_count > 0 else "GOLD_FEATURE_STORE_NOT_READY"
+    if microstructure_streaming_batch_count <= 0:
+        microstructure_streaming_status = "A2_MICROSTRUCTURE_STREAMING_NOT_REQUIRED"
+    elif microstructure_streaming_overlay_row_count > 0:
+        microstructure_streaming_status = "A2_MICROSTRUCTURE_STREAMING_READY"
+    elif any(
+        status_key == "A2_MICROSTRUCTURE_STREAMING_NO_SOURCE"
+        for status_key in microstructure_streaming_status_counts
+    ):
+        microstructure_streaming_status = "A2_MICROSTRUCTURE_STREAMING_NO_SOURCE"
+    else:
+        microstructure_streaming_status = "A2_MICROSTRUCTURE_STREAMING_NO_VALUES"
+    gold_decision_window_status = (
+        "GOLD_DECISION_WINDOW_FILTER_READY"
+        if requested_start_ms is not None or requested_end_ms is not None
+        else "GOLD_DECISION_WINDOW_FILTER_NOT_REQUIRED"
+    )
+    if microstructure_streaming_status == "A2_MICROSTRUCTURE_STREAMING_READY":
+        feature_equivalence_status = "A2_FEATURE_EQUIVALENCE_READY"
+    elif microstructure_streaming_status == "A2_MICROSTRUCTURE_STREAMING_NOT_REQUIRED":
+        feature_equivalence_status = "A2_FEATURE_EQUIVALENCE_NOT_REQUIRED"
+    else:
+        feature_equivalence_status = "A2_FEATURE_EQUIVALENCE_PARTIAL"
     manifest = StrategyLadderGoldFeatureManifest(
         gold_feature_store_status=status,
         feature_paths=tuple(feature_paths),
@@ -2799,6 +3659,21 @@ def _write_gold_features(
         timeframes_pruned=timeframes_pruned,
         pruning_reason_by_timeframe=dict(pruning_reason_by_timeframe),
         timeframe_feature_row_count=dict(per_timeframe_row_count),
+        gold_decision_window_status=gold_decision_window_status,
+        gold_context_row_count=gold_context_row_count,
+        gold_context_rows_suppressed_count=gold_context_rows_suppressed_count,
+        microstructure_cache_used=microstructure_streaming_batch_count > 0,
+        feature_equivalence_status=feature_equivalence_status,
+        microstructure_streaming_status=microstructure_streaming_status,
+        microstructure_streaming_batch_count=microstructure_streaming_batch_count,
+        microstructure_streaming_requested_row_count=(
+            microstructure_streaming_requested_row_count
+        ),
+        microstructure_streaming_overlay_row_count=microstructure_streaming_overlay_row_count,
+        microstructure_streaming_missing_row_count=microstructure_streaming_missing_row_count,
+        microstructure_streaming_status_counts=dict(
+            sorted(microstructure_streaming_status_counts.items())
+        ),
         blocker_codes=blocker_codes,
     )
     return finalize_hashed_model(manifest)
@@ -2809,6 +3684,357 @@ def _write_report(path: Path, payload: BaseException | dict[str, object] | objec
         atomic_write_json(path, payload.model_dump(mode="json"), indent=2)
     else:
         atomic_write_json(path, payload, indent=2)
+
+
+def _stage_elapsed_s(started_at: float) -> float:
+    return round(max(perf_counter() - started_at, 0.0), 6)
+
+
+def _progress_counter_payload(
+    *,
+    files_seen: int = 0,
+    files_processed: int = 0,
+    files_skipped: int = 0,
+    files_skipped_by_date_filter: int = 0,
+    rows_processed: int = 0,
+    rows_rejected: int = 0,
+    bytes_read: int = 0,
+    bytes_written: int = 0,
+    silver_entry_count: int = 0,
+    gold_feature_row_count: int = 0,
+) -> dict[str, object]:
+    return {
+        "files_seen": files_seen,
+        "files_processed": files_processed,
+        "files_skipped": files_skipped,
+        "files_skipped_by_date_filter": files_skipped_by_date_filter,
+        "rows_processed": rows_processed,
+        "rows_rejected": rows_rejected,
+        "bytes_read": bytes_read,
+        "bytes_written": bytes_written,
+        "silver_entry_count": silver_entry_count,
+        "gold_feature_row_count": gold_feature_row_count,
+    }
+
+
+def _write_a2_progress_report(
+    report_root: Path,
+    *,
+    run_id: str,
+    status: str,
+    current_stage: str,
+    normalized_start: str,
+    normalized_end: str,
+    effective_start_text: str,
+    requested_pairs: tuple[str, ...],
+    requested_timeframes: tuple[str, ...],
+    requested_feature_names: tuple[str, ...],
+    stage_timings_s: dict[str, float],
+    counters: dict[str, object],
+    blocker_codes: tuple[str, ...] = (),
+    extra: dict[str, object] | None = None,
+) -> None:
+    payload: dict[str, object] = {
+        "schema_version": "v53.a2_gold_progress_report.v1",
+        "run_id": run_id,
+        "status": status,
+        "current_stage": current_stage,
+        "generated_at": datetime.now(tz=UTC).isoformat(),
+        "window": {
+            "requested_start": normalized_start,
+            "requested_end": normalized_end,
+            "effective_context_start": effective_start_text,
+            "replay_context_lookback_ms": _REPLAY_CONTEXT_LOOKBACK_MS,
+            "context_policy": "REQUESTED_START_MINUS_1H_ROW_FILTERED",
+        },
+        "request": {
+            "pairs": requested_pairs,
+            "timeframes": requested_timeframes,
+            "feature_names": requested_feature_names,
+        },
+        "stage_timings_s": dict(stage_timings_s),
+        "counters": dict(counters),
+        "blocker_codes": blocker_codes,
+    }
+    if extra:
+        payload.update(extra)
+    _write_report(report_root / "a2_gold_progress_report.json", payload)
+
+
+def _build_a2_microstructure_cache_manifest(
+    *,
+    request: StrategyLadderDataFactoryRequest,
+    requested_microstructure_features: tuple[str, ...],
+    cache_stats: dict[str, object],
+    cache_manifest_ref: str,
+) -> dict[str, object]:
+    hit_count = int(
+        cache_stats.get("file_cache_hit_count")
+        or cache_stats.get("hit_count")
+        or 0
+    )
+    miss_count = int(
+        cache_stats.get("file_cache_miss_count")
+        or cache_stats.get("miss_count")
+        or 0
+    )
+    cached_path_count = int(
+        cache_stats.get("cached_path_count")
+        or cache_stats.get("cached_file_count")
+        or 0
+    )
+    cache_requested = bool(requested_microstructure_features)
+    if not cache_requested:
+        cache_status = "A2_MICROSTRUCTURE_FILE_CACHE_NOT_REQUIRED"
+    elif request.dry_run:
+        cache_status = "A2_MICROSTRUCTURE_FILE_CACHE_NOT_EXERCISED_DRY_RUN"
+    elif cached_path_count > 0 or miss_count > 0 or hit_count > 0:
+        cache_status = "A2_MICROSTRUCTURE_FILE_CACHE_READY"
+    else:
+        cache_status = "A2_MICROSTRUCTURE_FILE_CACHE_UNUSED_NO_PATHS"
+    return {
+        "schema_version": "v53.a2_microstructure_cache_manifest.v1",
+        "run_id": request.run_id,
+        "generated_at": datetime.now(tz=UTC).isoformat(),
+        "cache_status": cache_status,
+        "cache_manifest_ref": cache_manifest_ref,
+        "requested_features": tuple(request.feature_names),
+        "requested_microstructure_features": requested_microstructure_features,
+        "cache_requested": cache_requested,
+        "cache_policy": {
+            "scope": "A2_IN_MEMORY_PER_PROCESS_FILE_CACHE",
+            "source_signature": "RESOLVED_PATH_MTIME_NS_SIZE",
+            "decision_policy": "REPORTING_AND_IO_OPTIMIZATION_ONLY",
+            "trading_decisions_modified": False,
+            "proxy_promoted_to_truth": False,
+        },
+        "stats": dict(cache_stats),
+    }
+
+
+def _build_a2_feature_equivalence_report(
+    *,
+    request: StrategyLadderDataFactoryRequest,
+    gold_manifest: StrategyLadderGoldFeatureManifest,
+) -> dict[str, object]:
+    streaming_used = (
+        gold_manifest.microstructure_streaming_status
+        == "A2_MICROSTRUCTURE_STREAMING_READY"
+    )
+    if streaming_used:
+        status = "A2_FEATURE_EQUIVALENCE_READY"
+        equivalence_status = "CANONICAL_CALCULATORS_REUSED_NO_NUMERIC_CHANGE"
+    elif gold_manifest.microstructure_streaming_status == (
+        "A2_MICROSTRUCTURE_STREAMING_NOT_REQUIRED"
+    ):
+        status = "A2_FEATURE_EQUIVALENCE_NOT_REQUIRED"
+        equivalence_status = "MICROSTRUCTURE_FEATURES_NOT_REQUESTED"
+    else:
+        status = "A2_FEATURE_EQUIVALENCE_PARTIAL"
+        equivalence_status = "INSUFFICIENT_MICROSTRUCTURE_VALUES_FOR_EQUIVALENCE"
+    return {
+        "schema_version": "v53.a2_feature_equivalence_report.v1",
+        "run_id": request.run_id,
+        "generated_at": datetime.now(tz=UTC).isoformat(),
+        "status": status,
+        "equivalence_status": equivalence_status,
+        "builder_mode": "REQUESTED_ONLY_CANONICAL_CALCULATOR_BATCH",
+        "trading_decisions_modified": False,
+        "proxy_promoted_to_truth": False,
+        "post_decision_features_used": False,
+        "requested_features": tuple(request.feature_names),
+        "gold_decision_window": {
+            "status": gold_manifest.gold_decision_window_status,
+            "context_row_count": gold_manifest.gold_context_row_count,
+            "context_rows_suppressed_count": (
+                gold_manifest.gold_context_rows_suppressed_count
+            ),
+        },
+        "microstructure_streaming": {
+            "status": gold_manifest.microstructure_streaming_status,
+            "batch_count": gold_manifest.microstructure_streaming_batch_count,
+            "requested_row_count": (
+                gold_manifest.microstructure_streaming_requested_row_count
+            ),
+            "overlay_row_count": gold_manifest.microstructure_streaming_overlay_row_count,
+            "missing_row_count": gold_manifest.microstructure_streaming_missing_row_count,
+            "status_counts": dict(gold_manifest.microstructure_streaming_status_counts),
+        },
+        "notes": (
+            "Layer 3 computes only requested ex-ante microstructure features.",
+            "The same canonical data_backbone calculators are reused.",
+            "No Engine A/B/C/D thresholds or decisions are changed.",
+        ),
+    }
+
+
+def _build_a2_microstructure_performance_report(
+    *,
+    request: StrategyLadderDataFactoryRequest,
+    normalized_start: str,
+    normalized_end: str,
+    effective_start_text: str,
+    stage_timings_s: dict[str, float],
+    silver_index: tuple[StrategyLadderSilverIndexEntry, ...],
+    gold_manifest: StrategyLadderGoldFeatureManifest,
+    files_seen: int,
+    files_processed: int,
+    files_skipped: int,
+    files_skipped_by_date_filter: int,
+    rows_processed: int,
+    rows_rejected: int,
+    bytes_read: int,
+    bytes_written: int,
+    blocker_codes: tuple[str, ...],
+    microstructure_cache_manifest: dict[str, object],
+) -> dict[str, object]:
+    silver_entry_count_by_type: dict[str, int] = {}
+    silver_row_count_by_type: dict[str, int] = {}
+    silver_timeframes = sorted(
+        {
+            normalize_timeframe(entry.timeframe or "")
+            for entry in silver_index
+            if entry.data_type == "ohlcv" and normalize_timeframe(entry.timeframe or "")
+        }
+    )
+    for entry in silver_index:
+        data_type = entry.data_type or "unknown"
+        silver_entry_count_by_type[data_type] = silver_entry_count_by_type.get(data_type, 0) + 1
+        silver_row_count_by_type[data_type] = (
+            silver_row_count_by_type.get(data_type, 0) + int(entry.row_count or 0)
+        )
+    requested_timeframes = tuple(
+        normalize_timeframe(timeframe) or timeframe for timeframe in request.timeframes
+    )
+    unexpected_timeframes = tuple(
+        timeframe for timeframe in silver_timeframes if timeframe not in requested_timeframes
+    )
+    cache_stats = microstructure_cache_manifest.get("stats")
+    if not isinstance(cache_stats, dict):
+        cache_stats = {}
+    cache_hit_count = int(
+        cache_stats.get("file_cache_hit_count")
+        or cache_stats.get("hit_count")
+        or 0
+    )
+    cache_miss_count = int(
+        cache_stats.get("file_cache_miss_count")
+        or cache_stats.get("miss_count")
+        or 0
+    )
+    cache_status = str(
+        microstructure_cache_manifest.get("cache_status")
+        or "A2_MICROSTRUCTURE_FILE_CACHE_NOT_REQUIRED"
+    )
+    if cache_status == "A2_MICROSTRUCTURE_FILE_CACHE_READY":
+        repeated_raw_scan_status = "FILE_CACHE_ACTIVE"
+    elif cache_status == "A2_MICROSTRUCTURE_FILE_CACHE_NOT_REQUIRED":
+        repeated_raw_scan_status = "NOT_REQUIRED"
+    else:
+        repeated_raw_scan_status = "FILE_CACHE_NOT_EXERCISED"
+    return {
+        "schema_version": "v53.a2_microstructure_performance_report.v1",
+        "run_id": request.run_id,
+        "generated_at": datetime.now(tz=UTC).isoformat(),
+        "status": "A2_PERFORMANCE_REPORT_READY",
+        "window": {
+            "requested_start": normalized_start,
+            "requested_end": normalized_end,
+            "effective_context_start": effective_start_text,
+            "replay_context_lookback_ms": _REPLAY_CONTEXT_LOOKBACK_MS,
+            "context_policy": "REQUESTED_START_MINUS_1H_ROW_FILTERED",
+        },
+        "request": {
+            "pairs": request.pairs,
+            "timeframes": request.timeframes,
+            "feature_names": request.feature_names,
+            "data_types": request.data_types,
+            "storage_format": request.storage_format,
+            "dry_run": request.dry_run,
+            "small_scope": request.small_scope,
+        },
+        "stage_timings_s": dict(stage_timings_s),
+        "counters": _progress_counter_payload(
+            files_seen=files_seen,
+            files_processed=files_processed,
+            files_skipped=files_skipped,
+            files_skipped_by_date_filter=files_skipped_by_date_filter,
+            rows_processed=rows_processed,
+            rows_rejected=rows_rejected,
+            bytes_read=bytes_read,
+            bytes_written=bytes_written,
+            silver_entry_count=len(silver_index),
+            gold_feature_row_count=gold_manifest.feature_row_count,
+        ),
+        "silver": {
+            "entry_count_by_type": silver_entry_count_by_type,
+            "row_count_by_type": silver_row_count_by_type,
+            "timeframes_detected": tuple(silver_timeframes),
+            "unexpected_timeframes": unexpected_timeframes,
+            "timeframe_pruning_status": (
+                "SILVER_TIMEFRAME_PRUNING_READY"
+                if not unexpected_timeframes
+                else "SILVER_TIMEFRAME_PRUNING_VIOLATION"
+            ),
+        },
+        "gold": {
+            "feature_row_count": gold_manifest.feature_row_count,
+            "timeframes_generated": gold_manifest.gold_timeframes_generated,
+            "timeframe_feature_row_count": gold_manifest.timeframe_feature_row_count,
+            "feature_paths": gold_manifest.feature_paths,
+            "decision_window_status": gold_manifest.gold_decision_window_status,
+            "context_row_count": gold_manifest.gold_context_row_count,
+            "context_rows_suppressed_count": (
+                gold_manifest.gold_context_rows_suppressed_count
+            ),
+            "microstructure_cache_used": gold_manifest.microstructure_cache_used,
+            "feature_equivalence_status": gold_manifest.feature_equivalence_status,
+            "microstructure_streaming_status": gold_manifest.microstructure_streaming_status,
+            "microstructure_streaming_batch_count": (
+                gold_manifest.microstructure_streaming_batch_count
+            ),
+            "microstructure_streaming_overlay_row_count": (
+                gold_manifest.microstructure_streaming_overlay_row_count
+            ),
+        },
+        "microstructure": {
+            "cache_status": cache_status,
+            "cache_manifest_ref": microstructure_cache_manifest.get("cache_manifest_ref", ""),
+            "streaming_status": gold_manifest.microstructure_streaming_status,
+            "streaming_batch_count": gold_manifest.microstructure_streaming_batch_count,
+            "streaming_requested_row_count": (
+                gold_manifest.microstructure_streaming_requested_row_count
+            ),
+            "streaming_overlay_row_count": (
+                gold_manifest.microstructure_streaming_overlay_row_count
+            ),
+            "streaming_missing_row_count": (
+                gold_manifest.microstructure_streaming_missing_row_count
+            ),
+            "streaming_status_counts": dict(
+                gold_manifest.microstructure_streaming_status_counts
+            ),
+            "file_cache_hit_count": cache_hit_count,
+            "file_cache_miss_count": cache_miss_count,
+            "cached_path_count": int(
+                cache_stats.get("cached_path_count")
+                or cache_stats.get("cached_file_count")
+                or 0
+            ),
+            "cached_row_count": int(cache_stats.get("cached_row_count") or 0),
+            "time_index_hit_count": int(cache_stats.get("time_index_hit_count") or 0),
+            "time_index_miss_count": int(cache_stats.get("time_index_miss_count") or 0),
+            "time_indexed_path_count": int(
+                cache_stats.get("time_indexed_path_count") or 0
+            ),
+            "time_indexed_row_count": int(cache_stats.get("time_indexed_row_count") or 0),
+            "rows_loaded": int(cache_stats.get("rows_loaded") or 0),
+            "bytes_loaded": int(cache_stats.get("bytes_loaded") or 0),
+            "row_level_context_filter_status": "ROW_LEVEL_CONTEXT_FILTER_READY",
+            "repeated_raw_scan_status": repeated_raw_scan_status,
+        },
+        "blocker_codes": blocker_codes,
+    }
 
 
 def _write_generated_raw_source_manifest(
@@ -2835,11 +4061,15 @@ def run_strategy_ladder_data_factory(
     report_root.mkdir(parents=True, exist_ok=True)
     request.silver_root.mkdir(parents=True, exist_ok=True)
     request.gold_root.mkdir(parents=True, exist_ok=True)
+    run_started_at = perf_counter()
+    stage_timings_s: dict[str, float] = {}
+    stage_started_at = perf_counter()
     source_report = resolve_strategy_ladder_raw_sources(
         raw_roots=request.raw_roots,
         raw_source_manifest_path=request.raw_source_manifest_path,
         dry_run=request.dry_run,
     )
+    stage_timings_s["raw_source_resolution"] = _stage_elapsed_s(stage_started_at)
     normalized_start = _normalize_boundary_text(request.start)
     normalized_end = _normalize_boundary_text(request.end)
     start_ms = parse_time_boundary_to_ms(normalized_start)
@@ -2857,6 +4087,26 @@ def run_strategy_ladder_data_factory(
     )
     requested_pairs = {pair.upper() for pair in request.pairs}
     requested_types = {item.lower() for item in request.data_types}
+    requested_timeframes = {
+        normalize_timeframe(timeframe)
+        for timeframe in request.timeframes
+        if normalize_timeframe(timeframe)
+    }
+    _write_a2_progress_report(
+        report_root,
+        run_id=request.run_id,
+        status="A2_RUNNING",
+        current_stage="RAW_SOURCE_RESOLUTION_COMPLETE",
+        normalized_start=normalized_start,
+        normalized_end=normalized_end,
+        effective_start_text=effective_start_text,
+        requested_pairs=request.pairs,
+        requested_timeframes=request.timeframes,
+        requested_feature_names=request.feature_names,
+        stage_timings_s=stage_timings_s,
+        counters=_progress_counter_payload(),
+        blocker_codes=tuple(source_report.blocker_codes),
+    )
     metadata_cache_result = load_historical_metadata_cache(
         request.historical_metadata_root,
         requested_pairs=request.pairs,
@@ -2894,6 +4144,7 @@ def run_strategy_ladder_data_factory(
     orderbook_gap_diagnostics: list[dict[str, object]] = []
     dry_run_probe_keys: set[tuple[str, str, str]] = set()
     candidate_files: list[tuple[StrategyLadderRawSource, Path]] = []
+    stage_started_at = perf_counter()
     for source in source_report.sources:
         if source.status != "RAW_SOURCE_READY":
             continue
@@ -2918,6 +4169,12 @@ def run_strategy_ladder_data_factory(
                     continue
                 if not probed_date:
                     files_with_unparsed_date += 1
+            if requested_timeframes and _coarse_data_type_hint(path) == "klines":
+                _, coarse_timeframe, _ = _infer_pair_and_date(path)
+                mapped_timeframe = normalize_timeframe(_map_timeframe(coarse_timeframe))
+                if mapped_timeframe and mapped_timeframe not in requested_timeframes:
+                    files_skipped += 1
+                    continue
             if request.dry_run and not request.start and not request.end:
                 coarse_pair, coarse_timeframe, _ = _infer_pair_and_date(path)
                 probe_key = (
@@ -2929,6 +4186,27 @@ def run_strategy_ladder_data_factory(
                     files_skipped += 1
                     continue
             candidate_files.append((source, path))
+    stage_timings_s["candidate_file_scan"] = _stage_elapsed_s(stage_started_at)
+    _write_a2_progress_report(
+        report_root,
+        run_id=request.run_id,
+        status="A2_RUNNING",
+        current_stage="CANDIDATE_FILE_SCAN_COMPLETE",
+        normalized_start=normalized_start,
+        normalized_end=normalized_end,
+        effective_start_text=effective_start_text,
+        requested_pairs=request.pairs,
+        requested_timeframes=request.timeframes,
+        requested_feature_names=request.feature_names,
+        stage_timings_s=stage_timings_s,
+        counters=_progress_counter_payload(
+            files_seen=files_seen,
+            files_skipped=files_skipped,
+            files_skipped_by_date_filter=files_skipped_by_date_filter,
+        ),
+        blocker_codes=tuple(blocker_codes),
+        extra={"candidate_file_count": len(candidate_files)},
+    )
 
     from local_replay_runtime.storage_budget_report import (
         build_storage_budget_report,
@@ -2948,6 +4226,7 @@ def run_strategy_ladder_data_factory(
     ):
         effective_storage_format = "jsonl-gz"
         storage_auto_compressed = True
+    stage_started_at = perf_counter()
     preflight_storage_budget_report = build_storage_budget_report(
         run_id=request.run_id,
         output_root=report_root,
@@ -2960,6 +4239,30 @@ def run_strategy_ladder_data_factory(
             or request.debug_storage_override
         ),
         broad_scope=request.allow_broad_run and not request.small_scope,
+    )
+    stage_timings_s["storage_budget_preflight"] = _stage_elapsed_s(stage_started_at)
+    _write_a2_progress_report(
+        report_root,
+        run_id=request.run_id,
+        status="A2_RUNNING",
+        current_stage="STORAGE_BUDGET_PREFLIGHT_COMPLETE",
+        normalized_start=normalized_start,
+        normalized_end=normalized_end,
+        effective_start_text=effective_start_text,
+        requested_pairs=request.pairs,
+        requested_timeframes=request.timeframes,
+        requested_feature_names=request.feature_names,
+        stage_timings_s=stage_timings_s,
+        counters=_progress_counter_payload(
+            files_seen=files_seen,
+            files_skipped=files_skipped,
+            files_skipped_by_date_filter=files_skipped_by_date_filter,
+        ),
+        blocker_codes=tuple(blocker_codes),
+        extra={
+            "storage_budget_status": preflight_storage_budget_report.storage_budget_status,
+            "candidate_file_count": len(candidate_files),
+        },
     )
     raw_scan_budget_status = "DRY_RUN_SCOPE_READY"
     raw_scan_budget_reason_codes: list[str] = []
@@ -2986,12 +4289,20 @@ def run_strategy_ladder_data_factory(
             [raw_scan_budget_status, *raw_scan_budget_reason_codes]
         )
 
+    stage_started_at = perf_counter()
     for source, path in candidate_files:
         if scope_guard_blocked:
             break
         classification = classify_raw_file(source=source, path=path)
         pair = classification.pair or ""
         source_kind = _source_kind_from_data_type(classification.data_type)
+        if (
+            classification.data_type == "klines"
+            and requested_timeframes
+            and normalize_timeframe(classification.timeframe or "") not in requested_timeframes
+        ):
+            files_skipped += 1
+            continue
         if source_kind in source_pair_map and pair and pair != "UNKNOWN":
             source_pair_map[source_kind].add(pair)
             if not pair_inference_sources[source_kind]:
@@ -3045,6 +4356,9 @@ def run_strategy_ladder_data_factory(
                 silver_root=request.silver_root,
                 dry_run=request.dry_run,
                 storage_format=effective_storage_format,
+                window_start_ms=effective_start_ms,
+                window_end_ms=end_ms,
+                resume=request.resume,
             )
             trade_statuses.append(
                 entry.schema_status if entry is not None else "TRADE_SCHEMA_NOT_PROVEN"
@@ -3055,6 +4369,9 @@ def run_strategy_ladder_data_factory(
                 silver_root=request.silver_root,
                 dry_run=request.dry_run,
                 storage_format=effective_storage_format,
+                window_start_ms=effective_start_ms,
+                window_end_ms=end_ms,
+                resume=request.resume,
             )
             kline_statuses.append(
                 entry.schema_status if entry is not None else "KLINE_SCHEMA_NOT_PROVEN"
@@ -3072,6 +4389,9 @@ def run_strategy_ladder_data_factory(
                 silver_root=request.silver_root,
                 dry_run=request.dry_run,
                 storage_format=effective_storage_format,
+                window_start_ms=effective_start_ms,
+                window_end_ms=end_ms,
+                resume=request.resume,
             )
             if orderbook_entries:
                 orderbook_statuses.extend(
@@ -3148,7 +4468,33 @@ def run_strategy_ladder_data_factory(
         else:
             metadata_statuses.append("METADATA_SCHEMA_NOT_PROVEN")
         blocker_codes.extend(metadata_cache_result.blocker_codes)
+    stage_timings_s["silver_normalization"] = _stage_elapsed_s(stage_started_at)
     silver_index = tuple(index_entries)
+    _write_a2_progress_report(
+        report_root,
+        run_id=request.run_id,
+        status="A2_RUNNING",
+        current_stage="SILVER_NORMALIZATION_COMPLETE",
+        normalized_start=normalized_start,
+        normalized_end=normalized_end,
+        effective_start_text=effective_start_text,
+        requested_pairs=request.pairs,
+        requested_timeframes=request.timeframes,
+        requested_feature_names=request.feature_names,
+        stage_timings_s=stage_timings_s,
+        counters=_progress_counter_payload(
+            files_seen=files_seen,
+            files_processed=files_processed,
+            files_skipped=files_skipped,
+            files_skipped_by_date_filter=files_skipped_by_date_filter,
+            rows_processed=rows_processed,
+            rows_rejected=rows_rejected,
+            bytes_read=bytes_read,
+            bytes_written=bytes_written,
+            silver_entry_count=len(silver_index),
+        ),
+        blocker_codes=tuple(blocker_codes),
+    )
     pair_inference_summary = _derive_pair_inference_summary(
         requested_pairs=request.pairs,
         source_pair_map=source_pair_map,
@@ -3159,10 +4505,64 @@ def run_strategy_ladder_data_factory(
         index_entries=silver_index,
         pair_inference_summary=pair_inference_summary,
     )
+    requested_a2_features_for_cache = _requested_a2_feature_names(request)
+    requested_microstructure_features_for_cache = tuple(
+        sorted(
+            requested_a2_features_for_cache.intersection(
+                _A2_ENGINE_NATIVE_BRIDGE_FEATURES
+            )
+        )
+    )
+    reset_microstructure_file_cache_stats(clear_cache=True)
+    stage_started_at = perf_counter()
     gold_manifest = _write_gold_features(
         request=request,
         index_entries=silver_index,
         available_pairs=pair_report.available_pairs,
+    )
+    microstructure_cache_stats = get_microstructure_file_cache_stats()
+    microstructure_cache_report_path = (
+        report_root / "a2_microstructure_cache_manifest.json"
+    )
+    microstructure_cache_manifest = _build_a2_microstructure_cache_manifest(
+        request=request,
+        requested_microstructure_features=requested_microstructure_features_for_cache,
+        cache_stats=microstructure_cache_stats,
+        cache_manifest_ref=str(microstructure_cache_report_path.resolve()),
+    )
+    _write_report(microstructure_cache_report_path, microstructure_cache_manifest)
+    feature_equivalence_report_path = report_root / "a2_feature_equivalence_report.json"
+    feature_equivalence_report = _build_a2_feature_equivalence_report(
+        request=request,
+        gold_manifest=gold_manifest,
+    )
+    _write_report(feature_equivalence_report_path, feature_equivalence_report)
+    stage_timings_s["gold_feature_build"] = _stage_elapsed_s(stage_started_at)
+    _write_a2_progress_report(
+        report_root,
+        run_id=request.run_id,
+        status="A2_RUNNING",
+        current_stage="GOLD_FEATURE_BUILD_COMPLETE",
+        normalized_start=normalized_start,
+        normalized_end=normalized_end,
+        effective_start_text=effective_start_text,
+        requested_pairs=request.pairs,
+        requested_timeframes=request.timeframes,
+        requested_feature_names=request.feature_names,
+        stage_timings_s=stage_timings_s,
+        counters=_progress_counter_payload(
+            files_seen=files_seen,
+            files_processed=files_processed,
+            files_skipped=files_skipped,
+            files_skipped_by_date_filter=files_skipped_by_date_filter,
+            rows_processed=rows_processed,
+            rows_rejected=rows_rejected,
+            bytes_read=bytes_read,
+            bytes_written=bytes_written,
+            silver_entry_count=len(silver_index),
+            gold_feature_row_count=gold_manifest.feature_row_count,
+        ),
+        blocker_codes=tuple(blocker_codes),
     )
     trade_schema_status = next((status for status in trade_statuses if status), "TRADE_SCHEMA_NOT_PROVEN")
     kline_schema_status = next((status for status in kline_statuses if status), "KLINE_SCHEMA_NOT_PROVEN")
@@ -3194,6 +4594,7 @@ def run_strategy_ladder_data_factory(
     ) = _assess_ohlcv_temporal_completeness(
         index_entries=silver_index,
         requested_timeframes=request.timeframes,
+        expected_dates=_expected_date_scope(normalized_start, normalized_end),
     )
     blocker_codes.extend(ohlcv_temporal_blocker_codes)
     orderbook_groups: dict[tuple[str, str], list[StrategyLadderSilverIndexEntry]] = {}
@@ -3271,6 +4672,7 @@ def run_strategy_ladder_data_factory(
     if (
         not request.dry_run
         and ohlcv_temporal_completeness_status == "OHLCV_TEMPORAL_COMPLETENESS_BLOCKED"
+        and data_factory_status in {"DATA_FACTORY_READY", "DATA_FACTORY_PARTIAL"}
     ):
         data_factory_status = "DATA_FACTORY_BLOCKED_BY_OHLCV_TEMPORAL_COMPLETENESS"
     if (
@@ -3855,6 +5257,66 @@ def run_strategy_ladder_data_factory(
         start=normalized_start,
         end=normalized_end,
         ml_mode="ML_MODE_OFF",
+    )
+    stage_timings_s["total"] = _stage_elapsed_s(run_started_at)
+    performance_report = _build_a2_microstructure_performance_report(
+        request=request,
+        normalized_start=normalized_start,
+        normalized_end=normalized_end,
+        effective_start_text=effective_start_text,
+        stage_timings_s=stage_timings_s,
+        silver_index=silver_index,
+        gold_manifest=gold_manifest,
+        files_seen=files_seen,
+        files_processed=files_processed,
+        files_skipped=files_skipped,
+        files_skipped_by_date_filter=files_skipped_by_date_filter,
+        rows_processed=rows_processed,
+        rows_rejected=rows_rejected,
+        bytes_read=bytes_read,
+        bytes_written=bytes_written,
+        blocker_codes=manifest.blocker_codes,
+        microstructure_cache_manifest=microstructure_cache_manifest,
+    )
+    performance_report_path = report_root / "a2_microstructure_performance_report.json"
+    _write_report(performance_report_path, performance_report)
+    _write_a2_progress_report(
+        report_root,
+        run_id=request.run_id,
+        status="A2_COMPLETE",
+        current_stage=manifest.data_factory_status,
+        normalized_start=normalized_start,
+        normalized_end=normalized_end,
+        effective_start_text=effective_start_text,
+        requested_pairs=request.pairs,
+        requested_timeframes=request.timeframes,
+        requested_feature_names=request.feature_names,
+        stage_timings_s=stage_timings_s,
+        counters=_progress_counter_payload(
+            files_seen=files_seen,
+            files_processed=files_processed,
+            files_skipped=files_skipped,
+            files_skipped_by_date_filter=files_skipped_by_date_filter,
+            rows_processed=rows_processed,
+            rows_rejected=rows_rejected,
+            bytes_read=bytes_read,
+            bytes_written=bytes_written,
+            silver_entry_count=len(silver_index),
+            gold_feature_row_count=gold_manifest.feature_row_count,
+        ),
+        blocker_codes=manifest.blocker_codes,
+        extra={
+            "performance_report_ref": str(performance_report_path.resolve()),
+            "microstructure_cache_manifest_ref": str(
+                microstructure_cache_report_path.resolve()
+            ),
+            "feature_equivalence_report_ref": str(
+                feature_equivalence_report_path.resolve()
+            ),
+            "data_factory_status": manifest.data_factory_status,
+            "silver_index_status": manifest.silver_index_status,
+            "gold_feature_store_status": manifest.gold_feature_store_status,
+        },
     )
     return StrategyLadderDataFactoryResult(
         manifest=manifest,

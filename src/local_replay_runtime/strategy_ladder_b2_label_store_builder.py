@@ -17,6 +17,7 @@ from local_replay_runtime.strategy_ladder_detailed_replay import (
 )
 from local_replay_runtime.strategy_ladder_expected_edge_feature_contracts import (
     ANTI_REVENGE_STATE_ONE_HOT_FEATURE_NAMES,
+    ENGINE_D_GOVERNANCE_EXPECTED_EDGE_FEATURE_NAMES,
     EXPECTED_EDGE_AUGMENTED_FEATURE_KEYS,
     SUPPORTED_EXPECTED_EDGE_FEATURE_NAMES,
 )
@@ -119,6 +120,9 @@ _EXPECTED_EDGE_AUGMENTED_FEATURE_KEYS = (
     "anti_revenge_state__idle",
 )
 _EXPECTED_EDGE_AUGMENTED_FEATURE_KEYS = EXPECTED_EDGE_AUGMENTED_FEATURE_KEYS
+_ENGINE_D_ONLY_FEATURE_NAMES = frozenset(
+    (*ENGINE_D_GOVERNANCE_EXPECTED_EDGE_FEATURE_NAMES, *ANTI_REVENGE_STATE_ONE_HOT_FEATURE_NAMES)
+)
 
 
 def _numeric_feature_values(payload: dict[str, object]) -> dict[str, float]:
@@ -445,6 +449,9 @@ class StrategyLadderB2LabelStoreRow(BaseModel, frozen=True):
     mfe_mae_status: str = Field(..., min_length=1)
     proxy_execution_label_flag: bool = False
     replay_grounded_label_flag: bool = False
+    feature_truth_boundary_status: str = "FEATURE_TRUTH_BOUNDARY_NOT_PROVEN"
+    feature_usage_policy: str = "A2_GOLD_FEATURE_USAGE_NOT_PROVEN"
+    cost_feature_truth_status: str = "COST_FEATURE_TRUTH_NOT_PROVEN"
     feature_values: dict[str, float] = Field(default_factory=dict)
     feature_hash: str = ""
 
@@ -541,6 +548,9 @@ class StrategyLadderB2LabelStoreQualityReport(BaseModel, frozen=True):
     mfe_mae_status_counts: dict[str, int] = Field(default_factory=dict)
     execution_fidelity_status_counts: dict[str, int] = Field(default_factory=dict)
     evidence_class_counts: dict[str, int] = Field(default_factory=dict)
+    feature_truth_boundary_status_counts: dict[str, int] = Field(default_factory=dict)
+    cost_feature_truth_status_counts: dict[str, int] = Field(default_factory=dict)
+    feature_to_label_truth_promotion_blocked_count: int = Field(default=0, ge=0)
     blocking_reasons: tuple[str, ...] = ()
     replay_provenance_refs: tuple[str, ...] = ()
 
@@ -935,6 +945,18 @@ def _build_rows(
                 mfe_mae_status=mfe_mae_status,
                 proxy_execution_label_flag=proxy_execution_label_flag,
                 replay_grounded_label_flag=replay_grounded_label_flag,
+                feature_truth_boundary_status=str(
+                    compatibility.get("feature_truth_boundary_status")
+                    or "FEATURE_TRUTH_BOUNDARY_NOT_PROVEN"
+                ),
+                feature_usage_policy=str(
+                    compatibility.get("feature_usage_policy")
+                    or "A2_GOLD_FEATURE_USAGE_NOT_PROVEN"
+                ),
+                cost_feature_truth_status=str(
+                    compatibility.get("cost_feature_truth_status")
+                    or "COST_FEATURE_TRUTH_NOT_PROVEN"
+                ),
                 feature_values=feature_values,
                 feature_hash=_hash_payload(feature_values),
             )
@@ -1073,6 +1095,63 @@ def _build_f16_feature_coverage_report(
     feature_names = SUPPORTED_EXPECTED_EDGE_FEATURE_NAMES
     row_count = len(rows)
 
+    def _required_features_for_engine(engine_id: str) -> tuple[str, ...]:
+        normalized = engine_id.strip().lower()
+        if normalized == "engine_d":
+            return feature_names
+        return tuple(
+            feature_name
+            for feature_name in feature_names
+            if feature_name not in _ENGINE_D_ONLY_FEATURE_NAMES
+        )
+
+    def _engine_applicable_coverage() -> list[dict[str, object]]:
+        engine_rows: list[dict[str, object]] = []
+        for engine_id in sorted({row.engine_id for row in rows}):
+            scope_rows = tuple(row for row in rows if row.engine_id == engine_id)
+            required_features = _required_features_for_engine(engine_id)
+            full_count = sum(
+                1
+                for row in scope_rows
+                if all(
+                    _row_feature_value(row, feature_name) is not None
+                    for feature_name in required_features
+                )
+                and (
+                    engine_id == "engine_d"
+                    or _anti_revenge_one_hot_status(row)
+                    != "ANTI_REVENGE_STATE_ONE_HOT_INVALID"
+                )
+            )
+            feature_presence_count = {
+                feature_name: sum(
+                    1
+                    for row in scope_rows
+                    if _row_feature_value(row, feature_name) is not None
+                )
+                for feature_name in required_features
+            }
+            engine_rows.append(
+                {
+                    "engine_id": engine_id,
+                    "row_count": len(scope_rows),
+                    "required_feature_names": required_features,
+                    "engine_applicable_full_feature_row_count": full_count,
+                    "engine_applicable_full_feature_coverage_rate": _rate(
+                        full_count,
+                        len(scope_rows),
+                    ),
+                    "missing_engine_applicable_feature_names": tuple(
+                        feature_name
+                        for feature_name, count in feature_presence_count.items()
+                        if count < len(scope_rows)
+                    ),
+                    "feature_presence_count": feature_presence_count,
+                    "d_only_features_excluded": engine_id != "engine_d",
+                }
+            )
+        return engine_rows
+
     def _coverage_for_scope(scope_rows: tuple[StrategyLadderB2LabelStoreRow, ...]) -> dict[str, object]:
         scope_row_count = len(scope_rows)
         feature_presence_count = {
@@ -1130,6 +1209,11 @@ def _build_f16_feature_coverage_report(
         }
 
     overall = _coverage_for_scope(rows)
+    engine_applicable_rows = _engine_applicable_coverage()
+    engine_applicable_full_feature_row_count = sum(
+        int(row["engine_applicable_full_feature_row_count"])
+        for row in engine_applicable_rows
+    )
     timeframe_rows: list[dict[str, object]] = []
     for timeframe in sorted({row.timeframe for row in rows}):
         scope_rows = tuple(row for row in rows if row.timeframe == timeframe)
@@ -1177,6 +1261,11 @@ def _build_f16_feature_coverage_report(
         "row_count": row_count,
         "full_feature_row_count": overall["full_feature_row_count"],
         "full_feature_coverage_rate": overall["full_feature_coverage_rate"],
+        "engine_applicable_full_feature_row_count": engine_applicable_full_feature_row_count,
+        "engine_applicable_full_feature_coverage_rate": _rate(
+            engine_applicable_full_feature_row_count,
+            row_count,
+        ),
         "requested_feature_names": feature_names,
         "missing_feature_names": overall["missing_feature_names"],
         "zero_available_features": overall["zero_available_features"],
@@ -1184,6 +1273,7 @@ def _build_f16_feature_coverage_report(
         "source_status_by_feature": overall["source_status_by_feature"],
         "anti_revenge_status_counts": overall["anti_revenge_status_counts"],
         "timeframe_rows": timeframe_rows,
+        "engine_applicable_rows": engine_applicable_rows,
         "blocker_codes": tuple(dict.fromkeys(blocker_codes)),
         "created_at": datetime.now(tz=UTC).isoformat(),
     }
@@ -1341,6 +1431,23 @@ def build_strategy_ladder_b2_label_store(
             key: sum(1 for row in rows if row.execution_fidelity_status == key)
             for key in sorted({row.execution_fidelity_status for row in rows})
         },
+        feature_truth_boundary_status_counts={
+            key: sum(1 for row in rows if row.feature_truth_boundary_status == key)
+            for key in sorted({row.feature_truth_boundary_status for row in rows})
+        },
+        cost_feature_truth_status_counts={
+            key: sum(1 for row in rows if row.cost_feature_truth_status == key)
+            for key in sorted({row.cost_feature_truth_status for row in rows})
+        },
+        feature_to_label_truth_promotion_blocked_count=sum(
+            1
+            for row in rows
+            if row.cost_feature_truth_status
+            in {
+                "A2_COST_FEATURES_RESEARCH_ONLY_NOT_REPLAY_TRUTH",
+                "A2_COST_FEATURES_MEASURED_EX_ANTE_NOT_EXECUTION_LABEL_TRUTH",
+            }
+        ),
         evidence_class_counts={
             key: sum(1 for row in rows if row.evidence_class == key)
             for key in sorted({row.evidence_class for row in rows})

@@ -10,12 +10,18 @@ from execution_backbone.execution_cost_meter.adverse_selection_meter import (
     compute_adverse_selection,
     resolve_adverse_selection_delay_s,
 )
-from execution_backbone.execution_cost_meter.cost_aggregator import compute_trade_cost
+from execution_backbone.execution_cost_meter.cost_aggregator import (
+    TradeCost,
+    compute_trade_cost,
+)
 from execution_backbone.execution_cost_meter.fee_meter import estimate_fee
 from execution_backbone.execution_cost_meter.partial_fill_cost_meter import (
     compute_partial_fill_cost,
 )
-from execution_backbone.fee_aware_edge_gate import evaluate_fee_aware_edge
+from execution_backbone.fee_aware_edge_gate import (
+    FeeAwareEdgeDecision,
+    evaluate_fee_aware_edge,
+)
 from execution_backbone.fill_tracker.fill_aggregator import FillAggregator, FillEvent
 from execution_backbone.fill_tracker.fill_reporter import FillReporter
 from execution_backbone.fill_tracker.order_state_tracker import (
@@ -23,10 +29,27 @@ from execution_backbone.fill_tracker.order_state_tracker import (
     OrderStateTracker,
 )
 from execution_backbone.fill_tracker.order_terminal_state_resolver import resolve_terminal
-from execution_backbone.order_decider.intent_builder import OrderType, VenueConstraintSnapshot
-from execution_backbone.order_decider.order_type_selector import select_order_type
+from execution_backbone.order_decider.intent_builder import (
+    ExecutionIntent,
+    NoTradeDecision,
+    NoTradeReason,
+    OrderType,
+    VenueConstraintSnapshot,
+    build_intent,
+)
+from execution_backbone.order_decider.decision_reporter import DecisionReporter
+from execution_backbone.order_decider.order_type_selector import (
+    OrderTypeDecision,
+    select_order_type,
+)
 from execution_backbone.slippage_model import predict_execution_slippage
 from execution_backbone.spread_guard import evaluate_execution_spread_guard
+from local_replay_runtime.backbone_parity_adapter import (
+    BackboneParityPolicy,
+    BackboneSurfaceResolution,
+    build_backbone_parity_surface_report,
+    resolve_backbone_surface,
+)
 from local_replay_runtime.historical_data_gateway import (
     HistoricalReplayDataset,
     HistoricalReplayOpportunity,
@@ -38,6 +61,27 @@ from local_replay_runtime.replay_execution_contracts import (
 )
 from meta_minimal.dtr_core.decision_state_encoder import DecisionState
 from meta_minimal.dtr_core.dtr_record_builder import DTRRecord, build_dtr
+from portfolio_minimal.allocation_router.phantom_trade_guard import check_phantom
+from portfolio_minimal.allocation_router.portfolio_cap_applier import apply_caps
+from portfolio_minimal.opportunity_selector.eligibility_filter import PortfolioSnapshot
+from regime_classifier.regime_lite import (
+    RegimeLiteInput,
+    RegimeLiteThresholds,
+    classify_regime_lite,
+)
+from risk_backbone.risk_runtime_models import RiskCandidate, RiskLimits
+from risk_backbone.risk_runtime_runtime import RiskRuntime
+from scoring_backbone.hard_block_gate.blocker_decision_builder import build_decision
+from scoring_backbone.hard_block_gate.blocker_evaluator import (
+    BlockerCondition,
+    evaluate_blockers,
+)
+from scoring_backbone.hard_block_gate.blocker_reason_encoder import encode_reasons
+from scoring_backbone.hard_block_gate.blocker_reporter import BlockerReporter
+from scoring_backbone.ranking_router.ranking_score_builder import (
+    RankingWeights,
+    compute_ranking_scores,
+)
 
 
 @dataclass(frozen=True)
@@ -50,6 +94,7 @@ class _RowExecutionProfile:
     order_reason: str
     venue_constraints: VenueConstraintSnapshot | None
     fee_aware_edge_reason_code: str | None = None
+    surface_resolutions: tuple[BackboneSurfaceResolution, ...] = ()
 
 
 def _resolve_book_depth_contract(
@@ -513,6 +558,52 @@ def _resolve_fee_fraction(
     return fee_amount / planned_notional
 
 
+def _resolve_fee_surface_resolution(
+    row: HistoricalReplayOpportunity,
+    *,
+    order_type: OrderType,
+    fee_fraction: float | None,
+) -> BackboneSurfaceResolution:
+    fee_rate = None
+    if order_type == OrderType.LIMIT:
+        fee_rate = row.maker_fee_rate
+    elif order_type == OrderType.MARKET:
+        fee_rate = row.taker_fee_rate
+    else:
+        fee_rate = row.taker_fee_rate if row.taker_fee_rate is not None else row.maker_fee_rate
+    canonical_payload = (
+        {
+            "fee_rate": fee_fraction,
+            "fee_source_status": "CANONICAL_EXECUTION_COST_METER",
+            "order_type": order_type.value,
+        }
+        if fee_fraction is not None
+        else None
+    )
+    local_replay_payload = (
+        {
+            "fee_rate": fee_rate,
+            "fee_source_status": "LOCAL_REPLAY_FEE_RATE_INPUT",
+            "order_type": order_type.value,
+        }
+        if fee_rate is not None
+        else None
+    )
+    return resolve_backbone_surface(
+        surface="fee_measurement",
+        canonical_payload=canonical_payload,
+        local_replay_payload=local_replay_payload,
+        contract_ready=True,
+        policy=BackboneParityPolicy(
+            compared_fields=("fee_rate",),
+            numeric_tolerance=1e-12,
+        ),
+        canonical_source="execution_backbone.fee_meter",
+        fallback_source="local_replay_runtime.fee_rate_input",
+        fallback_reason="FEE_BACKBONE_PAYLOAD_MISSING",
+    )
+
+
 def _classify_adverse_selection_source(
     *,
     adverse_selection_fraction: float | None,
@@ -614,6 +705,1142 @@ def _classify_spread_model_source(
     return "REPLAY_PROXY"
 
 
+def _resolve_spread_surface_resolution(
+    row: HistoricalReplayOpportunity,
+    *,
+    has_spread_guard: bool,
+) -> BackboneSurfaceResolution:
+    spread_source = _classify_spread_model_source(
+        spread_provenance=getattr(row, "spread_provenance", "") or "",
+        has_spread_guard=has_spread_guard,
+    )
+    canonical_payload = (
+        {
+            "spread_bps": row.spread_bps,
+            "spread_model_source": spread_source,
+            "spread_provenance": getattr(row, "spread_provenance", "") or "",
+        }
+        if spread_source
+        in {
+            "CANONICAL_BOOK_MEASURED",
+            "CANONICAL_BOOK_RECONSTRUCTED",
+            "CANONICAL_SPREAD_GUARD",
+        }
+        else None
+    )
+    local_replay_payload = (
+        {
+            "spread_bps": row.spread_bps,
+            "spread_model_source": "LOCAL_REPLAY_SPREAD_INPUT",
+            "spread_provenance": getattr(row, "spread_provenance", "") or "",
+        }
+        if row.spread_bps >= 0.0
+        else None
+    )
+    fallback_reason = (
+        "SPREAD_MEASURED_STALE_AUDIT_ONLY"
+        if spread_source == "MEASURED_STALE_AUDIT_ONLY"
+        else "SPREAD_BACKBONE_PAYLOAD_MISSING"
+    )
+    return resolve_backbone_surface(
+        surface="spread_measurement",
+        canonical_payload=canonical_payload,
+        local_replay_payload=local_replay_payload,
+        contract_ready=True,
+        policy=BackboneParityPolicy(
+            compared_fields=("spread_bps",),
+            numeric_tolerance=1e-12,
+        ),
+        canonical_source=(
+            "execution_backbone.spread_guard"
+            if spread_source == "CANONICAL_SPREAD_GUARD"
+            else "book_replay_spread_measurement"
+        ),
+        fallback_source="local_replay_runtime.spread_input",
+        fallback_reason=fallback_reason,
+    )
+
+
+def _resolve_slippage_surface_resolution(
+    row: HistoricalReplayOpportunity,
+    *,
+    has_slippage_model: bool,
+) -> BackboneSurfaceResolution:
+    slippage_provenance = getattr(row, "slippage_provenance", "") or ""
+    slippage_source = _classify_slippage_model_source(
+        slippage_provenance=slippage_provenance,
+        has_slippage_model=has_slippage_model,
+    )
+    measured_sources = {
+        "CANONICAL_KYLE_LAMBDA_METER",
+        "CANONICAL_KYLE_LAMBDA_OVERRIDE",
+    }
+    if slippage_provenance == "MEASURED_FROM_DEPTH20_BOOK_WALK":
+        measured_sources.add("CANONICAL_EXECUTION_BACKBONE")
+    canonical_payload = (
+        {
+            "slippage_bps": row.slippage_bps,
+            "slippage_model_source": slippage_source,
+            "slippage_provenance": slippage_provenance,
+        }
+        if slippage_source in measured_sources
+        else None
+    )
+    local_replay_payload = (
+        {
+            "slippage_bps": row.slippage_bps,
+            "slippage_model_source": "LOCAL_REPLAY_SLIPPAGE_INPUT",
+            "slippage_provenance": slippage_provenance,
+        }
+        if row.slippage_bps >= 0.0
+        else None
+    )
+    if slippage_source == "MEASURED_STALE_AUDIT_ONLY":
+        fallback_reason = "SLIPPAGE_MEASURED_STALE_AUDIT_ONLY"
+    elif has_slippage_model and canonical_payload is None:
+        fallback_reason = "SLIPPAGE_PROJECTION_NOT_MEASURED_TRUTH"
+    else:
+        fallback_reason = "SLIPPAGE_BACKBONE_PAYLOAD_MISSING"
+    if slippage_source == "CANONICAL_KYLE_LAMBDA_METER":
+        canonical_source = "execution_backbone.kyle_lambda_meter"
+    elif slippage_source == "CANONICAL_KYLE_LAMBDA_OVERRIDE":
+        canonical_source = "execution_backbone.kyle_lambda_override"
+    else:
+        canonical_source = "execution_backbone.depth20_slippage_walk"
+    return resolve_backbone_surface(
+        surface="slippage_measurement",
+        canonical_payload=canonical_payload,
+        local_replay_payload=local_replay_payload,
+        contract_ready=canonical_payload is not None,
+        policy=BackboneParityPolicy(
+            compared_fields=("slippage_bps",),
+            numeric_tolerance=1e-12,
+        ),
+        canonical_source=canonical_source,
+        fallback_source="local_replay_runtime.slippage_input",
+        fallback_reason=fallback_reason,
+    )
+
+
+def _resolve_partial_fill_surface_resolution(
+    row: HistoricalReplayOpportunity,
+    *,
+    partial_fill_cost_fraction: float | None,
+    explicit_fill_path: bool,
+) -> BackboneSurfaceResolution:
+    canonical_payload = (
+        {
+            "partial_fill_cost_fraction": partial_fill_cost_fraction,
+            "fill_path_source": "EXPLICIT_REPLAY_FILL_PATH",
+            "fill_price_count": len(row.fill_prices),
+            "fill_quantity_count": len(row.fill_quantities),
+        }
+        if partial_fill_cost_fraction is not None and explicit_fill_path
+        else None
+    )
+    local_replay_payload = {
+        "fill_ratio": row.fill_ratio,
+        "fill_path_source": (
+            "EXPLICIT_REPLAY_FILL_PATH"
+            if explicit_fill_path
+            else "LOCAL_REPLAY_SYNTHETIC_FILL_RATIO"
+        ),
+    }
+    fallback_reason = (
+        "PARTIAL_FILL_SYNTHETIC_FILL_PATH_AUDIT_ONLY"
+        if partial_fill_cost_fraction is not None and not explicit_fill_path
+        else "PARTIAL_FILL_BACKBONE_PAYLOAD_MISSING"
+    )
+    return resolve_backbone_surface(
+        surface="partial_fill_cost",
+        canonical_payload=canonical_payload,
+        local_replay_payload=local_replay_payload,
+        contract_ready=canonical_payload is not None,
+        policy=BackboneParityPolicy(),
+        canonical_source="execution_backbone.partial_fill_cost_meter",
+        fallback_source="local_replay_runtime.fill_ratio_input",
+        fallback_reason=fallback_reason,
+    )
+
+
+def _resolve_adverse_selection_surface_resolution(
+    row: HistoricalReplayOpportunity,
+    *,
+    adverse_selection_fraction: float | None,
+    explicit_fill_path: bool,
+) -> BackboneSurfaceResolution:
+    canonical_payload = (
+        {
+            "adverse_selection_fraction": adverse_selection_fraction,
+            "post_fill_mid_price": row.post_fill_mid_price,
+            "fill_path_source": "EXPLICIT_REPLAY_FILL_PATH",
+        }
+        if adverse_selection_fraction is not None
+        and explicit_fill_path
+        and row.post_fill_mid_price is not None
+        and row.post_fill_mid_price > 0.0
+        else None
+    )
+    local_replay_payload = {
+        "post_fill_mid_price": row.post_fill_mid_price,
+        "fill_path_source": (
+            "EXPLICIT_REPLAY_FILL_PATH"
+            if explicit_fill_path
+            else "LOCAL_REPLAY_SYNTHETIC_FILL_RATIO"
+        ),
+    }
+    if adverse_selection_fraction is None:
+        fallback_reason = "ADVERSE_SELECTION_CANONICAL_METER_BLOCKED_BY_DEPENDENCY"
+    elif not explicit_fill_path:
+        fallback_reason = "ADVERSE_SELECTION_SYNTHETIC_FILL_PATH_AUDIT_ONLY"
+    else:
+        fallback_reason = "ADVERSE_SELECTION_BACKBONE_PAYLOAD_MISSING"
+    return resolve_backbone_surface(
+        surface="adverse_selection",
+        canonical_payload=canonical_payload,
+        local_replay_payload=local_replay_payload,
+        contract_ready=canonical_payload is not None,
+        policy=BackboneParityPolicy(),
+        canonical_source="execution_backbone.adverse_selection_meter",
+        fallback_source="local_replay_runtime.post_fill_inputs",
+        fallback_reason=fallback_reason,
+    )
+
+
+def _resolve_order_type_surface_resolution(
+    row: HistoricalReplayOpportunity,
+    *,
+    order_type_decision: OrderTypeDecision | None,
+) -> BackboneSurfaceResolution:
+    canonical_payload = (
+        {
+            "order_type": order_type_decision.order_type.value,
+            "reason": order_type_decision.reason,
+            "expected_cost": order_type_decision.expected_cost,
+            "expected_gain": order_type_decision.expected_gain,
+            "net_expected": order_type_decision.net_expected,
+        }
+        if order_type_decision is not None
+        else None
+    )
+    local_replay_payload = {
+        "target_decision_state": (
+            row.target_decision_state.value
+            if row.target_decision_state is not None
+            else ""
+        ),
+        "production_decision_state": (
+            row.production_decision_state.value
+            if row.production_decision_state is not None
+            else ""
+        ),
+    }
+    return resolve_backbone_surface(
+        surface="order_type_selection",
+        canonical_payload=canonical_payload,
+        local_replay_payload=local_replay_payload,
+        contract_ready=canonical_payload is not None,
+        policy=BackboneParityPolicy(),
+        canonical_source="execution_backbone.order_decider",
+        fallback_source="local_replay_runtime.target_decision_state",
+        fallback_reason="ORDER_TYPE_DECIDER_RESULT_MISSING",
+    )
+
+
+def _resolve_venue_constraints_surface_resolution(
+    row: HistoricalReplayOpportunity,
+    *,
+    venue_constraints: VenueConstraintSnapshot | None,
+) -> BackboneSurfaceResolution:
+    canonical_payload = (
+        {
+            "tick_size": venue_constraints.tick_size,
+            "step_size": venue_constraints.step_size,
+            "min_notional": venue_constraints.min_notional,
+        }
+        if venue_constraints is not None
+        else None
+    )
+    local_replay_payload = (
+        {
+            "tick_size": row.tick_size,
+            "step_size": row.step_size,
+            "min_notional": row.min_notional,
+        }
+        if row.tick_size is not None
+        or row.step_size is not None
+        or row.min_notional is not None
+        else None
+    )
+    return resolve_backbone_surface(
+        surface="venue_constraints",
+        canonical_payload=canonical_payload,
+        local_replay_payload=local_replay_payload,
+        contract_ready=canonical_payload is not None,
+        policy=BackboneParityPolicy(),
+        canonical_source="execution_backbone.venue_constraint_snapshot",
+        fallback_source="local_replay_runtime.venue_metadata_input",
+        fallback_reason="VENUE_CONSTRAINTS_BACKBONE_PAYLOAD_MISSING",
+    )
+
+
+def _resolve_fee_aware_edge_surface_resolution(
+    row: HistoricalReplayOpportunity,
+    *,
+    expected_cost: float,
+    fee_edge_decision: FeeAwareEdgeDecision | None,
+) -> BackboneSurfaceResolution:
+    canonical_payload = (
+        {
+            "allowed": fee_edge_decision.allowed,
+            "reason_code": fee_edge_decision.reason_code,
+            "expected_edge_bps": fee_edge_decision.expected_edge_bps,
+            "expected_cost_fraction": fee_edge_decision.expected_cost_fraction,
+            "expected_cost_bps": fee_edge_decision.expected_cost_bps,
+            "threshold_bps": fee_edge_decision.threshold_bps,
+            "edge_multiplier": fee_edge_decision.edge_multiplier,
+            "min_absolute_edge_bps": fee_edge_decision.min_absolute_edge_bps,
+        }
+        if fee_edge_decision is not None
+        else None
+    )
+    local_replay_payload = {
+        "expected_edge_bps": row.expected_edge_bps,
+        "expected_cost_fraction": expected_cost,
+    }
+    return resolve_backbone_surface(
+        surface="fee_aware_edge_gate",
+        canonical_payload=canonical_payload,
+        local_replay_payload=local_replay_payload,
+        contract_ready=canonical_payload is not None,
+        policy=BackboneParityPolicy(),
+        canonical_source="execution_backbone.fee_aware_edge_gate",
+        fallback_source="local_replay_runtime.expected_edge_cost_inputs",
+        fallback_reason="FEE_AWARE_EDGE_GATE_CONFIG_MISSING_OR_INVALID",
+    )
+
+
+def _resolve_cost_aggregation_surface_resolution(
+    *,
+    expected_cost: float,
+    realized_cost: float,
+    trade_cost: TradeCost | None,
+) -> BackboneSurfaceResolution:
+    canonical_payload = (
+        {
+            "total_cost": trade_cost.total_cost,
+            "explicit_fee": trade_cost.explicit_fee,
+            "implicit_cost": trade_cost.implicit_cost,
+            "adverse_selection": trade_cost.adverse_selection,
+            "partial_fill_cost": trade_cost.partial_fill_cost,
+            "market_impact": trade_cost.market_impact,
+            "expected_cost": trade_cost.expected_cost,
+            "cost_surprise": trade_cost.cost_surprise,
+        }
+        if trade_cost is not None
+        else None
+    )
+    local_replay_payload = {
+        "total_cost": realized_cost,
+        "expected_cost": expected_cost,
+    }
+    return resolve_backbone_surface(
+        surface="cost_aggregation",
+        canonical_payload=canonical_payload,
+        local_replay_payload=local_replay_payload,
+        contract_ready=canonical_payload is not None,
+        policy=BackboneParityPolicy(
+            compared_fields=("total_cost",),
+            numeric_tolerance=1e-12,
+        ),
+        canonical_source="execution_backbone.cost_aggregator",
+        fallback_source="local_replay_runtime.realized_cost_estimate",
+        fallback_reason="COST_AGGREGATION_BACKBONE_PAYLOAD_MISSING",
+    )
+
+
+def _resolve_fill_terminal_state_surface_resolution(
+    row: HistoricalReplayOpportunity,
+    *,
+    ordered_quantity: float | None,
+    fill_prices: tuple[float, ...],
+    fill_quantities: tuple[float, ...],
+    explicit_fill_path: bool,
+) -> BackboneSurfaceResolution:
+    canonical_payload = None
+    if (
+        explicit_fill_path
+        and ordered_quantity is not None
+        and ordered_quantity > 0.0
+        and fill_prices
+        and fill_quantities
+    ):
+        aggregator = FillAggregator()
+        for index, (price, quantity) in enumerate(
+            zip(fill_prices, fill_quantities, strict=False),
+            start=1,
+        ):
+            aggregator.record_fill(
+                FillEvent(
+                    fill_id=f"{row.opportunity_id}:surface_fill:{index}",
+                    order_id=row.opportunity_id,
+                    pair=row.pair,
+                    side=row.side,
+                    quantity=quantity,
+                    price=price,
+                    timestamp=row.timestamp_ms / 1000.0,
+                )
+            )
+        aggregated = aggregator.get_aggregated(row.opportunity_id)
+        if aggregated is not None:
+            terminal_state = (
+                OrderState.FILLED
+                if aggregated.total_filled_qty >= ordered_quantity
+                else OrderState.CANCELLED
+            )
+            resolution = resolve_terminal(
+                order_id=row.opportunity_id,
+                state=terminal_state,
+                ordered_quantity=ordered_quantity,
+                filled_quantity=aggregated.total_filled_qty,
+            )
+            canonical_payload = {
+                "state": resolution.state.value,
+                "category": resolution.category.value,
+                "filled_quantity": resolution.filled_quantity,
+                "ordered_quantity": resolution.ordered_quantity,
+                "fill_ratio": resolution.fill_ratio,
+                "has_residual": resolution.has_residual,
+                "fill_count": aggregated.fill_count,
+            }
+    local_replay_payload = (
+        {
+            "fill_ratio": row.fill_ratio,
+            "fill_path_source": (
+                "EXPLICIT_REPLAY_FILL_PATH"
+                if explicit_fill_path
+                else "LOCAL_REPLAY_SYNTHETIC_FILL_RATIO"
+            ),
+        }
+        if row.fill_ratio >= 0.0
+        else None
+    )
+    fallback_reason = (
+        "FILL_TERMINAL_SYNTHETIC_FILL_PATH_AUDIT_ONLY"
+        if not explicit_fill_path
+        else "FILL_TERMINAL_STATE_BACKBONE_PAYLOAD_MISSING"
+    )
+    return resolve_backbone_surface(
+        surface="fill_terminal_state",
+        canonical_payload=canonical_payload,
+        local_replay_payload=local_replay_payload,
+        contract_ready=canonical_payload is not None,
+        policy=BackboneParityPolicy(),
+        canonical_source="execution_backbone.fill_tracker",
+        fallback_source="local_replay_runtime.fill_ratio_input",
+        fallback_reason=fallback_reason,
+    )
+
+
+def _build_execution_intent(
+    row: HistoricalReplayOpportunity,
+    *,
+    order_type_decision: OrderTypeDecision,
+    ordered_quantity: float | None,
+    expected_cost: float,
+    venue_constraints: VenueConstraintSnapshot | None,
+) -> ExecutionIntent | None:
+    if order_type_decision.order_type == OrderType.NO_TRADE:
+        return None
+    if ordered_quantity is None or ordered_quantity <= 0.0:
+        return None
+    return build_intent(
+        intent_id=f"replay-intent-{row.opportunity_id}",
+        pair=row.pair,
+        engine_id=row.engine_id,
+        side=row.side,
+        order_type=order_type_decision.order_type,
+        quantity=ordered_quantity,
+        expected_cost=expected_cost,
+        expected_gain=row.expected_edge_bps / 10_000.0,
+        score=row.final_score or row.penalized_score or row.raw_score,
+        justification=order_type_decision.reason,
+        profile="COMPLETE",
+        venue_constraints=venue_constraints,
+    )
+
+
+def _resolve_execution_intent_surface_resolution(
+    row: HistoricalReplayOpportunity,
+    *,
+    execution_intent: ExecutionIntent | None,
+    order_type_decision: OrderTypeDecision,
+    ordered_quantity: float | None,
+) -> BackboneSurfaceResolution:
+    canonical_payload = (
+        {
+            "intent_id": execution_intent.intent_id,
+            "pair": execution_intent.pair,
+            "engine_id": execution_intent.engine_id,
+            "side": execution_intent.side,
+            "order_type": execution_intent.order_type.value,
+            "quantity": execution_intent.quantity,
+            "expected_cost": execution_intent.expected_cost,
+            "expected_gain": execution_intent.expected_gain,
+            "profile": execution_intent.profile,
+        }
+        if execution_intent is not None
+        else None
+    )
+    local_replay_payload = {
+        "order_type": order_type_decision.order_type.value,
+        "ordered_quantity": ordered_quantity,
+        "target_decision_state": (
+            row.target_decision_state.value
+            if row.target_decision_state is not None
+            else ""
+        ),
+    }
+    if order_type_decision.order_type == OrderType.NO_TRADE:
+        fallback_reason = "EXECUTION_INTENT_NOT_CREATED_FOR_NO_TRADE"
+    elif ordered_quantity is None or ordered_quantity <= 0.0:
+        fallback_reason = "EXECUTION_INTENT_QUANTITY_MISSING"
+    else:
+        fallback_reason = "EXECUTION_INTENT_BACKBONE_PAYLOAD_MISSING"
+    return resolve_backbone_surface(
+        surface="execution_intent",
+        canonical_payload=canonical_payload,
+        local_replay_payload=local_replay_payload,
+        contract_ready=canonical_payload is not None,
+        policy=BackboneParityPolicy(),
+        canonical_source="execution_backbone.intent_builder",
+        fallback_source="local_replay_runtime.execution_inputs",
+        fallback_reason=fallback_reason,
+    )
+
+
+def _resolve_order_decision_reporting_surface_resolution(
+    row: HistoricalReplayOpportunity,
+    *,
+    execution_intent: ExecutionIntent | None,
+    order_type_decision: OrderTypeDecision,
+    expected_cost: float,
+) -> BackboneSurfaceResolution:
+    reporter = DecisionReporter()
+    canonical_payload = None
+    if execution_intent is not None:
+        reporter.record_trade(
+            execution_intent,
+            timestamp=row.timestamp_ms / 1000.0,
+        )
+    elif order_type_decision.order_type == OrderType.NO_TRADE:
+        reporter.record_no_trade(
+            NoTradeDecision(
+                pair=row.pair,
+                engine_id=row.engine_id,
+                reason=NoTradeReason.COST_EXCEEDS_EDGE,
+                detail=order_type_decision.reason,
+                expected_cost=expected_cost,
+                expected_gain=row.expected_edge_bps / 10_000.0,
+                score=row.final_score or row.penalized_score or row.raw_score,
+                context={"source": "backtest_order_type_decision"},
+            ),
+            timestamp=row.timestamp_ms / 1000.0,
+        )
+    events = reporter.get_events()
+    stats = reporter.get_stats()
+    if events:
+        event = events[0]
+        canonical_payload = {
+            "is_trade": event.is_trade,
+            "order_type": event.order_type.value,
+            "no_trade_reason": event.no_trade_reason,
+            "expected_cost": event.expected_cost,
+            "expected_gain": event.expected_gain,
+            "net_expected": event.net_expected,
+            "total_decisions": stats.total_decisions,
+            "trades": stats.trades,
+            "no_trades": stats.no_trades,
+        }
+    local_replay_payload = {
+        "order_type": order_type_decision.order_type.value,
+        "target_decision_state": (
+            row.target_decision_state.value
+            if row.target_decision_state is not None
+            else ""
+        ),
+    }
+    fallback_reason = (
+        "ORDER_DECISION_REPORTER_INPUT_MISSING"
+        if order_type_decision.order_type != OrderType.NO_TRADE
+        else "ORDER_DECISION_REPORTER_BACKBONE_PAYLOAD_MISSING"
+    )
+    return resolve_backbone_surface(
+        surface="order_decision_reporting",
+        canonical_payload=canonical_payload,
+        local_replay_payload=local_replay_payload,
+        contract_ready=canonical_payload is not None,
+        policy=BackboneParityPolicy(),
+        canonical_source="execution_backbone.decision_reporter",
+        fallback_source="local_replay_runtime.decision_state_inputs",
+        fallback_reason=fallback_reason,
+    )
+
+
+def _resolve_risk_filter_surface_resolution(
+    row: HistoricalReplayOpportunity,
+    *,
+    execution_intent: ExecutionIntent | None,
+    expected_cost: float,
+    risk_limits: RiskLimits | None,
+) -> BackboneSurfaceResolution:
+    canonical_payload = None
+    if execution_intent is not None and risk_limits is not None:
+        runtime = RiskRuntime(risk_limits)
+        runtime.set_equity(current_equity=1.0, session_peak_equity=1.0)
+        evaluation = runtime.evaluate_candidate(
+            RiskCandidate(
+                pair=row.pair,
+                engine_id=row.engine_id,
+                size=execution_intent.quantity,
+                planned_loss=max(expected_cost * execution_intent.quantity, 0.0),
+                pair_beta=0.0,
+                side=row.side,
+            ),
+            now=row.timestamp_ms / 1000.0,
+        )
+        canonical_payload = {
+            "action": evaluation.action.value,
+            "accepted": evaluation.accepted,
+            "dominant_reason_code": evaluation.dominant_reason_code,
+            "reasons": evaluation.reasons,
+            "explain_summary": evaluation.explain_summary,
+        }
+    local_replay_payload = {
+        "candidate_size": row.candidate_size,
+        "final_size": row.final_size,
+        "target_decision_state": (
+            row.target_decision_state.value
+            if row.target_decision_state is not None
+            else ""
+        ),
+    }
+    if risk_limits is None:
+        fallback_reason = "RISK_LIMITS_NOT_CONFIGURED_FOR_BACKTEST"
+    elif execution_intent is None:
+        fallback_reason = "RISK_FILTER_NOT_EVALUATED_WITHOUT_EXECUTION_INTENT"
+    else:
+        fallback_reason = "RISK_FILTER_BACKBONE_PAYLOAD_MISSING"
+    return resolve_backbone_surface(
+        surface="risk_filter",
+        canonical_payload=canonical_payload,
+        local_replay_payload=local_replay_payload,
+        contract_ready=canonical_payload is not None,
+        policy=BackboneParityPolicy(),
+        canonical_source="risk_backbone.risk_runtime",
+        fallback_source="local_replay_runtime.size_inputs",
+        fallback_reason=fallback_reason,
+    )
+
+
+def _resolve_portfolio_state_surface_resolution(
+    row: HistoricalReplayOpportunity,
+    *,
+    expected_cost: float,
+    portfolio_snapshot: PortfolioSnapshot | None,
+    risk_limits: RiskLimits | None,
+) -> BackboneSurfaceResolution:
+    canonical_payload = None
+    cluster_capacity = None
+    if portfolio_snapshot is not None:
+        cluster_capacity = portfolio_snapshot.remaining_cluster_capacity.get(row.pair)
+    if (
+        portfolio_snapshot is not None
+        and risk_limits is not None
+        and cluster_capacity is not None
+        and (row.final_size > 0.0 or row.candidate_size > 0.0)
+    ):
+        modulated_size = row.final_size if row.final_size > 0.0 else row.candidate_size
+        capped = apply_caps(
+            pair=row.pair,
+            modulated_size=modulated_size,
+            remaining_gross_capacity=portfolio_snapshot.remaining_gross_capacity,
+            remaining_cluster_capacity=cluster_capacity,
+            position_cap=risk_limits.position_cap,
+            remaining_loss_capacity=portfolio_snapshot.remaining_loss_capacity,
+            remaining_beta_capacity=portfolio_snapshot.remaining_beta_capacity,
+            candidate_size=row.candidate_size,
+        )
+        phantom = check_phantom(
+            pair=row.pair,
+            final_size=capped.final_size,
+            candidate_size=row.candidate_size,
+            expected_cost=expected_cost,
+            ev_net=row.expected_edge_bps / 10_000.0,
+        )
+        canonical_payload = {
+            "pre_cap_size": capped.pre_cap_size,
+            "final_size": capped.final_size,
+            "was_capped": capped.was_capped,
+            "cap_reason": capped.cap_reason,
+            "remaining_gross_capacity": portfolio_snapshot.remaining_gross_capacity,
+            "remaining_cluster_capacity": cluster_capacity,
+            "phantom_verdict": phantom.verdict.value,
+            "phantom_reason": phantom.reason,
+        }
+    local_replay_payload = {
+        "candidate_size": row.candidate_size,
+        "final_size": row.final_size,
+    }
+    if portfolio_snapshot is None:
+        fallback_reason = "PORTFOLIO_SNAPSHOT_NOT_CONFIGURED_FOR_BACKTEST"
+    elif risk_limits is None:
+        fallback_reason = "PORTFOLIO_RISK_LIMITS_NOT_CONFIGURED"
+    elif cluster_capacity is None:
+        fallback_reason = "PORTFOLIO_CLUSTER_CAPACITY_MISSING"
+    else:
+        fallback_reason = "PORTFOLIO_STATE_BACKBONE_PAYLOAD_MISSING"
+    return resolve_backbone_surface(
+        surface="portfolio_state",
+        canonical_payload=canonical_payload,
+        local_replay_payload=local_replay_payload,
+        contract_ready=canonical_payload is not None,
+        policy=BackboneParityPolicy(),
+        canonical_source="portfolio_minimal.allocation_router",
+        fallback_source="local_replay_runtime.size_inputs",
+        fallback_reason=fallback_reason,
+    )
+
+
+def _coerce_regime_metric(value: object) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str) and value.strip():
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _resolve_regime_classification_surface_resolution(
+    row: HistoricalReplayOpportunity,
+    *,
+    regime_lite_thresholds: RegimeLiteThresholds | None,
+) -> BackboneSurfaceResolution:
+    feature_values = dict(row.feature_values or {})
+    metric_names = (
+        "btc_realized_vol_24h",
+        "btc_drop_1h",
+        "intraday_drawdown",
+        "engine_return_dispersion",
+    )
+    metrics = {
+        name: _coerce_regime_metric(feature_values.get(name))
+        for name in metric_names
+    }
+    canonical_payload = None
+    if regime_lite_thresholds is not None and all(
+        value is not None for value in metrics.values()
+    ):
+        assessment = classify_regime_lite(
+            RegimeLiteInput(
+                as_of_ts=max(int(row.timestamp_ms / 1000), 1),
+                btc_realized_vol_24h=metrics["btc_realized_vol_24h"] or 0.0,
+                btc_drop_1h=metrics["btc_drop_1h"] or 0.0,
+                intraday_drawdown=metrics["intraday_drawdown"] or 0.0,
+                engine_return_dispersion=metrics["engine_return_dispersion"] or 0.0,
+            ),
+            thresholds=regime_lite_thresholds,
+        )
+        canonical_payload = {
+            "state": assessment.state.value,
+            "candidate_state": assessment.candidate_state.value,
+            "entries_blocked": assessment.entries_blocked,
+            "entries_blocked_until_ts": assessment.entries_blocked_until_ts,
+            "reason_codes": assessment.reason_codes,
+        }
+    local_replay_payload = {"regime": row.regime} if row.regime else None
+    if regime_lite_thresholds is None:
+        fallback_reason = "REGIME_LITE_THRESHOLDS_NOT_CONFIGURED"
+    elif any(value is None for value in metrics.values()):
+        fallback_reason = "REGIME_CLASSIFIER_INPUTS_MISSING"
+    else:
+        fallback_reason = "REGIME_CLASSIFIER_BACKBONE_PAYLOAD_MISSING"
+    return resolve_backbone_surface(
+        surface="regime_classification",
+        canonical_payload=canonical_payload,
+        local_replay_payload=local_replay_payload,
+        contract_ready=canonical_payload is not None,
+        policy=BackboneParityPolicy(),
+        canonical_source="regime_classifier.regime_lite",
+        fallback_source="local_replay_runtime.regime_field",
+        fallback_reason=fallback_reason,
+    )
+
+
+def _resolve_scoring_ranking_surface_resolution(
+    row: HistoricalReplayOpportunity,
+    *,
+    expected_cost: float,
+    scoring_ranking_weights: RankingWeights | None,
+) -> BackboneSurfaceResolution:
+    canonical_payload = None
+    if scoring_ranking_weights is not None:
+        ranked = compute_ranking_scores(
+            (
+                {
+                    "engine_id": row.engine_id,
+                    "pair": row.pair,
+                    "penalized_score": row.penalized_score or row.raw_score,
+                    "expected_ce": row.expected_edge_bps / 10_000.0,
+                    "expected_cost": expected_cost,
+                },
+            ),
+            scoring_ranking_weights,
+        )
+        if ranked:
+            top = ranked[0]
+            canonical_payload = {
+                "ranking_score": top.ranking_score,
+                "rank": top.rank,
+                "penalized_score": top.penalized_score,
+                "expected_ce": top.expected_ce,
+                "expected_cost": top.expected_cost,
+                "weights_version": scoring_ranking_weights.version,
+            }
+    local_replay_payload = {
+        "raw_score": row.raw_score,
+        "penalized_score": row.penalized_score or row.raw_score,
+        "final_score": row.final_score or row.raw_score,
+        "ranking_position": row.ranking_position,
+    }
+    return resolve_backbone_surface(
+        surface="scoring_ranking",
+        canonical_payload=canonical_payload,
+        local_replay_payload=local_replay_payload,
+        contract_ready=canonical_payload is not None,
+        policy=BackboneParityPolicy(),
+        canonical_source="scoring_backbone.ranking_score_builder",
+        fallback_source="local_replay_runtime.score_fields",
+        fallback_reason="SCORING_RANKING_WEIGHTS_NOT_CONFIGURED",
+    )
+
+
+def _resolve_hard_block_gate_surface_resolution(
+    row: HistoricalReplayOpportunity,
+    *,
+    hard_block_conditions: BlockerCondition | None,
+) -> BackboneSurfaceResolution:
+    canonical_payload = None
+    if hard_block_conditions is not None:
+        evaluations = evaluate_blockers(hard_block_conditions)
+        triggered = tuple(
+            (evaluation.blocker_id, evaluation.reason)
+            for evaluation in evaluations
+            if evaluation.triggered
+        )
+        encoded = encode_reasons(triggered)
+        decision = build_decision(
+            pair=row.pair,
+            engine_id=row.engine_id,
+            encoded_reasons=encoded,
+        )
+        reporter = BlockerReporter()
+        reason_codes = tuple(reason.code for reason in encoded)
+        if decision.is_blocked:
+            reporter.record_blocked(reason_codes)
+        else:
+            reporter.record_passed()
+        stats = reporter.get_stats()
+        canonical_payload = {
+            "is_blocked": decision.is_blocked,
+            "may_proceed_to_ranking": decision.may_proceed_to_ranking,
+            "reason_codes": reason_codes,
+            "reason_count": decision.reason_count,
+            "hb_rate": stats.hb_rate,
+            "total_candidates": stats.total_candidates,
+            "total_blocked": stats.total_blocked,
+        }
+    local_replay_payload = {
+        "hard_block_reasons": row.hard_block_reasons,
+        "primary_reason": row.primary_reason,
+        "target_decision_state": (
+            row.target_decision_state.value
+            if row.target_decision_state is not None
+            else ""
+        ),
+    }
+    return resolve_backbone_surface(
+        surface="hard_block_gate",
+        canonical_payload=canonical_payload,
+        local_replay_payload=local_replay_payload,
+        contract_ready=canonical_payload is not None,
+        policy=BackboneParityPolicy(),
+        canonical_source="scoring_backbone.hard_block_gate",
+        fallback_source="local_replay_runtime.hard_block_reasons",
+        fallback_reason="HARD_BLOCK_CONDITIONS_NOT_CONFIGURED",
+    )
+
+
+_DATA_BACKBONE_MICROSTRUCTURE_FEATURES = (
+    "book_depth_levels",
+    "spread_bps",
+    "vpin",
+    "cumulative_ofi",
+    "queue_pressure",
+    "realized_vol_at_break",
+    "realized_vol_current",
+    "kyle_lambda",
+)
+
+
+def _coerce_optional_float(value: object) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _resolve_data_backbone_market_microstructure_surface_resolution(
+    row: HistoricalReplayOpportunity,
+) -> BackboneSurfaceResolution:
+    feature_values = dict(row.feature_values or {})
+    microstructure_features = {
+        name: _coerce_optional_float(feature_values.get(name))
+        for name in _DATA_BACKBONE_MICROSTRUCTURE_FEATURES
+        if name in feature_values
+    }
+    if row.book_depth_levels is not None:
+        microstructure_features.setdefault(
+            "book_depth_levels",
+            float(row.book_depth_levels),
+        )
+    if row.spread_bps >= 0.0:
+        microstructure_features.setdefault("spread_bps", float(row.spread_bps))
+
+    depth_status = (row.book_depth_source_status or "BOOK_DEPTH_NOT_PROVEN").strip()
+    staleness_status = (
+        row.book_depth_staleness_status or "BOOK_DEPTH_NOT_PROVEN"
+    ).strip()
+    depth20_proven = (
+        row.book_depth_levels is not None
+        and row.book_depth_levels >= 20
+        and depth_status == "BOOK_DEPTH20_AVAILABLE"
+        and staleness_status != "BOOK_DEPTH_STALE"
+    )
+    has_microstructure_values = any(
+        value is not None for value in microstructure_features.values()
+    )
+    canonical_payload = (
+        {
+            "pair": row.pair,
+            "timestamp_ms": row.timestamp_ms,
+            "book_depth_levels": row.book_depth_levels,
+            "book_depth_source_status": depth_status,
+            "book_depth_staleness_status": staleness_status,
+            "book_depth_snapshot_count": row.book_depth_snapshot_count,
+            "book_depth_event_count": row.book_depth_event_count,
+            "book_depth_missing_count": row.book_depth_missing_count,
+            "microstructure_features": microstructure_features,
+            "source_status": "DATA_BACKBONE_DEPTH20_MICROSTRUCTURE_PROVEN",
+        }
+        if depth20_proven and has_microstructure_values
+        else None
+    )
+    local_replay_payload = (
+        {
+            "pair": row.pair,
+            "timestamp_ms": row.timestamp_ms,
+            "book_depth_levels": row.book_depth_levels,
+            "book_depth_source_status": depth_status,
+            "book_depth_staleness_status": staleness_status,
+            "microstructure_features": microstructure_features,
+            "source_status": "LOCAL_REPLAY_FEATURE_VALUES_AUDIT_ONLY",
+        }
+        if has_microstructure_values
+        or row.book_depth_levels is not None
+        or depth_status != "BOOK_DEPTH_NOT_PROVEN"
+        else None
+    )
+    if not depth20_proven:
+        if staleness_status == "BOOK_DEPTH_STALE":
+            fallback_reason = "DATA_BACKBONE_BOOK_DEPTH_STALE"
+        elif depth_status != "BOOK_DEPTH20_AVAILABLE":
+            fallback_reason = "DATA_BACKBONE_BOOK_DEPTH20_NOT_PROVEN"
+        else:
+            fallback_reason = "DATA_BACKBONE_BOOK_DEPTH_LEVELS_INSUFFICIENT"
+    elif not has_microstructure_values:
+        fallback_reason = "DATA_BACKBONE_MICROSTRUCTURE_FEATURES_MISSING"
+    else:
+        fallback_reason = "DATA_BACKBONE_MICROSTRUCTURE_PAYLOAD_MISSING"
+    return resolve_backbone_surface(
+        surface="data_backbone_market_microstructure",
+        canonical_payload=canonical_payload,
+        local_replay_payload=local_replay_payload,
+        contract_ready=canonical_payload is not None,
+        policy=BackboneParityPolicy(
+            compared_fields=("book_depth_levels", "book_depth_source_status"),
+            numeric_tolerance=0.0,
+        ),
+        canonical_source="data_backbone.microstructure.gold_features",
+        fallback_source="local_replay_runtime.feature_values",
+        fallback_reason=fallback_reason,
+    )
+
+
+def _resolve_meta_learning_expected_edge_surface_resolution(
+    config: ShadowExecutionSimulatorConfig,
+) -> BackboneSurfaceResolution:
+    ml_mode = (config.ml_mode or "ML_MODE_OFF").strip()
+    model_status = (
+        config.expected_edge_model_status or "EXPECTED_EDGE_ARTIFACT_NOT_DECLARED"
+    ).strip()
+    artifact_hash = config.expected_edge_model_artifact_hash
+    artifact_ref = config.expected_edge_training_artifact_ref
+    frozen_ready = (
+        ml_mode == "ML_MODE_OVERLAY_FROZEN"
+        and bool(artifact_hash)
+        and bool(artifact_ref)
+        and model_status
+        in {
+            "GOVERNED_EDGE_MODEL_READY",
+            "EXPECTED_EDGE_GOVERNED_ARTIFACT_READY",
+            "ML_OVERLAY_FROZEN_ARTIFACT_READY",
+        }
+    )
+    canonical_payload = (
+        {
+            "ml_mode": ml_mode,
+            "expected_edge_model_status": model_status,
+            "expected_edge_model_artifact_hash": artifact_hash,
+            "expected_edge_model_feature_hash": config.expected_edge_model_feature_hash,
+            "expected_edge_training_artifact_ref": artifact_ref,
+            "training_invoked_by_b2": False,
+            "decision_authority": "overlay_only",
+        }
+        if frozen_ready
+        else None
+    )
+    local_replay_payload = {
+        "ml_mode": ml_mode,
+        "expected_edge_model_status": model_status,
+        "expected_edge_model_artifact_hash": artifact_hash,
+        "expected_edge_training_artifact_ref": artifact_ref,
+        "training_invoked_by_b2": False,
+        "decision_authority": "none" if ml_mode == "ML_MODE_OFF" else "blocked_overlay",
+    }
+    if ml_mode == "ML_MODE_OFF":
+        fallback_reason = "META_LEARNING_CORRECTLY_OUT_OF_B2_ML_MODE_OFF"
+    elif not artifact_hash or not artifact_ref:
+        fallback_reason = "EXPECTED_EDGE_FROZEN_ARTIFACT_MISSING"
+    else:
+        fallback_reason = "EXPECTED_EDGE_ARTIFACT_NOT_GOVERNED_FOR_BACKTEST_TRUTH"
+    return resolve_backbone_surface(
+        surface="meta_learning_expected_edge",
+        canonical_payload=canonical_payload,
+        local_replay_payload=local_replay_payload,
+        contract_ready=canonical_payload is not None,
+        policy=BackboneParityPolicy(),
+        canonical_source="meta_learning.governed_expected_edge_artifact",
+        fallback_source="local_replay_runtime.ml_mode_contract",
+        fallback_reason=fallback_reason,
+    )
+
+
+def _resolve_protocol_contract_surface_resolution(
+    config: ShadowExecutionSimulatorConfig,
+) -> BackboneSurfaceResolution:
+    contract_refs = tuple(ref for ref in config.protocol_contract_refs if ref)
+    refusal_status = (
+        config.refusal_contract_status or "REFUSAL_CONTRACT_NOT_DECLARED"
+    ).strip()
+    canonical_payload = (
+        {
+            "protocol_contract_refs": contract_refs,
+            "refusal_contract_status": refusal_status,
+            "live_transport_enabled": config.live_transport_enabled,
+            "transport_scope": "not_imported_in_b2",
+        }
+        if contract_refs and not config.live_transport_enabled
+        else None
+    )
+    local_replay_payload = {
+        "protocol_contract_refs": contract_refs,
+        "refusal_contract_status": refusal_status,
+        "live_transport_enabled": config.live_transport_enabled,
+        "transport_scope": "blocked_for_b2",
+    }
+    fallback_reason = (
+        "PROTOCOL_LIVE_TRANSPORT_NOT_ALLOWED_IN_B2"
+        if config.live_transport_enabled
+        else "PROTOCOL_CONTRACT_REFS_NOT_DECLARED"
+    )
+    return resolve_backbone_surface(
+        surface="protocol_contracts",
+        canonical_payload=canonical_payload,
+        local_replay_payload=local_replay_payload,
+        contract_ready=canonical_payload is not None,
+        policy=BackboneParityPolicy(),
+        canonical_source="protocols.contracts.refusal_only",
+        fallback_source="local_replay_runtime.refusal_ledger_contract",
+        fallback_reason=fallback_reason,
+    )
+
+
+def _resolve_complete_enablers_build14_surface_resolution(
+    config: ShadowExecutionSimulatorConfig,
+) -> BackboneSurfaceResolution:
+    context_status = (config.build14_context_status or "BUILD14_CONTEXT_NOT_DECLARED").strip()
+    filter_status = (
+        config.build14_upstream_filter_status or "BUILD14_UPSTREAM_FILTER_NOT_DECLARED"
+    ).strip()
+    feature_groups = tuple(group for group in config.build14_feature_groups if group)
+    ready_statuses = {
+        "BUILD14_CONTEXT_READY",
+        "BUILD14_CONTEXT_CONSUMED",
+        "COMPLETE_ENABLERS_CONTEXT_READY",
+    }
+    canonical_payload = (
+        {
+            "build14_context_status": context_status,
+            "build14_feature_groups": feature_groups,
+            "build14_upstream_filter_status": filter_status,
+            "decision_authority": "bounded_context_only",
+        }
+        if context_status in ready_statuses and feature_groups
+        else None
+    )
+    local_replay_payload = {
+        "build14_context_status": context_status,
+        "build14_feature_groups": feature_groups,
+        "build14_upstream_filter_status": filter_status,
+        "decision_authority": "not_available_or_filtered_upstream",
+    }
+    if "FILTERED" in filter_status.upper():
+        fallback_reason = "COMPLETE_ENABLERS_FILTERED_UPSTREAM"
+    elif not feature_groups:
+        fallback_reason = "COMPLETE_ENABLERS_FEATURE_GROUPS_NOT_DECLARED"
+    else:
+        fallback_reason = "COMPLETE_ENABLERS_CONTEXT_NOT_READY"
+    return resolve_backbone_surface(
+        surface="complete_enablers_build14",
+        canonical_payload=canonical_payload,
+        local_replay_payload=local_replay_payload,
+        contract_ready=canonical_payload is not None,
+        policy=BackboneParityPolicy(),
+        canonical_source="complete_enablers.build14_context",
+        fallback_source="local_replay_runtime.build14_context_status",
+        fallback_reason=fallback_reason,
+    )
+
+
 def _build_row_component_sources(
     *,
     config: ShadowExecutionSimulatorConfig,
@@ -673,6 +1900,10 @@ def _build_row_execution_profile(
     mid_price = _resolve_mid_price(row)
     ordered_quantity = _resolve_ordered_quantity(row, mid_price=mid_price)
     venue_constraints = _build_venue_constraints(row)
+    venue_constraints_surface_resolution = _resolve_venue_constraints_surface_resolution(
+        row,
+        venue_constraints=venue_constraints,
+    )
     order_type_decision = _select_replay_order_type(
         row,
         config=config,
@@ -683,6 +1914,19 @@ def _build_row_execution_profile(
         order_type=order_type_decision.order_type,
         mid_price=mid_price,
         ordered_quantity=ordered_quantity,
+    )
+    fee_surface_resolution = _resolve_fee_surface_resolution(
+        row,
+        order_type=order_type_decision.order_type,
+        fee_fraction=fee_fraction,
+    )
+    spread_surface_resolution = _resolve_spread_surface_resolution(
+        row,
+        has_spread_guard=config.spread_guard_model is not None,
+    )
+    slippage_surface_resolution = _resolve_slippage_surface_resolution(
+        row,
+        has_slippage_model=config.slippage_model is not None,
     )
     expected_cost = implicit_cost + (fee_fraction or 0.0)
     if fee_fraction is not None:
@@ -700,6 +1944,11 @@ def _build_row_execution_profile(
         if updated_fee_fraction is not None:
             fee_fraction = updated_fee_fraction
             expected_cost = implicit_cost + fee_fraction
+            fee_surface_resolution = _resolve_fee_surface_resolution(
+                row,
+                order_type=order_type_decision.order_type,
+                fee_fraction=fee_fraction,
+            )
     exec_price = _resolve_exec_price(
         row,
         mid_price=mid_price,
@@ -709,6 +1958,11 @@ def _build_row_execution_profile(
         row,
         ordered_quantity=ordered_quantity,
         exec_price=exec_price,
+    )
+    explicit_fill_path = bool(
+        row.fill_prices
+        and row.fill_quantities
+        and len(row.fill_prices) == len(row.fill_quantities)
     )
     partial_fill_cost_fraction = None
     if mid_price is not None and mid_price > 0.0 and ordered_quantity is not None and ordered_quantity > 0.0:
@@ -728,6 +1982,18 @@ def _build_row_execution_profile(
         partial_fill_cost_fraction = variance_component + (
             partial_fill_cost.unfilled_cost / max(mid_price * ordered_quantity, 1e-12)
         )
+    partial_fill_surface_resolution = _resolve_partial_fill_surface_resolution(
+        row,
+        partial_fill_cost_fraction=partial_fill_cost_fraction,
+        explicit_fill_path=explicit_fill_path,
+    )
+    fill_terminal_surface_resolution = _resolve_fill_terminal_state_surface_resolution(
+        row,
+        ordered_quantity=ordered_quantity,
+        fill_prices=fill_prices,
+        fill_quantities=fill_quantities,
+        explicit_fill_path=explicit_fill_path,
+    )
     adverse_selection_fraction = None
     if (
         row.post_fill_mid_price is not None
@@ -755,7 +2021,13 @@ def _build_row_execution_profile(
                 delay_s=delay_s,
             )
             adverse_selection_fraction = max(0.0, -adverse_measurement.adverse_selection) * execution_factor
+    adverse_selection_surface_resolution = _resolve_adverse_selection_surface_resolution(
+        row,
+        adverse_selection_fraction=adverse_selection_fraction,
+        explicit_fill_path=explicit_fill_path,
+    )
     realized_cost = expected_cost * execution_factor
+    trade_cost = None
     replay_cost_components = ["expected_cost_total", "spread_bps", "latency_penalty_bps"]
     if config.spread_guard_model is not None:
         replay_cost_components.append("canonical_spread_guard")
@@ -785,6 +2057,12 @@ def _build_row_execution_profile(
             expected_cost=expected_cost * execution_factor,
         )
         realized_cost = trade_cost.total_cost
+    cost_aggregation_surface_resolution = _resolve_cost_aggregation_surface_resolution(
+        expected_cost=expected_cost,
+        realized_cost=realized_cost,
+        trade_cost=trade_cost,
+    )
+    fee_edge_decision = None
     fee_edge_reason_code = None
     if config.fee_aware_edge_gate_config is not None:
         try:
@@ -797,6 +2075,75 @@ def _build_row_execution_profile(
             fee_edge_decision = None
         if fee_edge_decision is not None and not fee_edge_decision.allowed:
             fee_edge_reason_code = fee_edge_decision.reason_code
+    fee_aware_edge_surface_resolution = _resolve_fee_aware_edge_surface_resolution(
+        row,
+        expected_cost=expected_cost,
+        fee_edge_decision=fee_edge_decision,
+    )
+    order_type_surface_resolution = _resolve_order_type_surface_resolution(
+        row,
+        order_type_decision=order_type_decision,
+    )
+    execution_intent = _build_execution_intent(
+        row,
+        order_type_decision=order_type_decision,
+        ordered_quantity=ordered_quantity,
+        expected_cost=expected_cost,
+        venue_constraints=venue_constraints,
+    )
+    execution_intent_surface_resolution = _resolve_execution_intent_surface_resolution(
+        row,
+        execution_intent=execution_intent,
+        order_type_decision=order_type_decision,
+        ordered_quantity=ordered_quantity,
+    )
+    order_decision_reporting_surface_resolution = (
+        _resolve_order_decision_reporting_surface_resolution(
+            row,
+            execution_intent=execution_intent,
+            order_type_decision=order_type_decision,
+            expected_cost=expected_cost,
+        )
+    )
+    risk_filter_surface_resolution = _resolve_risk_filter_surface_resolution(
+        row,
+        execution_intent=execution_intent,
+        expected_cost=expected_cost,
+        risk_limits=config.risk_limits,
+    )
+    portfolio_state_surface_resolution = _resolve_portfolio_state_surface_resolution(
+        row,
+        expected_cost=expected_cost,
+        portfolio_snapshot=config.portfolio_snapshot,
+        risk_limits=config.risk_limits,
+    )
+    regime_classification_surface_resolution = (
+        _resolve_regime_classification_surface_resolution(
+            row,
+            regime_lite_thresholds=config.regime_lite_thresholds,
+        )
+    )
+    scoring_ranking_surface_resolution = _resolve_scoring_ranking_surface_resolution(
+        row,
+        expected_cost=expected_cost,
+        scoring_ranking_weights=config.scoring_ranking_weights,
+    )
+    hard_block_gate_surface_resolution = _resolve_hard_block_gate_surface_resolution(
+        row,
+        hard_block_conditions=config.hard_block_conditions,
+    )
+    data_backbone_market_surface_resolution = (
+        _resolve_data_backbone_market_microstructure_surface_resolution(row)
+    )
+    meta_learning_surface_resolution = _resolve_meta_learning_expected_edge_surface_resolution(
+        config
+    )
+    protocol_contract_surface_resolution = _resolve_protocol_contract_surface_resolution(
+        config
+    )
+    complete_enablers_surface_resolution = (
+        _resolve_complete_enablers_build14_surface_resolution(config)
+    )
     return _RowExecutionProfile(
         expected_cost=expected_cost,
         realized_cost=realized_cost,
@@ -819,6 +2166,29 @@ def _build_row_execution_profile(
         order_reason=order_type_decision.reason,
         venue_constraints=venue_constraints,
         fee_aware_edge_reason_code=fee_edge_reason_code,
+        surface_resolutions=(
+            fee_surface_resolution,
+            spread_surface_resolution,
+            slippage_surface_resolution,
+            partial_fill_surface_resolution,
+            adverse_selection_surface_resolution,
+            order_type_surface_resolution,
+            venue_constraints_surface_resolution,
+            fee_aware_edge_surface_resolution,
+            cost_aggregation_surface_resolution,
+            fill_terminal_surface_resolution,
+            execution_intent_surface_resolution,
+            order_decision_reporting_surface_resolution,
+            risk_filter_surface_resolution,
+            portfolio_state_surface_resolution,
+            regime_classification_surface_resolution,
+            scoring_ranking_surface_resolution,
+            hard_block_gate_surface_resolution,
+            data_backbone_market_surface_resolution,
+            meta_learning_surface_resolution,
+            protocol_contract_surface_resolution,
+            complete_enablers_surface_resolution,
+        ),
     )
 
 
@@ -1120,6 +2490,13 @@ def build_parity_diagnostics_payload(
         for row, record in zip(dataset.rows, dtr_records, strict=False)
     )
     component_sources = _aggregate_component_sources(row_profiles)
+    backbone_surface_report = build_backbone_parity_surface_report(
+        tuple(
+            resolution
+            for profile in row_profiles
+            for resolution in profile.surface_resolutions
+        )
+    )
     parity_policy = effective_config.parity_policy
     decision_compared = 0
     decision_matches = 0
@@ -1289,6 +2666,7 @@ def build_parity_diagnostics_payload(
         order_type_selection_source=component_sources["order_type_selection_source"],
         venue_constraints_source=component_sources["venue_constraints_source"],
         execution_fidelity_gap_codes=_execution_fidelity_gap_codes(component_sources),
+        backbone_surface_report=backbone_surface_report,
         spread_guard_model_loaded=effective_config.spread_guard_model is not None,
         slippage_model_loaded=effective_config.slippage_model is not None,
         execution_runtime_projection_ref=effective_config.execution_runtime_projection_ref,

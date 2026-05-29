@@ -49,6 +49,7 @@ from cockpit.queue_support import (
     resolve_dashboard_command_queue_paths,
 )
 from cockpit.runtime_support import _read_strategy_ladder_summary, read_runtime_surfaces
+from cockpit import backtest_preflight as backtest_preflight_module
 from cockpit.strategy_ladder_workflow_support import (
     PHASE_A1,
     PHASE_A2,
@@ -637,6 +638,144 @@ def test_lab_strategy_ladder_ml_handoff_launch_builds_dated_command() -> None:
         assert "--feature-names close_return,high_low_range,volume" in command
         assert "--sample-stride-minutes 60" in command
         assert "--target-horizon-minutes 1" in command
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_lab_strategy_ladder_ml_handoff_launch_propagates_label_store_dataset_path() -> None:
+    scratch = _scratch_dir("cockpit_lab_ml_handoff_label_store_path")
+    try:
+        client = _build_client(scratch)
+        kline_root = scratch / "klines"
+        kline_root.mkdir(parents=True, exist_ok=True)
+        dataset_path = (
+            scratch
+            / "phase_b_ml_training_label_factory"
+            / "labels"
+            / "b_ml_label_store.jsonl"
+        )
+        dataset_path.parent.mkdir(parents=True, exist_ok=True)
+        dataset_path.write_text("", encoding="utf-8")
+
+        response = client.post(
+            "/lab/strategy-ladder-ml-handoff",
+            data={
+                "kline_root": str(kline_root),
+                "label_store_dataset_path": str(dataset_path),
+                "pair": "BTCUSDT",
+                "timeframe": "1m",
+                "train_start": "2025-01-01",
+                "train_end": "2025-04-30",
+                "requested_backtest_start": "2025-05-01",
+                "requested_backtest_days": "30",
+                "selected_features_csv": "vpin,kyle_lambda",
+                "feature_picker_enabled": "1",
+            },
+            follow_redirects=False,
+        )
+
+        assert response.status_code in {302, 303, 307}
+        jobs = load_backtest_job_records(client.app.state.paths.backtest_jobs_root)
+        latest = jobs[0]
+        command = " ".join(latest.command)
+        assert latest.job_kind == CockpitBacktestJobKind.STRATEGY_LADDER_ML_LAB_HANDOFF
+        assert "--label-store-dataset-path" in command
+        assert str(dataset_path) in command
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_lab_preview_preserves_ready_handoff_refs_and_full_width_labels() -> None:
+    scratch = _scratch_dir("lab_preview_preserves_ready_handoff")
+    try:
+        client = _build_client(scratch)
+        jobs_root = client.app.state.paths.backtest_jobs_root
+        assert jobs_root is not None
+        job_root = jobs_root / "strategy_ladder_ml_lab_handoff-hero"
+        output_root = job_root / "output"
+        output_root.mkdir(parents=True, exist_ok=True)
+        backtest_input_ref = str((output_root / "strategy_ladder_backtest_ml_input.json").resolve())
+        training_report_ref = str((output_root / "training_report.json").resolve())
+        handoff_report_ref = str((output_root / "strategy_ladder_ml_lab_handoff_report.json").resolve())
+        transport_ref = str((output_root / "transport_artifact.json").resolve())
+        _write_json(
+            Path(handoff_report_ref),
+            {
+                "artifact_id": "strategy_ladder_ml_lab_handoff-hero",
+                "status": "STRATEGY_LADDER_ML_LAB_HANDOFF_READY",
+                "ready": True,
+                "pair": "BTCUSDT",
+                "timeframe": "1m",
+                "timeframe_scope": ["1m", "5m"],
+                "export_dir": str(output_root),
+                "train_start": "2025-05-02",
+                "train_end": "2025-07-17",
+                "training_report_ref": training_report_ref,
+                "handoff_report_ref": handoff_report_ref,
+                "backtest_input_ref": backtest_input_ref,
+                "transport_artifact_ref": transport_ref,
+                "artifact_hash": "a" * 64,
+                "feature_hash": "b" * 64,
+                "dataset_hash": "c" * 64,
+                "feature_names": ["close_return", "high_low_range", "volume"],
+            },
+        )
+        _write_json(
+            Path(training_report_ref),
+            {
+                "artifact_id": "strategy_ladder_ml_lab_handoff-hero",
+                "pair": "BTCUSDT",
+                "timeframe": "1m",
+                "kline_root": "L:\\klines",
+                "training_row_count": 210,
+                "trainer_train_row_count": 180,
+                "trainer_validation_row_count": 30,
+                "sample_stride_minutes": 60,
+                "target_horizon_minutes": 1,
+                "training_seed": 5307,
+                "optuna_trials_used": 0,
+                "bagging_folds_used": 0,
+                "feature_source": "gold_store_kline_features",
+                "label_source_type": "LEGACY_STRATEGY_LADDER_EXPECTED_EDGE_TARGET_POLICY",
+                "label_fidelity": "EXPECTED_EDGE_PROXY_DISCOVERY_ONLY",
+                "replay_grounded_label_count": 0,
+                "proxy_execution_label_count": 0,
+            },
+        )
+        _write_json(Path(backtest_input_ref), {"status": "READY"})
+        _write_json(Path(transport_ref), {"status": "READY"})
+        record = CockpitBacktestJobRecord(
+            job_id="strategy_ladder_ml_lab_handoff-hero",
+            correlation_id="corr-hero",
+            job_kind=CockpitBacktestJobKind.STRATEGY_LADDER_ML_LAB_HANDOFF,
+            status=CockpitBacktestJobStatus.JOB_COMPLETED,
+            requested_at_iso="2026-05-26T12:00:00+00:00",
+            output_root=str(output_root),
+            record_path=str((job_root / "job.json").resolve()),
+            stdout_log_path=str((job_root / "stdout.log").resolve()),
+        )
+        _write_json(Path(record.record_path), record.model_dump(mode="json"))
+
+        response = client.post(
+            "/lab/strategy-ladder-ml-handoff",
+            data={
+                "intent": "preview",
+                "kline_root": str(scratch / "klines"),
+                "pair": "BTCUSDT",
+                "timeframe": "1m",
+                "train_start": "2025-05-02",
+                "train_end": "2025-07-17",
+                "requested_backtest_start": "2025-07-18",
+                "requested_backtest_days": "15",
+            },
+            follow_redirects=True,
+        )
+
+        assert response.status_code == 200
+        assert "frozen-artifact-ready" in response.text
+        assert "Training provenance snapshot" in response.text
+        assert backtest_input_ref in response.text
+        assert "Frozen artifact state" in response.text
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
@@ -1819,6 +1958,146 @@ def test_command_builder_hard_guard_rejects_path_in_pairs() -> None:
         shutil.rmtree(scratch, ignore_errors=True)
 
 
+def test_command_builder_full_discovery_emits_uncapped_candidate_sample_cap() -> None:
+    from cockpit import action_support as action_support_module
+
+    scratch = _scratch_dir("cockpit_full_discovery_uncapped_command")
+    try:
+        command = action_support_module._build_backtest_command(
+            job_id="runner-full-discovery",
+            job_kind=CockpitBacktestJobKind.STRATEGY_LADDER_RUNNER,
+            export_dir=scratch / "export",
+            output_root=scratch / "out",
+            baseline_export_dir=None,
+            signed_by="tester",
+            python_executable="python",
+            action_name="PHASE_B1_CANDIDATE_DISCOVERY",
+            raw_source_manifest_path=None,
+            raw_roots=(),
+            pairs=("BNBUSDT", "BTCUSDT"),
+            start="2025-04-29",
+            end="2025-05-01",
+            allow_broad_run=False,
+            ml_mode_status="ML_MODE_OFF",
+            engine_native_mode=True,
+            engine_native_sample_size=10,
+            candidate_discovery_mode="FULL_DISCOVERY",
+            small_scope_enabled=False,
+            full_scan_enabled=True,
+            no_full_scan_enabled=False,
+            workflow_run_id="strategy_ladder_workflow-full-discovery",
+            backtest_timeframes=("15m",),
+        )
+
+        cap_index = command.index("--candidate-sample-cap")
+        assert command[cap_index + 1] == "0"
+        assert "--full-scan-enabled" in command
+        assert "--pairs" in command
+        assert "BNBUSDT,BTCUSDT" in command
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_command_builder_data_factory_emits_selected_feature_names() -> None:
+    from cockpit import action_support as action_support_module
+
+    scratch = _scratch_dir("cockpit_data_factory_feature_names_command")
+    try:
+        command = action_support_module._build_backtest_command(
+            job_id="data-factory-feature-names",
+            job_kind=CockpitBacktestJobKind.STRATEGY_LADDER_DATA_FACTORY,
+            export_dir=scratch / "export",
+            output_root=scratch / "out",
+            baseline_export_dir=None,
+            signed_by="tester",
+            python_executable="python",
+            action_name="PHASE_A2_DATA_FACTORY",
+            raw_source_manifest_path=None,
+            raw_roots=(scratch / "raw",),
+            pairs=("BTCUSDT",),
+            start="2025-04-29",
+            end="2025-05-01",
+            allow_broad_run=False,
+            ml_mode_status="ML_MODE_OFF",
+            engine_native_mode=True,
+            engine_native_sample_size=10,
+            backtest_timeframes=("15m",),
+            feature_names_csv="vpin,kyle_lambda,queue_pressure",
+        )
+
+        feature_index = command.index("--feature-names")
+        assert command[feature_index + 1] == "vpin,kyle_lambda,queue_pressure"
+        timeframe_index = command.index("--timeframes")
+        assert command[timeframe_index + 1] == "15m"
+        assert "run_strategy_ladder_data_factory.py" in " ".join(command)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_preflight_data_factory_preview_emits_selected_timeframes() -> None:
+    command_preview = backtest_preflight_module._build_preview_command(
+        action_name="PHASE_A2_DATA_FACTORY",
+        export_dir="",
+        baseline_export_dir="",
+        raw_source_manifest_path="",
+        orderbook_path="L:\\ordrebookpart1",
+        trades_path="L:\\trades",
+        klines_path="L:\\klines",
+        raw_roots=("L:\\ordrebookpart1", "L:\\trades", "L:\\klines"),
+        metadata_path="K:\\v5.3 backtest\\metadata\\bybit\\spot",
+        pairs=("BNBUSDT", "BTCUSDT"),
+        backtest_timeframes=("15m",),
+        feature_names="vpin,kyle_lambda",
+        start="2025-07-07",
+        end="2025-07-09",
+        ml_mode="ML_MODE_OFF",
+        expected_edge_artifact_mode="MONO_PAIR_LEGACY",
+        frozen_ml_artifact_path="",
+        frozen_ml_artifact_hash="",
+        rolling_ml_window_plan_path="",
+        ml_artifact_freshness_days=30,
+        output_root="L:\\output backtest\\runs\\strategy_ladder_workflow-test\\phase_a2_data_factory",
+        workflow_run_id="strategy_ladder_workflow-test",
+        engine_native_sample_size=50,
+        candidate_sample_cap=0,
+        candidate_discovery_mode="TEMPORAL_STRATIFIED",
+        small_scope_enabled=False,
+        full_scan_enabled=True,
+        no_full_scan_enabled=False,
+        allow_broad_run=False,
+        silver_storage_mode="jsonl_gz",
+    )
+
+    assert "run_strategy_ladder_data_factory.py" in command_preview
+    assert "--timeframes 15m" in command_preview
+    assert "--feature-names vpin,kyle_lambda" in command_preview
+
+
+def test_running_data_factory_job_counts_partial_output_files() -> None:
+    scratch = _scratch_dir("cockpit_data_factory_partial_files")
+    try:
+        output_root = scratch / "phase_a2_data_factory"
+        _write_jsonl(output_root / "silver" / "ohlcv" / "BTCUSDT" / "2025" / "07" / "07.jsonl", [{"x": 1}])
+        feature_path = output_root / "gold" / "features_15m" / "BTCUSDT" / "2025" / "07.jsonl.gz"
+        feature_path.parent.mkdir(parents=True, exist_ok=True)
+        feature_path.write_bytes(b"partial")
+        record = CockpitBacktestJobRecord(
+            job_id="strategy_ladder_data_factory-partial",
+            correlation_id="corr-partial",
+            job_kind=CockpitBacktestJobKind.STRATEGY_LADDER_DATA_FACTORY,
+            status=CockpitBacktestJobStatus.JOB_RUNNING,
+            requested_at_iso="2026-05-25T08:06:22+00:00",
+            output_root=str(output_root),
+            record_path=str(scratch / "job.json"),
+            stdout_log_path=str(scratch / "stdout.log"),
+        )
+
+        assert record.output_ref_count == 0
+        assert record.produced_file_count == 2
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
 def test_dashboard_reroutes_path_in_pairs_field_to_raw_roots() -> None:
     scratch = _scratch_dir("cockpit_pair_path_block")
     try:
@@ -2180,6 +2459,267 @@ def test_job_completed_with_blockers_status_when_manifests_have_blockers(
         assert payload["stage_statuses"].get("data_factory_status") == (
             "DATA_FACTORY_BLOCKED_BY_RAW_DATA"
         )
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_strategy_ladder_runner_recovers_postrun_terminal_artifact_stall(
+    monkeypatch,
+) -> None:
+    scratch = _scratch_dir("cockpit_strategy_ladder_postrun_stall")
+    try:
+        job_root = scratch / "backtest_jobs" / "strategy_ladder_runner-stalled"
+        job_root.mkdir(parents=True, exist_ok=True)
+        output_root = scratch / "phase_b1_candidate_discovery"
+        reports_dir = (
+            output_root
+            / "backtest_strategy_ladder"
+            / "strategy_ladder_workflow-stalled"
+            / "reports"
+        )
+        summary_path = reports_dir / "strategy_ladder_summary.json"
+        profitability_path = reports_dir / "profitability_truth_verdict.json"
+        final_verdict_path = reports_dir / "backtest_decision_report_final_verdict.json"
+
+        class _FakePopen:
+            def __init__(self, cmd, **kwargs):  # noqa: ANN001
+                self.pid = 54321
+                self._terminated = False
+                sentinel_path = Path(
+                    kwargs["env"][
+                        action_support_module.COCKPIT_JOB_TERMINAL_SENTINEL_ENV
+                    ]
+                )
+                _write_json(
+                    summary_path,
+                    {
+                        "run_id": "strategy_ladder_workflow-stalled",
+                        "workflow_run_id": "strategy_ladder_workflow-stalled",
+                        "phase_run_id": "phase-b1-stalled",
+                        "candidate_count": 200,
+                        "final_status": "STRATEGY_LADDER_READY_TO_RUN",
+                    },
+                )
+                _write_json(
+                    profitability_path,
+                    {
+                        "status": "PROFITABILITY_VERDICT_BLOCKED_NO_EXECUTED_TRADES",
+                    },
+                )
+                _write_json(
+                    final_verdict_path,
+                    {
+                        "verdict": "BACKTEST_DECISION_REPORT_PARTIAL",
+                        "profitability_backtest_ready": False,
+                    },
+                )
+                kwargs["stdout"].write(
+                    json.dumps(
+                        {
+                            "run_id": "strategy_ladder_workflow-stalled",
+                            "run_manifest_path": "dummy",
+                            "summary_path": str(summary_path.resolve()),
+                            "final_status": "STRATEGY_LADDER_READY_TO_RUN",
+                            "candidate_count": 200,
+                        },
+                        indent=2,
+                    )
+                )
+                kwargs["stdout"].flush()
+                _write_json(
+                    sentinel_path,
+                    {
+                        "written_at": "2026-05-26T10:00:05+00:00",
+                        "run_id": "strategy_ladder_workflow-stalled",
+                        "summary_path": str(summary_path.resolve()),
+                        "final_status": "STRATEGY_LADDER_READY_TO_RUN",
+                    },
+                )
+
+            def wait(self, timeout=None):  # noqa: ANN001
+                if self._terminated:
+                    return 0
+                raise action_support_module.subprocess.TimeoutExpired(
+                    cmd="python",
+                    timeout=timeout if timeout is not None else 0.5,
+                )
+
+            def terminate(self) -> None:
+                self._terminated = True
+
+            def kill(self) -> None:
+                self._terminated = True
+
+        monkeypatch.setattr(action_support_module.subprocess, "Popen", _FakePopen)
+        monkeypatch.setattr(
+            action_support_module,
+            "_STRATEGY_LADDER_POSTRUN_STALL_SECONDS",
+            0.0,
+        )
+
+        record = CockpitBacktestJobRecord(
+            job_id="strategy_ladder_runner-stalled",
+            correlation_id="corr-strategy-ladder-stalled",
+            job_kind=CockpitBacktestJobKind.STRATEGY_LADDER_RUNNER,
+            status=CockpitBacktestJobStatus.JOB_CREATED,
+            requested_at_iso="2026-05-26T10:00:00+00:00",
+            output_root=str(output_root.resolve()),
+            record_path=str((job_root / "job.json").resolve()),
+            stdout_log_path=str((job_root / "stdout.log").resolve()),
+            command=("python", "scripts/run_backtest_strategy_ladder.py"),
+            workflow_run_id="strategy_ladder_workflow-stalled",
+            phase_id=PHASE_B1,
+            phase_run_id="phase-b1-stalled",
+            stage_summary_path=str(summary_path.resolve()),
+            job_status_path=str((job_root / "job_status.json").resolve()),
+        )
+
+        action_support_module._run_backtest_job(
+            record_path=Path(record.record_path),
+            record=record,
+        )
+
+        payload = json.loads((job_root / "job.json").read_text(encoding="utf-8"))
+        assert payload["status"] == "JOB_COMPLETED"
+        assert (
+            payload["error_summary"]
+            == action_support_module.JOB_TERMINAL_ARTIFACT_STALL_RECOVERED
+        )
+        assert payload["termination_method"] == "POSTRUN_TERMINATE"
+        assert payload["finished_at_iso"]
+        status_payload = json.loads((job_root / "job_status.json").read_text(encoding="utf-8"))
+        assert status_payload["status"] == "JOB_COMPLETED"
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_strategy_ladder_data_factory_recovers_postrun_terminal_artifact_stall(
+    monkeypatch,
+) -> None:
+    scratch = _scratch_dir("cockpit_data_factory_postrun_stall")
+    try:
+        job_root = scratch / "backtest_jobs" / "strategy_ladder_data_factory-stalled"
+        job_root.mkdir(parents=True, exist_ok=True)
+        output_root = scratch / "phase_a2_data_factory"
+        manifest_path = output_root / "data_factory_manifest.json"
+        silver_index_path = output_root / "silver_index.json"
+        gold_manifest_path = output_root / "gold_feature_manifest.json"
+        data_quality_path = output_root / "data_quality_report.json"
+        progress_path = output_root / "a2_gold_progress_report.json"
+
+        class _FakePopen:
+            def __init__(self, cmd, **kwargs):  # noqa: ANN001
+                self.pid = 54322
+                self._terminated = False
+                sentinel_path = Path(
+                    kwargs["env"][
+                        action_support_module.COCKPIT_JOB_TERMINAL_SENTINEL_ENV
+                    ]
+                )
+                _write_json(
+                    manifest_path,
+                    {
+                        "run_id": "strategy_ladder_workflow-a2-stalled",
+                        "data_factory_status": "DATA_FACTORY_READY",
+                        "raw_source_status": "RAW_SOURCE_READY",
+                        "pair_universe_status": "PAIR_UNIVERSE_READY",
+                        "silver_index_status": "SILVER_INDEX_READY",
+                        "gold_feature_store_status": "FEATURE_STORE_READY",
+                        "blocker_codes": [],
+                    },
+                )
+                _write_json(silver_index_path, {"status": "SILVER_INDEX_READY", "entries": []})
+                _write_json(
+                    gold_manifest_path,
+                    {
+                        "gold_feature_store_status": "FEATURE_STORE_READY",
+                        "feature_row_count": 3,
+                    },
+                )
+                _write_json(data_quality_path, {"blocker_codes": []})
+                _write_json(
+                    progress_path,
+                    {
+                        "status": "A2_COMPLETE",
+                        "current_stage": "DATA_FACTORY_READY",
+                    },
+                )
+                kwargs["stdout"].write(
+                    json.dumps(
+                        {
+                            "run_id": "strategy_ladder_workflow-a2-stalled",
+                            "report_root": str(output_root.resolve()),
+                            "data_factory_status": "DATA_FACTORY_READY",
+                            "silver_index_status": "SILVER_INDEX_READY",
+                            "gold_feature_store_status": "FEATURE_STORE_READY",
+                            "rows_processed": 123,
+                        },
+                        indent=2,
+                    )
+                )
+                kwargs["stdout"].flush()
+                _write_json(
+                    sentinel_path,
+                    {
+                        "written_at": "2026-05-26T10:00:05+00:00",
+                        "run_id": "strategy_ladder_workflow-a2-stalled",
+                        "report_root": str(output_root.resolve()),
+                        "data_factory_status": "DATA_FACTORY_READY",
+                    },
+                )
+
+            def wait(self, timeout=None):  # noqa: ANN001
+                if self._terminated:
+                    return 0
+                raise action_support_module.subprocess.TimeoutExpired(
+                    cmd="python",
+                    timeout=timeout if timeout is not None else 0.5,
+                )
+
+            def terminate(self) -> None:
+                self._terminated = True
+
+            def kill(self) -> None:
+                self._terminated = True
+
+        monkeypatch.setattr(action_support_module.subprocess, "Popen", _FakePopen)
+        monkeypatch.setattr(
+            action_support_module,
+            "_STRATEGY_LADDER_POSTRUN_STALL_SECONDS",
+            0.0,
+        )
+
+        record = CockpitBacktestJobRecord(
+            job_id="strategy_ladder_data_factory-stalled",
+            correlation_id="corr-data-factory-stalled",
+            job_kind=CockpitBacktestJobKind.STRATEGY_LADDER_DATA_FACTORY,
+            status=CockpitBacktestJobStatus.JOB_CREATED,
+            requested_at_iso="2026-05-26T10:00:00+00:00",
+            output_root=str(output_root.resolve()),
+            record_path=str((job_root / "job.json").resolve()),
+            stdout_log_path=str((job_root / "stdout.log").resolve()),
+            command=("python", "scripts/run_strategy_ladder_data_factory.py"),
+            workflow_run_id="strategy_ladder_workflow-a2-stalled",
+            phase_id=PHASE_A2,
+            phase_run_id="phase-a2-stalled",
+            stage_summary_path=str(manifest_path.resolve()),
+            job_status_path=str((job_root / "job_status.json").resolve()),
+        )
+
+        action_support_module._run_backtest_job(
+            record_path=Path(record.record_path),
+            record=record,
+        )
+
+        payload = json.loads((job_root / "job.json").read_text(encoding="utf-8"))
+        assert payload["status"] == "JOB_COMPLETED"
+        assert (
+            payload["error_summary"]
+            == action_support_module.JOB_TERMINAL_ARTIFACT_STALL_RECOVERED
+        )
+        assert payload["termination_method"] == "POSTRUN_TERMINATE"
+        status_payload = json.loads((job_root / "job_status.json").read_text(encoding="utf-8"))
+        assert status_payload["status"] == "JOB_COMPLETED"
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
@@ -3716,6 +4256,384 @@ def test_launch_allows_phase_a2_from_matching_phase_a1_preview(monkeypatch) -> N
         shutil.rmtree(scratch, ignore_errors=True)
 
 
+def test_backtest_page_reuses_phase_a1_preview_context_for_phase_a2_launch() -> None:
+    scratch = _scratch_dir("patch6_page_a2_reuses_a1_preview_context")
+    try:
+        client = _build_client(scratch)
+        jobs_root = client.app.state.paths.backtest_jobs_root
+        assert jobs_root is not None
+        orderbook_root = scratch / "raw" / "orderbook" / "BTCUSDT"
+        trades_root = scratch / "raw" / "trades" / "BTCUSDT"
+        klines_root = scratch / "raw" / "klines" / "BTCUSDT" / "1"
+        metadata_root = scratch / "raw" / "metadata"
+        metadata_root.mkdir(parents=True, exist_ok=True)
+        _copy_orderbook_fixture(orderbook_root / "2025-04-29_BTCUSDT_ob200.data")
+        _write_trade_fixture(
+            trades_root / "BTCUSDT_2025-04-29.csv",
+            timestamp_ms=1_745_884_800_000,
+        )
+        _write_kline_fixture(
+            klines_root / "BTCUSDT_1_2025-04-29.csv",
+            timestamp_ms=1_745_884_800_000,
+        )
+
+        preview_response = _post_patch6(
+            client,
+            action_name="PHASE_A1_PREVIEW",
+            intent="preview",
+            export_dir=str(scratch / "export"),
+            orderbook_path=str(orderbook_root),
+            trades_path=str(trades_root),
+            klines_path=str(klines_root),
+            metadata_path=str(metadata_root),
+            start="2025-04-29",
+            end="2025-04-29",
+        )
+        assert preview_response.status_code == 303
+        previews_root = client.app.state.paths.backtest_jobs_root / "previews"
+        manifest_path = next(previews_root.glob("*/source_date_preview_manifest.json"))
+        preview_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+        write_backtest_form_state(
+            jobs_root,
+            BacktestFormState(
+                action_name="PHASE_A2_DATA_FACTORY",
+                phase_id=PHASE_A2,
+                workflow_phase=PHASE_A2,
+                workflow_run_id=preview_payload["workflow_run_id"],
+                export_dir=str(scratch / "export"),
+                orderbook_path=str(orderbook_root),
+                trades_path=str(trades_root),
+                klines_path=str(klines_root),
+                metadata_path=str(metadata_root),
+                pairs=("BTCUSDT",),
+                start="2025-04-29",
+                end="2025-04-29",
+                silver_storage_mode="jsonl_gz",
+            ),
+        )
+
+        vm = build_dashboard_view_model(
+            paths=client.app.state.paths,
+            welcome_message="Welcome",
+            grafana_url="http://127.0.0.1:3000",
+            prometheus_url="http://127.0.0.1:9090",
+            current_page="backtest",
+        )
+        assert vm.source_preview_state is not None
+        assert vm.source_preview_state.preview_id == preview_payload["preview_id"]
+        assert vm.source_preview_state.request_hash == preview_payload["request_hash"]
+        assert vm.backtest_preflight.phase_id == PHASE_A2
+        assert vm.backtest_preflight.request_hash != preview_payload["request_hash"]
+
+        page = client.get("/backtest")
+        assert page.status_code == 200
+        assert f'name="preview_id" value="{preview_payload["preview_id"]}"' in page.text
+        assert f'name="request_hash" value="{preview_payload["request_hash"]}"' in page.text
+        launch_marker = 'id="backtest-launch-button"'
+        launch_index = page.text.index(launch_marker)
+        launch_slice = page.text[launch_index : launch_index + 220]
+        assert "disabled" not in launch_slice
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_backtest_page_reuses_a1_preview_when_output_root_differs_from_export_dir() -> None:
+    scratch = _scratch_dir("patch6_page_a2_output_root_reuse")
+    try:
+        client = _build_client(scratch)
+        jobs_root = client.app.state.paths.backtest_jobs_root
+        assert jobs_root is not None
+        orderbook_root = scratch / "raw" / "orderbook" / "BTCUSDT"
+        trades_root = scratch / "raw" / "trades" / "BTCUSDT"
+        klines_root = scratch / "raw" / "klines" / "BTCUSDT" / "1"
+        output_root = scratch / "operator_output"
+        export_dir = scratch / "ml_handoff_output"
+        _copy_orderbook_fixture(orderbook_root / "2025-04-29_BTCUSDT_ob200.data")
+        _write_trade_fixture(
+            trades_root / "BTCUSDT_2025-04-29.csv",
+            timestamp_ms=1_745_884_800_000,
+        )
+        _write_kline_fixture(
+            klines_root / "BTCUSDT_1_2025-04-29.csv",
+            timestamp_ms=1_745_884_800_000,
+        )
+
+        preview_response = _post_patch6(
+            client,
+            action_name="PHASE_A1_PREVIEW",
+            intent="preview",
+            export_dir=str(export_dir),
+            output_root=str(output_root),
+            orderbook_path=str(orderbook_root),
+            trades_path=str(trades_root),
+            klines_path=str(klines_root),
+            start="2025-04-29",
+            end="2025-04-29",
+        )
+        assert preview_response.status_code == 303
+        manifest_path = next(
+            (
+                client.app.state.paths.backtest_jobs_root / "previews"
+            ).glob("*/source_date_preview_manifest.json")
+        )
+        preview_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+        write_backtest_form_state(
+            jobs_root,
+            BacktestFormState(
+                action_name="PHASE_A2_DATA_FACTORY",
+                phase_id=PHASE_A2,
+                workflow_phase=PHASE_A2,
+                workflow_run_id=preview_payload["workflow_run_id"],
+                export_dir=str(export_dir),
+                orderbook_path=str(orderbook_root),
+                trades_path=str(trades_root),
+                klines_path=str(klines_root),
+                pairs=("BTCUSDT",),
+                start="2025-04-29",
+                end="2025-04-29",
+                output_root=str(output_root),
+                silver_storage_mode="jsonl_gz",
+            ),
+        )
+
+        vm = build_dashboard_view_model(
+            paths=client.app.state.paths,
+            welcome_message="Welcome",
+            grafana_url="http://127.0.0.1:3000",
+            prometheus_url="http://127.0.0.1:9090",
+            current_page="backtest",
+        )
+        assert vm.backtest_preflight.phase_id == PHASE_A2
+        assert vm.backtest_preflight.workflow_run_id == preview_payload["workflow_run_id"]
+        assert vm.backtest_preflight.preview_id == preview_payload["preview_id"]
+        assert vm.backtest_preflight.inspection_status == "PHASE_A2_DATA_FACTORY_READY"
+
+        page = client.get("/backtest")
+        assert page.status_code == 200
+        assert "PREVIEW_NOT_GENERATED" not in page.text
+        assert f'name="preview_id" value="{preview_payload["preview_id"]}"' in page.text
+        launch_marker = 'id="backtest-launch-button"'
+        launch_index = page.text.index(launch_marker)
+        launch_slice = page.text[launch_index : launch_index + 220]
+        assert "disabled" not in launch_slice
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_backtest_page_uses_b1_preview_context_for_b1_launch() -> None:
+    scratch = _scratch_dir("patch6_page_b1_launch_context")
+    try:
+        client = _build_client(scratch)
+        jobs_root = client.app.state.paths.backtest_jobs_root
+        assert jobs_root is not None
+        orderbook_root = scratch / "raw" / "orderbook" / "BTCUSDT"
+        trades_root = scratch / "raw" / "trades" / "BTCUSDT"
+        klines_root = scratch / "raw" / "klines" / "BTCUSDT" / "1"
+        metadata_root = scratch / "metadata" / "bybit" / "spot"
+        _copy_orderbook_fixture(orderbook_root / "2025-04-29_BTCUSDT_ob200.data")
+        _write_trade_fixture(
+            trades_root / "BTCUSDT_2025-04-29.csv",
+            timestamp_ms=1_745_884_800_000,
+        )
+        _write_kline_fixture(
+            klines_root / "BTCUSDT_1_2025-04-29.csv",
+            timestamp_ms=1_745_884_800_000,
+        )
+        metadata_root.mkdir(parents=True, exist_ok=True)
+        (metadata_root / "symbol_metadata.csv").write_text(
+            "symbol\nBTCUSDT\n",
+            encoding="utf-8",
+        )
+
+        response = _post_patch6(
+            client,
+            action_name="PHASE_A1_PREVIEW",
+            intent="preview",
+            export_dir=str(scratch / "export"),
+            output_root=str(scratch / "export"),
+            orderbook_path=str(orderbook_root),
+            trades_path=str(trades_root),
+            klines_path=str(klines_root),
+            metadata_path=str(metadata_root),
+            start="2025-04-29",
+            end="2025-04-29",
+            candidate_discovery_mode="TEMPORAL_STRATIFIED",
+            engine_native_sample_size=250,
+            small_scope_enabled="false",
+            full_scan_enabled="true",
+            silver_storage_mode="jsonl_gz",
+        )
+        assert response.status_code == 303
+        a1_preview = _latest_preview_payload(jobs_root)
+        workflow_run_id = str(a1_preview["workflow_run_id"])
+        workflow_root = scratch / "export" / "runs" / workflow_run_id
+        phase_a2_root = workflow_root / "phase_a2_data_factory"
+        _write_json(
+            phase_a2_root / "data_factory_manifest.json",
+            {
+                "data_factory_status": "DATA_FACTORY_READY",
+                "raw_source_status": "RAW_SOURCE_READY",
+                "pair_universe_status": "PAIR_UNIVERSE_READY",
+                "silver_index_status": "SILVER_INDEX_READY",
+                "gold_feature_store_status": "GOLD_FEATURE_STORE_READY",
+            },
+        )
+        _write_json(phase_a2_root / "silver_index.json", {"storage_format": "jsonl_gz"})
+        (phase_a2_root / "gold").mkdir(parents=True, exist_ok=True)
+
+        response = _post_patch6(
+            client,
+            action_name="PHASE_B1_CANDIDATE_DISCOVERY",
+            intent="preview",
+            workflow_run_id=workflow_run_id,
+            export_dir=str(scratch / "export"),
+            output_root=str(scratch / "export"),
+            orderbook_path=str(orderbook_root),
+            trades_path=str(trades_root),
+            klines_path=str(klines_root),
+            metadata_path=str(metadata_root),
+            start="2025-04-29",
+            end="2025-04-29",
+            candidate_discovery_mode="TEMPORAL_STRATIFIED",
+            engine_native_sample_size=250,
+            small_scope_enabled="false",
+            full_scan_enabled="true",
+            silver_storage_mode="jsonl_gz",
+        )
+        assert response.status_code == 303
+        b1_preview = _latest_preview_payload(jobs_root)
+        assert b1_preview["blockers"] == []
+        assert b1_preview["inspection_status"] == "PHASE_B1_CANDIDATE_DISCOVERY_READY"
+
+        page = client.get("/backtest")
+        assert page.status_code == 200
+        assert f'name="preview_id" value="{b1_preview["preview_id"]}"' in page.text
+        assert f'name="request_hash" value="{b1_preview["request_hash"]}"' in page.text
+        launch_marker = 'id="backtest-launch-button"'
+        launch_index = page.text.index(launch_marker)
+        launch_slice = page.text[launch_index : launch_index + 220]
+        assert "disabled" not in launch_slice
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_backtest_page_uses_b2_preview_context_for_b2_launch() -> None:
+    scratch = _scratch_dir("patch6_page_b2_launch_context")
+    try:
+        client = _build_client(scratch)
+        jobs_root = client.app.state.paths.backtest_jobs_root
+        assert jobs_root is not None
+        orderbook_root = scratch / "raw" / "orderbook" / "BTCUSDT"
+        trades_root = scratch / "raw" / "trades" / "BTCUSDT"
+        klines_root = scratch / "raw" / "klines" / "BTCUSDT" / "1"
+        metadata_root = scratch / "metadata" / "bybit" / "spot"
+        _copy_orderbook_fixture(orderbook_root / "2025-04-29_BTCUSDT_ob200.data")
+        _write_trade_fixture(
+            trades_root / "BTCUSDT_2025-04-29.csv",
+            timestamp_ms=1_745_884_800_000,
+        )
+        _write_kline_fixture(
+            klines_root / "BTCUSDT_1_2025-04-29.csv",
+            timestamp_ms=1_745_884_800_000,
+        )
+        metadata_root.mkdir(parents=True, exist_ok=True)
+        (metadata_root / "symbol_metadata.csv").write_text(
+            "symbol\nBTCUSDT\n",
+            encoding="utf-8",
+        )
+
+        response = _post_patch6(
+            client,
+            action_name="PHASE_A1_PREVIEW",
+            intent="preview",
+            export_dir=str(scratch / "export"),
+            output_root=str(scratch / "export"),
+            orderbook_path=str(orderbook_root),
+            trades_path=str(trades_root),
+            klines_path=str(klines_root),
+            metadata_path=str(metadata_root),
+            start="2025-04-29",
+            end="2025-04-29",
+        )
+        assert response.status_code == 303
+        a1_preview = _latest_preview_payload(jobs_root)
+        workflow_run_id = str(a1_preview["workflow_run_id"])
+        workflow_root = scratch / "export" / "runs" / workflow_run_id
+        phase_a2_root = workflow_root / "phase_a2_data_factory"
+        _write_json(
+            phase_a2_root / "data_factory_manifest.json",
+            {
+                "data_factory_status": "DATA_FACTORY_READY",
+                "raw_source_status": "RAW_SOURCE_READY",
+                "pair_universe_status": "PAIR_UNIVERSE_READY",
+                "silver_index_status": "SILVER_INDEX_READY",
+                "gold_feature_store_status": "GOLD_FEATURE_STORE_READY",
+            },
+        )
+        _write_json(phase_a2_root / "silver_index.json", {"storage_format": "jsonl_gz"})
+        (phase_a2_root / "gold").mkdir(parents=True, exist_ok=True)
+
+        phase_b1_candidate_events = (
+            workflow_root
+            / "phase_b1_candidate_discovery"
+            / "backtest_strategy_ladder"
+            / workflow_run_id
+            / "fast_candidates"
+            / "candidate_events.jsonl"
+        )
+        phase_b1_candidate_events.parent.mkdir(parents=True, exist_ok=True)
+        phase_b1_candidate_events.write_text(
+            json.dumps({"candidate_id": "cand-1"}) + "\n",
+            encoding="utf-8",
+        )
+        phase_b1_run_root = phase_b1_candidate_events.parent.parent
+        (phase_b1_run_root / "reports").mkdir(parents=True, exist_ok=True)
+        (phase_b1_run_root / "preselection_candidates.jsonl").write_text(
+            json.dumps({"candidate_id": "cand-1"}) + "\n",
+            encoding="utf-8",
+        )
+        _write_json(
+            phase_b1_run_root / "reports" / "preselection_summary.json",
+            {
+                "status": "ENGINE_NATIVE_PRESELECTION_READY",
+                "replay_input_mode_status": "PRESELECTED_ONLY",
+                "engine_native_preselected_count": 1,
+            },
+        )
+
+        response = _post_patch6(
+            client,
+            action_name="PHASE_B2_DETAILED_REPLAY",
+            intent="preview",
+            workflow_run_id=workflow_run_id,
+            export_dir=str(scratch / "export"),
+            output_root=str(scratch / "export"),
+            orderbook_path=str(orderbook_root),
+            trades_path=str(trades_root),
+            klines_path=str(klines_root),
+            metadata_path=str(metadata_root),
+            start="2025-04-29",
+            end="2025-04-29",
+        )
+        assert response.status_code == 303
+        b2_preview = _latest_preview_payload(jobs_root)
+        assert b2_preview["blockers"] == []
+        assert b2_preview["inspection_status"] == "PHASE_B2_DETAILED_REPLAY_READY"
+
+        page = client.get("/backtest")
+        assert page.status_code == 200
+        assert f'name="preview_id" value="{b2_preview["preview_id"]}"' in page.text
+        assert f'name="request_hash" value="{b2_preview["request_hash"]}"' in page.text
+        launch_marker = 'id="backtest-launch-button"'
+        launch_index = page.text.index(launch_marker)
+        launch_slice = page.text[launch_index : launch_index + 220]
+        assert "disabled" not in launch_slice
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
 def test_phase_a2_preview_reuses_phase_a1_workflow_when_form_workflow_missing() -> None:
     scratch = _scratch_dir("patch6_phase_a2_preview_reuses_a1_workflow")
     try:
@@ -3763,6 +4681,97 @@ def test_phase_a2_preview_reuses_phase_a1_workflow_when_form_workflow_missing() 
         assert response.status_code == 303
         a2_preview = _latest_preview_payload(client.app.state.paths.backtest_jobs_root)
         assert a2_preview["workflow_run_id"] == a1_preview["workflow_run_id"]
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_phase_a2_preview_and_page_recover_from_mismatched_workflow_run_id() -> None:
+    scratch = _scratch_dir("patch6_phase_a2_preview_recovers_mismatched_workflow_id")
+    try:
+        client = _build_client(scratch)
+        jobs_root = client.app.state.paths.backtest_jobs_root
+        assert jobs_root is not None
+        orderbook_root = scratch / "raw" / "orderbook" / "BTCUSDT"
+        trades_root = scratch / "raw" / "trades" / "BTCUSDT"
+        klines_root = scratch / "raw" / "klines" / "BTCUSDT" / "1"
+        metadata_root = scratch / "metadata" / "bybit" / "spot"
+        _copy_orderbook_fixture(orderbook_root / "2025-04-29_BTCUSDT_ob200.data")
+        _write_trade_fixture(
+            trades_root / "BTCUSDT_2025-04-29.csv",
+            timestamp_ms=1_745_884_800_000,
+        )
+        _write_kline_fixture(
+            klines_root / "BTCUSDT_1_2025-04-29.csv",
+            timestamp_ms=1_745_884_800_000,
+        )
+        metadata_root.mkdir(parents=True, exist_ok=True)
+
+        response = _post_patch6(
+            client,
+            action_name="PHASE_A1_PREVIEW",
+            intent="preview",
+            export_dir=str(scratch / "export"),
+            output_root=str(scratch / "export"),
+            orderbook_path=str(orderbook_root),
+            trades_path=str(trades_root),
+            klines_path=str(klines_root),
+            metadata_path=str(metadata_root),
+            start="2025-04-29",
+            end="2025-04-29",
+        )
+        assert response.status_code == 303
+        a1_preview = _latest_preview_payload(jobs_root)
+        mismatched_workflow_run_id = (
+            f"strategy_ladder_workflow-{a1_preview['workflow_request_hash'][:16]}"
+        )
+        assert mismatched_workflow_run_id != a1_preview["workflow_run_id"]
+
+        write_backtest_form_state(
+            jobs_root,
+            BacktestFormState(
+                action_name="PHASE_A2_DATA_FACTORY",
+                phase_id=PHASE_A2,
+                workflow_phase=PHASE_A2,
+                workflow_run_id=mismatched_workflow_run_id,
+                export_dir=str(scratch / "export"),
+                output_root=str(scratch / "export"),
+                orderbook_path=str(orderbook_root),
+                trades_path=str(trades_root),
+                klines_path=str(klines_root),
+                metadata_path=str(metadata_root),
+                pairs=("BTCUSDT",),
+                start="2025-04-29",
+                end="2025-04-29",
+                silver_storage_mode="jsonl_gz",
+            ),
+        )
+
+        page = client.get("/backtest")
+        assert page.status_code == 200
+        assert (
+            f'name="workflow_run_id" value="{a1_preview["workflow_run_id"]}"'
+            in page.text
+        )
+        assert mismatched_workflow_run_id not in page.text
+
+        response = _post_patch6(
+            client,
+            action_name="PHASE_A2_DATA_FACTORY",
+            intent="preview",
+            workflow_run_id=mismatched_workflow_run_id,
+            export_dir=str(scratch / "export"),
+            output_root=str(scratch / "export"),
+            orderbook_path=str(orderbook_root),
+            trades_path=str(trades_root),
+            klines_path=str(klines_root),
+            metadata_path=str(metadata_root),
+            start="2025-04-29",
+            end="2025-04-29",
+        )
+        assert response.status_code == 303
+        a2_preview = _latest_preview_payload(jobs_root)
+        assert a2_preview["workflow_run_id"] == a1_preview["workflow_run_id"]
+        assert a2_preview["workflow_run_id"] != mismatched_workflow_run_id
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
@@ -4994,7 +6003,38 @@ def test_phase_launches_use_phase_specific_consumed_artifact_refs(monkeypatch) -
         )
         assert response.status_code == 303
         b2_preview = _latest_preview_payload(jobs_root)
-        assert "PHASE_B2_REQUIRES_B1_NATIVE_PRESELECTION" in b2_preview["blockers"]
+        assert b2_preview["blockers"] == []
+        assert "PHASE_B2_TARGETED_TRUTH_FROM_B1_DISCOVERY_CANDIDATES" in b2_preview[
+            "warnings"
+        ]
+        assert "--candidate-events-path" in b2_preview["command_preview"]
+        assert "--raw-window-mode" not in b2_preview["command_preview"]
+
+        response = _post_patch6(
+            client,
+            action_name="PHASE_B2_DETAILED_REPLAY",
+            intent="launch",
+            preview_id=str(b2_preview["preview_id"]),
+            request_hash=str(b2_preview["request_hash"]),
+            workflow_run_id=workflow_run_id,
+            export_dir=str(scratch / "export"),
+            orderbook_path=str(orderbook_root),
+            trades_path=str(trades_root),
+            klines_path=str(klines_root),
+            metadata_path=str(metadata_root),
+            start="2025-04-29",
+            end="2025-04-29",
+        )
+        assert response.status_code == 303
+        assert set(captured_calls[-1]["consumed_artifact_refs"]) == {
+            "phase_a2_data_factory_manifest",
+            "phase_a2_silver_index",
+            "phase_a2_gold_root",
+            "phase_b1_candidate_events",
+        }
+        assert str(captured_calls[-1]["candidate_events_path"]).endswith(
+            "fast_candidates\\candidate_events.jsonl"
+        )
 
         phase_b1_run_root = phase_b1_candidate_events.parent.parent
         (phase_b1_run_root / "reports").mkdir(parents=True, exist_ok=True)
@@ -5027,6 +6067,9 @@ def test_phase_launches_use_phase_specific_consumed_artifact_refs(monkeypatch) -
         assert response.status_code == 303
         b2_preview = _latest_preview_payload(jobs_root)
         assert b2_preview["blockers"] == []
+        assert "PHASE_B2_TARGETED_TRUTH_FROM_B1_DISCOVERY_CANDIDATES" not in b2_preview[
+            "warnings"
+        ]
         response = _post_patch6(
             client,
             action_name="PHASE_B2_DETAILED_REPLAY",
@@ -7173,6 +8216,70 @@ def test_patch6_launch_defaults_to_preselected_only_replay() -> None:
         assert "--b1-5-policy-mode conservative_hard_only" in request["command_preview"]
         assert "--preselected-only" in request["command_preview"]
         assert "--diagnostic-full-replay" not in request["command_preview"]
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_phase_b1_command_uses_refs_only_raw_window_mode() -> None:
+    scratch = _scratch_dir("phase_b1_refs_only_command")
+    try:
+        command = action_support_module._build_backtest_command(
+            job_id="job-b1-refs-only",
+            job_kind=CockpitBacktestJobKind.STRATEGY_LADDER_RUNNER,
+            export_dir=scratch / "export",
+            output_root=scratch / "output",
+            baseline_export_dir=scratch,
+            signed_by="tester",
+            python_executable="python",
+            action_name=action_support_module.StrategyLadderControlAction.PHASE_B1_CANDIDATE_DISCOVERY.value,
+            raw_source_manifest_path=None,
+            historical_metadata_root=None,
+            raw_roots=(scratch / "raw",),
+            pairs=("BTCUSDT",),
+            start="2025-07-20",
+            end="2025-07-22",
+            allow_broad_run=False,
+            ml_mode_status="ML_MODE_OFF",
+            engine_native_mode=True,
+            engine_native_sample_size=10,
+        )
+
+        command_text = " ".join(command)
+        assert "--fast-only" in command
+        assert "--raw-window-mode REFS_ONLY" in command_text
+        assert "--detailed-only" not in command
+        assert "--resume" not in command
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_phase_b2_command_keeps_materialized_raw_window_mode() -> None:
+    scratch = _scratch_dir("phase_b2_materialized_command")
+    try:
+        command = action_support_module._build_backtest_command(
+            job_id="job-b2-materialized",
+            job_kind=CockpitBacktestJobKind.STRATEGY_LADDER_RUNNER,
+            export_dir=scratch / "export",
+            output_root=scratch / "output",
+            baseline_export_dir=scratch,
+            signed_by="tester",
+            python_executable="python",
+            action_name=action_support_module.StrategyLadderControlAction.PHASE_B2_DETAILED_REPLAY.value,
+            raw_source_manifest_path=None,
+            historical_metadata_root=None,
+            raw_roots=(scratch / "raw",),
+            pairs=("BTCUSDT",),
+            start="2025-07-20",
+            end="2025-07-22",
+            allow_broad_run=False,
+            ml_mode_status="ML_MODE_OFF",
+            engine_native_mode=True,
+            engine_native_sample_size=10,
+        )
+
+        assert "--detailed-only" in command
+        assert "--resume" in command
+        assert "--raw-window-mode" not in command
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
