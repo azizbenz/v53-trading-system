@@ -68,7 +68,7 @@ def test_measure_spread_bps_returns_real_value(tmp_path: Path) -> None:
         book_path,
         [_book_snapshot(ts_ms=1_700_000_000_000, best_bid=99.95, best_ask=100.05)],
     )
-    spread, status = measure_spread_bps_from_book_snapshot(
+    spread, status, _age_ms = measure_spread_bps_from_book_snapshot(
         raw_book_path=book_path, timestamp_ms=1_700_000_000_000
     )
     assert status == "MEASURED_FROM_BOOK_SNAPSHOT"
@@ -88,7 +88,7 @@ def test_measure_spread_bps_picks_closest_in_window(tmp_path: Path) -> None:
         ],
     )
     # Timestamp 30s + 5s = closest to base + 30_000 (within tolerance)
-    spread, status = measure_spread_bps_from_book_snapshot(
+    spread, status, _age_ms = measure_spread_bps_from_book_snapshot(
         raw_book_path=book_path, timestamp_ms=base + 35_000, tolerance_ms=60_000
     )
     assert status == "MEASURED_FROM_BOOK_SNAPSHOT"
@@ -111,7 +111,7 @@ def test_measure_spread_bps_returns_stale_outside_tolerance_within_stale_max(
         book_path,
         [_book_snapshot(ts_ms=1_700_000_000_000, best_bid=99.95, best_ask=100.05)],
     )
-    spread, status = measure_spread_bps_from_book_snapshot(
+    spread, status, _age_ms = measure_spread_bps_from_book_snapshot(
         raw_book_path=book_path,
         timestamp_ms=1_700_000_000_000 + 200_000,  # 200s later (outside tolerance)
         tolerance_ms=60_000,
@@ -134,7 +134,7 @@ def test_measure_spread_bps_returns_none_beyond_stale_max(tmp_path: Path) -> Non
         book_path,
         [_book_snapshot(ts_ms=1_700_000_000_000, best_bid=99.95, best_ask=100.05)],
     )
-    spread, status = measure_spread_bps_from_book_snapshot(
+    spread, status, _age_ms = measure_spread_bps_from_book_snapshot(
         raw_book_path=book_path,
         timestamp_ms=1_700_000_000_000 + 200_000,
         tolerance_ms=60_000,
@@ -146,7 +146,7 @@ def test_measure_spread_bps_returns_none_beyond_stale_max(tmp_path: Path) -> Non
 
 def test_measure_spread_bps_handles_missing_path() -> None:
     """Sans path, retour None + BOOK_PATH_MISSING."""
-    spread, status = measure_spread_bps_from_book_snapshot(
+    spread, status, _age_ms = measure_spread_bps_from_book_snapshot(
         raw_book_path=None, timestamp_ms=1_700_000_000_000
     )
     assert spread is None

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 import sys
 
@@ -12,6 +13,9 @@ SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
+from local_replay_runtime.ia_lab_feature_dataset_adapter import (  # noqa: E402
+    EXPECTED_EDGE_FEATURE_MANIFEST_FILENAME,
+)
 from local_replay_runtime.strategy_ladder_ml_lab_handoff import (  # noqa: E402
     DEFAULT_STRATEGY_LADDER_BACKTEST_OOS_DAYS,
     StrategyLadderMlLabHandoffRequest,
@@ -25,8 +29,71 @@ from local_replay_runtime.strategy_ladder_rolling_ml_window_planner import (  # 
 )
 
 
+# P0-C-strict (2026-05-29) — kill silent 3-feature fallback.
+# Previously this CLI defaulted --feature-names to 3 OHLCV-only features,
+# silently producing undertrained models when the gold A2 store had 22+
+# microstructure features. The strict design: either user passes
+# --a2-output-root (auto-load from manifest, recommended), or explicit
+# --feature-names. Neither → fail-closed with clear error.
+LEGACY_DEFAULT_FEATURE_NAMES_CSV = "close_return,high_low_range,volume"
+
+
 def _csv_tuple(raw_value: str) -> tuple[str, ...]:
     return tuple(part.strip() for part in (raw_value or "").split(",") if part.strip())
+
+
+def _load_feature_names_from_a2_manifest(a2_output_root: Path) -> tuple[str, ...]:
+    """P0-C-auto — load feature_names from the A2 expected_edge_feature_manifest (fail-closed)."""
+
+    manifest_path = a2_output_root / EXPECTED_EDGE_FEATURE_MANIFEST_FILENAME
+    if not manifest_path.exists():
+        raise FileNotFoundError(
+            f"A2 manifest not found at {manifest_path}. "
+            f"Cannot auto-detect feature_names. "
+            f"Pass --feature-names explicitly or ensure A2 was executed."
+        )
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    feature_names = payload.get("feature_names")
+    if not feature_names:
+        raise ValueError(
+            f"A2 manifest at {manifest_path} has empty feature_names. "
+            f"Cannot auto-detect."
+        )
+    return tuple(str(name).strip() for name in feature_names if str(name).strip())
+
+
+def _resolve_feature_names(
+    *,
+    raw_feature_names: str,
+    a2_output_root_arg: str,
+) -> tuple[str, ...]:
+    """P0-C-strict — resolve feature_names, fail-closed if neither source given.
+
+    Logic:
+      - If --feature-names explicit (non-empty) → use it (override path).
+      - Elif --a2-output-root provided → auto-load from A2 manifest (recommended).
+      - Else → fail-closed (no silent 3-feature fallback).
+    """
+
+    raw_csv = (raw_feature_names or "").strip()
+    a2_root = (a2_output_root_arg or "").strip()
+
+    if raw_csv:
+        return _csv_tuple(raw_csv)
+    if a2_root:
+        auto_feature_names = _load_feature_names_from_a2_manifest(Path(a2_root))
+        print(
+            f"[P0-C-auto] Loaded {len(auto_feature_names)} feature_names from A2 manifest: "
+            f"{','.join(auto_feature_names)}",
+            file=sys.stderr,
+        )
+        return auto_feature_names
+    raise SystemExit(
+        "P0-C-strict: feature_names not provided. "
+        "Pass --a2-output-root <a2-phase-dir> (auto-load from manifest, recommended) "
+        "OR pass --feature-names <csv> explicitly. "
+        "Silent 3-feature fallback removed to prevent train/runtime decorrelation."
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -102,11 +169,26 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-training-rows", type=int, default=210)
     parser.add_argument(
         "--feature-names",
-        default="close_return,high_low_range,volume",
+        default="",
         help=(
             "Comma-separated expected-edge feature names to use. "
             "Supported names are governed by "
-            "local_replay_runtime.strategy_ladder_expected_edge_training."
+            "local_replay_runtime.strategy_ladder_expected_edge_training. "
+            "P0-C-strict (2026-05-29): no silent fallback. Either pass "
+            "--a2-output-root (auto-load from manifest, recommended) OR pass "
+            "--feature-names explicitly. Empty value + no --a2-output-root → fail-closed."
+        ),
+    )
+    parser.add_argument(
+        "--a2-output-root",
+        default="",
+        help=(
+            "P0-C-auto: optional A2 phase output root (e.g. "
+            "K:/output lab/runs/<run-id>/phase_a2_data_factory). "
+            "When provided AND --feature-names is the legacy 3-feature default, "
+            "feature_names are auto-loaded from "
+            "<a2-output-root>/expected_edge_feature_manifest.json. "
+            "Explicit --feature-names overrides this auto-detection."
         ),
     )
     parser.add_argument("--shap-summary-ref", default="", help="Optional SHAP summary reference.")
@@ -144,7 +226,10 @@ def main(argv: list[str] | None = None) -> int:
             training_seed=args.training_seed,
             max_optuna_trials=args.max_optuna_trials,
             min_training_rows=args.min_training_rows,
-            feature_names=_csv_tuple(args.feature_names),
+            feature_names=_resolve_feature_names(
+                raw_feature_names=args.feature_names,
+                a2_output_root_arg=args.a2_output_root,
+            ),
             shap_summary_ref=args.shap_summary_ref or None,
         )
     )

@@ -106,6 +106,14 @@ class EconomicProvenance:
     expected_edge_model_artifact_hash: str | None = None
     expected_edge_model_feature_hash: str | None = None
     measured_cost_governance: dict[str, object] = field(default_factory=dict)
+    # Patch P3 (2026-05-29) — book freshness temporal proof. Populated by
+    # measure_spread_bps_from_book_snapshot. age_ms = closest snapshot distance
+    # from decision timestamp. freshness_status = FRESH (within tolerance) /
+    # STALE (beyond tolerance but within stale_max) / MISSING (no snapshot or
+    # beyond stale_max) / NOT_PROVEN (book path missing).
+    book_snapshot_age_ms: int | None = None
+    book_freshness_status: str = "BOOK_FRESHNESS_NOT_PROVEN"
+    book_freshness_tolerance_ms: int = 60_000
 
     @property
     def aggregated_provenance(self) -> str:
@@ -403,6 +411,130 @@ def _measure_spread_via_reconstruction(
     return best_spread, "MEASURED_FROM_BOOK_RECONSTRUCTION"
 
 
+# Patch P3 (2026-05-29) — per-timeframe book freshness tolerance. Tighter for
+# shorter timeframes (microstructure decay faster). Per audit C5 calibration.
+_BOOK_FRESHNESS_TOLERANCE_BY_TIMEFRAME_MS: dict[str, int] = {
+    "1m": 10_000,
+    "3m": 20_000,
+    "5m": 30_000,
+    "15m": 60_000,
+    "30m": 120_000,
+    "1h": 300_000,
+    "2h": 450_000,
+    "4h": 600_000,
+    "6h": 900_000,
+    "12h": 1_500_000,
+    "1d": 1_800_000,
+}
+
+
+def tolerance_ms_for_timeframe(timeframe: str | None) -> int:
+    """P3 (2026-05-29) — return book freshness tolerance for a given timeframe.
+
+    Audit C5 calibration: 1m=10s, 5m=30s, 15m=60s, 1h=300s. Default 60s
+    when timeframe is unknown (preserves prior hardcoded behaviour).
+    """
+
+    if not timeframe:
+        return 60_000
+    return _BOOK_FRESHNESS_TOLERANCE_BY_TIMEFRAME_MS.get(
+        timeframe.lower().strip(), 60_000
+    )
+
+
+def derive_expected_edge_truth_status(expected_edge_provenance: str | None) -> str:
+    """P5 (2026-05-29) — derive explicit expected-edge truth status from provenance.
+
+    Returns one of:
+      - "EXPECTED_EDGE_MODEL_GOVERNED"  : GOVERNED_ML_ARTIFACT_BACKTEST_TRUTH
+      - "EXPECTED_EDGE_MODEL_OVERRIDE"  : caller-supplied override (research/calibration)
+      - "EXPECTED_EDGE_PROXY"           : PROXY_* (research forward-return median etc.)
+      - "EXPECTED_EDGE_DEFAULT_PROXY"   : DEFAULT_TO_CALIBRATE (hardcoded 5.0 bps fallback)
+      - "EXPECTED_EDGE_BLOCKED"         : EDGE_MODEL_BLOCKED:* (model run failed)
+      - "EXPECTED_EDGE_NOT_PROVEN"      : provenance missing or unknown
+
+    The enum drives schema field `expected_edge_truth_status` on
+    StrategyLadderFeatureRow and is consumed by `assess_gold_row_prod_safety`.
+    P5 validator: only `EXPECTED_EDGE_MODEL_GOVERNED` clears promotion gate.
+    """
+
+    value = str(expected_edge_provenance or "").strip().upper()
+    if not value:
+        return "EXPECTED_EDGE_NOT_PROVEN"
+    if value == "DEFAULT_TO_CALIBRATE":
+        return "EXPECTED_EDGE_DEFAULT_PROXY"
+    if value.startswith("PROXY_"):
+        return "EXPECTED_EDGE_PROXY"
+    if value == "MEASURED_FROM_EDGE_MODEL_OVERRIDE":
+        return "EXPECTED_EDGE_MODEL_OVERRIDE"
+    if value.startswith("GOVERNED_") or value == "GOVERNED_ML_ARTIFACT_BACKTEST_TRUTH":
+        return "EXPECTED_EDGE_MODEL_GOVERNED"
+    if value.startswith("EDGE_MODEL_BLOCKED"):
+        return "EXPECTED_EDGE_BLOCKED"
+    return "EXPECTED_EDGE_NOT_PROVEN"
+
+
+def derive_slippage_truth_status(slippage_provenance: str | None) -> str:
+    """P4 (2026-05-29) — derive explicit slippage truth status from provenance.
+
+    Returns one of:
+      - "SLIPPAGE_A2_KYLE_MEASURED"            : MEASURED_FROM_KYLE_LAMBDA (Kyle succeeded)
+      - "SLIPPAGE_A2_KYLE_OVERRIDE"            : caller supplied override
+      - "SLIPPAGE_A2_RESEARCH_ONLY_DEFAULT"    : DEFAULT_TO_CALIBRATE (Kyle failed / not measured)
+      - "SLIPPAGE_B2_DEPTH20_BOOK_WALK_MEASURED": replay-time measurement (future)
+      - "SLIPPAGE_NOT_PROVEN"                  : provenance missing or unknown
+
+    This explicit enum separates A2 research-quality slippage (Kyle estimate
+    or default fallback) from B2 replay-time truth (depth20 book walk during
+    execution). Per audit C1: A2 default is acceptable for research but not
+    promotion. P5 validators will block promotion when slippage_truth_status
+    is not in the prod-safe whitelist.
+    """
+
+    value = str(slippage_provenance or "").strip().upper()
+    if not value:
+        return "SLIPPAGE_NOT_PROVEN"
+    if value == "MEASURED_FROM_KYLE_LAMBDA_OVERRIDE":
+        return "SLIPPAGE_A2_KYLE_OVERRIDE"
+    if value == "MEASURED_FROM_KYLE_LAMBDA":
+        return "SLIPPAGE_A2_KYLE_MEASURED"
+    if value == "DEFAULT_TO_CALIBRATE":
+        return "SLIPPAGE_A2_RESEARCH_ONLY_DEFAULT"
+    if value.startswith("MEASURED_FROM_DEPTH20") or value.startswith("MEASURED_FROM_BOOK_WALK"):
+        return "SLIPPAGE_B2_DEPTH20_BOOK_WALK_MEASURED"
+    if value.startswith("MEASURED_"):
+        # Future measurement methods (Amihud, etc.) — accept as measured
+        return f"SLIPPAGE_A2_{value}"
+    return "SLIPPAGE_NOT_PROVEN"
+
+
+def derive_book_freshness_status(
+    *,
+    age_ms: int | None,
+    tolerance_ms: int,
+    stale_max_age_ms: int = 24 * 60 * 60 * 1000,
+    snapshot_found: bool = True,
+) -> str:
+    """P3 (2026-05-29) — derive book freshness enum from age + tolerance.
+
+    Returns one of:
+      - "BOOK_DEPTH20_AVAILABLE_FRESH" : age_ms <= tolerance_ms
+      - "BOOK_DEPTH20_AVAILABLE_STALE" : tolerance_ms < age_ms <= stale_max_age_ms
+      - "BOOK_DEPTH20_MISSING" : no snapshot OR age_ms > stale_max_age_ms
+      - "BOOK_FRESHNESS_NOT_PROVEN" : age_ms is None (not measured yet)
+    """
+
+    if not snapshot_found:
+        return "BOOK_DEPTH20_MISSING"
+    if age_ms is None:
+        return "BOOK_FRESHNESS_NOT_PROVEN"
+    if age_ms <= tolerance_ms:
+        return "BOOK_DEPTH20_AVAILABLE_FRESH"
+    if age_ms <= stale_max_age_ms:
+        return "BOOK_DEPTH20_AVAILABLE_STALE"
+    return "BOOK_DEPTH20_MISSING"
+
+
 def measure_spread_bps_from_book_snapshot(
     *,
     raw_book_path: Path | str | None,
@@ -411,7 +543,7 @@ def measure_spread_bps_from_book_snapshot(
     raw_book_delta_path: Path | str | None = None,
     enable_reconstruction_fallback: bool = True,
     stale_snapshot_max_age_ms: int = 24 * 60 * 60 * 1000,
-) -> tuple[float | None, str]:
+) -> tuple[float | None, str, int | None]:
     """Mesure le spread reel depuis le snapshot orderbook le plus proche,
     avec fallbacks de reconstruction snapshot+deltas et stale-snapshot.
 
@@ -423,19 +555,23 @@ def measure_spread_bps_from_book_snapshot(
                `stale_snapshot_max_age_ms`) avec provenance
                `MEASURED_FROM_BOOK_SNAPSHOT_STALE` ; mieux que le hardcoded
                `DEFAULT_BY_BOOK_STATUS` car c'est une mesure reelle
-      Fallback : (None, reason_code) → caller utilise DEFAULT_BY_BOOK_STATUS
+      Fallback : (None, reason_code, age) → caller utilise DEFAULT_BY_BOOK_STATUS
+
+    Patch P3 (2026-05-29) — returns 3-tuple including age_ms (closest snapshot
+    distance from `timestamp_ms`) for temporal proof on the gold row. age_ms
+    is None when no snapshot is found or the book path is missing.
 
     Provenance retournee :
       - "MEASURED_FROM_BOOK_SNAPSHOT"           : tier 1
-      - "MEASURED_FROM_BOOK_RECONSTRUCTION"     : tier 2
-      - "MEASURED_FROM_BOOK_SNAPSHOT_STALE"     : tier 3 (mesure stale)
+      - "MEASURED_FROM_BOOK_RECONSTRUCTION"     : tier 2 (age_ms=0 = fresh by construction)
+      - "MEASURED_FROM_BOOK_SNAPSHOT_STALE"     : tier 3 (mesure stale, age_ms=closest_dt)
       - reason_code (string "BOOK_*")           : fallback
     """
     if raw_book_path is None:
-        return None, "BOOK_PATH_MISSING"
+        return None, "BOOK_PATH_MISSING", None
     book_path = Path(raw_book_path)
     if not book_path.exists():
-        return None, f"BOOK_PATH_NOT_FOUND:{book_path}"
+        return None, f"BOOK_PATH_NOT_FOUND:{book_path}", None
 
     closest_row: dict[str, object] | None = None
     closest_dt = float("inf")
@@ -462,7 +598,12 @@ def measure_spread_bps_from_book_snapshot(
                     closest_dt = dt
                     closest_row = row
     except OSError as exc:
-        return None, f"BOOK_LOAD_FAILED:{type(exc).__name__}"
+        return None, f"BOOK_LOAD_FAILED:{type(exc).__name__}", None
+
+    # Patch P3 — capture closest snapshot age (None if no snapshot found)
+    snapshot_age_ms: int | None = (
+        int(closest_dt) if closest_row is not None and closest_dt != float("inf") else None
+    )
 
     # Tier 1 : snapshot direct dans la tolerance
     if closest_row is not None and closest_dt <= tolerance_ms:
@@ -471,7 +612,7 @@ def measure_spread_bps_from_book_snapshot(
             closest_row.get("asks"),
         )
         if spread_bps is not None:
-            return spread_bps, "MEASURED_FROM_BOOK_SNAPSHOT"
+            return spread_bps, "MEASURED_FROM_BOOK_SNAPSHOT", snapshot_age_ms
 
     # Tier 2 : reconstruction snapshot+deltas (W2 fix)
     reconstruction_status: str | None = None
@@ -489,7 +630,10 @@ def measure_spread_bps_from_book_snapshot(
                 tolerance_ms=tolerance_ms,
             )
             if spread_bps is not None:
-                return spread_bps, reconstruction_status
+                # Reconstructed state is fresh by construction (within tolerance,
+                # see _measure_spread_via_reconstruction). age_ms=0 indicates the
+                # reconstructed view aligns with timestamp_ms.
+                return spread_bps, reconstruction_status, 0
 
     # Tier 3 : stale snapshot (mesure reelle mais ancienne, mieux que hardcoded).
     # Audit 2026-05-13 W2 partial fix : sur les raw_windows B2, le snapshot
@@ -505,19 +649,19 @@ def measure_spread_bps_from_book_snapshot(
             closest_row.get("asks"),
         )
         if spread_bps is not None:
-            return spread_bps, "MEASURED_FROM_BOOK_SNAPSHOT_STALE"
+            return spread_bps, "MEASURED_FROM_BOOK_SNAPSHOT_STALE", snapshot_age_ms
 
     # Fallback : retourne le code raison le plus precis
     if closest_row is None:
-        return None, "BOOK_NO_SNAPSHOTS"
+        return None, "BOOK_NO_SNAPSHOTS", None
     if reconstruction_status is not None:
-        return None, reconstruction_status
+        return None, reconstruction_status, snapshot_age_ms
     if closest_dt > stale_snapshot_max_age_ms:
         return None, (
             f"BOOK_SNAPSHOT_TOO_FAR_BEYOND_STALE_MAX:{int(closest_dt)}ms_>_"
             f"{stale_snapshot_max_age_ms}ms"
-        )
-    return None, f"BOOK_SNAPSHOT_TOO_FAR:{int(closest_dt)}ms_>_{tolerance_ms}ms"
+        ), snapshot_age_ms
+    return None, f"BOOK_SNAPSHOT_TOO_FAR:{int(closest_dt)}ms_>_{tolerance_ms}ms", snapshot_age_ms
 
 
 def _measure_slippage_from_kyle_lambda(
@@ -691,12 +835,23 @@ def compute_economic_provenance(
         warnings.append(f"VENUE_FROM_SILVER_INDEX:{venue_id}")
 
     # ------------------------------------------------------------------
-    # 1. SPREAD — mesure depuis book snapshot
+    # 1. SPREAD — mesure depuis book snapshot (+ temporal proof P3)
     # ------------------------------------------------------------------
-    measured_spread, spread_status = measure_spread_bps_from_book_snapshot(
+    # Patch P3 (2026-05-29) — capture book_snapshot_age_ms (3rd return value)
+    # for temporal proof. Tolerance derived from timeframe (per audit C5
+    # calibration) when timeframe is provided; falls back to spread_tolerance_ms.
+    effective_tolerance_ms = (
+        tolerance_ms_for_timeframe(timeframe) if timeframe else spread_tolerance_ms
+    )
+    measured_spread, spread_status, book_snapshot_age_ms = measure_spread_bps_from_book_snapshot(
         raw_book_path=raw_book_path,
         timestamp_ms=timestamp_ms,
-        tolerance_ms=spread_tolerance_ms,
+        tolerance_ms=effective_tolerance_ms,
+    )
+    book_freshness_status = derive_book_freshness_status(
+        age_ms=book_snapshot_age_ms,
+        tolerance_ms=effective_tolerance_ms,
+        snapshot_found=measured_spread is not None or "BOOK_NO_SNAPSHOTS" not in spread_status,
     )
     if measured_spread is not None and measured_spread >= 0.0:
         if apply_pair_bounds:
@@ -966,6 +1121,10 @@ def compute_economic_provenance(
         expected_edge_model_status=expected_edge_model_status,
         expected_edge_model_artifact_hash=expected_edge_model_artifact_hash,
         expected_edge_model_feature_hash=expected_edge_model_feature_hash,
+        # Patch P3 (2026-05-29) — book freshness temporal proof
+        book_snapshot_age_ms=book_snapshot_age_ms,
+        book_freshness_status=book_freshness_status,
+        book_freshness_tolerance_ms=effective_tolerance_ms,
     )
 
 

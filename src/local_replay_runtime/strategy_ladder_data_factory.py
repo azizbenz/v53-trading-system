@@ -86,6 +86,8 @@ from local_replay_runtime.strategy_ladder_data_factory_models import (
 )
 from local_replay_runtime.strategy_ladder_economic_provenance import (
     compute_economic_provenance,
+    derive_expected_edge_truth_status,
+    derive_slippage_truth_status,
 )
 from local_replay_runtime.strategy_ladder_engine_native_adapter import (
     build_engine_c_microstructure_inputs_from_window,
@@ -855,6 +857,102 @@ def _expected_date_scope(start: str, end: str) -> tuple[str, ...]:
     return tuple(days)
 
 
+# Patch P1-A5 (2026-05-29) — method_version_hash cache. Computed once at first
+# use: SHA256-16 of this module's content + semantic version tag. Captures both
+# the version intent and the actual code state for full reproducibility.
+_GOLD_METHOD_VERSION_HASH_CACHE: str | None = None
+
+
+def _gold_method_version_hash() -> str:
+    """P1-A5 — SHA256-16 of gold builder module content + version tag."""
+
+    global _GOLD_METHOD_VERSION_HASH_CACHE
+    if _GOLD_METHOD_VERSION_HASH_CACHE is None:
+        try:
+            module_path = Path(__file__).resolve()
+            content_hash = hashlib.sha256(module_path.read_bytes()).hexdigest()[:16]
+        except OSError:
+            content_hash = "unknown"
+        _GOLD_METHOD_VERSION_HASH_CACHE = f"strategy_ladder.gold.v1#{content_hash}"
+    return _GOLD_METHOD_VERSION_HASH_CACHE
+
+
+def _feature_set_hash(feature_values: dict[str, object]) -> str:
+    """P1-A6 — Deterministic SHA256-16 of the active feature names set.
+
+    Used per-row so audit can verify reproducibility: same feature set →
+    same hash. If features drift (e.g. a new microstructure feature added
+    silently), the hash changes and validators upstream can flag mismatches.
+    """
+
+    names_csv = ",".join(sorted(str(k) for k in feature_values.keys()))
+    return hashlib.sha256(names_csv.encode("utf-8")).hexdigest()[:16]
+
+
+def _raw_catalog_ref(entry: StrategyLadderSilverIndexEntry) -> str:
+    """P1-A4 — Canonical raw catalog reference for the silver index entry.
+
+    Format: `silver:<source_id>:<exchange>:<market_type>:<data_type>:<pair>:<date>`
+    Deterministic key that lets downstream audit trace any gold row back to
+    its source silver index entry without ambiguity.
+    """
+
+    return (
+        f"silver:{entry.source_id}:{entry.exchange}:{entry.market_type}:"
+        f"{entry.data_type}:{entry.pair}:{entry.date}"
+    )
+
+
+def _ensure_input_data_hash(entry: StrategyLadderSilverIndexEntry) -> str:
+    """P1-A1 — Populate input_data_hash even when entry.file_hash is empty.
+
+    The v2 resume optimization (cf. RESUME-INDEX-GAP fix) stores resume entries
+    with `file_hash=""` as stat-only placeholders. For gold reproducibility we
+    need a real content hash — compute it lazily here when the gold row is
+    being built. The cost (one SHA256 per resume entry consumed by gold) is
+    amortized over gold building and only paid for entries actually used.
+    """
+
+    if entry.file_hash:
+        return entry.file_hash
+    try:
+        path = Path(entry.path)
+        if not path.is_file():
+            return ""
+        if path.stat().st_size == 0:
+            return ""
+        return _sha256_path(path)
+    except OSError:
+        return ""
+
+
+def _entry_has_silver_data(entry: StrategyLadderSilverIndexEntry) -> bool:
+    """Patch RESUME-INDEX-GAP (2026-05-29): treat resume placeholders as 'has data'.
+
+    Resume entries built by `_resume_silver_file_eligible` use `row_count=0` +
+    `file_hash=""` as stat-only placeholders that reference real silver files
+    on disk containing data. Without this check, downstream consumers
+    (pair_universe, coverage filters, gold builder) reject them as "no data"
+    via `entry.row_count > 0`, leading to `PAIR_UNIVERSE_EMPTY` even though
+    silver files are present and indexed.
+
+    Returns True when:
+      - `row_count > 0` (canonical counted entry), OR
+      - `row_count == 0` and `file_hash == ""` (resume placeholder) AND
+        the on-disk file exists with non-zero size.
+    """
+
+    if entry.row_count > 0:
+        return True
+    if entry.row_count == 0 and entry.file_hash == "":
+        try:
+            path = Path(entry.path)
+            return path.is_file() and path.stat().st_size > 0
+        except OSError:
+            return False
+    return False
+
+
 def _data_type_dates(
     silver_index: tuple[StrategyLadderSilverIndexEntry, ...],
     *,
@@ -865,7 +963,7 @@ def _data_type_dates(
             {
                 entry.date
                 for entry in silver_index
-                if entry.data_type in data_types and entry.date and entry.row_count > 0
+                if entry.data_type in data_types and entry.date and _entry_has_silver_data(entry)
             }
         )
     )
@@ -912,7 +1010,7 @@ def _build_data_factory_prod_safety_report(
                 for entry in silver_index
                 if entry.data_type in {"orderbook", "orderbook_snapshot", "orderbook_delta"}
                 and entry.date
-                and entry.row_count > 0
+                and _entry_has_silver_data(entry)
                 and entry.depth_source_status == "BOOK_DEPTH20_AVAILABLE"
             }
         )
@@ -1014,12 +1112,44 @@ def _build_data_factory_prod_safety_report(
         if not blocker_codes
         else "RESEARCH_ONLY_NOT_PROD_SAFE"
     )
+    # Patch P6 (2026-05-29) — A8 audit-conformant `allowed_usage` /
+    # `blocked_usage` arrays. When prod_safe=False the data may only be used
+    # for research/audit, never for ML promotion / profitability truth / live.
+    is_prod_safe = prod_safety_status == "DATA_FACTORY_PROD_SAFE"
+    allowed_usage = (
+        (
+            "RESEARCH",
+            "B1_DISCOVERY",
+            "B_ML_TRAINING_GOVERNED",
+            "PROFITABILITY_TRUTH",
+            "LIVE_PROMOTION",
+        )
+        if is_prod_safe
+        else (
+            "RESEARCH",
+            "B1_DISCOVERY",
+            "AUDIT",
+            "B_ML_TRAINING_RESEARCH_ONLY",
+        )
+    )
+    blocked_usage = (
+        ()
+        if is_prod_safe
+        else (
+            "ML_PROMOTION_TRAINING",
+            "PROFITABILITY_TRUTH",
+            "LIVE_PROMOTION",
+            "BACKTEST_INSTITUTIONAL_VERDICT",
+        )
+    )
     return {
-        "schema_version": "strategy_ladder.data_factory_prod_safety_report.v1",
+        "schema_version": "strategy_ladder.a2_gold_prod_safety_contract.v2",
         "run_id": request.run_id,
         "prod_safety_status": prod_safety_status,
         "truth_candidate_status": truth_candidate_status,
-        "prod_safe": prod_safety_status == "DATA_FACTORY_PROD_SAFE",
+        "prod_safe": is_prod_safe,
+        "allowed_usage": list(allowed_usage),
+        "blocked_usage": list(blocked_usage),
         "requested_pairs": request.pairs,
         "start": normalized_start,
         "end": normalized_end,
@@ -2703,10 +2833,10 @@ def _build_pair_universe_report(
     missing_pairs: list[str] = []
     for pair in sorted(pair_scope or set(discovered_pairs)):
         pair_entries = [entry for entry in index_entries if entry.pair == pair]
-        has_trades = any(entry.data_type == "trades" and entry.row_count > 0 for entry in pair_entries)
-        has_klines = any(entry.data_type == "ohlcv" and entry.row_count > 0 for entry in pair_entries)
-        has_orderbook = any(entry.data_type in {"orderbook_snapshot", "orderbook_delta", "orderbook"} and entry.row_count > 0 for entry in pair_entries)
-        has_metadata = any(entry.data_type == "metadata" and entry.row_count > 0 for entry in pair_entries)
+        has_trades = any(entry.data_type == "trades" and _entry_has_silver_data(entry) for entry in pair_entries)
+        has_klines = any(entry.data_type == "ohlcv" and _entry_has_silver_data(entry) for entry in pair_entries)
+        has_orderbook = any(entry.data_type in {"orderbook_snapshot", "orderbook_delta", "orderbook"} and _entry_has_silver_data(entry) for entry in pair_entries)
+        has_metadata = any(entry.data_type == "metadata" and _entry_has_silver_data(entry) for entry in pair_entries)
         trade_dates = {entry.date for entry in pair_entries if entry.data_type == "trades" and entry.date}
         kline_dates = {entry.date for entry in pair_entries if entry.data_type == "ohlcv" and entry.date}
         orderbook_dates = {entry.date for entry in pair_entries if entry.data_type in {"orderbook_snapshot", "orderbook_delta", "orderbook"} and entry.date}
@@ -3045,20 +3175,31 @@ def _write_gold_features(
             for entry in index_entries
             if entry.pair == pair and entry.data_type in {"orderbook_snapshot", "orderbook_delta", "orderbook"} and entry.path
         )
+        # Patch P2 (2026-05-29) — A7 venue metadata temporal proof. Track WHICH
+        # metadata entry produced the matching row so we can populate
+        # metadata_effective_at + metadata_source + metadata_hash on the gold row.
         metadata_entries = _group_index_entries(index_entries, pair=pair, data_type="metadata")
-        metadata_rows: list[dict[str, object]] = []
+        metadata_row: dict[str, object] = {}
+        matched_metadata_entry: StrategyLadderSilverIndexEntry | None = None
         for metadata_entry in metadata_entries:
             metadata_path = Path(metadata_entry.path)
-            if metadata_path.exists():
-                metadata_rows.extend(_load_jsonl_rows(metadata_path))
-        metadata_row = next(
-            (
-                row
-                for row in metadata_rows
-                if _normalize_pair(str(row.get("symbol") or row.get("pair") or "")) == pair
-            ),
-            {},
-        )
+            if not metadata_path.exists():
+                continue
+            for row in _load_jsonl_rows(metadata_path):
+                if _normalize_pair(str(row.get("symbol") or row.get("pair") or "")) == pair:
+                    metadata_row = row
+                    matched_metadata_entry = metadata_entry
+                    break
+            if matched_metadata_entry is not None:
+                break
+        if matched_metadata_entry is not None:
+            pair_metadata_effective_at = matched_metadata_entry.date or None
+            pair_metadata_source = _raw_catalog_ref(matched_metadata_entry)
+            pair_metadata_hash = _ensure_input_data_hash(matched_metadata_entry)
+        else:
+            pair_metadata_effective_at = None
+            pair_metadata_source = None
+            pair_metadata_hash = None
         raw_min_notional = metadata_row.get("min_notional")
         try:
             pair_min_notional = (
@@ -3349,11 +3490,20 @@ def _write_gold_features(
                 # quand `use_measured_economic_provenance` est off ; sinon
                 # ecrase par prov.slippage_provenance (cf. bloc plus bas).
                 economic_slippage_provenance = "DEFAULT_TO_CALIBRATE"
+                # Patch P3 (2026-05-29) — capture book freshness temporal proof
+                # even when use_measured_economic_provenance is off (defaults
+                # below). Overwritten if measured path runs.
+                economic_book_snapshot_age_ms: int | None = None
+                economic_book_freshness_status: str = "BOOK_FRESHNESS_NOT_PROVEN"
+                economic_book_freshness_tolerance_ms: int | None = None
                 if getattr(request, "use_measured_economic_provenance", False):
                     prov = compute_economic_provenance(
                         timestamp_ms=timestamp_ms,
                         book_status=book_status,
                         pair=pair,
+                        # Patch P3 (2026-05-29) — pass timeframe so the spread
+                        # measurement derives per-TF tolerance (audit C5).
+                        timeframe=entry.timeframe or None,
                         raw_book_path=snapshot_book_path,
                         raw_trade_path=raw_trade_path,
                         raw_ohlcv_path=Path(entry.path),
@@ -3379,6 +3529,16 @@ def _write_gold_features(
                     economic_latency_penalty_bps = prov.latency_penalty_bps
                     economic_spread_provenance = prov.spread_provenance
                     economic_slippage_provenance = prov.slippage_provenance
+                    # Patch P3 — book freshness temporal proof from prov.
+                    # getattr-with-default keeps back-compat with mocked
+                    # EconomicProvenance-like objects in legacy tests.
+                    economic_book_snapshot_age_ms = getattr(prov, "book_snapshot_age_ms", None)
+                    economic_book_freshness_status = getattr(
+                        prov, "book_freshness_status", "BOOK_FRESHNESS_NOT_PROVEN"
+                    )
+                    economic_book_freshness_tolerance_ms = getattr(
+                        prov, "book_freshness_tolerance_ms", None
+                    )
 
                 execution_fragility = _fragility_context(
                       open_price=open_price,
@@ -3442,8 +3602,57 @@ def _write_gold_features(
                           "engine_scope": request.engines,
                           "feature_values": feature_values,
                           "feature_version": "strategy_ladder.gold.v1",
-                          "input_data_hash": entry.file_hash,
-                          "method_version_hash": "strategy_ladder.gold.v1",
+                          # Patch P1 (2026-05-29) — A1 + A4 + A5 + A6: 4 hashes for
+                          # full reproducibility. input_data_hash lazily computed
+                          # for resume placeholders, method_version_hash captures
+                          # actual gold builder content, raw_catalog_ref ties row
+                          # back to silver index entry, feature_set_hash detects
+                          # silent feature drift.
+                          "input_data_hash": _ensure_input_data_hash(entry),
+                          "method_version_hash": _gold_method_version_hash(),
+                          "raw_catalog_ref": _raw_catalog_ref(entry),
+                          "feature_set_hash": _feature_set_hash(feature_values),
+                          # Patch P2 (2026-05-29) — A7 venue metadata temporal proof
+                          "metadata_effective_at": pair_metadata_effective_at,
+                          "metadata_source": pair_metadata_source,
+                          "metadata_hash": pair_metadata_hash,
+                          # Patch P3 (2026-05-29) — book freshness temporal proof
+                          "book_snapshot_age_ms": economic_book_snapshot_age_ms,
+                          "book_freshness_status": economic_book_freshness_status,
+                          "book_freshness_tolerance_ms": economic_book_freshness_tolerance_ms,
+                          # Patch P4 (2026-05-29) — slippage explicit truth status
+                          "slippage_truth_status": derive_slippage_truth_status(
+                              economic_slippage_provenance
+                          ),
+                          # Patch P5 (2026-05-29) — A9 expected-edge schema split.
+                          # Proxy value populated when provenance is PROXY_*/DEFAULT;
+                          # model value populated when provenance is GOVERNED_*/MEASURED_*.
+                          # Mutually exclusive (only one is non-None per row).
+                          "expected_edge_proxy_bps": (
+                              economic_expected_edge_bps
+                              if derive_expected_edge_truth_status(
+                                  economic_expected_edge_provenance
+                              )
+                              in {
+                                  "EXPECTED_EDGE_PROXY",
+                                  "EXPECTED_EDGE_DEFAULT_PROXY",
+                              }
+                              else None
+                          ),
+                          "expected_edge_model_bps": (
+                              economic_expected_edge_bps
+                              if derive_expected_edge_truth_status(
+                                  economic_expected_edge_provenance
+                              )
+                              in {
+                                  "EXPECTED_EDGE_MODEL_GOVERNED",
+                                  "EXPECTED_EDGE_MODEL_OVERRIDE",
+                              }
+                              else None
+                          ),
+                          "expected_edge_row_truth_status": derive_expected_edge_truth_status(
+                              economic_expected_edge_provenance
+                          ),
                         "source_ref": str(output_path.resolve()),
                         "available_at_timestamp_ms": timestamp_ms,
                         "feature_truth_boundary_status": (
@@ -3480,6 +3689,15 @@ def _write_gold_features(
                           ),
                           "maker_fee_rate": maker_fee_rate,
                           "taker_fee_rate": taker_fee_rate,
+                          # Patch P7 (2026-05-29) — fee schedule temporal proof.
+                          # Try explicit `fee_schedule_date` field from venue
+                          # metadata snapshot, fall back to the silver metadata
+                          # entry date (when the snapshot was captured).
+                          "fee_schedule_date": (
+                              str(metadata_row.get("fee_schedule_date"))
+                              if metadata_row.get("fee_schedule_date")
+                              else pair_metadata_effective_at
+                          ),
                           "book_depth_levels": depth_levels,
                           "book_depth_source_status": book_status,
                           "book_depth_snapshot_count": len(row_book_entries),
@@ -4604,11 +4822,11 @@ def run_strategy_ladder_data_factory(
         orderbook_groups.setdefault((entry.pair, entry.date), []).append(entry)
     for entries in orderbook_groups.values():
         has_snapshot = any(
-            entry.data_type == "orderbook_snapshot" and entry.row_count > 0
+            entry.data_type == "orderbook_snapshot" and _entry_has_silver_data(entry)
             for entry in entries
         )
         has_delta = any(
-            entry.data_type == "orderbook_delta" and entry.row_count > 0
+            entry.data_type == "orderbook_delta" and _entry_has_silver_data(entry)
             for entry in entries
         )
         depth_statuses = {entry.depth_source_status for entry in entries}
@@ -5212,18 +5430,27 @@ def run_strategy_ladder_data_factory(
         )
     )
     write_storage_budget_report(report_root, storage_budget_report)
+    # Patch P6 (2026-05-29) — A8 emit prod-safety contract under both names:
+    # the canonical audit-conformant name `a2_gold_prod_safety_contract.json`
+    # AND the legacy `data_factory_prod_safety_report.json` (back-compat with
+    # `a2_cache.py` and operator dashboards that still reference the old name).
+    _prod_safety_payload = _build_data_factory_prod_safety_report(
+        request=request,
+        manifest=manifest,
+        data_quality=data_quality,
+        silver_index=silver_index,
+        gold_manifest=canonical_gold_manifest,
+        storage_budget_report=storage_budget_report,
+        normalized_start=normalized_start,
+        normalized_end=normalized_end,
+    )
+    _write_report(
+        report_root / "a2_gold_prod_safety_contract.json",
+        _prod_safety_payload,
+    )
     _write_report(
         report_root / "data_factory_prod_safety_report.json",
-        _build_data_factory_prod_safety_report(
-            request=request,
-            manifest=manifest,
-            data_quality=data_quality,
-            silver_index=silver_index,
-            gold_manifest=canonical_gold_manifest,
-            storage_budget_report=storage_budget_report,
-            normalized_start=normalized_start,
-            normalized_end=normalized_end,
-        ),
+        _prod_safety_payload,
     )
     # Patch 6 batch 2 — emit the feature/threshold registry manifest.
     # Must be written BEFORE the proof matrix so the proof-matrix builder

@@ -105,7 +105,8 @@ RUN #1 LANCÉ → ETA ~3-6h
 audit_a2_run.py → check anti-leakage GREEN + 0 rows_rejected
    ↓
 python scripts/run_strategy_ladder_ml_lab_handoff.py
-   --from-a2 K:\output lab\runs\lab_train-2026-05-28-5pairs-186j
+   --a2-output-root "K:\output lab\runs\lab_train-2026-05-28-5pairs-186j\phase_a2_data_factory"
+   (autres args requis : --artifact-id, --kline-root, --export-dir, --train-start, --train-end, ...)
    ↓ ~20-40 min training
 artifact .lgb produit sous K:\output lab\artifacts\
    ↓
@@ -121,3 +122,24 @@ P0-B ENGINES CALIBRATION (A.1 + A.2)
    ↓
 VALIDATION FINALE : "de quoi est capable v5.3"
 ```
+
+---
+
+## P0-C-auto — Auto-détection feature_names depuis A2 manifest (2026-05-29)
+
+**Footgun fermé** : la commande `run_strategy_ladder_ml_lab_handoff.py` avait `--feature-names` default = `"close_return,high_low_range,volume"` (3 features). Si A2 produit gold avec 22 features mais user oublie `--feature-names` au handoff → modèle entraîné sur 3 features seulement → décorrélation silencieuse runtime/training.
+
+**Fix** : nouvel argument `--a2-output-root`. Quand fourni AND `--feature-names` reste le default legacy 3-feature, le CLI charge automatiquement `feature_names` depuis `<a2-output-root>/expected_edge_feature_manifest.json`.
+
+**Sémantique** :
+
+| `--a2-output-root` | `--feature-names` | Résultat |
+|--------------------|-------------------|----------|
+| fourni | default legacy (3) | **auto-load depuis manifest** ✓ |
+| fourni | explicite (ex. 22 features) | explicite gagne (back-compat) |
+| absent | default legacy (3) | 3 features (legacy, ⚠️ footgun) |
+| absent | explicite | explicite |
+
+**Fail-closed** : manifest absent ou `feature_names` vide → `FileNotFoundError` / `ValueError` (pas de silent fallback).
+
+**Affichage** : print stderr `[P0-C-auto] Loaded N feature_names from A2 manifest: ...` quand auto-detect actif.

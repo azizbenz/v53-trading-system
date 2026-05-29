@@ -263,6 +263,41 @@ class StrategyLadderFeatureRow(BaseModel, frozen=True):
     feature_version: str | None = None
     input_data_hash: str | None = None
     method_version_hash: str | None = None
+    # Patch P1 (2026-05-29) — A4 raw_catalog_ref + A6 feature_set_hash for full
+    # gold row reproducibility. Both optional (back-compat) but populated by the
+    # canonical gold row builder. Audit trace: raw_catalog_ref ties row back to
+    # silver index entry; feature_set_hash detects silent feature drift.
+    raw_catalog_ref: str | None = None
+    feature_set_hash: str | None = None
+    # Patch P2 (2026-05-29) — A7 venue metadata temporal proof. Populated when
+    # the gold row builder resolves a matching metadata silver entry. When
+    # metadata is missing, all three remain None and downstream audit can flag
+    # `VENUE_METADATA_TEMPORAL_PROOF_MISSING`.
+    metadata_effective_at: str | None = None  # ISO date of the metadata snapshot
+    metadata_source: str | None = None  # canonical silver-catalog ref
+    metadata_hash: str | None = None  # SHA256 of the metadata file content
+    # Patch P3 (2026-05-29) — book freshness temporal proof. Populated from
+    # EconomicProvenance. Audit C5 calibration: tolerance per timeframe.
+    # `book_freshness_status`: BOOK_DEPTH20_AVAILABLE_FRESH / AVAILABLE_STALE
+    # / MISSING / BOOK_FRESHNESS_NOT_PROVEN.
+    book_snapshot_age_ms: int | None = Field(default=None, ge=0)
+    book_freshness_status: str = "BOOK_FRESHNESS_NOT_PROVEN"
+    book_freshness_tolerance_ms: int | None = Field(default=None, ge=0)
+    # Patch P5 (2026-05-29) — A9 expected-edge schema split. Separates the
+    # proxy value (research only) from the model value (governed). Only
+    # `expected_edge_model_bps` is allowed as truth for promotion gates.
+    # `expected_edge_truth_status` is derived from `expected_edge_provenance`
+    # via `derive_expected_edge_truth_status` (enum: MODEL_GOVERNED /
+    # MODEL_OVERRIDE / PROXY / DEFAULT_PROXY / BLOCKED / NOT_PROVEN).
+    expected_edge_proxy_bps: float | None = None
+    expected_edge_model_bps: float | None = None
+    expected_edge_row_truth_status: str = "EXPECTED_EDGE_NOT_PROVEN"
+    # Patch P4 (2026-05-29) — slippage explicit truth status. Separates A2
+    # research-quality slippage (Kyle estimate / default fallback) from B2
+    # replay-time truth (depth20 book walk during execution). Derived from
+    # `slippage_provenance` via `derive_slippage_truth_status`. P5 validators
+    # will block promotion when not in the prod-safe whitelist.
+    slippage_truth_status: str = "SLIPPAGE_NOT_PROVEN"
     source_ref: str = Field(..., min_length=1)
     available_at_timestamp_ms: int | None = Field(default=None, ge=0)
     source_record_id: str | None = None
@@ -295,6 +330,10 @@ class StrategyLadderFeatureRow(BaseModel, frozen=True):
     step_size: float | None = Field(default=None, gt=0.0)
     maker_fee_rate: float | None = Field(default=None, ge=0.0)
     taker_fee_rate: float | None = Field(default=None, ge=0.0)
+    # Patch P7 (2026-05-29) — B5 fee schedule temporal proof. ISO date when
+    # the venue published the fee schedule used by this row. Validator P7
+    # blocks if drift vs row.timestamp_ms exceeds PROD_SAFE_MAX_FEE_SCHEDULE_DRIFT_DAYS.
+    fee_schedule_date: str | None = None
     target_decision_state: str | None = None
     production_decision_state: str | None = None
     production_final_score: float | None = None

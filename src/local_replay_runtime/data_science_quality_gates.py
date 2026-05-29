@@ -16,12 +16,157 @@ from local_replay_runtime.raw_data_processing_contracts import (
     SilverSynchronizedMarketManifest,
     finalize_hashed_model,
 )
+from local_replay_runtime.strategy_ladder_expected_edge_feature_contracts import (
+    SUPPORTED_FEATURE_NAME_SET,
+)
 
 
 DATA_SCIENCE_QUALITY_REPORT_FILENAME = "data_science_quality_report.json"
 ANTI_LEAKAGE_PRECHECK_REPORT_FILENAME = "anti_leakage_precheck_report.json"
 RAW_DATA_PROCESSING_REPORT_JSON_FILENAME = "raw_data_processing_report.json"
 RAW_DATA_PROCESSING_REPORT_MD_FILENAME = "raw_data_processing_report.md"
+
+
+# Patch P5 (2026-05-29) — A2 gold prod-safe whitelist enums. Only these
+# truth-status values clear the promotion gate. Anything else → blocker code.
+_PROD_SAFE_BOOK_FRESHNESS_STATUSES: frozenset[str] = frozenset({
+    "BOOK_DEPTH20_AVAILABLE_FRESH",
+})
+_PROD_SAFE_SLIPPAGE_TRUTH_STATUSES: frozenset[str] = frozenset({
+    "SLIPPAGE_A2_KYLE_MEASURED",
+    "SLIPPAGE_A2_KYLE_OVERRIDE",
+    "SLIPPAGE_B2_DEPTH20_BOOK_WALK_MEASURED",
+})
+_PROD_SAFE_EXPECTED_EDGE_TRUTH_STATUSES: frozenset[str] = frozenset({
+    "EXPECTED_EDGE_MODEL_GOVERNED",
+})
+
+# Patch P7 (2026-05-29) — fine-grained calibration thresholds. Audit C2/C3/C4
+# decisions: fail-closed on insufficient depth, fee schedule drift, metadata
+# staleness. These thresholds drive `assess_gold_row_prod_safety` checks.
+PROD_SAFE_MIN_BOOK_DEPTH_LEVELS: int = 20
+PROD_SAFE_MAX_FEE_SCHEDULE_DRIFT_DAYS: int = 90
+PROD_SAFE_MAX_METADATA_STALENESS_DAYS: int = 90
+
+
+def _days_drift(iso_date: str | None, row_timestamp_ms: int | None) -> int | None:
+    """P7 helper — compute absolute drift in days between an ISO date and a
+    row timestamp (epoch ms). Returns None if either input is missing or
+    unparseable (caller treats None as "drift unknown → cannot enforce").
+    """
+    from datetime import datetime, timezone
+
+    if not iso_date or row_timestamp_ms is None:
+        return None
+    try:
+        ref_dt = datetime.fromisoformat(str(iso_date)[:10])
+        ref_dt = ref_dt.replace(tzinfo=timezone.utc)
+        row_dt = datetime.fromtimestamp(int(row_timestamp_ms) / 1000.0, tz=timezone.utc)
+        return abs((row_dt - ref_dt).days)
+    except (ValueError, TypeError, OSError):
+        return None
+
+
+def assess_gold_row_prod_safety(row: object) -> tuple[str, ...]:
+    """P5 (2026-05-29) — assess a single gold row for prod-safe readiness.
+
+    Returns a tuple of blocker codes (`A2_GOLD_PROD_SAFE_BLOCKED_BY_*`) when
+    any required field is missing or proxy-tainted. Empty tuple means the row
+    is fully prod-safe.
+
+    Checks (per P1-P5 cleanup):
+      - P1 : input_data_hash, method_version_hash, raw_catalog_ref, feature_set_hash all non-empty
+      - P2 : metadata_effective_at, metadata_source, metadata_hash all populated
+      - P3 : book_freshness_status in PROD_SAFE whitelist (FRESH only)
+      - P4 : slippage_truth_status in PROD_SAFE whitelist
+      - P5 : expected_edge_row_truth_status == MODEL_GOVERNED
+
+    Designed to be called over a sample of gold rows; aggregator counts
+    blocker codes across the sample and emits a manifest-level summary.
+    """
+
+    blockers: list[str] = []
+
+    # P1 — 4 hashes for reproducibility
+    if not getattr(row, "input_data_hash", None):
+        blockers.append("A2_GOLD_PROD_SAFE_BLOCKED_BY_MISSING_INPUT_DATA_HASH")
+    if not getattr(row, "method_version_hash", None):
+        blockers.append("A2_GOLD_PROD_SAFE_BLOCKED_BY_MISSING_METHOD_VERSION_HASH")
+    if not getattr(row, "raw_catalog_ref", None):
+        blockers.append("A2_GOLD_PROD_SAFE_BLOCKED_BY_MISSING_RAW_CATALOG_REF")
+    if not getattr(row, "feature_set_hash", None):
+        blockers.append("A2_GOLD_PROD_SAFE_BLOCKED_BY_MISSING_FEATURE_SET_HASH")
+
+    # P2 — venue metadata temporal proof
+    if not getattr(row, "metadata_effective_at", None):
+        blockers.append("A2_GOLD_PROD_SAFE_BLOCKED_BY_MISSING_METADATA_EFFECTIVE_AT")
+    if not getattr(row, "metadata_source", None):
+        blockers.append("A2_GOLD_PROD_SAFE_BLOCKED_BY_MISSING_METADATA_SOURCE")
+    if not getattr(row, "metadata_hash", None):
+        blockers.append("A2_GOLD_PROD_SAFE_BLOCKED_BY_MISSING_METADATA_HASH")
+
+    # P3 — book freshness (FRESH only for prod)
+    book_status = str(getattr(row, "book_freshness_status", "") or "")
+    if book_status not in _PROD_SAFE_BOOK_FRESHNESS_STATUSES:
+        blockers.append(f"A2_GOLD_PROD_SAFE_BLOCKED_BY_BOOK_NOT_FRESH:{book_status}")
+
+    # P4 — slippage truth (Kyle measured or override only)
+    slippage_status = str(getattr(row, "slippage_truth_status", "") or "")
+    if slippage_status not in _PROD_SAFE_SLIPPAGE_TRUTH_STATUSES:
+        blockers.append(
+            f"A2_GOLD_PROD_SAFE_BLOCKED_BY_SLIPPAGE_NOT_PROVEN:{slippage_status}"
+        )
+
+    # P5 — expected-edge truth (governed ML only for prod)
+    edge_status = str(getattr(row, "expected_edge_row_truth_status", "") or "")
+    if edge_status not in _PROD_SAFE_EXPECTED_EDGE_TRUTH_STATUSES:
+        blockers.append(
+            f"A2_GOLD_PROD_SAFE_BLOCKED_BY_EXPECTED_EDGE_NOT_GOVERNED:{edge_status}"
+        )
+
+    # P7 — fine-grained calibration thresholds
+    # B4: book_depth_levels >= 20 (canonical depth20 ladder for slippage measurement)
+    book_depth = getattr(row, "book_depth_levels", None)
+    if book_depth is None or int(book_depth) < PROD_SAFE_MIN_BOOK_DEPTH_LEVELS:
+        blockers.append(
+            f"A2_GOLD_PROD_SAFE_BLOCKED_BY_ORDERBOOK_DEPTH_INSUFFICIENT:"
+            f"{book_depth if book_depth is not None else 'missing'}_<_{PROD_SAFE_MIN_BOOK_DEPTH_LEVELS}"
+        )
+
+    # B5 + C2: fee_schedule_date drift vs row timestamp must be within tolerance
+    fee_drift = _days_drift(
+        getattr(row, "fee_schedule_date", None),
+        getattr(row, "timestamp_ms", None),
+    )
+    if fee_drift is None:
+        blockers.append("A2_GOLD_PROD_SAFE_BLOCKED_BY_FEE_SCHEDULE_DRIFT_NOT_PROVEN")
+    elif fee_drift > PROD_SAFE_MAX_FEE_SCHEDULE_DRIFT_DAYS:
+        blockers.append(
+            f"A2_GOLD_PROD_SAFE_BLOCKED_BY_FEE_SCHEDULE_DRIFT_TOO_LARGE:"
+            f"{fee_drift}d_>_{PROD_SAFE_MAX_FEE_SCHEDULE_DRIFT_DAYS}d"
+        )
+
+    # C4: metadata_effective_at staleness vs row timestamp must be within tolerance
+    metadata_staleness = _days_drift(
+        getattr(row, "metadata_effective_at", None),
+        getattr(row, "timestamp_ms", None),
+    )
+    if metadata_staleness is None:
+        # Only block when metadata_effective_at is itself missing.
+        # If P2 already flagged that, we still want this distinct code
+        # for "drift could not be computed".
+        if not getattr(row, "metadata_effective_at", None):
+            # P2 already raised the missing blocker — skip duplicate signal
+            pass
+        else:
+            blockers.append("A2_GOLD_PROD_SAFE_BLOCKED_BY_METADATA_STALENESS_NOT_PROVEN")
+    elif metadata_staleness > PROD_SAFE_MAX_METADATA_STALENESS_DAYS:
+        blockers.append(
+            f"A2_GOLD_PROD_SAFE_BLOCKED_BY_METADATA_STALENESS_TOO_LARGE:"
+            f"{metadata_staleness}d_>_{PROD_SAFE_MAX_METADATA_STALENESS_DAYS}d"
+        )
+
+    return tuple(blockers)
 
 
 def build_runtime_feature_parity_manifest(
@@ -50,6 +195,20 @@ def build_runtime_feature_parity_manifest(
     elif missing_runtime_feature_names:
         status = "RUNTIME_PARITY_BLOCKED_BY_MISSING_RUNTIME_FEATURES"
         blocker_codes = ("RUNTIME_PARITY_BLOCKED_BY_MISSING_RUNTIME_FEATURES",)
+    else:
+        # P0-C-strict (2026-05-29) — only block on extra runtime features that
+        # are governed expected-edge candidates. Non-training features (e.g.
+        # spread_bps used for cost calculation, internal microstructure fields)
+        # may legitimately exist in gold without being in the training set.
+        # The blocker fires only when gold has SUPPORTED_FEATURE_NAME_SET
+        # features that the training set ignored = silent-undertrained-model
+        # footgun (gold has e.g. vpin/ofi/kyle_lambda but training used 3).
+        undertrained_candidates = tuple(
+            name for name in extra_runtime_feature_names if name in SUPPORTED_FEATURE_NAME_SET
+        )
+        if undertrained_candidates:
+            status = "RUNTIME_PARITY_BLOCKED_BY_UNDERTRAINED_FEATURES"
+            blocker_codes = ("RUNTIME_PARITY_BLOCKED_BY_UNDERTRAINED_FEATURES",)
     return finalize_hashed_model(
         RuntimeFeatureParityManifest(
             status=status,
