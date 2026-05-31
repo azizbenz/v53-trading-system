@@ -2,9 +2,68 @@
 
 from __future__ import annotations
 
+import gzip
+import json
 from dataclasses import dataclass
 from time import perf_counter
 from pathlib import Path
+
+# Patch W2 (2026-05-30) — adverse_selection dependency fix. Default delay
+# from CANONICAL_ADVERSE_SELECTION_DELAY_POLICY (5s). Used to look up the
+# post-fill mid price from OHLCV.
+_W2_DEFAULT_ADVERSE_SELECTION_DELAY_MS = 5_000
+
+
+def _compute_post_fill_mid_from_ohlcv(
+    raw_ohlcv_path: str | None,
+    *,
+    fill_timestamp_ms: int,
+    delay_ms: int = _W2_DEFAULT_ADVERSE_SELECTION_DELAY_MS,
+) -> float | None:
+    """W2 — compute post-fill mid proxy from raw OHLCV at `fill + delay_ms`.
+
+    Reads the OHLCV jsonl(.gz) file and returns the close of the first row
+    with `timestamp_ms >= fill_timestamp_ms + delay_ms`. Used to populate
+    `post_fill_mid_price` on the HistoricalReplayOpportunity so the
+    canonical adverse_selection_meter can compute the measurement instead
+    of falling back to `ADVERSE_SELECTION_CANONICAL_METER_BLOCKED_BY_DEPENDENCY`.
+
+    For 1m TF: 5s delay falls in the same candle → return next candle close.
+    For 15m+ TF: delay smaller than candle → return next candle close
+    (current candle would include the fill itself).
+    """
+
+    if not raw_ohlcv_path:
+        return None
+    path = Path(raw_ohlcv_path)
+    if not path.is_file():
+        return None
+    target_ms = int(fill_timestamp_ms) + int(delay_ms)
+    try:
+        if path.name.lower().endswith(".gz"):
+            handle_cm = gzip.open(path, "rt", encoding="utf-8-sig")
+        else:
+            handle_cm = path.open("r", encoding="utf-8-sig")
+        with handle_cm as handle:
+            best_close: float | None = None
+            best_ts: int = -1
+            for line in handle:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    row = json.loads(stripped)
+                    ts = int(row.get("timestamp_ms") or 0)
+                    close = float(row.get("close") or 0.0)
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    continue
+                if ts >= target_ms and close > 0.0:
+                    if best_ts < 0 or ts < best_ts:
+                        best_ts = ts
+                        best_close = close
+        return best_close
+    except OSError:
+        return None
 
 from interface_contracts.atomic_io import atomic_write_json
 from local_replay_runtime.historical_data_gateway import (
@@ -245,7 +304,21 @@ def _row_from_candidate(
             or _coalesce_numeric(payload, "close_price", 0.0)
             or None
         ),
-        "post_fill_mid_price": payload.get("post_fill_mid_price"),
+        # Patch W2 (2026-05-30) — close `ADVERSE_SELECTION_CANONICAL_METER_BLOCKED_BY_DEPENDENCY`.
+        # Compute post_fill_mid_price proxy from raw OHLCV at `fill + 5s` when the
+        # candidate payload doesn't already carry it. Fallback to None if window
+        # manifest absent or OHLCV unreadable → preserves prior blocker behavior.
+        "post_fill_mid_price": (
+            payload.get("post_fill_mid_price")
+            or (
+                _compute_post_fill_mid_from_ohlcv(
+                    window_manifest.raw_ohlcv_path,
+                    fill_timestamp_ms=candidate.resolved_timestamp_ms,
+                )
+                if window_manifest is not None
+                else None
+            )
+        ),
         "adverse_selection_delay_s": payload.get("adverse_selection_delay_s"),
         "target_decision_state": target_decision_state,
         "production_decision_state": payload.get("production_decision_state"),
@@ -677,6 +750,16 @@ def run_strategy_ladder_detailed_replay(
             _shared_overlay, bucket_specific_parity_payload = _strip_shared_parity_payload(
                 full_parity_payload
             )
+            # Patch P1 #2 (2026-05-30) — regime_id from candidate payload
+            _candidate_regime = (
+                (candidate.compatibility_payload or {}).get("regime")
+                or (candidate.compatibility_payload or {}).get("regime_id")
+            )
+            _regime_id_value = (
+                str(_candidate_regime).strip()
+                if _candidate_regime is not None and str(_candidate_regime).strip()
+                else None
+            )
             persisted_result = StrategyLadderBucketReplayResult(
                 candidate_id=candidate.candidate_id,
                 pair=candidate.pair,
@@ -685,6 +768,7 @@ def run_strategy_ladder_detailed_replay(
                 capital_bucket=capital_bucket,
                 timestamp_ms=candidate.resolved_timestamp_ms,
                 execution_state=execution_state,
+                regime_id=_regime_id_value,
                 executed_notional=(
                     planned_notional
                     if dtr_record.decision_state == DecisionState.EXECUTED

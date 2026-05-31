@@ -140,8 +140,13 @@ def _build_parser() -> argparse.ArgumentParser:
     # when sufficient book/trade data exists at decision timestamps.
     parser.add_argument(
         "--use-measured-economic-provenance",
-        action="store_true",
-        help="Compute spread/slippage from actual book snapshots and Kyle lambda from trades, instead of hardcoded proxy constants.",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Compute spread/slippage from actual book snapshots and Kyle lambda from trades, "
+            "instead of hardcoded proxy constants. Default True (W1 patch 2026-05-30); "
+            "use --no-use-measured-economic-provenance for legacy proxy behavior."
+        ),
     )
     # Patch T13-CLI (2026-05-28) — opt-in content-addressable cache for A2.
     # When `--cache-base PATH` is supplied the script routes through the

@@ -10,6 +10,90 @@ from local_replay_runtime import (
     build_parity_diagnostics_payload,
     simulate_shadow_compatible_dtrs,
 )
+from regime_classifier.regime_lite import (
+    RegimeLiteInput,
+    RegimeLiteThresholds,
+    classify_regime_lite,
+)
+
+
+def _regime_dataset(*, with_metrics: bool, regime_label: str = "") -> HistoricalReplayDataset:
+    feature_values: dict[str, float] = {"spread_bps": 3.0}
+    if with_metrics:
+        feature_values.update(
+            {
+                "btc_realized_vol_24h": 0.20,
+                "btc_drop_1h": 0.05,
+                "intraday_drawdown": 0.05,
+                "engine_return_dispersion": 0.10,
+            }
+        )
+    return HistoricalReplayDataset.from_records(
+        dataset_id="dataset-regime-1",
+        source_path="inmemory://regime",
+        records=(
+            HistoricalReplayOpportunity(
+                opportunity_id="op-regime",
+                timestamp_ms=1_700_000_000_000,
+                pair="BTCUSDT",
+                engine_id="engine_a",
+                raw_score=0.9,
+                penalized_score=0.87,
+                final_score=0.84,
+                expected_edge_bps=18.0,
+                spread_bps=3.0,
+                slippage_bps=2.0,
+                latency_penalty_bps=1.0,
+                fill_ratio=1.0,
+                target_decision_state="executed",
+                production_decision_state="executed",
+                production_final_score=0.84,
+                production_expected_cost=0.00063,
+                candidate_size=1.0,
+                final_size=1.0,
+                gross_return_bps=22.0,
+                regime=regime_label,
+                feature_values=feature_values,
+            ),
+        ),
+    )
+
+
+def test_dtr_regime_uses_canonical_classifier_when_metrics_present() -> None:
+    """P1 #2 Option B — DTRRecord.regime carries the canonical regime_lite state
+    when the four regime metrics + documented-default thresholds are present."""
+    thresholds = RegimeLiteThresholds.from_documented_defaults()
+    records = simulate_shadow_compatible_dtrs(
+        _regime_dataset(with_metrics=True),
+        config=ShadowExecutionSimulatorConfig(regime_lite_thresholds=thresholds),
+    )
+
+    expected_state = classify_regime_lite(
+        RegimeLiteInput(
+            as_of_ts=1_700_000_000,
+            btc_realized_vol_24h=0.20,
+            btc_drop_1h=0.05,
+            intraday_drawdown=0.05,
+            engine_return_dispersion=0.10,
+        ),
+        thresholds=thresholds,
+    ).state.value
+
+    assert records[0].regime == expected_state
+    assert records[0].regime != ""
+
+
+def test_dtr_regime_falls_back_to_row_regime_without_metrics() -> None:
+    """P1 #2 Option B — when the canonical inputs are absent, DTRRecord.regime
+    falls back to row.regime (prior behaviour, no regression)."""
+    records = simulate_shadow_compatible_dtrs(
+        _regime_dataset(with_metrics=False, regime_label="LOCAL_REPLAY_REGIME"),
+        config=ShadowExecutionSimulatorConfig(
+            regime_lite_thresholds=RegimeLiteThresholds.from_documented_defaults()
+        ),
+    )
+
+    assert records[0].regime == "LOCAL_REPLAY_REGIME"
 
 
 def _dataset() -> HistoricalReplayDataset:

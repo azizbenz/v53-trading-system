@@ -667,6 +667,10 @@ class StrategyLadderBucketReplayResult(BaseModel, frozen=True):
     dtr_record: dict[str, object] = Field(default_factory=dict)
     parity_payload: dict[str, object] = Field(default_factory=dict)
     shared_payload_ref: str = ""
+    # Patch P1 #2 (2026-05-30) — regime_id propagation. Was absent from bucket
+    # records → dashboard "Regime" section showed "No regime field populated".
+    # Populated from candidate.compatibility_payload["regime"] downstream.
+    regime_id: str | None = None
 
 
 class StrategyLadderSharedReplayPayload(BaseModel, frozen=True):

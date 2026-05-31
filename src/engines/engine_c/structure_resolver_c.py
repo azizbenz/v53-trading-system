@@ -1,8 +1,25 @@
-"""Pure structure-resolution helpers for Engine C."""
+"""Pure structure-resolution helpers for Engine C.
+
+This module hosts BOTH:
+  1. The POST-validation logic `resolve_engine_c_structure(inputs)` that
+     consumes an already-built `EngineCInput` and computes range/breakout
+     metadata + duplication checks.
+  2. The PRE-mapping `build_engine_c_input_from_breakout_features(...)` that
+     projects neutral breakout microstructure scores (from
+     `data_backbone.microstructure.breakout_microstructure_features`) into
+     the 7-float dict required by `EngineCInput.model_validate`.
+
+Layer separation : neutral microstructure primitives live in `data_backbone`
+(reusable by any engine). Engine-specific mapping lives here.
+"""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+
+from data_backbone.microstructure.breakout_microstructure_features import (
+    BreakoutMicrostructureResolution,
+)
 
 if TYPE_CHECKING:
     from .engine_c_runner import EngineCInput
@@ -10,6 +27,26 @@ if TYPE_CHECKING:
 
 def _clamp(value: float) -> float:
     return max(0.0, min(1.0, value))
+
+
+def build_engine_c_input_from_breakout_features(
+    resolution: BreakoutMicrostructureResolution,
+) -> dict[str, float]:
+    """Map neutral breakout microstructure scores → EngineCInput 7-float dict.
+
+    Engine-specific projection: keeps `data_backbone` neutral while enforcing
+    the EngineCInput contract (6 required floats + retrace_risk).
+    """
+
+    return {
+        "breakout_strength": resolution.breakout_strength.value,
+        "range_quality": resolution.range_quality.value,
+        "compression_quality": resolution.compression_quality.value,
+        "volume_confirmation": resolution.volume_confirmation.value,
+        "followthrough_room": resolution.followthrough_room.value,
+        "extension_pct": resolution.extension_pct.value,
+        "retrace_risk": resolution.retrace_risk.value,
+    }
 
 
 def _resolve_realized_vol_reference(inputs: "EngineCInput") -> float:

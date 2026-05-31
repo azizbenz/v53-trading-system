@@ -178,6 +178,7 @@ def test_cold_cache_invokes_underlying_and_populates(
         data_types=request.data_types,
         compression=request.compression,
         storage_format=request.storage_format,
+        use_measured_economic_provenance=request.use_measured_economic_provenance,
     )
     input_hash = compute_input_hash(cache_key)
     entry = lookup_a2_cache(cache_base, input_hash)
@@ -389,6 +390,7 @@ def test_restore_failure_falls_back_to_uncached(
         data_types=request_a.data_types,
         compression=request_a.compression,
         storage_format=request_a.storage_format,
+        use_measured_economic_provenance=request_a.use_measured_economic_provenance,
     )
     import shutil as _shutil
 

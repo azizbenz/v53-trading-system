@@ -55,6 +55,20 @@ from data_backbone.microstructure.realized_kernel_vol import (
     RealizedKernelVolRecord,
     compute_realized_kernel_vol,
 )
+# Patch 2026-05-30 — V5.3 doctrine microstructure-aware override
+from data_backbone.microstructure.breakout_microstructure_features import (
+    BreakoutMicrostructureInputs,
+    FRESHNESS_FRESH,
+    FRESHNESS_NOT_PROVEN,
+    resolve_breakout_microstructure_features,
+)
+from engines.engine_c.structure_resolver_c import (
+    build_engine_c_input_from_breakout_features,
+)
+
+
+_MICROSTRUCTURE_AWARE_PROVENANCE = "MICROSTRUCTURE_AWARE_RESOLVER_V1"
+_LEGACY_DOC21_HEURISTIC_PROVENANCE = "BUILDER_DOC21_HEURISTIC_TO_CALIBRATE"
 
 
 _NS_PER_MS = 1_000_000
@@ -631,6 +645,87 @@ def build_engine_c_input_from_window(
         except (TypeError, ValueError):
             entry_price = 0.0
 
+    # Patch 2026-05-30 — V5.3 microstructure-aware override per user doctrine.
+    # Legacy `_derive_seven_structural_fields_from_doc21` uses Bollinger
+    # squeeze / volume MA / OHLCV-only formulas that are explicitly forbidden
+    # as primary signal. When microstructure_partial_payload carries OFI /
+    # VPIN / queue_pressure / kyle_lambda (5 records bridge), recompute the
+    # 7 structural floats using `resolve_breakout_microstructure_features`
+    # (neutral primitives) + `build_engine_c_input_from_breakout_features`
+    # (engine-c-specific mapping). Fall back to legacy when no microstructure
+    # scalars are available (research-only mode preserved).
+    engine_c_input_provenance = _LEGACY_DOC21_HEURISTIC_PROVENANCE
+    if microstructure_partial_payload:
+        msp = microstructure_partial_payload
+        has_any_micro = any(
+            msp.get(k) is not None
+            for k in ("cumulative_ofi", "queue_pressure", "vpin", "kyle_lambda")
+        )
+        if has_any_micro:
+            try:
+                kyle_value = msp.get("kyle_lambda")
+                kyle_float = float(kyle_value) if kyle_value is not None else None
+            except (TypeError, ValueError):
+                kyle_float = None
+
+            breakout_inputs = BreakoutMicrostructureInputs(
+                breakout_price=breakout.level if breakout.level > 0.0 else None,
+                entry_price=entry_price if entry_price > 0.0 else None,
+                range_high=(
+                    breakout.range_high_lookback
+                    if breakout.range_high_lookback > 0.0
+                    else None
+                ),
+                range_low=(
+                    breakout.range_low_lookback
+                    if breakout.range_low_lookback > 0.0
+                    else None
+                ),
+                recent_range_width=(
+                    breakout.range_size if breakout.range_size > 0.0 else None
+                ),
+                realized_vol_current=(
+                    msp.get("realized_vol_current")
+                    or (
+                        breakout.realized_vol_at_break
+                        if breakout.realized_vol_at_break > 0.0
+                        else None
+                    )
+                ),
+                realized_vol_at_break=(
+                    breakout.realized_vol_at_break
+                    if breakout.realized_vol_at_break > 0.0
+                    else None
+                ),
+                ofi_normalized=msp.get("cumulative_ofi"),
+                cumulative_ofi=msp.get("cumulative_ofi"),
+                queue_pressure=msp.get("queue_pressure"),
+                vpin=msp.get("vpin"),
+                expected_slippage_bps=(
+                    kyle_float * 100.0
+                    if kyle_float is not None and kyle_float >= 0.0
+                    else None
+                ),
+                inputs_freshness_status=FRESHNESS_FRESH,
+            )
+            try:
+                resolution = resolve_breakout_microstructure_features(breakout_inputs)
+                microstructure_floats = build_engine_c_input_from_breakout_features(
+                    resolution
+                )
+                # Override legacy 7 floats with microstructure-aware values
+                structural_fields = microstructure_floats
+                # Provenance flag: research-only if any field used fallback
+                engine_c_input_provenance = (
+                    _MICROSTRUCTURE_AWARE_PROVENANCE
+                    if not resolution.any_research_only_fallback
+                    else f"{_MICROSTRUCTURE_AWARE_PROVENANCE}_PARTIAL_FALLBACK"
+                )
+            except Exception as exc:  # noqa: BLE001 - keep legacy values on failure
+                warnings.append(
+                    f"MICROSTRUCTURE_RESOLVER_FAILED:{type(exc).__name__}:{exc}"
+                )
+
     # Construction du payload EngineCInput.model_validate-compatible
     payload: dict[str, object] = {
         "pair": pair,
@@ -701,6 +796,7 @@ def build_engine_c_input_from_window(
         breakout_reference=breakout,
         engine_c_input_payload=payload,
         builder_warnings=tuple(warnings),
+        engine_c_input_provenance=engine_c_input_provenance,
     )
 
 

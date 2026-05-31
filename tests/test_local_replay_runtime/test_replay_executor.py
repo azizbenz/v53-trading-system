@@ -104,6 +104,34 @@ def test_build_replay_metrics_summary_aggregates_pairs_engines_and_drawdown():
     assert summary.non_execution_rate == pytest.approx(1.0)
 
 
+def test_executed_distinct_candidate_count_separates_buckets_from_candidates() -> None:
+    """P0 #3 — ``executed_count`` counts BUCKET records (1 candidate × N capital
+    buckets). ``executed_distinct_candidate_count`` keys on (pair, engine_id,
+    timestamp), stable across buckets. 8 executed records = 2 candidates × 4 buckets."""
+    records = tuple(
+        build_dtr(
+            dtr_id=f"dtr-{candidate_idx}-{bucket}",
+            pair="BTCUSDT",
+            engine_id="engine_a",
+            decision_state=DecisionState.EXECUTED,
+            expected_cost=0.0010,
+            realized_cost=0.0011,
+            gross_return=0.0022,
+            ce_expected=0.0006,
+            runtime_mode="local_replay",
+            input_source="local_replay",
+            timestamp=candidate_ts,
+        )
+        for candidate_idx, candidate_ts in enumerate((1_700_000_000.0, 1_700_000_900.0))
+        for bucket in (400, 500, 1000, 2000)
+    )
+
+    summary = build_replay_metrics_summary(records, total_opportunities=8)
+
+    assert summary.executed_count == 8
+    assert summary.executed_distinct_candidate_count == 2
+
+
 def test_build_replay_metrics_summary_adds_cd_engine_doctrine_and_non_green_statuses() -> None:
     records = (
         build_dtr(

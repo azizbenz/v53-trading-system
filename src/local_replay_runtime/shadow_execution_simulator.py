@@ -1481,6 +1481,26 @@ def _resolve_regime_classification_surface_resolution(
     )
 
 
+def _dtr_regime_label(
+    regime_resolution: BackboneSurfaceResolution,
+    row: HistoricalReplayOpportunity,
+) -> str:
+    """Patch P1 #2 (2026-05-31, Option B) — resolve the regime label persisted
+    on ``DTRRecord.regime`` (the field the cockpit dashboard aggregates).
+
+    Prefer the canonical ``regime_classifier.regime_lite`` state when the
+    classifier surface was actually used (thresholds configured AND the four
+    regime metrics present in ``row.feature_values``). Fall back to the
+    local-replay ``row.regime`` field otherwise — preserving prior behaviour
+    when the canonical inputs are absent (no regression / no silent change).
+    """
+    if regime_resolution.used_canonical:
+        canonical_state = regime_resolution.canonical_payload.get("state")
+        if canonical_state:
+            return str(canonical_state)
+    return row.regime
+
+
 def _resolve_scoring_ranking_surface_resolution(
     row: HistoricalReplayOpportunity,
     *,
@@ -2448,7 +2468,13 @@ def simulate_shadow_compatible_dtrs(
                     (row.expected_edge_bps / 10_000.0) - execution_profile.expected_cost,
                     6,
                 ),
-                regime=row.regime,
+                regime=_dtr_regime_label(
+                    _resolve_regime_classification_surface_resolution(
+                        row,
+                        regime_lite_thresholds=effective_config.regime_lite_thresholds,
+                    ),
+                    row,
+                ),
                 runtime_mode="local_replay",
                 input_source="historical_data_gateway",
                 path_complete=bool(row.feature_values) and row.shared_core_match,

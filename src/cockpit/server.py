@@ -1649,6 +1649,28 @@ def create_app(
             {"vm": view_model},
         )
 
+    @app.get("/backtest/replay", response_class=HTMLResponse)
+    def backtest_replay(
+        request: Request,
+        pair: str | None = None,
+        pinned_run_id: str | None = None,
+    ) -> HTMLResponse:
+        # Patch A (2026-05-30) — drill-down sub-page for a pinned backtest run.
+        # Same view-model as /backtest (full strategy_ladder_summary +
+        # runtime_feature_parity_card) but renders the focused replay template.
+        # Operator navigates here via "▶ Load this run" on Recent Jobs.
+        view_model = _build_vm(
+            request,
+            current_page="backtest_replay",
+            selected_pair=pair,
+            pinned_run_id=(pinned_run_id or "").strip(),
+        )
+        return templates.TemplateResponse(
+            request,
+            "pages/backtest_replay.html",
+            {"vm": view_model},
+        )
+
     @app.get("/backtest/picker/drives")
     def backtest_picker_drives() -> JSONResponse:
         return JSONResponse({"drives": _list_local_drives()})

@@ -78,6 +78,7 @@ from local_replay_runtime.replay_metrics_collector import (
 )
 from local_replay_runtime.replay_run_manifest import ReplayRunManifest
 from local_replay_runtime.replay_execution_contracts import ShadowExecutionSimulatorConfig
+from regime_classifier.regime_lite import RegimeLiteThresholds
 from local_replay_runtime.strategy_ladder_b2_label_store_builder import (
     _EXPECTED_EDGE_AUGMENTED_FEATURE_KEYS,
     StrategyLadderB2LabelStoreBuilderRequest,
@@ -939,6 +940,52 @@ def _build_fill_realism(results: tuple[StrategyLadderBucketReplayResult, ...]) -
         measured_fill_flag=fill_status in {"FILL_REALISM_PROVEN", "FILL_REALISM_SHADOW_MEASURED"},
         fill_ratio_source="candidate_window_replay",
     )
+
+
+def _derive_live_engine_parity_status(
+    *,
+    fee_model_source: str,
+    spread_model_source: str,
+    slippage_model_source: str,
+    partial_fill_model_source: str,
+    adverse_selection_source: str,
+    order_type_selection_source: str,
+    venue_constraints_source: str,
+    execution_fidelity_gap_codes: tuple[str, ...],
+) -> str:
+    """W3 (2026-05-30) — derive `live_engine_parity_status` from shadow simulator
+    aggregated outputs.
+
+    Per V5.3 doctrine, the manifest field `live_engine_parity_status` has been
+    stuck at "NOT_PROVEN" because no code computed it from the shadow
+    simulator results. This helper closes that gap by inspecting the 7
+    canonical model_source fields + execution_fidelity_gap_codes.
+
+    Returns:
+      - "PROVEN_NO_FIDELITY_GAP" : all 7 sources canonical AND zero gap codes
+      - "PROVEN_PARTIAL_FIDELITY" : at least 1 source canonical but gap codes
+        remain (shadow proved part of the chain but not all)
+      - "NOT_PROVEN" : zero canonical sources OR all REPLAY_PROXY (shadow
+        did not run or produced no parity evidence)
+    """
+
+    sources = (
+        fee_model_source,
+        spread_model_source,
+        slippage_model_source,
+        partial_fill_model_source,
+        adverse_selection_source,
+        order_type_selection_source,
+        venue_constraints_source,
+    )
+    canonical_count = sum(
+        1 for s in sources if str(s or "").upper().startswith("CANONICAL_")
+    )
+    if canonical_count == 0:
+        return "NOT_PROVEN"
+    if canonical_count == len(sources) and not execution_fidelity_gap_codes:
+        return "PROVEN_NO_FIDELITY_GAP"
+    return "PROVEN_PARTIAL_FIDELITY"
 
 
 def _build_cost_parity(results: tuple[StrategyLadderBucketReplayResult, ...]) -> ReplayCostParityEvidence:
@@ -2254,29 +2301,37 @@ def _materialize_native_candidate_event(
         for code in (*reason_codes, *no_trade_reasons, *hard_block_reasons)
         if str(code).strip()
     }
+    # Patch P0 #1 + #2 + P1 #1 (2026-05-30) — 3-bucket split per audit run
+    # 31bdfa55481f6d8f. Previously `native_blockers` mixed 3 categories
+    # (hard execution / promotion / diagnostic) into hard_block_reasons,
+    # misleading the operator dashboard. Now split cleanly :
+    #
+    #   - `native_blockers`     = REAL execution hard-block reasons only
+    #                             (ENGINE_NATIVE_NO_TRADE, engine-specific
+    #                             history_weak, etc.)
+    #   - `promotion_blockers_local` = blocks PROMOTION but allows execution
+    #                                  (cost_block_reason, edge proxy in
+    #                                  ML_MODE_OFF, etc.)
+    #   - `diagnostic_status_local`  = INFORMATIONAL, not blocking
+    #                                  (B2_ENGINE_NATIVE_DECISION_REUSED_FROM_B1)
     native_blockers: tuple[str, ...] = ()
+    promotion_blockers_local: list[str] = []
+    diagnostic_status_local: list[str] = []
+
     if not runner_invoked:
-        # Patch P0-RENAME-1 (2026-05-27) — `ENGINE_NATIVE_RUNNER_NOT_INVOKED`
-        # was emitted on 100% of B2 records and misleadingly suggested an
-        # engine pipeline failure. In B2 we deliberately do NOT re-invoke
-        # the engine: B1's decision is the authoritative one, reused as-is.
-        # The new name conveys the actual semantic (decision reused from
-        # B1, no re-evaluation requested) so the operator no longer reads
-        # the dashboard top-hard-block-reason as a broken pipeline.
-        # The `_engine_native_runner_invocation_audit` in
-        # `backtest_backbone_parity_audit.py` was the diagnostic module
-        # that flagged this as `_MISNAMED_DIAGNOSTIC` and proposed exactly
-        # this reclassification (see lines 663-674 of that file). The
-        # logical-status fields (`engine_native_status`, compatibility
-        # notes, preliminary reasons) continue to use the
-        # `ENGINE_NATIVE_RUNNER_(NOT_)INVOKED` strings because they are
-        # report-only descriptors, not blocker reasons.
-        native_blockers = ("B2_ENGINE_NATIVE_DECISION_REUSED_FROM_B1",)
+        # P0 #1 fix : B2_ENGINE_NATIVE_DECISION_REUSED_FROM_B1 is DIAGNOSTIC info
+        # ("decision reused from B1, no re-evaluation requested"), NOT a hard block.
+        # Previously it was injected into hard_block_reasons → polluted 100% of
+        # records and misled operator into thinking pipeline broken.
+        diagnostic_status_local.append("B2_ENGINE_NATIVE_DECISION_REUSED_FROM_B1")
     elif not is_emit:
+        # ENGINE_NATIVE_NO_TRADE = real execution hard block (engine refused trade)
         native_blockers = ("ENGINE_NATIVE_NO_TRADE",)
+
     edge_truth_is_selection_gate = str(ml_mode or "").strip().upper() != "ML_MODE_OFF"
     profitability_blockers: tuple[str, ...] = ()
     if not edge_is_truth:
+        # Always promotion blocker (audit-grade truth requires governed edge)
         profitability_blockers = _merge_codes(
             list(profitability_blockers),
             [
@@ -2287,6 +2342,7 @@ def _materialize_native_candidate_event(
             ],
         )
     if not edge_is_truth and edge_truth_is_selection_gate:
+        # Only HARD block when ML mode active (gate active) AND edge not truth
         native_blockers = _merge_codes(
             list(native_blockers),
             [
@@ -2297,14 +2353,25 @@ def _materialize_native_candidate_event(
             ],
         )
     if cost_block_reason:
-        native_blockers = _merge_codes(list(native_blockers), [cost_block_reason])
+        # P1 #1 fix : cost_block_reason = PROMOTION blocker (can execute with
+        # cost proxy estimate, but cannot promote as backtest truth). Was
+        # incorrectly injected as hard_block.
+        promotion_blockers_local.append(cost_block_reason)
     if lower_engine_id == "engine_d" and (
         "history_weak" in engine_history_reason_set
         or "engine_d.no_trade.history_weak" in engine_history_reason_set
     ):
+        # Real engine-D hard block (no closed_episode_source = cannot trade)
         native_blockers = _merge_codes(
             list(native_blockers),
             ["ENGINE_D_COLD_START_NO_CLOSED_EPISODE_SOURCE"],
+        )
+
+    # Merge per-row promotion_blockers into the manifest-level profitability_blockers
+    if promotion_blockers_local:
+        profitability_blockers = _merge_codes(
+            list(profitability_blockers),
+            promotion_blockers_local,
         )
 
     target_state = (
@@ -2511,6 +2578,12 @@ def _materialize_native_candidate_event(
             list(reason_codes),
             list(no_trade_reasons),
         ),
+        # Patch P0 #2 + P1 #1 (2026-05-30) — separate buckets so the dashboard
+        # can render hard-block / promotion / diagnostic in distinct sections.
+        # `promotion_blockers` allows execution but blocks promotion (audit-grade).
+        # `diagnostic_status` is informational (e.g. DECISION_REUSED_FROM_B1).
+        "promotion_blockers": tuple(profitability_blockers),
+        "diagnostic_status": tuple(diagnostic_status_local),
         "compatibility_notes": native_notes,
         "engine_native_status": (
             "ENGINE_NATIVE_RUNNER_INVOKED" if runner_invoked else "ENGINE_NATIVE_RUNNER_NOT_INVOKED"
@@ -6424,6 +6497,13 @@ def run_backtest_strategy_ladder(
             build14_context_status=build14_context_status,
             build14_feature_groups=build14_feature_groups,
             build14_upstream_filter_status=build14_upstream_filter_status,
+            # Patch P1 #2 (2026-05-31, Option B) — enable the canonical
+            # regime_classifier.regime_lite surface with governed documented
+            # default thresholds (calibration seam, not hardcoded magic numbers).
+            # DTRRecord.regime is populated from the canonical assessment when
+            # the four regime metrics are present in feature_values, else falls
+            # back to row.regime (no regression). Feeds dashboard section 5.
+            regime_lite_thresholds=RegimeLiteThresholds.from_documented_defaults(),
         )
         with performance_profiler.phase(
             "replay_orchestration",
@@ -6621,6 +6701,10 @@ def run_backtest_strategy_ladder(
     order_type_selection_source = "REPLAY_PROXY"
     venue_constraints_source = "REPLAY_PROXY"
     execution_fidelity_gap_codes: tuple[str, ...] = ()
+    # Patch W3 (2026-05-30) — live_engine_parity_status default NOT_PROVEN when
+    # shadow simulator did not run (fast_only/dry_run/no bucket results).
+    # Overwritten below via _derive_live_engine_parity_status when shadow ran.
+    live_engine_parity_status: str = "NOT_PROVEN"
     if not request.fast_only and not request.dry_run and all_bucket_results and all_bucket_dtrs:
         global_manifest = _build_replay_manifest(
             request=request,
@@ -6660,6 +6744,17 @@ def run_backtest_strategy_ladder(
         order_type_selection_source = global_metrics_summary.order_type_selection_source
         venue_constraints_source = global_metrics_summary.venue_constraints_source
         execution_fidelity_gap_codes = global_metrics_summary.execution_fidelity_gap_codes
+        # Patch W3 (2026-05-30) — derive live parity status from shadow outputs
+        live_engine_parity_status = _derive_live_engine_parity_status(
+            fee_model_source=fee_model_source,
+            spread_model_source=spread_model_source,
+            slippage_model_source=slippage_model_source,
+            partial_fill_model_source=partial_fill_model_source,
+            adverse_selection_source=adverse_selection_source,
+            order_type_selection_source=order_type_selection_source,
+            venue_constraints_source=venue_constraints_source,
+            execution_fidelity_gap_codes=execution_fidelity_gap_codes,
+        )
         strategy_bundles = tuple(
             _build_strategy_bundle(
                 request=request,
@@ -7192,6 +7287,8 @@ def run_backtest_strategy_ladder(
         resume=request.resume,
         dry_run=request.dry_run,
         ml_mode_status=ml_mode_status,
+        # Patch W3 (2026-05-30) — propagate shadow simulator parity verdict
+        live_engine_parity_status=live_engine_parity_status,
         data_factory_status=data_factory_status,
         raw_source_status=raw_source_status,
         pair_universe_status=pair_universe_status,

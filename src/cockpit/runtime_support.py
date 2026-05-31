@@ -9,6 +9,10 @@ from pathlib import Path
 import time
 
 from cockpit.queue_support import build_dashboard_command_queue_snapshot
+from cockpit.state_runtime_feature_parity import (
+    RuntimeFeatureParityCardSnapshot,
+    read_runtime_feature_parity_card,
+)
 from cockpit.strategy_ladder_component_coverage_support import (
     load_component_coverage_dashboard_fields,
 )
@@ -632,6 +636,49 @@ class CockpitRuntimeSurfaces(BaseModel, frozen=True):
     artifact_family_visibility: tuple[ArtifactFamilyVisibilitySummary, ...] = ()
     artifact_family_comparisons: tuple[ArtifactFamilyComparisonSummary, ...] = ()
     alerts: tuple[CockpitAlert, ...] = ()
+    # Patch B (2026-05-30) — runtime feature parity card (P0-C-strict +
+    # P5 validator). Snapshot read from `runtime_feature_parity_manifest.json`
+    # under the pinned run's phase_a2_data_factory dir. None when no pinned
+    # run or manifest absent (audit-visible default).
+    runtime_feature_parity_card: RuntimeFeatureParityCardSnapshot | None = None
+
+
+def _resolve_a2_phase_root_for_card(
+    backtest_jobs: tuple[CockpitBacktestJobRecord, ...],
+    *,
+    pinned_run_id: str,
+) -> Path | None:
+    """Patch B (2026-05-30) — resolve phase_a2_data_factory dir for parity card.
+
+    Picks the pinned run when provided, otherwise the most recent backtest
+    job with a parent_workflow_ref. Returns the `phase_a2_data_factory`
+    sub-directory of the workflow root, or None when unresolvable.
+    """
+
+    candidates = [
+        record
+        for record in backtest_jobs
+        if (
+            (
+                pinned_run_id
+                and (record.workflow_run_id == pinned_run_id or pinned_run_id in record.parent_workflow_ref)
+            )
+            or (not pinned_run_id and record.parent_workflow_ref)
+        )
+    ]
+    if not candidates:
+        return None
+    record = candidates[0] if pinned_run_id else max(
+        candidates,
+        key=lambda r: _parse_iso(r.latest_activity_iso) or datetime.min.replace(tzinfo=UTC),
+    )
+    if not record.parent_workflow_ref:
+        return None
+    workflow_root = Path(record.parent_workflow_ref).parent
+    a2_root = workflow_root / "phase_a2_data_factory"
+    if not a2_root.is_dir():
+        return None
+    return a2_root
 
 
 def read_runtime_surfaces(
@@ -723,6 +770,15 @@ def read_runtime_surfaces(
         recent_logs=recent_logs,
         observability=observability,
     )
+    # Patch B (2026-05-30) — read runtime feature parity card for cockpit
+    a2_root_for_parity = _resolve_a2_phase_root_for_card(
+        backtest_jobs, pinned_run_id=pinned_run_id
+    )
+    runtime_feature_parity_card = (
+        read_runtime_feature_parity_card(a2_root_for_parity)
+        if a2_root_for_parity is not None
+        else None
+    )
     return CockpitRuntimeSurfaces(
         monitoring_payload=monitoring_payload,
         service_state=service_state,
@@ -737,6 +793,7 @@ def read_runtime_surfaces(
         backtest_summary=backtest_summary,
         strategy_ladder_summary=strategy_ladder_summary,
         strategy_ladder_ml_handoff=strategy_ladder_ml_handoff,
+        runtime_feature_parity_card=runtime_feature_parity_card,
         artifact_family_visibility=artifact_family_visibility,
         artifact_family_comparisons=artifact_family_comparisons,
         alerts=alerts,
@@ -2743,6 +2800,11 @@ def _enrich_strategy_ladder_summary_from_artifacts(
             metrics_size_reduction_rate_count = 0
             metrics_min_notional_viable_count = 0
             metrics_executed_notional_sum = 0.0
+            # Patch P0 #3 (2026-05-30) — executed_count counts bucket records
+            # (1 candidate × N capital_buckets). Track distinct candidate_ids
+            # behind executed records so the dashboard can show e.g.
+            # "8 records = 2 distinct candidates × 4 buckets".
+            metrics_executed_candidate_keys: set[str] = set()
             for bucket_path in bucket_dir.glob("*/*.json") if bucket_dir.is_dir() else []:
                 try:
                     payload = _load_json(bucket_path, default={})
@@ -2809,6 +2871,14 @@ def _enrich_strategy_ladder_summary_from_artifacts(
                         metrics_decision_state_counts[decision_state] = (
                             metrics_decision_state_counts.get(decision_state, 0) + 1
                         )
+                    if decision_state == "executed":
+                        _executed_candidate_key = str(
+                            payload.get("candidate_id") or ""
+                        )
+                        if _executed_candidate_key:
+                            metrics_executed_candidate_keys.add(
+                                _executed_candidate_key
+                            )
                     primary_reason = str(dtr_record.get("primary_reason") or "")
                     if primary_reason:
                         metrics_primary_reason_counts[primary_reason] = (
@@ -3048,6 +3118,9 @@ def _enrich_strategy_ladder_summary_from_artifacts(
                         ),
                         "executed_count": metrics_decision_state_counts.get(
                             "executed", 0
+                        ),
+                        "executed_distinct_candidate_count": len(
+                            metrics_executed_candidate_keys
                         ),
                         "rejected_count": sum(
                             v

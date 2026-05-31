@@ -311,6 +311,12 @@ class ReplayMetricsSummary(BaseModel, frozen=True):
     dtr_coverage: float = Field(default=0.0, ge=0.0)
     selected_count: int = Field(default=0, ge=0)
     executed_count: int = Field(default=0, ge=0)
+    # Patch P0 #3 (2026-05-30) — executed_count counts BUCKET RECORDS (a single
+    # candidate × N capital_buckets emits N records). Operator dashboard
+    # previously showed "8 executed" without clarifying it was 2 candidates ×
+    # 4 buckets. `executed_distinct_candidate_count` exposes the underlying
+    # count of distinct candidate_ids that produced an executed bucket record.
+    executed_distinct_candidate_count: int = Field(default=0, ge=0)
     reduced_count: int = Field(default=0, ge=0)
     no_fill_count: int | None = Field(default=None, ge=0)
     hard_blocked_count: int = Field(default=0, ge=0)
@@ -1040,6 +1046,18 @@ def build_replay_metrics_summary(
     executed_count = sum(
         1 for record in records if record.decision_state == DecisionState.EXECUTED
     )
+    # Patch P0 #3 (2026-05-30) — `executed_count` counts BUCKET RECORDS: one
+    # candidate emits one record per capital_bucket. Distinct candidates are
+    # keyed by (pair, engine_id, timestamp), which is stable across buckets
+    # (only capital_bucket / dtr_id differ for the same candidate). This lets
+    # the dashboard show e.g. "8 records = 2 distinct candidates × 4 buckets".
+    executed_distinct_candidate_count = len(
+        {
+            (record.pair, record.engine_id, record.timestamp)
+            for record in records
+            if record.decision_state == DecisionState.EXECUTED
+        }
+    )
     reduced_count = sum(
         1 for record in records if record.decision_state == DecisionState.REDUCED
     )
@@ -1304,6 +1322,7 @@ def build_replay_metrics_summary(
         dtr_coverage=round(dtr_summary.dtr_coverage, 6),
         selected_count=selected_count,
         executed_count=executed_count,
+        executed_distinct_candidate_count=executed_distinct_candidate_count,
         reduced_count=reduced_count,
         no_fill_count=no_fill_count,
         hard_blocked_count=sum(

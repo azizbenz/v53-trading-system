@@ -1,0 +1,68 @@
+{# Patch A (2026-05-30) — Backtest sub-page : drill-down on a pinned run.
+
+Per `2026-05-30_A_BACKTEST_REPLAY_SUBPAGE_SPLIT_SPEC.md`, this page hosts
+the heavy diagnostic cards extracted from `backtest.html` (which dropped
+from 4212L → ~2000L). Operator lands here via `▶ Load this run` button
+on Recent Backtest Jobs.
+
+Skeleton SCOPE (this session — Opus seeded) :
+  - Route `/backtest/replay?pinned_run_id=<id>` wired
+  - Runtime feature parity card partial included (backend B wired)
+  - Placeholders for cards to be moved from backtest.html by Codex follow-up
+#}
+{% extends "base.html" %}
+
+{% block title %}Backtest Replay - {{ vm.welcome_message }}{% endblock %}
+
+{% block content %}
+
+<section class="welcome-banner">
+    <div class="welcome-banner__inner">
+        <div>
+            <h1 class="welcome-banner__title">Backtest Replay — Drill-down</h1>
+            <p class="welcome-banner__sub">
+                Focused inspection of a pinned backtest run. Use <em>▶ Load this run</em> on the
+                <a href="/backtest">/backtest</a> Recent Jobs panel to pin a run here.
+            </p>
+        </div>
+        <div class="welcome-banner__amount">
+            <span class="welcome-banner__label">Pinned run</span>
+            <span id="backtest-replay-pinned-run" class="welcome-banner__value mono">{{ vm.runtime.strategy_ladder_summary.pinned_run_id or 'none' }}</span>
+        </div>
+    </div>
+</section>
+
+{# === Runtime Feature Parity (P0-C-strict + B wire) === #}
+{% include 'partials/_runtime_feature_parity_card.html' %}
+
+{# === Cards to be MOVED here from backtest.html (Codex follow-up A spec) === #}
+{# Placeholders — uncomment + extract as Codex executes the spec extraction. #}
+
+{# {% include 'partials/_decision_report_card.html' %} #}
+{# {% include 'partials/_backbone_parity_detail_card.html' %} #}
+{# {% include 'partials/_backbone_metrics_6_sections_card.html' %} #}
+{# {% include 'partials/_runner_coverage_card.html' %} #}
+
+{# === NEW cards (Codex follow-up) === #}
+{# {% include 'partials/_prod_safety_contract_card.html' %} #}
+{# {% include 'partials/_loss_analysis_ledger_card.html' %} #}
+
+<section class="card">
+    <div class="card__head">
+        <span class="card__title">Codex follow-up scope</span>
+    </div>
+    <div class="card__body">
+        <p class="muted">
+            This sub-page is currently a skeleton. The full set of drill-down cards (decision report, backbone
+            parity detail, backbone metrics 6 sections, runner coverage, prod-safety contract, loss analysis ledger)
+            is queued for Codex extraction per the spec at
+            <span class="mono">docs/production_deployment_plan/update_audit/2026-05-30_A_BACKTEST_REPLAY_SUBPAGE_SPLIT_SPEC.md</span>.
+        </p>
+        <p class="muted">
+            The <strong>Runtime Feature Parity</strong> card above is fully wired (backend B 2026-05-30 +
+            template A skeleton 2026-05-30).
+        </p>
+    </div>
+</section>
+
+{% endblock %}

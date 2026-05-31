@@ -345,12 +345,55 @@ def _measure_spread_via_reconstruction(
     best_dt = float("inf")
     best_state_ts = -1
 
+    # Patch W0 (2026-05-30) — cross-book purge constants. Audit user 2026-05-30
+    # showed 27% of candidates failing because the snapshot carries stale
+    # levels (orders filled before the snapshot but never cleared by deltas
+    # in the lookback). After ~100k deltas applied, max(bid) > min(ask) → all
+    # subsequent states rejected. Fix: when cross-book detected, iteratively
+    # purge stale levels alternating between top bid and bottom ask (either
+    # side may carry stale orders depending on which side was traded into).
+    # Safety circuit breaker prevents infinite purge if book is fully corrupted.
+    _CROSS_BOOK_PURGE_MAX_PER_CAPTURE = 50
+
+    def _capture_top_of_book_with_cross_purge() -> tuple[float | None, float | None, int]:
+        """Return (best_bid, best_ask, n_purged).
+
+        When cross-book detected (ask <= bid), iteratively purge stale levels
+        ALTERNATING between top bid and bottom ask (W0 bidirectional patch).
+
+        Rationale: a stale snapshot can carry orphan bids ABOVE the true
+        market price OR orphan asks BELOW it (depending on which side was
+        traded into before the snapshot). Purging only one side leaves the
+        other side's stale levels unresolved. Alternating ensures both kinds
+        of corruption are cleaned with the same safety budget.
+
+        Bounded by `_CROSS_BOOK_PURGE_MAX_PER_CAPTURE` for safety.
+        """
+        purged = 0
+        # Alternate side: True = purge top bid, False = purge bottom ask
+        purge_bid_side = True
+        while bid_book and ask_book and purged < _CROSS_BOOK_PURGE_MAX_PER_CAPTURE:
+            best_bid_price = max(bid_book.keys())
+            best_ask_price = min(ask_book.keys())
+            if best_ask_price > best_bid_price > 0.0:
+                return best_bid_price, best_ask_price, purged
+            # Cross-book: alternate purge between top bid and bottom ask.
+            # Both sides can carry stale orphan levels from the snapshot.
+            if purge_bid_side:
+                bid_book.pop(best_bid_price, None)
+            else:
+                ask_book.pop(best_ask_price, None)
+            purge_bid_side = not purge_bid_side
+            purged += 1
+        return None, None, purged
+
     def _capture_top_of_book() -> tuple[float | None, float | None]:
-        if not bid_book or not ask_book:
-            return None, None
-        best_bid_price = max(bid_book.keys())
-        best_ask_price = min(ask_book.keys())
-        return best_bid_price, best_ask_price
+        """Back-compat wrapper that drops the purged count.
+
+        Use only when caller doesn't need to track corruption signal.
+        """
+        bb, ba, _purged = _capture_top_of_book_with_cross_purge()
+        return bb, ba
 
     # Etat initial : evaluer aussi le base snapshot
     bb, ba = _capture_top_of_book()

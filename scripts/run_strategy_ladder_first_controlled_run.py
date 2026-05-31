@@ -87,8 +87,13 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--use-measured-economic-provenance",
-        action="store_true",
-        help="Measure spread provenance from orderbook snapshots instead of hardcoded proxy constants.",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Measure spread provenance from orderbook snapshots instead of hardcoded "
+            "proxy constants. Default True (W1 patch 2026-05-30); use "
+            "--no-use-measured-economic-provenance for legacy proxy behavior."
+        ),
     )
     # Patch T13-CLI (2026-05-28) — opt-in A2 cache via env propagation. The
     # underlying `strategy_ladder_first_controlled_run` orchestrates A1+A2+B1

@@ -1,0 +1,99 @@
+{# Patch B+A (2026-05-30) — Runtime feature parity card.
+
+Renders `vm.runtime.runtime_feature_parity_card: RuntimeFeatureParityCardSnapshot`
+populated by `read_runtime_surfaces` → `read_runtime_feature_parity_card`.
+
+The card surfaces the train/runtime feature decorrelation status emitted by
+P0-C-strict + P5 validator. When `is_blocked=True`, applies a red banner
+(`.card--blocked` CSS class) so operator can see at a glance.
+#}
+{% set card = vm.runtime.runtime_feature_parity_card %}
+{% if card is none %}
+<div class="card backtest-monitor-card" id="backtest-runtime-feature-parity-card">
+    <div class="card__head">
+        <div class="card__head-main">
+            <span class="card__title">Runtime Feature Parity</span>
+            <span class="card__sub">Train vs runtime feature alignment (P0-C-strict)</span>
+        </div>
+    </div>
+    <div class="card__body">
+        <p class="muted">No pinned run or `runtime_feature_parity_manifest.json` not present yet.</p>
+        <p class="muted">Pin a backtest run via <em>▶ Load this run</em> to see parity details.</p>
+    </div>
+</div>
+{% else %}
+<div class="card backtest-monitor-card{% if card.is_blocked %} card--blocked{% endif %}" id="backtest-runtime-feature-parity-card">
+    <div class="card__head">
+        <div class="card__head-main">
+            <span class="card__title">Runtime Feature Parity</span>
+            <span class="card__sub">Train vs runtime feature alignment (P0-C-strict)</span>
+        </div>
+        <div class="card__head-aux">
+            {% if card.is_blocked %}
+                <span class="status-chip status-chip--bad">{{ card.status }}</span>
+            {% elif card.status == "RUNTIME_PARITY_SCHEMA_MATCH_READY" %}
+                <span class="status-chip status-chip--ok">{{ card.status }}</span>
+            {% else %}
+                <span class="status-chip status-chip--warn">{{ card.status }}</span>
+            {% endif %}
+        </div>
+    </div>
+    <div class="card__body">
+        <div class="card-stats">
+            <div class="card-stat">
+                <span class="card-stat__label">Training features</span>
+                <span class="card-stat__value">{{ card.training_feature_count }}</span>
+            </div>
+            <div class="card-stat">
+                <span class="card-stat__label">Runtime features</span>
+                <span class="card-stat__value">{{ card.runtime_feature_count }}</span>
+            </div>
+            <div class="card-stat">
+                <span class="card-stat__label">Feature hash</span>
+                <span class="card-stat__value mono">{{ card.feature_hash[:16] if card.feature_hash else 'n/a' }}</span>
+            </div>
+        </div>
+
+        {% if card.blocker_codes %}
+        <div class="card-section">
+            <h4 class="card-section__title">Blocker codes</h4>
+            <ul class="card-section__list">
+                {% for code in card.blocker_codes %}
+                <li class="card-section__item card-section__item--bad mono">{{ code }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+
+        {% if card.missing_runtime_feature_names %}
+        <div class="card-section">
+            <h4 class="card-section__title">Missing runtime features ({{ card.missing_runtime_feature_names | length }})</h4>
+            <p class="muted">Features expected by training but absent from gold runtime → blocks promotion.</p>
+            <ul class="card-section__list card-section__list--inline">
+                {% for name in card.missing_runtime_feature_names %}
+                <li class="card-section__item card-section__item--bad mono">{{ name }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+
+        {% if card.extra_runtime_feature_names %}
+        <div class="card-section">
+            <h4 class="card-section__title">Extra runtime features ({{ card.extra_runtime_feature_names | length }})</h4>
+            <p class="muted">Features present in gold runtime but not used by training → potential undertrained model.</p>
+            <ul class="card-section__list card-section__list--inline">
+                {% for name in card.extra_runtime_feature_names %}
+                <li class="card-section__item card-section__item--warn mono">{{ name }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+
+        <div class="card-section card-section--footer">
+            <p class="muted">
+                Source: <span class="mono">{{ card.source_path }}</span>
+            </p>
+        </div>
+    </div>
+</div>
+{% endif %}

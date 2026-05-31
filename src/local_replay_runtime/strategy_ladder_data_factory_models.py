@@ -369,7 +369,11 @@ class StrategyLadderDataFactoryRequest(BaseModel, frozen=True):
     # legacy. Activer via le runner quand engine_native_mode=True.
     # Quand True, le data_factory invoque compute_economic_provenance() pour
     # chaque feature_row au lieu de spread_bps = 4.0/6.0/0.0.
-    use_measured_economic_provenance: bool = False
+    # Patch W1 (2026-05-30) — default flipped to True per V5.3 doctrine.
+    # Spread/slippage proxy constants are research-only; canonical path
+    # computes from raw book/trade. Opt-out via explicit False if legacy
+    # proxy behavior is needed (e.g. fast dry-run smoke tests).
+    use_measured_economic_provenance: bool = True
 
     @model_validator(mode="before")
     @classmethod
@@ -439,8 +443,8 @@ class StrategyLadderFirstControlledRunRequest(BaseModel, frozen=True):
     engine_native_sample_size: int = Field(default=10, ge=0)
     # Audit 2026-05-07 (P0 CE/cost provenance) — propage vers
     # StrategyLadderDataFactoryRequest.use_measured_economic_provenance.
-    # Default False : comportement legacy (constantes hardcoded).
-    use_measured_economic_provenance: bool = False
+    # Patch W1 (2026-05-30) — default flipped to True per V5.3 doctrine.
+    use_measured_economic_provenance: bool = True
 
     @model_validator(mode="before")
     @classmethod

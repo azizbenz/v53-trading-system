@@ -19,16 +19,16 @@ Le pont produit ainsi N etats book consecutifs (typiquement 100-1000+) au lieu
 d'un unique snapshot, debloquant le calcul OFI et donnant une mesure robuste
 de QueuePressure sur la fenetre.
 
-LIMITATION P3a : ce module ne fait pas l'invocation finale `run_engine_c`,
-parce qu'EngineCInput requiert 7 champs structurels (breakout_strength,
-range_quality, compression_quality, volume_confirmation, followthrough_room,
-extension_pct, retrace_risk) qui n'ont pas encore de structure-resolver
-canonique cote caller. Le pont produit donc seulement :
-  - les 5 records microstructure
-  - une composition partielle d'input via compose_engine_c_input_payload
-
-Le call final `run_engine_c(EngineCInput.model_validate(payload))` reste
-bloque tant que le structure-resolver n'est pas livre (session future).
+LIMITATION P3a RESOLVED 2026-05-30 (C-wire) : le pont charge maintenant le
+microstructure-aware `engine_c_structure_resolver` qui calcule les 7 champs
+structurels (breakout_strength, range_quality, compression_quality,
+volume_confirmation, followthrough_room, extension_pct, retrace_risk) depuis
+les 5 records microstructure (OFI, VPIN, queue_pressure, kyle, realized_kernel_vol)
++ base_payload OHLCV. Le payload merge est validé contre `EngineCInput`. Le
+bridge_status `ENGINE_NATIVE_BRIDGE_FULL_PATH_READY` est émis quand les 5
+records sont OK et la validation EngineCInput passe. Fallback par-champ
+préservé via envelope `EngineCStructureField` (research_only_if_legacy_fallback
+remonté pour P5 validators).
 """
 
 from __future__ import annotations
@@ -44,6 +44,15 @@ from data_backbone.microstructure.engine_input_provenance import (
     build_engine_a_runner_microstructure_updates,
     compose_engine_c_input_payload,
     compose_engine_d_input_payload,
+)
+from data_backbone.microstructure.breakout_microstructure_features import (
+    BreakoutMicrostructureInputs,
+    FRESHNESS_FRESH,
+    FRESHNESS_NOT_PROVEN,
+    resolve_breakout_microstructure_features,
+)
+from engines.engine_c.structure_resolver_c import (
+    build_engine_c_input_from_breakout_features,
 )
 from data_backbone.microstructure.kyle_lambda import (
     KyleLambdaRecord,
@@ -330,6 +339,12 @@ class EngineNativeBridgeResult:
     queue_pressure_record: QueuePressureRecord | None = None
     realized_kernel_vol_record: RealizedKernelVolRecord | None = None
     engine_c_partial_input_payload: dict[str, object] = field(default_factory=dict)
+    # Patch 2026-05-30 — engine_c structure resolver C-wire. When the 5
+    # microstructure records succeed AND base_payload carries the OHLCV
+    # scalars, the resolver computes the 7 structural fields and the full
+    # payload is set + validated against EngineCInput.
+    engine_c_full_input_payload: dict[str, object] | None = None
+    engine_c_structure_resolution_summary: dict[str, object] = field(default_factory=dict)
     bridge_warnings: tuple[str, ...] = ()
 
     @property
@@ -1455,6 +1470,59 @@ def build_engine_c_microstructure_inputs_from_window(
     except Exception as exc:  # noqa: BLE001
         warnings.append(f"COMPOSE_ENGINE_C_FAILED:{type(exc).__name__}:{exc}")
 
+    # Patch 2026-05-30 (C-wire) — close LIMITATION P3a. Build the 7 structural
+    # fields via engine_c_structure_resolver from the 5 microstructure records
+    # + base_payload OHLCV scalars, merge into the engine_c payload, and try
+    # EngineCInput.model_validate to surface full-path readiness.
+    full_payload: dict[str, object] | None = None
+    structure_summary: dict[str, object] = {}
+    try:
+        resolver_inputs = _build_breakout_microstructure_inputs(
+            ofi_record=ofi_record,
+            queue_pressure_record=queue_pressure_record,
+            vpin_record=vpin_record,
+            kyle_record=kyle_for_engine_c,
+            realized_kernel_record=realized_kernel_record,
+            base_payload=base,
+        )
+        resolution = resolve_breakout_microstructure_features(resolver_inputs)
+        # Engine-specific projection: 7-float dict for EngineCInput contract
+        structure_floats = build_engine_c_input_from_breakout_features(resolution)
+        full_payload = dict(partial_payload)
+        full_payload.update(structure_floats)
+        structure_summary = {
+            "any_fallback_used": resolution.any_fallback_used,
+            "any_research_only_fallback": resolution.any_research_only_fallback,
+            "per_field_provenance": {
+                name: getattr(resolution, name).provenance
+                for name in (
+                    "breakout_strength",
+                    "range_quality",
+                    "compression_quality",
+                    "volume_confirmation",
+                    "followthrough_room",
+                    "extension_pct",
+                    "retrace_risk",
+                )
+            },
+            "per_field_confidence": {
+                name: getattr(resolution, name).confidence
+                for name in (
+                    "breakout_strength",
+                    "range_quality",
+                    "compression_quality",
+                    "volume_confirmation",
+                    "followthrough_room",
+                    "extension_pct",
+                    "retrace_risk",
+                )
+            },
+        }
+    except Exception as exc:  # noqa: BLE001 — surface as warning, fall back to partial
+        warnings.append(
+            f"ENGINE_C_STRUCTURE_RESOLVER_FAILED:{type(exc).__name__}:{exc}"
+        )
+
     # Statut final
     n_built = sum(
         1
@@ -1467,7 +1535,23 @@ def build_engine_c_microstructure_inputs_from_window(
         )
         if r is not None
     )
-    if n_built == 5:
+    full_path_validated = False
+    if n_built == 5 and full_payload is not None:
+        # Try EngineCInput.model_validate — surface full-path readiness only
+        # when the merged payload satisfies the contract.
+        try:
+            from engines.engine_c.engine_c_runner import EngineCInput
+
+            EngineCInput.model_validate(full_payload)
+            full_path_validated = True
+        except Exception as exc:  # noqa: BLE001
+            warnings.append(
+                f"ENGINE_C_INPUT_VALIDATION_FAILED:{type(exc).__name__}"
+            )
+
+    if n_built == 5 and full_path_validated:
+        bridge_status = "ENGINE_NATIVE_BRIDGE_FULL_PATH_READY"
+    elif n_built == 5:
         bridge_status = "ENGINE_NATIVE_BRIDGE_READY_STRUCTURE_RESOLVER_PENDING"
     elif n_built > 0:
         bridge_status = "ENGINE_NATIVE_BRIDGE_PARTIAL"
@@ -1490,7 +1574,88 @@ def build_engine_c_microstructure_inputs_from_window(
         queue_pressure_record=queue_pressure_record,
         realized_kernel_vol_record=realized_kernel_record,
         engine_c_partial_input_payload=partial_payload,
+        engine_c_full_input_payload=full_payload if full_path_validated else None,
+        engine_c_structure_resolution_summary=structure_summary,
         bridge_warnings=tuple(warnings),
+    )
+
+
+def _build_breakout_microstructure_inputs(
+    *,
+    ofi_record: OrderFlowImbalanceRecord | None,
+    queue_pressure_record: QueuePressureRecord | None,
+    vpin_record: VpinRecord | None,
+    kyle_record: KyleLambdaRecord | None,
+    realized_kernel_record: RealizedKernelVolRecord | None,
+    base_payload: dict[str, object],
+) -> BreakoutMicrostructureInputs:
+    """Extract microstructure scalars from records + base_payload for resolver.
+
+    Missing inputs (None records, missing OHLCV scalars) gracefully degrade
+    via per-field fallback in resolve_breakout_microstructure_features.
+    """
+
+    def _opt_float(value: object) -> float | None:
+        if value is None:
+            return None
+        try:
+            f = float(value)
+            return f if f == f else None  # NaN check
+        except (TypeError, ValueError):
+            return None
+
+    ofi_value = (
+        _opt_float(ofi_record.value) if ofi_record is not None else None
+    )
+    queue_value = (
+        _opt_float(queue_pressure_record.value)
+        if queue_pressure_record is not None
+        else None
+    )
+    vpin_value = _opt_float(vpin_record.value) if vpin_record is not None else None
+    realized_vol = (
+        _opt_float(realized_kernel_record.value)
+        if realized_kernel_record is not None
+        else None
+    )
+    kyle_value = _opt_float(kyle_record.value) if kyle_record is not None else None
+    # Kyle lambda × standard 100 USDT notional → expected slippage in bps
+    expected_slippage_bps = (
+        kyle_value * 100.0 if kyle_value is not None and kyle_value >= 0 else None
+    )
+
+    return BreakoutMicrostructureInputs(
+        breakout_price=_opt_float(base_payload.get("breakout_level"))
+        or _opt_float(base_payload.get("entry_price")),
+        entry_price=_opt_float(base_payload.get("entry_price")),
+        range_high=_opt_float(base_payload.get("range_high")),
+        range_low=_opt_float(base_payload.get("range_low")),
+        recent_range_width=(
+            _opt_float(base_payload.get("range_high"))
+            - _opt_float(base_payload.get("range_low"))
+            if _opt_float(base_payload.get("range_high")) is not None
+            and _opt_float(base_payload.get("range_low")) is not None
+            else None
+        ),
+        realized_vol_current=realized_vol,
+        ofi_normalized=ofi_value,
+        cumulative_ofi=ofi_value,
+        queue_pressure=queue_value,
+        expected_slippage_bps=expected_slippage_bps,
+        vpin=vpin_value,
+        inputs_freshness_status=(
+            FRESHNESS_FRESH
+            if all(
+                r is not None
+                for r in (
+                    ofi_record,
+                    queue_pressure_record,
+                    vpin_record,
+                    realized_kernel_record,
+                )
+            )
+            else FRESHNESS_NOT_PROVEN
+        ),
     )
 
 
