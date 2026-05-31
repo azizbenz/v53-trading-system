@@ -135,14 +135,32 @@ Smoke test     :
 - Streaming live updates on /backtest/replay (currently snapshot at page load) — POST CODEX
 - Sub-tabs inside /backtest/replay (e.g. Replay vs Promotion vs Costs) — POST CODEX
 
+## ⚠️ Implementation gotchas (Opus 2026-05-31 — appris en câblant le skeleton)
+
+1. **NE JAMAIS pré-écrire un `{% include 'partials/_X.html' %}` avant que `_X.html` existe — même commenté.**
+   `src/cockpit/source_discovery_support.py:22` `_INCLUDE_PATTERN = re.compile(r"{%\s*include\s+["']([^"']+)["']")` est un regex **naïf** qui matche les includes **à l'intérieur des commentaires Jinja `{# #}`**. Un include placeholder commenté d'un partial inexistant fait planter `tests/cockpit/test_source_discovery_support.py` en `FileNotFoundError`. → Ajouter chaque `{% include %}` UNIQUEMENT au moment où le partial est créé dans le même commit.
+
+2. **Compteur de surfaces.** `tests/cockpit/test_source_discovery_support.py:test_discover_pages_matches_real_cockpit_surface_count` hardcode le nombre de pages ET le set de `page_id`. Le skeleton a déjà fait passer **8 → 9** (ajout `backtest_replay`, page_id = stem du fichier). Si tu ajoutes d'AUTRES pages, mets à jour ce test. (NE PAS toucher `pages=8` dans `test_runner_generates_expected_outputs_for_minimal_repo` = repo minimal seedé, sans rapport.)
+
+3. **Ce test est LENT (~5 min, scan complet du cockpit).** Le batcher en fin de lot, pas après chaque micro-edit.
+
+4. **Ancres de ligne actuelles dans `backtest.html` (4212L)** pour les 4 cards à extraire (les blocs sont des `<div class="card ...">`, pas des `<section>` — attention au `</div>` fermant correct, divs imbriqués) :
+   - `#backtest-decision-report-card` → **L672**
+   - `#backtest-backbone-parity-card` (DETAIL) → **L711**
+   - `#backtest-backbone-metrics-card` (6 sections) → **L834**
+   - `#backtest-runner-coverage-card` → **L1037**
+   (Référence JS à `backtest-runner-coverage-card` aussi à ~L4023 — ne pas casser.)
+
 ## Risks
 
 | Risk | Mitigation |
 |------|-----------|
-| Template extraction breaks Jinja contexts | Run all cockpit pytest after each partial extraction |
+| Include fantôme casse source_discovery | Voir gotcha #1 : jamais d'`include` (même commenté) d'un partial absent |
+| Template extraction breaks Jinja contexts | Run all cockpit pytest après chaque extraction de partial |
 | `_build_vm` regression breaks /backtest existing fields | Add per-section snapshot test BEFORE refactoring |
 | Pin button regression | Keep current pin behavior on /backtest as fallback ; only ADD navigation on Recent Jobs button |
 | Card CSS standalone rendering issues | Add visual smoke test in browser locally before commit |
+| `<div>` fermant mal apparié à l'extraction | Extraire 1 card à la fois + pytest cockpit entre chaque (gotcha #4) |
 
 ## Completion Status (slot)
 

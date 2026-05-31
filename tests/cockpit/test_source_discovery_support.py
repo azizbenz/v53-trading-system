@@ -96,7 +96,9 @@ def _seed_minimal_repo(repo_root: Path) -> None:
 
 def test_discover_pages_matches_real_cockpit_surface_count() -> None:
     pages = discover_pages(REPO_ROOT)
-    assert len(pages) == 8
+    # Patch A (2026-05-31) — /backtest/replay sub-page added (backtest_replay.html)
+    # per 2026-05-30_A_BACKTEST_REPLAY_SUBPAGE_SPLIT_SPEC.md → 8 → 9 surfaces.
+    assert len(pages) == 9
     page_ids = {page.page_id for page in pages}
     assert page_ids == {
         "overview",
@@ -105,6 +107,7 @@ def test_discover_pages_matches_real_cockpit_surface_count() -> None:
         "vps",
         "lab",
         "backtest",
+        "backtest_replay",
         "logs",
         "observability",
     }

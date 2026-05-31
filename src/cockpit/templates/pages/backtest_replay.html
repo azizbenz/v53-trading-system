@@ -35,17 +35,24 @@ Skeleton SCOPE (this session — Opus seeded) :
 {# === Runtime Feature Parity (P0-C-strict + B wire) === #}
 {% include 'partials/_runtime_feature_parity_card.html' %}
 
-{# === Cards to be MOVED here from backtest.html (Codex follow-up A spec) === #}
-{# Placeholders — uncomment + extract as Codex executes the spec extraction. #}
+{# === Cards to be MOVED here from backtest.html (Codex follow-up A spec) ===
 
-{# {% include 'partials/_decision_report_card.html' %} #}
-{# {% include 'partials/_backbone_parity_detail_card.html' %} #}
-{# {% include 'partials/_backbone_metrics_6_sections_card.html' %} #}
-{# {% include 'partials/_runner_coverage_card.html' %} #}
+    Codex extraction queue (do NOT pre-write the include tags here: the cockpit
+    source-discovery scanner matches `include` directives with a naive regex that
+    also fires INSIDE Jinja comments, so a commented-out include of a not-yet-
+    created partial breaks tests/cockpit/test_source_discovery_support.py with
+    FileNotFoundError. Add each real `include` only once its partial file exists).
 
-{# === NEW cards (Codex follow-up) === #}
-{# {% include 'partials/_prod_safety_contract_card.html' %} #}
-{# {% include 'partials/_loss_analysis_ledger_card.html' %} #}
+    MOVE from backtest.html (current line anchors):
+      - decision report card            (backtest.html ~672)  -> _decision_report_card.html
+      - backbone parity DETAIL card     (backtest.html ~711)  -> _backbone_parity_detail_card.html
+      - backbone metrics 6-sections card(backtest.html ~834)  -> _backbone_metrics_6_sections_card.html
+      - runner coverage card            (backtest.html ~1037) -> _runner_coverage_card.html
+
+    NEW cards (create fresh):
+      - _prod_safety_contract_card.html  (reads a2_gold_prod_safety_contract.json)
+      - _loss_analysis_ledger_card.html  (reads loss_analysis_ledger.jsonl)
+#}
 
 <section class="card">
     <div class="card__head">
