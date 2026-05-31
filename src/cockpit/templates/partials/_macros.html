@@ -1,0 +1,18 @@
+{# Shared cockpit template macros.
+
+   Patch A (2026-05-31) — extracted from backtest.html so partials moved to
+   /backtest/replay can render status chips without depending on the page that
+   includes them. Import in a partial with:
+     {% from 'partials/_macros.html' import status_chip %}
+#}
+{% macro status_chip(value) -%}
+    {% set text = (value if value is not none else 'n/a') | string %}
+    {% set upper = text.upper() %}
+    {% if 'BLOCKED' in upper or 'FAILED' in upper or 'MISSING' in upper or 'NOT_PROVEN' in upper or 'NOT_READY' in upper or 'DEAD' in upper or 'CANCELLED' in upper or 'ERROR' in upper or 'BLOCKER' in upper %}
+        <span class="status-chip status-chip--bad">{{ text }}</span>
+    {% elif 'READY' in upper or 'AVAILABLE' in upper or 'OK' in upper or 'PRODUCED' in upper or 'RUNNING' in upper or 'ACTIVE' in upper or 'LAUNCHABLE' in upper or 'ALIVE' in upper %}
+        <span class="status-chip status-chip--ok">{{ text }}</span>
+    {% else %}
+        <span class="status-chip status-chip--warn">{{ text }}</span>
+    {% endif %}
+{%- endmacro %}

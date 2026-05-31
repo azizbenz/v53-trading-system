@@ -1,0 +1,205 @@
+{# Patch A (2026-05-31) — Backbone Metrics card extracted from backtest.html.
+   Rendered on /backtest/replay (drill-down) and still included on /backtest.
+   Self-imports status_chip so it renders standalone. #}
+            <div class="card backtest-monitor-card" id="backtest-backbone-metrics-card">
+                <div class="card__head">
+                    <div class="card__head-main">
+                        <h3>Backbone Metrics — Shadow/Live monitoring view</h3>
+                        <span class="card__sub">Les nombres que tu surveillerais en shadow/live (pas la plomberie de parité)</span>
+                    </div>
+                </div>
+                <div class="card__body">
+                    {% if vm.runtime.strategy_ladder_summary.backbone_metrics_summary.get('records_total', 0) %}
+                    {% set metrics = vm.runtime.strategy_ladder_summary.backbone_metrics_summary %}
+                    <p class="field-note">Aggregated over <strong>{{ metrics.records_total }}</strong> bucket records. KPIs reflect what the backbones actually produced this run.</p>
+
+                    <details class="backbone-metrics-section" open>
+                        <summary class="field-note" style="cursor: pointer; font-weight: 600;">1. Execution — coûts &amp; qualité fill</summary>
+                        <div class="backbone-metrics-grid">
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Execution label canonical</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.execution.execution_label_canonical_pct }}%</div>
+                                <div class="backbone-metrics-tile__sub">PARTIAL_CANONICAL / total</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Fee model canonical</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.execution.fee_model_canonical_pct }}%</div>
+                                <div class="backbone-metrics-tile__sub">CANONICAL_EXECUTION_COST_METER</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Spread model canonical</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.execution.spread_model_canonical_pct }}%</div>
+                                <div class="backbone-metrics-tile__sub">CANONICAL_SPREAD_GUARD</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Slippage model canonical</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.execution.slippage_model_canonical_pct }}%</div>
+                                <div class="backbone-metrics-tile__sub">CANONICAL_EXECUTION_BACKBONE</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Partial-fill canonical</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.execution.partial_fill_model_canonical_pct }}%</div>
+                                <div class="backbone-metrics-tile__sub">CANONICAL_PARTIAL_FILL_COST_METER</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">No-fill count</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.execution.no_fill_count }}</div>
+                                <div class="backbone-metrics-tile__sub">records with no_fill_flag=true</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Partial-fill count</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.execution.partial_fill_count }}</div>
+                                <div class="backbone-metrics-tile__sub">records with partial_fill_flag=true</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Fill realism blocked</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.execution.fill_realism_blocked_pct }}%</div>
+                                <div class="backbone-metrics-tile__sub">FILL_REALISM_BLOCKED_BY_*</div>
+                            </div>
+                        </div>
+                    </details>
+
+                    <details class="backbone-metrics-section">
+                        <summary class="field-note" style="cursor: pointer; font-weight: 600;">2. Edge &amp; Scoring — la valeur que le système croit pouvoir capter</summary>
+                        <div class="backbone-metrics-grid">
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Expected CE net (mean)</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.edge.expected_ce_net_mean }}</div>
+                                <div class="backbone-metrics-tile__sub">expected cost-aware edge</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Expected cost (mean)</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.edge.expected_cost_mean }}</div>
+                                <div class="backbone-metrics-tile__sub">ex-ante fraction</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Realized cost (mean)</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.edge.realized_cost_mean }}</div>
+                                <div class="backbone-metrics-tile__sub">post-trade</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Gross return (mean)</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.edge.gross_return_mean }}</div>
+                                <div class="backbone-metrics-tile__sub">before cost</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Raw → Final score</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.edge.raw_score_mean }} → {{ metrics.edge.final_score_mean }}</div>
+                                <div class="backbone-metrics-tile__sub">dampening {{ metrics.edge.score_dampening_pct }}%</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Penalized score (mean)</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.edge.penalized_score_mean }}</div>
+                                <div class="backbone-metrics-tile__sub">intermediate</div>
+                            </div>
+                        </div>
+                    </details>
+
+                    <details class="backbone-metrics-section">
+                        <summary class="field-note" style="cursor: pointer; font-weight: 600;">3. Risk — gates &amp; rejets</summary>
+                        <div class="backbone-metrics-grid">
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Executed</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.risk.executed_count }}</div>
+                                <div class="backbone-metrics-tile__sub">decision_state = executed</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Rejected / Blocked</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.risk.rejected_count }}</div>
+                                <div class="backbone-metrics-tile__sub">decision_state contains reject/blocked</div>
+                            </div>
+                        </div>
+                        {% if metrics.risk.decision_state_breakdown %}
+                        <p class="field-note" style="margin-top: 8px;">Decision-state distribution:</p>
+                        <ul class="small-list">
+                            {% for entry in metrics.risk.decision_state_breakdown %}
+                            <li><code>{{ entry.label }}</code> — {{ entry.count }}</li>
+                            {% endfor %}
+                        </ul>
+                        {% endif %}
+                        {% if metrics.risk.primary_reason_top5 %}
+                        <p class="field-note" style="margin-top: 8px;">Top primary reasons:</p>
+                        <ul class="small-list">
+                            {% for entry in metrics.risk.primary_reason_top5 %}
+                            <li><code>{{ entry.code }}</code> — {{ entry.count }}</li>
+                            {% endfor %}
+                        </ul>
+                        {% endif %}
+                    </details>
+
+                    <details class="backbone-metrics-section">
+                        <summary class="field-note" style="cursor: pointer; font-weight: 600;">4. Portfolio — sizing &amp; capacities</summary>
+                        <div class="backbone-metrics-grid">
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Candidate size (mean)</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.portfolio.candidate_size_mean }}</div>
+                                <div class="backbone-metrics-tile__sub">pre-cap target</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Final size (mean)</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.portfolio.final_size_mean }}</div>
+                                <div class="backbone-metrics-tile__sub">post-cap</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Size reduction rate</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.portfolio.size_reduction_rate_mean }}</div>
+                                <div class="backbone-metrics-tile__sub">(candidate - final) / candidate</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Min notional viable</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.portfolio.min_notional_viable_count }}</div>
+                                <div class="backbone-metrics-tile__sub">records ≥ exchange floor</div>
+                            </div>
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Executed notional Σ</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.portfolio.executed_notional_sum }}</div>
+                                <div class="backbone-metrics-tile__sub">cumulative quote-unit</div>
+                            </div>
+                        </div>
+                    </details>
+
+                    <details class="backbone-metrics-section">
+                        <summary class="field-note" style="cursor: pointer; font-weight: 600;">5. Regime — état marché</summary>
+                        {% if metrics.regime.regime_breakdown %}
+                        <ul class="small-list" style="margin-top: 8px;">
+                            {% for entry in metrics.regime.regime_breakdown %}
+                            <li><code>{{ entry.label }}</code> — {{ entry.count }} records</li>
+                            {% endfor %}
+                        </ul>
+                        {% else %}
+                        <p class="field-note">No regime field populated on bucket records.</p>
+                        {% endif %}
+                    </details>
+
+                    <details class="backbone-metrics-section">
+                        <summary class="field-note" style="cursor: pointer; font-weight: 600;">6. Hard-block &amp; Meta — sécurités</summary>
+                        <div class="backbone-metrics-grid">
+                            <div class="backbone-metrics-tile">
+                                <div class="backbone-metrics-tile__label">Hard-blocked</div>
+                                <div class="backbone-metrics-tile__value">{{ metrics.hard_block.hard_blocked_count }}</div>
+                                <div class="backbone-metrics-tile__sub">{{ metrics.hard_block.hard_blocked_pct }}% of records</div>
+                            </div>
+                        </div>
+                        {% if metrics.hard_block.hard_block_reasons_top5 %}
+                        <p class="field-note" style="margin-top: 8px;">Top hard-block reasons:</p>
+                        <ul class="small-list">
+                            {% for entry in metrics.hard_block.hard_block_reasons_top5 %}
+                            <li><code>{{ entry.code }}</code> — {{ entry.count }}</li>
+                            {% endfor %}
+                        </ul>
+                        {% endif %}
+                        {% if metrics.hard_block.runtime_mode_breakdown %}
+                        <p class="field-note" style="margin-top: 8px;">Runtime mode distribution:</p>
+                        <ul class="small-list">
+                            {% for entry in metrics.hard_block.runtime_mode_breakdown %}
+                            <li><code>{{ entry.label }}</code> — {{ entry.count }}</li>
+                            {% endfor %}
+                        </ul>
+                        {% endif %}
+                    </details>
+
+                    {% else %}
+                    <p class="field-note">Run a B2 backtest to populate backbone metrics. Aggregation happens automatically from bucket records.</p>
+                    {% endif %}
+                </div>
+            </div>

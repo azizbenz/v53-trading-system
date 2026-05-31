@@ -1,0 +1,115 @@
+{# Patch A (2026-05-31) — Backbone Parity card extracted from backtest.html.
+   Rendered on /backtest/replay (drill-down) and still included on /backtest.
+   Self-imports status_chip so it renders standalone. #}
+{% from 'partials/_macros.html' import status_chip %}
+            <div class="card backtest-monitor-card" id="backtest-backbone-parity-card">
+                <div class="card__head">
+                    <div class="card__head-main">
+                        <h3>Backbone Parity</h3>
+                        <span class="card__sub">Canonical backbone vs local_replay fallback across B2 surfaces</span>
+                    </div>
+                    <span id="backtest-backbone-parity-badge" class="monitor-badge monitor-badge--idle">{{ status_chip(vm.runtime.strategy_ladder_summary.backbone_parity_overall) }}</span>
+                </div>
+                <div class="card__body">
+                    <table class="data-table data-table--compact">
+                        <tbody>
+                            <tr><th>Overall verdict</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.backbone_parity_overall) }}</td></tr>
+                            <tr><th>Shadow/live parity</th><td>{{ vm.runtime.strategy_ladder_summary.backbone_parity_shadow_live_verdict or 'not_audited' }}</td></tr>
+                            <tr><th>Total surface evaluations</th><td>{{ vm.runtime.strategy_ladder_summary.backbone_parity_total_surfaces }}</td></tr>
+                            <tr>
+                                <th>Canonical backbone used</th>
+                                <td>
+                                    {{ vm.runtime.strategy_ladder_summary.backbone_parity_canonical_surface_count }}
+                                    {% if vm.runtime.strategy_ladder_summary.backbone_parity_total_surfaces %}
+                                    ({{ ((vm.runtime.strategy_ladder_summary.backbone_parity_canonical_surface_count * 100) / vm.runtime.strategy_ladder_summary.backbone_parity_total_surfaces) | round(1) }}%)
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            <tr>
+                                <th>Local replay fallback</th>
+                                <td>
+                                    {{ vm.runtime.strategy_ladder_summary.backbone_parity_fallback_surface_count }}
+                                    {% if vm.runtime.strategy_ladder_summary.backbone_parity_total_surfaces %}
+                                    ({{ ((vm.runtime.strategy_ladder_summary.backbone_parity_fallback_surface_count * 100) / vm.runtime.strategy_ladder_summary.backbone_parity_total_surfaces) | round(1) }}%)
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            <tr>
+                                <th>No surface result</th>
+                                <td>
+                                    {{ vm.runtime.strategy_ladder_summary.backbone_parity_missing_surface_count }}
+                                    {% if vm.runtime.strategy_ladder_summary.backbone_parity_total_surfaces %}
+                                    ({{ ((vm.runtime.strategy_ladder_summary.backbone_parity_missing_surface_count * 100) / vm.runtime.strategy_ladder_summary.backbone_parity_total_surfaces) | round(1) }}%)
+                                    {% endif %}
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    {% if vm.runtime.strategy_ladder_summary.backbone_parity_surfaces_still_local_or_proxy %}
+                    <p class="field-note" style="margin-top: 8px;">Surfaces still using local_replay or proxy:</p>
+                    <ul class="small-list">
+                        {% for surface in vm.runtime.strategy_ladder_summary.backbone_parity_surfaces_still_local_or_proxy %}
+                        <li><code>{{ surface }}</code></li>
+                        {% endfor %}
+                    </ul>
+                    {% endif %}
+                    {#
+                       Patch BACKBONE-PARITY-COCKPIT-2 (2026-05-27) — per-surface
+                       breakdown table so the operator can see, surface by
+                       surface, what fraction of records used the canonical
+                       backbone vs the local-replay fallback. Each row also
+                       surfaces the dominant reason code so the operator
+                       understands why a surface stayed on local_replay
+                       (e.g. inputs missing, cluster capacity missing,
+                       threshold not configured).
+                    #}
+                    {% if vm.runtime.strategy_ladder_summary.backbone_parity_per_surface_breakdown %}
+                    <details style="margin-top: 12px;">
+                        <summary class="field-note" style="cursor: pointer;">
+                            Per-surface breakdown ({{ vm.runtime.strategy_ladder_summary.backbone_parity_per_surface_breakdown | length }} surfaces) — click to expand
+                        </summary>
+                        <table class="data-table data-table--compact" style="margin-top: 8px;">
+                            <thead>
+                                <tr>
+                                    <th>Surface</th>
+                                    <th>Dominant status</th>
+                                    <th>Canonical coverage</th>
+                                    <th>Records (C / F / M / Σ)</th>
+                                    <th>Dominant reason</th>
+                                    <th>Selected source</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for entry in vm.runtime.strategy_ladder_summary.backbone_parity_per_surface_breakdown %}
+                                <tr>
+                                    <td><code>{{ entry.surface }}</code></td>
+                                    <td>{{ status_chip(entry.dominant_status) }}</td>
+                                    <td class="numeric">{{ entry.coverage_canonical_pct }}%</td>
+                                    <td class="numeric">
+                                        {{ entry.records_canonical }} /
+                                        {{ entry.records_fallback }} /
+                                        {{ entry.records_missing }} /
+                                        {{ entry.records_total }}
+                                    </td>
+                                    <td><code>{{ entry.dominant_reason_code or '—' }}</code></td>
+                                    <td><code>{{ entry.selected_source or '—' }}</code></td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                        <p class="field-note" style="margin-top: 4px;">
+                            Legend: C = CANONICAL_BACKBONE_USED, F = LOCAL_REPLAY_FALLBACK_USED, M = NO_SURFACE_RESULT_AVAILABLE, Σ = total records.
+                        </p>
+                    </details>
+                    {% endif %}
+                    {% if vm.runtime.strategy_ladder_summary.backbone_parity_links %}
+                    <ul class="small-list" style="margin-top: 12px;">
+                        {% for link in vm.runtime.strategy_ladder_summary.backbone_parity_links %}
+                        <li>{{ link.label }}: <code>{{ link.path }}</code></li>
+                        {% endfor %}
+                    </ul>
+                    {% else %}
+                    <p class="field-note">Backbone parity reports are produced at the end of B2.</p>
+                    {% endif %}
+                </div>
+            </div>

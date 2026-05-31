@@ -1,0 +1,35 @@
+{# Patch A (2026-05-31) — Decision Report card extracted from backtest.html
+   (was ~L672). Hosted on /backtest/replay (drill-down) and still included on
+   /backtest. Self-imports status_chip so it renders standalone. #}
+{% from 'partials/_macros.html' import status_chip %}
+<div class="card backtest-monitor-card" id="backtest-decision-report-card">
+    <div class="card__head">
+        <div class="card__head-main">
+            <h3>Decision Report</h3>
+            <span class="card__sub">Operator ranking and readiness artifacts</span>
+        </div>
+        <span id="backtest-decision-report-badge" class="monitor-badge monitor-badge--idle">{{ status_chip(vm.runtime.strategy_ladder_summary.backtest_decision_report_status) }}</span>
+    </div>
+    <div class="card__body">
+        <table class="data-table data-table--compact">
+            <tbody>
+                <tr><th>Best timeframe</th><td>{{ vm.runtime.strategy_ladder_summary.backtest_decision_best_timeframe or 'insufficient_executions' }}</td></tr>
+                <tr><th>Best pair</th><td>{{ vm.runtime.strategy_ladder_summary.backtest_decision_best_pair or 'insufficient_executions' }}</td></tr>
+                <tr><th>Best bucket</th><td>{{ vm.runtime.strategy_ladder_summary.backtest_decision_best_capital_bucket or 'insufficient_executions' }}</td></tr>
+                <tr><th>ML benefit</th><td>{{ status_chip(vm.runtime.strategy_ladder_summary.backtest_decision_ml_benefit_status) }}</td></tr>
+                <tr><th>Profitability ready</th><td>{{ 'true' if vm.runtime.strategy_ladder_summary.backtest_decision_profitability_ready else 'false' }}</td></tr>
+                <tr><th>Claim allowed</th><td>{{ 'true' if vm.runtime.strategy_ladder_summary.backtest_decision_profitability_claim_allowed else 'false' }}</td></tr>
+                <tr><th>Next blocker</th><td>{{ vm.runtime.strategy_ladder_summary.backtest_decision_next_blocker or 'n/a' }}</td></tr>
+            </tbody>
+        </table>
+        {% if vm.runtime.strategy_ladder_summary.backtest_decision_report_links %}
+        <ul class="small-list" style="margin-top: 12px;">
+            {% for link in vm.runtime.strategy_ladder_summary.backtest_decision_report_links %}
+            <li>{{ link.label }}: <code>{{ link.path }}</code></li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p class="field-note">Decision reports are produced after B2 completes.</p>
+        {% endif %}
+    </div>
+</div>

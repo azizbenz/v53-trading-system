@@ -163,11 +163,20 @@ def test_backtest_template_contains_decision_report_surface() -> None:
     template = Path("src/cockpit/templates/pages/backtest.html").read_text(
         encoding="utf-8"
     )
+    # Patch A (2026-05-31) — the Decision Report card was extracted to
+    # partials/_decision_report_card.html (included on /backtest AND
+    # /backtest/replay). The surface strings now live in the partial; the main
+    # page must reference the partial via include.
+    decision_partial = Path(
+        "src/cockpit/templates/partials/_decision_report_card.html"
+    ).read_text(encoding="utf-8")
 
-    assert "backtest-decision-report-card" in template
-    assert "backtest_decision_report_status" in template
-    assert "backtest_decision_report_links" in template
-    assert "backtest_decision_next_blocker" in template
+    assert "partials/_decision_report_card.html" in template
+    assert "backtest-decision-report-card" in decision_partial
+    assert "backtest_decision_report_status" in decision_partial
+    assert "backtest_decision_report_links" in decision_partial
+    assert "backtest_decision_next_blocker" in decision_partial
+    # Cards still rendered inline on the main /backtest control center:
     assert "backtest-a2-performance-card" in template
     assert "a2_microstructure_report_links" in template
     assert "backtest-latest-job-health" in template

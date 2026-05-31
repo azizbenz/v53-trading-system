@@ -1,0 +1,22 @@
+{# Patch A (2026-05-31) — Runner Coverage card extracted from backtest.html.
+   Rendered on /backtest/replay (drill-down) and still included on /backtest.
+   Self-imports status_chip so it renders standalone. #}
+            <div class="card backtest-monitor-card{% if monitor_active %} backtest-monitor-card--active{% endif %}" id="backtest-runner-coverage-card">
+                <div class="card__head">
+                    <div class="card__head-main">
+                        <h3>Runner Coverage</h3>
+                        <span class="card__sub">What the cockpit can prove during execution</span>
+                    </div>
+                    <span id="backtest-runner-coverage-badge" class="monitor-badge {% if monitor_active %}monitor-badge--active{% else %}monitor-badge--idle{% endif %}">
+                        {{ 'live reading' if monitor_active else 'proof surface' }}
+                    </span>
+                </div>
+                <div class="card__body">
+                    <ul class="small-list">
+                        <li>Runner visibility: {{ 'present' if vm.runtime.backtest_jobs else 'not_yet_persisted' }}</li>
+                        <li>Progress proof: job status + timestamps + output refs</li>
+                        <li>Failure proof: explicit exit code in audited record</li>
+                        <li>Baseline diff input: configured on demand</li>
+                    </ul>
+                </div>
+            </div>
