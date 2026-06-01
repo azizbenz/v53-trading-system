@@ -319,6 +319,49 @@ def test_kyle_trade_points_parsed_once_cached_and_windowed(tmp_path: Path) -> No
     assert after.hits >= before.hits + 2
 
 
+def test_reconstruction_delta_file_parsed_once_cached(tmp_path: Path) -> None:
+    """PERF (2026-06-01) — the per-day orderbook_delta file (12-21 MB gz on real
+    data) is parsed ONCE per path (cached), not re-decompressed per candidate row.
+    Reconstruction result is unchanged."""
+    from local_replay_runtime.strategy_ladder_economic_provenance import (
+        _load_reconstruction_deltas,
+        _measure_spread_via_reconstruction,
+    )
+
+    snapshot_path = tmp_path / "orderbook_snapshot.jsonl"
+    delta_path = tmp_path / "orderbook_delta.jsonl"
+    base = 1_700_000_000_000
+    _write_jsonl(
+        snapshot_path,
+        [{"timestamp_ms": base - 5_000, "update_id": 100,
+          "bids": [[100.0, 1.0]], "asks": [[100.2, 1.0]]}],
+    )
+    _write_jsonl(
+        delta_path,
+        [
+            {"timestamp_ms": base - 3_000, "update_id": 101, "bids": [[100.05, 2.0]], "asks": []},
+            {"timestamp_ms": base - 1_000, "update_id": 102, "bids": [], "asks": [[100.25, 1.0]]},
+        ],
+    )
+
+    _load_reconstruction_deltas.cache_clear()
+    before = _load_reconstruction_deltas.cache_info()
+    spread1, status1 = _measure_spread_via_reconstruction(
+        snapshot_path=snapshot_path, delta_path=delta_path,
+        timestamp_ms=base, tolerance_ms=60_000,
+    )
+    spread2, status2 = _measure_spread_via_reconstruction(
+        snapshot_path=snapshot_path, delta_path=delta_path,
+        timestamp_ms=base - 500, tolerance_ms=60_000,
+    )
+    after = _load_reconstruction_deltas.cache_info()
+
+    assert status1 == "MEASURED_FROM_BOOK_RECONSTRUCTION"
+    assert spread1 is not None and spread1 > 0.0
+    # second reconstruction reused the cached delta parse (no re-decompress)
+    assert after.hits >= before.hits + 1
+
+
 def test_compute_economic_provenance_measures_slippage_from_gzip_trade_file(
     tmp_path: Path,
 ) -> None:

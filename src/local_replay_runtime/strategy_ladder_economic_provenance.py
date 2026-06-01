@@ -247,6 +247,72 @@ def _spread_bps_from_book_levels(
     return spread_bps, "OK"
 
 
+@lru_cache(maxsize=2)
+def _load_reconstruction_snapshots(
+    snapshot_path_str: str,
+) -> tuple[tuple[int, int, dict], ...]:
+    """Parse the book snapshot file ONCE: (ts_ms, update_id, row) sorted by ts.
+
+    PERF (2026-06-01): companion to the Kyle trade cache. The book reconstruction
+    spread path was called once per candidate row and re-parsed the snapshot file
+    each time. Cheap on its own (snapshots are tiny) but cached for symmetry with
+    the delta cache below.
+    """
+    path = Path(snapshot_path_str)
+    out: list[tuple[int, int, dict]] = []
+    with path.open("r", encoding="utf-8-sig") as handle:
+        for line in handle:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                row = json.loads(stripped)
+                ts = int(row.get("timestamp_ms") or 0)
+                uid = int(row.get("update_id") or 0)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                continue
+            out.append((ts, uid, row))
+    out.sort(key=lambda item: item[0])
+    return tuple(out)
+
+
+@lru_cache(maxsize=2)
+def _load_reconstruction_deltas(
+    delta_path_str: str,
+) -> tuple[tuple[int, int, dict], ...]:
+    """Parse the orderbook_delta file ONCE: (update_id, ts_ms, row) sorted by uid.
+
+    PERF (2026-06-01): THE dominant A2 gold bottleneck. The book reconstruction
+    spread path (_measure_spread_via_reconstruction) was called once per candidate
+    row (~250 / partition) and EACH call re-opened + re-decompressed + re-parsed
+    the ENTIRE per-day delta file (12-21 MB gz, ~430k events) — O(rows × file),
+    several GB of gzip decompression per partition, even when reconstruction then
+    failed to tier-3 stale. Caching the parse per path (LRU 2) collapses it to one
+    parse per file; the per-row causal window is filtered in memory. Same deltas
+    applied -> identical reconstructed spread.
+    """
+    path = Path(delta_path_str)
+    out: list[tuple[int, int, dict]] = []
+    if path.name.lower().endswith(".gz"):
+        handle_cm = gzip.open(path, "rt", encoding="utf-8-sig")
+    else:
+        handle_cm = path.open("r", encoding="utf-8-sig")
+    with handle_cm as handle:
+        for line in handle:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                row = json.loads(stripped)
+                uid = int(row.get("update_id") or 0)
+                ts = int(row.get("timestamp_ms") or 0)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                continue
+            out.append((uid, ts, row))
+    out.sort(key=lambda item: item[0])
+    return tuple(out)
+
+
 def _measure_spread_via_reconstruction(
     *,
     snapshot_path: Path,
@@ -267,25 +333,17 @@ def _measure_spread_via_reconstruction(
 
     Retourne (None, reason_code) si reconstruction echoue.
     """
-    # Charger snapshot le plus recent <= timestamp_ms
-    base_snapshot: dict[str, object] | None = None
-    base_ts = -1
+    # Charger snapshot le plus recent <= timestamp_ms (parse cache par path).
     try:
-        with snapshot_path.open("r", encoding="utf-8-sig") as handle:
-            for line in handle:
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                try:
-                    row = json.loads(stripped)
-                    ts = int(row.get("timestamp_ms") or 0)
-                except (json.JSONDecodeError, TypeError, ValueError):
-                    continue
-                if ts <= timestamp_ms and ts > base_ts:
-                    base_ts = ts
-                    base_snapshot = row
+        snapshots = _load_reconstruction_snapshots(str(snapshot_path))
     except OSError as exc:
         return None, f"BOOK_RECONSTRUCTION_SNAPSHOT_IO_FAILED:{type(exc).__name__}"
+    base_snapshot: dict[str, object] | None = None
+    base_ts = -1
+    for snap_ts, _snap_uid, snap_row in snapshots:
+        if snap_ts <= timestamp_ms and snap_ts > base_ts:
+            base_ts = snap_ts
+            base_snapshot = snap_row
 
     if base_snapshot is None:
         return None, "BOOK_RECONSTRUCTION_NO_BASE_SNAPSHOT"
@@ -310,38 +368,25 @@ def _measure_spread_via_reconstruction(
         if size > 0.0:
             ask_book[price] = size
 
-    deltas: list[dict[str, object]] = []
     # Audit 2026-05-13 W2 fix : causalite stricte sur les deltas (ts <=
     # timestamp_ms). La tolerance ne filtre PAS l'input mais s'applique sur le
     # `best_dt` final entre l'etat reconstruit et le candidat. Cela permet de
     # capturer le state book le plus proche AVANT le candidat, meme si le
     # premier delta est plus ancien que `timestamp_ms - tolerance_ms`.
     causal_upper_ts = timestamp_ms
+    # PERF (2026-06-01) — the per-day delta file (12-21 MB gz) is parsed ONCE per
+    # path (cached) instead of re-decompressed per candidate row. `all_deltas` is
+    # sorted by update_id, so the filtered causal window preserves that order
+    # (the previous explicit re-sort is therefore no longer needed).
     try:
-        # Patch 2026-05-29 — gz-aware open (silver writer emits .jsonl.gz when
-        # storage_format=jsonl-gz; the previous text-only open raised
-        # UnicodeDecodeError on 0x8b gzip magic byte).
-        if delta_path.name.lower().endswith(".gz"):
-            delta_handle_cm = gzip.open(delta_path, "rt", encoding="utf-8-sig")
-        else:
-            delta_handle_cm = delta_path.open("r", encoding="utf-8-sig")
-        with delta_handle_cm as handle:
-            for line in handle:
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                try:
-                    row = json.loads(stripped)
-                    uid = int(row.get("update_id") or 0)
-                    ts = int(row.get("timestamp_ms") or 0)
-                except (json.JSONDecodeError, TypeError, ValueError):
-                    continue
-                if uid > base_update_id and ts <= causal_upper_ts:
-                    deltas.append(row)
+        all_deltas = _load_reconstruction_deltas(str(delta_path))
     except OSError as exc:
         return None, f"BOOK_RECONSTRUCTION_DELTAS_IO_FAILED:{type(exc).__name__}"
-
-    deltas.sort(key=lambda r: int(r.get("update_id") or 0))
+    deltas: list[dict[str, object]] = [
+        delta_row
+        for delta_uid, delta_ts, delta_row in all_deltas
+        if delta_uid > base_update_id and delta_ts <= causal_upper_ts
+    ]
 
     best_spread: float | None = None
     best_dt = float("inf")
