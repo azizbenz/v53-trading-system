@@ -2747,3 +2747,37 @@ def test_gold_emits_generation_not_supported_for_unknown_timeframe(monkeypatch) 
         assert "TIMEFRAME_FEATURE_GENERATION_NOT_SUPPORTED" in manifest.blocker_codes
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_gold_build_cooperative_cancel_helpers(tmp_path: Path) -> None:
+    """Patch GOLD-CANCEL (2026-06-01) — the gold build polls a cancel sidecar
+    and raises GoldBuildCancelledError promptly once it appears, so an operator
+    cancel is honored within seconds instead of the cockpit's external poll lag."""
+    import pytest
+
+    cancel = tmp_path / "cancel_request.json"
+    try:
+        data_factory_module.set_gold_cancel_file(None)
+        assert data_factory_module._gold_cancel_requested() is False
+        # no raise when unset
+        data_factory_module._raise_if_gold_cancelled(
+            pair="BTCUSDT", timeframe="5m", entry_index=1
+        )
+
+        data_factory_module.set_gold_cancel_file(cancel)
+        # sidecar not written yet -> still no cancel
+        assert data_factory_module._gold_cancel_requested() is False
+        data_factory_module._raise_if_gold_cancelled(
+            pair="BTCUSDT", timeframe="5m", entry_index=1
+        )
+
+        cancel.write_text("{}", encoding="utf-8")
+        assert data_factory_module._gold_cancel_requested() is True
+        with pytest.raises(data_factory_module.GoldBuildCancelledError):
+            data_factory_module._raise_if_gold_cancelled(
+                pair="BTCUSDT", timeframe="5m", entry_index=2
+            )
+    finally:
+        # reset the module-level global so it cannot leak into other tests that
+        # run the real data factory build.
+        data_factory_module.set_gold_cancel_file(None)

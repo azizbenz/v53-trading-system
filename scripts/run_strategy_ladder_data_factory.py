@@ -167,12 +167,32 @@ def _build_parser() -> argparse.ArgumentParser:
             "Default empty = no cache (legacy behaviour)."
         ),
     )
+    # Patch GOLD-CANCEL (2026-06-01) — cooperative cancel sidecar. The cockpit
+    # passes the running job's cancel_request.json path; the gold build polls it
+    # at entry/row boundaries and exits within seconds instead of waiting for the
+    # cockpit's external SIGTERM poll (observed 54-min lag on run b3ffd14a).
+    parser.add_argument(
+        "--cancel-file",
+        default="",
+        help=(
+            "Operator cancel sidecar path (e.g. the job's cancel_request.json). "
+            "When this file appears mid-run, the A2 gold build stops promptly."
+        ),
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
+    # Patch GOLD-CANCEL (2026-06-01) — register the operator cancel sidecar so
+    # the gold build can stop promptly mid-run.
+    from local_replay_runtime.strategy_ladder_data_factory import (
+        GoldBuildCancelledError,
+        set_gold_cancel_file,
+    )
+    _cancel_file_arg = (args.cancel_file or "").strip()
+    set_gold_cancel_file(Path(_cancel_file_arg).resolve() if _cancel_file_arg else None)
     explicit_output_root = (args.output_root or "").strip()
     explicit_silver = (args.silver_root or "").strip()
     explicit_gold = (args.gold_root or "").strip()
@@ -234,18 +254,31 @@ def main(argv: list[str] | None = None) -> int:
     # drop-in replacement; the result is byte-identical to the un-cached
     # path. We pick the wrapper *only* when `--cache-base` was supplied.
     cache_base_arg = (args.cache_base or "").strip()
-    if cache_base_arg:
-        from local_replay_runtime.a2_cache_runner import (
-            run_strategy_ladder_data_factory_cached,
+    try:
+        if cache_base_arg:
+            from local_replay_runtime.a2_cache_runner import (
+                run_strategy_ladder_data_factory_cached,
+            )
+            cache_base_path = Path(cache_base_arg).resolve()
+            result = run_strategy_ladder_data_factory_cached(
+                request,
+                cache_base=cache_base_path,
+                cache_enabled=True,
+            )
+        else:
+            result = run_strategy_ladder_data_factory(request)
+    except GoldBuildCancelledError as exc:
+        # Patch GOLD-CANCEL (2026-06-01) — cooperative cancel: exit promptly with
+        # a clear status. The cockpit derives the cancelled job status from the
+        # cancel_request.json sidecar + the process exit.
+        print(
+            json.dumps(
+                {"data_factory_status": "CANCELLED_BY_OPERATOR", "detail": str(exc)},
+                indent=2,
+            )
         )
-        cache_base_path = Path(cache_base_arg).resolve()
-        result = run_strategy_ladder_data_factory_cached(
-            request,
-            cache_base=cache_base_path,
-            cache_enabled=True,
-        )
-    else:
-        result = run_strategy_ladder_data_factory(request)
+        sys.stdout.flush()
+        return 130
     payload = {
         "run_id": result.manifest.run_id,
         "report_root": str(report_root),

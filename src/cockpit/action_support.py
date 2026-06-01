@@ -837,6 +837,7 @@ def launch_backtest_job(
         command = _build_backtest_command(
             job_id=job_id,
             job_kind=job_kind,
+            cancel_file=job_dir / CANCEL_REQUEST_FILENAME,
             export_dir=export_dir,
             b2_run_root=b2_run_root,
             label_store_dataset_path=label_store_dataset_path,
@@ -1210,6 +1211,7 @@ def _build_backtest_command(
     *,
     job_id: str,
     job_kind: CockpitBacktestJobKind,
+    cancel_file: Path | None = None,
     export_dir: Path,
     b2_run_root: Path | None = None,
     label_store_dataset_path: Path | None = None,
@@ -1556,6 +1558,11 @@ def _build_backtest_command(
             command.append("--allow-broad-run")
         if debug_storage_override:
             command.append("--debug-storage-override")
+        if cancel_file is not None:
+            # Patch GOLD-CANCEL (2026-06-01) — the gold build polls this sidecar
+            # (the same cancel_request.json request_job_cancel writes) and stops
+            # within seconds of an operator cancel.
+            command.extend(["--cancel-file", str(cancel_file)])
         if action_name in {
             StrategyLadderControlAction.DATA_FACTORY_DRY_RUN.value,
             StrategyLadderControlAction.PHASE_A1_PREVIEW.value,

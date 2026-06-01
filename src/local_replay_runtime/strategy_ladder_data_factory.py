@@ -2963,6 +2963,44 @@ def _load_jsonl_rows(path: Path) -> tuple[dict[str, object], ...]:
     return tuple(rows)
 
 
+# Patch GOLD-CANCEL (2026-06-01) — cooperative cancellation. The A2 gold build
+# runs as a subprocess; the cockpit signals cancel by writing a cancel sidecar
+# (cancel_request.json). The build polls this module-level path at per-entry and
+# per-N-row boundaries so an operator cancel is honored within seconds instead of
+# relying solely on the cockpit's external SIGTERM poll (observed 54-min lag on
+# run b3ffd14a). Set once by the CLI entrypoint (one run per process).
+_GOLD_CANCEL_FILE: Path | None = None
+_GOLD_CANCEL_ROW_CHECK_INTERVAL = 50
+
+
+class GoldBuildCancelledError(RuntimeError):
+    """Raised when an operator cancel sidecar is detected mid gold build."""
+
+
+def set_gold_cancel_file(path: Path | None) -> None:
+    """Register the operator cancel sidecar path polled by the gold build."""
+    global _GOLD_CANCEL_FILE
+    _GOLD_CANCEL_FILE = path
+
+
+def _gold_cancel_requested() -> bool:
+    path = _GOLD_CANCEL_FILE
+    if path is None:
+        return False
+    try:
+        return path.exists()
+    except OSError:
+        return False
+
+
+def _raise_if_gold_cancelled(*, pair: str, timeframe: str, entry_index: int) -> None:
+    if _gold_cancel_requested():
+        raise GoldBuildCancelledError(
+            f"operator_requested_cancel during gold build "
+            f"(pair={pair} timeframe={timeframe} entry={entry_index})"
+        )
+
+
 def _write_gold_feature_build_heartbeat(
     *,
     request: StrategyLadderDataFactoryRequest,
@@ -3217,6 +3255,12 @@ def _write_gold_features(
             kline_feature_status = "KLINE_FEATURE_STATUS_READY"
         entry_count = len(kline_entries)
         for entry_index, entry in enumerate(kline_entries, start=1):
+            # Patch GOLD-CANCEL (2026-06-01) — honor an operator cancel at each
+            # entry boundary (seconds-level latency instead of the cockpit's
+            # external SIGTERM poll lag).
+            _raise_if_gold_cancelled(
+                pair=pair, timeframe=entry.timeframe or "1m", entry_index=entry_index
+            )
             if gold_row_limit and feature_row_count >= gold_row_limit:
                 break
             rows = _load_jsonl_rows(Path(entry.path))
@@ -3371,6 +3415,14 @@ def _write_gold_features(
             )
             trade_count = sum(item.row_count for item in entry_trade_entries)
             for index, row in enumerate(decision_rows, start=1):
+                # Patch GOLD-CANCEL (2026-06-01) — also poll mid-entry every N
+                # rows so a cancel is honored within seconds even on a large entry.
+                if index % _GOLD_CANCEL_ROW_CHECK_INTERVAL == 0:
+                    _raise_if_gold_cancelled(
+                        pair=pair,
+                        timeframe=entry.timeframe or "1m",
+                        entry_index=entry_index,
+                    )
                 timestamp_ms = int(row.get("timestamp_ms") or 0)
                 open_price = float(row.get("open") or 0.0)
                 close_price = float(row.get("close") or 0.0)
