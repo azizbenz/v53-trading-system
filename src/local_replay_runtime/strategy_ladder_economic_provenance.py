@@ -28,8 +28,10 @@ PHILOSOPHIE PRESERVEE :
 
 from __future__ import annotations
 
+import bisect
 import gzip
 import json
+from functools import lru_cache
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -707,6 +709,47 @@ def measure_spread_bps_from_book_snapshot(
     return None, f"BOOK_SNAPSHOT_TOO_FAR:{int(closest_dt)}ms_>_{tolerance_ms}ms", snapshot_age_ms
 
 
+@lru_cache(maxsize=2)
+def _load_sorted_trade_points(
+    trade_path_str: str,
+) -> tuple[tuple[int, float, float], ...]:
+    """Parse the whole trade file ONCE (gzip-aware) into ``(ts_ms, price,
+    volume)`` tuples sorted ascending by ``ts_ms``.
+
+    PERF (2026-06-01): the A2 gold build calls ``_measure_slippage_from_kyle_lambda``
+    once per candidate row (~250 / partition). Each call previously re-opened and
+    re-parsed the ENTIRE per-day trade file (gzip decompress + ``json.loads`` per
+    line) just to keep a 60s window — O(rows × file). Caching the parse per path
+    (LRU 2 = current partition + one in-flight) collapses it to a single parse per
+    file, then a bisect window per row. Same measured points -> identical Kyle
+    result (real economics preserved). Tests that rewrite a path must call
+    ``_load_sorted_trade_points.cache_clear()``.
+    """
+    trade_path = Path(trade_path_str)
+    rows: list[tuple[int, float, float]] = []
+    if trade_path.name.lower().endswith(".gz"):
+        handle_cm = gzip.open(trade_path, "rt", encoding="utf-8-sig")
+    else:
+        handle_cm = trade_path.open("r", encoding="utf-8-sig")
+    with handle_cm as handle:
+        for line in handle:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                row = json.loads(stripped)
+                ts_ms = int(row.get("timestamp_ms") or 0)
+                price = float(row.get("price") or 0.0)
+                volume = float(row.get("qty") or row.get("volume") or 0.0)
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+                continue
+            if price <= 0.0 or volume <= 0.0:
+                continue
+            rows.append((ts_ms, price, volume))
+    rows.sort(key=lambda item: item[0])
+    return tuple(rows)
+
+
 def _measure_slippage_from_kyle_lambda(
     *,
     raw_trade_path: Path | str | None,
@@ -727,38 +770,25 @@ def _measure_slippage_from_kyle_lambda(
     if not trade_path.exists():
         return None, f"TRADE_PATH_NOT_FOUND:{trade_path}"
 
-    points: list[KyleTradePoint] = []
     extended_start_ms = timestamp_ms - lookback_ms
     try:
-        if trade_path.name.lower().endswith(".gz"):
-            handle_cm = gzip.open(trade_path, "rt", encoding="utf-8-sig")
-        else:
-            handle_cm = trade_path.open("r", encoding="utf-8-sig")
-        with handle_cm as handle:
-            for line in handle:
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                try:
-                    row = json.loads(stripped)
-                    ts_ms = int(row.get("timestamp_ms") or 0)
-                    price = float(row.get("price") or 0.0)
-                    volume = float(row.get("qty") or row.get("volume") or 0.0)
-                except (json.JSONDecodeError, KeyError, TypeError, ValueError):
-                    continue
-                if price <= 0.0 or volume <= 0.0:
-                    continue
-                if extended_start_ms <= ts_ms <= timestamp_ms:
-                    points.append(
-                        KyleTradePoint(
-                            timestamp_ns=ts_ms * 1_000_000,
-                            price=price,
-                            volume=volume,
-                            mid_price=None,
-                        )
-                    )
+        all_points = _load_sorted_trade_points(str(trade_path))
     except OSError as exc:
         return None, f"TRADE_LOAD_FAILED:{type(exc).__name__}"
+    # Window [extended_start_ms, timestamp_ms] (inclusive both ends — identical
+    # to the previous per-row linear filter) via binary search on the cached,
+    # ts-sorted points. O(log n + window) per row instead of O(file) per row.
+    lo = bisect.bisect_left(all_points, extended_start_ms, key=lambda item: item[0])
+    hi = bisect.bisect_right(all_points, timestamp_ms, key=lambda item: item[0])
+    points = [
+        KyleTradePoint(
+            timestamp_ns=ts_ms * 1_000_000,
+            price=price,
+            volume=volume,
+            mid_price=None,
+        )
+        for ts_ms, price, volume in all_points[lo:hi]
+    ]
 
     if len(points) < 2:
         return None, f"INSUFFICIENT_TRADES:{len(points)}<2"

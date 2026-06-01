@@ -273,6 +273,52 @@ def test_compute_economic_provenance_measures_slippage_from_kyle_lambda_with_60s
     assert not any("SLIPPAGE_FALLBACK" in w for w in prov.measurement_warnings)
 
 
+def test_kyle_trade_points_parsed_once_cached_and_windowed(tmp_path: Path) -> None:
+    """PERF (2026-06-01) — the per-day trade file is parsed ONCE per path
+    (LRU-cached) and windowed via bisect, instead of re-parsed per candidate row.
+    Same measured Kyle result; out-of-window + zero-volume rows excluded."""
+    from local_replay_runtime.strategy_ladder_economic_provenance import (
+        _load_sorted_trade_points,
+        _measure_slippage_from_kyle_lambda,
+    )
+
+    trade_path = tmp_path / "trades_cache.jsonl"
+    base = 1_700_000_000_000
+    _write_jsonl(
+        trade_path,
+        [
+            {"timestamp_ms": base - 120_000, "price": 99.0, "qty": 5.0},   # out: before window
+            {"timestamp_ms": base + 5_000, "price": 100.0, "qty": 0.0},    # out: zero volume
+            {"timestamp_ms": base + 0, "price": 100.0, "qty": 1.0},
+            {"timestamp_ms": base + 15_000, "price": 100.2, "qty": 2.0},
+            {"timestamp_ms": base + 30_000, "price": 100.0, "qty": 1.5},
+            {"timestamp_ms": base + 45_000, "price": 100.3, "qty": 3.0},
+            {"timestamp_ms": base + 55_000, "price": 100.5, "qty": 2.5},
+            {"timestamp_ms": base + 90_000, "price": 101.0, "qty": 9.0},   # out: after window
+        ],
+    )
+
+    _load_sorted_trade_points.cache_clear()
+    pts = _load_sorted_trade_points(str(trade_path))
+    # zero-volume row dropped (8 -> 7) and sorted ascending by ts
+    assert len(pts) == 7
+    assert [p[0] for p in pts] == sorted(p[0] for p in pts)
+
+    before = _load_sorted_trade_points.cache_info()
+    slip, status = _measure_slippage_from_kyle_lambda(
+        raw_trade_path=trade_path, timestamp_ms=base + 55_000, pair="BTCUSDT"
+    )
+    # 5 in-window trades (>=2) -> Kyle measured; out-of-window rows excluded
+    assert status == "MEASURED_FROM_KYLE_LAMBDA"
+    assert slip is not None and slip >= 0.0
+    _measure_slippage_from_kyle_lambda(
+        raw_trade_path=trade_path, timestamp_ms=base + 45_000, pair="BTCUSDT"
+    )
+    after = _load_sorted_trade_points.cache_info()
+    # both slippage calls reused the cached parse (no re-read of the file)
+    assert after.hits >= before.hits + 2
+
+
 def test_compute_economic_provenance_measures_slippage_from_gzip_trade_file(
     tmp_path: Path,
 ) -> None:
