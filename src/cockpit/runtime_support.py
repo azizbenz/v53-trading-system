@@ -33,6 +33,12 @@ from cockpit.backtest_state_support import (
     phase_label_for_action,
 )
 from cockpit.form_state_support import read_lab_ml_handoff_form_state
+from cockpit.backtest_replay_state_support import (
+    LossAnalysisLedgerCardSnapshot,
+    ProdSafetyContractCardSnapshot,
+    read_loss_analysis_ledger,
+    read_prod_safety_contract,
+)
 from cockpit.strategy_ladder_workflow_support import (
     PHASE_A2,
     PHASE_B1,
@@ -641,6 +647,9 @@ class CockpitRuntimeSurfaces(BaseModel, frozen=True):
     # under the pinned run's phase_a2_data_factory dir. None when no pinned
     # run or manifest absent (audit-visible default).
     runtime_feature_parity_card: RuntimeFeatureParityCardSnapshot | None = None
+    # Patch A (2026-05-31) — NEW /backtest/replay drill-down cards.
+    prod_safety_contract_card: ProdSafetyContractCardSnapshot | None = None
+    loss_analysis_ledger_card: LossAnalysisLedgerCardSnapshot | None = None
 
 
 def _resolve_a2_phase_root_for_card(
@@ -779,6 +788,18 @@ def read_runtime_surfaces(
         if a2_root_for_parity is not None
         else None
     )
+    # Patch A (2026-05-31) — NEW replay drill-down cards. The A2 gold phase root
+    # holds the prod-safety contract; its parent (workflow root) yields the B2
+    # phase root for the loss analysis ledger. Both readers are fail-soft.
+    _workflow_root_for_cards = (
+        a2_root_for_parity.parent if a2_root_for_parity is not None else None
+    )
+    prod_safety_contract_card = read_prod_safety_contract(a2_root_for_parity)
+    loss_analysis_ledger_card = read_loss_analysis_ledger(
+        workflow_phase_root(_workflow_root_for_cards, PHASE_B2)
+        if _workflow_root_for_cards is not None
+        else None
+    )
     return CockpitRuntimeSurfaces(
         monitoring_payload=monitoring_payload,
         service_state=service_state,
@@ -794,6 +815,8 @@ def read_runtime_surfaces(
         strategy_ladder_summary=strategy_ladder_summary,
         strategy_ladder_ml_handoff=strategy_ladder_ml_handoff,
         runtime_feature_parity_card=runtime_feature_parity_card,
+        prod_safety_contract_card=prod_safety_contract_card,
+        loss_analysis_ledger_card=loss_analysis_ledger_card,
         artifact_family_visibility=artifact_family_visibility,
         artifact_family_comparisons=artifact_family_comparisons,
         alerts=alerts,

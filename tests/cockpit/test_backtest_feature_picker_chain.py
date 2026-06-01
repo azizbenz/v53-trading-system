@@ -319,7 +319,10 @@ def test_backtest_feature_picker_renders_and_exposes_multiframe_scope(tmp_path: 
     assert response.text.count('name="selected_features" value="') == 25
     assert 'name="selected_features_csv"' in response.text
     assert 'id="backtest-run-form"' in response.text
-    assert 'document.getElementById("backtest-run-form")' in response.text
+    # Patch A (2026-05-31) — the run-form JS moved to the external static bundle
+    # (static/backtest_page.js contains document.getElementById("backtest-run-form"));
+    # the page wires it via <script src> so the inline string is no longer in the HTML.
+    assert '/static/backtest_page.js' in response.text
     assert 'document.querySelector(\'form[action="/backtest/run"]\')' not in response.text
     assert response.text.count('form="backtest-run-form"') >= 28
     assert 'name="backtest_timeframes"' in response.text
@@ -1152,7 +1155,9 @@ def test_backtest_page_lazy_loads_candidate_feature_audits(
         return CockpitRuntimeSurfaces(strategy_ladder_summary=summary)
 
     monkeypatch.setattr("cockpit.state.read_runtime_surfaces", _fake_runtime_surfaces)
-    response = client.get("/backtest")
+    # Patch A (2026-05-31) — candidate feature / wiring audit panels MOVED to
+    # /backtest/replay (drill-down). The lazy-load placeholders now render there.
+    response = client.get("/backtest/replay")
 
     assert response.status_code == 200
     assert "Loading feature metrics asynchronously to reduce first-paint cost." in response.text

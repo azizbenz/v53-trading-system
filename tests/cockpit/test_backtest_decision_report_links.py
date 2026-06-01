@@ -170,8 +170,13 @@ def test_backtest_template_contains_decision_report_surface() -> None:
     decision_partial = Path(
         "src/cockpit/templates/partials/_decision_report_card.html"
     ).read_text(encoding="utf-8")
+    replay_template = Path(
+        "src/cockpit/templates/pages/backtest_replay.html"
+    ).read_text(encoding="utf-8")
 
-    assert "partials/_decision_report_card.html" in template
+    # Patch A (2026-05-31) — decision report card MOVED to /backtest/replay
+    # (cut from the /backtest control center). The include now lives on replay.
+    assert "partials/_decision_report_card.html" in replay_template
     assert "backtest-decision-report-card" in decision_partial
     assert "backtest_decision_report_status" in decision_partial
     assert "backtest_decision_report_links" in decision_partial

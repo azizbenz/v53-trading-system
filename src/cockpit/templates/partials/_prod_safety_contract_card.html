@@ -1,0 +1,44 @@
+{# Patch A (2026-05-31) — NEW card: A2 gold prod-safety contract drill-down.
+   Consumes vm.runtime.prod_safety_contract_card (backtest_replay_state_support).
+   Self-imports status_chip so it renders standalone on /backtest/replay. #}
+{% from 'partials/_macros.html' import status_chip %}
+{% set psc = vm.runtime.prod_safety_contract_card %}
+<div class="card backtest-monitor-card{% if psc and psc.is_available and not psc.prod_safe %} card--blocked{% endif %}" id="backtest-prod-safety-contract-card">
+    <div class="card__head">
+        <div class="card__head-main">
+            <h3>Prod-Safety Contract</h3>
+            <span class="card__sub">A2 gold data prod-safety verdict + allowed / blocked usage</span>
+        </div>
+        <span class="monitor-badge monitor-badge--idle">{{ status_chip(psc.prod_safety_status if psc and psc.is_available else 'PROD_SAFETY_NOT_PROVEN') }}</span>
+    </div>
+    <div class="card__body">
+        {% if psc and psc.is_available %}
+        <table class="data-table data-table--compact">
+            <tbody>
+                <tr><th>Prod safe</th><td>{{ status_chip('READY' if psc.prod_safe else 'BLOCKED') }} {{ 'true' if psc.prod_safe else 'false' }}</td></tr>
+                <tr><th>Status</th><td>{{ status_chip(psc.prod_safety_status) }}</td></tr>
+                <tr><th>Schema</th><td><code>{{ psc.schema_version }}</code></td></tr>
+            </tbody>
+        </table>
+        {% if psc.allowed_usage %}
+        <p class="field-note" style="margin-top:10px;"><strong>Allowed usage</strong></p>
+        <ul class="small-list">
+            {% for usage in psc.allowed_usage %}
+            <li><span class="status-chip status-chip--ok">{{ usage }}</span></li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+        {% if psc.blocked_usage %}
+        <p class="field-note" style="margin-top:10px;"><strong>Blocked usage</strong></p>
+        <ul class="small-list">
+            {% for usage in psc.blocked_usage %}
+            <li><span class="status-chip status-chip--bad">{{ usage }}</span></li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+        <p class="field-note" style="margin-top:10px;">Source: <code>{{ psc.source_path }}</code></p>
+        {% else %}
+        <p class="field-note">No prod-safety contract for this run (a2_gold_prod_safety_contract.json not found — pin a run with a completed A2 gold phase).</p>
+        {% endif %}
+    </div>
+</div>

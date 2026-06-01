@@ -1467,9 +1467,12 @@ def test_backtest_page_surfaces_strategy_ladder_summary() -> None:
         payload["finished_at_iso"] = "2026-05-03T12:05:00+00:00"
         _write_json(Path(record.record_path), payload)
 
-        page = client.get("/backtest")
+        page = client.get("/backtest/replay")
         assert page.status_code == 200
-        assert "Strategy Ladder runner" in page.text
+        # Patch A (2026-05-31) — the Strategy Ladder Status panel (+ its values)
+        # moved to /backtest/replay. ("Strategy Ladder runner" was the control
+        # center's not-present fallback label; the panel header below covers the
+        # present-summary case asserted here.)
         assert "Strategy Ladder Status" in page.text
         assert "STRATEGY_LADDER_RAN_WITH_PARTIAL_EVIDENCE" in page.text
         assert "PROMOTION_BLOCKED_BY_SAMPLE_SIZE" in page.text
@@ -1559,7 +1562,7 @@ def test_backtest_page_surfaces_research_only_provenance_alert() -> None:
             },
         )
 
-        page = client.get("/backtest")
+        page = client.get("/backtest/replay")
         assert page.status_code == 200
         assert "Research-only provenance alert" in page.text
         assert "RAW_SOURCE_TYPE_INFERRED" in page.text
@@ -1869,7 +1872,7 @@ def test_backtest_page_surfaces_patch6_non_green_summary() -> None:
             {"run_id": "strategy_ladder_first_controlled_run-1", "artifact_refs": {}},
         )
 
-        page = client.get("/backtest")
+        page = client.get("/backtest/replay")
         assert page.status_code == 200
         assert "Cockpit State Consistency" in page.text
         assert "SILVER_INDEX_NOT_READY" in page.text
@@ -2801,7 +2804,7 @@ def test_backtest_page_does_not_mix_strategy_ladder_roots() -> None:
             },
         )
 
-        page = client.get("/backtest")
+        page = client.get("/backtest/replay")
         assert page.status_code == 200
         assert "STRATEGY_LADDER_RAN_WITH_PARTIAL_EVIDENCE" in page.text
         assert "RAW_SOURCE_MISSING" not in page.text
@@ -2852,7 +2855,7 @@ def test_backtest_page_prefers_proof_matrix_orderbook_reconstruction_status() ->
             },
         )
 
-        page = client.get("/backtest")
+        page = client.get("/backtest/replay")
         assert page.status_code == 200
         assert "ORDERBOOK_SEQUENCE_GAP" in page.text
         assert "ORDERBOOK_SCHEMA_READY" not in page.text
@@ -3094,7 +3097,7 @@ def test_backtest_page_shows_candidate_explorer_and_model_only_warning() -> None
             },
         )
 
-        page = client.get("/backtest?candidate_id=cand-1")
+        page = client.get("/backtest/replay?candidate_id=cand-1")
         assert page.status_code == 200
         assert "Candidate Explorer" in page.text
         assert "cand-1" in page.text
@@ -3115,7 +3118,10 @@ def test_backtest_page_shows_candidate_explorer_and_model_only_warning() -> None
         assert "REPLAY_PROTOCOL_PROOF_BLOCKED" in page.text
         assert "VENUE_CONSTRAINTS_PROXY" in page.text
         assert "Selected Candidate Detail" in page.text
-        assert "/backtest/candidate-detail.json" in page.text
+        # Patch A (2026-05-31) — the candidate-detail fetch wiring moved to the
+        # external static bundle (static/backtest_page.js); the page now loads it
+        # via <script src>. The endpoint itself is exercised directly below.
+        assert "/static/backtest_page.js" in page.text
         assert "data-candidate-select-form" in page.text
         assert 'action="/backtest#candidate-workspace"' in page.text
         detail = client.get("/backtest/candidate-detail.json", params={"candidate_id": "cand-1"})
@@ -3192,7 +3198,7 @@ def test_backtest_page_shows_cancelled_partial_artifact_banner() -> None:
             },
         )
 
-        page = client.get("/backtest")
+        page = client.get("/backtest/replay")
         assert page.status_code == 200
         assert "Cancelled after partial artifact production." in page.text
         assert "candidate_count=4" in page.text
@@ -5649,7 +5655,7 @@ def test_latest_summary_state_is_marked_not_current_request() -> None:
                 end="2025-07-23",
             ),
         )
-        page = client.get("/backtest")
+        page = client.get("/backtest/replay")
         assert page.status_code == 200
         assert "LATEST_SUMMARY_NOT_CURRENT_REQUEST" in page.text
         assert "Showing latest completed run, not current preview." in page.text
@@ -6903,7 +6909,7 @@ def test_backtest_page_shows_current_job_and_last_successful_b2_separately() -> 
         _write_json(Path(current_record.record_path), current_record.model_dump(mode="json"))
         _write_json(Path(older_record.record_path), older_record.model_dump(mode="json"))
 
-        page = client.get("/backtest")
+        page = client.get("/backtest/replay")
         assert page.status_code == 200
         assert "Current job" in page.text
         assert "Last successful B2 summary" in page.text
@@ -7012,7 +7018,7 @@ def test_backtest_page_shows_no_trade_refusal_audit_panel() -> None:
             stage_summary_path=str(summary_path.resolve()),
         )
         _write_json(Path(record.record_path), record.model_dump(mode="json"))
-        page = client.get("/backtest")
+        page = client.get("/backtest/replay")
         assert page.status_code == 200
         assert "Post-B2 No-Trade Audit" in page.text
         assert "ENGINE_NATIVE_NO_TRADE" in page.text
@@ -7130,7 +7136,7 @@ def test_backtest_page_renders_engine_no_trade_diagnosis_panel() -> None:
             stage_summary_path=str(summary_path.resolve()),
         )
         _write_json(Path(record.record_path), record.model_dump(mode="json"))
-        page = client.get("/backtest")
+        page = client.get("/backtest/replay")
         assert page.status_code == 200
         assert "Engine No-Trade Diagnosis" in page.text
         assert "BUILD_CLOSED_EPISODE_JOURNAL_FOR_ENGINE_D" in page.text
@@ -7297,7 +7303,7 @@ def test_backtest_page_renders_gate_waterfall_and_readiness_panels() -> None:
             stage_summary_path=str(summary_path.resolve()),
         )
         _write_json(Path(record.record_path), record.model_dump(mode="json"))
-        page = client.get("/backtest")
+        page = client.get("/backtest/replay")
         assert page.status_code == 200
         assert "Gate Waterfall" in page.text
         assert "RESEARCH_ONLY_COUNTERFACTUAL" in page.text
@@ -7514,7 +7520,7 @@ def test_backtest_page_explains_current_form_moved_after_launch() -> None:
             ),
         )
 
-        page = client.get("/backtest")
+        page = client.get("/backtest/replay")
         assert page.status_code == 200
         assert "CURRENT_FORM_MOVED_AFTER_LAUNCH" in page.text
         assert "Current form now targets a different workflow than the latest launch job. The displayed summary still belongs to the latest launch workflow." in page.text
@@ -7836,7 +7842,7 @@ def test_backtest_page_shows_adopt_launch_workflow_control() -> None:
                 status="JOB_BLOCKED",
             ),
         )
-        page = client.get("/backtest")
+        page = client.get("/backtest/replay")
         assert page.status_code == 200
         assert "Adopt Current Launch Workflow" in page.text
         assert "/backtest/adopt-launch-workflow" in page.text
@@ -8047,16 +8053,24 @@ def test_backtest_page_labels_shadow_service_and_light_polling_notice() -> None:
     scratch = _scratch_dir("backtest_shadow_service_label")
     try:
         client = _build_client(scratch)
+        # Control-center content stays on /backtest (jobs table, polling notice,
+        # progress card, B1.5 controls).
         page = client.get("/backtest")
         assert page.status_code == 200
-        assert "Shadow Service offline" in page.text
+        # Patch A (2026-05-31) — the shadow-service label + status-polling JS moved
+        # to the external static bundle (static/backtest_page.js contains "Shadow
+        # Service offline" + "/backtest/status.json"); the page loads it via
+        # <script src> so those strings are no longer inline in the HTML.
+        assert "/static/backtest_page.js" in page.text
         assert "Lightweight status polling is enabled on the backtest page." in page.text
-        assert "/backtest/status.json" in page.text
         assert 'id="backtest-jobs-table-host"' in page.text
         assert "Observe the active run here first" in page.text
         assert "B1.5 policy mode" in page.text
         assert "conservative_hard_only" in page.text
-        assert page.text.index("Recent Backtest Jobs") < page.text.index("Cockpit State Consistency")
+        # Cockpit State Consistency moved to /backtest/replay (drill-down); the
+        # control center keeps Recent Backtest Jobs.
+        assert "Recent Backtest Jobs" in page.text
+        assert "Cockpit State Consistency" not in page.text
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
@@ -8181,7 +8195,7 @@ def test_backtest_page_surfaces_b15_preselection_panel() -> None:
             ],
         )
 
-        page = client.get("/backtest")
+        page = client.get("/backtest/replay")
         assert page.status_code == 200
         assert "B1.5 Native Preselection" in page.text
         assert "Engine-native preselected" in page.text
@@ -8405,7 +8419,7 @@ def test_backtest_page_surfaces_replay_performance_panel() -> None:
             },
         )
 
-        page = client.get("/backtest")
+        page = client.get("/backtest/replay")
         assert page.status_code == 200
         assert "Replay Performance" in page.text
         assert "REPLAY_PERFORMANCE_PROFILE_READY" in page.text

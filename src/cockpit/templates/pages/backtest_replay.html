@@ -41,34 +41,27 @@ Skeleton SCOPE (this session — Opus seeded) :
 {% include 'partials/_backbone_metrics_6_sections_card.html' %}
 {% include 'partials/_runner_coverage_card.html' %}
 
-{# === Remaining: NEW cards (Codex follow-up — create fresh) ===
+{# === NEW replay-only cards (A-split 2026-05-31) === #}
+{% include 'partials/_prod_safety_contract_card.html' %}
+{% include 'partials/_loss_analysis_ledger_card.html' %}
 
-    Reminder: do NOT add an {% include %} (even commented out) before the
-    partial file exists — the cockpit source-discovery scanner's naive regex
-    matches includes INSIDE Jinja comments and breaks
-    tests/cockpit/test_source_discovery_support.py with FileNotFoundError.
-    Add each real include only once its partial file exists.
-
-      - _prod_safety_contract_card.html  (reads a2_gold_prod_safety_contract.json)
-      - _loss_analysis_ledger_card.html  (reads loss_analysis_ledger.jsonl)
-#}
+{# === Diagnostic / forensic panels MOVED off the /backtest control center
+   (A-split 2026-05-31): strategy ladder status, no-trade audits, gate waterfall,
+   candidate explorer, ledgers, matrices, etc. Replay-only. === #}
+{% include 'partials/_backtest_drilldown_panels.html' %}
 
 <section class="card">
-    <div class="card__head">
-        <span class="card__title">Codex follow-up scope</span>
-    </div>
     <div class="card__body">
         <p class="muted">
-            This sub-page is currently a skeleton. The full set of drill-down cards (decision report, backbone
-            parity detail, backbone metrics 6 sections, runner coverage, prod-safety contract, loss analysis ledger)
-            is queued for Codex extraction per the spec at
-            <span class="mono">docs/production_deployment_plan/update_audit/2026-05-30_A_BACKTEST_REPLAY_SUBPAGE_SPLIT_SPEC.md</span>.
-        </p>
-        <p class="muted">
-            The <strong>Runtime Feature Parity</strong> card above is fully wired (backend B 2026-05-30 +
-            template A skeleton 2026-05-30).
+            Drill-down for the pinned run. Cards above: runtime feature parity (backend B),
+            decision report, backbone parity detail, backbone metrics (6 sections), runner coverage,
+            prod-safety contract, and loss analysis ledger. Pin a different run via
+            <em>▶ Open this run in replay drill-down</em> on the <a href="/backtest">/backtest</a> Recent Jobs panel.
         </p>
     </div>
 </section>
+
+{# Page interactivity for the moved drill-down panels (shared with /backtest). #}
+<script src="/static/backtest_page.js?v=20260531-a-split-1"></script>
 
 {% endblock %}

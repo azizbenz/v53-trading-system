@@ -681,7 +681,10 @@ def create_app(
         log_query: ShadowVpsServiceLogQuery | None = None,
         pinned_run_id: str = "",
     ):
-        if current_page == "backtest":
+        # Patch A (2026-05-31) — /backtest/replay renders the same strategy ladder
+        # summary + diagnostic panels (moved off the control center), so it needs
+        # the same ML-chain reconciliation that resolves current-vs-last-B2.
+        if current_page in ("backtest", "backtest_replay"):
             _reconcile_backtest_ml_chain()
         notice_message = request.query_params.get("notice", "")
         notice_status = request.query_params.get("notice_status", "info")

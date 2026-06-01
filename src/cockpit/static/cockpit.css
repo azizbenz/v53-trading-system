@@ -1175,6 +1175,29 @@ details[open] summary { color: var(--accent); }
 .operator-card--warn .card__head h3 {
     color: #fde68a;
 }
+/* Patch A (2026-05-31) — blocked-card red banner. Referenced by
+   _runtime_feature_parity_card.html + _prod_safety_contract_card.html when a
+   surface is blocked; previously applied but undefined (no visual effect). */
+.card--blocked {
+    border-color: rgba(248, 113, 113, 0.45);
+}
+.card--blocked .card__head {
+    background: linear-gradient(90deg, rgba(248, 113, 113, 0.16), rgba(15, 23, 42, 0));
+}
+.card--blocked .card__head h3 {
+    color: #fca5a5;
+}
+.card--blocked .card__head::after {
+    content: "BLOCKED";
+    margin-left: 8px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(248, 113, 113, 0.2);
+    color: #fca5a5;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+}
 .status-chip {
     display: inline-flex;
     align-items: center;

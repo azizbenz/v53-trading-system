@@ -1,0 +1,38 @@
+{# Patch A (2026-05-31) — NEW card: loss analysis ledger top-losses drill-down.
+   Consumes vm.runtime.loss_analysis_ledger_card (backtest_replay_state_support). #}
+{% set lal = vm.runtime.loss_analysis_ledger_card %}
+<div class="card backtest-monitor-card" id="backtest-loss-analysis-ledger-card">
+    <div class="card__head">
+        <div class="card__head-main">
+            <h3>Loss Analysis Ledger</h3>
+            <span class="card__sub">Worst executed losses with classification + primary cause</span>
+        </div>
+        <span class="monitor-badge monitor-badge--idle">{{ lal.total_loss_count if lal and lal.is_available else 0 }} losses</span>
+    </div>
+    <div class="card__body">
+        {% if lal and lal.is_available and lal.top_rows %}
+        <table class="data-table data-table--compact">
+            <thead>
+                <tr><th>Trade</th><th>Pair</th><th>Engine</th><th>Loss (bps)</th><th>Class</th><th>Primary cause</th></tr>
+            </thead>
+            <tbody>
+                {% for row in lal.top_rows %}
+                <tr>
+                    <td><code>{{ row.trade_id }}</code></td>
+                    <td>{{ row.pair }}</td>
+                    <td>{{ row.engine_id }}</td>
+                    <td>{{ "%.1f"|format(row.loss_bps) }}</td>
+                    <td>{{ row.loss_classification }}</td>
+                    <td>{{ row.primary_cause }}{% if row.secondary_causes %} <span class="muted">(+{{ row.secondary_causes|length }})</span>{% endif %}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <p class="field-note" style="margin-top:8px;">Showing worst {{ lal.top_rows|length }} of {{ lal.total_loss_count }}. Source: <code>{{ lal.source_path }}</code></p>
+        {% elif lal and lal.is_available %}
+        <p class="field-note">No executed losses recorded for this run (loss_analysis_ledger.jsonl empty — no net-negative executed trades).</p>
+        {% else %}
+        <p class="field-note">No loss ledger for this run (loss_analysis_ledger.jsonl not found — pin a run with a completed B2 phase).</p>
+        {% endif %}
+    </div>
+</div>
