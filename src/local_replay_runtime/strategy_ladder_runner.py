@@ -9,6 +9,9 @@ from datetime import UTC, datetime, timedelta
 import hashlib
 import json
 import math
+import os
+import shutil
+import tempfile
 from pathlib import Path
 from statistics import NormalDist, median
 
@@ -105,6 +108,11 @@ from local_replay_runtime.strategy_ladder_complete_enabler_support import (
 from local_replay_runtime.strategy_ladder_detailed_replay import (
     StrategyLadderDetailedReplayStageResult,
     run_strategy_ladder_detailed_replay,
+    run_strategy_ladder_detailed_replay_parallel,
+)
+from local_replay_runtime.strategy_ladder_parallel import (
+    ordered_parallel_map,
+    resolve_worker_count,
 )
 from local_replay_runtime.strategy_ladder_economic_provenance import (
     EconomicProvenance,
@@ -2904,6 +2912,183 @@ def _run_native_engine_candidate(
     )
 
 
+def _native_candidate_worker(
+    packed: tuple[
+        StrategyLadderCandidateEvent, StrategyLadderRawWindowManifest | None, dict
+    ],
+) -> tuple[StrategyLadderCandidateEvent, int, bool, bool, str]:
+    """Picklable per-candidate unit for the Phase 3 parallel path: compute the
+    economic provenance (book reconstruction + Kyle slippage) then run the native
+    engine. Module-level so it survives the Windows ``spawn`` pickle. Used only
+    when no expected-edge model is loaded (models are not passed across the
+    process boundary). Returns exactly what the serial loop needs to accumulate."""
+    candidate, window, cfg = packed
+    economic_provenance = _economic_provenance_for_candidate(
+        candidate,
+        window,
+        expected_edge_model=None,
+        expected_edge_model_required=cfg["expected_edge_model_required"],
+        expected_edge_model_load_status=cfg["expected_edge_model_load_status"],
+        silver_exchange=cfg["silver_exchange"],
+        silver_market_type=cfg["silver_market_type"],
+    )
+    native_event, built_count, invoked = _run_native_engine_candidate(
+        candidate=candidate,
+        window=window,
+        economic_provenance=economic_provenance,
+        ml_mode=cfg["ml_mode"],
+    )
+    is_truth = is_expected_edge_backtest_truth(
+        economic_provenance.expected_edge_provenance
+    )
+    edge_status = expected_edge_backtest_truth_status(
+        economic_provenance.expected_edge_provenance
+    )
+    return native_event, built_count, invoked, is_truth, edge_status
+
+
+def _candidate_affinity_key(
+    packed: tuple[
+        StrategyLadderCandidateEvent, StrategyLadderRawWindowManifest | None, dict
+    ],
+) -> str:
+    """Group candidates reading the same silver book source into one worker chunk
+    so the per-process Arrow ``load_silver_table`` cache is reused, not re-parsed."""
+    window = packed[1]
+    if window is None:
+        return ""
+    return str(
+        getattr(window, "raw_book_path", "")
+        or getattr(window, "raw_trade_path", "")
+        or ""
+    )
+
+
+def _prewrite_silver_ipc_sidecars(
+    candidate_events: tuple[StrategyLadderCandidateEvent, ...],
+    window_by_candidate: dict,
+) -> None:
+    """Parent parses each unique silver source ONCE (writing its Arrow IPC
+    sidecar) so the spawned workers all memory-map it (zero re-parse). Best-effort
+    — a missing/unreadable source just means that worker falls back to a parse."""
+    from local_replay_runtime.strategy_ladder_arrow_window import load_silver_table
+
+    seen: set[str] = set()
+    for candidate in candidate_events:
+        window = window_by_candidate.get(candidate.candidate_id)
+        if window is None:
+            continue
+        for attr in (
+            "raw_book_path",
+            "raw_book_delta_path",
+            "raw_trade_path",
+            "raw_ohlcv_path",
+        ):
+            path = str(getattr(window, attr, "") or "")
+            if path and path not in seen:
+                seen.add(path)
+                try:
+                    load_silver_table(path)
+                except Exception:  # noqa: BLE001 — best-effort sidecar pre-warm
+                    pass
+
+
+def _parallel_native_materialization(
+    *,
+    candidate_events: tuple[StrategyLadderCandidateEvent, ...],
+    window_by_candidate: dict,
+    expected_edge_model: ExpectedEdgeModelProtocol | None,
+    expected_edge_model_required: bool,
+    expected_edge_model_load_status: str,
+    silver_exchange: str | None,
+    silver_market_type: str,
+    ml_mode: str,
+    progress_callback: Callable[[int, int, int, int, int, int], None] | None,
+) -> tuple[list, int, int, int, int, list[str]] | None:
+    """Phase 3 — engine-native materialization across CPU cores.
+
+    Returns the accumulated tuple ``(native_events, records_built,
+    runner_invocations, expected_edge_proxy_count, expected_edge_governed_count,
+    expected_edge_blocker_codes)`` when parallelism is engaged, or ``None`` to
+    tell the caller to run the legacy serial loop unchanged.
+
+    Engaged only when: workers > 1 (``V53_MAX_WORKERS`` opt-in / auto), no
+    expected-edge model is loaded, and there is more than one candidate. Output
+    is identical to the serial loop — order is preserved, counters are sums."""
+    workers = resolve_worker_count()
+    if workers <= 1 or expected_edge_model is not None or len(candidate_events) <= 1:
+        return None
+    cfg = {
+        "expected_edge_model_required": expected_edge_model_required,
+        "expected_edge_model_load_status": expected_edge_model_load_status,
+        "silver_exchange": silver_exchange,
+        "silver_market_type": silver_market_type,
+        "ml_mode": ml_mode,
+    }
+    tasks = [
+        (candidate, window_by_candidate.get(candidate.candidate_id), cfg)
+        for candidate in candidate_events
+    ]
+    # Phase 3 IPC orchestration: parse each silver source ONCE in the parent and
+    # share it with the workers as a memory-mapped Arrow IPC sidecar (no per-worker
+    # re-parse). Scoped to this call + cleaned up so it never leaks elsewhere.
+    ipc_cache_dir = tempfile.mkdtemp(prefix="v53_ipc_")
+    previous_ipc_env = os.environ.get("V53_IPC_CACHE_DIR")
+    os.environ["V53_IPC_CACHE_DIR"] = ipc_cache_dir
+    try:
+        _prewrite_silver_ipc_sidecars(candidate_events, window_by_candidate)
+        results = ordered_parallel_map(
+            _native_candidate_worker,
+            tasks,
+            max_workers=workers,
+            affinity_key=_candidate_affinity_key,
+        )
+    finally:
+        if previous_ipc_env is None:
+            os.environ.pop("V53_IPC_CACHE_DIR", None)
+        else:
+            os.environ["V53_IPC_CACHE_DIR"] = previous_ipc_env
+        shutil.rmtree(ipc_cache_dir, ignore_errors=True)
+    native_events: list[StrategyLadderCandidateEvent] = []
+    records_built = 0
+    runner_invocations = 0
+    expected_edge_proxy_count = 0
+    expected_edge_governed_count = 0
+    expected_edge_blocker_codes: list[str] = []
+    for native_event, built_count, invoked, is_truth, edge_status in results:
+        if is_truth:
+            expected_edge_governed_count += 1
+        else:
+            expected_edge_proxy_count += 1
+            expected_edge_blocker_codes.append(
+                "EXPECTED_EDGE_MODEL_NOT_BACKTEST_TRUTH"
+                if edge_status == "EXPECTED_EDGE_MODEL_BLOCKED"
+                else "EXPECTED_EDGE_PROXY_NOT_BACKTEST_TRUTH"
+            )
+        native_events.append(native_event)
+        records_built += built_count
+        if invoked:
+            runner_invocations += 1
+    if progress_callback is not None:
+        total_candidates = len(candidate_events)
+        progress_callback(
+            total_candidates,
+            total_candidates,
+            records_built,
+            runner_invocations,
+            expected_edge_proxy_count,
+            expected_edge_governed_count,
+        )
+    return (
+        native_events,
+        records_built,
+        runner_invocations,
+        expected_edge_proxy_count,
+        expected_edge_governed_count,
+        expected_edge_blocker_codes,
+    )
+
+
 def _materialize_engine_native_candidates(
     *,
     candidate_events: tuple[StrategyLadderCandidateEvent, ...],
@@ -2937,7 +3122,29 @@ def _materialize_engine_native_candidates(
     expected_edge_governed_count = 0
     expected_edge_blocker_codes: list[str] = []
     total_candidates = len(candidate_events)
-    for processed_count, candidate in enumerate(candidate_events, start=1):
+    _serial_events: tuple[StrategyLadderCandidateEvent, ...] = candidate_events
+    _parallel = _parallel_native_materialization(
+        candidate_events=candidate_events,
+        window_by_candidate=window_by_candidate,
+        expected_edge_model=expected_edge_model,
+        expected_edge_model_required=expected_edge_model_required,
+        expected_edge_model_load_status=expected_edge_model_load_status,
+        silver_exchange=silver_exchange,
+        silver_market_type=silver_market_type,
+        ml_mode=ml_mode,
+        progress_callback=progress_callback,
+    )
+    if _parallel is not None:
+        (
+            native_events,
+            records_built,
+            runner_invocations,
+            expected_edge_proxy_count,
+            expected_edge_governed_count,
+            expected_edge_blocker_codes,
+        ) = _parallel
+        _serial_events = ()
+    for processed_count, candidate in enumerate(_serial_events, start=1):
         window = window_by_candidate.get(candidate.candidate_id)
         economic_provenance = _economic_provenance_for_candidate(
             candidate,
@@ -6510,14 +6717,24 @@ def run_backtest_strategy_ladder(
             status="OK",
             candidate_count=len(candidate_events),
         ):
-            detailed_result = run_strategy_ladder_detailed_replay(
-                detailed_replay_dir,
-                candidate_events=candidate_events,
-                raw_window_manifests=raw_window_manifests,
-                capital_buckets=request.capital_buckets,
-                execution_runtime_projection_path=request.execution_runtime_projection_path,
-                simulator_config=detailed_simulator_config,
-            )
+            if resolve_worker_count() > 1:
+                detailed_result = run_strategy_ladder_detailed_replay_parallel(
+                    detailed_replay_dir,
+                    candidate_events=candidate_events,
+                    raw_window_manifests=raw_window_manifests,
+                    capital_buckets=request.capital_buckets,
+                    execution_runtime_projection_path=request.execution_runtime_projection_path,
+                    simulator_config=detailed_simulator_config,
+                )
+            else:
+                detailed_result = run_strategy_ladder_detailed_replay(
+                    detailed_replay_dir,
+                    candidate_events=candidate_events,
+                    raw_window_manifests=raw_window_manifests,
+                    capital_buckets=request.capital_buckets,
+                    execution_runtime_projection_path=request.execution_runtime_projection_path,
+                    simulator_config=detailed_simulator_config,
+                )
         performance_profiler.observe_replay_subtimers(
             shared_payload_build_seconds=(
                 detailed_result.performance_metrics.shared_payload_build_seconds

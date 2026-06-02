@@ -53,6 +53,14 @@ class GapDetector:
 
         return None
 
+    def reset(self, pair: str, stream_type: str, sequence: int) -> None:
+        """Re-anchor the sequence baseline for a pair+stream after a fresh
+        snapshot (e.g. a REST re-sync). The next ``check`` will be evaluated
+        against ``sequence + 1`` so the post-anchor stream is not false-flagged.
+        Does not record a gap and does not increment the expected counter.
+        """
+        self._last_seq[(pair, stream_type)] = sequence
+
     def get_gaps(self, pair: str | None = None) -> tuple[GapEvent, ...]:
         if pair is None:
             return tuple(self._gaps)

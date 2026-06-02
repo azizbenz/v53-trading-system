@@ -1951,9 +1951,19 @@ def _resolve_silver_path(base_path: Path, storage_format: str) -> Path:
     """
 
     fmt = normalize_silver_storage_format(storage_format)
-    if fmt == "jsonl-gz":
+    if fmt in ("jsonl-gz", "jsonl-gz-parquet"):
         return base_path.with_suffix(base_path.suffix + ".gz")
     return base_path
+
+
+def _silver_parquet_sidecar_path(path: Path) -> Path:
+    """Map a silver jsonl(.gz) path to its Parquet sidecar (``X.jsonl.gz`` ->
+    ``X.parquet``). Used by the spec Phase 2 dual-write."""
+    name = path.name
+    for suffix in (".jsonl.gz", ".jsonl"):
+        if name.endswith(suffix):
+            return path.with_name(name[: -len(suffix)] + ".parquet")
+    return path.with_suffix(".parquet")
 
 
 def _write_rows(
@@ -1964,13 +1974,17 @@ def _write_rows(
 ) -> int:
     """Write ``rows`` as JSONL (default) or gzip-compressed JSONL.
 
-    Returns the on-disk file size in bytes.
+    For ``jsonl-gz-parquet`` (spec Phase 2 dual-write) the canonical jsonl-gz
+    file is written unchanged AND an equivalent ``.parquet`` sidecar is emitted
+    next to it (back-compat: every existing reader still sees the jsonl-gz file).
+
+    Returns the on-disk file size in bytes of the canonical file.
     """
 
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = _jsonl_dump_lines(rows)
     fmt = normalize_silver_storage_format(storage_format)
-    if fmt == "jsonl-gz":
+    if fmt in ("jsonl-gz", "jsonl-gz-parquet"):
         # Compress in-memory then atomic-write the bytes. mtime=0 keeps the
         # gzip header deterministic so file_hash stays reproducible.
         import io as _io
@@ -1985,6 +1999,13 @@ def _write_rows(
         tmp_path.replace(path)
     else:
         atomic_write_text(path, payload)
+    if fmt == "jsonl-gz-parquet":
+        # Dual-write Parquet sidecar (additive; jsonl-gz above stays canonical).
+        from local_replay_runtime.strategy_ladder_arrow_window import (
+            write_rows_parquet,
+        )
+
+        write_rows_parquet(rows, _silver_parquet_sidecar_path(path))
     return path.stat().st_size
 
 

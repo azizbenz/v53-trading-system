@@ -12,6 +12,13 @@ import json
 from pathlib import Path
 
 from interface_contracts.atomic_io import atomic_write_json
+from local_replay_runtime.strategy_ladder_arrow_window import (
+    ROW_INDEX_COLUMN,
+    load_silver_table,
+    read_raw_source_lines,
+    slice_window_with_anchor,
+    slice_window,
+)
 from local_replay_runtime.strategy_ladder_data_factory_models import (
     StrategyLadderSilverIndexEntry,
 )
@@ -235,6 +242,28 @@ def _row_timestamp_ms(row: dict[str, object]) -> int | None:
 def _write_window_slices(
     requests: tuple[_WindowSliceRequest, ...],
 ) -> _WindowSliceExecutionStats:
+    """Extract candidate windows via the Arrow core and write byte-exact slices.
+
+    Each silver source file is parsed ONCE into an Arrow table (LRU-4 across
+    runs) and each window is selected with a vectorized predicate
+    (``slice_window`` / ``slice_window_with_anchor``) instead of a per-row Python
+    loop. To guarantee bit-for-bit parity with the source, selected rows are
+    written from their VERBATIM source lines (mapped via the internal
+    ``__row_idx__`` column): the parsed dicts are never re-serialized, so no
+    field is dropped and no number is reformatted. Parquet sources (no original
+    text) fall back to a JSON dump of the typed columns.
+
+    Output compression follows the target suffix: ``.gz`` targets are written
+    gzip-compressed (the bytes inside the gzip member are the identical verbatim
+    JSONL — ~7-40x smaller on disk, readers are already gz-aware), any other
+    suffix is written as plain text. Compression NEVER changes which rows or
+    which bytes are emitted, only how they are stored.
+
+    The anchor logic (last row strictly before window_start_ms for
+    include_anchor_before_start requests) is handled by
+    ``slice_window_with_anchor``. Multi-source targets (e.g. multi-day delta
+    files merged into one) accumulate their lines in source/iteration order,
+    matching the old streaming writer."""
     started_wall = perf_counter()
     started_cpu = process_time()
     if not requests:
@@ -245,92 +274,62 @@ def _write_window_slices(
             wall_time_s=0.0,
             cpu_time_s=0.0,
         )
-    counts = {str(request.target_path.resolve()): 0 for request in requests}
     grouped: dict[Path, list[_WindowSliceRequest]] = {}
     for request in requests:
         grouped.setdefault(request.source_path.resolve(), []).append(request)
 
+    # Initialise every requested target up front so a missing/empty source still
+    # produces an (empty) slice file — same contract as the old streaming writer.
+    target_lines: dict[Path, list[str]] = {}
+    for request in requests:
+        request.target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_lines.setdefault(request.target_path.resolve(), [])
+
     parsed_row_count = 0
-    initialized_targets: set[Path] = set()
     for source_path, source_requests in grouped.items():
+        if not source_path.exists():
+            continue
+        table = load_silver_table(str(source_path))
+        parsed_row_count += table.num_rows
+        raw_lines = read_raw_source_lines(str(source_path))
         for request in source_requests:
-            request.target_path.parent.mkdir(parents=True, exist_ok=True)
-        handles = []
-        for request in source_requests:
-            target_resolved = request.target_path.resolve()
-            mode = "a" if target_resolved in initialized_targets else "w"
-            handles.append(
-                (
-                    request,
-                    request.target_path.open(mode, encoding="utf-8", newline="\n"),
+            if request.include_anchor_before_start:
+                sliced = slice_window_with_anchor(
+                    table, request.window_start_ms, request.window_end_ms
                 )
-            )
-            initialized_targets.add(target_resolved)
-        anchor_lines: dict[_WindowSliceRequest, tuple[int, str] | None] = {
-            request: None for request in source_requests
-        }
-        anchor_flushed: dict[_WindowSliceRequest, bool] = {
-            request: False for request in source_requests
-        }
-        min_start_ms = min(request.window_start_ms for request in source_requests)
-        max_end_ms = max(request.window_end_ms for request in source_requests)
-        try:
-            if not source_path.exists():
+            else:
+                sliced = slice_window(
+                    table, request.window_start_ms, request.window_end_ms
+                )
+            if sliced.num_rows == 0:
                 continue
-            with _open_text_input(source_path) as source_handle:
-                for line in source_handle:
-                    stripped = line.strip()
-                    if not stripped:
-                        continue
-                    try:
-                        row = json.loads(stripped)
-                    except json.JSONDecodeError:
-                        continue
-                    if not isinstance(row, dict):
-                        continue
-                    parsed_row_count += 1
-                    timestamp_ms = _row_timestamp_ms(row)
-                    if timestamp_ms is None:
-                        continue
-                    for request, _target_handle in handles:
-                        if (
-                            request.include_anchor_before_start
-                            and timestamp_ms <= request.window_start_ms
-                        ):
-                            anchor_lines[request] = (timestamp_ms, stripped)
-                    if timestamp_ms < min_start_ms:
-                        continue
-                    if timestamp_ms > max_end_ms:
-                        break
-                    for request, target_handle in handles:
-                        if request.window_start_ms <= timestamp_ms <= request.window_end_ms:
-                            anchor = anchor_lines.get(request)
-                            if (
-                                request.include_anchor_before_start
-                                and not anchor_flushed[request]
-                                and anchor is not None
-                                and anchor[0] < request.window_start_ms
-                            ):
-                                target_handle.write(anchor[1])
-                                target_handle.write("\n")
-                                counts[str(request.target_path.resolve())] += 1
-                            anchor_flushed[request] = True
-                            target_handle.write(stripped)
-                            target_handle.write("\n")
-                            counts[str(request.target_path.resolve())] += 1
-                for request, target_handle in handles:
-                    anchor = anchor_lines.get(request)
-                    if (
-                        request.include_anchor_before_start
-                        and not anchor_flushed[request]
-                        and anchor is not None
-                    ):
-                        target_handle.write(anchor[1])
-                        target_handle.write("\n")
-                        counts[str(request.target_path.resolve())] += 1
-        finally:
-            for _request, target_handle in handles:
-                target_handle.close()
+            target_resolved = request.target_path.resolve()
+            indices = sliced.column(ROW_INDEX_COLUMN).to_pylist()
+            if raw_lines is not None:
+                target_lines[target_resolved].extend(
+                    raw_lines[index] for index in indices
+                )
+            else:
+                projected = sliced.select(
+                    [name for name in sliced.column_names if name != ROW_INDEX_COLUMN]
+                )
+                target_lines[target_resolved].extend(
+                    json.dumps(row, ensure_ascii=False) for row in projected.to_pylist()
+                )
+
+    counts: dict[str, int] = {}
+    for target_path, lines in target_lines.items():
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        if target_path.name.lower().endswith(".gz"):
+            handle_cm = gzip.open(target_path, "wt", encoding="utf-8", newline="\n")
+        else:
+            handle_cm = target_path.open("w", encoding="utf-8", newline="\n")
+        with handle_cm as handle:
+            for line in lines:
+                handle.write(line)
+                handle.write("\n")
+        counts[str(target_path)] = len(lines)
+
     return _WindowSliceExecutionStats(
         slice_counts=counts,
         parsed_row_count=parsed_row_count,
@@ -799,7 +798,7 @@ def _resolve_from_silver_index(
         ):
             raw_trade_path = str(Path(trade_entry.path).resolve())
         elif trade_entry is not None and trade_entry.path:
-            trade_slice_path = manifest_dir / "trades.jsonl"
+            trade_slice_path = manifest_dir / "trades.jsonl.gz"
             if len(trade_entries) == 1 and trade_entry.file_hash:
                 trade_slice_path = _shared_materialized_window_path(
                     output_dir,
@@ -811,7 +810,7 @@ def _resolve_from_silver_index(
                     depth=None,
                     source_hash=trade_entry.file_hash,
                     include_anchor_before_start=False,
-                    filename="trades.jsonl",
+                    filename="trades.jsonl.gz",
                 )
                 cache_requests.append(
                     StrategyLadderWindowCacheRequest(
@@ -858,7 +857,7 @@ def _resolve_from_silver_index(
         ):
             raw_book_path = str(Path(snapshot_entry.path).resolve())
         elif snapshot_entry is not None and snapshot_entry.path:
-            snapshot_slice_path = manifest_dir / "orderbook_snapshot.jsonl"
+            snapshot_slice_path = manifest_dir / "orderbook_snapshot.jsonl.gz"
             if snapshot_entry.file_hash:
                 snapshot_slice_path = _shared_materialized_window_path(
                     output_dir,
@@ -870,7 +869,7 @@ def _resolve_from_silver_index(
                     depth=book_levels,
                     source_hash=snapshot_entry.file_hash,
                     include_anchor_before_start=True,
-                    filename="orderbook_snapshot.jsonl",
+                    filename="orderbook_snapshot.jsonl.gz",
                 )
                 cache_requests.append(
                     StrategyLadderWindowCacheRequest(
@@ -898,7 +897,7 @@ def _resolve_from_silver_index(
                 )
             raw_book_path = str(snapshot_slice_path.resolve())
         elif generic_book_entry is not None and generic_book_entry.path:
-            book_slice_path = manifest_dir / "orderbook.jsonl"
+            book_slice_path = manifest_dir / "orderbook.jsonl.gz"
             if generic_book_entry.file_hash:
                 book_slice_path = _shared_materialized_window_path(
                     output_dir,
@@ -910,7 +909,7 @@ def _resolve_from_silver_index(
                     depth=book_levels,
                     source_hash=generic_book_entry.file_hash,
                     include_anchor_before_start=False,
-                    filename="orderbook.jsonl",
+                    filename="orderbook.jsonl.gz",
                 )
                 cache_requests.append(
                     StrategyLadderWindowCacheRequest(
@@ -959,7 +958,7 @@ def _resolve_from_silver_index(
             if len(delta_entries) == 1 and delta_entry.file_hash:
                 raw_book_delta_path = str(Path(delta_entry.path).resolve())
             else:
-                delta_slice_path = manifest_dir / "orderbook_delta.jsonl"
+                delta_slice_path = manifest_dir / "orderbook_delta.jsonl.gz"
                 delta_source_hash = _entries_source_hash(delta_entries)
                 if delta_source_hash:
                     delta_slice_path = _shared_materialized_window_path(
@@ -972,7 +971,7 @@ def _resolve_from_silver_index(
                         depth=book_levels,
                         source_hash=delta_source_hash,
                         include_anchor_before_start=delta_slice_start_ms < window_start_ms,
-                        filename="orderbook_delta.jsonl",
+                        filename="orderbook_delta.jsonl.gz",
                     )
                 for entry in delta_entries:
                     pending_slices.append(
@@ -996,7 +995,7 @@ def _resolve_from_silver_index(
         ):
             raw_ohlcv_path = str(Path(ohlcv_entry.path).resolve())
         elif ohlcv_entry is not None and ohlcv_entry.path:
-            ohlcv_slice_path = manifest_dir / "ohlcv.jsonl"
+            ohlcv_slice_path = manifest_dir / "ohlcv.jsonl.gz"
             if len(ohlcv_entries) == 1 and ohlcv_entry.file_hash:
                 ohlcv_slice_path = _shared_materialized_window_path(
                     output_dir,
@@ -1008,7 +1007,7 @@ def _resolve_from_silver_index(
                     depth=None,
                     source_hash=ohlcv_entry.file_hash,
                     include_anchor_before_start=False,
-                    filename="ohlcv.jsonl",
+                    filename="ohlcv.jsonl.gz",
                 )
                 cache_requests.append(
                     StrategyLadderWindowCacheRequest(

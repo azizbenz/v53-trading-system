@@ -47,6 +47,10 @@ from local_replay_runtime.pair_bounds_registry import (
     clamp_with_warning,
     get_bounds_for_pair,
 )
+from local_replay_runtime.strategy_ladder_arrow_window import (
+    ROW_INDEX_COLUMN,
+    load_silver_table,
+)
 from local_replay_runtime.venue_metadata_registry import (
     UNKNOWN_VENUE_METADATA,
     VenueEconomicMetadata,
@@ -206,6 +210,8 @@ def _derive_orderbook_delta_path(snapshot_path: Path) -> Path | None:
     name = snapshot_path.name
     candidates: list[str] = []
     if "orderbook_snapshot" in name:
+        # The base replace keeps the suffix, so it covers .jsonl, .jsonl.gz and
+        # .parquet variants of the same naming convention automatically.
         candidates.append(name.replace("orderbook_snapshot", "orderbook_delta"))
     if "snapshot" in name.lower():
         candidates.append(
@@ -216,10 +222,15 @@ def _derive_orderbook_delta_path(snapshot_path: Path) -> Path | None:
         derived = parent / candidate
         if derived.is_file():
             return derived
-    # Fallback : same parent dir contains "orderbook_delta.jsonl"
-    default_delta = parent / "orderbook_delta.jsonl"
-    if default_delta.is_file():
-        return default_delta
+    # Fallback : same parent dir contains a sibling delta file (any known format)
+    for fallback_name in (
+        "orderbook_delta.jsonl.gz",
+        "orderbook_delta.jsonl",
+        "orderbook_delta.parquet",
+    ):
+        default_delta = parent / fallback_name
+        if default_delta.is_file():
+            return default_delta
     return None
 
 
@@ -258,20 +269,18 @@ def _load_reconstruction_snapshots(
     each time. Cheap on its own (snapshots are tiny) but cached for symmetry with
     the delta cache below.
     """
-    path = Path(snapshot_path_str)
+    table = load_silver_table(snapshot_path_str)
+    if table.num_rows == 0:
+        return ()
     out: list[tuple[int, int, dict]] = []
-    with path.open("r", encoding="utf-8-sig") as handle:
-        for line in handle:
-            stripped = line.strip()
-            if not stripped:
-                continue
-            try:
-                row = json.loads(stripped)
-                ts = int(row.get("timestamp_ms") or 0)
-                uid = int(row.get("update_id") or 0)
-            except (json.JSONDecodeError, TypeError, ValueError):
-                continue
-            out.append((ts, uid, row))
+    for row in table.to_pylist():
+        row.pop(ROW_INDEX_COLUMN, None)
+        try:
+            ts = int(row.get("timestamp_ms") or 0)
+            uid = int(row.get("update_id") or 0)
+        except (TypeError, ValueError):
+            continue
+        out.append((ts, uid, row))
     out.sort(key=lambda item: item[0])
     return tuple(out)
 
@@ -291,24 +300,18 @@ def _load_reconstruction_deltas(
     parse per file; the per-row causal window is filtered in memory. Same deltas
     applied -> identical reconstructed spread.
     """
-    path = Path(delta_path_str)
+    table = load_silver_table(delta_path_str)
+    if table.num_rows == 0:
+        return ()
     out: list[tuple[int, int, dict]] = []
-    if path.name.lower().endswith(".gz"):
-        handle_cm = gzip.open(path, "rt", encoding="utf-8-sig")
-    else:
-        handle_cm = path.open("r", encoding="utf-8-sig")
-    with handle_cm as handle:
-        for line in handle:
-            stripped = line.strip()
-            if not stripped:
-                continue
-            try:
-                row = json.loads(stripped)
-                uid = int(row.get("update_id") or 0)
-                ts = int(row.get("timestamp_ms") or 0)
-            except (json.JSONDecodeError, TypeError, ValueError):
-                continue
-            out.append((uid, ts, row))
+    for row in table.to_pylist():
+        row.pop(ROW_INDEX_COLUMN, None)
+        try:
+            uid = int(row.get("update_id") or 0)
+            ts = int(row.get("timestamp_ms") or 0)
+        except (TypeError, ValueError):
+            continue
+        out.append((uid, ts, row))
     out.sort(key=lambda item: item[0])
     return tuple(out)
 
@@ -319,6 +322,7 @@ def _measure_spread_via_reconstruction(
     delta_path: Path,
     timestamp_ms: int,
     tolerance_ms: int,
+    expected_update_id_step: int | None = None,
 ) -> tuple[float | None, str]:
     """Audit 2026-05-13 W2 fix : reconstruction snapshot + deltas pour mesurer
     le spread reel au timestamp lorsque le snapshot direct est `TOO_FAR`.
@@ -332,6 +336,18 @@ def _measure_spread_via_reconstruction(
       4. Calcule spread_bps depuis ce best_state
 
     Retourne (None, reason_code) si reconstruction echoue.
+
+    Sequence-gap detection (2026-06-02) — exactness seam. When
+    ``expected_update_id_step`` is set (e.g. 1 for Bybit L2, whose ``u``
+    increments by 1 per depth message), the contiguity of ``update_id`` along
+    the applied chain (anchor -> best state) is checked. A discontinuity means
+    the captured delta stream MISSED messages, so the reconstructed book has
+    silently diverged from reality. The spread value is still returned
+    (best-effort) but the provenance is flagged
+    ``MEASURED_FROM_BOOK_RECONSTRUCTION_SEQUENCE_GAP:<n>`` so downstream gates
+    can refuse to treat it as exact. Default ``None`` keeps detection OFF (no
+    behaviour change) until the venue's step is confirmed — the re-anchor lever
+    (more snapshots/day) shortens chains so a fresher anchor is gap-free.
     """
     # Charger snapshot le plus recent <= timestamp_ms (parse cache par path).
     try:
@@ -391,6 +407,14 @@ def _measure_spread_via_reconstruction(
     best_spread: float | None = None
     best_dt = float("inf")
     best_state_ts = -1
+
+    # Sequence-gap tracking (calibration seam). prev_uid walks the chain from
+    # the anchor; a non-step jump means missed messages. best_state_gap_count
+    # snapshots the cumulative gap count AT the reported (best) state so gaps
+    # AFTER it (which don't pollute that state's book) are not counted.
+    prev_uid_for_gap = base_update_id
+    gap_count = 0
+    best_state_gap_count = 0
 
     # Patch W0 (2026-05-30) — cross-book purge constants. Audit user 2026-05-30
     # showed 27% of candidates failing because the snapshot carries stale
@@ -454,6 +478,14 @@ def _measure_spread_via_reconstruction(
                 best_spread = (ba - bb) / mid * 10_000.0
 
     for delta in deltas:
+        if expected_update_id_step is not None:
+            try:
+                cur_uid = int(delta.get("update_id") or 0)
+            except (TypeError, ValueError):
+                cur_uid = prev_uid_for_gap + expected_update_id_step
+            if cur_uid != prev_uid_for_gap + expected_update_id_step:
+                gap_count += 1
+            prev_uid_for_gap = cur_uid
         for level in (delta.get("bids") or []):
             try:
                 price = float(level[0])
@@ -490,6 +522,7 @@ def _measure_spread_via_reconstruction(
             best_dt = dt
             best_state_ts = delta_ts
             best_spread = (ba - bb) / mid * 10_000.0
+            best_state_gap_count = gap_count
 
     if best_spread is None:
         return None, "BOOK_RECONSTRUCTION_NO_VALID_STATE"
@@ -497,6 +530,13 @@ def _measure_spread_via_reconstruction(
         return (
             None,
             f"BOOK_RECONSTRUCTION_STATE_TOO_FAR:{int(best_dt)}ms_>_{tolerance_ms}ms",
+        )
+    if expected_update_id_step is not None and best_state_gap_count > 0:
+        # The chain from the anchor to the reported state missed messages: the
+        # reconstructed book is NOT exact. Return the value but flag it visibly.
+        return (
+            best_spread,
+            f"MEASURED_FROM_BOOK_RECONSTRUCTION_SEQUENCE_GAP:{best_state_gap_count}",
         )
     return best_spread, "MEASURED_FROM_BOOK_RECONSTRUCTION"
 
@@ -530,6 +570,29 @@ def tolerance_ms_for_timeframe(timeframe: str | None) -> int:
     return _BOOK_FRESHNESS_TOLERANCE_BY_TIMEFRAME_MS.get(
         timeframe.lower().strip(), 60_000
     )
+
+
+def recommended_snapshots_per_day(
+    *,
+    delta_events_per_day: int,
+    max_chain_deltas: int,
+) -> int:
+    """Calibration seam (2026-06-02) — how many orderbook snapshot anchors per
+    day to capture so no reconstruction chain exceeds ``max_chain_deltas``.
+
+    The exactness of a snapshot+delta reconstruction degrades with chain length:
+    longer chains accumulate more opportunities for a sequence gap (missed
+    message) and numerical drift. Given the observed delta rate, re-anchoring
+    every ``max_chain_deltas`` events bounds the worst-case chain. More anchors
+    -> shorter chains -> a fresher gap-free anchor is reachable for any candidate.
+
+    This replaces a hardcoded "N snapshots/day" magic number with a value
+    derived from measurable inputs (the venue's delta rate + the operator's
+    drift budget). Returns at least 1 (the bootstrap anchor).
+    """
+    if delta_events_per_day <= 0 or max_chain_deltas <= 0:
+        return 1
+    return max(1, math.ceil(delta_events_per_day / max_chain_deltas))
 
 
 def derive_expected_edge_truth_status(expected_edge_provenance: str | None) -> str:
@@ -633,6 +696,7 @@ def measure_spread_bps_from_book_snapshot(
     raw_book_delta_path: Path | str | None = None,
     enable_reconstruction_fallback: bool = True,
     stale_snapshot_max_age_ms: int = 24 * 60 * 60 * 1000,
+    expected_update_id_step: int | None = None,
 ) -> tuple[float | None, str, int | None]:
     """Mesure le spread reel depuis le snapshot orderbook le plus proche,
     avec fallbacks de reconstruction snapshot+deltas et stale-snapshot.
@@ -718,6 +782,7 @@ def measure_spread_bps_from_book_snapshot(
                 delta_path=delta_path,
                 timestamp_ms=timestamp_ms,
                 tolerance_ms=tolerance_ms,
+                expected_update_id_step=expected_update_id_step,
             )
             if spread_bps is not None:
                 # Reconstructed state is fresh by construction (within tolerance,
@@ -769,28 +834,39 @@ def _load_sorted_trade_points(
     file, then a bisect window per row. Same measured points -> identical Kyle
     result (real economics preserved). Tests that rewrite a path must call
     ``_load_sorted_trade_points.cache_clear()``.
+
+    Format-agnostic via the Arrow core: jsonl, jsonl.gz, and parquet are all
+    handled by ``load_silver_table``. Callers that also hold a
+    ``load_silver_table`` cache entry benefit from the shared in-RAM table.
     """
-    trade_path = Path(trade_path_str)
+    table = load_silver_table(trade_path_str)
+    if table.num_rows == 0:
+        return ()
+    col_names = table.column_names
+    if "timestamp_ms" not in col_names or "price" not in col_names:
+        return ()
+    if "qty" not in col_names and "volume" not in col_names:
+        return ()
+    ts_list = table.column("timestamp_ms").to_pylist()
+    price_list = table.column("price").to_pylist()
+    qty_list = table.column("qty").to_pylist() if "qty" in col_names else None
+    volume_list = table.column("volume").to_pylist() if "volume" in col_names else None
     rows: list[tuple[int, float, float]] = []
-    if trade_path.name.lower().endswith(".gz"):
-        handle_cm = gzip.open(trade_path, "rt", encoding="utf-8-sig")
-    else:
-        handle_cm = trade_path.open("r", encoding="utf-8-sig")
-    with handle_cm as handle:
-        for line in handle:
-            stripped = line.strip()
-            if not stripped:
-                continue
-            try:
-                row = json.loads(stripped)
-                ts_ms = int(row.get("timestamp_ms") or 0)
-                price = float(row.get("price") or 0.0)
-                volume = float(row.get("qty") or row.get("volume") or 0.0)
-            except (json.JSONDecodeError, KeyError, TypeError, ValueError):
-                continue
-            if price <= 0.0 or volume <= 0.0:
-                continue
-            rows.append((ts_ms, price, volume))
+    for index, (ts_raw, price_raw) in enumerate(zip(ts_list, price_list)):
+        qty_raw = qty_list[index] if qty_list is not None else None
+        # Per-row fallback identical to the old ``row.get("qty") or
+        # row.get("volume")``: a falsy/missing qty defers to volume on THAT row,
+        # not column-wide (a heterogeneous file keeps every measurable trade).
+        vol_raw = qty_raw if qty_raw else (volume_list[index] if volume_list is not None else None)
+        try:
+            ts_ms = int(ts_raw or 0)
+            price = float(price_raw or 0.0)
+            volume = float(vol_raw or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if price <= 0.0 or volume <= 0.0:
+            continue
+        rows.append((ts_ms, price, volume))
     rows.sort(key=lambda item: item[0])
     return tuple(rows)
 
@@ -885,6 +961,7 @@ def compute_economic_provenance(
     latency_penalty_bps_override: float | None = None,
     fee_bps_override: float | None = None,
     spread_tolerance_ms: int = 60_000,
+    book_reconstruction_expected_update_id_step: int | None = None,
     edge_lookback_ms: int = 60 * 60 * 1000,
     slippage_lookback_ms: int = 60_000,
     measure_slippage_from_trades: bool = True,
@@ -965,6 +1042,7 @@ def compute_economic_provenance(
         raw_book_path=raw_book_path,
         timestamp_ms=timestamp_ms,
         tolerance_ms=effective_tolerance_ms,
+        expected_update_id_step=book_reconstruction_expected_update_id_step,
     )
     book_freshness_status = derive_book_freshness_status(
         age_ms=book_snapshot_age_ms,

@@ -22,6 +22,9 @@ def normalize_silver_storage_format(storage_format: str | None) -> str:
     fmt = (storage_format or "jsonl").strip().lower().replace("_", "-")
     if fmt == "jsonl-debug":
         return "jsonl-debug"
+    if fmt in ("jsonl-gz-parquet", "jsonl-gz+parquet"):
+        # Spec Phase 2 dual-write: canonical jsonl-gz + Parquet sidecar.
+        return "jsonl-gz-parquet"
     if fmt == "jsonl-gz":
         return "jsonl-gz"
     return "jsonl"

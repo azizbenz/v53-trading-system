@@ -45,6 +45,7 @@ le manifest doit refuser la promotion (audit-ready).
 
 from __future__ import annotations
 
+import gzip
 import json
 import math
 from dataclasses import dataclass, field
@@ -132,7 +133,12 @@ def _load_ohlcv_in_window(
         return []
     rows: list[dict[str, object]] = []
     extended_start = window_start_ms - lookback_ms
-    with raw_ohlcv_path.open("r", encoding="utf-8-sig") as handle:
+    handle_cm = (
+        gzip.open(raw_ohlcv_path, "rt", encoding="utf-8-sig")
+        if str(raw_ohlcv_path).endswith(".gz")
+        else raw_ohlcv_path.open("r", encoding="utf-8-sig")
+    )
+    with handle_cm as handle:
         for line in handle:
             stripped = line.strip()
             if not stripped:
@@ -159,7 +165,12 @@ def _compute_realized_vol_at_break(
     if not raw_trade_path.exists():
         return None
     points: list[RealizedKernelPricePoint] = []
-    with raw_trade_path.open("r", encoding="utf-8-sig") as handle:
+    handle_cm = (
+        gzip.open(raw_trade_path, "rt", encoding="utf-8-sig")
+        if str(raw_trade_path).endswith(".gz")
+        else raw_trade_path.open("r", encoding="utf-8-sig")
+    )
+    with handle_cm as handle:
         for line in handle:
             stripped = line.strip()
             if not stripped:

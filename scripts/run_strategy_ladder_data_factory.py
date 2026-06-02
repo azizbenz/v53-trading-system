@@ -113,9 +113,14 @@ def _build_parser() -> argparse.ArgumentParser:
     # Patch 6 batch 1 — silver storage governance.
     parser.add_argument(
         "--storage-format",
-        choices=("jsonl", "jsonl-gz", "jsonl_debug", "jsonl-debug"),
+        choices=("jsonl", "jsonl-gz", "jsonl_debug", "jsonl-debug", "jsonl-gz-parquet"),
         default="jsonl",
-        help="Silver storage format. ``jsonl-gz`` is ~7-10x smaller and recommended for production.",
+        help=(
+            "Silver storage format. ``jsonl-gz`` is ~7-10x smaller and recommended "
+            "for production. ``jsonl-gz-parquet`` additionally dual-writes a "
+            "columnar ``.parquet`` sidecar next to each jsonl-gz file (migration "
+            "spec Phase 2; back-compat — jsonl-gz stays canonical)."
+        ),
     )
     parser.add_argument(
         "--allow-broad-run",

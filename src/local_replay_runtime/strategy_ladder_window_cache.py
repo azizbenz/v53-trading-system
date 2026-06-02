@@ -103,7 +103,7 @@ class StrategyLadderWindowCache:
         misses: list[StrategyLadderWindowCacheMiss] = []
         for cache_key, group in grouped.items():
             canonical = group[0]
-            cache_path = self._cache_root / canonical.source_type / canonical.pair / f"{cache_key}.jsonl"
+            cache_path = self._cache_root / canonical.source_type / canonical.pair / f"{cache_key}.jsonl.gz"
             meta_path = cache_path.with_suffix(".meta.json")
             target_paths = tuple(
                 dict.fromkeys(item.target_path.resolve() for item in group)

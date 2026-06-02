@@ -3043,14 +3043,14 @@ def test_raw_window_extraction_uses_silver_index_and_preserves_multi_source_line
         assert manifest.raw_book_path is not None
         assert manifest.raw_book_delta_path is not None
         assert manifest.raw_ohlcv_path is not None
-        assert Path(manifest.raw_trade_path).name == "trades.jsonl"
-        assert Path(manifest.raw_book_path).name == "orderbook_snapshot.jsonl"
+        assert Path(manifest.raw_trade_path).name == "trades.jsonl.gz"
+        assert Path(manifest.raw_book_path).name == "orderbook_snapshot.jsonl.gz"
         assert Path(manifest.raw_book_delta_path).suffix in {".jsonl", ".gz"}
-        assert Path(manifest.raw_ohlcv_path).name == "ohlcv.jsonl"
-        assert Path(manifest.raw_trade_path).read_text(encoding="utf-8").strip()
-        assert Path(manifest.raw_book_path).read_text(encoding="utf-8").strip()
+        assert Path(manifest.raw_ohlcv_path).name == "ohlcv.jsonl.gz"
+        assert _read_jsonl_any(Path(manifest.raw_trade_path))
+        assert _read_jsonl_any(Path(manifest.raw_book_path))
         assert _read_jsonl_any(Path(manifest.raw_book_delta_path))
-        assert Path(manifest.raw_ohlcv_path).read_text(encoding="utf-8").strip()
+        assert _read_jsonl_any(Path(manifest.raw_ohlcv_path))
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
@@ -3179,15 +3179,12 @@ def test_raw_window_extraction_keeps_pre_window_snapshot_anchor_for_delta_replay
         assert status == "RAW_WINDOW_READY"
         assert manifest.raw_book_path is not None
         assert manifest.raw_book_delta_path is not None
-        snapshot_rows = Path(manifest.raw_book_path).read_text(encoding="utf-8").strip().splitlines()
-        delta_rows = [
-            json.dumps(row)
-            for row in _read_jsonl_any(Path(manifest.raw_book_delta_path))
-        ]
+        snapshot_rows = _read_jsonl_any(Path(manifest.raw_book_path))
+        delta_rows = _read_jsonl_any(Path(manifest.raw_book_delta_path))
         assert len(snapshot_rows) == 1
         assert len(delta_rows) == 1
-        assert json.loads(snapshot_rows[0])["timestamp_ms"] == candidate_ts - 120_000
-        assert json.loads(delta_rows[0])["timestamp_ms"] == candidate_ts
+        assert snapshot_rows[0]["timestamp_ms"] == candidate_ts - 120_000
+        assert delta_rows[0]["timestamp_ms"] == candidate_ts
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 

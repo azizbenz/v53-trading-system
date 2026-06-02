@@ -28,6 +28,10 @@ def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
 
 
 def _read_jsonl_any(path: Path) -> list[dict[str, object]]:
+    """Read a slice file regardless of format: .parquet, .jsonl.gz, or .jsonl."""
+    if path.suffix == ".parquet":
+        import pyarrow.parquet as pq
+        return pq.read_table(path).to_pylist()
     if path.suffix == ".gz":
         with gzip.open(path, "rt", encoding="utf-8-sig") as handle:
             return [json.loads(line) for line in handle if line.strip()]
@@ -237,8 +241,8 @@ def test_engine_c_raw_window_extraction_pads_trades_and_ohlcv_with_prebreak_look
     assert result.status == "RAW_WINDOW_READY"
     manifest = result.manifests[0]
     assert manifest.window_start_ms == logical_window_start_ms
-    trade_rows = [json.loads(line) for line in Path(manifest.raw_trade_path or "").read_text(encoding="utf-8").splitlines()]
-    ohlcv_rows = [json.loads(line) for line in Path(manifest.raw_ohlcv_path or "").read_text(encoding="utf-8").splitlines()]
+    trade_rows = _read_jsonl_any(Path(manifest.raw_trade_path or ""))
+    ohlcv_rows = _read_jsonl_any(Path(manifest.raw_ohlcv_path or ""))
     assert trade_rows[0]["timestamp_ms"] < manifest.window_start_ms
     assert ohlcv_rows[0]["timestamp_ms"] < manifest.window_start_ms
 
@@ -296,8 +300,8 @@ def test_engine_a_raw_window_extraction_keeps_trade_slice_logical_but_pads_ohlcv
 
     assert result.status == "RAW_WINDOW_READY"
     manifest = result.manifests[0]
-    trade_rows = [json.loads(line) for line in Path(manifest.raw_trade_path or "").read_text(encoding="utf-8").splitlines()]
-    ohlcv_rows = [json.loads(line) for line in Path(manifest.raw_ohlcv_path or "").read_text(encoding="utf-8").splitlines()]
+    trade_rows = _read_jsonl_any(Path(manifest.raw_trade_path or ""))
+    ohlcv_rows = _read_jsonl_any(Path(manifest.raw_ohlcv_path or ""))
     assert trade_rows[0]["timestamp_ms"] >= manifest.window_start_ms
     assert ohlcv_rows[0]["timestamp_ms"] < manifest.window_start_ms
 
@@ -357,8 +361,8 @@ def test_engine_b_raw_window_extraction_pads_ohlcv_for_edge_fallback_without_pad
 
     assert result.status == "RAW_WINDOW_READY"
     manifest = result.manifests[0]
-    trade_rows = [json.loads(line) for line in Path(manifest.raw_trade_path or "").read_text(encoding="utf-8").splitlines()]
-    ohlcv_rows = [json.loads(line) for line in Path(manifest.raw_ohlcv_path or "").read_text(encoding="utf-8").splitlines()]
+    trade_rows = _read_jsonl_any(Path(manifest.raw_trade_path or ""))
+    ohlcv_rows = _read_jsonl_any(Path(manifest.raw_ohlcv_path or ""))
     assert trade_rows[0]["timestamp_ms"] >= manifest.window_start_ms
     assert ohlcv_rows[0]["timestamp_ms"] < manifest.window_start_ms
 
@@ -914,10 +918,7 @@ def test_engine_b_raw_window_extraction_concatenates_cross_midnight_ohlcv_entrie
 
     assert result.status == "RAW_WINDOW_READY"
     manifest = result.manifests[0]
-    ohlcv_rows = [
-        json.loads(line)
-        for line in Path(manifest.raw_ohlcv_path or "").read_text(encoding="utf-8").splitlines()
-    ]
+    ohlcv_rows = _read_jsonl_any(Path(manifest.raw_ohlcv_path or ""))
     assert len(ohlcv_rows) == 5
     assert ohlcv_rows[0]["timestamp_ms"] < manifest.window_start_ms
     assert ohlcv_rows[-1]["timestamp_ms"] == candidate_ts
@@ -1093,10 +1094,7 @@ def test_raw_window_extractor_keeps_ohlcv_post_window_for_replay_outcome_horizon
 
     assert result.status == "RAW_WINDOW_READY"
     manifest = result.manifests[0]
-    ohlcv_rows = [
-        json.loads(line)
-        for line in Path(manifest.raw_ohlcv_path or "").read_text(encoding="utf-8").splitlines()
-    ]
+    ohlcv_rows = _read_jsonl_any(Path(manifest.raw_ohlcv_path or ""))
     future_timestamps = [
         row["timestamp_ms"] for row in ohlcv_rows if row["timestamp_ms"] > candidate_ts
     ]

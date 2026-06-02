@@ -385,20 +385,24 @@ def _iter_jsonl(path: Path) -> list[dict[str, object]]:
         # 200 × O(N) copy storm into 200 × O(1) shared references.
         return list(cached)
     out: list[dict[str, object]] = []
-    opener = (
-        lambda: gzip.open(path, "rt", encoding="utf-8-sig")
-        if str(path).endswith(".gz")
-        else path.open("r", encoding="utf-8-sig")
-    )
-    with opener() as handle:
-        for line in handle:
-            stripped = line.strip()
-            if not stripped:
-                continue
-            try:
-                out.append(json.loads(stripped))
-            except json.JSONDecodeError:
-                continue
+    if path.suffix.lower() == ".parquet":
+        import pyarrow.parquet as _pq
+        out = _pq.read_table(path).to_pylist()
+    else:
+        opener = (
+            lambda: gzip.open(path, "rt", encoding="utf-8-sig")
+            if str(path).endswith(".gz")
+            else path.open("r", encoding="utf-8-sig")
+        )
+        with opener() as handle:
+            for line in handle:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    out.append(json.loads(stripped))
+                except json.JSONDecodeError:
+                    continue
     cached_rows = tuple(dict(row) for row in out)
     _MICROSTRUCTURE_JSONL_FILE_CACHE[cache_key] = cached_rows
     _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS["miss_count"] = (

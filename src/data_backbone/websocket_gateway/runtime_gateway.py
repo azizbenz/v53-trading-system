@@ -5,9 +5,14 @@ Minimal injectable runtime path for Build-2 WebSocket gateway.
 from __future__ import annotations
 
 import logging
-from typing import Protocol
+from typing import Protocol, TYPE_CHECKING
 
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    from data_backbone.consistency_checker.book_sequence_sentinel import (
+        BookSequenceSentinel,
+    )
 
 from .connection_manager import ConnectionManager, ConnectionState, ConnectionStatus
 from .heartbeat_monitor import HeartbeatMonitor, HeartbeatState
@@ -57,6 +62,10 @@ class GatewayPollResult(BaseModel, frozen=True):
     raw_message: RawMessage | None = None
     reconnect_event: ReconnectEvent | None = None
     error: str = ""
+    # Book sequence-gap observability (set only when a sentinel is wired and the
+    # message is a book delta). Default False -> unchanged for non-book runtimes.
+    sequence_gap_detected: bool = False
+    book_resync_triggered: bool = False
 
 
 class WebSocketGatewayRuntime:
@@ -71,6 +80,8 @@ class WebSocketGatewayRuntime:
         heartbeat_monitor: HeartbeatMonitor | None = None,
         reconnect_controller: ReconnectController | None = None,
         emitter: RawMessageEmitter | None = None,
+        book_sequence_sentinel: "BookSequenceSentinel | None" = None,
+        book_stream_types: frozenset[str] = frozenset(),
     ) -> None:
         self._adapter = adapter
         self._connections = connection_manager or ConnectionManager()
@@ -78,6 +89,10 @@ class WebSocketGatewayRuntime:
         self._heartbeat = heartbeat_monitor or HeartbeatMonitor()
         self._reconnect = reconnect_controller or ReconnectController()
         self._emitter = emitter or RawMessageEmitter()
+        # Point 2 wiring (opt-in): when a sentinel + book stream types are given,
+        # each book delta's sequence is observed -> resync triggered on a gap.
+        self._book_sentinel = book_sequence_sentinel
+        self._book_stream_types = book_stream_types
 
     def register_endpoint(self, endpoint: str) -> None:
         self._connections.register_endpoint(endpoint)
@@ -179,6 +194,20 @@ class WebSocketGatewayRuntime:
         self._emitter.emit(raw_message)
         self._heartbeat.record_heartbeat(endpoint, recv_time)
 
+        # Point 2: observe book-delta sequence -> trigger resync on a gap.
+        sequence_gap_detected = False
+        book_resync_triggered = False
+        if (
+            self._book_sentinel is not None
+            and raw_message.stream_type in self._book_stream_types
+            and raw_message.sequence is not None
+        ):
+            observation = self._book_sentinel.observe(
+                raw_message.pair, raw_message.stream_type, raw_message.sequence
+            )
+            sequence_gap_detected = observation.gap_detected
+            book_resync_triggered = observation.resync_triggered
+
         return GatewayPollResult(
             endpoint=endpoint,
             connection_status=self._connections.get_status(endpoint) or status,
@@ -186,6 +215,8 @@ class WebSocketGatewayRuntime:
             backlog=self._emitter.backlog,
             utilization=self._emitter.utilization,
             raw_message=raw_message,
+            sequence_gap_detected=sequence_gap_detected,
+            book_resync_triggered=book_resync_triggered,
         )
 
     @property

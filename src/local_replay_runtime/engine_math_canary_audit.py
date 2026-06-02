@@ -75,6 +75,7 @@ from local_replay_runtime.strategy_ladder_models import (
 from local_replay_runtime.strategy_ladder_raw_window_extractor import (
     load_strategy_ladder_raw_window_manifests,
 )
+from local_replay_runtime.strategy_ladder_arrow_window import resolve_slice_path
 from local_replay_runtime.strategy_ladder_replay_evidence import (
     build_measured_slippage_payload,
     build_measured_spread_payload,
@@ -866,11 +867,11 @@ def reconstruct_native_candidate_case(
 
 
 def _scenario_metadata_rows(asset_root: Path) -> list[dict[str, object]]:
-    klines_path = str((asset_root / "klines.jsonl").resolve())
-    trades_path = str((asset_root / "trades.jsonl").resolve())
-    orderbook_snapshot_path = str((asset_root / "orderbook_snapshot.jsonl").resolve())
-    orderbook_delta_path = str((asset_root / "orderbook_delta.jsonl").resolve())
-    closed_episode_journal_path = str((asset_root / "closed_episode_journal.jsonl").resolve())
+    klines_path = str(resolve_slice_path(asset_root, "klines").resolve())
+    trades_path = str(resolve_slice_path(asset_root, "trades").resolve())
+    orderbook_snapshot_path = str(resolve_slice_path(asset_root, "orderbook_snapshot").resolve())
+    orderbook_delta_path = str(resolve_slice_path(asset_root, "orderbook_delta").resolve())
+    closed_episode_journal_path = str(resolve_slice_path(asset_root, "closed_episode_journal").resolve())
     return [
         {
             "scenario_id": "SCENARIO_A_LONG_PASS_NATIVE",

@@ -580,12 +580,17 @@ def test_raw_window_extraction_reuses_shared_multi_entry_orderbook_delta_windows
     assert result.manifests[0].raw_book_delta_path == result.manifests[1].raw_book_delta_path
     assert "_shared_windows" in str(result.manifests[0].raw_book_delta_path)
     assert "orderbook_delta" in str(result.manifests[0].raw_book_delta_path)
-    assert not list((tmp_path / "raw_windows" / "BTCUSDT").rglob("orderbook_delta.jsonl"))
-    delta_rows = [
-        json.loads(line)
-        for line in Path(str(result.manifests[0].raw_book_delta_path)).read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    assert not list((tmp_path / "raw_windows" / "BTCUSDT").rglob("orderbook_delta.jsonl.gz"))
+    delta_path = Path(str(result.manifests[0].raw_book_delta_path))
+    if delta_path.suffix == ".gz":
+        with gzip.open(delta_path, "rt", encoding="utf-8-sig") as handle:
+            delta_rows = [json.loads(line) for line in handle if line.strip()]
+    else:
+        delta_rows = [
+            json.loads(line)
+            for line in delta_path.read_text(encoding="utf-8-sig").splitlines()
+            if line.strip()
+        ]
     assert [row["timestamp_ms"] for row in delta_rows] == [candidate_ts - 60_000, candidate_ts]
 
 
