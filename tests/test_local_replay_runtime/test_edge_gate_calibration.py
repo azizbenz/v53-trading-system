@@ -171,3 +171,38 @@ def test_calibrate_edge_gate_thresholds_rejects_weak_positive_sample():
 
     with pytest.raises(EdgeGateCalibrationInsufficientDataError):
         calibrate_edge_gate_thresholds(records, config=config)
+
+
+def test_documented_floor_edge_gate_artifact_uses_human_floors() -> None:
+    """Floor artifact ships the documented human floors (THR-E01=2.0/THR-E02=15.0)
+    sourced from EdgeGateCalibrationConfig — no hand-typed magic numbers — and is a
+    valid signed/hashed artifact resolvable by the fee-aware edge gate."""
+    from local_replay_runtime import build_documented_floor_edge_gate_artifact
+
+    cfg = EdgeGateCalibrationConfig()
+    ts = datetime(2026, 6, 2, tzinfo=timezone.utc)
+    artifact = build_documented_floor_edge_gate_artifact(
+        signed_by="tester", config=cfg, generated_at=ts, signed_at=ts
+    )
+
+    e01 = next(
+        t for t in artifact.thresholds if t.threshold_id == cfg.edge_multiplier_threshold_id
+    )
+    e02 = next(
+        t for t in artifact.thresholds if t.threshold_id == cfg.min_absolute_edge_threshold_id
+    )
+    assert e01.value == cfg.human_multiplier_floor == 2.0
+    assert e02.value == cfg.human_absolute_floor_bps == 15.0
+    # valid signed artifact (hash attestation matches canonical payload)
+    assert artifact.signature.payload_hash_sha256 == artifact.payload_hash_sha256()
+    assert "DOCUMENTED CONSERVATIVE FLOOR" in e01.notes
+
+
+def test_committed_edge_gate_artifact_resolves_fee_aware_thresholds() -> None:
+    """The committed config/calibration/v1/edge_gate.yml resolves through the
+    canonical fee-aware edge-gate loader to the documented floors."""
+    from execution_backbone.fee_aware_edge_gate import resolve_fee_aware_edge_thresholds
+
+    thresholds = resolve_fee_aware_edge_thresholds()
+    assert thresholds.edge_multiplier == 2.0
+    assert thresholds.min_absolute_edge_bps == 15.0

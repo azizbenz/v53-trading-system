@@ -244,6 +244,81 @@ def build_edge_gate_calibration_artifact(
     )
 
 
+def build_documented_floor_edge_gate_artifact(
+    *,
+    signed_by: str,
+    config: EdgeGateCalibrationConfig | None = None,
+    signature_note: str = "",
+    generated_at: datetime | None = None,
+    signed_at: datetime | None = None,
+) -> CalibrationArtifact:
+    """Build a CONSERVATIVE DOCUMENTED-FLOOR edge-gate artifact (pre-calibration).
+
+    When there is not yet enough governed replay evidence to empirically
+    calibrate THR-E01 / THR-E02 (``calibrate_edge_gate_thresholds`` requires
+    ``min_positive_trades`` executed positive trades, which a 0-trade discovery
+    run cannot provide), this publishes the **documented human safety floors**
+    directly so the fee-aware edge gate resolves through the canonical
+    calibration seam instead of failing closed.
+
+    The values are taken from ``EdgeGateCalibrationConfig``
+    (``human_multiplier_floor``, ``human_absolute_floor_bps``) — NOT hand-typed
+    magic numbers. The ``apply_human_minimum_floor`` policy guarantees a later
+    empirical calibration can only TIGHTEN (raise) these floors, never lower
+    them, so shipping the floor first is strictly conservative.
+    """
+
+    calibration = config or EdgeGateCalibrationConfig()
+    floor_note = (
+        "DOCUMENTED CONSERVATIVE FLOOR (pre-calibration). Equals the human safety "
+        "minimum, not an empirical replay calibration. Replace via "
+        "calibrate_edge_gate_thresholds once "
+        f">= {calibration.min_positive_trades} governed positive executed trades "
+        "exist; the human floor remains the hard lower bound."
+    )
+    thresholds = (
+        CalibrationThresholdEntry(
+            threshold_id=calibration.edge_multiplier_threshold_id,
+            value=round(calibration.human_multiplier_floor, 6),
+            description="Minimum multiplier between expected edge and expected cost.",
+            source_module=calibration.source_module,
+            calibration_artifact=calibration.calibration_artifact_path,
+            notes=floor_note,
+        ),
+        CalibrationThresholdEntry(
+            threshold_id=calibration.min_absolute_edge_threshold_id,
+            value=round(calibration.human_absolute_floor_bps, 6),
+            description="Absolute expected-edge floor in bps.",
+            source_module=calibration.source_module,
+            calibration_artifact=calibration.calibration_artifact_path,
+            notes=floor_note,
+        ),
+    )
+    unsigned_artifact = CalibrationArtifact(
+        artifact_id=calibration.artifact_id,
+        version=calibration.calibration_version,
+        produced_by=calibration.produced_by,
+        generated_at=generated_at or datetime.now(timezone.utc),
+        thresholds=thresholds,
+        signature=CalibrationManualSignature(
+            signed_by=signed_by,
+            signed_at=signed_at or datetime.now(timezone.utc),
+            note=(
+                signature_note
+                or "Documented conservative floor (THR-E01/THR-E02); "
+                "pre-calibration fee-aware edge-gate unblock."
+            ),
+        ),
+    )
+    return unsigned_artifact.model_copy(
+        update={
+            "signature": unsigned_artifact.signature.model_copy(
+                update={"payload_hash_sha256": unsigned_artifact.payload_hash_sha256()}
+            )
+        }
+    )
+
+
 def write_edge_gate_calibration_artifact(
     artifact: CalibrationArtifact,
     path: Path | str,
@@ -394,6 +469,7 @@ __all__ = [
     "EdgeGateCalibrationReport",
     "EdgeGateCalibrationValidationError",
     "EdgeGateThresholdCalibration",
+    "build_documented_floor_edge_gate_artifact",
     "build_edge_gate_calibration_artifact",
     "calibrate_edge_gate_thresholds",
     "write_edge_gate_calibration_artifact",

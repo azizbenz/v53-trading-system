@@ -46,6 +46,15 @@ class ShadowExecutionSimulatorConfig(BaseModel, frozen=True):
     parity_policy: ParityTolerancePolicy = Field(default_factory=ParityTolerancePolicy)
     spread_guard_model: ExecutionSpreadGuardModel | None = None
     slippage_model: ExecutionSlippageModel | None = None
+    # Field default stays None to preserve the documented contract "missing config
+    # => explicit local_replay fallback" (test_fee_aware_edge_surface_missing_config
+    # _is_explicit_fallback). The fee-aware edge gate is ENABLED at the production
+    # B2 run level (strategy_ladder_runner builds the simulator config with an
+    # explicit FeeAwareEdgeGateConfig()), so real backtests enforce it (canonical
+    # surface + Carver break-even discipline) while isolated unit tests keep their
+    # gate-free default. It is a real decision-affecting gate (verified: correctly
+    # blocks a sub-floor trade, e.g. 10bps edge < 15bps absolute floor → no real
+    # fill), so it is never silently defaulted on for every consumer.
     fee_aware_edge_gate_config: FeeAwareEdgeGateConfig | None = None
     # Restored 2026-05-27 — backbone parity surface config fields (Codex
     # delivery, accidentally removed by an over-eager checkout earlier in

@@ -1,0 +1,32 @@
+schema_version: calibration.v1
+artifact_id: edge_gate_thresholds
+version: v1
+produced_by: local_ia_lab
+generated_at: '2026-06-02T00:00:00Z'
+thresholds:
+- threshold_id: THR-E01
+  value: 2.0
+  description: Minimum multiplier between expected edge and expected cost.
+  source_module: src/scoring_backbone/fee_aware_edge_gate.py
+  calibration_artifact: config/calibration/v1/edge_gate.yml
+  notes: DOCUMENTED CONSERVATIVE FLOOR (pre-calibration). Equals the human safety
+    minimum, not an empirical replay calibration. Replace via calibrate_edge_gate_thresholds
+    once >= 200 governed positive executed trades exist; the human floor remains the
+    hard lower bound.
+- threshold_id: THR-E02
+  value: 15.0
+  description: Absolute expected-edge floor in bps.
+  source_module: src/scoring_backbone/fee_aware_edge_gate.py
+  calibration_artifact: config/calibration/v1/edge_gate.yml
+  notes: DOCUMENTED CONSERVATIVE FLOOR (pre-calibration). Equals the human safety
+    minimum, not an empirical replay calibration. Replace via calibrate_edge_gate_thresholds
+    once >= 200 governed positive executed trades exist; the human floor remains the
+    hard lower bound.
+signature:
+  mode: human_attestation
+  signed_by: aziz.benz@gmail.com
+  signed_at: '2026-06-02T00:00:00Z'
+  payload_hash_sha256: c24bb6db66672cd650edd0f738c1de556d2c5a386792a5aac31c75c148441ff4
+  note: Documented conservative floor THR-E01=2.0 / THR-E02=15.0 bps; pre-calibration
+    fee-aware edge-gate canonical unblock (Carver/Narang/Taleb-grounded; floor is
+    hard lower bound).

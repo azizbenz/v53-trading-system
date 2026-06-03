@@ -81,6 +81,7 @@ from local_replay_runtime.replay_metrics_collector import (
 )
 from local_replay_runtime.replay_run_manifest import ReplayRunManifest
 from local_replay_runtime.replay_execution_contracts import ShadowExecutionSimulatorConfig
+from execution_backbone.fee_aware_edge_gate import FeeAwareEdgeGateConfig
 from regime_classifier.regime_lite import RegimeLiteThresholds
 from local_replay_runtime.strategy_ladder_b2_label_store_builder import (
     _EXPECTED_EDGE_AUGMENTED_FEATURE_KEYS,
@@ -6687,6 +6688,13 @@ def run_backtest_strategy_ladder(
             build14_upstream_filter_status = "BUILD14_UPSTREAM_FILTER_NOT_DECLARED"
         detailed_simulator_config = ShadowExecutionSimulatorConfig(
             ml_mode=request.ml_mode,
+            # Fee-aware edge gate ENABLED for production B2 backtests (2026-06-02):
+            # documented-floor artifact config/calibration/v1/edge_gate.yml
+            # (THR-E01=2.0/THR-E02=15.0). Real runs enforce fee-aware edge discipline
+            # (block trades whose edge cannot cover fees) → `fee_aware_edge_gate`
+            # surface becomes CANONICAL. Simulator falls back gracefully if the
+            # artifact is missing. Unit tests keep the gate-free default (None).
+            fee_aware_edge_gate_config=FeeAwareEdgeGateConfig(),
             expected_edge_model_status=expected_edge_model_load_status,
             expected_edge_model_artifact_hash=expected_edge_model_load_result.artifact_hash,
             expected_edge_model_feature_hash=expected_edge_model_load_result.feature_hash,

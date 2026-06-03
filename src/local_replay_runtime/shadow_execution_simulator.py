@@ -22,6 +22,7 @@ from execution_backbone.fee_aware_edge_gate import (
     FeeAwareEdgeDecision,
     evaluate_fee_aware_edge,
 )
+from calibration_loader.loader import CalibrationLoaderError
 from execution_backbone.fill_tracker.fill_aggregator import FillAggregator, FillEvent
 from execution_backbone.fill_tracker.fill_reporter import FillReporter
 from execution_backbone.fill_tracker.order_state_tracker import (
@@ -2091,7 +2092,11 @@ def _build_row_execution_profile(
                 expected_cost=expected_cost,
                 config=config.fee_aware_edge_gate_config,
             )
-        except ValueError:
+        except (ValueError, CalibrationLoaderError):
+            # ValueError = bad inputs; CalibrationLoaderError = missing/malformed
+            # calibration artifact. Either way, degrade gracefully to the
+            # local_replay fallback (surface stays non-canonical) instead of
+            # crashing the run. Report-only — never gates the trade.
             fee_edge_decision = None
         if fee_edge_decision is not None and not fee_edge_decision.allowed:
             fee_edge_reason_code = fee_edge_decision.reason_code
