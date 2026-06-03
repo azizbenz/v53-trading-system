@@ -81,6 +81,34 @@ def test_arrow_kyle_parse_matches_jsonl_bit_for_bit(tmp_path: Path) -> None:
     assert got == expected, "Arrow-backed parse diverged from JSONL reference"
 
 
+def test_kyle_parse_heterogeneous_rows_match_reference(tmp_path: Path) -> None:
+    """Edge cases that stress the per-row qty/volume fallback + skip rules: must
+    match the reference parse byte-for-byte (guards the direct-parse Gain-1 path).
+    """
+    rows = [
+        {"timestamp_ms": BASE_MS + 5000, "price": 100.0, "qty": 1.5},          # normal qty
+        {"timestamp_ms": BASE_MS + 1000, "price": 101.0, "volume": 2.0},       # volume, no qty -> use volume
+        {"timestamp_ms": BASE_MS + 2000, "price": 102.0, "qty": 0, "volume": 3.0},  # qty falsy -> volume
+        {"timestamp_ms": BASE_MS + 3000, "price": 103.0, "qty": 0, "volume": 0},     # both 0 -> skipped
+        {"timestamp_ms": BASE_MS + 4000, "price": 0.0, "qty": 5.0},            # price 0 -> skipped
+        {"timestamp_ms": BASE_MS + 6000, "price": 104.0, "qty": 0.7, "trade_id": "X", "is_buyer_maker": True},  # extras
+        {"timestamp_ms": BASE_MS + 500, "price": 105.0, "qty": 0.3},           # earliest -> sort first
+    ]
+    src = tmp_path / "trades.jsonl.gz"
+    _write_jsonl_gz(src, rows)
+    expected = _old_parse(src)
+
+    _load_sorted_trade_points.cache_clear()
+    load_silver_table.cache_clear()
+    got = _load_sorted_trade_points(str(src))
+
+    assert got == expected, f"heterogeneous parse diverged: {got} != {expected}"
+    # explicit invariants: skipped rows gone, sorted, fallback applied
+    assert len(got) == 5  # 7 rows - 2 skipped
+    assert [p[0] for p in got] == sorted(p[0] for p in got)  # sorted by ts
+    assert got[0] == (BASE_MS + 500, 105.0, 0.3)  # earliest first
+
+
 def test_arrow_kyle_parquet_equals_jsonl_gz(tmp_path: Path) -> None:
     """Same trade data written as jsonl.gz AND parquet → identical tuples."""
     rows = _trade_rows(2_000)

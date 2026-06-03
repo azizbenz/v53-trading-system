@@ -37,6 +37,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping, Protocol
 
+# GAIN 1b (2026-06-03) — orjson is a C JSON parser measured ~2.19x faster than
+# stdlib json on the real BTC trade silver (1.65M rows: 19.5s -> 8.9s, byte-
+# identical tuples). It is the A2 gold-build hotspot (parse-bound). Used with a
+# graceful fallback so a stripped environment without orjson stays correct (just
+# slower). Both orjson.JSONDecodeError and json.JSONDecodeError subclass
+# ValueError, so the existing ``except ValueError`` paths cover decode errors.
+try:  # pragma: no cover - import shim
+    import orjson as _orjson
+
+    _fast_json_loads = _orjson.loads
+except ImportError:  # pragma: no cover - fallback when orjson absent
+    _fast_json_loads = json.loads
+
 from data_backbone.microstructure.kyle_lambda import (
     KyleTradePoint,
     compute_kyle_lambda,
@@ -835,38 +848,75 @@ def _load_sorted_trade_points(
     result (real economics preserved). Tests that rewrite a path must call
     ``_load_sorted_trade_points.cache_clear()``.
 
-    Format-agnostic via the Arrow core: jsonl, jsonl.gz, and parquet are all
-    handled by ``load_silver_table``. Callers that also hold a
-    ``load_silver_table`` cache entry benefit from the shared in-RAM table.
+    Format-agnostic: jsonl/jsonl.gz are parsed DIRECTLY to ``(ts, price, vol)``
+    tuples; parquet (columnar) reads its 3 columns via ``load_silver_table``.
+
+    GAIN 1 (2026-06-03 A2 profiling): Kyle needs only 3 numeric columns. Routing
+    jsonl through ``load_silver_table`` (Arrow table + ``_normalize_union_keys`` +
+    ``from_pylist``/``to_pylist`` round-trip) cost ~24s of the ~49s per trade-day
+    parse — and the parse is the A2 hotspot (×3 candidates 5m vs 15m was only +5%
+    wall, i.e. parse-dominated, candidate-count-independent). The direct parse is
+    byte-identical to the reference (test_kyle_arrow_parity) and drops that
+    overhead. ``_normalize_union_keys`` stays for the heterogeneous book path.
     """
-    table = load_silver_table(trade_path_str)
-    if table.num_rows == 0:
-        return ()
-    col_names = table.column_names
-    if "timestamp_ms" not in col_names or "price" not in col_names:
-        return ()
-    if "qty" not in col_names and "volume" not in col_names:
-        return ()
-    ts_list = table.column("timestamp_ms").to_pylist()
-    price_list = table.column("price").to_pylist()
-    qty_list = table.column("qty").to_pylist() if "qty" in col_names else None
-    volume_list = table.column("volume").to_pylist() if "volume" in col_names else None
+    trade_path = Path(trade_path_str)
+    name = trade_path.name.lower()
     rows: list[tuple[int, float, float]] = []
-    for index, (ts_raw, price_raw) in enumerate(zip(ts_list, price_list)):
-        qty_raw = qty_list[index] if qty_list is not None else None
-        # Per-row fallback identical to the old ``row.get("qty") or
-        # row.get("volume")``: a falsy/missing qty defers to volume on THAT row,
-        # not column-wide (a heterogeneous file keeps every measurable trade).
-        vol_raw = qty_raw if qty_raw else (volume_list[index] if volume_list is not None else None)
-        try:
-            ts_ms = int(ts_raw or 0)
-            price = float(price_raw or 0.0)
-            volume = float(vol_raw or 0.0)
-        except (TypeError, ValueError):
-            continue
-        if price <= 0.0 or volume <= 0.0:
-            continue
-        rows.append((ts_ms, price, volume))
+    if name.endswith(".parquet"):
+        table = load_silver_table(trade_path_str)
+        if table.num_rows == 0:
+            return ()
+        col_names = table.column_names
+        if "timestamp_ms" not in col_names or "price" not in col_names:
+            return ()
+        if "qty" not in col_names and "volume" not in col_names:
+            return ()
+        ts_list = table.column("timestamp_ms").to_pylist()
+        price_list = table.column("price").to_pylist()
+        qty_list = table.column("qty").to_pylist() if "qty" in col_names else None
+        volume_list = table.column("volume").to_pylist() if "volume" in col_names else None
+        for index, (ts_raw, price_raw) in enumerate(zip(ts_list, price_list)):
+            qty_raw = qty_list[index] if qty_list is not None else None
+            # Per-row fallback identical to ``row.get("qty") or row.get("volume")``.
+            vol_raw = qty_raw if qty_raw else (volume_list[index] if volume_list is not None else None)
+            try:
+                ts_ms = int(ts_raw or 0)
+                price = float(price_raw or 0.0)
+                volume = float(vol_raw or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if price <= 0.0 or volume <= 0.0:
+                continue
+            rows.append((ts_ms, price, volume))
+    else:
+        # Binary read + orjson (Gain 1b): orjson.loads accepts bytes directly
+        # (fastest path, no str decode). A leading UTF-8 BOM on the first line
+        # is stripped so byte-identical output is preserved vs the utf-8-sig
+        # text reader. Malformed lines are skipped (decode errors subclass
+        # ValueError -> caught below), same contract as before.
+        if name.endswith(".gz"):
+            handle_cm = gzip.open(trade_path, "rb")
+        else:
+            handle_cm = trade_path.open("rb")
+        with handle_cm as handle:
+            first = True
+            for raw_line in handle:
+                if first:
+                    if raw_line[:3] == b"\xef\xbb\xbf":
+                        raw_line = raw_line[3:]
+                    first = False
+                if not raw_line.strip():
+                    continue
+                try:
+                    row = _fast_json_loads(raw_line)
+                    ts_ms = int(row.get("timestamp_ms") or 0)
+                    price = float(row.get("price") or 0.0)
+                    volume = float(row.get("qty") or row.get("volume") or 0.0)
+                except (ValueError, KeyError, TypeError):
+                    continue
+                if price <= 0.0 or volume <= 0.0:
+                    continue
+                rows.append((ts_ms, price, volume))
     rows.sort(key=lambda item: item[0])
     return tuple(rows)
 
