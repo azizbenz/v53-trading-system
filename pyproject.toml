@@ -8,6 +8,15 @@ dependencies = [
     "pydantic>=2.0,<3.0",
     "pyyaml>=6.0",
     "websocket-client>=1.8,<2.0",
+    "httpx>=0.27",
+    # Columnar in-RAM window/feature core (load_silver_table, parquet, ipc) —
+    # imported at module load in local_replay_runtime.strategy_ladder_arrow_window;
+    # the system does NOT run without it (was previously undeclared).
+    "pyarrow>=14.0",
+    # Fast C JSON parser — ~2.2x faster trade-silver parse (A2 gold hotspot).
+    # Used with a graceful stdlib-json fallback, but declared so production runs
+    # get the speedup deterministically.
+    "orjson>=3.9",
 ]
 
 [project.optional-dependencies]
