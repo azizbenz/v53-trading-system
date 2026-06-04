@@ -10,6 +10,8 @@ from types import SimpleNamespace
 from uuid import uuid4
 import zipfile
 
+import pytest
+
 from local_replay_runtime.bybit_historical_metadata import (
     fetch_bybit_spot_metadata_cache,
 )
@@ -2619,6 +2621,81 @@ def _write_btcusdt_trades_sample(raw_root: Path) -> None:
             "2,1735689660000,94010,0.02,sell",
         ],
     )
+
+
+def _write_pair_trades_and_kline(raw_root: Path, pair: str, *, minutes: int) -> None:
+    """Minimal trades + single-timeframe kline CSVs for an arbitrary pair."""
+
+    _write_csv(
+        raw_root / "trades" / f"{pair}_2025-01-01.csv",
+        "id,timestamp,price,volume,side",
+        [
+            "1,1735689600000,94000,0.01,buy",
+            "2,1735689660000,94010,0.02,sell",
+        ],
+    )
+    _write_csv(
+        raw_root / "klines" / f"{pair}_{minutes}_2025-01-01.csv",
+        "startTime,open,high,low,close,volume,turnover",
+        [
+            "1735689600000,94000,94100,93900,94010,10,940100",
+            f"{1735689600000 + minutes * 60_000},94010,94110,93910,94020,11,1034220",
+        ],
+    )
+
+
+def test_canonical_bundle_covers_all_pairs_not_just_primary_2026_06_04(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The canonical bundle must cover EVERY scope pair, not only the first one.
+
+    Latent defect (2026-06-04): `primary_symbol = next(iter(...))` collapsed the
+    canonical bundle (raw_file_manifest + gold-microstructure manifest +
+    expected_edge) to the alphabetically-first pair (BNB), silently omitting BTC
+    even though silver and the multi-pair gold_feature_manifest carried both.
+    """
+    scratch = _scratch_dir("canonical_bundle_multi_pair")
+    shutil.rmtree(scratch, ignore_errors=True)
+    try:
+        raw_root = scratch / "raw"
+        for pair in ("BNBUSDT", "BTCUSDT"):
+            _write_pair_trades_and_kline(raw_root, pair, minutes=5)
+        _stub_economic_provenance(monkeypatch)
+
+        report_root = scratch / "factory"
+        run_strategy_ladder_data_factory(
+            StrategyLadderDataFactoryRequest(
+                run_id="df-multi-pair-bundle",
+                input_root=report_root,
+                raw_roots=(raw_root,),
+                silver_root=report_root / "silver",
+                gold_root=report_root / "gold",
+                pairs=("BNBUSDT", "BTCUSDT"),
+                data_types=("trades", "klines"),
+                timeframes=("5m",),
+                start="2025-01-01",
+                end="2025-01-01",
+                use_measured_economic_provenance=True,
+                small_scope=True,
+            )
+        )
+
+        # A2-1 fix — raw_file_manifest must enumerate BOTH pairs (was BNB-only).
+        raw_rows = _read_jsonl_any(report_root / "raw_file_manifest.jsonl.gz")
+        raw_symbols = {str(row.get("symbol")) for row in raw_rows}
+        assert {"BNBUSDT", "BTCUSDT"} <= raw_symbols, raw_symbols
+
+        # A2-3 fix — canonical gold-microstructure manifest scope covers both
+        # (reconciles with the already-multi-pair gold_feature_manifest.json).
+        gold_micro = json.loads(
+            (report_root / "gold_microstructure_feature_manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        symbol_scope = set(gold_micro.get("symbol_scope") or ())
+        assert {"BNBUSDT", "BTCUSDT"} <= symbol_scope, symbol_scope
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
 
 
 def test_gold_materializes_every_supported_timeframe_present_in_silver(monkeypatch) -> None:

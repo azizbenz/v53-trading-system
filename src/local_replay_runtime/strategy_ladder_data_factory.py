@@ -116,11 +116,15 @@ _KLINE_FIELDS = {"starttime", "open", "high", "low", "close", "volume", "turnove
 _REPLAY_CONTEXT_LOOKBACK_MS = 60 * 60 * 1000
 _CRITICAL_OHLCV_TIMEFRAME_INTERVALS_MS: dict[str, int] = {
     "1m": 60_000,
+    "5m": 5 * 60_000,
     "10m": 10 * 60_000,
+    "15m": 15 * 60_000,
 }
 _CRITICAL_OHLCV_EXPECTED_ROWS_PER_DAY: dict[str, int] = {
     "1m": 1_440,
+    "5m": 288,
     "10m": 144,
+    "15m": 96,
 }
 # Patch D1+D2 (2026-05-21) — severity classifier OHLCV temporal completeness.
 # Source raw L: dumps Bybit sont systématiquement tronqués à 1000 rows max
@@ -130,9 +134,18 @@ _CRITICAL_OHLCV_EXPECTED_ROWS_PER_DAY: dict[str, int] = {
 # tout en flaggant pour audit. La promotion-grade exige le seuil strict 99%.
 # missing_candle_count / duplicate_candle_count > 0 restent fail-close
 # (gaps internes ou dupli ≠ truncation propre du suffix).
+# 2026-06-04 — extension 5m/15m. Avant ce patch le critical set ne connaissait
+# que {1m,10m} : tout run en TF ∉ {1m,10m} (ex. le run canonical 5m/15m)
+# retournait un NOT_PROVEN STRUCTUREL (entries simplement ignorées, jamais
+# évaluées). 5m=288/jour et 15m=96/jour sont SOUS le cap Bybit de 1000 rows →
+# jamais tronqués → un jour plein = rows exactes ; ils restent néanmoins
+# évalués par le même severity classifier (boundary partiel + gaps internes).
+# min-assessment ≈ expected/14.4 (le ratio exact des paliers 1m/10m existants).
 _OHLCV_DAILY_COMPLETENESS_MIN_ASSESSMENT_ROWS: dict[str, int] = {
     "1m": 100,
+    "5m": 20,
     "10m": 10,
+    "15m": 7,
 }
 _A2_ENGINE_NATIVE_BRIDGE_FEATURES = frozenset(
     {
@@ -5304,8 +5317,8 @@ def run_strategy_ladder_data_factory(
     )
     _write_report(report_root / "gold_feature_manifest.json", gold_manifest)
     _write_report(report_root / "compression_report.json", compression)
-    primary_symbol = next(
-        iter(
+    canonical_pairs = tuple(
+        dict.fromkeys(
             pair_report.available_pairs
             or pair_report.discovered_pairs
             or request.pairs
@@ -5313,6 +5326,14 @@ def run_strategy_ladder_data_factory(
             or ("UNKNOWN",)
         )
     )
+    # 2026-06-04 — canonical bundle multi-paire. Avant : `primary_symbol =
+    # next(iter(...))` ne gardait que la 1re paire (tri alpha → BNB), déposant
+    # raw_file_manifest / gold-microstructure / expected_edge en MONO-PAIRE
+    # alors que silver + gold_feature_manifest sont multi-paires → BTC
+    # silencieusement omis. On couvre désormais toute la portée. bronze +
+    # silver-sync restent volontairement mono-symbole (résumés operator,
+    # self-filtrants par `symbol=`) → primary_symbol conservé pour eux.
+    primary_symbol = canonical_pairs[0]
     canonical_raw_roots = (
         tuple(request.raw_roots)
         + ((request.historical_metadata_root,) if request.historical_metadata_root is not None else ())
@@ -5329,12 +5350,16 @@ def run_strategy_ladder_data_factory(
             )
         )
     )
-    canonical_raw_manifests = scan_bybit_raw_root(
-        raw_roots=canonical_raw_roots,
-        symbol=primary_symbol,
-        start=normalized_start,
-        end=normalized_end,
-        source_types=canonical_source_types,
+    canonical_raw_manifests = tuple(
+        manifest
+        for pair in canonical_pairs
+        for manifest in scan_bybit_raw_root(
+            raw_roots=canonical_raw_roots,
+            symbol=pair,
+            start=normalized_start,
+            end=normalized_end,
+            source_types=canonical_source_types,
+        )
     )
     write_raw_market_file_manifest_bundle(
         report_root / "raw_file_manifest.jsonl.gz",
@@ -5358,7 +5383,7 @@ def run_strategy_ladder_data_factory(
     )
     canonical_gold_manifest = build_gold_microstructure_feature_manifest(
         gold_root=request.gold_root,
-        pairs=(primary_symbol,),
+        pairs=canonical_pairs,
         timeframes=request.timeframes,
         start=normalized_start,
         end=normalized_end,
@@ -5368,7 +5393,7 @@ def run_strategy_ladder_data_factory(
         gold_root=request.gold_root,
         output_dir=report_root,
         dataset_id=f"{request.run_id}.expected_edge_features",
-        pairs=(primary_symbol,),
+        pairs=canonical_pairs,
         timeframes=request.timeframes,
         start=normalized_start,
         end=normalized_end,
@@ -5379,7 +5404,7 @@ def run_strategy_ladder_data_factory(
         gold_manifest=canonical_gold_manifest,
     )
     backtest_manifest = build_backtest_replay_dataset_manifest(
-        pair_scope=canonical_gold_manifest.symbol_scope or (primary_symbol,),
+        pair_scope=canonical_gold_manifest.symbol_scope or canonical_pairs,
         timeframe_scope=canonical_gold_manifest.timeframe_scope or request.timeframes,
         silver_index=silver_index,
         gold_manifest=canonical_gold_manifest,
