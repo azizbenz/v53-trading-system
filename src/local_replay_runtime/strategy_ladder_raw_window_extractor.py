@@ -4,18 +4,20 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import csv
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import heapq
 import os
+import re
 from time import perf_counter, process_time
 import gzip
 import json
 from pathlib import Path
+from typing import TextIO
 
 from interface_contracts.atomic_io import atomic_write_json
 from local_replay_runtime.strategy_ladder_arrow_window import (
     ROW_INDEX_COLUMN,
     load_silver_table,
-    read_raw_source_lines,
     slice_window_with_anchor,
     slice_window,
 )
@@ -26,6 +28,9 @@ from local_replay_runtime.strategy_ladder_models import (
     StrategyLadderCandidateEvent,
     StrategyLadderRawWindowManifest,
     deterministic_payload_hash,
+)
+from local_replay_runtime.strategy_ladder_resource_guard import (
+    assert_ram_below_hard_limit,
 )
 from local_replay_runtime.strategy_ladder_window_cache import (
     StrategyLadderWindowCache,
@@ -41,6 +46,8 @@ _RAW_WINDOW_PROGRESS_EVERY = 50
 _ENGINE_C_STRUCTURAL_LOOKBACK_MS = 60 * 60 * 1000
 _ECONOMIC_EDGE_OHLCV_LOOKBACK_MS = 60 * 60 * 1000
 _REPLAY_OUTCOME_OHLCV_POST_BARS = 10
+
+_TIMESTAMP_MS_RE = re.compile(r'"timestamp_ms"\s*:\s*(?:"(-?\d+)"|(-?\d+))')
 
 
 def _silver_passthrough_enabled() -> bool:
@@ -84,6 +91,15 @@ class _WindowSliceExecutionStats:
     files_scanned: int
     wall_time_s: float
     cpu_time_s: float
+
+
+@dataclass
+class _StreamingSliceState:
+    request: _WindowSliceRequest
+    anchor_line: str | None = None
+    anchor_ts_ms: int | None = None
+    first_window_ts_ms: int | None = None
+    window_lines: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -239,31 +255,201 @@ def _row_timestamp_ms(row: dict[str, object]) -> int | None:
         return None
 
 
+def _open_text_output(path: Path, *, append: bool) -> TextIO:
+    mode = "at" if append else "wt"
+    if _is_gzip_path(path):
+        return gzip.open(path, mode, encoding="utf-8", newline="\n")
+    return path.open("a" if append else "w", encoding="utf-8", newline="\n")
+
+
+def _extract_jsonl_timestamp_ms(line: str) -> int | None:
+    match = _TIMESTAMP_MS_RE.search(line)
+    if match is None:
+        return None
+    raw_value = match.group(1) or match.group(2)
+    try:
+        return int(raw_value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _append_lines_to_target(target_path: Path, lines: list[str]) -> int:
+    if not lines:
+        return 0
+    with _open_text_output(target_path, append=True) as handle:
+        for line in lines:
+            handle.write(line)
+            handle.write("\n")
+    return len(lines)
+
+
+def _write_streaming_slice_states(
+    states: list[_StreamingSliceState],
+) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for state in states:
+        request = state.request
+        lines: list[str] = []
+        if (
+            request.include_anchor_before_start
+            and state.anchor_line is not None
+            and state.first_window_ts_ms != request.window_start_ms
+        ):
+            lines.append(state.anchor_line)
+        lines.extend(state.window_lines)
+        written = _append_lines_to_target(request.target_path.resolve(), lines)
+        if written:
+            key = str(request.target_path.resolve())
+            counts[key] = counts.get(key, 0) + written
+    return counts
+
+
+def _stream_jsonl_window_slices_exact(
+    source_path: Path,
+    source_requests: list[_WindowSliceRequest],
+) -> tuple[dict[str, int], int]:
+    states = [_StreamingSliceState(request=request) for request in source_requests]
+    parsed_row_count = 0
+    with _open_text_input(source_path) as handle:
+        for line in handle:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            timestamp_ms = _extract_jsonl_timestamp_ms(stripped)
+            if timestamp_ms is None:
+                continue
+            parsed_row_count += 1
+            for state in states:
+                request = state.request
+                if (
+                    request.include_anchor_before_start
+                    and timestamp_ms < request.window_start_ms
+                    and (
+                        state.anchor_ts_ms is None
+                        or timestamp_ms >= state.anchor_ts_ms
+                    )
+                ):
+                    state.anchor_ts_ms = timestamp_ms
+                    state.anchor_line = stripped
+                if request.window_start_ms <= timestamp_ms <= request.window_end_ms:
+                    if state.first_window_ts_ms is None:
+                        state.first_window_ts_ms = timestamp_ms
+                    state.window_lines.append(stripped)
+
+    return _write_streaming_slice_states(states), parsed_row_count
+
+
+def _stream_jsonl_window_slices(
+    source_path: Path,
+    source_requests: list[_WindowSliceRequest],
+) -> tuple[dict[str, int], int]:
+    states = [_StreamingSliceState(request=request) for request in source_requests]
+    starts = sorted(
+        (state.request.window_start_ms, index)
+        for index, state in enumerate(states)
+    )
+    start_cursor = 0
+    active_indices: set[int] = set()
+    end_heap: list[tuple[int, int]] = []
+    parsed_row_count = 0
+    previous_ts_ms: int | None = None
+    last_line_seen: str | None = None
+    last_line_before_current_ts: str | None = None
+
+    with _open_text_input(source_path) as handle:
+        for line in handle:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            timestamp_ms = _extract_jsonl_timestamp_ms(stripped)
+            if timestamp_ms is None:
+                continue
+            parsed_row_count += 1
+            if previous_ts_ms is not None:
+                if timestamp_ms < previous_ts_ms:
+                    return _stream_jsonl_window_slices_exact(
+                        source_path,
+                        source_requests,
+                    )
+                if timestamp_ms > previous_ts_ms:
+                    last_line_before_current_ts = last_line_seen
+
+            while start_cursor < len(starts) and starts[start_cursor][0] <= timestamp_ms:
+                _, state_index = starts[start_cursor]
+                state = states[state_index]
+                if (
+                    state.request.include_anchor_before_start
+                    and last_line_before_current_ts is not None
+                ):
+                    state.anchor_ts_ms = previous_ts_ms
+                    state.anchor_line = last_line_before_current_ts
+                active_indices.add(state_index)
+                heapq.heappush(end_heap, (state.request.window_end_ms, state_index))
+                start_cursor += 1
+
+            while end_heap and end_heap[0][0] < timestamp_ms:
+                _, state_index = heapq.heappop(end_heap)
+                active_indices.discard(state_index)
+
+            for state_index in active_indices:
+                state = states[state_index]
+                if state.first_window_ts_ms is None:
+                    state.first_window_ts_ms = timestamp_ms
+                state.window_lines.append(stripped)
+
+            last_line_seen = stripped
+            previous_ts_ms = timestamp_ms
+
+    if last_line_seen is not None:
+        while start_cursor < len(starts):
+            _, state_index = starts[start_cursor]
+            state = states[state_index]
+            if state.request.include_anchor_before_start:
+                state.anchor_ts_ms = previous_ts_ms
+                state.anchor_line = last_line_seen
+            start_cursor += 1
+
+    return _write_streaming_slice_states(states), parsed_row_count
+
+
+def _write_parquet_window_slices(
+    source_path: Path,
+    source_requests: list[_WindowSliceRequest],
+) -> tuple[dict[str, int], int]:
+    table = load_silver_table(str(source_path))
+    counts: dict[str, int] = {}
+    for request in source_requests:
+        if request.include_anchor_before_start:
+            sliced = slice_window_with_anchor(
+                table, request.window_start_ms, request.window_end_ms
+            )
+        else:
+            sliced = slice_window(table, request.window_start_ms, request.window_end_ms)
+        if sliced.num_rows == 0:
+            continue
+        projected = sliced.select(
+            [name for name in sliced.column_names if name != ROW_INDEX_COLUMN]
+        )
+        lines = [json.dumps(row, ensure_ascii=False) for row in projected.to_pylist()]
+        written = _append_lines_to_target(request.target_path.resolve(), lines)
+        if written:
+            key = str(request.target_path.resolve())
+            counts[key] = counts.get(key, 0) + written
+    return counts, table.num_rows
+
+
 def _write_window_slices(
     requests: tuple[_WindowSliceRequest, ...],
 ) -> _WindowSliceExecutionStats:
-    """Extract candidate windows via the Arrow core and write byte-exact slices.
+    """Extract candidate windows with bounded-memory source streaming.
 
-    Each silver source file is parsed ONCE into an Arrow table (LRU-4 across
-    runs) and each window is selected with a vectorized predicate
-    (``slice_window`` / ``slice_window_with_anchor``) instead of a per-row Python
-    loop. To guarantee bit-for-bit parity with the source, selected rows are
-    written from their VERBATIM source lines (mapped via the internal
-    ``__row_idx__`` column): the parsed dicts are never re-serialized, so no
-    field is dropped and no number is reformatted. Parquet sources (no original
-    text) fall back to a JSON dump of the typed columns.
-
-    Output compression follows the target suffix: ``.gz`` targets are written
-    gzip-compressed (the bytes inside the gzip member are the identical verbatim
-    JSONL — ~7-40x smaller on disk, readers are already gz-aware), any other
-    suffix is written as plain text. Compression NEVER changes which rows or
-    which bytes are emitted, only how they are stored.
-
-    The anchor logic (last row strictly before window_start_ms for
-    include_anchor_before_start requests) is handled by
-    ``slice_window_with_anchor``. Multi-source targets (e.g. multi-day delta
-    files merged into one) accumulate their lines in source/iteration order,
-    matching the old streaming writer."""
+    JSONL/JSONL.GZ sources are scanned once per source file and only matching
+    verbatim source lines are retained for each requested window. Anchor requests
+    prepend the nearest row strictly before ``window_start_ms`` unless the first
+    in-window row starts exactly at the window boundary. Parquet sources have no
+    verbatim text, so they retain the Arrow fallback and emit JSON rows from the
+    typed columns.
+    """
     started_wall = perf_counter()
     started_cpu = process_time()
     if not requests:
@@ -278,57 +464,34 @@ def _write_window_slices(
     for request in requests:
         grouped.setdefault(request.source_path.resolve(), []).append(request)
 
-    # Initialise every requested target up front so a missing/empty source still
-    # produces an (empty) slice file — same contract as the old streaming writer.
-    target_lines: dict[Path, list[str]] = {}
+    counts: dict[str, int] = {}
+    initialized_targets: set[Path] = set()
     for request in requests:
-        request.target_path.parent.mkdir(parents=True, exist_ok=True)
-        target_lines.setdefault(request.target_path.resolve(), [])
+        target_path = request.target_path.resolve()
+        if target_path in initialized_targets:
+            continue
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        with _open_text_output(target_path, append=False):
+            pass
+        counts[str(target_path)] = 0
+        initialized_targets.add(target_path)
 
     parsed_row_count = 0
     for source_path, source_requests in grouped.items():
+        assert_ram_below_hard_limit(phase_name="raw_window_extraction")
         if not source_path.exists():
             continue
-        table = load_silver_table(str(source_path))
-        parsed_row_count += table.num_rows
-        raw_lines = read_raw_source_lines(str(source_path))
-        for request in source_requests:
-            if request.include_anchor_before_start:
-                sliced = slice_window_with_anchor(
-                    table, request.window_start_ms, request.window_end_ms
-                )
-            else:
-                sliced = slice_window(
-                    table, request.window_start_ms, request.window_end_ms
-                )
-            if sliced.num_rows == 0:
-                continue
-            target_resolved = request.target_path.resolve()
-            indices = sliced.column(ROW_INDEX_COLUMN).to_pylist()
-            if raw_lines is not None:
-                target_lines[target_resolved].extend(
-                    raw_lines[index] for index in indices
-                )
-            else:
-                projected = sliced.select(
-                    [name for name in sliced.column_names if name != ROW_INDEX_COLUMN]
-                )
-                target_lines[target_resolved].extend(
-                    json.dumps(row, ensure_ascii=False) for row in projected.to_pylist()
-                )
-
-    counts: dict[str, int] = {}
-    for target_path, lines in target_lines.items():
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        if target_path.name.lower().endswith(".gz"):
-            handle_cm = gzip.open(target_path, "wt", encoding="utf-8", newline="\n")
+        if source_path.name.lower().endswith(".parquet"):
+            source_counts, source_rows = _write_parquet_window_slices(
+                source_path, source_requests
+            )
         else:
-            handle_cm = target_path.open("w", encoding="utf-8", newline="\n")
-        with handle_cm as handle:
-            for line in lines:
-                handle.write(line)
-                handle.write("\n")
-        counts[str(target_path)] = len(lines)
+            source_counts, source_rows = _stream_jsonl_window_slices(
+                source_path, source_requests
+            )
+        parsed_row_count += source_rows
+        for target_key, count in source_counts.items():
+            counts[target_key] = counts.get(target_key, 0) + count
 
     return _WindowSliceExecutionStats(
         slice_counts=counts,
@@ -1084,6 +1247,8 @@ def _resolve_from_silver_index(
     slice_requests = _dedupe_slice_requests(
         tuple((*pending_slices, *cached_slice_requests))
     )
+    # RAM bound (run 53402a08 B2 OOM): stream source JSONL/JSONL.GZ files
+    # instead of materializing whole day-files as Arrow tables.
     slice_stats = _write_window_slices(slice_requests)
     slice_counts = dict(slice_stats.slice_counts)
     slice_counts.update(window_cache.materialize_cache_hits(cache_plan))

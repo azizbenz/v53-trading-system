@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import sys
+from types import TracebackType
 from uuid import uuid4
 
 
@@ -17,9 +18,99 @@ if str(SRC_ROOT) not in sys.path:
 
 from local_replay_runtime.strategy_ladder_runner import run_backtest_strategy_ladder
 from local_replay_runtime.strategy_ladder_models import StrategyLadderRequest
+from local_replay_runtime.strategy_ladder_resource_guard import (
+    StrategyLadderResourceGuardError,
+)
 
 
 _COCKPIT_JOB_TERMINAL_SENTINEL_ENV = "COCKPIT_JOB_TERMINAL_SENTINEL_PATH"
+
+
+class _RunDirectoryLockError(RuntimeError):
+    pass
+
+
+class _RunDirectoryLock:
+    def __init__(self, lock_path: Path, *, run_id: str) -> None:
+        self._lock_path = lock_path
+        self._run_id = run_id
+        self._handle = None
+
+    def __enter__(self) -> "_RunDirectoryLock":
+        self._lock_path.parent.mkdir(parents=True, exist_ok=True)
+        self._handle = self._lock_path.open("a+", encoding="utf-8")
+        self._handle.seek(0)
+        try:
+            self._lock_file()
+        except OSError as exc:
+            try:
+                self._handle.seek(0)
+                existing = self._handle.read().strip()
+            except OSError:
+                existing = "LOCK_METADATA_UNAVAILABLE"
+            self._handle.close()
+            self._handle = None
+            raise _RunDirectoryLockError(
+                "another Strategy Ladder run is already writing this run_dir; "
+                f"run_id={self._run_id}; lock={self._lock_path}; holder={existing}"
+            ) from exc
+        self._handle.seek(0)
+        self._handle.truncate()
+        self._handle.write(
+            json.dumps(
+                {
+                    "schema_version": "v1",
+                    "status": "STRATEGY_LADDER_RUN_LOCK_HELD",
+                    "run_id": self._run_id,
+                    "pid": os.getpid(),
+                },
+                indent=2,
+            )
+        )
+        self._handle.flush()
+        os.fsync(self._handle.fileno())
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        if self._handle is None:
+            return
+        try:
+            self._handle.seek(0)
+            self._unlock_file()
+        finally:
+            self._handle.close()
+            self._handle = None
+            try:
+                self._lock_path.unlink()
+            except OSError:
+                pass
+
+    def _lock_file(self) -> None:
+        assert self._handle is not None
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(self._handle.fileno(), msvcrt.LK_NBLCK, 1)
+            return
+        import fcntl
+
+        fcntl.flock(self._handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def _unlock_file(self) -> None:
+        assert self._handle is not None
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(self._handle.fileno(), msvcrt.LK_UNLCK, 1)
+            return
+        import fcntl
+
+        fcntl.flock(self._handle.fileno(), fcntl.LOCK_UN)
 
 
 def _csv_tuple(raw_value: str) -> tuple[str, ...]:
@@ -234,7 +325,33 @@ def main(argv: list[str] | None = None) -> int:
             else None
         ),
     )
-    result = run_backtest_strategy_ladder(request)
+    os.environ.setdefault("V53_RAM_GUARD_ENABLED", "1")
+    os.environ.setdefault("V53_MAX_RAM_FRACTION", "0.75")
+    os.environ.setdefault("V53_HARD_RAM_FRACTION", "0.80")
+    os.environ.setdefault("V53_RAM_GUARD_MAX_WAIT_SECONDS", "1800")
+    os.environ.setdefault("V53_RAM_GUARD_POLL_SECONDS", "5")
+    os.environ.setdefault("V53_RAM_GUARD_WORKER_RESERVE_MB", "6144")
+    try:
+        with _RunDirectoryLock(request.run_dir / ".strategy_ladder_run.lock", run_id=run_id):
+            result = run_backtest_strategy_ladder(request)
+    except _RunDirectoryLockError as exc:
+        payload = {
+            "run_id": run_id,
+            "run_manifest_path": str((request.run_dir / "run_manifest.json").resolve()),
+            "final_status": "STRATEGY_LADDER_BLOCKED_BY_RUN_LOCK",
+            "error": str(exc),
+        }
+        print(json.dumps(payload, indent=2), file=sys.stderr)
+        return 2
+    except StrategyLadderResourceGuardError as exc:
+        payload = {
+            "run_id": run_id,
+            "run_manifest_path": str((request.run_dir / "run_manifest.json").resolve()),
+            "final_status": "STRATEGY_LADDER_BLOCKED_BY_RESOURCE_GUARD",
+            "error": str(exc),
+        }
+        print(json.dumps(payload, indent=2), file=sys.stderr)
+        return 3
     payload = {
         "run_id": result.run_manifest.run_id,
         "run_manifest_path": str((request.run_dir / "run_manifest.json").resolve()),

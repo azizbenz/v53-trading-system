@@ -21,8 +21,13 @@ The worker callable and every task must be picklable (Windows uses ``spawn``).
 from __future__ import annotations
 
 import os
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from typing import Callable, Sequence, TypeVar
+
+from local_replay_runtime.strategy_ladder_resource_guard import (
+    assert_ram_below_hard_limit,
+    cap_workers_for_ram,
+)
 
 T = TypeVar("T")
 R = TypeVar("R")
@@ -53,9 +58,11 @@ def resolve_worker_count(requested: int | str | None = None) -> int:
         return 1
     token = str(val).strip().lower()
     if token in _AUTO_TOKENS:
-        return max(1, _detected_cpus())
+        workers = max(1, _detected_cpus())
+        return cap_workers_for_ram(workers, phase_name="resolve_worker_count")
     if token.isdigit() and int(token) > 0:
-        return max(1, min(int(token), _detected_cpus()))
+        workers = max(1, min(int(token), _detected_cpus()))
+        return cap_workers_for_ram(workers, phase_name="resolve_worker_count")
     return 1
 
 
@@ -78,6 +85,7 @@ def ordered_parallel_map(
     if n == 0:
         return []
     if max_workers <= 1:
+        assert_ram_below_hard_limit(phase_name="ordered_parallel_map.serial")
         return [worker_fn(task) for task in tasks]
 
     indexed: list[tuple[int, T]] = list(enumerate(tasks))
@@ -87,10 +95,70 @@ def ordered_parallel_map(
     if chunksize is None:
         chunksize = max(1, n // (max_workers * 4))
 
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        ordered_results = list(
-            executor.map(worker_fn, ordered_tasks, chunksize=chunksize)
-        )
+    pool_workers = cap_workers_for_ram(
+        max_workers,
+        phase_name="ordered_parallel_map.parallel",
+    )
+    ordered_results: list[R] = [None] * n  # type: ignore[list-item]
+    if pool_workers <= 1:
+        ordered_results = [worker_fn(task) for task in ordered_tasks]
+    else:
+        executor = ProcessPoolExecutor(max_workers=pool_workers)
+        try:
+            pending = {}
+            next_task_index = 0
+            active_cap = cap_workers_for_ram(
+                pool_workers,
+                phase_name="ordered_parallel_map.submit",
+            )
+            while next_task_index < min(active_cap, n):
+                future = executor.submit(worker_fn, ordered_tasks[next_task_index])
+                pending[future] = next_task_index
+                next_task_index += 1
+            while pending:
+                assert_ram_below_hard_limit(phase_name="ordered_parallel_map.parallel")
+                done, _not_done = wait(
+                    pending,
+                    timeout=2.0,
+                    return_when=FIRST_COMPLETED,
+                )
+                if not done:
+                    continue
+                for future in done:
+                    result_index = pending.pop(future)
+                    ordered_results[result_index] = future.result()
+                    active_cap = cap_workers_for_ram(
+                        pool_workers,
+                        phase_name="ordered_parallel_map.submit",
+                    )
+                    if next_task_index < n and len(pending) < active_cap:
+                        new_future = executor.submit(
+                            worker_fn,
+                            ordered_tasks[next_task_index],
+                        )
+                        pending[new_future] = next_task_index
+                        next_task_index += 1
+                while next_task_index < n:
+                    active_cap = cap_workers_for_ram(
+                        pool_workers,
+                        phase_name="ordered_parallel_map.submit",
+                    )
+                    if len(pending) >= active_cap:
+                        break
+                    new_future = executor.submit(
+                        worker_fn,
+                        ordered_tasks[next_task_index],
+                    )
+                    pending[new_future] = next_task_index
+                    next_task_index += 1
+        except BaseException:
+            if hasattr(executor, "terminate_workers"):
+                executor.terminate_workers()
+            else:
+                executor.shutdown(wait=False, cancel_futures=True)
+            raise
+        else:
+            executor.shutdown()
 
     results: list[R] = [None] * n  # type: ignore[list-item]
     for (original_index, _task), result in zip(indexed, ordered_results):

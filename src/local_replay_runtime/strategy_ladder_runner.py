@@ -14,6 +14,7 @@ import shutil
 import tempfile
 from pathlib import Path
 from statistics import NormalDist, median
+from time import perf_counter, process_time
 
 from calibration_methods.dsr import (
     DeflatedSharpeRatioError,
@@ -114,6 +115,9 @@ from local_replay_runtime.strategy_ladder_detailed_replay import (
 from local_replay_runtime.strategy_ladder_parallel import (
     ordered_parallel_map,
     resolve_worker_count,
+)
+from local_replay_runtime.strategy_ladder_resource_guard import (
+    assert_ram_below_hard_limit,
 )
 from local_replay_runtime.strategy_ladder_economic_provenance import (
     EconomicProvenance,
@@ -3146,6 +3150,8 @@ def _materialize_engine_native_candidates(
         ) = _parallel
         _serial_events = ()
     for processed_count, candidate in enumerate(_serial_events, start=1):
+        if processed_count == 1 or processed_count % _ENGINE_NATIVE_PROGRESS_EVERY == 0:
+            assert_ram_below_hard_limit(phase_name="engine_native_materialization")
         window = window_by_candidate.get(candidate.candidate_id)
         economic_provenance = _economic_provenance_for_candidate(
             candidate,
@@ -6383,6 +6389,8 @@ def run_backtest_strategy_ladder(
     )
 
     if request.engine_native_mode and not request.dry_run and candidate_events:
+        engine_native_started_wall = perf_counter()
+        engine_native_started_cpu = process_time()
         native_materialization = _materialize_engine_native_candidates(
             candidate_events=candidate_events,
             raw_window_manifests=raw_window_manifests,
@@ -6393,6 +6401,28 @@ def run_backtest_strategy_ladder(
             silver_exchange=silver_exchange_resolved,
             silver_market_type=silver_market_type_resolved,
             ml_mode=request.ml_mode,
+        )
+        performance_profiler.record_phase(
+            "engine_native_materialization",
+            status=native_materialization.engine_native_status,
+            wall_time_s=perf_counter() - engine_native_started_wall,
+            cpu_time_s=process_time() - engine_native_started_cpu,
+            candidate_count=len(candidate_events),
+            replay_record_count=(
+                native_materialization.engine_native_records_built
+            ),
+            counters={
+                "workers_requested": resolve_worker_count(),
+                "engine_native_runner_invocation_count": (
+                    native_materialization.engine_native_runner_invocation_count
+                ),
+                "expected_edge_proxy_count": (
+                    native_materialization.expected_edge_proxy_count
+                ),
+                "expected_edge_governed_count": (
+                    native_materialization.expected_edge_governed_count
+                ),
+            },
         )
         materialized_candidate_events = native_materialization.candidate_events
         candidate_discovery_status = native_materialization.candidate_discovery_status
@@ -6773,6 +6803,9 @@ def run_backtest_strategy_ladder(
             ),
             cache_misses_ohlcv=(
                 detailed_result.performance_metrics.cache_misses_ohlcv
+            ),
+            replay_workers_used=(
+                detailed_result.performance_metrics.replay_workers_used
             ),
         )
     progress_manifest = _build_progress_manifest(

@@ -1,4 +1,4 @@
-"""End-to-end byte-parity gate for the Arrow-backed ``_write_window_slices``.
+"""End-to-end byte-parity gate for the streamed ``_write_window_slices``.
 
 The Opus audit (2026-06-01) found the building blocks (slice_window, anchor,
 resolve) were parity-tested but the INTEGRATED writer — the function that
@@ -17,7 +17,10 @@ import gzip
 import json
 from pathlib import Path
 
+import pytest
+
 from local_replay_runtime.strategy_ladder_arrow_window import load_silver_table
+import local_replay_runtime.strategy_ladder_raw_window_extractor as extractor
 from local_replay_runtime.strategy_ladder_raw_window_extractor import (
     _WindowSliceRequest,
     _write_window_slices,
@@ -37,7 +40,12 @@ def _write_lines(path: Path, lines: list[str], *, gz: bool = False) -> None:
 
 
 def _read_lines(path: Path) -> list[str]:
-    return [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if path.name.lower().endswith(".gz"):
+        with gzip.open(path, "rt", encoding="utf-8") as handle:
+            text = handle.read()
+    else:
+        text = path.read_text(encoding="utf-8")
+    return [line for line in text.splitlines() if line.strip()]
 
 
 def test_write_slices_byte_exact_on_heterogeneous_rows(tmp_path: Path) -> None:
@@ -131,6 +139,79 @@ def test_write_slices_anchor_row_is_byte_exact(tmp_path: Path) -> None:
     assert out == [src_lines[4], src_lines[5], src_lines[6], src_lines[7]]
 
 
+def test_write_slices_does_not_prepend_anchor_at_exact_start(tmp_path: Path) -> None:
+    rows = [{"timestamp_ms": BASE + i * 1000, "price": 100.0 + i} for i in range(4)]
+    src_lines = [json.dumps(r) for r in rows]
+    src = tmp_path / "orderbook_delta.jsonl"
+    _write_lines(src, src_lines)
+    target = tmp_path / "out" / "orderbook_delta.jsonl"
+
+    _write_window_slices(
+        (
+            _WindowSliceRequest(
+                source_path=src,
+                target_path=target,
+                window_start_ms=BASE + 1000,
+                window_end_ms=BASE + 3000,
+                include_anchor_before_start=True,
+            ),
+        )
+    )
+
+    assert _read_lines(target) == [src_lines[1], src_lines[2], src_lines[3]]
+
+
+def test_write_slices_unsorted_source_keeps_exact_anchor_semantics(tmp_path: Path) -> None:
+    rows = [
+        {"timestamp_ms": BASE + 3000, "price": 103.0},
+        {"timestamp_ms": BASE + 1000, "price": 101.0},
+        {"timestamp_ms": BASE + 2000, "price": 102.0, "anchor_version": "old"},
+        {"timestamp_ms": BASE + 2000, "price": 102.5, "anchor_version": "new"},
+    ]
+    src_lines = [json.dumps(r) for r in rows]
+    src = tmp_path / "orderbook_delta_unsorted.jsonl"
+    _write_lines(src, src_lines)
+    target = tmp_path / "out" / "orderbook_delta.jsonl"
+
+    _write_window_slices(
+        (
+            _WindowSliceRequest(
+                source_path=src,
+                target_path=target,
+                window_start_ms=BASE + 2500,
+                window_end_ms=BASE + 3500,
+                include_anchor_before_start=True,
+            ),
+        )
+    )
+
+    assert _read_lines(target) == [src_lines[3], src_lines[0]]
+
+
+def test_write_slices_streams_jsonl_without_arrow_materialization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_load_silver_table(path_str: str) -> None:
+        raise AssertionError(f"JSONL streaming path loaded Arrow table: {path_str}")
+
+    monkeypatch.setattr(extractor, "load_silver_table", fail_load_silver_table)
+    src_lines = [
+        json.dumps({"timestamp_ms": BASE + 0, "price": 100.0}),
+        json.dumps({"timestamp_ms": BASE + 1000, "price": 100.5}),
+        json.dumps({"timestamp_ms": BASE + 2000, "price": 101.0}),
+    ]
+    src = tmp_path / "trades.jsonl.gz"
+    _write_lines(src, src_lines, gz=True)
+    target = tmp_path / "out" / "trades.jsonl"
+
+    _write_window_slices(
+        (_WindowSliceRequest(src, target, BASE + 1000, BASE + 2000),)
+    )
+
+    assert _read_lines(target) == [src_lines[1], src_lines[2]]
+
+
 def test_write_slices_multi_source_schema_drift_does_not_crash(tmp_path: Path) -> None:
     """Two source files merged into ONE target with DIFFERENT key sets (a field
     present one day, absent the next) must not raise (the old pa.concat_tables
@@ -182,3 +263,20 @@ def test_write_slices_byte_exact_from_gzip_source(tmp_path: Path) -> None:
         (_WindowSliceRequest(src, target, BASE + 2000, BASE + 4000),)
     )
     assert _read_lines(target) == [src_lines[2], src_lines[3], src_lines[4]]
+
+
+def test_write_slices_byte_exact_to_gzip_target(tmp_path: Path) -> None:
+    """A gz target stores the same logical JSONL lines."""
+    src_lines = [
+        json.dumps({"timestamp_ms": BASE + i * 1000, "price": 100.0 + i, "qty": 0.1})
+        for i in range(5)
+    ]
+    src = tmp_path / "trades.jsonl"
+    _write_lines(src, src_lines)
+    target = tmp_path / "out" / "trades.jsonl.gz"
+
+    _write_window_slices(
+        (_WindowSliceRequest(src, target, BASE + 1000, BASE + 3000),)
+    )
+
+    assert _read_lines(target) == [src_lines[1], src_lines[2], src_lines[3]]

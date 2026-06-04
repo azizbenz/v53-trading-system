@@ -290,6 +290,35 @@ def test_a2_opt1_deltas_after_base_cache_filters_and_bisects(tmp_path: Path) -> 
     _MICROSTRUCTURE_DELTAS_AFTER_BASE_CACHE.clear()
 
 
+def test_corrupt_gzip_window_is_blocked_without_crashing_pool(tmp_path: Path) -> None:
+    from local_replay_runtime.strategy_ladder_engine_native_adapter import (
+        _iter_jsonl_timestamp_window,
+        get_microstructure_file_cache_stats,
+        reset_microstructure_file_cache_stats,
+    )
+
+    corrupt_path = tmp_path / "orderbook_delta.jsonl.gz"
+    corrupt_path.write_bytes(b"\x1f\x8b\x08\x00" + b"not-a-valid-gzip-member")
+
+    reset_microstructure_file_cache_stats(clear_cache=True)
+
+    assert (
+        _iter_jsonl_timestamp_window(
+            corrupt_path,
+            window_start_ms=1_700_000_000_000,
+            window_end_ms=1_700_000_060_000,
+        )
+        == []
+    )
+    stats = get_microstructure_file_cache_stats()
+    assert stats["invalid_file_count"] == 1
+    assert stats["invalid_paths"][str(corrupt_path)] in {
+        "BadGzipFile",
+        "EOFError",
+        "error",
+    }
+
+
 def test_engine_native_adapter_builds_records_with_snapshot_plus_deltas(tmp_path: Path) -> None:
     """Sur une fenetre synthetique avec 200 trades + 1 snapshot initial + 30 deltas,
     le pont doit reconstruire 30 etats book consecutifs et calculer OFI +

@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import zlib
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
 from math import isfinite
@@ -132,6 +133,8 @@ _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS: dict[str, object] = {
     "rows_loaded": 0,
     "bytes_loaded": 0,
     "paths_loaded": {},
+    "invalid_file_count": 0,
+    "invalid_paths": {},
     # Patch A2-OPT-1 (2026-05-25) — counters for the delta-by-base cache.
     "deltas_after_base_hit_count": 0,
     "deltas_after_base_miss_count": 0,
@@ -154,6 +157,8 @@ def reset_microstructure_file_cache_stats(*, clear_cache: bool = True) -> None:
             "rows_loaded": 0,
             "bytes_loaded": 0,
             "paths_loaded": {},
+            "invalid_file_count": 0,
+            "invalid_paths": {},
             "deltas_after_base_hit_count": 0,
             "deltas_after_base_miss_count": 0,
             # Patch A2-OPT-4 (2026-05-26) — progressive book state cache counters.
@@ -205,6 +210,10 @@ def get_microstructure_file_cache_stats() -> dict[str, object]:
     path_payload: dict[str, object] = {}
     if isinstance(paths_loaded, dict):
         path_payload = {str(key): value for key, value in paths_loaded.items()}
+    invalid_paths = _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("invalid_paths")
+    invalid_path_payload: dict[str, object] = {}
+    if isinstance(invalid_paths, dict):
+        invalid_path_payload = {str(key): value for key, value in invalid_paths.items()}
     return {
         "cache_status": "A2_MICROSTRUCTURE_FILE_CACHE_READY",
         "hit_count": int(_MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("hit_count") or 0),
@@ -217,6 +226,9 @@ def get_microstructure_file_cache_stats() -> dict[str, object]:
         ),
         "rows_loaded": int(_MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("rows_loaded") or 0),
         "bytes_loaded": int(_MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("bytes_loaded") or 0),
+        "invalid_file_count": int(
+            _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("invalid_file_count") or 0
+        ),
         "cached_file_count": len(_MICROSTRUCTURE_JSONL_FILE_CACHE),
         "cached_path_count": len(_MICROSTRUCTURE_JSONL_FILE_CACHE),
         "cached_row_count": sum(len(rows) for rows in _MICROSTRUCTURE_JSONL_FILE_CACHE.values()),
@@ -260,6 +272,7 @@ def get_microstructure_file_cache_stats() -> dict[str, object]:
             _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("evicted_cached_row_count") or 0
         ),
         "paths_loaded": path_payload,
+        "invalid_paths": invalid_path_payload,
     }
 
 
@@ -394,15 +407,33 @@ def _iter_jsonl(path: Path) -> list[dict[str, object]]:
             if str(path).endswith(".gz")
             else path.open("r", encoding="utf-8-sig")
         )
-        with opener() as handle:
-            for line in handle:
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                try:
-                    out.append(json.loads(stripped))
-                except json.JSONDecodeError:
-                    continue
+        try:
+            with opener() as handle:
+                for line in handle:
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    try:
+                        out.append(json.loads(stripped))
+                    except json.JSONDecodeError:
+                        continue
+        except (EOFError, OSError, gzip.BadGzipFile, zlib.error) as exc:
+            _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS["invalid_file_count"] = (
+                int(
+                    _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get(
+                        "invalid_file_count"
+                    )
+                    or 0
+                )
+                + 1
+            )
+            invalid_paths = _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.setdefault(
+                "invalid_paths",
+                {},
+            )
+            if isinstance(invalid_paths, dict):
+                invalid_paths[str(path)] = type(exc).__name__
+            out = []
     cached_rows = tuple(dict(row) for row in out)
     _MICROSTRUCTURE_JSONL_FILE_CACHE[cache_key] = cached_rows
     _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS["miss_count"] = (

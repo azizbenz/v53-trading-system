@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import gzip
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from time import perf_counter
 from pathlib import Path
 
@@ -66,6 +66,13 @@ def _compute_post_fill_mid_from_ohlcv(
         return None
 
 from interface_contracts.atomic_io import atomic_write_json
+from local_replay_runtime.strategy_ladder_parallel import (
+    ordered_parallel_map,
+    resolve_worker_count,
+)
+from local_replay_runtime.strategy_ladder_resource_guard import (
+    assert_ram_below_hard_limit,
+)
 from local_replay_runtime.historical_data_gateway import (
     HistoricalReplayDataset,
     HistoricalReplayOpportunity,
@@ -132,6 +139,7 @@ class StrategyLadderDetailedReplayPerformanceMetrics:
     cache_misses_book_state: int = 0
     cache_hits_ohlcv: int = 0
     cache_misses_ohlcv: int = 0
+    replay_workers_used: int = 0
 
 
 @dataclass(frozen=True)
@@ -524,7 +532,9 @@ def run_strategy_ladder_detailed_replay(
     cache_hits_ohlcv = 0
     cache_misses_ohlcv = 0
 
-    for candidate in candidate_events:
+    for candidate_index, candidate in enumerate(candidate_events, start=1):
+        if candidate_index == 1 or candidate_index % 25 == 0:
+            assert_ram_below_hard_limit(phase_name="detailed_replay")
         window_manifest = window_by_candidate.get(candidate.candidate_id)
         bucket_results: list[StrategyLadderBucketReplayResult] = []
         bucket_refs: list[str] = []
@@ -992,6 +1002,249 @@ def run_strategy_ladder_detailed_replay(
     )
 
 
+def _split_contiguous(items: tuple, n: int) -> list[list]:
+    """Split ``items`` into <= n contiguous order-preserving chunks."""
+    if n <= 1 or len(items) <= 1:
+        return [list(items)]
+    size = max(1, len(items) // n)
+    chunks: list[list] = [list(items[i : i + size]) for i in range(0, len(items), size)]
+    while len(chunks) > n:  # fold the integer-division remainder into the last chunk
+        chunks[-2].extend(chunks[-1])
+        chunks.pop()
+    return chunks
+
+
+def _split_write_disjoint_candidate_chunks(
+    candidate_events: tuple[StrategyLadderCandidateEvent, ...],
+    n: int,
+) -> list[list[StrategyLadderCandidateEvent]]:
+    """Split replay work without allowing one candidate_id in multiple chunks.
+
+    Detailed replay writes candidate_id-keyed artifacts. If duplicate candidate
+    rows are split across workers, two processes can race on the same output
+    files. Build contiguous ID-closed segments first, then merge those segments
+    into at most ``n`` ordered chunks.
+    """
+
+    if n <= 1 or len(candidate_events) <= 1:
+        return [list(candidate_events)]
+
+    last_index_by_candidate_id = {
+        candidate.candidate_id: index
+        for index, candidate in enumerate(candidate_events)
+    }
+    segments: list[list[StrategyLadderCandidateEvent]] = []
+    start = 0
+    while start < len(candidate_events):
+        end = last_index_by_candidate_id[candidate_events[start].candidate_id]
+        cursor = start
+        while cursor <= end:
+            end = max(
+                end,
+                last_index_by_candidate_id[
+                    candidate_events[cursor].candidate_id
+                ],
+            )
+            cursor += 1
+        segments.append(list(candidate_events[start : end + 1]))
+        start = end + 1
+
+    if len(segments) <= n:
+        return segments
+
+    max_chunks = min(n, len(segments))
+    target_size = max(1, (len(candidate_events) + max_chunks - 1) // max_chunks)
+    chunks: list[list[StrategyLadderCandidateEvent]] = []
+    current: list[StrategyLadderCandidateEvent] = []
+    for segment_index, segment in enumerate(segments):
+        remaining_segments = len(segments) - segment_index
+        remaining_chunks = max_chunks - len(chunks)
+        should_flush = (
+            bool(current)
+            and len(chunks) + 1 < max_chunks
+            and len(current) + len(segment) > target_size
+            and remaining_segments >= remaining_chunks
+        )
+        if should_flush:
+            chunks.append(current)
+            current = []
+        current.extend(segment)
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _has_duplicate_candidate_ids(
+    candidate_events: tuple[StrategyLadderCandidateEvent, ...],
+) -> bool:
+    seen: set[str] = set()
+    for candidate in candidate_events:
+        if candidate.candidate_id in seen:
+            return True
+        seen.add(candidate.candidate_id)
+    return False
+
+
+def _detailed_replay_chunk_worker(
+    packed: tuple,
+) -> StrategyLadderDetailedReplayStageResult:
+    """Picklable worker: replay one contiguous chunk of candidates. All writes in
+    ``run_strategy_ladder_detailed_replay`` are candidate_id-keyed, so chunks never
+    collide on disk (only idempotent ``mkdir`` is shared)."""
+    (
+        output_dir,
+        candidate_chunk,
+        manifest_chunk,
+        capital_buckets,
+        execution_runtime_projection_path,
+        simulator_config,
+    ) = packed
+    return run_strategy_ladder_detailed_replay(
+        output_dir,
+        candidate_events=candidate_chunk,
+        raw_window_manifests=manifest_chunk,
+        capital_buckets=capital_buckets,
+        execution_runtime_projection_path=execution_runtime_projection_path,
+        simulator_config=simulator_config,
+    )
+
+
+def _merge_detailed_replay_results(
+    results: list[StrategyLadderDetailedReplayStageResult],
+    capital_buckets: tuple[int, ...],
+) -> StrategyLadderDetailedReplayStageResult:
+    """Merge per-chunk results into one, bit-identical to a serial run over the
+    concatenated candidate order. Artifacts/bucket tuples concatenated in chunk
+    order (= original order); metrics summed; status per the serial rule."""
+    artifacts: list = []
+    bucket_results: dict[int, list] = {bucket: [] for bucket in capital_buckets}
+    bucket_dtr: dict[int, list] = {bucket: [] for bucket in capital_buckets}
+    totals = dict.fromkeys(
+        (
+            "shared_payload_build_seconds",
+            "engine_dataset_build_seconds",
+            "evaluate_replay_execution_seconds",
+            "replay_evidence_seconds",
+            "by_bucket_write_seconds",
+            "candidate_wrapper_write_seconds",
+            "cache_hits_book_state",
+            "cache_misses_book_state",
+            "cache_hits_ohlcv",
+            "cache_misses_ohlcv",
+        ),
+        0,
+    )
+    any_partial = False
+    for res in results:
+        artifacts.extend(res.candidate_artifacts)
+        for bucket in capital_buckets:
+            bucket_results[bucket].extend(res.bucket_results_by_bucket.get(bucket, ()))
+            bucket_dtr[bucket].extend(res.bucket_dtr_records.get(bucket, ()))
+        pm = res.performance_metrics
+        for key in totals:
+            totals[key] += getattr(pm, key)
+        if res.detailed_replay_status == "DETAILED_REPLAY_PARTIAL":
+            any_partial = True
+    if not artifacts:
+        status = "DETAILED_REPLAY_NOT_PROVEN"
+    elif any_partial or any(
+        a.detailed_replay_status != "DETAILED_REPLAY_READY" for a in artifacts
+    ):
+        status = "DETAILED_REPLAY_PARTIAL"
+    else:
+        status = "DETAILED_REPLAY_READY"
+    return StrategyLadderDetailedReplayStageResult(
+        detailed_replay_status=status,
+        candidate_artifacts=tuple(artifacts),
+        bucket_results_by_bucket={b: tuple(bucket_results[b]) for b in capital_buckets},
+        bucket_dtr_records={b: tuple(bucket_dtr[b]) for b in capital_buckets},
+        performance_metrics=StrategyLadderDetailedReplayPerformanceMetrics(
+            shared_payload_build_seconds=round(totals["shared_payload_build_seconds"], 6),
+            engine_dataset_build_seconds=round(totals["engine_dataset_build_seconds"], 6),
+            evaluate_replay_execution_seconds=round(
+                totals["evaluate_replay_execution_seconds"], 6
+            ),
+            replay_evidence_seconds=round(totals["replay_evidence_seconds"], 6),
+            by_bucket_write_seconds=round(totals["by_bucket_write_seconds"], 6),
+            candidate_wrapper_write_seconds=round(
+                totals["candidate_wrapper_write_seconds"], 6
+            ),
+            cache_hits_book_state=totals["cache_hits_book_state"],
+            cache_misses_book_state=totals["cache_misses_book_state"],
+            cache_hits_ohlcv=totals["cache_hits_ohlcv"],
+            cache_misses_ohlcv=totals["cache_misses_ohlcv"],
+        ),
+    )
+
+
+def run_strategy_ladder_detailed_replay_parallel(
+    output_dir: Path,
+    *,
+    candidate_events: tuple[StrategyLadderCandidateEvent, ...],
+    raw_window_manifests: tuple[StrategyLadderRawWindowManifest, ...],
+    capital_buckets: tuple[int, ...],
+    execution_runtime_projection_path: Path | None = None,
+    simulator_config: ShadowExecutionSimulatorConfig | None = None,
+    max_workers: int | str | None = None,
+) -> StrategyLadderDetailedReplayStageResult:
+    """Phase 3 — parallel detailed replay across CPU cores.
+
+    Partitions candidates into contiguous chunks, replays each chunk in its own
+    process, and merges the results — **bit-identical** to the serial function
+    (per-candidate writes are disjoint; artifacts/buckets concatenated in order).
+    Worker count auto-detected from ``V53_MAX_WORKERS`` (`resolve_worker_count`);
+    ``<=1`` runs the serial path unchanged. RAM is intentionally NOT capped —
+    saturating the cores is the goal and the box has headroom."""
+    workers = resolve_worker_count(max_workers)
+    if (
+        workers <= 1
+        or len(candidate_events) <= 1
+        or _has_duplicate_candidate_ids(candidate_events)
+    ):
+        return run_strategy_ladder_detailed_replay(
+            output_dir,
+            candidate_events=candidate_events,
+            raw_window_manifests=raw_window_manifests,
+            capital_buckets=capital_buckets,
+            execution_runtime_projection_path=execution_runtime_projection_path,
+            simulator_config=simulator_config,
+        )
+    chunks = _split_write_disjoint_candidate_chunks(
+        candidate_events,
+        min(workers, len(candidate_events)),
+    )
+    window_by_id = {m.candidate_id: m for m in raw_window_manifests}
+    tasks = [
+        (
+            output_dir,
+            tuple(chunk),
+            tuple(
+                window_by_id[c.candidate_id]
+                for c in chunk
+                if c.candidate_id in window_by_id
+            ),
+            capital_buckets,
+            execution_runtime_projection_path,
+            simulator_config,
+        )
+        for chunk in chunks
+    ]
+    results = ordered_parallel_map(
+        _detailed_replay_chunk_worker, tasks, max_workers=workers
+    )
+    merged = _merge_detailed_replay_results(results, capital_buckets)
+    return StrategyLadderDetailedReplayStageResult(
+        detailed_replay_status=merged.detailed_replay_status,
+        candidate_artifacts=merged.candidate_artifacts,
+        bucket_results_by_bucket=merged.bucket_results_by_bucket,
+        bucket_dtr_records=merged.bucket_dtr_records,
+        performance_metrics=replace(
+            merged.performance_metrics,
+            replay_workers_used=len(chunks),
+        ),
+    )
+
+
 __all__ = [
     "StrategyLadderDetailedReplayPerformanceMetrics",
     "StrategyLadderDetailedReplayStageResult",
@@ -999,4 +1252,5 @@ __all__ = [
     "load_strategy_ladder_detailed_replay_artifact",
     "load_strategy_ladder_shared_replay_payload",
     "run_strategy_ladder_detailed_replay",
+    "run_strategy_ladder_detailed_replay_parallel",
 ]

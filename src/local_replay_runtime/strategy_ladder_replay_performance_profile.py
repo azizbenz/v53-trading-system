@@ -124,6 +124,7 @@ class StrategyLadderReplayPerformanceProfiler:
             "cache_misses_book_state": 0,
             "cache_hits_ohlcv": 0,
             "cache_misses_ohlcv": 0,
+            "replay_workers_used": 0,
         }
 
     @contextmanager
@@ -248,6 +249,7 @@ class StrategyLadderReplayPerformanceProfiler:
         cache_misses_book_state: int = 0,
         cache_hits_ohlcv: int = 0,
         cache_misses_ohlcv: int = 0,
+        replay_workers_used: int = 0,
     ) -> None:
         self._replay_subtimers.update(
             {
@@ -273,6 +275,7 @@ class StrategyLadderReplayPerformanceProfiler:
                 "cache_misses_book_state": max(cache_misses_book_state, 0),
                 "cache_hits_ohlcv": max(cache_hits_ohlcv, 0),
                 "cache_misses_ohlcv": max(cache_misses_ohlcv, 0),
+                "replay_workers_used": max(replay_workers_used, 0),
             }
         )
 
@@ -346,6 +349,7 @@ class StrategyLadderReplayPerformanceProfiler:
             indexed_lookup_metrics=indexed_lookup_payload,
             window_cache_metrics=window_cache_payload,
             bottleneck_summary=bottlenecks,
+            replay_workers_used=int(self._replay_subtimers["replay_workers_used"]),
             shared_payload_build_seconds=float(
                 self._replay_subtimers["shared_payload_build_seconds"]
             ),

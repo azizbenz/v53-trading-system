@@ -7,10 +7,19 @@ the CPU at runtime with a safe serial default.
 from __future__ import annotations
 
 import os
+from pathlib import Path
+
+import pytest
 
 from local_replay_runtime.strategy_ladder_parallel import (
     ordered_parallel_map,
     resolve_worker_count,
+)
+from local_replay_runtime.strategy_ladder_resource_guard import (
+    StrategyLadderMemoryStatus,
+    StrategyLadderResourceGuardError,
+    cap_workers_for_ram,
+    set_memory_status_provider_for_tests,
 )
 
 
@@ -46,6 +55,71 @@ def test_env_var_opt_in(monkeypatch) -> None:
     assert resolve_worker_count() == cpus
     monkeypatch.setenv("V53_MAX_WORKERS", "garbage")
     assert resolve_worker_count() == 1  # unparseable -> safe serial
+
+
+def test_resource_guard_caps_auto_workers_at_soft_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("V53_RAM_GUARD_ENABLED", "1")
+    monkeypatch.setenv("V53_MAX_RAM_FRACTION", "0.75")
+    monkeypatch.setenv("V53_HARD_RAM_FRACTION", "0.80")
+    monkeypatch.setenv("V53_RAM_GUARD_MAX_WAIT_SECONDS", "0")
+    monkeypatch.setenv("V53_RAM_GUARD_RECLAIM_ENABLED", "0")
+    set_memory_status_provider_for_tests(
+        lambda: StrategyLadderMemoryStatus(
+            total_physical_bytes=100,
+            available_physical_bytes=24,
+        )
+    )
+    try:
+        assert resolve_worker_count("auto") == 1
+    finally:
+        set_memory_status_provider_for_tests(None)
+
+
+def test_resource_guard_caps_workers_by_soft_headroom_reserve(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gib = 1024 * 1024 * 1024
+    monkeypatch.setenv("V53_RAM_GUARD_ENABLED", "1")
+    monkeypatch.setenv("V53_MAX_RAM_FRACTION", "0.75")
+    monkeypatch.setenv("V53_HARD_RAM_FRACTION", "0.80")
+    monkeypatch.setenv("V53_RAM_GUARD_WORKER_RESERVE_MB", "6144")
+    set_memory_status_provider_for_tests(
+        lambda: StrategyLadderMemoryStatus(
+            total_physical_bytes=32 * gib,
+            available_physical_bytes=20 * gib,
+        )
+    )
+    try:
+        assert cap_workers_for_ram(32, phase_name="test") == 2
+    finally:
+        set_memory_status_provider_for_tests(None)
+
+
+def test_resource_guard_blocks_parallel_map_at_hard_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("V53_RAM_GUARD_ENABLED", "1")
+    monkeypatch.setenv("V53_MAX_RAM_FRACTION", "0.75")
+    monkeypatch.setenv("V53_HARD_RAM_FRACTION", "0.80")
+    monkeypatch.setenv("V53_RAM_GUARD_MAX_WAIT_SECONDS", "0")
+    monkeypatch.setenv("V53_RAM_GUARD_RECLAIM_ENABLED", "0")
+    set_memory_status_provider_for_tests(
+        lambda: StrategyLadderMemoryStatus(
+            total_physical_bytes=100,
+            available_physical_bytes=19,
+        )
+    )
+    try:
+        try:
+            ordered_parallel_map(_square, [1, 2, 3], max_workers=2)
+        except StrategyLadderResourceGuardError as exc:
+            assert "RESOURCE_GUARD_RAM_LIMIT_EXCEEDED_AFTER_WAIT" in str(exc)
+        else:
+            raise AssertionError("resource guard did not block hard RAM limit")
+    finally:
+        set_memory_status_provider_for_tests(None)
 
 
 def test_serial_map_input_order() -> None:
@@ -204,3 +278,54 @@ def test_detailed_replay_serial_equals_parallel(tmp_path, monkeypatch) -> None:
         serial.performance_metrics.cache_misses_book_state
         == parallel.performance_metrics.cache_misses_book_state
     )
+    assert serial.performance_metrics.replay_workers_used == 0
+    assert parallel.performance_metrics.replay_workers_used == 2
+
+
+def test_detailed_replay_parallel_duplicate_ids_fallback_to_serial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from local_replay_runtime.strategy_ladder_detailed_replay import (
+        run_strategy_ladder_detailed_replay_parallel,
+    )
+
+    cands = (_mk_candidate(0), _mk_candidate(1), _mk_candidate(1))
+    windows = (_mk_window(0), _mk_window(1))
+
+    monkeypatch.setenv("V53_MAX_WORKERS", "2")
+    result = run_strategy_ladder_detailed_replay_parallel(
+        tmp_path / "duplicate_ids",
+        candidate_events=cands,
+        raw_window_manifests=windows,
+        capital_buckets=(400,),
+    )
+
+    assert result.detailed_replay_status == "DETAILED_REPLAY_READY"
+    assert len(result.candidate_artifacts) == 3
+    assert result.performance_metrics.replay_workers_used == 0
+
+
+def test_detailed_replay_chunks_keep_duplicate_ids_together() -> None:
+    from local_replay_runtime.strategy_ladder_detailed_replay import (
+        _split_write_disjoint_candidate_chunks,
+    )
+
+    cands = (
+        _mk_candidate(0),
+        _mk_candidate(1),
+        _mk_candidate(0),
+        _mk_candidate(2),
+        _mk_candidate(3),
+        _mk_candidate(2),
+    )
+
+    chunks = _split_write_disjoint_candidate_chunks(cands, 4)
+
+    assert [c.candidate_id for chunk in chunks for c in chunk] == [
+        c.candidate_id for c in cands
+    ]
+    owners: dict[str, int] = {}
+    for chunk_index, chunk in enumerate(chunks):
+        for candidate in chunk:
+            previous = owners.setdefault(candidate.candidate_id, chunk_index)
+            assert previous == chunk_index

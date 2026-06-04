@@ -262,13 +262,8 @@ def slice_window_with_anchor(
     if table.num_rows == 0 or ts_column not in table.column_names:
         return sliced
     ts_col = table.column(ts_column)
-    # Streaming-extractor parity: the JSONL streamer tracks the last row with
-    # ts <= window_start_ms as anchor, but only writes it when ts < window_start_ms.
-    # When a source row sits at exactly window_start_ms the anchor pointer is
-    # overwritten to that row, making the "< start" guard fail — so no extra row is
-    # prepended (the window_start_ms row is already the first window row).
-    # Replicate: find last row with ts < window_start_ms, but skip it when the
-    # window's own first row is at exactly window_start_ms.
+    # Match the streaming writer: nearest timestamp strictly before the window,
+    # but no duplicate anchor when the first in-window row sits on the boundary.
     anchor_table = table.filter(pc.less(ts_col, window_start_ms))
     if anchor_table.num_rows == 0:
         return sliced
@@ -276,7 +271,10 @@ def slice_window_with_anchor(
         first_window_ts = sliced.column(ts_column)[0].as_py()
         if first_window_ts == window_start_ms:
             return sliced
-    anchor_row = anchor_table.slice(anchor_table.num_rows - 1, 1)
+    anchor_ts_col = anchor_table.column(ts_column)
+    anchor_ts = pc.max(anchor_ts_col).as_py()
+    nearest_anchor_rows = anchor_table.filter(pc.equal(anchor_ts_col, anchor_ts))
+    anchor_row = nearest_anchor_rows.slice(nearest_anchor_rows.num_rows - 1, 1)
     return pa.concat_tables([anchor_row, sliced])
 
 
