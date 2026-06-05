@@ -124,6 +124,23 @@ _PROGRESSIVE_BOOK_STATE_CACHE: dict[
     list[tuple[int, int, dict[float, float], dict[float, float]]],
 ] = {}
 _PROGRESSIVE_BOOK_STATE_CACHE_MAX_BOUNDARIES = 4
+# Patch B2-RECON-SHARE (2026-06-04) — Partition-shared book-state timeline.
+# B2 candidates of the same (pair, base snapshot) each reconstructed the book
+# from scratch: the progressive cache key above includes the per-candidate
+# delta-slice path, so it never shares (measured 0/15 hit on subset20). This
+# cache holds ONE cumulative book-state timeline per (pair, base_update_id) —
+# path-independent — so overlapping/nested candidate windows reuse it and return
+# only their [window_start, window_end] sub-slice. Bit-identical to a from-base
+# reconstruction: each timeline state is the cumulative book at a delta uid;
+# filtering to the candidate window reproduces the legacy per-window emit.
+_PARTITION_BOOK_TIMELINE_CACHE: "dict[tuple[str, int], _PartitionBookTimeline]" = {}
+# Runtime toggle: default False so the A2 gold path (which shares the same
+# Engine-C builder and is RAM-sensitive across 1440 decisions/day) keeps the
+# legacy bounded-book progressive cache. The B2 runner enables it around its
+# materialization loop only — there candidates of one (pair, day) reuse the
+# shared timeline, and the RAM guard reclaims it under pressure.
+# Monkeypatchable in tests for A/B parity.
+_PARTITION_BOOK_TIMELINE_ENABLED = False
 _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS: dict[str, object] = {
     "hit_count": 0,
     "miss_count": 0,
@@ -138,6 +155,13 @@ _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS: dict[str, object] = {
     # Patch A2-OPT-1 (2026-05-25) — counters for the delta-by-base cache.
     "deltas_after_base_hit_count": 0,
     "deltas_after_base_miss_count": 0,
+    # Patch B2-RECON-SHARE (2026-06-04) — partition-shared timeline counters.
+    # build_count = distinct (pair, base) timelines reconstructed (one per
+    # partition, NOT per candidate); reuse_count = candidates served without
+    # extending; extend_deltas = gap deltas applied across all extensions.
+    "partition_timeline_build_count": 0,
+    "partition_timeline_reuse_count": 0,
+    "partition_timeline_extend_deltas": 0,
 }
 
 
@@ -161,6 +185,10 @@ def reset_microstructure_file_cache_stats(*, clear_cache: bool = True) -> None:
             "invalid_paths": {},
             "deltas_after_base_hit_count": 0,
             "deltas_after_base_miss_count": 0,
+            # Patch B2-RECON-SHARE (2026-06-04) — partition-shared timeline counters.
+            "partition_timeline_build_count": 0,
+            "partition_timeline_reuse_count": 0,
+            "partition_timeline_extend_deltas": 0,
             # Patch A2-OPT-4 (2026-05-26) — progressive book state cache counters.
             "progressive_book_state_hit_count": 0,
             "progressive_book_state_miss_count": 0,
@@ -185,6 +213,7 @@ def evict_microstructure_file_cache() -> dict[str, int]:
     _MICROSTRUCTURE_JSONL_TIME_INDEX_CACHE.clear()
     _MICROSTRUCTURE_DELTAS_AFTER_BASE_CACHE.clear()
     _PROGRESSIVE_BOOK_STATE_CACHE.clear()
+    _PARTITION_BOOK_TIMELINE_CACHE.clear()
     _MICROSTRUCTURE_RECORD_CACHE.clear()
     _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS["eviction_count"] = (
         int(_MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("eviction_count") or 0) + 1
@@ -250,6 +279,17 @@ def get_microstructure_file_cache_stats() -> dict[str, object]:
             _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("deltas_after_base_miss_count") or 0
         ),
         "deltas_after_base_cache_size": len(_MICROSTRUCTURE_DELTAS_AFTER_BASE_CACHE),
+        # Patch B2-RECON-SHARE (2026-06-04) — partition-shared timeline counters.
+        "partition_timeline_build_count": int(
+            _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("partition_timeline_build_count") or 0
+        ),
+        "partition_timeline_reuse_count": int(
+            _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("partition_timeline_reuse_count") or 0
+        ),
+        "partition_timeline_extend_deltas": int(
+            _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("partition_timeline_extend_deltas") or 0
+        ),
+        "partition_timeline_cache_size": len(_PARTITION_BOOK_TIMELINE_CACHE),
         # Patch A2-OPT-4 (2026-05-26) — progressive book state cache counters.
         "progressive_book_state_hit_count": int(
             _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("progressive_book_state_hit_count") or 0
@@ -274,6 +314,27 @@ def get_microstructure_file_cache_stats() -> dict[str, object]:
         "paths_loaded": path_payload,
         "invalid_paths": invalid_path_payload,
     }
+
+
+def set_partition_book_timeline_enabled(enabled: bool) -> bool:
+    """Patch B2-RECON-SHARE (2026-06-04) — toggle the partition-shared book
+    timeline (B2 materialization only). Returns the prior value so callers can
+    restore it in a ``finally`` block. A2 leaves this False (legacy progressive).
+    """
+    global _PARTITION_BOOK_TIMELINE_ENABLED
+    prior = _PARTITION_BOOK_TIMELINE_ENABLED
+    _PARTITION_BOOK_TIMELINE_ENABLED = bool(enabled)
+    return prior
+
+
+def evict_partition_book_timelines() -> int:
+    """Patch B2-RECON-SHARE (2026-06-04) — drop cached partition book timelines
+    and return the count evicted. Surgical (does not touch the JSONL file / delta
+    caches), used to release B2 timeline memory after the materialization phase.
+    """
+    count = len(_PARTITION_BOOK_TIMELINE_CACHE)
+    _PARTITION_BOOK_TIMELINE_CACHE.clear()
+    return count
 
 
 def _path_cache_signature(path_like: Path | str | None) -> tuple[str, int | None, int | None]:
@@ -780,6 +841,210 @@ def _reconstruct_book_states_with_progressive_cache(
         _PROGRESSIVE_BOOK_STATE_CACHE[cache_key] = cached_entries
 
     return states
+
+
+class _PartitionBookTimeline:
+    """Patch B2-RECON-SHARE (2026-06-04) — shared cumulative book-state timeline
+    for one ``(pair, base snapshot)`` partition.
+
+    Emits a ``_BookState`` for every applied delta (the timeline's own
+    window_start is -inf); each candidate then takes the
+    ``[window_start, window_end]`` sub-slice. Parity invariant: every emitted
+    state is the cumulative book at a delta ``update_id`` — identical to
+    :func:`_reconstruct_book_states` — so filtering reproduces the legacy
+    per-window emit exactly, for nested/overlapping B2 windows alike.
+    """
+
+    __slots__ = ("bid_book", "ask_book", "last_uid", "covered_ts", "states")
+
+    def __init__(
+        self,
+        bid_book: dict[float, float],
+        ask_book: dict[float, float],
+        last_uid: int,
+    ) -> None:
+        self.bid_book = bid_book
+        self.ask_book = ask_book
+        self.last_uid = last_uid
+        self.covered_ts = -1
+        self.states: list[_BookState] = []
+
+    @classmethod
+    def from_base(cls, base_snapshot: dict[str, object]) -> "_PartitionBookTimeline":
+        bid_book: dict[float, float] = {}
+        ask_book: dict[float, float] = {}
+        for level in base_snapshot.get("bids") or []:
+            try:
+                price = float(level[0])
+                size = float(level[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if size > 0.0:
+                bid_book[price] = size
+        for level in base_snapshot.get("asks") or []:
+            try:
+                price = float(level[0])
+                size = float(level[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if size > 0.0:
+                ask_book[price] = size
+        return cls(bid_book, ask_book, int(base_snapshot.get("update_id") or 0))
+
+    def extend(
+        self,
+        deltas: list[dict[str, object]],
+        *,
+        window_end_ms: int,
+        top_k: int,
+    ) -> None:
+        """Apply gap deltas (``update_id > last_uid`` and ``ts <= window_end_ms``).
+
+        Mirrors the apply+emit loop of :func:`_reconstruct_book_states` exactly so
+        the partition path stays byte-parity with the legacy reconstruction.
+        """
+
+        def _delta_update_id(d: dict[str, object]) -> int:
+            try:
+                return int(d.get("update_id") or 0)
+            except (TypeError, ValueError):
+                return 0
+
+        for delta in sorted(deltas, key=_delta_update_id):
+            delta_uid = _delta_update_id(delta)
+            if delta_uid <= self.last_uid:
+                continue
+            ts = delta.get("timestamp_ms")
+            if not isinstance(ts, (int, float)):
+                continue
+            delta_ts_ms = int(ts)
+            if delta_ts_ms > window_end_ms:
+                break
+            for level in delta.get("bids") or []:
+                try:
+                    price = float(level[0])
+                    size = float(level[1])
+                except (TypeError, ValueError, IndexError):
+                    continue
+                if size <= 0.0:
+                    self.bid_book.pop(price, None)
+                else:
+                    self.bid_book[price] = size
+            for level in delta.get("asks") or []:
+                try:
+                    price = float(level[0])
+                    size = float(level[1])
+                except (TypeError, ValueError, IndexError):
+                    continue
+                if size <= 0.0:
+                    self.ask_book.pop(price, None)
+                else:
+                    self.ask_book[price] = size
+            self.last_uid = delta_uid
+            self.covered_ts = delta_ts_ms
+            sorted_bids = sorted(self.bid_book.items(), key=lambda x: -x[0])[:top_k]
+            sorted_asks = sorted(self.ask_book.items(), key=lambda x: x[0])[:top_k]
+            if not sorted_bids or not sorted_asks:
+                continue
+            self.states.append(
+                _BookState(
+                    timestamp_ms=delta_ts_ms,
+                    update_id=delta_uid,
+                    bid_levels=tuple(sorted_bids),
+                    ask_levels=tuple(sorted_asks),
+                )
+            )
+
+    def window_slice(
+        self, window_start_ms: int, window_end_ms: int
+    ) -> list[_BookState]:
+        return [
+            state
+            for state in self.states
+            if window_start_ms <= state.timestamp_ms <= window_end_ms
+        ]
+
+
+def _partition_shared_book_states(
+    *,
+    pair: str,
+    raw_book_path: Path | str,
+    delta_path: Path,
+    base_snapshot: dict[str, object],
+    window_start_ms: int,
+    window_end_ms: int,
+    top_k: int = 20,
+) -> tuple[list[_BookState], int]:
+    """Patch B2-RECON-SHARE (2026-06-04) — reconstruct ``[ws, we]`` book states
+    via a ``(pair, base_update_id)`` partition-shared timeline.
+
+    Returns ``(window_states, gap_deltas_loaded)``. Candidates of the same
+    partition reuse one cumulative timeline instead of re-walking the day's
+    deltas each (the measured B2 redundancy: 0/15 progressive-cache hit on
+    subset20). When :data:`_PARTITION_BOOK_TIMELINE_ENABLED` is False, falls back
+    to the legacy per-candidate progressive path (rollback seam).
+    """
+    base_update_id = int(base_snapshot.get("update_id") or 0)
+
+    if not _PARTITION_BOOK_TIMELINE_ENABLED:
+        boundary = _latest_progressive_book_state_boundary(
+            snapshot_path=Path(raw_book_path),
+            delta_path=delta_path,
+            base_update_id=base_update_id,
+            window_start_ms=window_start_ms,
+        )
+        deltas = _load_book_deltas_in_window_with_lookback(
+            delta_path,
+            base_update_id=base_update_id,
+            window_end_ms=window_end_ms,
+            window_start_ms=boundary[1] if boundary is not None else None,
+            after_update_id=boundary[0] if boundary is not None else None,
+        )
+        states = _reconstruct_book_states_with_progressive_cache(
+            snapshot_path=Path(raw_book_path),
+            delta_path=delta_path,
+            base_snapshot=base_snapshot,
+            deltas=deltas,
+            window_start_ms=window_start_ms,
+            window_end_ms=window_end_ms,
+            top_k=top_k,
+        )
+        return states, len(deltas)
+
+    key = (pair, base_update_id)
+    timeline = _PARTITION_BOOK_TIMELINE_CACHE.get(key)
+    if timeline is None:
+        timeline = _PartitionBookTimeline.from_base(base_snapshot)
+        _PARTITION_BOOK_TIMELINE_CACHE[key] = timeline
+        _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS["partition_timeline_build_count"] = (
+            int(_MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("partition_timeline_build_count") or 0)
+            + 1
+        )
+
+    gap_deltas_loaded = 0
+    if window_end_ms > timeline.covered_ts:
+        gap_deltas = _load_book_deltas_in_window_with_lookback(
+            delta_path,
+            base_update_id=base_update_id,
+            window_end_ms=window_end_ms,
+            window_start_ms=timeline.covered_ts if timeline.covered_ts >= 0 else None,
+            after_update_id=(
+                timeline.last_uid if timeline.last_uid != base_update_id else None
+            ),
+        )
+        gap_deltas_loaded = len(gap_deltas)
+        timeline.extend(gap_deltas, window_end_ms=window_end_ms, top_k=top_k)
+        _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS["partition_timeline_extend_deltas"] = (
+            int(_MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("partition_timeline_extend_deltas") or 0)
+            + gap_deltas_loaded
+        )
+    else:
+        _MICROSTRUCTURE_JSONL_FILE_CACHE_STATS["partition_timeline_reuse_count"] = (
+            int(_MICROSTRUCTURE_JSONL_FILE_CACHE_STATS.get("partition_timeline_reuse_count") or 0)
+            + 1
+        )
+
+    return timeline.window_slice(window_start_ms, window_end_ms), gap_deltas_loaded
 
 
 def _reconstruct_book_states(
@@ -1350,34 +1615,14 @@ def build_engine_c_microstructure_inputs_from_window(
                         f"BOOK_DELTA_PATH_MISSING:{delta_path}"
                     )
                 else:
-                    progressive_boundary = _latest_progressive_book_state_boundary(
-                        snapshot_path=Path(raw_book_path),
-                        delta_path=delta_path,
-                        base_update_id=base_uid,
-                        window_start_ms=window_start_ms,
-                    )
-                    deltas = _load_book_deltas_in_window_with_lookback(
-                        delta_path,
-                        base_update_id=base_uid,
-                        window_end_ms=window_end_ms,
-                        window_start_ms=(
-                            progressive_boundary[1]
-                            if progressive_boundary is not None
-                            else None
-                        ),
-                        after_update_id=(
-                            progressive_boundary[0]
-                            if progressive_boundary is not None
-                            else None
-                        ),
-                    )
-                    book_deltas_count = len(deltas)
-                    # Patch A2-OPT-4 (2026-05-26) — progressive cache wrapper.
-                    book_states = _reconstruct_book_states_with_progressive_cache(
-                        snapshot_path=Path(raw_book_path),
+                    # Patch B2-RECON-SHARE (2026-06-04) — partition-shared book
+                    # timeline when the B2 runner enables it; legacy progressive
+                    # path (A2-safe) otherwise. Bit-identical book_states.
+                    book_states, book_deltas_count = _partition_shared_book_states(
+                        pair=pair,
+                        raw_book_path=raw_book_path,
                         delta_path=delta_path,
                         base_snapshot=base_snap,
-                        deltas=deltas,
                         window_start_ms=window_start_ms,
                         window_end_ms=window_end_ms,
                         top_k=20,
@@ -1779,34 +2024,14 @@ def _compute_microstructure_records_from_window(
                 if delta_path is None or not delta_path.exists():
                     warnings.append(f"BOOK_DELTA_PATH_MISSING:{delta_path}")
                 else:
-                    progressive_boundary = _latest_progressive_book_state_boundary(
-                        snapshot_path=Path(raw_book_path),
-                        delta_path=delta_path,
-                        base_update_id=base_uid,
-                        window_start_ms=window_start_ms,
-                    )
-                    deltas = _load_book_deltas_in_window_with_lookback(
-                        delta_path,
-                        base_update_id=base_uid,
-                        window_end_ms=window_end_ms,
-                        window_start_ms=(
-                            progressive_boundary[1]
-                            if progressive_boundary is not None
-                            else None
-                        ),
-                        after_update_id=(
-                            progressive_boundary[0]
-                            if progressive_boundary is not None
-                            else None
-                        ),
-                    )
-                    book_deltas_count = len(deltas)
-                    # Patch A2-OPT-4 (2026-05-26) — progressive cache wrapper.
-                    book_states = _reconstruct_book_states_with_progressive_cache(
-                        snapshot_path=Path(raw_book_path),
+                    # Patch B2-RECON-SHARE (2026-06-04) — partition-shared book
+                    # timeline when the B2 runner enables it; legacy progressive
+                    # path (A2-safe) otherwise. Bit-identical book_states.
+                    book_states, book_deltas_count = _partition_shared_book_states(
+                        pair=pair,
+                        raw_book_path=raw_book_path,
                         delta_path=delta_path,
                         base_snapshot=base_snap,
-                        deltas=deltas,
                         window_start_ms=window_start_ms,
                         window_end_ms=window_end_ms,
                         top_k=20,
@@ -2548,5 +2773,7 @@ __all__ = [
     "build_engine_b_microstructure_inputs_from_window",
     "evict_microstructure_file_cache",
     "get_microstructure_file_cache_stats",
+    "set_partition_book_timeline_enabled",
+    "evict_partition_book_timelines",
     "reset_microstructure_file_cache_stats",
 ]

@@ -6391,17 +6391,30 @@ def run_backtest_strategy_ladder(
     if request.engine_native_mode and not request.dry_run and candidate_events:
         engine_native_started_wall = perf_counter()
         engine_native_started_cpu = process_time()
-        native_materialization = _materialize_engine_native_candidates(
-            candidate_events=candidate_events,
-            raw_window_manifests=raw_window_manifests,
-            expected_edge_model=expected_edge_model,
-            expected_edge_model_required=expected_edge_model_required,
-            expected_edge_model_load_status=expected_edge_model_load_status,
-            progress_callback=_engine_native_progress_callback,
-            silver_exchange=silver_exchange_resolved,
-            silver_market_type=silver_market_type_resolved,
-            ml_mode=request.ml_mode,
+        # Patch B2-RECON-SHARE (2026-06-04) — enable the (pair, base) shared book
+        # timeline for B2 materialization only; A2 keeps the legacy progressive
+        # cache. Reset + evict timelines in finally so neither leaks past B2.
+        from local_replay_runtime.strategy_ladder_engine_native_adapter import (
+            evict_partition_book_timelines,
+            set_partition_book_timeline_enabled,
         )
+
+        _prior_timeline_enabled = set_partition_book_timeline_enabled(True)
+        try:
+            native_materialization = _materialize_engine_native_candidates(
+                candidate_events=candidate_events,
+                raw_window_manifests=raw_window_manifests,
+                expected_edge_model=expected_edge_model,
+                expected_edge_model_required=expected_edge_model_required,
+                expected_edge_model_load_status=expected_edge_model_load_status,
+                progress_callback=_engine_native_progress_callback,
+                silver_exchange=silver_exchange_resolved,
+                silver_market_type=silver_market_type_resolved,
+                ml_mode=request.ml_mode,
+            )
+        finally:
+            set_partition_book_timeline_enabled(_prior_timeline_enabled)
+            evict_partition_book_timelines()
         performance_profiler.record_phase(
             "engine_native_materialization",
             status=native_materialization.engine_native_status,
