@@ -235,6 +235,19 @@ def _derive_orderbook_delta_path(snapshot_path: Path) -> Path | None:
         derived = parent / candidate
         if derived.is_file():
             return derived
+    # Silver layout (A2 gold path, 2026-06-05 fix): orderbook_snapshot /
+    # orderbook_delta are parent DIRECTORIES, not filename tokens —
+    # silver/{venue}/spot/orderbook_snapshot/{PAIR}/{Y}/{M}/{D}.jsonl.gz. The
+    # filename ("16.jsonl.gz") carries no token, so the loop above finds nothing.
+    # Derive on the FULL path instead. Without this the spread reconstruction
+    # (Tier 2) was silently skipped for every A2 gold window and fell back to the
+    # stale snapshot (measured: derived=None -> 47/48 STALE; with delta -> 47/48
+    # MEASURED_FROM_BOOK_RECONSTRUCTION, fresh ~1-tick spread).
+    full_path = str(snapshot_path)
+    if "orderbook_snapshot" in full_path:
+        derived_full = Path(full_path.replace("orderbook_snapshot", "orderbook_delta"))
+        if derived_full.is_file():
+            return derived_full
     # Fallback : same parent dir contains a sibling delta file (any known format)
     for fallback_name in (
         "orderbook_delta.jsonl.gz",
