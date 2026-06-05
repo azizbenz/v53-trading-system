@@ -342,6 +342,183 @@ def _load_reconstruction_deltas(
     return tuple(out)
 
 
+# ---------------------------------------------------------------------------
+# A2-RECON-SHARE (2026-06-05) — partition-shared reconstruction-state timeline.
+# ---------------------------------------------------------------------------
+# Measured: the A2 gold build calls measure_spread_bps_from_book_snapshot once
+# per gold row (2304 rows on a 3-day / 2-pair run). The file PARSE is already
+# cached (_load_reconstruction_deltas, 2026-06-01), but each row still RE-APPLIED
+# every delta from the base snapshot to rebuild the book — O(rows x deltas) over
+# ~430k deltas/day. A proxy run (--no-use-measured-economic-provenance) isolated
+# this: gold_feature_build 6655s -> 1.82s. So the per-row re-walk IS ~100% of the
+# measured A2 cost.
+#
+# Fix: build the cumulative book-state timeline ONCE per (snapshot, delta, base)
+# partition, applying deltas + cross-purge + gap EXACTLY like the legacy per-row
+# walk and recording every valid captured state; each row then selects its state
+# by bisect.
+#
+# Parity invariant: the book state at delta D depends only on
+# ``base + deltas[base+1..D]`` plus the cross-purge captures along the way, in
+# update_id order — independent of which row triggered it. When the delta
+# timestamps are non-decreasing in update_id order (clean L2 capture), the
+# per-row "max ts <= target, tie -> lowest uid" selection is a bisect on the
+# shared timeline, byte-identical to the legacy walk. When ts is NOT monotonic in
+# uid (out-of-order capture), the builder reports it and the caller falls back to
+# the legacy per-row walk — so the optimisation is never wrong, only skipped.
+_RECONSTRUCTION_TIMELINE_ENABLED = True
+_TIMELINE_CROSS_BOOK_PURGE_MAX = 50
+
+
+def _capture_top_of_book_purged(
+    bid_book: dict[float, float],
+    ask_book: dict[float, float],
+) -> tuple[float | None, float | None, int]:
+    """Module-level twin of the W0 cross-book purge capture used by the legacy
+    walk. Returns ``(best_bid, best_ask, n_purged)`` and mutates the books in
+    place, identical to the closure in :func:`_measure_spread_via_reconstruction`
+    (kept duplicated so the legacy fallback stays byte-untouched).
+    """
+    purged = 0
+    purge_bid_side = True
+    while bid_book and ask_book and purged < _TIMELINE_CROSS_BOOK_PURGE_MAX:
+        best_bid_price = max(bid_book.keys())
+        best_ask_price = min(ask_book.keys())
+        if best_ask_price > best_bid_price > 0.0:
+            return best_bid_price, best_ask_price, purged
+        if purge_bid_side:
+            bid_book.pop(best_bid_price, None)
+        else:
+            ask_book.pop(best_ask_price, None)
+        purge_bid_side = not purge_bid_side
+        purged += 1
+    return None, None, purged
+
+
+def _book_from_snapshot_levels(
+    base_snapshot: dict[str, object],
+) -> tuple[dict[float, float], dict[float, float]]:
+    """Build ``(bid_book, ask_book)`` from a snapshot row, identical to the
+    legacy inline base-book construction."""
+    bid_book: dict[float, float] = {}
+    ask_book: dict[float, float] = {}
+    for level in (base_snapshot.get("bids") or []):
+        try:
+            price = float(level[0])
+            size = float(level[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if size > 0.0:
+            bid_book[price] = size
+    for level in (base_snapshot.get("asks") or []):
+        try:
+            price = float(level[0])
+            size = float(level[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if size > 0.0:
+            ask_book[price] = size
+    return bid_book, ask_book
+
+
+@lru_cache(maxsize=8)
+def _build_reconstruction_state_timeline(
+    snapshot_path_str: str,
+    delta_path_str: str,
+    base_update_id: int,
+    expected_update_id_step: int | None,
+) -> tuple[tuple[int, ...], tuple[float, ...], tuple[int, ...], bool]:
+    """Build ONCE the valid ``(ts_ms, spread_bps, gap_count)`` reconstruction
+    states for a ``(snapshot, delta, base)`` partition, in update_id order.
+
+    Mirrors the legacy per-row apply + cross-purge + gap loop of
+    :func:`_measure_spread_via_reconstruction` exactly, but records EVERY valid
+    captured state instead of only the per-row best. Returns parallel tuples
+    ``(ts, spread, gap)`` plus ``ts_monotonic`` (True iff delta timestamps are
+    non-decreasing in update_id order). When monotonic the caller bisects this
+    timeline; otherwise it falls back to the legacy walk (parity guard).
+
+    Tests that rewrite a path must call
+    ``_build_reconstruction_state_timeline.cache_clear()``.
+    """
+    snapshots = _load_reconstruction_snapshots(snapshot_path_str)
+    base_snapshot: dict[str, object] | None = None
+    base_ts = -1
+    for snap_ts, snap_uid, snap_row in snapshots:
+        if snap_uid == base_update_id:
+            base_snapshot = snap_row
+            base_ts = snap_ts
+            break
+    if base_snapshot is None:
+        return (), (), (), True
+
+    bid_book, ask_book = _book_from_snapshot_levels(base_snapshot)
+    all_deltas = _load_reconstruction_deltas(delta_path_str)
+
+    ts_list: list[int] = []
+    spread_list: list[float] = []
+    gap_list: list[int] = []
+    gap_count = 0
+    prev_uid_for_gap = base_update_id
+    prev_ts = base_ts
+    monotonic = True
+
+    # Base state — evaluated before any delta, exactly like the legacy walk.
+    bb, ba, _purged = _capture_top_of_book_purged(bid_book, ask_book)
+    if bb is not None and ba is not None and ba > bb > 0.0:
+        mid = (bb + ba) / 2.0
+        if mid > 0.0:
+            ts_list.append(base_ts)
+            spread_list.append((ba - bb) / mid * 10_000.0)
+            gap_list.append(0)
+
+    for delta_uid, _delta_ts_sort, delta in all_deltas:
+        if delta_uid <= base_update_id:
+            continue
+        if expected_update_id_step is not None:
+            if delta_uid != prev_uid_for_gap + expected_update_id_step:
+                gap_count += 1
+            prev_uid_for_gap = delta_uid
+        for level in (delta.get("bids") or []):
+            try:
+                price = float(level[0])
+                size = float(level[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if size <= 0.0:
+                bid_book.pop(price, None)
+            else:
+                bid_book[price] = size
+        for level in (delta.get("asks") or []):
+            try:
+                price = float(level[0])
+                size = float(level[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if size <= 0.0:
+                ask_book.pop(price, None)
+            else:
+                ask_book[price] = size
+        try:
+            delta_ts = int(delta.get("timestamp_ms") or 0)
+        except (TypeError, ValueError):
+            continue
+        if delta_ts < prev_ts:
+            monotonic = False
+        prev_ts = delta_ts
+        bb, ba, _purged = _capture_top_of_book_purged(bid_book, ask_book)
+        if bb is None or ba is None or ba <= bb:
+            continue
+        mid = (bb + ba) / 2.0
+        if mid <= 0.0:
+            continue
+        ts_list.append(delta_ts)
+        spread_list.append((ba - bb) / mid * 10_000.0)
+        gap_list.append(gap_count)
+
+    return tuple(ts_list), tuple(spread_list), tuple(gap_list), monotonic
+
+
 def _measure_spread_via_reconstruction(
     *,
     snapshot_path: Path,
@@ -391,6 +568,49 @@ def _measure_spread_via_reconstruction(
         return None, "BOOK_RECONSTRUCTION_NO_BASE_SNAPSHOT"
 
     base_update_id = int(base_snapshot.get("update_id") or 0)
+
+    # A2-RECON-SHARE (2026-06-05) fast path — partition-shared cumulative book
+    # timeline. Parity-exact with the legacy per-row walk below when delta
+    # timestamps are non-decreasing in update_id order; otherwise (or when the
+    # flag is off) it falls through to the legacy walk. Priming the delta cache
+    # here surfaces an IO error with the legacy error code, then the builder
+    # reuses the cached parse (no re-IO, no raise).
+    if _RECONSTRUCTION_TIMELINE_ENABLED:
+        try:
+            _load_reconstruction_deltas(str(delta_path))
+        except OSError as exc:
+            return None, f"BOOK_RECONSTRUCTION_DELTAS_IO_FAILED:{type(exc).__name__}"
+        ts_states, spread_states, gap_states, ts_monotonic = (
+            _build_reconstruction_state_timeline(
+                str(snapshot_path),
+                str(delta_path),
+                base_update_id,
+                expected_update_id_step,
+            )
+        )
+        if ts_monotonic:
+            if not ts_states:
+                return None, "BOOK_RECONSTRUCTION_NO_VALID_STATE"
+            pos = bisect.bisect_right(ts_states, timestamp_ms) - 1
+            if pos < 0:
+                return None, "BOOK_RECONSTRUCTION_NO_VALID_STATE"
+            best_state_ts = ts_states[pos]
+            first = bisect.bisect_left(ts_states, best_state_ts)
+            best_spread = spread_states[first]
+            best_state_gap_count = gap_states[first]
+            best_dt = abs(best_state_ts - timestamp_ms)
+            if best_dt > tolerance_ms:
+                return (
+                    None,
+                    f"BOOK_RECONSTRUCTION_STATE_TOO_FAR:{int(best_dt)}ms_>_{tolerance_ms}ms",
+                )
+            if expected_update_id_step is not None and best_state_gap_count > 0:
+                return (
+                    best_spread,
+                    f"MEASURED_FROM_BOOK_RECONSTRUCTION_SEQUENCE_GAP:{best_state_gap_count}",
+                )
+            return best_spread, "MEASURED_FROM_BOOK_RECONSTRUCTION"
+
     bid_book: dict[float, float] = {}
     ask_book: dict[float, float] = {}
     for level in (base_snapshot.get("bids") or []):
