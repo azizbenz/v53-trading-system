@@ -162,6 +162,38 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _write_chunk_index(
+    run_root: Path,
+    run_id: str,
+    start: date,
+    end: date,
+    args: argparse.Namespace,
+    chunks_total: int,
+    chunk_index: list[dict],
+) -> None:
+    """Write/refresh chunk_index.json. Called after EACH chunk so the dashboard
+    viewer shows live progress (grid grows as chunks complete), not only at the end."""
+    index = {
+        "schema_version": "v1",
+        "run_id": run_id,
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "granularity": args.chunk,
+        "chunk_count": chunks_total,
+        "chunks": chunk_index,
+        "config": {
+            "pairs": args.pairs,
+            "engines": args.engines,
+            "timeframes": args.timeframes,
+            "max_workers": args.max_workers,
+            "engine_native_sample_size": args.engine_native_sample_size,
+        },
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    run_root.mkdir(parents=True, exist_ok=True)
+    (run_root / "chunk_index.json").write_text(json.dumps(index, indent=2), encoding="utf-8")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     start, end = _parse_date(args.start), _parse_date(args.end)
@@ -192,6 +224,7 @@ def main(argv: list[str] | None = None) -> int:
             if prev.get("status") == "CHUNK_COMPLETE":
                 print(f"[chunked] SKIP {label} (already CHUNK_COMPLETE)")
                 chunk_index.append({"chunk_label": label, "status": "CHUNK_COMPLETE", "skipped": True})
+                _write_chunk_index(run_root, run_id, start, end, args, len(chunks), chunk_index)
                 continue
 
         a2_dir = chunk_dir / "phase_a2_data_factory"
@@ -283,17 +316,10 @@ def main(argv: list[str] | None = None) -> int:
         chunk_dir.mkdir(parents=True, exist_ok=True)
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         chunk_index.append({k: manifest[k] for k in ("chunk_label", "status", "total_wall_s")})
+        _write_chunk_index(run_root, run_id, start, end, args, len(chunks), chunk_index)
         print(f"[chunked] {label}: {status} ({manifest['total_wall_s']}s)")
 
-    index = {
-        "schema_version": "v1", "run_id": run_id,
-        "start": start.isoformat(), "end": end.isoformat(), "granularity": args.chunk,
-        "chunk_count": len(chunks), "chunks": chunk_index,
-        "config": {"pairs": args.pairs, "engines": args.engines, "timeframes": args.timeframes,
-                   "max_workers": args.max_workers, "engine_native_sample_size": args.engine_native_sample_size},
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    }
-    (run_root / "chunk_index.json").write_text(json.dumps(index, indent=2), encoding="utf-8")
+    _write_chunk_index(run_root, run_id, start, end, args, len(chunks), chunk_index)
     done = sum(1 for c in chunk_index if c.get("status") == "CHUNK_COMPLETE")
     print(f"\n[chunked] DONE {done}/{len(chunks)} complete. Index: {run_root / 'chunk_index.json'}")
     print(f"[chunked] Reduce: python scripts/reduce_backtest_chunks.py --run-root \"{run_root}\"")

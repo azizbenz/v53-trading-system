@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+
+{% block title %}Chunked run - {{ vm.welcome_message }}{% endblock %}
+
+{% block content %}
+{% set badge_colors = {'ok': '#1a7f37', 'blocked': '#b8860b', 'failed': '#c0392b', 'missing': '#777'} %}
+
+<section class="welcome-banner">
+    <div class="welcome-banner__inner">
+        <div>
+            <h1 class="welcome-banner__title">Run chunked (map-reduce)</h1>
+            <p class="welcome-banner__sub">
+                Per-chunk state and pooled synthesis for a Phase 3 chunked backtest run. Read-only.
+            </p>
+        </div>
+        <div class="welcome-banner__amount">
+            <span class="welcome-banner__label">Phase 3</span>
+            <span class="welcome-banner__value">Chunking</span>
+        </div>
+    </div>
+</section>
+
+<section style="margin:1rem 0;">
+    <form method="get" action="/backtest/chunked" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;">
+        <label for="run_root">Run root:</label>
+        <input id="run_root" type="text" name="run_root" value="{{ run_root|e }}"
+               placeholder="E:\output2\runs\chunk_smoke_1d"
+               style="flex:1;min-width:26rem;padding:.4rem;">
+        <button type="submit">Load</button>
+    </form>
+</section>
+
+<section style="margin:1rem 0;border:1px solid rgba(255,255,255,.08);border-radius:.5rem;padding:.75rem;">
+    <h2 style="margin-bottom:.5rem;">Launch a chunked run</h2>
+    <form method="post" action="/backtest/chunked/run"
+          style="display:grid;grid-template-columns:repeat(auto-fit,minmax(13rem,1fr));gap:.6rem;align-items:end;">
+        <label>Start<br><input type="text" name="start" placeholder="2025-11-16" required style="width:100%;padding:.35rem;"></label>
+        <label>End<br><input type="text" name="end" placeholder="2025-11-18" required style="width:100%;padding:.35rem;"></label>
+        <label>Chunk<br><select name="chunk" style="width:100%;padding:.35rem;"><option value="1d">1 day</option><option value="1w">1 week</option></select></label>
+        <label>Max workers<br><input type="text" name="max_workers" value="1" style="width:100%;padding:.35rem;"></label>
+        <label>Pairs<br><input type="text" name="pairs" value="BNBUSDT,BTCUSDT" style="width:100%;padding:.35rem;"></label>
+        <label>Output root<br><input type="text" name="output_root" placeholder="L:\output backtest\runs" required style="width:100%;padding:.35rem;"></label>
+        <label>Raw roots (csv)<br><input type="text" name="raw_roots" placeholder="L:\ordrebookpart1,L:\trades,L:\klines" style="width:100%;padding:.35rem;"></label>
+        <label>Metadata root<br><input type="text" name="historical_metadata_root" placeholder="K:\v5.3 backtest\metadata\bybit\spot" style="width:100%;padding:.35rem;"></label>
+        <button type="submit" style="padding:.45rem .9rem;">Launch chunked run</button>
+    </form>
+    <p style="font-size:.85rem;opacity:.75;margin-top:.5rem;">Runs <code>scripts/run_chunked_backtest.py</code> as a background job; this page then shows live per-chunk progress (incremental index). Run the reduce afterwards for pooled synthesis.</p>
+</section>
+
+{% if discovered %}
+<section style="margin-top:1rem;">
+    <h2 style="margin-bottom:.6rem;">Chunked runs found ({{ discovered|length }})</h2>
+    <div style="overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:.92rem;">
+        <thead>
+            <tr style="text-align:left;border-bottom:1px solid #555;">
+                <th style="padding:.4rem .6rem;">Run</th>
+                <th style="padding:.4rem .6rem;">Horizon</th>
+                <th style="padding:.4rem .6rem;">Coverage</th>
+                <th style="padding:.4rem .6rem;">State</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for s in discovered %}
+            <tr style="border-bottom:1px solid #2c2c2c;">
+                <td style="padding:.35rem .6rem;"><a href="/backtest/chunked?run_root={{ s.run_root|urlencode }}"><code>{{ s.run_id }}</code></a></td>
+                <td style="padding:.35rem .6rem;">{{ s.start }} to {{ s.end }} | {{ s.granularity }} | {{ s.chunk_count }} chunks</td>
+                <td style="padding:.35rem .6rem;">{{ s.complete }}/{{ s.chunk_count }} ok | blocked {{ s.blocked }} | failed {{ s.failed }} | missing {{ s.missing }}</td>
+                <td style="padding:.35rem .6rem;">{% if s.has_synthesis %}reduced{% else %}live (pre-reduce){% endif %}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</section>
+{% endif %}
+
+{% if discovered and not (chunked and chunked.found) %}
+    <section class="stat-card">
+        <div class="stat-card__foot">Pick a run above to drill into its chunk grid and pooled synthesis.</div>
+    </section>
+{% elif chunked is none %}
+    <section class="stat-card">
+        <div class="stat-card__foot">
+            Enter the root directory for a chunked run, or its parent runs folder to list them, then load it. Example:
+            <code>E:\output2\runs\chunk_smoke_1d</code>.
+            Produced by <code>scripts/run_chunked_backtest.py</code> and
+            <code>scripts/reduce_backtest_chunks.py</code>.
+        </div>
+    </section>
+{% elif not chunked.found %}
+    <section class="stat-card stat-card--red">
+        <div class="stat-card__head"><span class="stat-card__pair">Not found</span></div>
+        <div class="stat-card__price">--</div>
+        <div class="stat-card__foot">{{ chunked.error }} | <code>{{ chunked.run_root }}</code></div>
+    </section>
+{% else %}
+
+<section class="stat-row">
+    <div class="stat-card">
+        <div class="stat-card__head"><span class="stat-card__pair">Run</span></div>
+        <div class="stat-card__price">{{ chunked.run_id }}</div>
+        <div class="stat-card__foot">{{ chunked.start }} to {{ chunked.end }} | {{ chunked.granularity }} | {{ chunked.chunk_count }} chunks</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-card__head"><span class="stat-card__pair">Coverage</span></div>
+        <div class="stat-card__price">{{ chunked.coverage.get('complete', 0) }} / {{ chunked.chunk_count }}</div>
+        <div class="stat-card__foot">blocked {{ chunked.coverage.get('blocked', 0) }} | failed {{ chunked.coverage.get('failed', 0) }} | missing {{ chunked.coverage.get('missing', 0) }}</div>
+    </div>
+    {% if chunked.has_synthesis %}
+    {% set total_wall_s = chunked.performance.get('total_wall_s', 0)|float %}
+    {% set engine_native_s = chunked.performance.get('engine_native_s', 0)|float %}
+    <div class="stat-card">
+        <div class="stat-card__head"><span class="stat-card__pair">Total time</span></div>
+        <div class="stat-card__price">{{ '%.0f'|format(total_wall_s) }} s</div>
+        <div class="stat-card__foot">{{ '%.2f'|format(total_wall_s / 3600) }} h | engine_native {{ '%.0f'|format(engine_native_s) }} s</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-card__head"><span class="stat-card__pair">Pooled economics</span></div>
+        <div class="stat-card__price">{{ chunked.economic.get('executed_trade_count', 0) }} trades</div>
+        <div class="stat-card__foot">{{ chunked.economic.get('candidate_count', 0) }} candidates | Sharpe/DSR: {{ chunked.pooled_statistical_validation }}</div>
+    </div>
+    {% else %}
+    <div class="stat-card stat-card--orange">
+        <div class="stat-card__head"><span class="stat-card__pair">Synthesis</span></div>
+        <div class="stat-card__price">PENDING</div>
+        <div class="stat-card__foot">{{ chunked.error }}</div>
+    </div>
+    {% endif %}
+</section>
+
+{% if chunked.has_synthesis %}
+{% set a2_wall_s = chunked.performance.get('a2_wall_s', 0)|float %}
+{% set b1_wall_s = chunked.performance.get('b1_wall_s', 0)|float %}
+{% set b2_wall_s = chunked.performance.get('b2_wall_s', 0)|float %}
+<section class="stat-row">
+    <div class="stat-card">
+        <div class="stat-card__head"><span class="stat-card__pair">Phase cost</span></div>
+        <div class="stat-card__price">B2 {{ '%.0f'|format(b2_wall_s) }} s</div>
+        <div class="stat-card__foot">A2 {{ '%.0f'|format(a2_wall_s) }} s | B1 {{ '%.0f'|format(b1_wall_s) }} s</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-card__head"><span class="stat-card__pair">Data quality</span></div>
+        <div class="stat-card__price">depth20 missing {{ chunked.data_quality.get('depth20_missing', 0) }}</div>
+        <div class="stat-card__foot">raw-window partial {{ chunked.data_quality.get('raw_window_partial', 0) }}</div>
+    </div>
+</section>
+{% endif %}
+
+<section style="margin-top:1.5rem;">
+    <h2 style="margin-bottom:.6rem;">Chunk grid ({{ chunked.grid|length }})</h2>
+    <div style="overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:.92rem;">
+        <thead>
+            <tr style="text-align:left;border-bottom:1px solid #555;">
+                <th style="padding:.4rem .6rem;">Chunk</th>
+                <th style="padding:.4rem .6rem;">Status</th>
+                <th style="padding:.4rem .6rem;">Total (s)</th>
+                <th style="padding:.4rem .6rem;">engine_native (s)</th>
+                <th style="padding:.4rem .6rem;">Candidates</th>
+                <th style="padding:.4rem .6rem;">B2 final</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for c in chunked.grid %}
+            <tr style="border-bottom:1px solid #2c2c2c;">
+                <td style="padding:.35rem .6rem;"><code>{{ c.label }}</code></td>
+                <td style="padding:.35rem .6rem;">
+                    <span style="padding:.1rem .5rem;border-radius:.4rem;color:#fff;background:{{ badge_colors.get(c.badge, '#777') }};">{{ c.status }}</span>
+                </td>
+                <td style="padding:.35rem .6rem;">{{ '%.0f'|format(c.total_wall_s) }}</td>
+                <td style="padding:.35rem .6rem;">{{ '%.0f'|format(c.engine_native_s) }}</td>
+                <td style="padding:.35rem .6rem;">{{ c.candidate_count if c.candidate_count is not none else '--' }}</td>
+                <td style="padding:.35rem .6rem;"><small>{{ c.b2_final_status }}</small></td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</section>
+
+{% endif %}
+{% endblock %}

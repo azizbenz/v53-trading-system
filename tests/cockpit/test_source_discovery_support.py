@@ -96,9 +96,9 @@ def _seed_minimal_repo(repo_root: Path) -> None:
 
 def test_discover_pages_matches_real_cockpit_surface_count() -> None:
     pages = discover_pages(REPO_ROOT)
-    # Patch A (2026-05-31) — /backtest/replay sub-page added (backtest_replay.html)
-    # per 2026-05-30_A_BACKTEST_REPLAY_SUBPAGE_SPLIT_SPEC.md → 8 → 9 surfaces.
-    assert len(pages) == 9
+    # Cockpit has 11 rendered surfaces after /backtest/replay, /glossary and
+    # /backtest/chunked (Phase 3 chunked-run synthesis view).
+    assert len(pages) == 11
     page_ids = {page.page_id for page in pages}
     assert page_ids == {
         "overview",
@@ -108,9 +108,14 @@ def test_discover_pages_matches_real_cockpit_surface_count() -> None:
         "lab",
         "backtest",
         "backtest_replay",
+        "backtest_chunked",
+        "glossary",
         "logs",
         "observability",
     }
+    by_id = {page.page_id: page for page in pages}
+    assert by_id["backtest_chunked"].label == "Backtest Chunked"
+    assert by_id["backtest_chunked"].route_path == "/backtest/chunked"
 
 
 def test_runner_generates_expected_outputs_for_minimal_repo() -> None:

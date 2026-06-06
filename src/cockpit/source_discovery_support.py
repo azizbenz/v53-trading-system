@@ -71,6 +71,8 @@ _PAGE_LABELS = {
     "vps": "VPS",
     "lab": "IA Lab",
     "backtest": "Backtest",
+    "backtest_chunked": "Backtest Chunked",
+    "glossary": "Glossary",
     "logs": "Logs",
     "observability": "Observability",
 }
@@ -81,6 +83,8 @@ _PAGE_ROUTE_HINTS = {
     "vps": "/vps",
     "lab": "/lab",
     "backtest": "/backtest",
+    "backtest_chunked": "/backtest/chunked",
+    "glossary": "/glossary",
     "logs": "/logs",
     "observability": "/observability",
 }
@@ -91,6 +95,8 @@ _PAGE_OWNERSHIP_HINTS = {
     "vps": ("service_liveness", "queue_trace", "disk_growth", "data_quality"),
     "lab": ("lab_review", "lab_vps_transfer", "model_risk", "calibration", "multiple_testing"),
     "backtest": ("run_comparison", "replay", "decision_trace", "backtest_jobs"),
+    "backtest_chunked": ("chunk_index", "global_synthesis", "chunk_manifest", "data_quality"),
+    "glossary": ("canonical_glossary", "audit_dictionary", "operator_terms"),
     "logs": ("recent_logs", "log_query", "parse_error"),
     "observability": ("observability", "prometheus", "grafana", "bridge"),
 }

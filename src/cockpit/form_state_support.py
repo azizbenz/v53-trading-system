@@ -68,6 +68,8 @@ class BacktestFormState(BaseModel, frozen=True):
     # Patch 6 output-root selector. Empty string preserves the default
     # ``<jobs_root>/<job_id>/output`` path. Operators can override per run.
     output_root: str = ""
+    # Last selected chunked-run folder, persisted like the raw-data paths.
+    chunked_run_root: str = ""
 
     @property
     def raw_roots_csv(self) -> str:

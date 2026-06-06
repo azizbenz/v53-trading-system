@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import AsyncIterator
 from urllib.parse import urlencode
 
@@ -79,6 +80,7 @@ from cockpit.strategy_ladder_workflow_support import (
     workflow_phase_dirname,
 )
 from cockpit.runtime_support import read_runtime_surfaces
+from cockpit.state_chunked_backtest import discover_chunked_runs, read_chunked_run
 from cockpit.strategy_ladder_ml_handoff_support import (
     DEFAULT_ROLLING_CHUNK_DAYS,
     DEFAULT_ROLLING_FRESHNESS_DAYS,
@@ -108,6 +110,31 @@ from interface_contracts import (
 )
 from interface_contracts.atomic_io import atomic_write_json
 from monitoring.contracts import ShadowVpsServiceLogQuery
+
+
+def _chunked_orchestrator_script() -> Path:
+    return Path(__file__).resolve().parents[2] / "scripts" / "run_chunked_backtest.py"
+
+
+def _launch_chunked_subprocess(argv: list[str], log_path: Path) -> None:
+    """Spawn the chunked orchestrator detached so it outlives the HTTP request;
+    stdout + stderr tee to ``log_path``. Module-level so tests can monkeypatch it."""
+    import os
+    import subprocess
+
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    handle = log_path.open("ab")
+    flags = 0
+    if os.name == "nt":
+        flags = subprocess.CREATE_NEW_PROCESS_GROUP | getattr(subprocess, "DETACHED_PROCESS", 0)
+    subprocess.Popen(
+        argv,
+        cwd=str(Path(__file__).resolve().parents[2]),
+        stdout=handle,
+        stderr=handle,
+        creationflags=flags,
+        close_fds=True,
+    )
 
 
 _logger = logging.getLogger(__name__)
@@ -701,6 +728,21 @@ def create_app(
             notice_status=notice_status,
             log_query=log_query,
             pinned_run_id=pinned_run_id,
+        )
+
+    def _build_static_vm(request: Request, *, current_page: str):
+        notice_message = request.query_params.get("notice", "")
+        notice_status = request.query_params.get("notice_status", "info")
+        return SimpleNamespace(
+            current_page=current_page,
+            welcome_message=app.state.welcome_message,
+            grafana_url=app.state.grafana_url,
+            prometheus_url=app.state.prometheus_url,
+            rendered_at_iso=datetime.now(tz=UTC).isoformat(),
+            notice_message=notice_message,
+            notice_status=notice_status,
+            runtime=SimpleNamespace(alerts=()),
+            service=read_service_status(app.state.paths),
         )
 
     def _resolve_backtest_runtime_feature_context() -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -1674,6 +1716,91 @@ def create_app(
             {"vm": view_model},
         )
 
+    @app.get("/backtest/chunked", response_class=HTMLResponse)
+    def backtest_chunked(request: Request, run_root: str = "") -> HTMLResponse:
+        # Phase 3 (2026-06-05): surface a chunked (map-reduce) backtest run to the
+        # dashboard. Reads chunk_index.json / global_synthesis.json from the run
+        # root and renders the chunk grid + pooled synthesis. ``run_root`` is
+        # operator-supplied because chunked runs live under an operator output
+        # root (``<output>/runs/<run_id>``), not the cockpit job registry.
+        view_model = _build_static_vm(request, current_page="backtest_chunked")
+        jobs_root = app.state.paths.backtest_jobs_root
+        current_form = read_backtest_form_state(jobs_root)
+        requested_run_root = run_root.strip()
+        selected_run_root = requested_run_root or current_form.chunked_run_root.strip()
+        if requested_run_root and requested_run_root != current_form.chunked_run_root:
+            write_backtest_form_state(
+                jobs_root,
+                current_form.model_copy(update={"chunked_run_root": requested_run_root}),
+            )
+        chunked = read_chunked_run(selected_run_root) if selected_run_root else None
+        # When the supplied root is not itself a chunked run (e.g. it is the runs
+        # parent dir, or empty), list the chunked runs found directly under it so
+        # the operator can browse + drill in without typing each run path.
+        discovered: tuple = ()
+        if selected_run_root and (chunked is None or not chunked.found):
+            discovered = discover_chunked_runs(selected_run_root)
+        fixed_run_href = (
+            "/backtest/chunked?" + urlencode({"run_root": selected_run_root})
+            if selected_run_root
+            else "/backtest/chunked"
+        )
+        return templates.TemplateResponse(
+            request,
+            "pages/backtest_chunked.html",
+            {
+                "vm": view_model,
+                "chunked": chunked,
+                "discovered": discovered,
+                "run_root": selected_run_root,
+                "fixed_run_href": fixed_run_href,
+            },
+        )
+
+    @app.post("/backtest/chunked/run")
+    def backtest_chunked_run(
+        start: str = Form(...),
+        end: str = Form(...),
+        chunk: str = Form("1d"),
+        max_workers: str = Form("1"),
+        output_root: str = Form(...),
+        raw_roots: str = Form(""),
+        pairs: str = Form("BNBUSDT,BTCUSDT"),
+        historical_metadata_root: str = Form(""),
+    ) -> RedirectResponse:
+        # Phase 3 launcher (2026-06-05): spawn the chunked orchestrator as a
+        # detached job, then redirect to the viewer for the new run (live progress
+        # via the orchestrator's incremental chunk_index.json). Additive — does not
+        # touch the monolithic /backtest/run workflow path.
+        import sys
+        from uuid import uuid4
+
+        run_id = f"chunked-{uuid4().hex[:12]}"
+        out = output_root.strip().strip('"').strip("'")
+        argv = [
+            sys.executable,
+            str(_chunked_orchestrator_script()),
+            "--run-id", run_id,
+            "--start", start.strip(),
+            "--end", end.strip(),
+            "--chunk", (chunk.strip() or "1d"),
+            "--max-workers", (max_workers.strip() or "1"),
+            "--output-root", out,
+            "--pairs", (pairs.strip() or "BNBUSDT,BTCUSDT"),
+        ]
+        for raw_root in [token.strip() for token in raw_roots.split(",") if token.strip()]:
+            argv += ["--raw-root", raw_root]
+        if historical_metadata_root.strip():
+            argv += ["--historical-metadata-root", historical_metadata_root.strip()]
+        run_root = str(Path(out) / run_id)
+        try:
+            _launch_chunked_subprocess(argv, Path(run_root) / "_launch.log")
+            notice, notice_status = f"Launched chunked run {run_id}", "success"
+        except OSError as exc:
+            notice, notice_status = f"Failed to launch chunked run: {exc}", "error"
+        params = urlencode({"run_root": run_root, "notice": notice, "notice_status": notice_status})
+        return RedirectResponse(url=f"/backtest/chunked?{params}", status_code=303)
+
     @app.get("/backtest/picker/drives")
     def backtest_picker_drives() -> JSONResponse:
         return JSONResponse({"drives": _list_local_drives()})
@@ -1863,6 +1990,15 @@ def create_app(
         return templates.TemplateResponse(
             request,
             "pages/logs.html",
+            {"vm": view_model},
+        )
+
+    @app.get("/glossary", response_class=HTMLResponse)
+    def glossary(request: Request, pair: str | None = None) -> HTMLResponse:
+        view_model = _build_static_vm(request, current_page="glossary")
+        return templates.TemplateResponse(
+            request,
+            "pages/glossary.html",
             {"vm": view_model},
         )
 
