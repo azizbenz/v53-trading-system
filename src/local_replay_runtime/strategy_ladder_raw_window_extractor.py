@@ -766,6 +766,45 @@ def _entry_overlaps_window(
     return entry.max_timestamp_ms >= window_start_ms and entry.min_timestamp_ms <= window_end_ms
 
 
+def _resolve_snapshot_anchor_entries(
+    entries: tuple[StrategyLadderSilverIndexEntry, ...],
+    *,
+    pair: str,
+    window_start_ms: int,
+) -> tuple[StrategyLadderSilverIndexEntry, ...]:
+    """Resolve a fully-past orderbook-snapshot ANCHOR when none overlaps.
+
+    Mirrors the A2 gold ``_resolve_snapshot_anchor_entry`` fix (and is the
+    raw-window twin of the e61923a delta-path fix). With sparse capture
+    (~1 snapshot/day) the snapshot instant rarely overlaps a replay window, so
+    ``_entry_overlaps_window`` drops it, ``snapshot_entry`` is ``None``,
+    ``raw_book_path`` is ``None`` on the window manifest, and B2
+    (``_resolve_book_state``) reports ``SPREAD_BLOCKED_BY_MISSING_BOOK`` /
+    ``SLIPPAGE_BLOCKED_BY_MISSING_DEPTH20`` for every candidate -> 0 trades.
+
+    A snapshot is the reconstruction anchor, not an in-window observation. Pick
+    the most recent snapshot whose data is entirely at-or-before
+    ``window_start_ms`` (causal, no look-ahead); the extractor then slices it
+    with ``include_anchor_before_start=True`` and replays the in-window deltas
+    forward from it. Returns an empty tuple when no past snapshot exists (window
+    precedes first capture), preserving the MISSING_BOOK result for those.
+    """
+    anchor: StrategyLadderSilverIndexEntry | None = None
+    for entry in entries:
+        if entry.data_type != "orderbook_snapshot" or entry.pair != pair or not entry.path:
+            continue
+        max_ts = entry.max_timestamp_ms
+        if max_ts is None or max_ts > window_start_ms:
+            continue
+        if (
+            anchor is None
+            or max_ts > anchor.max_timestamp_ms
+            or (max_ts == anchor.max_timestamp_ms and (entry.date or "") > (anchor.date or ""))
+        ):
+            anchor = entry
+    return (anchor,) if anchor is not None else ()
+
+
 def _sort_entries(
     entries: tuple[StrategyLadderSilverIndexEntry, ...],
 ) -> tuple[StrategyLadderSilverIndexEntry, ...]:
@@ -884,6 +923,16 @@ def _resolve_from_silver_index(
             window_end_ms=window_end_ms,
             data_types=("orderbook_snapshot",),
         )
+        if not snapshot_entries:
+            # Sparse capture (~1 snapshot/day): no snapshot overlaps this window,
+            # so fall back to the most recent fully-past snapshot anchor. Without
+            # it the slice carries no book anchor and B2 fails closed with
+            # SPREAD_BLOCKED_BY_MISSING_BOOK for every candidate.
+            snapshot_entries = _resolve_snapshot_anchor_entries(
+                entries,
+                pair=candidate.pair,
+                window_start_ms=window_start_ms,
+            )
         delta_entries = _entries_for_candidate(
             entries=entries,
             window_index=window_index,

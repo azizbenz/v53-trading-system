@@ -541,13 +541,10 @@ def _feature_overlay_batch_from_engine_native_bridge(
             entry_book_entries,
             timestamp_ms=timestamp_ms,
         )
-        snapshot_book_entry = next(
-            (
-                item
-                for item in row_book_entries
-                if item.data_type in {"orderbook_snapshot", "orderbook"} and item.path
-            ),
-            None,
+        snapshot_book_entry = _resolve_snapshot_anchor_entry(
+            entry_book_entries,
+            timestamp_ms=timestamp_ms,
+            covering_entries=row_book_entries,
         )
         delta_book_entry = next(
             (
@@ -749,6 +746,66 @@ def _book_entries_covering_timestamp(
         if entry.min_timestamp_ms <= timestamp_ms <= entry.max_timestamp_ms:
             covered.append(entry)
     return tuple(covered)
+
+
+def _resolve_snapshot_anchor_entry(
+    entry_book_entries: tuple[StrategyLadderSilverIndexEntry, ...],
+    *,
+    timestamp_ms: int,
+    covering_entries: tuple[StrategyLadderSilverIndexEntry, ...],
+) -> StrategyLadderSilverIndexEntry | None:
+    """Resolve the orderbook-snapshot ANCHOR for spread reconstruction.
+
+    A book snapshot is the reconstruction *anchor*, not an in-window
+    observation. With sparse capture (~1 snapshot/day) the snapshot's captured
+    instant rarely falls inside a row's tolerance window, so
+    :func:`_book_entries_covering_timestamp` drops it and
+    :func:`measure_spread_bps_from_book_snapshot` then receives
+    ``raw_book_path=None`` -> ``BOOK_PATH_MISSING`` ->
+    ``DEFAULT_BY_BOOK_STATUS`` for every row, even though Tier-2 reconstruction
+    (snapshot anchor + forward deltas) and Tier-3 stale snapshot are designed
+    exactly for a far, fully-past anchor. This is the snapshot-anchor companion
+    to the e61923a delta-path fix; without it spread defaults to a hardcoded
+    proxy and the spread/slippage-realism gate blocks every candidate.
+
+    Prefer a covering snapshot (dense capture -> Tier-1). Otherwise fall back to
+    the most recent snapshot whose data is entirely at-or-before
+    ``timestamp_ms`` (``max_timestamp_ms <= timestamp_ms``), which keeps
+    reconstruction causal (no look-ahead into a future snapshot). Returns
+    ``None`` when no past snapshot exists (row precedes first capture),
+    preserving the ``BOOK_DEPTH_NOT_PROVEN`` result for those rows.
+    """
+    covering_snapshot = next(
+        (
+            item
+            for item in covering_entries
+            if item.data_type in {"orderbook_snapshot", "orderbook"} and item.path
+        ),
+        None,
+    )
+    if covering_snapshot is not None:
+        return covering_snapshot
+    anchor: StrategyLadderSilverIndexEntry | None = None
+    for item in entry_book_entries:
+        if item.data_type not in {"orderbook_snapshot", "orderbook"} or not item.path:
+            continue
+        item_ts = item.max_timestamp_ms
+        if item_ts is None or item_ts > timestamp_ms:
+            continue
+        if anchor is None:
+            anchor = item
+            continue
+        # Prefer the most recent fully-past snapshot. When two day-partitioned
+        # entries carry the SAME boundary snapshot instant (e.g. a 00:00:02
+        # capture written into both day files), prefer the later date so the
+        # anchor pairs with the same-day forward-delta file (which reaches the
+        # row), yielding fresh MEASURED_FROM_BOOK_RECONSTRUCTION rather than a
+        # stale measurement off the prior day's short delta tail.
+        if item_ts > anchor.max_timestamp_ms or (
+            item_ts == anchor.max_timestamp_ms and (item.date or "") > (anchor.date or "")
+        ):
+            anchor = item
+    return anchor
 
 
 def _prioritize_requested_window_rows(
@@ -3525,14 +3582,10 @@ def _write_gold_features(
                     )
                     spread_bps = 4.0 if book_status == "BOOK_DEPTH20_AVAILABLE" else 6.0 if book_status == "BOOK_LIMITED_DEPTH_AVAILABLE" else 0.0
 
-                snapshot_book_entry = next(
-                    (
-                        item
-                        for item in row_book_entries
-                        if item.data_type in {"orderbook_snapshot", "orderbook"}
-                        and item.path
-                    ),
-                    None,
+                snapshot_book_entry = _resolve_snapshot_anchor_entry(
+                    entry_book_entries,
+                    timestamp_ms=timestamp_ms,
+                    covering_entries=row_book_entries,
                 )
                 delta_book_entry = next(
                     (
