@@ -92,6 +92,13 @@ def _prod_safe_row_with(**overrides) -> StrategyLadderFeatureRow:
         # P7
         "book_depth_levels": 20,
         "fee_schedule_date": "2025-04-29",
+        # P0-2 — microstructure coverage (governed gold carries modern signals)
+        "feature_values": {
+            "vpin": 0.42,
+            "cumulative_ofi": 1.5,
+            "queue_pressure": 0.3,
+            "kyle_lambda": 0.001,
+        },
     }
     defaults.update(overrides)
     return StrategyLadderFeatureRow(**defaults)
@@ -160,3 +167,25 @@ def test_assess_gold_row_fully_prod_safe_emits_empty_blockers() -> None:
     blockers = assess_gold_row_prod_safety(row)
 
     assert blockers == ()
+
+
+def test_assess_gold_row_blocks_when_microstructure_absent() -> None:
+    """P0-2 (2026-06-08) — a gold row with only legacy OHLCV + cost features
+    (no vpin / cumulative_ofi / queue_pressure / kyle_lambda) is NOT prod-safe:
+    the silent 3-feature feature-request degradation must be caught."""
+    row = _prod_safe_row_with(
+        feature_values={"close_return": 0.1, "high_low_range": 0.2, "spread_bps": 1.0}
+    )
+
+    blockers = assess_gold_row_prod_safety(row)
+
+    assert "A2_GOLD_PROD_SAFE_BLOCKED_BY_MISSING_MICROSTRUCTURE" in blockers
+
+
+def test_assess_gold_row_microstructure_present_clears_blocker() -> None:
+    """A single modern microstructure signal clears the P0-2 blocker."""
+    row = _prod_safe_row_with(feature_values={"vpin": 0.4})
+
+    blockers = assess_gold_row_prod_safety(row)
+
+    assert "A2_GOLD_PROD_SAFE_BLOCKED_BY_MISSING_MICROSTRUCTURE" not in blockers

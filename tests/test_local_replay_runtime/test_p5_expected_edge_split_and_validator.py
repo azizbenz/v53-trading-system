@@ -121,6 +121,13 @@ def _make_prod_safe_row() -> StrategyLadderFeatureRow:
         # P7 — fine thresholds: depth>=20, fee_schedule_date close to row.timestamp_ms
         book_depth_levels=20,
         fee_schedule_date="2025-04-29",
+        # P0-2 — microstructure coverage (governed gold carries modern signals)
+        feature_values={
+            "vpin": 0.42,
+            "cumulative_ofi": 1.5,
+            "queue_pressure": 0.3,
+            "kyle_lambda": 0.001,
+        },
     )
 
 

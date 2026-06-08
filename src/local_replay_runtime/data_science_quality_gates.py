@@ -48,6 +48,21 @@ PROD_SAFE_MIN_BOOK_DEPTH_LEVELS: int = 20
 PROD_SAFE_MAX_FEE_SCHEDULE_DRIFT_DAYS: int = 90
 PROD_SAFE_MAX_METADATA_STALENESS_DAYS: int = 90
 
+# P0-2 (2026-06-08) — modern microstructure signals (Cont-Kukanov OFI,
+# Easley-Lopez-O'Hara VPIN, queue/book pressure, Kyle's lambda price impact,
+# realized-kernel vol). Mirrors strategy_ladder_data_factory._A2_ENGINE_NATIVE_
+# BRIDGE_FEATURES. A prod-safe (governed) gold row must carry at least one of
+# these; a row with only legacy OHLCV + cost features (the silent 3-legacy
+# feature-request degradation) is research-only, NOT prod-safe.
+_PROD_SAFE_REQUIRED_MICROSTRUCTURE_FEATURES: frozenset[str] = frozenset({
+    "vpin",
+    "cumulative_ofi",
+    "queue_pressure",
+    "kyle_lambda",
+    "realized_vol_current",
+    "realized_vol_at_break",
+})
+
 
 def _days_drift(iso_date: str | None, row_timestamp_ms: int | None) -> int | None:
     """P7 helper — compute absolute drift in days between an ISO date and a
@@ -165,6 +180,18 @@ def assess_gold_row_prod_safety(row: object) -> tuple[str, ...]:
             f"A2_GOLD_PROD_SAFE_BLOCKED_BY_METADATA_STALENESS_TOO_LARGE:"
             f"{metadata_staleness}d_>_{PROD_SAFE_MAX_METADATA_STALENESS_DAYS}d"
         )
+
+    # P0-2 (2026-06-08) — microstructure coverage. A governed/prod-safe gold must
+    # carry modern microstructure signals; a legacy-only gold (the silent 3-feature
+    # request degradation, e.g. a chunked run launched without --feature-names) is
+    # research-only, not prod-safe. Microstructure lives in row.feature_values
+    # (a dict), not as top-level columns.
+    feature_values = getattr(row, "feature_values", None)
+    if not isinstance(feature_values, dict) or not any(
+        feature_values.get(name) is not None
+        for name in _PROD_SAFE_REQUIRED_MICROSTRUCTURE_FEATURES
+    ):
+        blockers.append("A2_GOLD_PROD_SAFE_BLOCKED_BY_MISSING_MICROSTRUCTURE")
 
     return tuple(blockers)
 
