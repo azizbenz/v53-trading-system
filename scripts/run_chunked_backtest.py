@@ -37,8 +37,29 @@ import time
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = REPO_ROOT / "scripts"
+SRC_ROOT = REPO_ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
 DATA_FACTORY_CLI = SCRIPTS / "run_strategy_ladder_data_factory.py"
 LADDER_CLI = SCRIPTS / "run_backtest_strategy_ladder.py"
+
+from local_replay_runtime.strategy_ladder_expected_edge_feature_contracts import (
+    DEFAULT_EXPECTED_EDGE_FEATURE_NAMES,
+    EXTENDED_MICROSTRUCTURE_EXPECTED_EDGE_FEATURE_NAMES,
+    REPLAY_MICROSTRUCTURE_EXPECTED_EDGE_FEATURE_NAMES,
+)
+
+# A2-materializable governed feature set (= DEFAULT u REPLAY_MICROSTRUCTURE u
+# EXTENDED, mirrors strategy_ladder_data_factory._A2_MATERIALIZABLE_FEATURES).
+# Used as the chunked-launcher --feature-names default so governed runs
+# materialize the microstructure features (vpin / cumulative_ofi / queue_pressure
+# / kyle_lambda / realized_vol_*) into A2 gold instead of silently degrading to
+# the 3 legacy features when no --feature-names is supplied.
+_A2_GOVERNED_FEATURE_NAMES: tuple[str, ...] = (
+    *DEFAULT_EXPECTED_EDGE_FEATURE_NAMES,
+    *REPLAY_MICROSTRUCTURE_EXPECTED_EDGE_FEATURE_NAMES,
+    *EXTENDED_MICROSTRUCTURE_EXPECTED_EDGE_FEATURE_NAMES,
+)
 
 
 def _parse_date(value: str) -> date:
@@ -155,6 +176,16 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--candidate-sample-cap", default=50, type=int, help="Per-engine candidate cap.")
     p.add_argument("--b1-5-policy-mode", default="conservative_hard_only", help="B1.5 preselection policy.")
     p.add_argument("--storage-format", default="jsonl-gz", help="Silver storage format.")
+    p.add_argument(
+        "--feature-names",
+        default=",".join(_A2_GOVERNED_FEATURE_NAMES),
+        help=(
+            "Comma-separated governed expected-edge feature names to materialize in A2 "
+            "gold. Defaults to the microstructure-inclusive governed set so chunked runs "
+            "do not silently degrade to the 3 legacy features. Pass a smaller set "
+            "(e.g. 'close_return,high_low_range,volume') only for LIGHT smoke runs."
+        ),
+    )
     p.add_argument("--ml-mode", default="ML_MODE_OFF", help="ML mode.")
     p.add_argument("--max-workers", default="1", help="B2 engine-native workers (V53_MAX_WORKERS). RAM-safe at 1-day chunking.")
     p.add_argument("--resume", action="store_true", help="Skip chunks already CHUNK_COMPLETE.")
@@ -237,6 +268,7 @@ def main(argv: list[str] | None = None) -> int:
             "--output-root", str(a2_dir), *raw_root_args,
             "--pairs", args.pairs, "--timeframes", args.timeframes,
             "--start", s, "--end", e,
+            "--feature-names", args.feature_names,
             "--storage-format", args.storage_format, "--use-measured-economic-provenance",
         ]
         if args.historical_metadata_root:
