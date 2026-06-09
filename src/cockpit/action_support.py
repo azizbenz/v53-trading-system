@@ -1494,7 +1494,7 @@ def _build_backtest_command(
             "--ml-mode",
             ml_mode_status,
             "--max-workers",
-            "1",
+            "3",
         ]
         if pairs:
             command.extend(["--pairs", ",".join(pairs)])

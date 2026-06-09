@@ -187,7 +187,9 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     p.add_argument("--ml-mode", default="ML_MODE_OFF", help="ML mode.")
-    p.add_argument("--max-workers", default="1", help="B2 engine-native workers (V53_MAX_WORKERS). RAM-safe at 1-day chunking.")
+    p.add_argument("--max-workers", default="3", help="Workers for A2 gold + B2 engine-native (exported as V53_MAX_WORKERS for every phase). cap_workers_for_ram reduces dynamically; serial fallback at 1.")
+    p.add_argument("--max-ram-fraction", default="0.69", help="Soft RAM ceiling fraction (V53_MAX_RAM_FRACTION); e.g. 0.69 ~ 22 GB on 32 GB total.")
+    p.add_argument("--hard-ram-fraction", default="0.81", help="Hard RAM ceiling fraction (V53_HARD_RAM_FRACTION); e.g. 0.81 ~ 26 GB on 32 GB total.")
     p.add_argument("--resume", action="store_true", help="Skip chunks already CHUNK_COMPLETE.")
     p.add_argument("--dry-run", action="store_true", help="Print the chunk plan + per-phase commands without executing.")
     return p
@@ -309,8 +311,18 @@ def main(argv: list[str] | None = None) -> int:
         status = "CHUNK_COMPLETE"
         t0 = time.perf_counter()
 
-        # --- A2 ---
-        rc, payload, wall = _run_phase(a2_argv, log_path=logs / "a2.log")
+        # Multicore A2->B2 + dynamic RAM guard, shared by every phase (2026-06-09).
+        # V53_MAX_WORKERS caps the pool; cap_workers_for_ram reduces it below the
+        # soft fraction and waits (reclaim+poll) above the hard fraction. setdefault
+        # lets an explicit operator env override these launcher defaults.
+        phase_env = dict(os.environ)
+        phase_env["V53_MAX_WORKERS"] = str(args.max_workers)
+        phase_env.setdefault("V53_RAM_GUARD_ENABLED", "1")
+        phase_env.setdefault("V53_MAX_RAM_FRACTION", str(args.max_ram_fraction))
+        phase_env.setdefault("V53_HARD_RAM_FRACTION", str(args.hard_ram_fraction))
+
+        # --- A2 (gold; parallel, RAM-guarded) ---
+        rc, payload, wall = _run_phase(a2_argv, env=phase_env, log_path=logs / "a2.log")
         phases["A2"] = {"exit": rc, "wall_s": round(wall, 2),
                         "data_factory_status": (payload or {}).get("data_factory_status")}
         if rc != 0 or (payload or {}).get("data_factory_status") != "DATA_FACTORY_READY":
@@ -318,7 +330,7 @@ def main(argv: list[str] | None = None) -> int:
 
         # --- B1 ---
         if status == "CHUNK_COMPLETE":
-            rc, payload, wall = _run_phase(b1_argv, log_path=logs / "b1.log")
+            rc, payload, wall = _run_phase(b1_argv, env=phase_env, log_path=logs / "b1.log")
             phases["B1"] = {"exit": rc, "wall_s": round(wall, 2),
                             "final_status": (payload or {}).get("final_status"),
                             "candidate_count": (payload or {}).get("candidate_count")}
@@ -327,9 +339,7 @@ def main(argv: list[str] | None = None) -> int:
 
         # --- B2 (parallel; RAM-safe at chunk granularity) ---
         if status == "CHUNK_COMPLETE":
-            env = dict(os.environ)
-            env["V53_MAX_WORKERS"] = str(args.max_workers)
-            rc, payload, wall = _run_phase(b2_argv, env=env, log_path=logs / "b2.log")
+            rc, payload, wall = _run_phase(b2_argv, env=phase_env, log_path=logs / "b2.log")
             prof = _read_b2_profile(chunk_dir, b2_run_id)
             b2_final = (payload or {}).get("final_status")
             phases["B2"] = {"exit": rc, "wall_s": round(wall, 2), "final_status": b2_final,
