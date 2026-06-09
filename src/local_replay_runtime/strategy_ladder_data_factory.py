@@ -4872,7 +4872,14 @@ def run_strategy_ladder_data_factory(
     )
     reset_microstructure_file_cache_stats(clear_cache=True)
     stage_started_at = perf_counter()
-    gold_manifest = _write_gold_features(
+    # Multicore A2 gold (2026-06-09): drop-in parallel build over (pair, month)
+    # partitions when V53_MAX_WORKERS > 1 (set per-phase by run_chunked_backtest).
+    # Serial fallback is byte-identical (parity-tested in
+    # test_a2_gold_parallel_parity). Lazy import avoids any data-factory cycle.
+    from local_replay_runtime.strategy_ladder_a2_gold_parallel import (
+        build_gold_features_parallel,
+    )
+    gold_manifest = build_gold_features_parallel(
         request=request,
         index_entries=silver_index,
         available_pairs=pair_report.available_pairs,
