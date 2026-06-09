@@ -26,6 +26,8 @@ from interface_contracts import (
 from interface_contracts.atomic_io import atomic_write_json
 from local_replay_runtime.strategy_ladder_expected_edge_training import (
     DEFAULT_EXPECTED_EDGE_FEATURE_NAMES,
+    EXTENDED_MICROSTRUCTURE_EXPECTED_EDGE_FEATURE_NAMES,
+    REPLAY_MICROSTRUCTURE_EXPECTED_EDGE_FEATURE_NAMES,
 )
 from cockpit.strategy_ladder_workflow_support import (
     PHASE_A1,
@@ -59,6 +61,41 @@ _logger = logging.getLogger(__name__)
 _LEGACY_EXPECTED_EDGE_FEATURE_NAME_SET = frozenset(
     DEFAULT_EXPECTED_EDGE_FEATURE_NAMES
 )
+# A2-materializable governed feature set (= DEFAULT u REPLAY_MICROSTRUCTURE u
+# EXTENDED, mirrors strategy_ladder_data_factory._A2_MATERIALIZABLE_FEATURES and
+# run_chunked_backtest._A2_GOVERNED_FEATURE_NAMES). Used to upgrade a legacy-only
+# selection on the chunked (governed) rail so gold materializes microstructure.
+_A2_GOVERNED_FEATURE_NAMES_CSV = ",".join(
+    (
+        *DEFAULT_EXPECTED_EDGE_FEATURE_NAMES,
+        *REPLAY_MICROSTRUCTURE_EXPECTED_EDGE_FEATURE_NAMES,
+        *EXTENDED_MICROSTRUCTURE_EXPECTED_EDGE_FEATURE_NAMES,
+    )
+)
+
+
+def _scoped_chunked_feature_names_csv(feature_names_csv: str) -> str:
+    """Resolve the ``--feature-names`` CSV for the chunked (governed) rail.
+
+    Honors an explicit microstructure selection unchanged; upgrades a legacy-only
+    or empty selection to the A2-materializable governed set so chunked gold
+    materializes microstructure (vpin / cumulative_ofi / queue_pressure /
+    kyle_lambda / realized_vol_*) instead of silently degrading to the 3 legacy
+    features. Profile discipline: only the chunked rail upgrades; LIGHT/other
+    paths keep their explicit selection.
+    """
+
+    selected = tuple(
+        token.strip()
+        for token in (feature_names_csv or "").split(",")
+        if token.strip()
+    )
+    has_microstructure = any(
+        name not in _LEGACY_EXPECTED_EDGE_FEATURE_NAME_SET for name in selected
+    )
+    if has_microstructure:
+        return ",".join(selected)
+    return _A2_GOVERNED_FEATURE_NAMES_CSV
 
 
 class CockpitBacktestJobStatus(StrEnum):
@@ -355,6 +392,7 @@ class CockpitBacktestJobKind(StrEnum):
     STRATEGY_LADDER_FIRST_CONTROLLED_RUN = "strategy_ladder_first_controlled_run"
     STRATEGY_LADDER_ML_LAB_HANDOFF = "strategy_ladder_ml_lab_handoff"
     STRATEGY_LADDER_B_ML_LABEL_FACTORY = "strategy_ladder_b_ml_label_factory"
+    STRATEGY_LADDER_CHUNKED = "strategy_ladder_chunked"
 
 
 class StrategyLadderControlAction(StrEnum):
@@ -1417,6 +1455,63 @@ def _build_backtest_command(
         ]
         if candidate_events_path is not None:
             command.extend(["--b1-candidate-events-path", str(candidate_events_path.resolve())])
+        return tuple(command)
+    if job_kind == CockpitBacktestJobKind.STRATEGY_LADDER_CHUNKED:
+        # Phase 3 chunked rail (2026-06-05): the monolithic A2->B1->B2 run is
+        # executed as a per-day chunk map by run_chunked_backtest.py (RAM-safe,
+        # resumable). The run lands at ``output_root`` (chunks/<label>/...,
+        # chunk_index.json) and is observed read-only on /backtest/chunked.
+        resolved_run_root = output_root.resolve()
+        command = [
+            python_executable,
+            str(REPO_ROOT / "scripts" / "run_chunked_backtest.py"),
+            "--run-id",
+            resolved_run_root.name,
+            "--output-root",
+            str(resolved_run_root.parent),
+            "--start",
+            start,
+            "--end",
+            end,
+            "--chunk",
+            "1d",
+            "--engine-native-sample-size",
+            str(max(engine_native_sample_size, 0)),
+            "--candidate-discovery-mode",
+            candidate_discovery_mode or "TEMPORAL_STRATIFIED",
+            "--candidate-sample-cap",
+            str(max(engine_native_sample_size, 0)),
+            "--b1-5-policy-mode",
+            b1_5_policy_mode,
+            "--storage-format",
+            (
+                "jsonl-gz"
+                if silver_storage_mode == "jsonl_gz"
+                else "parquet"
+                if silver_storage_mode == "parquet"
+                else "jsonl"
+            ),
+            "--ml-mode",
+            ml_mode_status,
+            "--max-workers",
+            "1",
+        ]
+        if pairs:
+            command.extend(["--pairs", ",".join(pairs)])
+        if backtest_timeframes:
+            command.extend(["--timeframes", ",".join(backtest_timeframes)])
+        # Scoped governed default (2026-06-08): the chunked rail materializes A2
+        # gold for the whole run, so a legacy-only selection is upgraded to the
+        # governed microstructure set (explicit microstructure picks honored).
+        command.extend(
+            ["--feature-names", _scoped_chunked_feature_names_csv(feature_names_csv)]
+        )
+        for raw_root in raw_roots:
+            command.extend(["--raw-root", str(raw_root.resolve())])
+        if raw_source_manifest_path is not None:
+            command.extend(["--raw-source-manifest", str(raw_source_manifest_path.resolve())])
+        if historical_metadata_root is not None:
+            command.extend(["--historical-metadata-root", str(historical_metadata_root.resolve())])
         return tuple(command)
     if job_kind == CockpitBacktestJobKind.STRATEGY_LADDER_RUNNER:
         resolved_candidate_sample_cap = (
